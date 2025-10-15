@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{ "name": "📚 DOCS & VISION", "path": "docs" },
+    	{ "name": "🚀 Gateway (Rust)", "path": "services/gateway" },
+    	{ "name": "⚖️ Auction (Scala)", "path": "services/auction" },
+    	{ "name": "🔔 Notifications (Elixir)", "path": "services/notifications" },
+    	{ "name": "🔧 Project Root", "path": "." }
+	],
+	"settings": {
+		"files.exclude": {
+			"**/.git": true,
+			"**/.DS_Store": true
+		}
+	}
+}
