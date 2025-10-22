@@ -20,7 +20,24 @@
 *   **Обработка ошибок:** `anyhow` / `thiserror`
 *   **Логирование:** `tracing` со структурированным JSON-выводом.
 
-## 3. Эндпоинты (API Endpoints) - MVP
+## 3. Архитектура и логика роутинга
+
+`Telegram Gateway` является "переводчиком" между внешним миром Telegram и внутренней архитектурой платформы. Он использует два основных паттерна взаимодействия:
+
+1.  **Асинхронные команды (Commands):** Для всех действий, **изменяющих состояние** системы (например, сделать ставку, создать сходку), Gateway публикует стандартизированную, не зависящую от Telegram команду в шину NATS. Он не ждет ответа и не знает, какой сервис обработает эту команду.
+2.  **Синхронные запросы (Queries):** Для всех действий, **запрашивающих информацию** для отображения пользователю (например, показать экран сходки), Gateway выступает в роли **"сборщика UI"**. Он делает прямые, синхронные gRPC-запросы к одному или нескольким внутренним сервисам (`Events Service`, `Users Service`, `Auction Service Read Model` и т.д.), собирает из их ответов необходимые данные, форматирует их в сообщение Telegram и отправляет пользователю.
+
+### Пример: Отображение экрана сходки
+
+1.  Пользователь нажимает кнопку "Сходка 'Летний Пикник'".
+2.  Gateway получает колбэк `show_event:event-123`.
+3.  Gateway делает gRPC-запрос к `Events Service`: `GetEvent(id: "event-123")`.
+4.  `Events Service` возвращает `{ name: "...", enabled_modules: ["auction", "voting"] }`.
+5.  Gateway видит, что модуль `auction` включен, и делает gRPC-запрос к `Auction Service`: `GetAuctionStatus(eventId: "event-123")`.
+6.  `Auction Service` возвращает `{ status: "running" }`.
+7.  Gateway, собрав всю информацию, формирует сообщение и клавиатуру с кнопками для "auction" и "voting" и отправляет его пользователю.
+
+## 4. Эндпоинты (API Endpoints)
 
 ### `POST /telegram/webhook/{token}`
 
@@ -31,41 +48,34 @@
 *   **Логика:**
     1.  Проверить, что `token` из URL совпадает с токеном из конфигурации. Если нет — вернуть `403 Forbidden`.
     2.  Десериализовать тело запроса в структуру `Update`.
-    3.  Определить тип `Update` (новое сообщение, колбэк от кнопки и т.д.).
-    4.  **Для MVP:** Если это колбэк, связанный со ставкой (`place_bid:*`), вызвать функцию-обработчик.
-    5.  Для всех остальных типов обновлений — просто логировать и возвращать `200 OK`.
-    6.  Вернуть `200 OK`, чтобы Telegram знал, что вебхук получен.
+    3.  Определить тип `Update`.
+    4.  В зависимости от типа, либо запустить процесс **синхронного сбора данных**, либо опубликовать **асинхронную команду**.
+    5.  Вернуть `200 OK`.
 
-## 4. Внутренние контракты (NATS) - MVP
+## 5. Внутренние контракты
 
-Все сообщения сериализуются в **Protobuf**. Схемы регистрируются и управляются через **Apicurio Registry**.
+### 5.1. Асинхронные (NATS)
 
-*   **Публикуемые команды:**
+*   **Публикуемые команды (Примеры):**
     *   **Тема:** `commands.auction.place-bid`
     *   **Payload (Protobuf):** `PlaceBidCommand`
-        ```protobuf
-        message PlaceBidCommand {
-          string trace_id = 1;
-          string event_id = 2;
-          string lot_id = 3;
-          int64 user_id = 4;
-          double amount = 5;
-        }
-        ```
 *   **Подписка на команды:**
     *   **Тема:** `commands.telegram.send-message`
     *   **Payload (Protobuf):** `SendMessageCommand`
-        ```protobuf
-        message SendMessageCommand {
-          string trace_id = 1;
-          int64 chat_id = 2;
-          string text = 3;
-        }
-        ```
 
-## 5. Конфигурация (Переменные окружения)
+### 5.2. Синхронные (gRPC)
+
+*   Gateway выступает **клиентом** для gRPC-сервисов:
+    *   `EventsService.GetEvent(..)`
+    *   `UsersService.GetUser(..)`
+    *   `AuctionService.GetAuctionStatus(..)`
+
+## 6. Конфигурация (Переменные окружения)
 
 *   `TELEGRAM_BOT_TOKEN`: Секретный токен бота.
 *   `NATS_URL`: Адрес сервера NATS.
 *   `APICURIO_REGISTRY_URL`: URL Apicurio Registry для получения Protobuf-схем.
 *   `RUST_LOG`: Уровень логирования (например, `info`).
+*   `EVENTS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Events Service`.
+*   `USERS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Users Service`.
+*   `AUCTION_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Auction Service`.

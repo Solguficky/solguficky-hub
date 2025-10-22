@@ -25,6 +25,10 @@
 
 ### Команды (Commands)
 
+*   **`commands.events.create`**
+    *   *Отправитель:* Telegram Gateway
+    *   *Получатель:* Events Service
+    *   *Описание:* Создать новую сходку (изначально в статусе "предложена").
 *   **`commands.auction.start`**
     *   *Отправитель:* Telegram Gateway
     *   *Получатель:* Auction Service
@@ -51,7 +55,10 @@
     *   *Отправитель:* Auction Service
     *   *Получатель:* Notifications Service, Real-Time Hub, Achievements Service.
     *   *Описание:* Была сделана новая ставка. Содержит информацию о предыдущем и текущем лидере.
-
+*   **`events.auction.finished`**
+    *   *Отправитель:* Auction Service
+    *   *Получатель:* Notifications Service, Achievements Service
+    *   *Описание:* Аукцион для сходки завершен.
 *   **`events.auction.lot-sold`**
     *   *Отправитель:* Auction Service
     *   *Получатель:* Notifications Service, Achievements Service.

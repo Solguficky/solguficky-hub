@@ -29,6 +29,7 @@ graph TD
             Events[Events Service<br/>C#]
             Users[Users Service<br/>C#]
             Achievements[Achievements Service<br/>C#]
+            ContentFeed[Content Feed Service<br/>C#]
         end
         
         DB[(PostgreSQL<br/>Event Store &<br/>Read Models)]
@@ -43,12 +44,19 @@ graph TD
     Gateway -- Async Command --> Bus
     Gateway -- Sync gRPC Query --> Events
     Gateway -- Sync gRPC Query --> Users
+    Gateway -- Sync gRPC Query --> Achievements
+    Gateway -- Sync gRPC Query --> ContentFeed
     
     %% Event Bus Choreography
     Bus -- Command --> Auction
+    Bus -- Command --> Events
+    Bus -- Command --> Users
+    Bus -- Command --> ContentFeed
     
     Auction -- Event --> Bus
     Users -- Event --> Bus
+    Events -- Event --> Bus
+    ContentFeed -- Event --> Bus
     
     Bus -- Event --> Notifications
     Bus -- Event --> Achievements
@@ -62,8 +70,7 @@ graph TD
     Events -- DB Read/Write --> DB
     Users -- DB Read/Write --> DB
     Achievements -- DB Read/Write --> DB
-    
-    Realtime -- gRPC --> Gateway
+    ContentFeed -- DB Read/Write --> DB
 ```
 
 ## Краткое описание сервисов
@@ -75,6 +82,12 @@ graph TD
 *   **Events Service (C#):** CRUD-сервис, "владелец" данных о сходках.
 *   **Users Service (C#):** CRUD-сервис, управляет пользователями, ролями и правами.
 *   **Achievements Service (C#):** Stateless-сервис, слушает события и выдает ачивки.
+*   **Content Feed Service (C#):** CRUD-сервис для управления информационной лентой сходки (посты, голосования, ссылки).
+
+### Клиентские приложения
+
+*   **Admin Panel (Mini App):** Telegram Mini App для ведущего аукциона. Предоставляет богатый UI для управления ходом торгов (например, прием ставок из зала) с бесшовной и безопасной аутентификацией через Telegram.
+*   **Big Screen App (Web):** Отдельное веб-приложение для отображения хода аукциона на большом экране (проекторе) во время офлайн-мероприятий. Получает данные в реальном времени через WebSocket от `Real-Time Hub`.
 
 ## Ключевые технологические решения и сервисы
 
@@ -88,4 +101,4 @@ graph TD
     *   **Scala/F# (Auction Service):** Строгая типизация и акторная модель для сложной stateful-логики.
     *   **Elixir (Notifications, Real-Time Hub):** Массовая конкурентность для уведомлений и WebSocket.
     *   **C# (Events, Users, Achievements):** Быстрая и надежная разработка CRUD-сервисов.
-    *   **TypeScript (Frontend):** Стандарт индустрии для веб-приложений.
+    *   **TypeScript (Frontend):** Стандарт индустрии для веб-приложений (`Big Screen App`, `Admin Panel`). Рекомендуется использование современных фреймворков, таких как Svelte, Vue или React.
