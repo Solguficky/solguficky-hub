@@ -1,0 +1,12 @@
+set dotenv-load := true
+
+dev:
+    cargo watch -x "clippy --all-targets --all-features -D warnings" -x "test -q"
+
+run-polling:
+    RUST_LOG=info,teloxide=info,telegram_gateway=debug cargo run --bin telegram-gateway
+
+run-webhook:
+    APP__SERVER__MODE=webhook APP__SERVER__PUBLIC_URL=${PUBLIC_URL} \
+    APP__SERVER__WEBHOOK_PATH=/webhook/secret APP__SERVER__BIND=0.0.0.0:8443 \
+    cargo run --bin telegram-gateway

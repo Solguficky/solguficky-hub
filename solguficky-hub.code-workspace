@@ -1,6 +1,9 @@
 {
 	"folders": [
-		{ "name": "Solguficky Hub", "path": "./" },
+		{
+			"name": "Solguficky Hub",
+			"path": "./"
+		},
 	],
 	"settings": {
 		"files.exclude": {
@@ -8,6 +11,17 @@
 			"**/.DS_Store": true
 		},
 		"explorer.compactFolders": false,
-		"explorer.excludeGitIgnore": false
+		"explorer.excludeGitIgnore": false,
+		"editor.formatOnSave": true,
+		"editor.rulers": [
+			100
+		],
+		"files.trimTrailingWhitespace": true,
+		"rust-analyzer.procMacro.attributes.enable": true,
+		"lldb.displayFormat": "auto",
+		"lldb.showDisassembly": "auto",
+		"rust-analyzer.linkedProjects": [
+			"./services/telegram-gateway/Cargo.toml"
+		]
 	}
 }

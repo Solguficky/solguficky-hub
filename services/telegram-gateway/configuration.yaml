@@ -1,0 +1,9 @@
+application:
+  host: "127.0.0.1"
+  port: 8000
+telegram:
+  # Этот токен будет переопределен переменной окружения APP_TELEGRAM__TOKEN
+  token: "placeholder_token"
+nats:
+  # Этот URL будет переопределен переменной окружения APP_NATS__URL
+  url: "nats://127.0.0.1:4222"
