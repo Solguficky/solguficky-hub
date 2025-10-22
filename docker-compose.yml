@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: solguficky-postgres
+    environment:
+      POSTGRES_DB: solguficky
+      POSTGRES_USER: solguficky
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - solguficky-network
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: solguficky-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - solguficky-network
+
+  apicurio-registry:
+    image: apicurio/apicurio-registry-mem:2.5.0.Final
+    container_name: solguficky-apicurio
+    environment:
+      QUARKUS_PROFILE: prod
+      REGISTRY_DATASOURCE_URL: jdbc:postgresql://postgres:5432/solguficky
+      REGISTRY_DATASOURCE_USERNAME: solguficky
+      REGISTRY_DATASOURCE_PASSWORD: dev_password
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - solguficky-network
+
+volumes:
+  postgres_data:
+
+networks:
+  solguficky-network:
+    driver: bridge
+
