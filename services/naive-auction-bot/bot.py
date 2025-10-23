@@ -3,6 +3,7 @@ import sys
 import signal
 import asyncio
 import logging
+from typing import Optional, Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
@@ -251,21 +252,19 @@ async def process_delete_bid_id(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await handle_unknown_message(update, context)
 
-async def notify_outbid_users(lot_id: int, new_max_bid_amount: float, context: ContextTypes.DEFAULT_TYPE):
+async def notify_outbid_users(lot_id: int, previous_max_bid: Optional[Dict], new_max_bid_amount: float, context: ContextTypes.DEFAULT_TYPE):
     lot = auction_lots[lot_id]
-    lot_bids = await database.get_lot_bids(lot_id)
 
-    for bid in lot_bids:
-        if bid['amount'] < new_max_bid_amount:
-            user_id = bid['user_id']
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"❗ Ваша ставка в {bid['amount']} рублей на лот '{lot['title']}' была перебита. "
-                         f"Текущая максимальная ставка теперь составляет {new_max_bid_amount} рублей."
-                )
-            except Exception as e:
-                logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
+    if previous_max_bid and previous_max_bid['user_id']:
+        user_id = previous_max_bid['user_id']
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"❗ Ваша ставка в {previous_max_bid['amount']} рублей на лот '{lot['title']}' была перебита. "
+                     f"Текущая максимальная ставка теперь составляет {new_max_bid_amount} рублей."
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
 
 async def show_lots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lot_buttons = []
@@ -337,14 +336,14 @@ async def bid_increase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     lot_id = int(query.data.split('_')[2])
     lot = auction_lots[lot_id]
 
-    max_bid = await database.get_current_max_bid(lot_id)
-    current_bid = max_bid['amount'] if max_bid else lot['starting_price']
+    previous_max_bid = await database.get_current_max_bid(lot_id)
+    current_bid = previous_max_bid['amount'] if previous_max_bid else lot['starting_price']
 
     new_bid = current_bid + lot['min_bid_step']
 
     bid_id = await database.save_bid(lot_id, query.from_user.id, new_bid)
 
-    await notify_outbid_users(lot_id, new_bid, context)
+    await notify_outbid_users(lot_id, previous_max_bid, new_bid, context)
 
     await query.edit_message_text(
         text=f"✅ Ставка в {new_bid} рублей была поднята для '{lot['title']}'. Ваш ID ставки: {bid_id}. Спасибо!\n\n"
@@ -404,17 +403,22 @@ async def process_bid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         lot = auction_lots[lot_id]
 
-        max_bid = await database.get_current_max_bid(lot_id)
-        current_bid = max_bid['amount'] if max_bid else None
+        previous_max_bid = await database.get_current_max_bid(lot_id)
+        current_bid = previous_max_bid['amount'] if previous_max_bid else None
 
-        if current_bid is not None and bid_amount <= current_bid:
-            await update.message.reply_text(f"Ваша ставка должна быть больше текущей ставки ({current_bid}).")
-            return
+        if current_bid is not None:
+            min_required_bid = current_bid + lot['min_bid_step']
+            if bid_amount < min_required_bid:
+                await update.message.reply_text(
+                    f"Ваша ставка должна быть минимум {min_required_bid} рублей "
+                    f"(текущая ставка {current_bid} + минимальный шаг {lot['min_bid_step']})."
+                )
+                return
 
         bid_id = await database.save_bid(lot_id, user.id, bid_amount)
 
         if current_bid is None or bid_amount > current_bid:
-            await notify_outbid_users(lot_id, bid_amount, context)
+            await notify_outbid_users(lot_id, previous_max_bid, bid_amount, context)
 
         await update.message.reply_text(
             f"✅ Ставка в {bid_amount} рублей была сделана для '{lot['title']}'. Ваш ID ставки: {bid_id}. Спасибо!\n\n"
