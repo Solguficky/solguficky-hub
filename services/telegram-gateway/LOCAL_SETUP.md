@@ -54,6 +54,7 @@ docker-compose logs -f telegram-gateway
 
 - NATS Monitoring: http://localhost:8222
 - Apicurio Registry: http://localhost:8080
+- Grafana (для логов): http://localhost:3000 (admin/admin)
 
 **Проверьте доступность через curl:**
 
@@ -76,6 +77,33 @@ curl http://localhost:8080/health
 7. Попробуйте "🎯 Начать торги" или "💰 Повысить ставку"
 
 ## Отладка и мониторинг
+
+### Централизованное Логирование (Loki + Grafana)
+
+Для удобного просмотра и анализа логов со всех сервисов, включая `telegram-gateway`, в проекте настроен стек Loki+Grafana.
+
+**1. Запуск стека логирования:**
+
+В корне проекта выполните команду:
+
+```bash
+docker-compose -f docker-compose.logging.yml up -d
+```
+
+Эта команда запустит Loki, Grafana и Promtail в фоновом режиме.
+
+**2. Просмотр логов в Grafana:**
+
+1.  Откройте Grafana в браузере: http://localhost:3000
+2.  Войдите с учетными данными `admin` / `admin`.
+3.  Перейдите в раздел `Explore`.
+4.  В выпадающем списке источников данных `Loki` должен быть уже выбран.
+5.  В поле `Log browser` введите запрос для фильтрации, например:
+    - `{container="telegram-gateway"}` - показать логи только от `telegram-gateway`.
+    - `{container="telegram-gateway"} |= "ERROR"` - показать ошибки в логах `telegram-gateway`.
+    - `{container=~".+"}` - показать логи со всех запущенных контейнеров.
+
+Это намного удобнее, чем использовать `docker-compose logs`.
 
 ### Просмотр NATS событий через CLI
 
@@ -100,7 +128,9 @@ nats sub "commands.auction.>" --server=localhost:4222
 
 Теперь каждое действие в боте будет отображаться как Protobuf сообщение в терминале.
 
-### Фильтрация логов
+### Фильтрация логов (старый способ)
+
+Раньше для фильтрации логов использовалась команда `docker-compose logs ... | grep ...`. Сейчас рекомендуется использовать Grafana, как описано выше. Примеры ниже оставлены для справки.
 
 **Только сообщения о публикации команд:**
 
