@@ -36,16 +36,8 @@ impl NatsClient {
             .encode(&mut buf)
             .context("Failed to encode PlaceBidCommand to Protobuf")?;
 
-        let mut headers = async_nats::HeaderMap::new();
-        headers.insert("content-type", "application/x-protobuf");
-        headers.insert("schema-id", "place-bid-command-v1");
-
         self.client
-            .publish_with_headers(
-                "commands.auction.place-bid".to_string(),
-                headers,
-                buf.into(),
-            )
+            .publish("commands.auction.place-bid".to_string(), buf.into())
             .await
             .context("Failed to publish PlaceBidCommand to NATS")?;
 
@@ -82,21 +74,8 @@ impl NatsClient {
 pub async fn handle_auction_event(message: async_nats::Message) {
     let subject = &message.subject;
 
-    let schema_id = message
-        .headers
-        .as_ref()
-        .and_then(|h| h.get("schema-id"))
-        .map(|v| v.as_str());
-
     match subject.as_str() {
         "events.auction.bid-placed" => {
-            if schema_id != Some("bid-placed-event-v1") {
-                warn!(
-                    "Unknown or missing schema-id for bid-placed: {:?}",
-                    schema_id
-                );
-            }
-
             match generated::nats::events::BidPlacedEvent::decode(&*message.payload) {
                 Ok(event) => {
                     info!(

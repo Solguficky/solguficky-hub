@@ -148,14 +148,10 @@ docker-compose logs telegram-gateway | grep "ERROR"
 2. Проверьте URL в `.env`: должен быть `nats://nats:4222` (не localhost!)
 3. Перезапустите: `docker-compose restart telegram-gateway`
 
-### Apicurio Registry недоступен
+### PostgreSQL недоступен
 
-**Проблема:** `Connection refused` к Apicurio
-
-**Решение:**
-1. Проверьте, что PostgreSQL запущен: `docker-compose ps postgres`
-2. Проверьте health check: `docker-compose ps apicurio-registry`
-3. Дождитесь готовности (может занять 30-60 секунд после старта)
+**Проблема:** Ошибки `connection refused` при подключении к базе.
+**Решение:** Убедитесь, что Docker-контейнер `postgres-db` запущен и работает.
 
 ### Ошибка компиляции в Docker
 
@@ -229,13 +225,13 @@ cargo run
 1. ✅ Убедитесь, что все действия в боте генерируют события
 2. ✅ Проверьте логи на отсутствие ошибок
 3. 🚧 Интегрируйте реальный Auction Service
-4. 🚧 Настройте автоматическую регистрацию схем в Apicurio
+4. 🚧 Добавить обработку большего числа событий из NATS
 5. 🚧 Переведите на webhook режим для production
 
 ## Полезные ссылки
 
 - [Документация NATS](https://docs.nats.io/)
-- [Документация Apicurio Registry](https://www.apicur.io/registry/docs/)
-- [Teloxide (Telegram Bot Framework)](https://github.com/teloxide/teloxide)
+- [Документация Teloxide](https://docs.rs/teloxide)
+- [Документация `dptree`](https://docs.rs/dptree)
 - [Docker Compose Reference](https://docs.docker.com/compose/compose-file/)
 

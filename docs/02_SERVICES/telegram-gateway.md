@@ -16,7 +16,7 @@
 *   **Telegram фреймворк:** Teloxide для работы с Telegram Bot API (Axum для webhooks)
 *   **Асинхронный рантайм:** Tokio
 *   **NATS-клиент:** `async-nats`
-*   **Сериализация:** Protobuf (схемы управляются через Apicurio Registry)
+*   **Сериализация:** Protobuf (схемы хранятся в `contracts/proto/`)
 *   **Обработка ошибок:** `anyhow` / `thiserror`
 *   **Логирование:** `tracing` со структурированным JSON-выводом
 *   **Идемпотентность:** Redis для распределенного кеша
@@ -171,7 +171,6 @@ sequenceDiagram
 
 *   `TELEGRAM_BOT_TOKEN`: Секретный токен бота.
 *   `NATS_URL`: Адрес сервера NATS.
-*   `APICURIO_REGISTRY_URL`: URL Apicurio Registry для получения Protobuf-схем.
 *   `RUST_LOG`: Уровень логирования (например, `info`).
 *   `EVENTS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Events Service`.
 *   `USERS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Users Service`.

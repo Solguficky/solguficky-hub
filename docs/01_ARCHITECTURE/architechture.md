@@ -23,7 +23,7 @@ graph TD
             Notifications[Notifications Service<br/>Elixir]
             Realtime[Real-Time Hub<br/>Elixir + Phoenix]
         end
-        
+
         subgraph Stateless Services
             direction LR
             Events[Events Service<br/>C#]
@@ -31,7 +31,7 @@ graph TD
             Achievements[Achievements Service<br/>C#]
             ContentFeed[Content Feed Service<br/>C#]
         end
-        
+
         DB[(PostgreSQL<br/>Event Store &<br/>Read Models)]
     end
 
@@ -46,25 +46,25 @@ graph TD
     Gateway -- Sync gRPC Query --> Users
     Gateway -- Sync gRPC Query --> Achievements
     Gateway -- Sync gRPC Query --> ContentFeed
-    
+
     %% Event Bus Choreography
     Bus -- Command --> Auction
     Bus -- Command --> Events
     Bus -- Command --> Users
     Bus -- Command --> ContentFeed
-    
+
     Auction -- Event --> Bus
     Users -- Event --> Bus
     Events -- Event --> Bus
     ContentFeed -- Event --> Bus
-    
+
     Bus -- Event --> Notifications
     Bus -- Event --> Achievements
     Bus -- Event --> Realtime
 
     %% Service-to-Service & DB Interactions
     Auction -- Sync gRPC Query --> Events
-    
+
     Auction -- Writes to Event Store --> DB
     Notifications -- DB Read/Write --> DB
     Events -- DB Read/Write --> DB
@@ -94,7 +94,7 @@ graph TD
 *   **Хостинг:** **Railway (PaaS)** для упрощения развертывания.
 *   **Асинхронное взаимодействие:** **NATS JetStream** для надежной доставки команд и событий.
 *   **Синхронное взаимодействие:** **gRPC** для быстрых и строго типизированных Service-to-Service вызовов.
-*   **Управление схемами:** **Apicurio Registry** для централизованного управления Protobuf-схемами сообщений и обеспечения совместимости при эволюции контрактов.
+*   **Управление схемами:** **Protobuf-in-Git**. Схемы сообщений (`.proto` файлы) хранятся в репозитории и являются частью контракта сервиса. Кодогенерация происходит на этапе сборки.
 *   **Хранение данных:** **PostgreSQL** как для обычных данных, так и в качестве Event Store.
 *   **Языки и роли:**
     *   **Rust (Telegram Gateway):** Высокопроизводительный и безопасный входной шлюз.

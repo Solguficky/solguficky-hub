@@ -1,5 +1,5 @@
 # Stage 1: Chef - prepare recipe for dependency caching
-FROM rust:1.75-slim as chef
+FROM rust:1.90-slim as chef
 WORKDIR /app
 RUN cargo install cargo-chef
 
@@ -17,6 +17,7 @@ FROM chef AS builder
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy recipe and build dependencies (cached layer)

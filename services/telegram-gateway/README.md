@@ -8,8 +8,8 @@ API Gateway для платформы Solguficky. Единственная то�
 - **Teloxide** - Telegram Bot Framework (long polling)
 - **Axum** - веб-фреймворк для webhooks
 - **Tokio** - асинхронный рантайм
-- **NATS** - асинхронная шина сообщений
-- **Protobuf** - сериализация сообщений (через Apicurio Registry)
+- **NATS** - асинхронная шина сообщений. Схемы хранятся в `../../contracts/proto`.
+- **Protobuf** - сериализация сообщений. Схемы хранятся в `../../contracts/proto`.
 - **dptree** - роутинг запросов
 - **tracing** - структурированное логирование
 
