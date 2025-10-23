@@ -518,18 +518,14 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="HTML"
     )
 
-def setup_signal_handlers(app):
-    def signal_handler(sig, frame):
-        logger.info("Received shutdown signal, stopping gracefully...")
-        asyncio.create_task(app.stop())
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
 async def main() -> None:
     await database.init_db()
 
-    app = ApplicationBuilder().token(TG_BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TG_BOT_TOKEN)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("auction", auction_info))
@@ -551,11 +547,35 @@ async def main() -> None:
     app.add_handler(CallbackQueryHandler(auction_info, pattern='^auction_info$'))
     app.add_handler(CallbackQueryHandler(handle_back_to_start, pattern="^back_to_start$"))
 
-    setup_signal_handlers(app)
+    logger.info("Bot starting...")
 
-    logger.info("Bot started successfully")
-    await app.run_polling()
+    try:
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        logger.info("Bot started successfully")
+
+        # Keep the bot running until a shutdown signal is received
+        while True:
+            await asyncio.sleep(60)
+
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutdown signal received, stopping gracefully...")
+    finally:
+        if app.updater and app.updater.is_running:
+            await app.updater.stop()
+        if app.running:
+            await app.stop()
+        await app.shutdown()
+        logger.info("Bot stopped gracefully")
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except RuntimeError:
+        # This can happen if the event loop is already running, e.g. in some environments.
+        # We can try to get the existing loop and run the main function in it.
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(main())
 
