@@ -23,6 +23,20 @@ docker-compose up --build
 
 Подробная инструкция: [services/telegram-gateway/LOCAL_SETUP.md](services/telegram-gateway/LOCAL_SETUP.md)
 
+### Запуск Naive Auction Bot (standalone)
+
+Простой production-ready Telegram-бот для проведения аукционов с SQLite:
+
+```bash
+cd services/naive-auction-bot
+pip install -r requirements.txt
+cp .env.example .env
+# Добавьте TG_BOT_TOKEN в .env
+python bot.py
+```
+
+Деплой на Railway: см. [services/naive-auction-bot/README.md](services/naive-auction-bot/README.md)
+
 ## 📚 Документация
 
 - [Архитектура](docs/01_ARCHITECTURE/architechture.md) - общая архитектура платформы
@@ -38,8 +52,9 @@ solguficky-hub/
 │   └── proto/
 ├── docs/              # Документация
 ├── services/          # Микросервисы
-│   ├── telegram-gateway/  # Rust - API Gateway для Telegram
-│   ├── auction-service/   # Scala/Akka - Сервис аукционов (планируется)
+│   ├── telegram-gateway/    # Rust - API Gateway для Telegram
+│   ├── auction-service/     # Scala/Akka - Сервис аукционов (планируется)
+│   ├── naive-auction-bot/   # Python - Standalone аукцион-бот (production-ready)
 │   └── ...
 └── docker-compose.yml # Локальная инфраструктура
 ```
@@ -49,6 +64,7 @@ solguficky-hub/
 - **Telegram Gateway**: Rust + Teloxide + NATS + Protobuf
 - **Auction Service**: Scala + Akka (Event Sourcing)
 - **Notifications Service**: Elixir + Phoenix
+- **Naive Auction Bot**: Python + python-telegram-bot + SQLite (standalone)
 - **Инфраструктура**: NATS JetStream, PostgreSQL, Apicurio Registry
 
 ## 📖 Дополнительная информация
