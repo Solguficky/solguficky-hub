@@ -1,0 +1,13 @@
+syntax = "proto3";
+package nats.commands;
+
+import "common/types.proto";
+
+message PlaceBidCommand {
+  string op_id = 1;
+  string event_id = 2;
+  uint32 lot_id = 3;
+  int64 user_id = 4;
+  double amount = 5;
+}
+

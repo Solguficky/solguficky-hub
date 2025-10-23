@@ -1,1 +1,7 @@
-// Здесь будут DTO, трейты для сервисов и другая доменная логика.
+pub mod commands;
+pub mod dto;
+pub mod events;
+
+pub use commands::*;
+pub use dto::*;
+pub use events::*;

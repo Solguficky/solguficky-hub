@@ -1,5 +1,5 @@
 ---
-globs: ['*.rs']
+globs: *.rs
 alwaysApply: false
 ---
 # Общие практики Rust

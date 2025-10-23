@@ -12,13 +12,18 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U solguficky" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - solguficky-network
 
   nats:
     image: nats:2.10-alpine
     container_name: solguficky-nats
-    command: ["-js", "-m", "8222"]
+    command: [ "-js", "-m", "8222" ]
     ports:
       - "4222:4222"
       - "8222:8222"
@@ -26,24 +31,49 @@ services:
       - solguficky-network
 
   apicurio-registry:
-    image: apicurio/apicurio-registry-mem:2.5.0.Final
+    image: apicurio/apicurio-registry-sql:2.5.0.Final
     container_name: solguficky-apicurio
     environment:
       QUARKUS_PROFILE: prod
-      REGISTRY_DATASOURCE_URL: jdbc:postgresql://postgres:5432/solguficky
-      REGISTRY_DATASOURCE_USERNAME: solguficky
-      REGISTRY_DATASOURCE_PASSWORD: dev_password
+      QUARKUS_DATASOURCE_DB_KIND: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/solguficky
+      QUARKUS_DATASOURCE_USERNAME: solguficky
+      QUARKUS_DATASOURCE_PASSWORD: dev_password
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health/ready" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - solguficky-network
+
+  telegram-gateway:
+    build:
+      context: .
+      dockerfile: services/telegram-gateway/Dockerfile
+    container_name: solguficky-telegram-gateway
+    env_file:
+      - .env
+    environment:
+      APP_NATS__URL: nats://nats:4222
+    ports:
+      - "8000:8000"
+    depends_on:
+      - nats
+      - apicurio-registry
+    restart: unless-stopped
     networks:
       - solguficky-network
 
 volumes:
   postgres_data:
 
+
 networks:
   solguficky-network:
     driver: bridge
-

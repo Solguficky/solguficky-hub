@@ -10,15 +10,18 @@
 
 **Сервис НЕ должен содержать сложной бизнес-логики.**
 
-## 2. Технологии (MVP)
+## 2. Технологии
 
 *   **Язык:** Rust
-*   **Веб-фреймворк:** Axum
+*   **Telegram фреймворк:** Teloxide для работы с Telegram Bot API (Axum для webhooks)
 *   **Асинхронный рантайм:** Tokio
 *   **NATS-клиент:** `async-nats`
 *   **Сериализация:** Protobuf (схемы управляются через Apicurio Registry)
 *   **Обработка ошибок:** `anyhow` / `thiserror`
-*   **Логирование:** `tracing` со структурированным JSON-выводом.
+*   **Логирование:** `tracing` со структурированным JSON-выводом
+*   **Идемпотентность:** Redis для распределенного кеша
+
+**Примечание:** Для локальной разработки на начальном этапе допустимо использовать long polling вместо webhook и in-memory кеш вместо Redis. Эти детали реализации не влияют на архитектуру кода.
 
 ## 3. Архитектурные решения
 
@@ -43,7 +46,10 @@
 
 ### 3.2. Надёжность
 
-- **Идемпотентность**: Все операции, изменяющие состояние, должны быть идемпотентными, чтобы избежать побочных эффектов от повторных запросов. Клики по inline-кнопкам должны дедуплицироваться по `callback_query.id`. Для команд, отправляемых в NATS, должен генерироваться уникальный `op_id`, который доменные сервисы могут использовать для предотвращения дублирования операций.
+- **Идемпотентность**: Все операции, изменяющие состояние, должны быть идемпотентными.
+    - **Дедупликация callback_query:** Использовать `callback_query.id` как ключ с TTL 1 час. Клики по inline-кнопкам должны дедуплицироваться.
+    - **Идемпотентность команд в NATS:** Каждая команда содержит уникальный `op_id: Uuid`, который доменные сервисы могут использовать для предотвращения дублирования операций.
+
 - **Быстрый ответ Telegram API**: Сервис должен максимально быстро отвечать на запросы от Telegram. Для `callback_query` необходимо немедленно вызывать `answerCallbackQuery`. При использовании вебхуков — возвращать `200 OK` до завершения обработки. Длительные операции должны выполняться в фоновом режиме.
 
 ### 3.3. Тестируемость
@@ -103,7 +109,65 @@
     *   `UsersService.GetUser(..)`
     *   `AuctionService.GetAuctionStatus(..)`
 
-## 6. Конфигурация (Переменные окружения)
+## 6. Примеры взаимодействий
+
+### 6.1. Сценарий: Пользователь делает ставку
+
+```mermaid
+sequenceDiagram
+    participant User as Пользователь
+    participant TG as Telegram API
+    participant Gateway as Telegram Gateway
+    participant NATS as NATS JetStream
+    participant Auction as Auction Service
+
+    User->>TG: Нажимает кнопку "Сделать ставку 500₽"
+    TG->>Gateway: CallbackQuery (callback_data: "bid_start:1")
+
+    Note over Gateway: Проверка идемпотентности
+    Gateway->>Gateway: check_and_insert(callback_query.id)
+
+    Gateway->>TG: answerCallbackQuery()
+    Note over Gateway,TG: Немедленный ответ (убирает "loading")
+
+    Gateway->>NATS: publish(commands.auction.place-bid)
+    Note over NATS: PlaceBidCommand {<br/>op_id, event_id,<br/>lot_id, user_id, amount}
+
+    Gateway->>TG: editMessageText("✅ Ставка отправлена!")
+
+    Note over NATS,Auction: Асинхронная обработка
+    NATS->>Auction: PlaceBidCommand
+    Auction->>Auction: Валидация и применение
+    Auction->>NATS: publish(events.auction.bid-placed)
+
+    NATS->>Gateway: BidPlacedEvent {previous_leader_id, ...}
+    Gateway->>TG: sendMessage(previous_leader,<br/>"❗ Вас перебили!")
+```
+
+### 6.2. Сценарий: Показ списка лотов (Query)
+
+```mermaid
+sequenceDiagram
+    participant User as Пользователь
+    participant TG as Telegram API
+    participant Gateway as Telegram Gateway
+    participant Auction as Auction Service (gRPC)
+
+    User->>TG: Нажимает "Ближайший аукцион"
+    TG->>Gateway: CallbackQuery
+
+    Gateway->>TG: answerCallbackQuery()
+
+    Note over Gateway,Auction: Синхронный запрос данных
+    Gateway->>Auction: GetAuction(event_id) [gRPC]
+    Auction-->>Gateway: AuctionDto {lots: [...]}
+
+    Gateway->>Gateway: Формирует UI (кнопки для каждого лота)
+    Gateway->>TG: editMessageText + InlineKeyboard
+    TG-->>User: Отображение списка лотов
+```
+
+## 7. Конфигурация (Переменные окружения)
 
 *   `TELEGRAM_BOT_TOKEN`: Секретный токен бота.
 *   `NATS_URL`: Адрес сервера NATS.
