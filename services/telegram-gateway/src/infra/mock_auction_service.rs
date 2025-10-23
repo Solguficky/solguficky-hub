@@ -1,24 +1,68 @@
 use crate::domain::{AuctionDto, AuctionStatus, LotDto};
 use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-pub struct MockAuctionService;
+pub struct MockAuctionService {
+    dynamic_lots: Arc<RwLock<Vec<LotDto>>>,
+}
+
+impl Default for MockAuctionService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl MockAuctionService {
     pub fn new() -> Self {
-        Self
+        Self {
+            dynamic_lots: Arc::new(RwLock::new(Vec::new())),
+        }
     }
 
     pub async fn get_auction(&self, _event_id: &str) -> Result<AuctionDto> {
+        let hardcoded_lots = self.get_mock_lots();
+        let dynamic_lots = self.dynamic_lots.read().await;
+
+        let mut all_lots = hardcoded_lots;
+        all_lots.extend(dynamic_lots.clone());
+
         Ok(AuctionDto {
             event_id: "summer-meetup-2024".to_string(),
             event_name: "Летняя Сходка 2024".to_string(),
             status: AuctionStatus::Running,
-            lots: self.get_mock_lots(),
+            lots: all_lots,
         })
     }
 
     pub async fn get_lot(&self, _event_id: &str, lot_id: u32) -> Result<Option<LotDto>> {
-        Ok(self.get_mock_lots().into_iter().find(|l| l.id == lot_id))
+        let hardcoded_lots = self.get_mock_lots();
+        if let Some(lot) = hardcoded_lots.into_iter().find(|l| l.id == lot_id) {
+            return Ok(Some(lot));
+        }
+
+        let dynamic_lots = self.dynamic_lots.read().await;
+        Ok(dynamic_lots.iter().find(|l| l.id == lot_id).cloned())
+    }
+
+    pub async fn create_lot(&self, mut lot: LotDto) -> Result<LotDto> {
+        let mut lots = self.dynamic_lots.write().await;
+
+        if lot.title.trim().is_empty() {
+            return Err(anyhow::anyhow!("Название не может быть пустым"));
+        }
+        if lot.starting_price <= 0.0 {
+            return Err(anyhow::anyhow!("Стартовая цена должна быть больше 0"));
+        }
+        if lot.min_bid_step <= 0.0 {
+            return Err(anyhow::anyhow!("Минимальный шаг должен быть больше 0"));
+        }
+
+        let max_id = lots.iter().map(|l| l.id).max().unwrap_or(5);
+        lot.id = max_id + 1;
+
+        lots.push(lot.clone());
+        Ok(lot)
     }
 
     fn get_mock_lots(&self) -> Vec<LotDto> {

@@ -20,16 +20,23 @@ pub struct Nats {
     pub url: String,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct Auth {
+    pub admins: Vec<i64>,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Settings {
     pub application: Application,
     pub telegram: Telegram,
     pub nats: Nats,
+    pub auth: Auth,
 }
 
-pub fn get_configuration() -> Result<Settings, figment::Error> {
+pub fn get_configuration() -> Result<Settings, Box<figment::Error>> {
     Figment::new()
         .merge(Yaml::file("configuration.yaml"))
         .merge(Env::prefixed("APP_").split("__"))
         .extract()
+        .map_err(Box::new)
 }

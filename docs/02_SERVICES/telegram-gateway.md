@@ -52,11 +52,102 @@
 
 - **Быстрый ответ Telegram API**: Сервис должен максимально быстро отвечать на запросы от Telegram. Для `callback_query` необходимо немедленно вызывать `answerCallbackQuery`. При использовании вебхуков — возвращать `200 OK` до завершения обработки. Длительные операции должны выполняться в фоновом режиме.
 
-### 3.3. Тестируемость
+### 3.3. Тестируемость и Action паттерн
 
-Для упрощения тестирования, логика обработчиков (handlers) должна быть отделена от непосредственного взаимодействия с Telegram API. Предпочтительным является паттерн, при котором хендлер формирует описание необходимого действия (например, `enum Action`), а отдельный исполнитель (Executor) выполняет это действие, вызывая методы клиента `teloxide`. Это позволяет проводить юнит-тестирование хендлеров, проверяя возвращаемое ими `Action`, без необходимости мокать сетевые вызовы.
+**Реализованная архитектура (MVP):**
 
-### 3.4. Качество кода и Наблюдаемость
+Для обеспечения тестируемости используется **Action паттерн**:
+
+1. **Хендлеры возвращают `BotAction`**, а не вызывают `teloxide::Bot` напрямую:
+```rust
+pub enum BotAction {
+    SendMessage { chat_id, text, keyboard },
+    EditMessage { chat_id, message_id, text, keyboard },
+    AnswerCallback { callback_id, text },
+    SendPhoto { chat_id, photo_url, caption, keyboard },
+    Multiple(Vec<BotAction>),
+}
+```
+
+2. **Выполнение через helper-функцию** `execute_action(&Bot, BotAction)` в модуле `helpers.rs`
+
+3. **Wrapper-функции в lib.rs** интегрируют хендлеры с teloxide dispatcher:
+```rust
+async fn show_auction_wrapper(q: CallbackQuery, deps: Dependencies, bot: Bot) -> Result<()> {
+    handle_with_action(bot, || show_auction_handler(q, deps)).await
+}
+```
+
+**Преимущества:**
+- ✅ Хендлеры тестируются проверкой возвращаемого `BotAction`
+- ✅ FSM логика полностью изолирована (чистые функции)
+- ✅ UI билдеры - чистые функции, легко тестируются
+- ✅ 20 юнит-тестов покрывают FSM и UI логику
+
+**Структура модулей:**
+```
+src/app/
+├── actions.rs           # BotAction enum
+├── fsm/                 # FSM логика (чистые функции)
+│   └── lot_creation.rs  # FsmTransition { new_state, action }
+├── ui/                  # UI билдеры (чистые функции)
+│   ├── common.rs
+│   ├── user/auction.rs
+│   └── admin/
+│       ├── auction_management.rs
+│       └── lot_creation.rs
+├── handlers/            # Тонкие обертки над FSM
+│   ├── admin.rs
+│   └── auction.rs
+└── helpers.rs           # execute_action()
+```
+
+### 3.4. RBAC (Role-Based Access Control) для MVP
+
+**Реализация:**
+
+Система ролей для MVP реализована через конфигурацию:
+
+1. **Конфигурация** (`configuration.yaml`):
+```yaml
+auth:
+  admins: [123456789, 987654321]  # Telegram ID админов
+```
+
+2. **Модуль авторизации** (`src/app/auth/`):
+```rust
+pub enum UserRole { Admin, User }
+pub fn get_user_role(user_id: UserId, config: &Auth) -> UserRole
+```
+
+3. **Проверка в хендлерах** через `Dependencies`:
+```rust
+let role = deps.get_user_role(user_id);
+match role {
+    UserRole::Admin => ui::admin::build_admin_auction_view(&auction),
+    UserRole::User => ui::user::build_auction_list(&auction),
+}
+```
+
+4. **Фильтр в роутинге** (`lib.rs`):
+```rust
+fn admin_only(q: CallbackQuery, deps: Dependencies) -> bool {
+    deps.get_user_role(q.from.id) == UserRole::Admin
+}
+
+// Использование:
+.filter(admin_only)
+.endpoint(start_lot_creation_wrapper)
+```
+
+**Админские функции (MVP):**
+- ➕ Создание лотов через пошаговую форму (FSM)
+- 📊 Просмотр админской панели аукциона
+- 🔄 (Будущее) Управление аукционом (старт/стоп/финал)
+
+**План миграции:** При появлении User Service заменить `get_user_role` на gRPC вызов. Логика уже изолирована в модуле `auth`.
+
+### 3.5. Качество кода и Наблюдаемость
 
 - **Логирование**: Все логи должны выводиться в структурированном формате (JSON). Ключевые операции должны быть обернуты в `tracing::span` с добавлением контекстных полей (`update_id`, `chat_id`, `user_id`, `op_id`). Логи не должны содержать персональных данных (PII), таких как тексты сообщений или имена пользователей. Собранные `stdout` логи отправляются в **Loki** для централизованного хранения и анализа в Grafana.
 - **Метрики**: (TBD) В будущем планируется добавление метрик в формате Prometheus для мониторинга здоровья и производительности сервиса.

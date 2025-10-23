@@ -1,73 +1,62 @@
-use crate::app::{deps::Dependencies, state::State};
+use crate::app::{actions::BotAction, deps::Dependencies, state::State, ui};
 use crate::domain::PlaceBidCommand;
-use teloxide::{
-    dispatching::dialogue::InMemStorage,
-    prelude::*,
-    types::{InlineKeyboardButton, InlineKeyboardMarkup},
-};
-use tracing::{error, info, instrument};
+use teloxide::prelude::*;
+use tracing::{info, instrument};
 
-pub type MyDialogue = Dialogue<State, InMemStorage<State>>;
+use super::MyDialogue;
 
-#[instrument(skip(bot, q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
 pub async fn show_auction_handler(
-    bot: Bot,
     q: CallbackQuery,
     deps: Dependencies,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BotAction> {
     if !deps.idempotency.check_and_insert(q.id.to_string()) {
         info!("Duplicate callback_query detected, skipping");
-        return Ok(());
+        return Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        });
     }
-
-    bot.answer_callback_query(q.id.clone()).await?;
 
     let auction = deps
         .auction_service
         .get_auction("summer-meetup-2024")
         .await?;
 
-    let mut keyboard = InlineKeyboardMarkup::default();
+    let user_role = deps.get_user_role(q.from.id);
 
-    for lot in auction.lots.iter().take(5) {
-        keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-            format!("Лот {}: {}", lot.id, lot.title),
-            format!("view_lot:{}", lot.id),
-        )]);
-    }
+    let (text, keyboard) = match user_role {
+        crate::app::auth::UserRole::Admin => ui::admin::build_admin_auction_view(&auction),
+        crate::app::auth::UserRole::User => ui::user::build_auction_list(&auction),
+    };
 
-    keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-        "🏠 Главное меню",
-        "back_to_start",
-    )]);
+    let message = q
+        .message
+        .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
 
-    let text = format!(
-        "🎪 Аукцион: {}\n\nСтатус: {:?}\n\nДоступные лоты:",
-        auction.event_name, auction.status
-    );
-
-    if let Some(message) = q.message {
-        let chat_id = message.chat().id;
-        bot.edit_message_text(chat_id, message.id(), text)
-            .reply_markup(keyboard)
-            .await?;
-    }
-
-    Ok(())
+    Ok(BotAction::Multiple(vec![
+        BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        },
+        BotAction::EditMessage {
+            chat_id: message.chat().id,
+            message_id: message.id(),
+            text,
+            keyboard: Some(keyboard),
+        },
+    ]))
 }
 
-#[instrument(skip(bot, q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
-pub async fn view_lot_handler(
-    bot: Bot,
-    q: CallbackQuery,
-    deps: Dependencies,
-) -> anyhow::Result<()> {
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+pub async fn view_lot_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::Result<BotAction> {
     if !deps.idempotency.check_and_insert(q.id.to_string()) {
         info!("Duplicate callback_query detected, skipping");
-        return Ok(());
+        return Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        });
     }
-
-    bot.answer_callback_query(q.id.clone()).await?;
 
     let lot_id: u32 = q
         .data
@@ -82,71 +71,43 @@ pub async fn view_lot_handler(
         .await?;
 
     if let Some(lot) = lot {
-        let mut keyboard = InlineKeyboardMarkup::default();
+        let (text, keyboard) = ui::user::build_lot_view(&lot);
+        let message = q
+            .message
+            .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
 
-        keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-            "📖 Посмотреть описание",
-            format!("show_description:{}", lot.id),
-        )]);
-
-        if let Some(current_bid) = lot.current_bid {
-            let new_bid = current_bid + lot.min_bid_step;
-            keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-                format!(
-                    "💰 Повысить на {} руб (новая ставка: {} руб)",
-                    lot.min_bid_step, new_bid
-                ),
-                format!("bid_increase:{}", lot.id),
-            )]);
-            keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-                format!("✏️ Индивидуальная ставка (>{})", lot.min_bid_step),
-                format!("set_bid:{}", lot.id),
-            )]);
-        } else {
-            keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-                format!("🎯 Начать торги за {} руб", lot.starting_price),
-                format!("bid_start:{}", lot.id),
-            )]);
-        }
-
-        keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-            "◀️ Назад к лотам",
-            "show_auction",
-        )]);
-
-        let text = format!(
-            "📦 Лот: {}\n\n\
-            Текущая ставка: {}\n\n\
-            Выберите действие:",
-            lot.title,
-            lot.current_bid
-                .map(|b| format!("{} руб", b))
-                .unwrap_or_else(|| "Нет ставок".to_string())
-        );
-
-        if let Some(message) = q.message {
-            let chat_id = message.chat().id;
-            bot.edit_message_text(chat_id, message.id(), text)
-                .reply_markup(keyboard)
-                .await?;
-        }
+        Ok(BotAction::Multiple(vec![
+            BotAction::AnswerCallback {
+                callback_id: q.id.to_string(),
+                text: None,
+            },
+            BotAction::EditMessage {
+                chat_id: message.chat().id,
+                message_id: message.id(),
+                text,
+                keyboard: Some(keyboard),
+            },
+        ]))
+    } else {
+        Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: Some("Лот не найден".to_string()),
+        })
     }
-
-    Ok(())
 }
 
-#[instrument(skip(bot, q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
 pub async fn show_description_handler(
-    bot: Bot,
     q: CallbackQuery,
     deps: Dependencies,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BotAction> {
     if !deps.idempotency.check_and_insert(q.id.to_string()) {
         info!("Duplicate callback_query detected, skipping");
-        return Ok(());
+        return Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        });
     }
-
-    bot.answer_callback_query(q.id.clone()).await?;
 
     let lot_id: u32 = q
         .data
@@ -161,84 +122,40 @@ pub async fn show_description_handler(
         .await?;
 
     if let Some(lot) = lot {
-        let caption = format!(
-            "📖 Описание лота '{}'\n\n\
-            {}\n\n\
-            Текущая ставка: {}",
-            lot.title,
-            lot.description,
-            lot.current_bid
-                .map(|b| format!("{} руб", b))
-                .unwrap_or_else(|| "Нет ставок".to_string())
-        );
+        let (caption, keyboard) = ui::user::build_lot_description(&lot);
+        let message = q
+            .message
+            .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
+        let chat_id = message.chat().id;
 
-        let mut keyboard = InlineKeyboardMarkup::default();
-
-        if let Some(current_bid) = lot.current_bid {
-            let new_bid = current_bid + lot.min_bid_step;
-            keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-                format!(
-                    "💰 Повысить на {} руб (новая ставка: {} руб)",
-                    lot.min_bid_step, new_bid
-                ),
-                format!("bid_increase:{}", lot.id),
-            )]);
-            keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-                format!("✏️ Индивидуальная ставка (>{})", lot.min_bid_step),
-                format!("set_bid:{}", lot.id),
-            )]);
-        } else {
-            keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-                format!("🎯 Начать торги за {} руб", lot.starting_price),
-                format!("bid_start:{}", lot.id),
-            )]);
-        }
-
-        keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
-            "◀️ Назад к лоту",
-            format!("view_lot:{}", lot.id),
-        )]);
-
-        if let Some(message) = q.message {
-            let chat_id = message.chat().id;
-            if lot.image_url.starts_with("http") {
-                let caption_text = caption.clone();
-                match bot
-                    .send_photo(
-                        chat_id,
-                        teloxide::types::InputFile::url(lot.image_url.parse()?),
-                    )
-                    .caption(caption)
-                    .reply_markup(keyboard.clone())
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Failed to send photo: {}", e);
-                        bot.send_message(chat_id, caption_text)
-                            .reply_markup(keyboard)
-                            .await?;
-                    }
-                }
-            }
-        }
+        Ok(BotAction::Multiple(vec![
+            BotAction::AnswerCallback {
+                callback_id: q.id.to_string(),
+                text: None,
+            },
+            BotAction::SendMessage {
+                chat_id,
+                text: caption,
+                keyboard: Some(keyboard),
+            },
+        ]))
+    } else {
+        Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: Some("Лот не найден".to_string()),
+        })
     }
-
-    Ok(())
 }
 
-#[instrument(skip(bot, q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
-pub async fn bid_start_handler(
-    bot: Bot,
-    q: CallbackQuery,
-    deps: Dependencies,
-) -> anyhow::Result<()> {
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+pub async fn bid_start_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::Result<BotAction> {
     if !deps.idempotency.check_and_insert(q.id.to_string()) {
         info!("Duplicate callback_query detected, skipping");
-        return Ok(());
+        return Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        });
     }
-
-    bot.answer_callback_query(q.id.clone()).await?;
 
     let lot_id: u32 = q
         .data
@@ -268,37 +185,47 @@ pub async fn bid_start_handler(
             lot.id, user, lot.starting_price
         );
 
-        if let Some(message) = q.message {
-            let chat_id = message.chat().id;
-            bot.edit_message_text(
-                chat_id,
-                message.id(),
-                format!(
+        let message = q
+            .message
+            .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
+
+        Ok(BotAction::Multiple(vec![
+            BotAction::AnswerCallback {
+                callback_id: q.id.to_string(),
+                text: None,
+            },
+            BotAction::EditMessage {
+                chat_id: message.chat().id,
+                message_id: message.id(),
+                text: format!(
                     "✅ Торги начались для '{}'.\n\
                     Ваша ставка: {} руб.\n\n\
                     Команда отправлена в систему!",
                     lot.title, lot.starting_price
                 ),
-            )
-            .await?;
-        }
+                keyboard: None,
+            },
+        ]))
+    } else {
+        Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: Some("Лот не найден".to_string()),
+        })
     }
-
-    Ok(())
 }
 
-#[instrument(skip(bot, q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
 pub async fn bid_increase_handler(
-    bot: Bot,
     q: CallbackQuery,
     deps: Dependencies,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BotAction> {
     if !deps.idempotency.check_and_insert(q.id.to_string()) {
         info!("Duplicate callback_query detected, skipping");
-        return Ok(());
+        return Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        });
     }
-
-    bot.answer_callback_query(q.id.clone()).await?;
 
     let lot_id: u32 = q
         .data
@@ -326,32 +253,36 @@ pub async fn bid_increase_handler(
             lot.id, user, new_bid
         );
 
-        if let Some(message) = q.message {
-            let chat_id = message.chat().id;
-            bot.edit_message_text(
-                chat_id,
-                message.id(),
-                format!(
+        let message = q
+            .message
+            .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
+
+        Ok(BotAction::Multiple(vec![
+            BotAction::AnswerCallback {
+                callback_id: q.id.to_string(),
+                text: None,
+            },
+            BotAction::EditMessage {
+                chat_id: message.chat().id,
+                message_id: message.id(),
+                text: format!(
                     "✅ Ставка в {} руб была сделана для '{}'.\n\n\
                     Команда отправлена в систему!",
                     new_bid, lot.title
                 ),
-            )
-            .await?;
-        }
+                keyboard: None,
+            },
+        ]))
+    } else {
+        Ok(BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: Some("Лот не найден или нет текущей ставки".to_string()),
+        })
     }
-
-    Ok(())
 }
 
-#[instrument(skip(bot, q, dialogue), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
-pub async fn set_bid_handler(
-    bot: Bot,
-    q: CallbackQuery,
-    dialogue: MyDialogue,
-) -> anyhow::Result<()> {
-    bot.answer_callback_query(q.id.clone()).await?;
-
+#[instrument(skip(q, dialogue), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+pub async fn set_bid_handler(q: CallbackQuery, dialogue: MyDialogue) -> anyhow::Result<BotAction> {
     let lot_id: u32 = q
         .data
         .as_ref()
@@ -363,31 +294,35 @@ pub async fn set_bid_handler(
         .update(State::WaitingForBidAmount { lot_id })
         .await?;
 
-    if let Some(message) = q.message {
-        let chat_id = message.chat().id;
-        bot.edit_message_text(
-            chat_id,
-            message.id(),
-            format!(
+    let message = q
+        .message
+        .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
+
+    Ok(BotAction::Multiple(vec![
+        BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        },
+        BotAction::EditMessage {
+            chat_id: message.chat().id,
+            message_id: message.id(),
+            text: format!(
                 "✏️ Введите вашу индивидуальную ставку для лота {}.\n\n\
                 Ваша ставка должна быть числом (например: 500 или 1250.50)",
                 lot_id
             ),
-        )
-        .await?;
-    }
-
-    Ok(())
+            keyboard: None,
+        },
+    ]))
 }
 
-#[instrument(skip(bot, msg, dialogue, deps, state), fields(chat_id = %msg.chat.id, user_id = ?msg.from.as_ref().map(|u| u.id), state = ?state))]
+#[instrument(skip(msg, dialogue, deps, state), fields(chat_id = %msg.chat.id, user_id = ?msg.from.as_ref().map(|u| u.id), state = ?state))]
 pub async fn receive_bid_amount(
-    bot: Bot,
     msg: Message,
     dialogue: MyDialogue,
     deps: Dependencies,
     state: State,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BotAction> {
     if let State::WaitingForBidAmount { lot_id } = state {
         match msg.text().and_then(|t| t.parse::<f64>().ok()) {
             Some(amount) if amount > 0.0 => {
@@ -403,52 +338,61 @@ pub async fn receive_bid_amount(
                     lot_id, user_id, amount
                 );
 
-                bot.send_message(
-                    msg.chat.id,
-                    format!(
+                dialogue.update(State::Idle).await?;
+
+                Ok(BotAction::SendMessage {
+                    chat_id: msg.chat.id,
+                    text: format!(
                         "✅ Ставка в {} руб была сделана для лота {}.\n\n\
                         Команда отправлена в систему!",
                         amount, lot_id
                     ),
-                )
-                .await?;
-
-                dialogue.update(State::Idle).await?;
+                    keyboard: None,
+                })
             }
-            _ => {
-                bot.send_message(
-                    msg.chat.id,
-                    "❌ Пожалуйста, введите корректное число (например: 500 или 1250.50)",
-                )
-                .await?;
-            }
+            _ => Ok(BotAction::SendMessage {
+                chat_id: msg.chat.id,
+                text: "❌ Пожалуйста, введите корректное число (например: 500 или 1250.50)"
+                    .to_string(),
+                keyboard: None,
+            }),
         }
+    } else {
+        Ok(BotAction::SendMessage {
+            chat_id: msg.chat.id,
+            text: "❌ Неверное состояние".to_string(),
+            keyboard: None,
+        })
     }
-
-    Ok(())
 }
 
-#[instrument(skip(bot, q), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
-pub async fn back_to_start_handler(bot: Bot, q: CallbackQuery) -> anyhow::Result<()> {
-    bot.answer_callback_query(q.id.clone()).await?;
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]
+pub async fn back_to_start_handler(
+    q: CallbackQuery,
+    deps: Dependencies,
+) -> anyhow::Result<BotAction> {
+    let message = q
+        .message
+        .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
 
-    let keyboard =
-        InlineKeyboardMarkup::default().append_row(vec![InlineKeyboardButton::callback(
-            "🎪 Ближайший аукцион",
-            "show_auction",
-        )]);
+    let role = deps.get_user_role(q.from.id);
+    let keyboard = match role {
+        crate::app::auth::UserRole::Admin => ui::common::build_admin_main_menu(),
+        crate::app::auth::UserRole::User => ui::common::build_main_menu(),
+    };
 
-    if let Some(message) = q.message {
-        let chat_id = message.chat().id;
-        bot.edit_message_text(
-            chat_id,
-            message.id(),
-            "Привет! Добро пожаловать на платформу Solguficky.\n\n\
-            Здесь проходят аукционы для нашего комьюнити.",
-        )
-        .reply_markup(keyboard)
-        .await?;
-    }
-
-    Ok(())
+    Ok(BotAction::Multiple(vec![
+        BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        },
+        BotAction::EditMessage {
+            chat_id: message.chat().id,
+            message_id: message.id(),
+            text: "Привет! Добро пожаловать на платформу Solguficky.\n\n\
+            Здесь проходят аукционы для нашего комьюнити."
+                .to_string(),
+            keyboard: Some(keyboard),
+        },
+    ]))
 }
