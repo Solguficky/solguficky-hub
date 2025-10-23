@@ -44,6 +44,7 @@ impl LotDraft {
             current_bid: None,
             current_bidder_id: None,
             image_url: self.image_url.clone().unwrap_or_default(),
+            bids: vec![],
         }
     }
 }

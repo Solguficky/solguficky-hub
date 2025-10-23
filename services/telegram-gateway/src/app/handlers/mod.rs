@@ -15,6 +15,7 @@ pub use admin::{
 };
 pub use auction::{
     back_to_start_handler, bid_increase_handler, bid_start_handler, receive_bid_amount,
-    set_bid_handler, show_auction_handler, show_description_handler, view_lot_handler,
+    set_bid_handler, show_auction_handler, show_description_handler, show_user_bids_handler,
+    view_lot_handler,
 };
-pub use start::start_handler;
+pub use start::{auction_info_handler, handle_unknown_message_handler, start_handler};

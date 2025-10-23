@@ -13,4 +13,4 @@ apicurio:
 auth:
   # Список Telegram ID администраторов
   # Может быть переопределен через APP_AUTH__ADMINS="123456789,987654321"
-  admins: [364267879]
+  admins: []

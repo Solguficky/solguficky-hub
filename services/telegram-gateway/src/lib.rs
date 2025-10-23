@@ -91,6 +91,8 @@ pub async fn run() -> anyhow::Result<()> {
             Update::filter_callback_query()
                 .branch(callback_routes! {
                     "show_auction" => show_auction_wrapper,
+                    "show_user_bids" => show_user_bids_wrapper,
+                    "auction_info" => auction_info_wrapper,
                     "admin:manage_auctions" => show_auction_wrapper [admin_only],
                     "view_lot:" => view_lot_wrapper,
                     "show_description:" => show_description_wrapper,
@@ -109,6 +111,12 @@ pub async fn run() -> anyhow::Result<()> {
                     })
                     .endpoint(cancel_lot_creation_wrapper),
                 ),
+        )
+        // Handler for unknown text messages
+        .branch(
+            Update::filter_message()
+                .filter(|msg: Message| msg.text().is_some())
+                .endpoint(handle_unknown_message_wrapper),
         );
 
     info!("Starting dispatcher with graceful shutdown...");

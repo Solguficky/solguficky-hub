@@ -1,6 +1,7 @@
 use crate::app::{actions::BotAction, deps::Dependencies, state::State, ui};
 use crate::domain::PlaceBidCommand;
 use teloxide::prelude::*;
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 use tracing::{debug, info, instrument};
 
 use super::MyDialogue;
@@ -169,9 +170,10 @@ pub async fn show_description_handler(
                 callback_id: q.id.to_string(),
                 text: None,
             },
-            BotAction::SendMessage {
+            BotAction::SendPhoto {
                 chat_id,
-                text: caption,
+                photo_url: lot.image_url.clone(),
+                caption,
                 keyboard: Some(keyboard),
             },
         ]))
@@ -219,6 +221,10 @@ pub async fn bid_start_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::
 
         deps.nats.publish_place_bid(command).await?;
 
+        deps.auction_service
+            .record_bid(lot.id, user, lot.starting_price)
+            .await?;
+
         info!(
             lot_id = lot.id,
             user_id = user,
@@ -230,6 +236,13 @@ pub async fn bid_start_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::
         let message = q
             .message
             .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
+
+        let keyboard = InlineKeyboardMarkup::default()
+            .append_row(vec![InlineKeyboardButton::callback(
+                "◀️ К лотам",
+                "show_auction",
+            )])
+            .append_row(vec![ui::common::back_to_menu_button()]);
 
         Ok(BotAction::Multiple(vec![
             BotAction::AnswerCallback {
@@ -245,7 +258,7 @@ pub async fn bid_start_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::
                     Команда отправлена в систему!",
                     lot.title, lot.starting_price
                 ),
-                keyboard: None,
+                keyboard: Some(keyboard),
             },
         ]))
     } else {
@@ -292,6 +305,10 @@ pub async fn bid_increase_handler(
 
         deps.nats.publish_place_bid(command).await?;
 
+        deps.auction_service
+            .record_bid(lot.id, user, new_bid)
+            .await?;
+
         info!(
             lot_id = lot.id,
             user_id = user,
@@ -306,6 +323,13 @@ pub async fn bid_increase_handler(
             .message
             .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
 
+        let keyboard = InlineKeyboardMarkup::default()
+            .append_row(vec![InlineKeyboardButton::callback(
+                "◀️ К лотам",
+                "show_auction",
+            )])
+            .append_row(vec![ui::common::back_to_menu_button()]);
+
         Ok(BotAction::Multiple(vec![
             BotAction::AnswerCallback {
                 callback_id: q.id.to_string(),
@@ -319,7 +343,7 @@ pub async fn bid_increase_handler(
                     Команда отправлена в систему!",
                     new_bid, lot.title
                 ),
-                keyboard: None,
+                keyboard: Some(keyboard),
             },
         ]))
     } else {
@@ -393,6 +417,10 @@ pub async fn receive_bid_amount(
 
                 deps.nats.publish_place_bid(command).await?;
 
+                deps.auction_service
+                    .record_bid(lot_id, user_id, amount)
+                    .await?;
+
                 info!(
                     lot_id,
                     user_id, amount, "PlaceBid command published: user placed custom bid"
@@ -401,6 +429,13 @@ pub async fn receive_bid_amount(
                 dialogue.update(State::Idle).await?;
                 debug!("FSM state reset to Idle after successful bid");
 
+                let keyboard = InlineKeyboardMarkup::default()
+                    .append_row(vec![InlineKeyboardButton::callback(
+                        "◀️ К лотам",
+                        "show_auction",
+                    )])
+                    .append_row(vec![ui::common::back_to_menu_button()]);
+
                 Ok(BotAction::SendMessage {
                     chat_id: msg.chat.id,
                     text: format!(
@@ -408,7 +443,7 @@ pub async fn receive_bid_amount(
                         Команда отправлена в систему!",
                         amount, lot_id
                     ),
-                    keyboard: None,
+                    keyboard: Some(keyboard),
                 })
             }
             _ => {
@@ -429,6 +464,38 @@ pub async fn receive_bid_amount(
             keyboard: None,
         })
     }
+}
+
+#[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_id = %q.id))]
+pub async fn show_user_bids_handler(
+    q: CallbackQuery,
+    deps: Dependencies,
+) -> anyhow::Result<BotAction> {
+    let user_id = q.from.id.0 as i64;
+
+    debug!(user_id, "Fetching user bids");
+    let bids = deps.auction_service.get_user_bids(user_id).await?;
+
+    let (text, keyboard) = ui::user::build_user_bids_view(&bids);
+
+    let message = q
+        .message
+        .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
+
+    info!(user_id, bids_count = bids.len(), "User bids displayed");
+
+    Ok(BotAction::Multiple(vec![
+        BotAction::AnswerCallback {
+            callback_id: q.id.to_string(),
+            text: None,
+        },
+        BotAction::EditMessage {
+            chat_id: message.chat().id,
+            message_id: message.id(),
+            text,
+            keyboard: Some(keyboard),
+        },
+    ]))
 }
 
 #[instrument(skip(q, deps), fields(user_id = %q.from.id, callback_data = ?q.data, callback_id = %q.id))]

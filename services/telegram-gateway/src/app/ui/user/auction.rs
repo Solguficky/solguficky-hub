@@ -1,5 +1,6 @@
 use crate::app::ui::common;
 use crate::domain::{AuctionDto, LotDto};
+use crate::infra::UserBidSummary;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
 pub fn build_auction_list(auction: &AuctionDto) -> (String, InlineKeyboardMarkup) {
@@ -10,7 +11,7 @@ pub fn build_auction_list(auction: &AuctionDto) -> (String, InlineKeyboardMarkup
 
     let mut keyboard = InlineKeyboardMarkup::default();
 
-    for lot in auction.lots.iter().take(5) {
+    for lot in auction.lots.iter() {
         keyboard = keyboard.append_row(vec![InlineKeyboardButton::callback(
             format!("Лот {}: {}", lot.id, lot.title),
             format!("view_lot:{}", lot.id),
@@ -108,4 +109,30 @@ pub fn build_lot_description(lot: &LotDto) -> (String, InlineKeyboardMarkup) {
     )]);
 
     (caption, keyboard)
+}
+
+pub fn build_user_bids_view(bids: &[UserBidSummary]) -> (String, InlineKeyboardMarkup) {
+    if bids.is_empty() {
+        return (
+            "У вас пока нет ставок.".to_string(),
+            InlineKeyboardMarkup::default().append_row(vec![common::back_to_menu_button()]),
+        );
+    }
+
+    let mut text = "📊 Ваши ставки:\n\n".to_string();
+    for bid in bids {
+        let status = if bid.is_winning {
+            "🏆 Вы лидируете!"
+        } else {
+            "❌ Перебито"
+        };
+        text.push_str(&format!(
+            "Лот {}: '{}'\n├ Ваша ставка: {} руб\n├ Текущая: {} руб\n└ {}\n\n",
+            bid.lot_id, bid.lot_title, bid.user_max_bid, bid.current_bid, status
+        ));
+    }
+
+    let keyboard = InlineKeyboardMarkup::default().append_row(vec![common::back_to_menu_button()]);
+
+    (text, keyboard)
 }
