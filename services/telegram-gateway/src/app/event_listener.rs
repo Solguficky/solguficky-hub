@@ -3,65 +3,92 @@ use crate::infra::NatsClient;
 use anyhow::Result;
 use futures::StreamExt;
 use teloxide::{prelude::*, types::ChatId};
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 pub async fn start_event_listener(bot: Bot, nats: NatsClient) -> Result<()> {
-    info!("Starting NATS event listener...");
+    info!("Starting NATS event listener task");
 
     let mut subscriber = nats.subscribe_to_events().await?;
 
     tokio::spawn(async move {
+        debug!("Event listener task started, waiting for messages");
+
         while let Some(message) = subscriber.next().await {
             let subject = message.subject.as_str();
-            info!("Received event from NATS: {}", subject);
+            debug!(
+                subject = %subject,
+                payload_size = message.payload.len(),
+                "Received event from NATS"
+            );
 
             match subject {
                 "events.auction.bid-placed" => {
                     if let Err(e) = handle_bid_placed_event(&bot, &message.payload).await {
-                        error!("Failed to handle bid-placed event: {}", e);
+                        error!(error = %e, subject, "Failed to handle bid-placed event");
                     }
                 }
                 _ => {
-                    info!("Unknown event subject: {}", subject);
+                    warn!(subject = %subject, "Unknown event subject, ignoring");
                 }
             }
         }
 
-        info!("Event listener stopped");
+        warn!("Event listener stream ended, task stopped");
     });
 
+    info!("Event listener task spawned successfully");
     Ok(())
 }
 
 pub async fn start_send_message_listener(bot: Bot, nats: NatsClient) -> Result<()> {
-    info!("Starting send-message command listener...");
+    info!("Starting send-message command listener task");
 
     let mut subscriber = nats.subscribe_to_send_message_commands().await?;
 
     tokio::spawn(async move {
+        debug!("Send-message listener task started, waiting for commands");
+
         while let Some(message) = subscriber.next().await {
-            info!("Received send-message command from NATS");
+            debug!(
+                payload_size = message.payload.len(),
+                "Received send-message command from NATS"
+            );
 
             match serde_json::from_slice::<SendMessageCommand>(&message.payload) {
                 Ok(cmd) => {
-                    if let Err(e) = bot
-                        .send_message(ChatId(cmd.user_id), cmd.text)
-                        .await
-                    {
-                        error!("Failed to send message to user {}: {}", cmd.user_id, e);
+                    debug!(
+                        user_id = cmd.user_id,
+                        text_length = cmd.text.len(),
+                        "Parsed send-message command, sending to Telegram"
+                    );
+
+                    if let Err(e) = bot.send_message(ChatId(cmd.user_id), cmd.text).await {
+                        error!(
+                            user_id = cmd.user_id,
+                            error = %e,
+                            "Failed to send message via Telegram Bot API"
+                        );
                     } else {
-                        info!("Successfully sent message to user {}", cmd.user_id);
+                        info!(
+                            user_id = cmd.user_id,
+                            "Message sent successfully via Telegram"
+                        );
                     }
                 }
                 Err(e) => {
-                    error!("Failed to deserialize SendMessageCommand: {}", e);
+                    error!(
+                        error = %e,
+                        payload_size = message.payload.len(),
+                        "Failed to deserialize SendMessageCommand"
+                    );
                 }
             }
         }
 
-        info!("Send-message listener stopped");
+        warn!("Send-message listener stream ended, task stopped");
     });
 
+    info!("Send-message listener task spawned successfully");
     Ok(())
 }
 
@@ -69,11 +96,20 @@ async fn handle_bid_placed_event(bot: &Bot, payload: &[u8]) -> Result<()> {
     let event: BidPlacedEvent = serde_json::from_slice(payload)?;
 
     info!(
-        "Bid placed: lot_id={}, amount={}, user_id={}",
-        event.lot_id, event.amount, event.user_id
+        lot_id = event.lot_id,
+        amount = event.amount,
+        user_id = event.user_id,
+        has_previous_leader = event.previous_leader_id.is_some(),
+        "Processing BidPlacedEvent"
     );
 
     if let Some(previous_leader_id) = event.previous_leader_id {
+        debug!(
+            previous_leader_id,
+            new_leader_id = event.user_id,
+            "Sending outbid notification to previous leader"
+        );
+
         let message = format!(
             "❗ Ваша ставка на лот {} была перебита!\n\
             Новая максимальная ставка: {} руб.",
@@ -82,17 +118,23 @@ async fn handle_bid_placed_event(bot: &Bot, payload: &[u8]) -> Result<()> {
 
         if let Err(e) = bot.send_message(ChatId(previous_leader_id), message).await {
             error!(
-                "Failed to send notification to previous leader {}: {}",
-                previous_leader_id, e
+                previous_leader_id,
+                error = %e,
+                "Failed to send outbid notification"
             );
         } else {
             info!(
-                "Sent outbid notification to user {}",
-                previous_leader_id
+                previous_leader_id,
+                lot_id = event.lot_id,
+                "Outbid notification sent successfully"
             );
         }
+    } else {
+        debug!(
+            lot_id = event.lot_id,
+            "First bid on lot, no notification needed"
+        );
     }
 
     Ok(())
 }
-

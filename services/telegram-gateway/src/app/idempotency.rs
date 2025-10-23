@@ -1,6 +1,7 @@
 use dashmap::DashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 pub struct IdempotencyCache {
     cache: Arc<DashSet<(String, Instant)>>,
@@ -27,16 +28,28 @@ impl IdempotencyCache {
         let now = Instant::now();
 
         if self.cache.iter().any(|entry| entry.0 == id) {
+            debug!(request_id = %id, "Idempotency check: duplicate request detected");
             return false;
         }
 
-        self.cache.insert((id, now));
+        self.cache.insert((id.clone(), now));
+        debug!(request_id = %id, cache_size = self.cache.len(), "Idempotency check: new request, added to cache");
         true
     }
 
     fn cleanup(cache: &DashSet<(String, Instant)>) {
         let now = Instant::now();
+        let initial_size = cache.len();
         cache.retain(|(_, timestamp)| now.duration_since(*timestamp) < Duration::from_secs(3600));
+        let removed = initial_size.saturating_sub(cache.len());
+
+        if removed > 0 {
+            info!(
+                removed_entries = removed,
+                remaining_entries = cache.len(),
+                "Idempotency cache cleanup completed"
+            );
+        }
     }
 }
 
@@ -48,4 +61,3 @@ impl Clone for IdempotencyCache {
         }
     }
 }
-

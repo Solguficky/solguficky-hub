@@ -2,6 +2,7 @@ use crate::domain::{AuctionDto, AuctionStatus, LotDto};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info};
 
 pub struct MockAuctionService {
     dynamic_lots: Arc<RwLock<Vec<LotDto>>>,
@@ -20,12 +21,22 @@ impl MockAuctionService {
         }
     }
 
-    pub async fn get_auction(&self, _event_id: &str) -> Result<AuctionDto> {
+    pub async fn get_auction(&self, event_id: &str) -> Result<AuctionDto> {
+        debug!(event_id, "Fetching auction data");
+
         let hardcoded_lots = self.get_mock_lots();
         let dynamic_lots = self.dynamic_lots.read().await;
 
         let mut all_lots = hardcoded_lots;
         all_lots.extend(dynamic_lots.clone());
+
+        debug!(
+            event_id,
+            total_lots = all_lots.len(),
+            hardcoded_lots = self.get_mock_lots().len(),
+            dynamic_lots = dynamic_lots.len(),
+            "Auction data retrieved"
+        );
 
         Ok(AuctionDto {
             event_id: "summer-meetup-2024".to_string(),
@@ -35,31 +46,72 @@ impl MockAuctionService {
         })
     }
 
-    pub async fn get_lot(&self, _event_id: &str, lot_id: u32) -> Result<Option<LotDto>> {
+    pub async fn get_lot(&self, event_id: &str, lot_id: u32) -> Result<Option<LotDto>> {
+        debug!(event_id, lot_id, "Fetching lot data");
+
         let hardcoded_lots = self.get_mock_lots();
         if let Some(lot) = hardcoded_lots.into_iter().find(|l| l.id == lot_id) {
+            debug!(
+                event_id,
+                lot_id,
+                title = %lot.title,
+                "Lot found in hardcoded data"
+            );
             return Ok(Some(lot));
         }
 
         let dynamic_lots = self.dynamic_lots.read().await;
-        Ok(dynamic_lots.iter().find(|l| l.id == lot_id).cloned())
+        let result = dynamic_lots.iter().find(|l| l.id == lot_id).cloned();
+
+        if result.is_some() {
+            debug!(event_id, lot_id, "Lot found in dynamic data");
+        } else {
+            debug!(event_id, lot_id, "Lot not found");
+        }
+
+        Ok(result)
     }
 
     pub async fn create_lot(&self, mut lot: LotDto) -> Result<LotDto> {
+        debug!(
+            title = %lot.title,
+            starting_price = lot.starting_price,
+            min_bid_step = lot.min_bid_step,
+            "Creating new lot"
+        );
+
         let mut lots = self.dynamic_lots.write().await;
 
         if lot.title.trim().is_empty() {
+            error!("Lot creation failed: empty title");
             return Err(anyhow::anyhow!("Название не может быть пустым"));
         }
         if lot.starting_price <= 0.0 {
+            error!(
+                starting_price = lot.starting_price,
+                "Lot creation failed: invalid starting price"
+            );
             return Err(anyhow::anyhow!("Стартовая цена должна быть больше 0"));
         }
         if lot.min_bid_step <= 0.0 {
+            error!(
+                min_bid_step = lot.min_bid_step,
+                "Lot creation failed: invalid min bid step"
+            );
             return Err(anyhow::anyhow!("Минимальный шаг должен быть больше 0"));
         }
 
         let max_id = lots.iter().map(|l| l.id).max().unwrap_or(5);
         lot.id = max_id + 1;
+
+        info!(
+            lot_id = lot.id,
+            title = %lot.title,
+            starting_price = lot.starting_price,
+            min_bid_step = lot.min_bid_step,
+            has_image = !lot.image_url.is_empty(),
+            "Lot created successfully"
+        );
 
         lots.push(lot.clone());
         Ok(lot)

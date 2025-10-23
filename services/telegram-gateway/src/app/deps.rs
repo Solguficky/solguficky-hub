@@ -4,6 +4,7 @@ use crate::infra::{MockAuctionService, NatsClient};
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::types::UserId;
+use tracing::debug;
 
 #[derive(Clone)]
 pub struct Dependencies {
@@ -24,6 +25,12 @@ impl Dependencies {
     }
 
     pub fn get_user_role(&self, user_id: UserId) -> UserRole {
-        auth::get_user_role(user_id, &self.auth_config)
+        let role = auth::get_user_role(user_id, &self.auth_config);
+        debug!(
+            user_id = %user_id,
+            role = ?role,
+            "User role resolved"
+        );
+        role
     }
 }
