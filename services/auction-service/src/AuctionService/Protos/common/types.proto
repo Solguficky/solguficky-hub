@@ -1,0 +1,10 @@
+syntax = "proto3";
+package common;
+
+message Lot {
+    uint32 id = 1;
+    string title = 2;
+    string description = 3;
+    double starting_price = 4;
+    double min_bid_step = 5;
+}

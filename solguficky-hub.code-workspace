@@ -10,6 +10,9 @@
 			"**/.git": true,
 			"**/.DS_Store": true
 		},
+		"files.watcherExclude": {
+			"**/target": true
+		},
 		"explorer.compactFolders": false,
 		"explorer.excludeGitIgnore": false,
 		"editor.formatOnSave": true,

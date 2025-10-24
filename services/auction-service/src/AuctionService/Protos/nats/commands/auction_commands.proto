@@ -10,9 +10,3 @@ message PlaceBidCommand {
   int64 user_id = 4;
   double amount = 5;
 }
-
-message StartAuctionCommand {
-  string op_id = 1;
-  string event_id = 2;
-}
-

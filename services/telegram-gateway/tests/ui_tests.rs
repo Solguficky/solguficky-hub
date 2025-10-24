@@ -20,6 +20,7 @@ fn test_user_build_auction_list() {
                 current_bid: None,
                 current_bidder_id: None,
                 image_url: "https://example.com/1.jpg".to_string(),
+                bids: vec![],
             },
             LotDto {
                 id: 2,
@@ -30,6 +31,7 @@ fn test_user_build_auction_list() {
                 current_bid: Some(250.0),
                 current_bidder_id: Some(12345),
                 image_url: "https://example.com/2.jpg".to_string(),
+                bids: vec![],
             },
         ],
     };
@@ -67,6 +69,7 @@ fn test_user_build_lot_view_without_bids() {
         current_bid: None,
         current_bidder_id: None,
         image_url: "https://example.com/image.jpg".to_string(),
+        bids: vec![],
     };
 
     let (text, keyboard) = user::build_lot_view(&lot);
@@ -106,6 +109,7 @@ fn test_user_build_lot_view_with_bids() {
         current_bid: Some(150.0),
         current_bidder_id: Some(12345),
         image_url: "https://example.com/image.jpg".to_string(),
+        bids: vec![],
     };
 
     let (text, keyboard) = user::build_lot_view(&lot);
@@ -146,6 +150,7 @@ fn test_admin_build_admin_auction_view() {
             current_bid: None,
             current_bidder_id: None,
             image_url: "https://example.com/1.jpg".to_string(),
+            bids: vec![],
         }],
     };
 

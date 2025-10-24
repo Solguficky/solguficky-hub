@@ -1,0 +1,520 @@
+---
+globs: *.cs
+alwaysApply: false
+---
+##Auction Service: C# + Akka.NET + Event Sourcing Rules
+
+Набор правил и лучших практик для разработки Auction Service на C# с использованием Akka.NET Classic API и Event Sourcing.
+
+## 1. Общие практики C#
+
+### 1.1. Code Style
+
+- **PascalCase** для публичных членов (классы, методы, свойства)
+- **camelCase** для приватных полей (с префиксом `_`)
+- **PascalCase** для record types и их параметров
+- Избегать венгерской нотации
+- Использовать file-scoped namespaces (C# 10+):
+  ```csharp
+  namespace AuctionService.Domain.Lot;
+
+  public class LotActor : ReceivePersistentActor { }
+  ```
+
+### 1.2. Nullable Reference Types
+
+- Всегда включать: `<Nullable>enable</Nullable>` в `.csproj`
+- Использовать `?` для nullable типов: `long? leaderId`
+- Избегать `null!` (null-forgiving operator) — обрабатывать null явно
+
+### 1.3. Record Types для Immutability
+
+- Commands, Events, State — всегда `record types`
+- Используйте `sealed record` для конкретных классов
+- Используйте `abstract record` для базовых типов
+- Используйте `with` для immutable updates:
+  ```csharp
+  _state = _state with { CurrentPrice = newPrice };
+  ```
+
+### 1.4. Pattern Matching
+
+- Используйте switch expressions для маршрутизации команд:
+  ```csharp
+  return command switch
+  {
+      PlaceBid cmd => HandlePlaceBid(cmd),
+      GetStatus cmd => HandleGetStatus(cmd),
+      _ => throw new NotSupportedException()
+  };
+  ```
+
+### 1.5. Асинхронный код
+
+- Используйте `async`/`await` для I/O операций (gRPC, NATS)
+- НЕ используйте `async` внутри акторов — используйте `PipeTo` или `Tell`
+- Не блокируйте `Task.Wait()` или `.Result` — deadlock риск
+
+## 2. Akka.NET Classic API
+
+### 2.1. Базовый актор
+
+- Наследуйтесь от `ReceiveActor` для обычных акторов
+- Наследуйтесь от `ReceivePersistentActor` для Event Sourcing
+- Регистрируйте handlers в конструкторе:
+  ```csharp
+  public LotActor()
+  {
+      Command<PlaceBid>(HandlePlaceBid);
+      Command<GetStatus>(HandleGetStatus);
+  }
+  ```
+
+### 2.2. Props и создание акторов
+
+- Используйте `Props.Create<T>()` для типобезопасности:
+  ```csharp
+  var props = Props.Create(() => new LotActor(lotId, startPrice, minStep));
+  var actorRef = Context.ActorOf(props, $"lot-{lotId}");
+  ```
+
+### 2.3. Tell vs Ask
+
+- **Tell** (Fire-and-forget): для команд без ожидания результата
+  ```csharp
+  actorRef.Tell(new PlaceBid(userId, amount, Self));
+  ```
+
+- **Ask** (Request-response): для синхронных запросов (gRPC)
+  ```csharp
+  var response = await actorRef.Ask<StatusResponse>(
+      new GetStatus(ActorRefs.NoSender),
+      timeout: TimeSpan.FromSeconds(5)
+  );
+  ```
+
+### 2.4. Supervision Strategy
+
+- Определяйте стратегию для child акторов:
+  ```csharp
+  protected override SupervisorStrategy SupervisorStrategy()
+  {
+      return new OneForOneStrategy(
+          maxNrOfRetries: 3,
+          withinTimeRange: TimeSpan.FromMinutes(1),
+          localOnlyDecider: ex => ex switch
+          {
+              InvalidOperationException => Directive.Restart,
+              ArgumentException => Directive.Stop,
+              _ => Directive.Escalate
+          }
+      );
+  }
+  ```
+
+## 3. Event Sourcing с Akka.Persistence
+
+### 3.1. Принципы
+
+**Правило Event Sourcing:**
+```
+Command → Validate → Event → Persist → Apply to State → Reply
+```
+
+- **Command** — imperative (PlaceBid, StartAuction)
+- **Event** — past tense (BidPlaced, AuctionStarted)
+- **State** — immutable snapshot
+
+### 3.2. ReceivePersistentActor
+
+**Структура:**
+```csharp
+public class LotActor : ReceivePersistentActor
+{
+    public override string PersistenceId { get; }
+    private State _state;
+
+    public LotActor(int lotId)
+    {
+        PersistenceId = $"lot-{lotId}";
+        _state = State.Empty;
+
+        Command<PlaceBid>(HandlePlaceBid);
+        Recover<BidPlaced>(ApplyBidPlaced);
+    }
+
+    private void HandlePlaceBid(PlaceBid cmd)
+    {
+        if (ValidateBid(cmd))
+        {
+            var evt = new BidPlaced(cmd.UserId, cmd.Amount, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            Persist(evt, e =>
+            {
+                ApplyBidPlaced(e);
+                cmd.ReplyTo.Tell(new BidAccepted(e.Amount));
+            });
+        }
+        else
+        {
+            cmd.ReplyTo.Tell(new BidRejected("Invalid bid"));
+        }
+    }
+
+    private void ApplyBidPlaced(BidPlaced evt)
+    {
+        _state = _state with { CurrentPrice = evt.Amount };
+    }
+}
+```
+
+### 3.3. PersistenceId
+
+- Формат: `"{entity-type}-{entity-id}"`
+- Примеры: `lot-42`, `session-event-123`
+- Уникальный для каждого агрегата
+
+### 3.4. Command Handlers
+
+- Валидация бизнес-логики
+- НЕ изменяют state напрямую
+- Создают Events
+- Вызывают `Persist(event, callback)`
+
+### 3.5. Event Handlers
+
+- Применяют события к state
+- Чистые функции (без side effects)
+- Используются при восстановлении (Recovery)
+- Используются после persist (Apply)
+
+### 3.6. Recovery
+
+- Регистрируйте recovery handlers:
+  ```csharp
+  Recover<BidPlaced>(ApplyBidPlaced);
+  Recover<LotSold>(ApplyLotSold);
+  Recover<SnapshotOffer>(offer => _state = (State)offer.Snapshot);
+  ```
+
+- Recovery выполняется автоматически при старте актора
+
+### 3.7. Snapshots
+
+- Используйте snapshots для больших event streams:
+  ```csharp
+  if (LastSequenceNr % 100 == 0)
+  {
+      SaveSnapshot(_state);
+  }
+  ```
+
+- Обрабатывайте `SnapshotOffer`:
+  ```csharp
+  Recover<SnapshotOffer>(offer => _state = (State)offer.Snapshot);
+  ```
+
+## 4. Структура проекта (DDD)
+
+### 4.1. Слои
+
+```
+Domain/          — Бизнес-логика (акторы, Commands, Events, State)
+Application/     — Use cases (gRPC services, command handlers)
+Infrastructure/  — Техническая инфраструктура (NATS, persistence setup)
+```
+
+### 4.2. Namespaces
+
+- **Domain:** `AuctionService.Domain.Lot`, `AuctionService.Domain.Session`
+- **Application:** `AuctionService.Application`
+- **Infrastructure:** `AuctionService.Infrastructure`
+
+### 4.3. Организация файлов
+
+- **Commands.cs** — все команды для агрегата
+- **Events.cs** — все события
+- **State.cs** — состояние агрегата
+- **{Entity}Actor.cs** — актор-агрегат
+
+## 5. gRPC Integration
+
+### 5.1. Service Implementation
+
+- Наследуйтесь от `{ServiceName}Base` (generated by Grpc.Tools)
+- Используйте `Ask` pattern для запросов к акторам:
+  ```csharp
+  public class AuctionGrpcService : AuctionService.AuctionServiceBase
+  {
+      private readonly IActorRef _registry;
+      private readonly TimeSpan _timeout = TimeSpan.FromSeconds(5);
+
+      public override async Task<AuctionStatusResponse> GetAuctionStatus(
+          GetAuctionStatusRequest request,
+          ServerCallContext context)
+      {
+          var status = await _registry.Ask<StatusResponse>(
+              new GetStatus(ActorRefs.NoSender),
+              _timeout
+          );
+
+          return new AuctionStatusResponse
+          {
+              Status = "Running",
+              CurrentPrice = status.CurrentPrice
+          };
+      }
+  }
+  ```
+
+### 5.2. Error Handling
+
+- Используйте `RpcException` для gRPC ошибок:
+  ```csharp
+  throw new RpcException(new Status(StatusCode.NotFound, "Auction not found"));
+  ```
+
+### 5.3. Registration
+
+- Регистрируйте в `Program.cs`:
+  ```csharp
+  builder.Services.AddGrpc();
+  builder.Services.AddSingleton(registry);
+  app.MapGrpcService<AuctionGrpcService>();
+  ```
+
+## 6. NATS Integration
+
+### 6.1. Subscriber
+
+- Парсите Protobuf и отправляйте в акторы:
+  ```csharp
+  public class NatsSubscriber
+  {
+      private readonly IConnection _connection;
+      private readonly IActorRef _registry;
+
+      public void SubscribeToCommands()
+      {
+          _connection.SubscribeAsync("commands.auction.place-bid", (sender, args) =>
+          {
+              var command = PlaceBidCommand.Parser.ParseFrom(args.Message.Data);
+              _registry.Tell(new RouteCommand(command.EventId, command.LotId, command.UserId, command.Amount));
+          });
+      }
+  }
+  ```
+
+### 6.2. Publisher
+
+- Сериализуйте Protobuf и публикуйте:
+  ```csharp
+  public class NatsPublisher
+  {
+      private readonly IConnection _connection;
+
+      public void Publish<T>(string subject, T message) where T : IMessage<T>
+      {
+          var bytes = message.ToByteArray();
+          _connection.Publish(subject, bytes);
+      }
+  }
+  ```
+
+### 6.3. Connection Management
+
+- Создавайте один `IConnection` на приложение
+- Переиспользуйте connection для subscribers и publishers
+
+## 7. Тестирование
+
+### 7.1. Unit-тесты акторов
+
+- Используйте `Akka.TestKit.Xunit2`:
+  ```csharp
+  public class LotActorTests : TestKit
+  {
+      [Fact]
+      public void ShouldAcceptValidBid()
+      {
+          var probe = CreateTestProbe();
+          var actor = Sys.ActorOf(Props.Create(() => new LotActor(1, 100.0, 10.0)));
+
+          actor.Tell(new PlaceBid(userId: 1, amount: 110.0, replyTo: probe.Ref));
+
+          probe.ExpectMsg<BidAccepted>(TimeSpan.FromSeconds(3));
+      }
+  }
+  ```
+
+### 7.2. Persistence Tests
+
+- Используйте in-memory журнал:
+  ```csharp
+  var config = ConfigurationFactory.ParseString(@"
+      akka.persistence.journal.plugin = ""akka.persistence.journal.inmem""
+      akka.persistence.snapshot-store.plugin = ""akka.persistence.snapshot-store.inmem""
+  ");
+  var sys = ActorSystem.Create("test", config);
+  ```
+
+### 7.3. TestProbe
+
+- Используйте для моков и верификации:
+  ```csharp
+  var probe = CreateTestProbe();
+  actor.Tell(new GetStatus(probe.Ref));
+  var response = probe.ExpectMsg<StatusResponse>();
+  Assert.Equal(100.0, response.CurrentPrice);
+  ```
+
+## 8. Конфигурация
+
+### 8.1. Akka HOCON
+
+- Определяйте в `appsettings.json` или встроенной строке:
+  ```csharp
+  var config = ConfigurationFactory.ParseString(@"
+      akka {
+          persistence {
+              journal.plugin = ""akka.persistence.journal.postgresql""
+              journal.postgresql {
+                  connection-string = """ + connectionString + @"""
+                  table-name = events
+                  schema-name = public
+              }
+          }
+      }
+  ");
+  var system = ActorSystem.Create("auction-service", config);
+  ```
+
+### 8.2. appsettings.json
+
+- Используйте для application-level конфигурации:
+  ```json
+  {
+    "Akka": {
+      "Persistence": {
+        "ConnectionString": "Host=localhost;Port=5432;Database=auction"
+      }
+    },
+    "Nats": {
+      "Url": "nats://localhost:4222"
+    }
+  }
+  ```
+
+## 9. Логирование
+
+### 9.1. Serilog
+
+- Используйте JSON формат для централизованного сбора:
+  ```csharp
+  Log.Logger = new LoggerConfiguration()
+      .WriteTo.Console(new JsonFormatter())
+      .CreateLogger();
+  ```
+
+### 9.2. Akka Logging
+
+- Используйте Akka's logging adapter:
+  ```csharp
+  private readonly ILoggingAdapter _log = Context.GetLogger();
+
+  _log.Info("Bid placed: {UserId} - {Amount}", userId, amount);
+  ```
+
+## 10. Anti-patterns (чего НЕ делать)
+
+### ❌ Mutable State в акторе
+```csharp
+private List<BidPlaced> _bids = new();
+_bids.Add(evt);
+```
+✅ **Правильно:** используйте `ImmutableList` или `record with`:
+```csharp
+_state = _state with { Bids = _state.Bids.Add(evt) };
+```
+
+### ❌ Изменение State в Command Handler
+```csharp
+private void HandlePlaceBid(PlaceBid cmd)
+{
+    _state = _state with { CurrentPrice = cmd.Amount };
+}
+```
+✅ **Правильно:** только через `Persist`:
+```csharp
+Persist(evt, e => ApplyBidPlaced(e));
+```
+
+### ❌ Side effects в Event Handler
+```csharp
+private void ApplyBidPlaced(BidPlaced evt)
+{
+    _natsPublisher.Publish("events.auction.bid-placed", evt);
+    _state = _state with { CurrentPrice = evt.Amount };
+}
+```
+✅ **Правильно:** side effects в Persist callback:
+```csharp
+Persist(evt, e =>
+{
+    ApplyBidPlaced(e);
+    _natsPublisher.Publish("events.auction.bid-placed", e);
+});
+```
+
+### ❌ Блокирующие вызовы в акторе
+```csharp
+var result = actorRef.Ask<Response>(cmd).Result;
+```
+✅ **Правильно:** используйте `PipeTo` или `Tell`:
+```csharp
+actorRef.Ask<Response>(cmd).PipeTo(Self);
+```
+
+### ❌ Catch-all exception handlers
+```csharp
+try
+{
+    Persist(evt, e => ApplyEvent(e));
+}
+catch (Exception)
+{
+}
+```
+✅ **Правильно:** дайте исключению всплыть → Supervision Strategy обработает
+
+### ❌ Async в конструкторе актора
+```csharp
+public LotActor()
+{
+    await LoadConfigAsync();
+}
+```
+✅ **Правильно:** используйте `PreStart()` + `PipeTo`:
+```csharp
+protected override void PreStart()
+{
+    LoadConfigAsync().PipeTo(Self);
+}
+```
+
+## 11. Резюме
+
+**Главные принципы:**
+
+1. **Immutability:** record types, `with`, `ImmutableList`
+2. **Event Sourcing:** Command → Event → Persist → Apply
+3. **Separation of Concerns:** Domain/Application/Infrastructure
+4. **Tell > Ask:** используйте Tell внутри актора, Ask только для gRPC
+5. **Pure Event Handlers:** без side effects
+6. **Supervision:** определяйте стратегии для child акторов
+7. **Testing:** используйте TestKit и in-memory persistence
+
+**Полезные ссылки:**
+
+- [Akka.NET Documentation](https://getakka.net/articles/intro/what-is-akka.html)
+- [Akka.Persistence Guide](https://getakka.net/articles/persistence/architecture.html)
+- [Event Sourcing Pattern](https://docs.microsoft.com/en-us/azure/architecture/patterns/event-sourcing)

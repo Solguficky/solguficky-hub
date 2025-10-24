@@ -103,3 +103,4 @@ pnpm-debug.log*
 # Тестовые репорты и кэш
 /coverage/
 .nyc_output/
+.fake
