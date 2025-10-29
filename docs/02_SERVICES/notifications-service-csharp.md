@@ -28,20 +28,19 @@
 
 ```
 NotificationsService/
-├── Domain/
-│   ├── Events/           # Protobuf generated (BidPlacedEvent)
-│   └── Commands/         # Protobuf generated (SendMessageCommand)
-├── Application/
-│   ├── Handlers/
-│   │   └── BidPlacedHandler.cs    # Бизнес-логика обработки события
-│   ├── Templates/
-│   │   └── NotificationTemplates.cs  # Шаблоны уведомлений
-│   └── Services/
-│       ├── NatsEventListener.cs   # IHostedService для подписки на события
-│       └── NatsPublisher.cs       # Публикация команд в NATS
-├── Infrastructure/
-│   └── Logging/
-│       └── SerilogConfiguration.cs
+├── Attributes/
+│   ├── HandlesSubjectAttribute.cs   # Маркировка хендлеров для subjects
+│   └── NatsSubjectAttribute.cs      # Маркировка команд для subjects (опционально)
+├── Handlers/
+│   ├── IEventHandler.cs             # Интерфейс обработчика событий
+│   └── BidPlacedHandler.cs          # Обработчик события bid_placed
+├── Services/
+│   ├── INatsPublisher.cs            # Интерфейс публикации в NATS
+│   ├── NatsPublisher.cs             # Реализация публикации
+│   ├── NatsEventListener.cs         # IHostedService для подписки на NATS
+│   └── EventDispatcher.cs           # Диспетчер событий к хендлерам
+├── Templates/
+│   └── NotificationTemplates.cs     # Шаблоны уведомлений
 └── Program.cs
 ```
 
@@ -55,15 +54,25 @@ NotificationsService/
 ### 3.3. Flow обработки
 
 ```
-1. NatsEventListener подписывается на "events.auction.>"
-2. Получает BidPlacedEvent из NATS
-3. Декодирует Protobuf → BidPlacedEvent DTO
-4. Передает в BidPlacedHandler
-5. Handler:
-   - Проверяет previous_leader_id != null
+1. NatsEventListener подписывается на "events.auction.>" (поддержка wildcards)
+2. Получает Msg (subject + raw bytes) из NATS
+3. Передает Msg в EventDispatcher
+4. EventDispatcher:
+   - Получает все зарегистрированные IEventHandler из Scoped DI
+   - Вызывает handler.CanHandle(msg) для каждого:
+     * Хендлер проверяет subject (fast path - без парсинга)
+     * Парсит Protobuf если subject подходит
+     * Проверяет бизнес-логику (previous_leader_id != null)
+     * Кеширует распарсенное событие в поле класса
+   - Для тех, кто вернул true, вызывает handler.HandleAsync(msg)
+   - Собирает все команды
+   - Публикует команды через INatsPublisher (маппинг типа → subject)
+5. BidPlacedHandler (с атрибутом [HandlesSubject] для документации):
+   - CanHandle проверяет subject == "events.auction.bid_placed"
+   - Парсит и кеширует событие
+   - HandleAsync использует кешированное событие (или парсит заново)
    - Рендерит шаблон с данными события
-   - Формирует SendMessageCommand
-6. NatsPublisher отправляет команду в "commands.telegram.send_message"
+   - Возвращает SendMessageCommand
 ```
 
 ## 4. Внешние контракты (NATS)
@@ -138,22 +147,26 @@ services/notifications-service/
 ├── NotificationsService.sln
 ├── src/
 │   └── NotificationsService/
-│       ├── Application/
-│       │   ├── Handlers/
-│       │   │   └── BidPlacedHandler.cs
-│       │   ├── Services/
-│       │   │   ├── NatsEventListener.cs
-│       │   │   └── NatsPublisher.cs
-│       │   └── Templates/
-│       │       └── NotificationTemplates.cs
-│       ├── Domain/
-│       │   ├── Generated/              # Protobuf generated code
-│       │   │   ├── BidPlacedEvent.cs
-│       │   │   └── SendMessageCommand.cs
-│       │   └── INatsPublisher.cs       # Interface
-│       ├── Infrastructure/
-│       │   └── Logging/
-│       │       └── SerilogConfig.cs
+│       ├── Attributes/
+│       │   ├── HandlesSubjectAttribute.cs
+│       │   └── NatsSubjectAttribute.cs
+│       ├── Handlers/
+│       │   ├── IEventHandler.cs
+│       │   └── BidPlacedHandler.cs
+│       ├── Services/
+│       │   ├── INatsPublisher.cs
+│       │   ├── NatsPublisher.cs
+│       │   ├── NatsEventListener.cs
+│       │   └── EventDispatcher.cs
+│       ├── Templates/
+│       │   └── NotificationTemplates.cs
+│       ├── obj/
+│       │   └── Debug/net8.0/
+│       │       └── nats/               # Protobuf generated code
+│       │           ├── commands/
+│       │           │   └── TelegramCommands.cs
+│       │           └── events/
+│       │               └── AuctionEvents.cs
 │       ├── appsettings.json
 │       ├── appsettings.Development.json
 │       ├── NotificationsService.csproj
@@ -205,7 +218,22 @@ services/notifications-service/
 - ✅ **Имеет IHostedService** - для long-running NATS подписки
 - ✅ **Minimal API** - только для health checks (`/health`, `/ready`)
 
-## 9. Roadmap (после MVP)
+## 9. Known Limitations (MVP)
+
+### ChatId vs UserId
+Currently, `SendMessageCommand` uses `user_id` directly as `chat_id`. This is a temporary MVP solution that assumes every user has a Telegram chat with the bot and their user_id equals the Telegram chat_id.
+
+**Future improvement:**
+- Create `NotifyUserCommand` with only `user_id` and notification content
+- Separate service (or integration with Identity Service) to resolve `chat_id` from `user_id`
+- Support multiple notification channels (Telegram, Email, Push notifications)
+- User preferences for notification delivery methods
+
+**Affected components:**
+- `BidPlacedHandler.cs` - currently uses `evt.PreviousLeaderId` as `ChatId` directly
+- `SendMessageCommand` proto contract - designed for Telegram-specific delivery
+
+## 10. Roadmap (после MVP)
 
 ### Фаза 2: Расширение функционала
 - [ ] Добавить уведомление "Вы выиграли лот" (`events.auction.lot_sold`)
@@ -225,7 +253,70 @@ services/notifications-service/
 - [ ] Admin UI для редактирования шаблонов
 - [ ] Поддержка локализации (RU/EN)
 
-## 10. Метрики успеха
+## 11. Архитектурные решения
+
+### Event-Driven Architecture
+
+**Проблема:** Сервис должен обрабатывать разные типы событий из разных subjects.
+
+**Решение:** Handler-based архитектура с явной проверкой:
+- `IEventHandler` работает с `Msg` (subject + raw bytes)
+- `[HandlesSubject("events.auction.bid_placed")]` - атрибут для документации (не используется в runtime)
+- `EventDispatcher` вызывает все зарегистрированные хендлеры
+- Каждый хендлер сам проверяет subject в `CanHandle()`
+- Scoped DI для кеширования распарсенных событий
+
+**Преимущества:**
+- Легко добавить новый хендлер для нового типа события
+- Хендлер сам решает, парсить ли событие (fail-fast на проверке subject)
+- Подписка на wildcard `events.auction.>` - получаем все события
+- Каждый хендлер изолирован, ошибки не влияют друг на друга
+- Нет рефлексии - все явно и прозрачно
+- Хендлер может обрабатывать несколько subjects если нужно
+
+### Кеширование в Scoped DI
+
+**Проблема:** Protobuf парсинг может быть дважды (CanHandle + HandleAsync).
+
+**Решение:**
+- Хендлер создается через Scoped DI per message
+- `_cachedEvent` - поле класса для кеширования
+- `CanHandle` парсит и кеширует
+- `HandleAsync` использует кеш или парсит заново (если CanHandle не вызывался)
+
+**Trade-off:** Небольшая утечка состояния в хендлере, но значительное улучшение производительности.
+
+### Command Publishing
+
+**Проблема:** Хендлер не должен знать про NATS и subject mapping.
+
+**Решение:**
+- Хендлер возвращает `IEnumerable<IMessage>` (Protobuf команды)
+- `EventDispatcher` сам публикует через `INatsPublisher`
+- Маппинг типа команды → subject через `appsettings.json`
+
+**Преимущества:**
+- Хендлеры тестируются без NATS
+- Централизованная логика публикации с ретраями/логированием
+- Можно легко добавить батчинг/дедупликацию
+
+### Multi-Subject Subscription
+
+**Проблема:** Сервис может обрабатывать события из разных subjects.
+
+**Решение:**
+- `NatsEventListener` поддерживает массив subjects в конфиге
+- Создает отдельную подписку для каждого subject
+- Все события идут в один `EventDispatcher`
+
+**Конфигурация:**
+```json
+"Subjects": {
+  "Events": "events.auction.>" // Wildcard для всех событий аукциона
+}
+```
+
+## 12. Метрики успеха
 
 - **Latency:** < 100ms от получения события до отправки команды
 - **Throughput:** 100+ событий/сек (достаточно для MVP)

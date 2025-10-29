@@ -1,6 +1,5 @@
-using NotificationsService.Application.Handlers;
-using NotificationsService.Application.Services;
-using NotificationsService.Domain;
+using NotificationsService.Handlers;
+using NotificationsService.Services;
 using Serilog;
 using Serilog.Formatting.Compact;
 
@@ -15,7 +14,8 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 builder.Services.AddSingleton<INatsPublisher, NatsPublisher>();
-builder.Services.AddScoped<BidPlacedHandler>();
+builder.Services.AddTransient<IEventHandler, BidPlacedHandler>();
+builder.Services.AddScoped<EventDispatcher>();
 builder.Services.AddHostedService<NatsEventListener>();
 
 builder.Services.AddHealthChecks();
