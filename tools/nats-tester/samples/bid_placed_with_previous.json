@@ -1,0 +1,10 @@
+{
+    "event_id": "test-bid-001",
+    "lot_id": 42,
+    "user_id": 200,
+    "amount": 150.0,
+    "previous_leader_id": 123,
+    "current_leader_id": 200,
+    "lot_title": "Значок Клоун",
+    "previous_amount": 100.0
+}
