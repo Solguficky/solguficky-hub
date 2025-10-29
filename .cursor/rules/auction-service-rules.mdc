@@ -295,7 +295,7 @@ Infrastructure/  — Техническая инфраструктура (NATS, 
 
       public void SubscribeToCommands()
       {
-          _connection.SubscribeAsync("commands.auction.place-bid", (sender, args) =>
+          _connection.SubscribeAsync("commands.auction.place_bid", (sender, args) =>
           {
               var command = PlaceBidCommand.Parser.ParseFrom(args.Message.Data);
               _registry.Tell(new RouteCommand(command.EventId, command.LotId, command.UserId, command.Amount));

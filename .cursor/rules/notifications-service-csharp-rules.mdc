@@ -1,0 +1,432 @@
+---
+globs: services/notifications-service/**/*.cs
+alwaysApply: false
+---
+# Notifications Service Rules (C# / .NET 8)
+
+## Технологический стек
+- **Язык**: C# 12
+- **Framework**: .NET 8
+- **NATS клиент**: NATS.Client 2.x
+- **Protobuf**: Google.Protobuf + Grpc.Tools
+- **Logging**: Serilog с JSON formatter
+- **Testing**: xUnit + Moq
+
+## Архитектурные принципы
+
+### Clean Architecture Layers
+```
+Domain/           - Protobuf generated types, interfaces
+Application/      - Business logic, handlers, services
+Infrastructure/   - Logging, configuration
+Program.cs        - Composition root
+```
+
+### Dependency Injection
+Все сервисы регистрируются через DI:
+```csharp
+builder.Services.AddSingleton<INatsPublisher, NatsPublisher>();
+builder.Services.AddHostedService<NatsEventListener>();
+```
+
+## Стиль кодирования
+
+### Naming Conventions
+- **Classes/Interfaces**: PascalCase (`BidPlacedHandler`, `INatsPublisher`)
+- **Methods/Properties**: PascalCase (`PublishMessage`, `UserId`)
+- **Private fields**: _camelCase (`_logger`, `_connection`)
+- **Local variables**: camelCase (`userId`, `chatId`)
+- **Constants**: PascalCase или SCREAMING_CASE (`MaxRetries` или `MAX_RETRIES`)
+
+### File Organization
+```csharp
+namespace NotificationsService.Application.Handlers;
+
+public class BidPlacedHandler
+{
+    private readonly INatsPublisher _publisher;
+    private readonly ILogger<BidPlacedHandler> _logger;
+
+    public BidPlacedHandler(
+        INatsPublisher publisher,
+        ILogger<BidPlacedHandler> logger)
+    {
+        _publisher = publisher;
+        _logger = logger;
+    }
+
+    public async Task HandleAsync(BidPlacedEvent evt, CancellationToken ct)
+    {
+    }
+}
+```
+
+### Избегай комментариев
+**Плохо:**
+```csharp
+// Check if previous leader exists
+if (evt.PreviousLeaderId.HasValue)
+{
+}
+```
+
+**Хорошо:**
+```csharp
+if (evt.PreviousLeaderId.HasValue)
+{
+    await NotifyOutbidUser(evt, ct);
+}
+
+private async Task NotifyOutbidUser(BidPlacedEvent evt, CancellationToken ct)
+{
+}
+```
+
+## Обработка ошибок
+
+### Try-Catch только для внешних систем
+```csharp
+public async Task PublishAsync(SendMessageCommand command, CancellationToken ct)
+{
+    try
+    {
+        var payload = command.ToByteArray();
+        await _connection.PublishAsync(Subject, payload);
+
+        _logger.LogInformation("Command published",
+            new { command.ChatId, Subject });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Failed to publish command",
+            new { command.ChatId, Subject });
+        throw;
+    }
+}
+```
+
+### Не глотай исключения
+**Плохо:**
+```csharp
+catch (Exception)
+{
+    return;
+}
+```
+
+**Хорошо:**
+```csharp
+catch (NatsException ex)
+{
+    _logger.LogError(ex, "NATS connection failed");
+    throw;
+}
+```
+
+## NATS Integration
+
+### IHostedService для подписки
+```csharp
+public class NatsEventListener : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var connection = _connectionFactory.CreateConnection();
+        using var subscription = connection.SubscribeAsync(Subject);
+
+        await foreach (var msg in subscription.Messages.WithCancellation(stoppingToken))
+        {
+            await ProcessMessageAsync(msg, stoppingToken);
+        }
+    }
+
+    private async Task ProcessMessageAsync(Msg msg, CancellationToken ct)
+    {
+        try
+        {
+            var evt = BidPlacedEvent.Parser.ParseFrom(msg.Data);
+            await _handler.HandleAsync(evt, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process message");
+        }
+    }
+}
+```
+
+### Publisher как Singleton
+```csharp
+public interface INatsPublisher
+{
+    Task PublishSendMessageAsync(long chatId, string text, CancellationToken ct = default);
+}
+
+public class NatsPublisher : INatsPublisher, IDisposable
+{
+    private readonly IConnection _connection;
+    private readonly string _subject;
+
+    public NatsPublisher(IConfiguration config)
+    {
+        var factory = new ConnectionFactory();
+        _connection = factory.CreateConnection(config["Nats:Url"]);
+        _subject = config["Nats:Subjects:SendMessage"]!;
+    }
+
+    public async Task PublishSendMessageAsync(long chatId, string text, CancellationToken ct)
+    {
+        var command = new SendMessageCommand
+        {
+            ChatId = chatId,
+            Text = text,
+            ParseMode = ""
+        };
+
+        await _connection.PublishAsync(_subject, command.ToByteArray());
+    }
+
+    public void Dispose() => _connection?.Dispose();
+}
+```
+
+## Protobuf
+
+### Кодогенерация через .csproj
+```xml
+<ItemGroup>
+  <Protobuf Include="Protos\nats\events\auction_events.proto"
+            GrpcServices="None"
+            Link="Protos\auction_events.proto" />
+  <Protobuf Include="Protos\nats\commands\telegram_commands.proto"
+            GrpcServices="None"
+            Link="Protos\telegram_commands.proto" />
+</ItemGroup>
+```
+
+### Использование сгенерированных типов
+```csharp
+var evt = BidPlacedEvent.Parser.ParseFrom(bytes);
+
+if (evt.PreviousLeaderId.HasValue)
+{
+    var previousLeader = evt.PreviousLeaderId.Value;
+}
+
+var command = new SendMessageCommand
+{
+    ChatId = 123,
+    Text = "Hello",
+    ParseMode = ""
+};
+
+byte[] payload = command.ToByteArray();
+```
+
+## Логирование (Serilog)
+
+### Конфигурация
+```csharp
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .Enrich.FromLogContext()
+    .WriteTo.Console(new CompactJsonFormatter())
+    .CreateLogger();
+
+builder.Host.UseSerilog();
+```
+
+### Structured Logging
+```csharp
+_logger.LogInformation("Notification sent to {UserId} for lot {LotId}",
+    evt.PreviousLeaderId,
+    evt.LotId);
+
+_logger.LogError(ex, "Failed to decode event from subject {Subject}",
+    msg.Subject);
+```
+
+### Log Levels
+- **Debug**: Детальная информация для разработки
+- **Information**: Нормальные события (уведомление отправлено)
+- **Warning**: Неожиданные ситуации (отсутствует поле)
+- **Error**: Ошибки обработки (не удалось декодировать Protobuf)
+- **Critical**: Критические сбои (NATS недоступен)
+
+## Testing
+
+### Unit Tests с xUnit
+```csharp
+public class BidPlacedHandlerTests
+{
+    private readonly Mock<INatsPublisher> _publisherMock;
+    private readonly Mock<ILogger<BidPlacedHandler>> _loggerMock;
+    private readonly BidPlacedHandler _handler;
+
+    public BidPlacedHandlerTests()
+    {
+        _publisherMock = new Mock<INatsPublisher>();
+        _loggerMock = new Mock<ILogger<BidPlacedHandler>>();
+        _handler = new BidPlacedHandler(_publisherMock.Object, _loggerMock.Object);
+    }
+
+    [Fact]
+    public async Task HandleAsync_NoPreviousLeader_DoesNotPublish()
+    {
+        var evt = new BidPlacedEvent
+        {
+            EventId = "test",
+            LotId = 1,
+            UserId = 100
+        };
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _publisherMock.Verify(
+            x => x.PublishSendMessageAsync(It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithPreviousLeader_PublishesNotification()
+    {
+        var evt = new BidPlacedEvent
+        {
+            PreviousLeaderId = 123,
+            LotTitle = "Test Lot",
+            PreviousAmount = 100,
+            Amount = 150
+        };
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _publisherMock.Verify(
+            x => x.PublishSendMessageAsync(123, It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+}
+```
+
+## Конфигурация
+
+### appsettings.json
+```json
+{
+  "Nats": {
+    "Url": "nats://localhost:4222",
+    "Subjects": {
+      "BidPlaced": "events.auction.bid-placed",
+      "SendMessage": "commands.telegram.send_message"
+    }
+  },
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Warning",
+        "System": "Warning"
+      }
+    }
+  }
+}
+```
+
+### Чтение конфигурации
+```csharp
+var natsUrl = builder.Configuration["Nats:Url"]!;
+var subject = builder.Configuration["Nats:Subjects:BidPlaced"]!;
+```
+
+### Environment Variables Override
+```bash
+NATS__URL=nats://nats:4222
+NATS__SUBJECTS__BIDPLACED=events.auction.bid-placed
+SERILOG__MINIMUMLEVEL__DEFAULT=Debug
+```
+
+## Graceful Shutdown
+
+### IHostedService with CancellationToken
+```csharp
+protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+{
+    while (!stoppingToken.IsCancellationRequested)
+    {
+        try
+        {
+            await ProcessEventsAsync(stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("Service stopping");
+            break;
+        }
+    }
+}
+```
+
+## Запрещенные практики
+
+❌ **Комментарии вместо понятных имен**
+❌ **Пустые catch блоки**
+❌ **Синхронные вызовы async методов (.Result, .Wait())**
+❌ **Создание экземпляров через `new` вместо DI**
+❌ **Хардкод строк вместо конфигурации**
+❌ **Игнорирование CancellationToken**
+
+## Лучшие практики
+
+✅ **Dependency Injection для всех зависимостей**
+✅ **Async/await везде (никаких .Result или .Wait())**
+✅ **Structured logging с параметрами**
+✅ **Unit tests для всей бизнес-логики**
+✅ **Graceful shutdown через CancellationToken**
+✅ **Interface для всех сервисов (testability)**
+✅ **Nullable reference types включены**
+
+## Специфика Notifications Service
+
+### Hardcoded Rules для MVP
+```csharp
+public class BidPlacedHandler
+{
+    public async Task HandleAsync(BidPlacedEvent evt, CancellationToken ct)
+    {
+        if (!evt.PreviousLeaderId.HasValue)
+        {
+            return;
+        }
+
+        var text = NotificationTemplates.OutbidNotification(
+            evt.LotTitle,
+            evt.PreviousAmount,
+            evt.Amount);
+
+        await _publisher.PublishSendMessageAsync(
+            evt.PreviousLeaderId.Value,
+            text,
+            ct);
+
+        _logger.LogInformation("Outbid notification sent",
+            new { UserId = evt.PreviousLeaderId.Value, evt.LotId });
+    }
+}
+```
+
+### Шаблоны как статические методы
+```csharp
+public static class NotificationTemplates
+{
+    public static string OutbidNotification(string lotTitle, double yourBid, double newBid)
+    {
+        return $"❗ Ваша ставка в {yourBid} рублей на лот '{lotTitle}' была перебита. " +
+               $"Текущая максимальная ставка теперь составляет {newBid} рублей.";
+    }
+}
+```
+
+### Будущее: Migrация на Database Rules
+Когда понадобится гибкость:
+1. Создать таблицу `notification_preferences` в PostgreSQL
+2. Добавить `NotificationRulesService` для загрузки правил
+3. Заменить hardcoded проверки на динамические

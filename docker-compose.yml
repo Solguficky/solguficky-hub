@@ -67,6 +67,23 @@ services:
     networks:
       - solguficky-network
 
+  notifications-service:
+    build:
+      context: ./services/notifications-service
+      dockerfile: Dockerfile
+    container_name: solguficky-notifications
+    environment:
+      NATS__URL: nats://nats:4222
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "5001:8080"
+    depends_on:
+      - nats
+    restart: unless-stopped
+    networks:
+      - solguficky-network
+
 volumes:
   postgres_data:
 

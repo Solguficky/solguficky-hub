@@ -111,12 +111,12 @@ src/AuctionService/
 
 ## 6. Зависимости
 
-*   Зависит от **Events Service** для получения и верификации информации о сходке, к которой привязан аукцион.
+*   Зависит от **Meetups Service** для получения и верификации информации о сходке, к которой привязан аукцион.
 
 ## 7. Обрабатываемые команды (Примеры)
 
 *   `commands.auction.start { eventId, settings }`
-*   `commands.auction.place-bid { eventId, lotId, userId, amount }`
+*   `commands.auction.place_bid { eventId, lotId, userId, amount }`
 *   `commands.auction.admin.update-settings { eventId, settings }`
 *   `commands.auction.admin.close-lot { eventId, lotId }`
 
@@ -295,7 +295,7 @@ public class NatsSubscriber
 
     public void SubscribeToCommands()
     {
-        _connection.SubscribeAsync("commands.auction.place-bid", (sender, args) =>
+        _connection.SubscribeAsync("commands.auction.place_bid", (sender, args) =>
         {
             var command = PlaceBidCommand.Parser.ParseFrom(args.Message.Data);
             _registry.Tell(new RouteCommand(

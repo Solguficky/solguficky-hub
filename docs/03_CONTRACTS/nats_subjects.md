@@ -27,19 +27,19 @@
 
 *   **`commands.events.create`**
     *   *Отправитель:* Telegram Gateway
-    *   *Получатель:* Events Service
+    *   *Получатель:* Meetups Service
     *   *Описание:* Создать новую сходку (изначально в статусе "предложена").
 *   **`commands.auction.start`**
     *   *Отправитель:* Telegram Gateway
     *   *Получатель:* Auction Service
     *   *Описание:* Начать аукцион для сходки.
 
-*   **`commands.auction.place-bid`**
+*   **`commands.auction.place_bid`**
     *   *Отправитель:* Telegram Gateway
     *   *Получатель:* Auction Service
     *   *Описание:* Сделать ставку на лот.
 
-*   **`commands.telegram.send-message`**
+*   **`commands.telegram.send_message`**
     *   *Отправитель:* Notifications Service
     *   *Получатель:* Telegram Gateway
     *   *Описание:* Отправить сообщение пользователю в Telegram.
@@ -47,7 +47,7 @@
 ### События (Events)
 
 *   **`events.event.created`**
-    *   *Отправитель:* Events Service
+    *   *Отправитель:* Meetups Service
     *   *Получатель:* Notifications Service, Achievements Service, etc.
     *   *Описание:* Новая сходка была создана и одобрена.
 

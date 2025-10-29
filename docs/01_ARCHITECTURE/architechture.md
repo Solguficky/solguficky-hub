@@ -26,8 +26,8 @@ graph TD
 
         subgraph Stateless Services
             direction LR
-            Events[Events Service<br/>C#]
-            Users[Users Service<br/>C#]
+            Meetups[Meetups Service<br/>C#]
+            Identity[Identity Service<br/>C#]
             Achievements[Achievements Service<br/>C#]
             ContentFeed[Content Feed Service<br/>C#]
         end
@@ -42,20 +42,20 @@ graph TD
 
     %% Gateway Interactions
     Gateway -- Async Command --> Bus
-    Gateway -- Sync gRPC Query --> Events
-    Gateway -- Sync gRPC Query --> Users
+    Gateway -- Sync gRPC Query --> Meetups
+    Gateway -- Sync gRPC Query --> Identity
     Gateway -- Sync gRPC Query --> Achievements
     Gateway -- Sync gRPC Query --> ContentFeed
 
     %% Event Bus Choreography
     Bus -- Command --> Auction
-    Bus -- Command --> Events
-    Bus -- Command --> Users
+    Bus -- Command --> Meetups
+    Bus -- Command --> Identity
     Bus -- Command --> ContentFeed
 
     Auction -- Event --> Bus
-    Users -- Event --> Bus
-    Events -- Event --> Bus
+    Identity -- Event --> Bus
+    Meetups -- Event --> Bus
     ContentFeed -- Event --> Bus
 
     Bus -- Event --> Notifications
@@ -63,12 +63,12 @@ graph TD
     Bus -- Event --> Realtime
 
     %% Service-to-Service & DB Interactions
-    Auction -- Sync gRPC Query --> Events
+    Auction -- Sync gRPC Query --> Meetups
 
     Auction -- Writes to Event Store --> DB
     Notifications -- DB Read/Write --> DB
-    Events -- DB Read/Write --> DB
-    Users -- DB Read/Write --> DB
+    Meetups -- DB Read/Write --> DB
+    Identity -- DB Read/Write --> DB
     Achievements -- DB Read/Write --> DB
     ContentFeed -- DB Read/Write --> DB
 ```
@@ -79,8 +79,8 @@ graph TD
 *   **Auction Service (Scala/F#):** Stateful-сервис, управляющий сложной логикой аукционов с помощью акторной модели и Event Sourcing.
 *   **Notifications Service (Elixir):** Stateful-сервис для формирования и планирования отложенных уведомлений.
 *   **Real-Time Hub (Elixir):** WebSocket-шлюз для "живой" доставки событий на фронтенд-клиенты.
-*   **Events Service (C#):** CRUD-сервис, "владелец" данных о сходках.
-*   **Users Service (C#):** CRUD-сервис, управляет пользователями, ролями и правами.
+*   **Meetups Service (C#):** CRUD-сервис, "владелец" данных о сходках.
+*   **Identity Service (C#):** CRUD-сервис, управляет пользователями, ролями и правами.
 *   **Achievements Service (C#):** Stateless-сервис, слушает события и выдает ачивки.
 *   **Content Feed Service (C#):** CRUD-сервис для управления информационной лентой сходки (посты, голосования, ссылки).
 
@@ -100,7 +100,7 @@ graph TD
     *   **Rust (Telegram Gateway):** Высокопроизводительный и безопасный входной шлюз.
     *   **Scala/F# (Auction Service):** Строгая типизация и акторная модель для сложной stateful-логики.
     *   **Elixir (Notifications, Real-Time Hub):** Массовая конкурентность для уведомлений и WebSocket.
-    *   **C# (Events, Users, Achievements):** Быстрая и надежная разработка CRUD-сервисов.
+    *   **C# (Meetups, Identity, Achievements):** Быстрая и надежная разработка CRUD-сервисов.
     *   **TypeScript (Frontend):** Стандарт индустрии для веб-приложений (`Big Screen App`, `Admin Panel`). Рекомендуется использование современных фреймворков, таких как Svelte, Vue или React.
 
 ## Наблюдаемость (Observability)

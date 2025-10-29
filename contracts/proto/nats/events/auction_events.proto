@@ -8,5 +8,7 @@ message BidPlacedEvent {
   double amount = 4;
   optional int64 previous_leader_id = 5;
   int64 current_leader_id = 6;
+  string lot_title = 7;
+  double previous_amount = 8;
 }
 

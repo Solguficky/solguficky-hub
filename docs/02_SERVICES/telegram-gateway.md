@@ -32,14 +32,14 @@
 Сервис использует гибридную модель взаимодействия, разделяя операции чтения и записи:
 
 1.  **Асинхронные команды (Commands) через NATS:** Для всех действий, **изменяющих состояние** системы (например, сделать ставку, создать сходку), Gateway публикует стандартизированную команду в шину NATS. Это fire-and-forget операция; сервис не ждет ответа и не знает, какой именно сервис обработает команду.
-2.  **Синхронные запросы (Queries) через gRPC:** Для всех действий, **запрашивающих информацию** для отображения пользователю (например, проверить права доступа, получить список сходок), Gateway выступает в роли **"сборщика UI"**. Он делает прямые, синхронные gRPC-запросы к одному или нескольким внутренним сервисам (`Events Service`, `Users Service`), собирает из их ответов данные, формирует сообщение Telegram и отправляет его пользователю.
+2.  **Синхронные запросы (Queries) через gRPC:** Для всех действий, **запрашивающих информацию** для отображения пользователю (например, проверить права доступа, получить список сходок), Gateway выступает в роли **"сборщика UI"**. Он делает прямые, синхронные gRPC-запросы к одному или нескольким внутренним сервисам (`Meetups Service`, `Identity Service`), собирает из их ответов данные, формирует сообщение Telegram и отправляет его пользователю.
 
 #### Пример: Отображение экрана сходки
 
 1.  Пользователь нажимает кнопку "Сходка 'Летний Пикник'".
 2.  Gateway получает колбэк `show_event:event-123`.
-3.  Gateway делает gRPC-запрос к `Events Service`: `GetEvent(id: "event-123")`.
-4.  `Events Service` возвращает `{ name: "...", enabled_modules: ["auction", "voting"] }`.
+3.  Gateway делает gRPC-запрос к `Meetups Service`: `GetMeetup(id: "meetup-123")`.
+4.  `Meetups Service` возвращает `{ name: "...", enabled_modules: ["auction", "voting"] }`.
 5.  Gateway видит, что модуль `auction` включен, и делает gRPC-запрос к `Auction Service`: `GetAuctionStatus(eventId: "event-123")`.
 6.  `Auction Service` возвращает `{ status: "running" }`.
 7.  Gateway, собрав всю информацию, формирует сообщение и клавиатуру с кнопками для "auction" и "voting" и отправляет его пользователю.
@@ -188,17 +188,17 @@ fn admin_only(q: CallbackQuery, deps: Dependencies) -> bool {
 ### 5.1. Асинхронные (NATS)
 
 *   **Публикуемые команды (Примеры):**
-    *   **Тема:** `commands.auction.place-bid`
+    *   **Тема:** `commands.auction.place_bid`
     *   **Payload (Protobuf):** `PlaceBidCommand`
 *   **Подписка на команды:**
-    *   **Тема:** `commands.telegram.send-message`
+    *   **Тема:** `commands.telegram.send_message`
     *   **Payload (Protobuf):** `SendMessageCommand`
 
 ### 5.2. Синхронные (gRPC)
 
 *   Gateway выступает **клиентом** для gRPC-сервисов:
-    *   `EventsService.GetEvent(..)`
-    *   `UsersService.GetUser(..)`
+    *   `MeetupsService.GetMeetup(..)`
+    *   `IdentityService.GetUser(..)`
     *   `AuctionService.GetAuctionStatus(..)`
 
 ## 6. Примеры взаимодействий
@@ -222,7 +222,7 @@ sequenceDiagram
     Gateway->>TG: answerCallbackQuery()
     Note over Gateway,TG: Немедленный ответ (убирает "loading")
 
-    Gateway->>NATS: publish(commands.auction.place-bid)
+    Gateway->>NATS: publish(commands.auction.place_bid)
     Note over NATS: PlaceBidCommand {<br/>op_id, event_id,<br/>lot_id, user_id, amount}
 
     Gateway->>TG: editMessageText("✅ Ставка отправлена!")
@@ -264,6 +264,6 @@ sequenceDiagram
 *   `TELEGRAM_BOT_TOKEN`: Секретный токен бота.
 *   `NATS_URL`: Адрес сервера NATS.
 *   `RUST_LOG`: Уровень логирования (например, `info`).
-*   `EVENTS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Events Service`.
-*   `USERS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Users Service`.
+*   `MEETUPS_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Meetups Service`.
+*   `IDENTITY_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Identity Service`.
 *   `AUCTION_SERVICE_GRPC_URL`: Адрес gRPC-сервера `Auction Service`.
