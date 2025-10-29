@@ -113,13 +113,13 @@ service AuctionService {
 
 **Принимаемые команды:**
 - `commands.auction.start` — начать аукцион
-- `commands.auction.place-bid` — сделать ставку
+- `commands.auction.place_bid` — сделать ставку
 - `commands.auction.admin.*` — админские команды
 
 **Публикуемые события:**
 - `events.auction.started` — аукцион начался
-- `events.auction.bid-placed` — сделана ставка
-- `events.auction.lot-sold` — лот продан
+- `events.auction.bid_placed` — сделана ставка
+- `events.auction.lot_sold` — лот продан
 - `events.auction.finished` — аукцион завершен
 
 ## Архитектура
@@ -278,7 +278,7 @@ dotnet format
 - [x] Unit-тесты с Akka.TestKit
 - [x] Настройка PostgreSQL Event Store
 - [ ] gRPC endpoint `GetAuctionStatus`
-- [ ] NATS subscriber для команд `place-bid`
+- [ ] NATS subscriber для команд `place_bid`
 - [ ] NATS publisher для событий
 
 ### Следующие итерации

@@ -22,9 +22,9 @@ pub async fn start_event_listener(bot: Bot, nats: NatsClient) -> Result<()> {
             );
 
             match subject {
-                "events.auction.bid-placed" => {
+                "events.auction.bid_placed" => {
                     if let Err(e) = handle_bid_placed_event(&bot, &message.payload).await {
-                        error!(error = %e, subject, "Failed to handle bid-placed event");
+                        error!(error = %e, subject, "Failed to handle bid_placed event");
                     }
                 }
                 _ => {
@@ -41,17 +41,17 @@ pub async fn start_event_listener(bot: Bot, nats: NatsClient) -> Result<()> {
 }
 
 pub async fn start_send_message_listener(bot: Bot, nats: NatsClient) -> Result<()> {
-    info!("Starting send-message command listener task");
+    info!("Starting send_message command listener task");
 
     let mut subscriber = nats.subscribe_to_send_message_commands().await?;
 
     tokio::spawn(async move {
-        debug!("Send-message listener task started, waiting for commands");
+        debug!("send_message listener task started, waiting for commands");
 
         while let Some(message) = subscriber.next().await {
             debug!(
                 payload_size = message.payload.len(),
-                "Received send-message command from NATS"
+                "Received send_message command from NATS"
             );
 
             match serde_json::from_slice::<SendMessageCommand>(&message.payload) {
@@ -59,7 +59,7 @@ pub async fn start_send_message_listener(bot: Bot, nats: NatsClient) -> Result<(
                     debug!(
                         user_id = cmd.user_id,
                         text_length = cmd.text.len(),
-                        "Parsed send-message command, sending to Telegram"
+                        "Parsed send_message command, sending to Telegram"
                     );
 
                     if let Err(e) = bot.send_message(ChatId(cmd.user_id), cmd.text).await {
@@ -85,10 +85,10 @@ pub async fn start_send_message_listener(bot: Bot, nats: NatsClient) -> Result<(
             }
         }
 
-        warn!("Send-message listener stream ended, task stopped");
+        warn!("send_message listener stream ended, task stopped");
     });
 
-    info!("Send-message listener task spawned successfully");
+    info!("send_message listener task spawned successfully");
     Ok(())
 }
 

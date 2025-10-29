@@ -300,7 +300,7 @@ nats sub "events.auction.>" --translate "jq ."
 **Публикация команды:**
 ```bash
 echo '{"eventId":"event-1","lotId":1,"userId":42,"amount":150.0}' | \
-  nats pub commands.auction.place-bid --count=1
+  nats pub commands.auction.place_bid --count=1
 ```
 
 ### Grafana + Loki (централизованные логи)

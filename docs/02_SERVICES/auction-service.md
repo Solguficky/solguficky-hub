@@ -117,14 +117,14 @@ src/AuctionService/
 
 *   `commands.auction.start { eventId, settings }`
 *   `commands.auction.place_bid { eventId, lotId, userId, amount }`
-*   `commands.auction.admin.update-settings { eventId, settings }`
-*   `commands.auction.admin.close-lot { eventId, lotId }`
+*   `commands.auction.admin.update_settings { eventId, settings }`
+*   `commands.auction.admin.close_lot { eventId, lotId }`
 
 ## 8. Публикуемые события (Примеры)
 
 *   `events.auction.started { eventId, lots }`
-*   `events.auction.bid-placed { eventId, lotId, userId, currentPrice, leaderId }`
-*   `events.auction.lot-sold { eventId, lotId, winnerId, finalPrice }`
+*   `events.auction.bid_placed { eventId, lotId, userId, currentPrice, leaderId }`
+*   `events.auction.lot_sold { eventId, lotId, winnerId, finalPrice }`
 *   `events.auction.finished { eventId }`
 
 ## 9. Синхронное API (gRPC)
@@ -346,7 +346,7 @@ public class NatsPublisher
             Amount = amount,
             CurrentLeaderId = userId
         };
-        Publish("events.auction.bid-placed", @event);
+        Publish("events.auction.bid_placed", @event);
     }
 }
 ```

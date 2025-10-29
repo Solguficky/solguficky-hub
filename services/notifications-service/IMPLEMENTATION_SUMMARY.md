@@ -19,10 +19,10 @@
 #### 2. Application Layer
 
 **Handlers:**
-- `BidPlacedHandler` - обрабатывает события `bid-placed`
+- `BidPlacedHandler` - обрабатывает события `bid_placed`
   - Проверяет наличие `previous_leader_id`
   - Формирует уведомление через шаблон
-  - Публикует команду `send-message`
+  - Публикует команду `send_message`
 
 **Services:**
 - `NatsPublisher` - Singleton, публикует команды в NATS
@@ -54,7 +54,7 @@
 ### Контракты NATS
 
 **Входящие:**
-- Subject: `events.auction.bid-placed`
+- Subject: `events.auction.bid_placed`
 - Format: Protobuf (`BidPlacedEvent`)
 
 **Исходящие:**
@@ -134,7 +134,7 @@ curl http://localhost:5001/health
 ## Следующие шаги (post-MVP)
 
 ### Фаза 2: Расширение событий
-- [ ] Обработка `events.auction.lot-sold`
+- [ ] Обработка `events.auction.lot_sold`
 - [ ] Обработка `events.auction.finished`
 - [ ] Уведомление победителям
 
@@ -194,8 +194,8 @@ curl http://localhost:5001/health
 - NATS (обязательно) - для обмена сообщениями
 
 **Integration:**
-- Auction Service (опционально) - генерирует `bid-placed` события
-- Telegram Gateway (опционально) - обрабатывает `send-message` команды
+- Auction Service (опционально) - генерирует `bid_placed` события
+- Telegram Gateway (опционально) - обрабатывает `send_message` команды
 
 ## Метрики успеха MVP
 

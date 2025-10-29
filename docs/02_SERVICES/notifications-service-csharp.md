@@ -4,7 +4,7 @@
 
 Сервис является **централизованным обработчиком бизнес-событий** для информирования пользователей через Telegram.
 
-**Основная задача (MVP):** Обрабатывать событие `events.auction.bid-placed` и уведомлять пользователей, чьи ставки были перебиты.
+**Основная задача (MVP):** Обрабатывать событие `events.auction.bid_placed` и уведомлять пользователей, чьи ставки были перебиты.
 
 Сервис инкапсулирует логику уведомлений:
 1. **Формирование контента:** Преобразует событие `BidPlacedEvent` в человекочитаемое сообщение через шаблоны
@@ -48,7 +48,7 @@ NotificationsService/
 ### 3.2. Правила обработки (Hardcoded для MVP)
 
 **Правило 1: Уведомление о перебитии ставки**
-- **Триггер:** `events.auction.bid-placed` где `previous_leader_id != null`
+- **Триггер:** `events.auction.bid_placed` где `previous_leader_id != null`
 - **Получатель:** `previous_leader_id` (пользователь, чью ставку перебили)
 - **Шаблон:** "❗ Ваша ставка в {previous_amount} рублей на лот '{lot_title}' была перебита. Текущая максимальная ставка теперь составляет {amount} рублей."
 
@@ -70,7 +70,7 @@ NotificationsService/
 
 ### 4.1. Подписка на события (входящие)
 
-**Subject:** `events.auction.bid-placed`
+**Subject:** `events.auction.bid_placed`
 
 **Payload (Protobuf):**
 ```protobuf
@@ -108,7 +108,7 @@ message SendMessageCommand {
   "Nats": {
     "Url": "nats://localhost:4222",
     "Subjects": {
-      "BidPlaced": "events.auction.bid-placed",
+      "BidPlaced": "events.auction.bid_placed",
       "SendMessage": "commands.telegram.send_message"
     }
   },
@@ -208,7 +208,7 @@ services/notifications-service/
 ## 9. Roadmap (после MVP)
 
 ### Фаза 2: Расширение функционала
-- [ ] Добавить уведомление "Вы выиграли лот" (`events.auction.lot-sold`)
+- [ ] Добавить уведомление "Вы выиграли лот" (`events.auction.lot_sold`)
 - [ ] Добавить уведомление "Аукцион завершен" (`events.auction.finished`)
 
 ### Фаза 3: Настройки пользователей

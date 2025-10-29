@@ -452,7 +452,7 @@ Persist(evt, e => ApplyBidPlaced(e));
 ```csharp
 private void ApplyBidPlaced(BidPlaced evt)
 {
-    _natsPublisher.Publish("events.auction.bid-placed", evt);
+    _natsPublisher.Publish("events.auction.bid_placed", evt);
     _state = _state with { CurrentPrice = evt.Amount };
 }
 ```
@@ -461,7 +461,7 @@ private void ApplyBidPlaced(BidPlaced evt)
 Persist(evt, e =>
 {
     ApplyBidPlaced(e);
-    _natsPublisher.Publish("events.auction.bid-placed", e);
+    _natsPublisher.Publish("events.auction.bid_placed", e);
 });
 ```
 

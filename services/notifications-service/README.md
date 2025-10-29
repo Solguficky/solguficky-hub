@@ -13,10 +13,10 @@
 
 ## Ответственность (MVP)
 
-Сервис обрабатывает событие `events.auction.bid-placed` и отправляет уведомления пользователям, чьи ставки были перебиты.
+Сервис обрабатывает событие `events.auction.bid_placed` и отправляет уведомления пользователям, чьи ставки были перебиты.
 
 **Flow:**
-1. Подписывается на `events.auction.bid-placed` в NATS
+1. Подписывается на `events.auction.bid_placed` в NATS
 2. Декодирует Protobuf событие `BidPlacedEvent`
 3. Проверяет наличие `previous_leader_id`
 4. Формирует текст уведомления через шаблон
@@ -49,7 +49,7 @@ Program.cs        - DI, Serilog, Health checks
 
 ### Входящие события
 
-**Subject:** `events.auction.bid-placed`
+**Subject:** `events.auction.bid_placed`
 
 **Payload (Protobuf):**
 ```protobuf
@@ -87,7 +87,7 @@ message SendMessageCommand {
   "Nats": {
     "Url": "nats://localhost:4222",
     "Subjects": {
-      "BidPlaced": "events.auction.bid-placed",
+      "BidPlaced": "events.auction.bid_placed",
       "SendMessage": "commands.telegram.send_message"
     }
   }
@@ -98,7 +98,7 @@ message SendMessageCommand {
 
 ```bash
 NATS__URL=nats://nats:4222
-NATS__SUBJECTS__BIDPLACED=events.auction.bid-placed
+NATS__SUBJECTS__BIDPLACED=events.auction.bid_placed
 SERILOG__MINIMUMLEVEL__DEFAULT=Information
 ```
 
@@ -146,7 +146,7 @@ dotnet test
 - ❌ Отложенные уведомления (Hangfire/Quartz)
 - ❌ gRPC клиент для Users Service
 - ❌ Настройки уведомлений (enable/disable)
-- ❌ Дополнительные события (`lot-sold`, `auction-finished`)
+- ❌ Дополнительные события (`lot_sold`, `auction-finished`)
 
 ## Лицензия
 

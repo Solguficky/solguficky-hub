@@ -99,7 +99,7 @@ brew install nats-io/nats-tools/nats  # macOS
 # Лучше использовать auction-service или telegram-gateway для генерации реальных событий
 ```
 
-Или используйте **auction-service** для генерации реальных `bid-placed` событий.
+Или используйте **auction-service** для генерации реальных `bid_placed` событий.
 
 ## 9. Просмотр логов
 
@@ -194,8 +194,8 @@ dotnet run
 Для полного flow нужны:
 
 1. **NATS** (обязательно) - шина сообщений
-2. **Auction Service** (опционально) - генерирует `bid-placed` события
-3. **Telegram Gateway** (опционально) - обрабатывает `send-message` команды
+2. **Auction Service** (опционально) - генерирует `bid_placed` события
+3. **Telegram Gateway** (опционально) - обрабатывает `send_message` команды
 
 Запуск всего стека:
 ```bash

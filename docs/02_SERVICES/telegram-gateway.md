@@ -230,7 +230,7 @@ sequenceDiagram
     Note over NATS,Auction: Асинхронная обработка
     NATS->>Auction: PlaceBidCommand
     Auction->>Auction: Валидация и применение
-    Auction->>NATS: publish(events.auction.bid-placed)
+    Auction->>NATS: publish(events.auction.bid_placed)
 
     NATS->>Gateway: BidPlacedEvent {previous_leader_id, ...}
     Gateway->>TG: sendMessage(previous_leader,<br/>"❗ Вас перебили!")

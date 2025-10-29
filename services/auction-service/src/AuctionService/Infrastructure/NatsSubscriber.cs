@@ -39,7 +39,7 @@ public class NatsSubscriber : IHostedService
     {
         _logger.LogInformation("Starting NATS subscriber...");
 
-        _placeBidSubscription = _natsConnection.SubscribeAsync("commands.auction.place-bid", (sender, args) =>
+        _placeBidSubscription = _natsConnection.SubscribeAsync("commands.auction.place_bid", (sender, args) =>
         {
             try
             {

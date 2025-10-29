@@ -148,9 +148,9 @@ proto_cmd.encode(&mut buf)?;
 
 let mut headers = async_nats::HeaderMap::new();
 headers.insert("content-type", "application/x-protobuf");
-headers.insert("schema-id", "place-bid-command-v1");
+headers.insert("schema-id", "place_bid-command-v1");
 
-client.publish_with_headers("commands.auction.place-bid".to_string(), headers, buf.into()).await?;
+client.publish_with_headers("commands.auction.place_bid".to_string(), headers, buf.into()).await?;
 ```
 
 **Декодирование события:**
@@ -160,7 +160,7 @@ let schema_id = message.headers
     .and_then(|h| h.get("schema-id"))
     .map(|v| v.as_str());
 
-if schema_id != Some("bid-placed-event-v1") {
+if schema_id != Some("bid_placed-event-v1") {
     warn!("Unknown schema-id: {:?}", schema_id);
 }
 
@@ -243,7 +243,7 @@ message PlaceBidCommand {
 }
 ```
 
-Subject: `commands.auction.place-bid`
+Subject: `commands.auction.place_bid`
 
 ### Пример события из NATS
 
@@ -258,7 +258,7 @@ message BidPlacedEvent {
 }
 ```
 
-Subject: `events.auction.bid-placed`
+Subject: `events.auction.bid_placed`
 
 ## Документация
 

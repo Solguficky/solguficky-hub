@@ -34,7 +34,7 @@ public class NatsPublisher : INatsPublisher, IDisposable
         _connection.Publish(_subject, payload);
         _connection.Flush();
 
-        _logger.LogDebug("Published send-message command for chat {ChatId}", chatId);
+        _logger.LogDebug("Published send_message command for chat {ChatId}", chatId);
 
         return Task.CompletedTask;
     }

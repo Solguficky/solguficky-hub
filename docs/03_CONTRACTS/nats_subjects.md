@@ -19,7 +19,7 @@
 
 *   **Тип:** `commands` (намерения), `events` (факты).
 *   **Домен:** `events`, `auction`, `users`, `notifications`, `telegram`.
-*   **Действие:** `create`, `update`, `place-bid`, `started`, `created`.
+*   **Действие:** `create`, `update`, `place_bid`, `started`, `created`.
 
 ## Список тем (v1)
 
@@ -51,7 +51,7 @@
     *   *Получатель:* Notifications Service, Achievements Service, etc.
     *   *Описание:* Новая сходка была создана и одобрена.
 
-*   **`events.auction.bid-placed`**
+*   **`events.auction.bid_placed`**
     *   *Отправитель:* Auction Service
     *   *Получатель:* Notifications Service, Real-Time Hub, Achievements Service.
     *   *Описание:* Была сделана новая ставка. Содержит информацию о предыдущем и текущем лидере.
@@ -59,7 +59,7 @@
     *   *Отправитель:* Auction Service
     *   *Получатель:* Notifications Service, Achievements Service
     *   *Описание:* Аукцион для сходки завершен.
-*   **`events.auction.lot-sold`**
+*   **`events.auction.lot_sold`**
     *   *Отправитель:* Auction Service
     *   *Получатель:* Notifications Service, Achievements Service.
     *   *Описание:* Торги по лоту завершены.

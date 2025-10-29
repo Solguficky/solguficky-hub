@@ -97,7 +97,7 @@ public class NatsEventListener : ReceiveActor
             PreviousLeaderId = evt.PreviousLeaderId ?? 0
         };
 
-        _natsPublisher.Publish("events.auction.bid-placed", bidPlacedEvent);
+        _natsPublisher.Publish("events.auction.bid_placed", bidPlacedEvent);
     }
 
     private void HandleAuctionStarted(AuctionStarted evt)

@@ -45,7 +45,7 @@ impl NatsClient {
             .encode(&mut buf)
             .context("Failed to encode PlaceBidCommand to Protobuf")?;
 
-        let subject = "commands.auction.place-bid";
+        let subject = "commands.auction.place_bid";
         debug!(
             subject,
             payload_size = buf.len(),
@@ -82,16 +82,16 @@ impl NatsClient {
     }
 
     pub async fn subscribe_to_send_message_commands(&self) -> Result<async_nats::Subscriber> {
-        let subject = "commands.telegram.send-message";
-        debug!(subject, "Subscribing to send-message commands");
+        let subject = "commands.telegram.send_message";
+        debug!(subject, "Subscribing to send_message commands");
 
         let subscriber = self
             .client
             .subscribe(subject.to_string())
             .await
-            .context("Failed to subscribe to send-message commands")?;
+            .context("Failed to subscribe to send_message commands")?;
 
-        info!(subject, "Successfully subscribed to send-message commands");
+        info!(subject, "Successfully subscribed to send_message commands");
         Ok(subscriber)
     }
 }
@@ -105,7 +105,7 @@ pub async fn handle_auction_event(message: async_nats::Message) {
     );
 
     match subject.as_str() {
-        "events.auction.bid-placed" => {
+        "events.auction.bid_placed" => {
             match generated::nats::events::BidPlacedEvent::decode(&*message.payload) {
                 Ok(event) => {
                     info!(

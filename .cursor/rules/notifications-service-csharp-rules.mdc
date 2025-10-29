@@ -315,7 +315,7 @@ public class BidPlacedHandlerTests
   "Nats": {
     "Url": "nats://localhost:4222",
     "Subjects": {
-      "BidPlaced": "events.auction.bid-placed",
+      "BidPlaced": "events.auction.bid_placed",
       "SendMessage": "commands.telegram.send_message"
     }
   },
@@ -340,7 +340,7 @@ var subject = builder.Configuration["Nats:Subjects:BidPlaced"]!;
 ### Environment Variables Override
 ```bash
 NATS__URL=nats://nats:4222
-NATS__SUBJECTS__BIDPLACED=events.auction.bid-placed
+NATS__SUBJECTS__BIDPLACED=events.auction.bid_placed
 SERILOG__MINIMUMLEVEL__DEFAULT=Debug
 ```
 
