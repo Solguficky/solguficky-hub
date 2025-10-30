@@ -1,0 +1,334 @@
+---
+globs: services/websocket-gateway/**/*.cs
+alwaysApply: false
+---
+# WebSocket Gateway Rules (C# / .NET 8 + SignalR)
+
+## Технологический стек
+- **Язык**: C# 12
+- **Framework**: .NET 8 + ASP.NET Core
+- **SignalR**: Microsoft.AspNetCore.SignalR
+- **NATS клиент**: NATS.Client 2.x
+- **Protobuf**: Google.Protobuf
+- **Logging**: Serilog с JSON formatter
+- **Testing**: xUnit + Moq
+
+## Архитектурные принципы
+
+### Разделение ответственности
+```
+Hubs/          - SignalR Hubs (клиентский API)
+Services/      - NATS listener, event broadcasting
+Models/        - DTOs для событий
+Program.cs     - Composition root
+```
+
+### Dependency Injection
+```csharp
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IConnection>(sp => {
+    var factory = new ConnectionFactory();
+    return factory.CreateConnection(natsUrl);
+});
+builder.Services.AddHostedService<NatsEventListener>();
+builder.Services.AddScoped<EventBroadcaster>();
+```
+
+## SignalR Hubs
+
+### Naming Conventions
+- Hub classes: `*Hub` (e.g., `AuctionHub`, `AdminHub`)
+- Client methods: PascalCase (`SendAsync("AuctionEvent", ...)`)
+- Server methods: PascalCase (`SubscribeToAuction`, `UnsubscribeFromAuction`)
+
+### Hub Implementation
+```csharp
+public class AuctionHub : Hub
+{
+    private readonly ILogger<AuctionHub> _logger;
+
+    public AuctionHub(ILogger<AuctionHub> logger)
+    {
+        _logger = logger;
+    }
+
+    public async Task SubscribeToAuction(string auctionId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"auction:{auctionId}");
+
+        _logger.LogInformation("Client subscribed to auction",
+            new { ConnectionId = Context.ConnectionId, AuctionId = auctionId });
+    }
+
+    public async Task UnsubscribeFromAuction(string auctionId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"auction:{auctionId}");
+
+        _logger.LogInformation("Client unsubscribed from auction",
+            new { Context.ConnectionId, AuctionId = auctionId });
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        _logger.LogInformation("Client connected",
+            new { Context.ConnectionId });
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        _logger.LogInformation("Client disconnected",
+            new { Context.ConnectionId, Exception = exception?.Message });
+        await base.OnDisconnectedAsync(exception);
+    }
+}
+```
+
+### Groups для роутинга
+```csharp
+await _hubContext.Clients.Group($"auction:{auctionId}")
+    .SendAsync("AuctionEvent", eventData, ct);
+```
+
+## NATS Integration
+
+### IHostedService для подписки
+```csharp
+public class NatsEventListener : BackgroundService
+{
+    private readonly IConnection _natsConnection;
+    private readonly IHubContext<AuctionHub> _hubContext;
+    private readonly ILogger<NatsEventListener> _logger;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var subscription = _natsConnection.SubscribeAsync("events.auction.*");
+
+        await foreach (var msg in subscription.Messages.WithCancellation(stoppingToken))
+        {
+            await ProcessEventAsync(msg, stoppingToken);
+        }
+    }
+
+    private async Task ProcessEventAsync(Msg msg, CancellationToken ct)
+    {
+        try
+        {
+            var auctionId = ExtractAuctionId(msg);
+            var eventData = DeserializeEvent(msg);
+
+            await _hubContext.Clients
+                .Group($"auction:{auctionId}")
+                .SendAsync("AuctionEvent", eventData, ct);
+
+            _logger.LogInformation("Event broadcasted",
+                new { Subject = msg.Subject, AuctionId = auctionId });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process event",
+                new { Subject = msg.Subject });
+        }
+    }
+}
+```
+
+## Protobuf → JSON Mapping
+
+### Десериализация и конвертация
+```csharp
+private object DeserializeEvent(Msg msg)
+{
+    return msg.Subject switch
+    {
+        "events.auction.bid_placed" => MapBidPlacedEvent(
+            BidPlacedEvent.Parser.ParseFrom(msg.Data)
+        ),
+        "events.auction.lot_activated" => MapLotActivatedEvent(
+            LotActivatedEvent.Parser.ParseFrom(msg.Data)
+        ),
+        _ => new { type = "unknown", subject = msg.Subject }
+    };
+}
+
+private object MapBidPlacedEvent(BidPlacedEvent evt)
+{
+    return new
+    {
+        type = "bid_placed",
+        data = new
+        {
+            lot_id = evt.LotId,
+            amount = evt.Amount,
+            bidder_name = evt.BidderName,
+            timestamp = evt.Timestamp
+        }
+    };
+}
+```
+
+### Event DTOs
+```csharp
+public record AuctionEventDto(
+    string Type,
+    object Data,
+    long Timestamp
+);
+```
+
+## Logging
+
+### Structured Logging
+```csharp
+_logger.LogInformation("Client subscribed",
+    new { ConnectionId, AuctionId, Timestamp = DateTimeOffset.UtcNow });
+
+_logger.LogError(ex, "Failed to broadcast event",
+    new { Subject = msg.Subject, AuctionId, ErrorMessage = ex.Message });
+```
+
+### Log Levels
+- **Debug**: Подробности NATS сообщений
+- **Information**: Подписки, отписки, broadcast событий
+- **Warning**: Неожиданные subjects
+- **Error**: Ошибки десериализации Protobuf
+- **Critical**: NATS connection lost
+
+## Testing
+
+### Unit Tests для EventBroadcaster
+```csharp
+public class EventBroadcasterTests
+{
+    private readonly Mock<IHubContext<AuctionHub>> _hubContextMock;
+    private readonly Mock<IHubClients> _clientsMock;
+    private readonly Mock<IClientProxy> _groupProxyMock;
+
+    public EventBroadcasterTests()
+    {
+        _hubContextMock = new Mock<IHubContext<AuctionHub>>();
+        _clientsMock = new Mock<IHubClients>();
+        _groupProxyMock = new Mock<IClientProxy>();
+
+        _clientsMock.Setup(c => c.Group(It.IsAny<string>()))
+            .Returns(_groupProxyMock.Object);
+
+        _hubContextMock.Setup(h => h.Clients)
+            .Returns(_clientsMock.Object);
+    }
+
+    [Fact]
+    public async Task BroadcastAsync_SendsToCorrectGroup()
+    {
+        var auctionId = "123";
+        var eventData = new { type = "test" };
+
+        await _broadcaster.BroadcastAsync(auctionId, eventData, CancellationToken.None);
+
+        _clientsMock.Verify(
+            c => c.Group($"auction:{auctionId}"),
+            Times.Once);
+
+        _groupProxyMock.Verify(
+            p => p.SendCoreAsync("AuctionEvent", It.IsAny<object[]>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+}
+```
+
+## SignalR Configuration
+
+### Program.cs setup
+```csharp
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+});
+
+app.MapHub<AuctionHub>("/auctionHub");
+```
+
+### CORS для frontend
+```csharp
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:3000", "https://bigscreen.app")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+app.UseCors();
+```
+
+## Health Checks
+
+### Простая проверка здоровья
+```csharp
+builder.Services.AddHealthChecks()
+    .AddCheck("nats", () =>
+    {
+        var connection = app.Services.GetRequiredService<IConnection>();
+        return connection.State == ConnState.CONNECTED
+            ? HealthCheckResult.Healthy()
+            : HealthCheckResult.Unhealthy("NATS disconnected");
+    });
+
+app.MapHealthChecks("/health");
+```
+
+## Запрещенные практики
+
+❌ **Бизнес-логика в Hub**
+❌ **Broadcast всем клиентам вместо Groups**
+❌ **Игнорирование ошибок десериализации**
+❌ **Синхронные вызовы в async методах**
+❌ **Хардкод subject names**
+
+## Лучшие практики
+
+✅ **Используй SignalR Groups для роутинга**
+✅ **Логируй все подписки и события**
+✅ **Десериализуй Protobuf в try-catch**
+✅ **Конвертируй события в JSON для клиентов**
+✅ **Используй IHubContext для broadcast из Background Service**
+✅ **Graceful shutdown через CancellationToken**
+✅ **Health checks для NATS connection**
+
+## Специфика WebSocket Gateway
+
+### Отличие от Notifications Service
+
+**Notifications Service:**
+- Читает события → формирует уведомления → отправляет в Telegram
+- Содержит бизнес-логику (кому отправить, какой текст)
+- Push notifications (fire-and-forget)
+
+**WebSocket Gateway:**
+- Читает события → проталкивает в WebSocket
+- НЕ содержит бизнес-логики (просто прокси)
+- Stateful connections (управление подписками)
+
+### Роль сервиса
+
+Этот сервис — **"глупый" транспортный шлюз**:
+- Не должен знать о бизнес-правилах
+- Не формирует контент
+- Только роутинг событий по Groups
+
+### Future: Масштабирование
+
+Когда потребуется >1000 соединений:
+```csharp
+services.AddSignalR()
+    .AddStackExchangeRedis("redis:6379", options => {
+        options.Configuration.ChannelPrefix = "solguficky";
+    });
+```
+
+Или миграция на Elixir + Phoenix для горизонтального масштабирования.

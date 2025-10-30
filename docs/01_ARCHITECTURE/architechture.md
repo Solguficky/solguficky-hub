@@ -21,7 +21,7 @@ graph TD
             direction LR
             Auction[Auction Service<br/>Scala/F# + Akka]
             Notifications[Notifications Service<br/>Elixir]
-            Realtime[Real-Time Hub<br/>Elixir + Phoenix]
+            Realtime[WebSocket Gateway<br/>C# (MVP)]
         end
 
         subgraph Stateless Services
@@ -78,7 +78,7 @@ graph TD
 *   **Telegram Gateway (Rust):** Принимает все внешние запросы, отвечает за авторизацию и роутинг. Команды отправляет в шину, за данными ходит напрямую.
 *   **Auction Service (Scala/F#):** Stateful-сервис, управляющий сложной логикой аукционов с помощью акторной модели и Event Sourcing.
 *   **Notifications Service (Elixir):** Stateful-сервис для формирования и планирования отложенных уведомлений.
-*   **Real-Time Hub (Elixir):** WebSocket-шлюз для "живой" доставки событий на фронтенд-клиенты.
+*   **WebSocket Gateway (C#):** WebSocket-шлюз для "живой" доставки событий на фронтенд-клиенты. Для MVP реализован на C# с SignalR, в будущем возможна миграция на Elixir для масштабирования.
 *   **Meetups Service (C#):** CRUD-сервис, "владелец" данных о сходках.
 *   **Identity Service (C#):** CRUD-сервис, управляет пользователями, ролями и правами.
 *   **Achievements Service (C#):** Stateless-сервис, слушает события и выдает ачивки.

@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: solguficky-nats
+    ports:
+      - "4222:4222" # Client connections
+      - "8222:8222" # HTTP monitoring
+      - "6222:6222" # Cluster routing
+    command:
+      - "--jetstream"
+      - "--http_port=8222"
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - solguficky-network
+
+  notifications-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notifications-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - Nats__Url=nats://nats:4222
+      - Serilog__MinimumLevel__Default=Debug
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - solguficky-network
+    volumes:
+      # Mount proto files for easier debugging
+      - ../../contracts/proto:/app/contracts/proto:ro
+
+  # Опционально: NATS Box для отладки внутри контейнера
+  nats-box:
+    image: natsio/nats-box:latest
+    container_name: nats-box
+    depends_on:
+      - nats
+    networks:
+      - solguficky-network
+    command: sleep infinity
+
+  nats-surveyor:
+    image: natsio/nats-surveyor:latest
+    container_name: nats-surveyor
+    ports:
+      - "7777:7777"
+    command:
+      - "-s"
+      - "nats://nats:4222"
+      - "-http_port"
+      - "7777"
+    depends_on:
+      - nats
+    networks:
+      - solguficky-network
+
+networks:
+  solguficky-network:
+    name: solguficky-network
+    driver: bridge
