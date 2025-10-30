@@ -7,8 +7,8 @@ use telegram_gateway::domain::{AuctionDto, AuctionStatus, LotDto};
 #[test]
 fn test_user_build_auction_list() {
     let auction = AuctionDto {
-        event_id: "test-event".to_string(),
-        event_name: "Test Event".to_string(),
+        auction_id: "test-event".to_string(),
+        auction_name: "Test Event".to_string(),
         status: AuctionStatus::Running,
         lots: vec![
             LotDto {
@@ -138,8 +138,8 @@ fn test_user_build_lot_view_with_bids() {
 #[test]
 fn test_admin_build_admin_auction_view() {
     let auction = AuctionDto {
-        event_id: "test-event".to_string(),
-        event_name: "Test Event".to_string(),
+        auction_id: "test-event".to_string(),
+        auction_name: "Test Event".to_string(),
         status: AuctionStatus::Running,
         lots: vec![LotDto {
             id: 1,

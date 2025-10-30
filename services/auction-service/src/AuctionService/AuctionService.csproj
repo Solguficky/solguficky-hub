@@ -7,15 +7,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Akka" Version="1.5.37" />
-    <PackageReference Include="Akka.Persistence" Version="1.5.37" />
-    <PackageReference Include="Akka.Persistence.PostgreSql" Version="1.5.37" />
-    <PackageReference Include="Akka.Serialization.Hyperion" Version="1.5.37" />
-    <PackageReference Include="Akka.Hosting" Version="1.5.37" />
-    <PackageReference Include="Akka.DependencyInjection" Version="1.5.37" />
-    <PackageReference Include="Akka.Persistence.Hosting" Version="1.5.37" />
-    <PackageReference Include="Akka.Persistence.Query.Sql" Version="1.5.37" />
+    <PackageReference Include="Akka" Version="1.5.55" />
+    <PackageReference Include="Akka.Persistence" Version="1.5.55" />
+    <PackageReference Include="Akka.Persistence.Sql" Version="1.5.55.1" />
+    <PackageReference Include="Akka.Persistence.Sql.Hosting" Version="1.5.55.1" />
+    <PackageReference Include="Akka.Serialization.Hyperion" Version="1.5.55" />
+    <PackageReference Include="Akka.Hosting" Version="1.5.55.1" />
+    <PackageReference Include="Akka.DependencyInjection" Version="1.5.55" />
+    <PackageReference Include="Akka.Persistence.Hosting" Version="1.5.55.1" />
     <PackageReference Include="Akka.Logger.Serilog" Version="1.5.25" />
+    <PackageReference Include="linq2db" Version="5.4.1" />
 
     <PackageReference Include="Grpc.AspNetCore" Version="2.65.0" />
     <PackageReference Include="Google.Protobuf" Version="3.28.3" />
@@ -35,10 +36,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="Protos\auction_service.proto" GrpcServices="Server" />
-    <Protobuf Include="Protos\nats\commands\auction_commands.proto" GrpcServices="None" ProtoRoot="Protos\" />
-    <Protobuf Include="Protos\nats\events\auction_events.proto" GrpcServices="None" ProtoRoot="Protos\" />
-    <Protobuf Include="Protos\common\types.proto" GrpcServices="None" ProtoRoot="Protos\" />
+    <Protobuf Include="..\..\..\..\contracts\proto\grpc\auction_service.proto" GrpcServices="Server" ProtoRoot="..\..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\..\contracts\proto\nats\commands\auction_commands.proto" GrpcServices="None" ProtoRoot="..\..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\..\contracts\proto\nats\events\auction_events.proto" GrpcServices="None" ProtoRoot="..\..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\..\contracts\proto\common\types.proto" GrpcServices="None" ProtoRoot="..\..\..\..\contracts\proto" />
   </ItemGroup>
 
 </Project>

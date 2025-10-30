@@ -1,22 +1,13 @@
-namespace AuctionService.Application.Services;
+namespace AuctionService.Services;
 
 using AuctionService.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
-public class LotCrudService
+public class LotRepository(AuctionDbContext context, ILogger<LotRepository> logger)
 {
-    private readonly AuctionDbContext _context;
-    private readonly ILogger<LotCrudService> _logger;
-
-    public LotCrudService(AuctionDbContext context, ILogger<LotCrudService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
-
     public async Task<LotEntity> CreateLot(LotEntity lot)
     {
-        _logger.LogInformation("Creating lot: {Title} for event {EventId}", lot.Title, lot.EventId);
+        logger.LogInformation("Creating lot: {Title} for auction {AuctionId}", lot.Title, lot.AuctionId);
 
         if (string.IsNullOrWhiteSpace(lot.Title))
         {
@@ -34,32 +25,32 @@ public class LotCrudService
         }
 
         lot.CreatedAt = DateTime.UtcNow;
-        _context.Lots.Add(lot);
-        await _context.SaveChangesAsync();
+        context.Lots.Add(lot);
+        await context.SaveChangesAsync();
 
-        _logger.LogInformation("Lot created with ID: {LotId}", lot.Id);
+        logger.LogInformation("Lot created with ID: {LotId}", lot.Id);
         return lot;
     }
 
     public async Task<LotEntity?> GetLot(int lotId)
     {
-        return await _context.Lots.FindAsync(lotId);
+        return await context.Lots.FindAsync(lotId);
     }
 
-    public async Task<List<LotEntity>> GetLotsByEventId(string eventId)
+    public async Task<List<LotEntity>> GetLotsByAuctionId(string auctionId)
     {
-        _logger.LogInformation("Fetching lots for event {EventId}", eventId);
-        return await _context.Lots
-            .Where(l => l.EventId == eventId)
+        logger.LogInformation("Fetching lots for auction {AuctionId}", auctionId);
+        return await context.Lots
+            .Where(l => l.AuctionId == auctionId)
             .OrderBy(l => l.Id)
             .ToListAsync();
     }
 
     public async Task<LotEntity> UpdateLot(int lotId, LotEntity updatedLot)
     {
-        _logger.LogInformation("Updating lot {LotId}", lotId);
+        logger.LogInformation("Updating lot {LotId}", lotId);
 
-        var existing = await _context.Lots.FindAsync(lotId);
+        var existing = await context.Lots.FindAsync(lotId);
         if (existing == null)
         {
             throw new InvalidOperationException($"Lot {lotId} not found");
@@ -72,26 +63,26 @@ public class LotCrudService
         existing.ImageUrl = updatedLot.ImageUrl;
         existing.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
-        _logger.LogInformation("Lot {LotId} updated", lotId);
+        await context.SaveChangesAsync();
+        logger.LogInformation("Lot {LotId} updated", lotId);
 
         return existing;
     }
 
     public async Task DeleteLot(int lotId)
     {
-        _logger.LogInformation("Deleting lot {LotId}", lotId);
+        logger.LogInformation("Deleting lot {LotId}", lotId);
 
-        var lot = await _context.Lots.FindAsync(lotId);
+        var lot = await context.Lots.FindAsync(lotId);
         if (lot == null)
         {
             throw new InvalidOperationException($"Lot {lotId} not found");
         }
 
-        _context.Lots.Remove(lot);
-        await _context.SaveChangesAsync();
+        context.Lots.Remove(lot);
+        await context.SaveChangesAsync();
 
-        _logger.LogInformation("Lot {LotId} deleted", lotId);
+        logger.LogInformation("Lot {LotId} deleted", lotId);
     }
 }
 

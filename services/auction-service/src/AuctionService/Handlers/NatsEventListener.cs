@@ -1,13 +1,14 @@
-namespace AuctionService.Infrastructure;
+namespace AuctionService.Handlers;
 
 using Akka.Actor;
 using Akka.Event;
 using Akka.Persistence.Query;
-using Akka.Persistence.Query.Sql;
+using Akka.Persistence.Sql.Query;
 using Akka.Streams;
 using Akka.Streams.Dsl;
-using AuctionService.Domain.Lot;
-using AuctionService.Domain.Session;
+using AuctionService.Actors.Lot;
+using AuctionService.Actors.Auction;
+using AuctionService.Infrastructure;
 using Nats.Events;
 using System.Text.RegularExpressions;
 
@@ -17,7 +18,7 @@ public class NatsEventListener : ReceiveActor
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly ActorMaterializer _materializer;
     private readonly SqlReadJournal _readJournal;
-    private string _currentEventId = string.Empty;
+    private string _currentAuctionId = string.Empty;
     private readonly Regex _lotPersistenceIdRegex = new Regex(@"^lot-(\d+)$");
 
     public NatsEventListener(INatsPublisher natsPublisher)
@@ -27,7 +28,7 @@ public class NatsEventListener : ReceiveActor
 
         _readJournal = PersistenceQuery
             .Get(Context.System)
-            .ReadJournalFor<SqlReadJournal>(SqlReadJournal.Identifier);
+            .ReadJournalFor<SqlReadJournal>("akka.persistence.query.journal.sql");
 
         SubscribeToEventStream();
 
@@ -36,8 +37,9 @@ public class NatsEventListener : ReceiveActor
 
     private void SubscribeToEventStream()
     {
+        var self = Self;
         _readJournal.EventsByTag("auction", Offset.NoOffset())
-            .RunForeach(envelope => Self.Tell(envelope), _materializer);
+            .RunForeach(envelope => self.Tell(envelope), _materializer);
 
         _log.Info("Subscribed to Akka.Persistence.Query event stream with tag 'auction'");
     }
@@ -56,9 +58,12 @@ public class NatsEventListener : ReceiveActor
                 HandleAuctionStarted(evt);
                 break;
             case OpenBiddingStarted evt:
-                _log.Info("OpenBidding phase started for event {EventId}", _currentEventId);
+                _log.Info("OpenBidding phase started for auction {AuctionId}", _currentAuctionId);
                 break;
-            case Session.AuctionFinished evt:
+            case FinalPhaseStarted evt:
+                HandleFinalPhaseStarted(evt);
+                break;
+            case Actors.Auction.AuctionFinished evt:
                 HandleAuctionFinished(evt);
                 break;
             case LotTimerExtended evt:
@@ -89,12 +94,14 @@ public class NatsEventListener : ReceiveActor
 
         var bidPlacedEvent = new BidPlacedEvent
         {
-            EventId = _currentEventId,
+            AuctionId = _currentAuctionId,
             LotId = (uint)lotId,
             UserId = evt.UserId,
             Amount = evt.Amount,
             CurrentLeaderId = evt.UserId,
-            PreviousLeaderId = evt.PreviousLeaderId ?? 0
+            PreviousLeaderId = evt.PreviousLeaderId ?? 0,
+            LotTitle = string.Empty,
+            PreviousAmount = 0
         };
 
         _natsPublisher.Publish("events.auction.bid_placed", bidPlacedEvent);
@@ -102,14 +109,45 @@ public class NatsEventListener : ReceiveActor
 
     private void HandleAuctionStarted(AuctionStarted evt)
     {
-        _log.Info("Auction started for event {EventId} with {LotCount} lots",
-            evt.EventId, evt.LotIds.Count);
-        _currentEventId = evt.EventId;
+        _log.Info("Auction started {AuctionId} with {LotCount} lots",
+            evt.AuctionId, evt.LotIds.Count);
+        _currentAuctionId = evt.AuctionId;
+
+        var auctionStartedEvent = new AuctionStartedEvent
+        {
+            AuctionId = evt.AuctionId,
+            LotIds = { evt.LotIds.Select(id => (uint)id) }
+        };
+
+        _natsPublisher.Publish("events.auction.started", auctionStartedEvent);
     }
 
-    private void HandleAuctionFinished(Session.AuctionFinished evt)
+    private void HandleFinalPhaseStarted(FinalPhaseStarted evt)
     {
-        _log.Info("Auction finished for event {EventId}", _currentEventId);
+        _log.Info("Final phase started for auction {AuctionId}", _currentAuctionId);
+
+        var phaseTransitionedEvent = new PhaseTransitionedEvent
+        {
+            AuctionId = _currentAuctionId,
+            FromPhase = "OpenBidding",
+            ToPhase = "Final"
+        };
+
+        _natsPublisher.Publish("events.auction.phase_transitioned", phaseTransitionedEvent);
+    }
+
+    private void HandleAuctionFinished(Actors.Auction.AuctionFinished evt)
+    {
+        _log.Info("Auction finished {AuctionId}", _currentAuctionId);
+
+        var phaseTransitionedEvent = new PhaseTransitionedEvent
+        {
+            AuctionId = _currentAuctionId,
+            FromPhase = "Final",
+            ToPhase = "Finished"
+        };
+
+        _natsPublisher.Publish("events.auction.phase_transitioned", phaseTransitionedEvent);
     }
 
     protected override void PostStop()
@@ -118,3 +156,4 @@ public class NatsEventListener : ReceiveActor
         base.PostStop();
     }
 }
+

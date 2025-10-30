@@ -9,7 +9,7 @@ public class AuctionEventTagger : IWriteEventAdapter
 
     public object ToJournal(object evt)
     {
-        return new Tagged(evt, new[] { "auction" });
+        return new Tagged(evt, ["auction"]);
     }
 }
 

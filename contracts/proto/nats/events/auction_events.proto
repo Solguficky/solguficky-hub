@@ -2,7 +2,7 @@ syntax = "proto3";
 package nats.events;
 
 message BidPlacedEvent {
-  string event_id = 1;
+  string auction_id = 1;
   uint32 lot_id = 2;
   int64 user_id = 3;
   double amount = 4;
@@ -12,3 +12,13 @@ message BidPlacedEvent {
   double previous_amount = 8;
 }
 
+message AuctionStartedEvent {
+  string auction_id = 1;
+  repeated uint32 lot_ids = 2;
+}
+
+message PhaseTransitionedEvent {
+  string auction_id = 1;
+  string from_phase = 2;
+  string to_phase = 3;
+}

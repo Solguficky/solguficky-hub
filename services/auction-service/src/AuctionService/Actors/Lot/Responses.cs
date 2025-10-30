@@ -1,4 +1,4 @@
-namespace AuctionService.Domain.Lot;
+namespace AuctionService.Actors.Lot;
 
 public abstract record Response;
 
@@ -11,3 +11,4 @@ public sealed record StatusResponse(
     long? LeaderId,
     DateTimeOffset? EndTime
 ) : Response;
+

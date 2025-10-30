@@ -6,7 +6,7 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 pub fn build_auction_list(auction: &AuctionDto) -> (String, InlineKeyboardMarkup) {
     let text = format!(
         "🎪 Аукцион: {}\n\nСтатус: {:?}\n\nДоступные лоты:",
-        auction.event_name, auction.status
+        auction.auction_name, auction.status
     );
 
     let mut keyboard = InlineKeyboardMarkup::default();

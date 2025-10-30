@@ -25,7 +25,7 @@ impl NatsClient {
     pub async fn publish_place_bid(&self, command: PlaceBidCommand) -> Result<()> {
         let proto_cmd = generated::nats::commands::PlaceBidCommand {
             op_id: command.op_id.to_string(),
-            event_id: command.event_id.clone(),
+            auction_id: command.auction_id.clone(),
             lot_id: command.lot_id,
             user_id: command.user_id,
             amount: command.amount,
@@ -33,7 +33,7 @@ impl NatsClient {
 
         debug!(
             op_id = %command.op_id,
-            event_id = %command.event_id,
+            auction_id = %command.auction_id,
             lot_id = command.lot_id,
             user_id = command.user_id,
             amount = command.amount,

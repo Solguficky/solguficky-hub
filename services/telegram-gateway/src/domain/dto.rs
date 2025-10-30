@@ -22,8 +22,8 @@ pub struct LotDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuctionDto {
-    pub event_id: String,
-    pub event_name: String,
+    pub auction_id: String,
+    pub auction_name: String,
     pub status: AuctionStatus,
     pub lots: Vec<LotDto>,
 }

@@ -22,7 +22,7 @@ pub async fn show_auction_handler(
     debug!("Fetching auction data");
     let auction = deps
         .auction_service
-        .get_auction("summer-meetup-2024")
+        .get_auction(crate::constants::AUCTION_ID)
         .await?;
 
     let user_role = deps.get_user_role(q.from.id);
@@ -40,7 +40,7 @@ pub async fn show_auction_handler(
         .ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
 
     info!(
-        event_id = %auction.event_id,
+        auction_id = %auction.auction_id,
         lots_count,
         role = ?user_role,
         "Auction view displayed successfully"
@@ -81,7 +81,7 @@ pub async fn view_lot_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::R
 
     let lot = deps
         .auction_service
-        .get_lot("summer-meetup-2024", lot_id)
+        .get_lot(crate::constants::AUCTION_ID, lot_id)
         .await?;
 
     if let Some(lot) = lot {
@@ -148,7 +148,7 @@ pub async fn show_description_handler(
 
     let lot = deps
         .auction_service
-        .get_lot("summer-meetup-2024", lot_id)
+        .get_lot(crate::constants::AUCTION_ID, lot_id)
         .await?;
 
     if let Some(lot) = lot {
@@ -207,13 +207,13 @@ pub async fn bid_start_handler(q: CallbackQuery, deps: Dependencies) -> anyhow::
 
     let lot = deps
         .auction_service
-        .get_lot("summer-meetup-2024", lot_id)
+        .get_lot(crate::constants::AUCTION_ID, lot_id)
         .await?;
 
     if let Some(lot) = lot {
         let user = q.from.id.0 as i64;
         let command = PlaceBidCommand::new(
-            "summer-meetup-2024".to_string(),
+            crate::constants::AUCTION_ID.to_string(),
             lot.id,
             user,
             lot.starting_price,
@@ -293,7 +293,7 @@ pub async fn bid_increase_handler(
 
     let lot = deps
         .auction_service
-        .get_lot("summer-meetup-2024", lot_id)
+        .get_lot(crate::constants::AUCTION_ID, lot_id)
         .await?;
 
     if let (Some(lot), Some(current_bid)) = (lot.as_ref(), lot.as_ref().and_then(|l| l.current_bid))
@@ -301,7 +301,7 @@ pub async fn bid_increase_handler(
         let user = q.from.id.0 as i64;
         let new_bid = current_bid + lot.min_bid_step;
 
-        let command = PlaceBidCommand::new("summer-meetup-2024".to_string(), lot.id, user, new_bid);
+        let command = PlaceBidCommand::new(crate::constants::AUCTION_ID.to_string(), lot.id, user, new_bid);
 
         deps.nats.publish_place_bid(command).await?;
 
@@ -413,7 +413,7 @@ pub async fn receive_bid_amount(
                 let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
 
                 let command =
-                    PlaceBidCommand::new("summer-meetup-2024".to_string(), lot_id, user_id, amount);
+                    PlaceBidCommand::new(crate::constants::AUCTION_ID.to_string(), lot_id, user_id, amount);
 
                 deps.nats.publish_place_bid(command).await?;
 

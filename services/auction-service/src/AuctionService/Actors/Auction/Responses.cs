@@ -1,11 +1,11 @@
-namespace AuctionService.Domain.Session;
+namespace AuctionService.Actors.Auction;
 
 using System.Collections.Immutable;
 
 public abstract record Response;
 
 public sealed record AuctionStatusResponse(
-    string EventId,
+    string AuctionId,
     AuctionPhase Phase,
     ImmutableList<int> LotIds
 ) : Response;

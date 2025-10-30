@@ -1,12 +1,13 @@
 using Akka.Actor;
+using Akka.Configuration;
 using Akka.Hosting;
-using Akka.Persistence.Hosting;
-using Akka.Persistence.PostgreSql.Hosting;
-using AuctionService.Application.GrpcServices;
-using AuctionService.Application.Services;
-using AuctionService.Domain.Registry;
+using Akka.Persistence.Sql.Hosting;
+using AuctionService.Actors;
+using AuctionService.Handlers;
 using AuctionService.Infrastructure;
 using AuctionService.Infrastructure.Persistence;
+using AuctionService.Services;
+using LinqToDB;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
@@ -28,61 +29,57 @@ var postgresConnectionString = builder.Configuration["Akka:Persistence:Connectio
 builder.Services.AddDbContext<AuctionDbContext>(options =>
     options.UseNpgsql(postgresConnectionString));
 
-builder.Services.AddScoped<LotCrudService>();
+builder.Services.AddScoped<LotRepository>();
 builder.Services.AddSingleton<INatsPublisher, NatsPublisher>();
+
+var eventAdapterConfig = ConfigurationFactory.ParseString(@"
+    akka.persistence.journal.sql {
+        event-adapters {
+            auction-tagger = ""AuctionService.Infrastructure.AuctionEventTagger, AuctionService""
+        }
+        event-adapter-bindings {
+            ""AuctionService.Actors.Lot.BidPlaced, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Lot.ProxyBidSet, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Lot.LotTimerExtended, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Lot.AuctionFinished, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Lot.LotSold, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Auction.AuctionStarted, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Auction.OpenBiddingStarted, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Auction.FinalPhaseStarted, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Auction.AuctionFinished, AuctionService"" = auction-tagger
+        }
+    }
+");
 
 builder.Services.AddAkka("auction-service", (configBuilder, serviceProvider) =>
 {
     configBuilder
+        .AddHocon(eventAdapterConfig, HoconAddMode.Append)
         .ConfigureLoggers(setup =>
         {
             setup.LogLevel = Akka.Event.LogLevel.InfoLevel;
             setup.AddLogger<Akka.Logger.Serilog.SerilogLogger>();
         })
-        .WithActors((system, registry, resolver) =>
+        .WithSqlPersistence(
+            connectionString: postgresConnectionString,
+            providerName: ProviderName.PostgreSQL15,
+            autoInitialize: true)
+        .WithActors((system, registry) =>
         {
-            var registryActor = system.ActorOf(Props.Create(() => new AuctionRegistryActor()), "auction-registry");
-            registry.Register<AuctionRegistryActor>(registryActor);
+            var auctionRegistry = system.ActorOf(Props.Create<AuctionRegistry>(), "auction-registry");
+            registry.Register<AuctionRegistry>(auctionRegistry);
 
-            var natsPublisher = resolver.GetRequiredService<INatsPublisher>();
+            var natsPublisher = serviceProvider.GetRequiredService<INatsPublisher>();
             var eventListener = system.ActorOf(
                 Props.Create(() => new NatsEventListener(natsPublisher)),
                 "nats-event-listener"
             );
-        })
-        .WithPostgreSqlPersistence(
-            connectionString: postgresConnectionString,
-            autoInitialize: true,
-            storedAs: Akka.Persistence.PostgreSql.StoredAsType.ByteA
-        )
-        .WithPostgreSqlReadJournal()
-        .WithEventAdapter<AuctionEventTagger>(
-            "auction-event-tagger",
-            boundTypes: new[]
-            {
-                typeof(Domain.Lot.BidPlaced),
-                typeof(Domain.Lot.ProxyBidSet),
-                typeof(Domain.Lot.LotTimerExtended),
-                typeof(Domain.Lot.AuctionFinished),
-                typeof(Domain.Lot.LotSold),
-                typeof(Domain.Session.AuctionStarted),
-                typeof(Domain.Session.OpenBiddingStarted),
-                typeof(Domain.Session.AuctionFinished)
-            }
-        );
+        });
 });
 
-builder.Services.AddSingleton(provider =>
-{
-    var actorRegistry = provider.GetRequiredService<ActorRegistry>();
-    return actorRegistry.Get<AuctionRegistryActor>();
-});
-
-builder.Services.AddHostedService<NatsSubscriber>();
+builder.Services.AddHostedService<NatsCommandHandler>();
 
 builder.Services.AddGrpc();
-builder.Services.AddSingleton<AuctionGrpcService>();
-builder.Services.AddSingleton<LotGrpcService>();
 
 var app = builder.Build();
 

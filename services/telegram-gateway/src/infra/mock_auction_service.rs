@@ -31,8 +31,8 @@ impl MockAuctionService {
         }
     }
 
-    pub async fn get_auction(&self, event_id: &str) -> Result<AuctionDto> {
-        debug!(event_id, "Fetching auction data");
+    pub async fn get_auction(&self, auction_id: &str) -> Result<AuctionDto> {
+        debug!(auction_id, "Fetching auction data");
 
         let hardcoded_lots = self.get_mock_lots();
         let dynamic_lots = self.dynamic_lots.read().await;
@@ -41,7 +41,7 @@ impl MockAuctionService {
         all_lots.extend(dynamic_lots.clone());
 
         debug!(
-            event_id,
+            auction_id,
             total_lots = all_lots.len(),
             hardcoded_lots = self.get_mock_lots().len(),
             dynamic_lots = dynamic_lots.len(),
@@ -49,20 +49,20 @@ impl MockAuctionService {
         );
 
         Ok(AuctionDto {
-            event_id: "summer-meetup-2024".to_string(),
-            event_name: "Летняя Сходка 2024".to_string(),
+            auction_id: crate::constants::AUCTION_ID.to_string(),
+            auction_name: "Летняя Сходка 2024".to_string(),
             status: AuctionStatus::Running,
             lots: all_lots,
         })
     }
 
-    pub async fn get_lot(&self, event_id: &str, lot_id: u32) -> Result<Option<LotDto>> {
-        debug!(event_id, lot_id, "Fetching lot data");
+    pub async fn get_lot(&self, auction_id: &str, lot_id: u32) -> Result<Option<LotDto>> {
+        debug!(auction_id, lot_id, "Fetching lot data");
 
         let hardcoded_lots = self.get_mock_lots();
         if let Some(lot) = hardcoded_lots.into_iter().find(|l| l.id == lot_id) {
             debug!(
-                event_id,
+                auction_id,
                 lot_id,
                 title = %lot.title,
                 "Lot found in hardcoded data"
@@ -74,9 +74,9 @@ impl MockAuctionService {
         let result = dynamic_lots.iter().find(|l| l.id == lot_id).cloned();
 
         if result.is_some() {
-            debug!(event_id, lot_id, "Lot found in dynamic data");
+            debug!(auction_id, lot_id, "Lot found in dynamic data");
         } else {
-            debug!(event_id, lot_id, "Lot not found");
+            debug!(auction_id, lot_id, "Lot not found");
         }
 
         Ok(result)

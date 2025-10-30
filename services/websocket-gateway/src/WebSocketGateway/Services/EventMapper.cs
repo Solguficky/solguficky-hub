@@ -37,7 +37,7 @@ public class EventMapper(ILogger<EventMapper> logger)
             Type: "bid_placed",
             Data: new
             {
-                event_id = evt.EventId,
+                auction_id = evt.AuctionId,
                 lot_id = evt.LotId,
                 user_id = evt.UserId,
                 amount = evt.Amount,

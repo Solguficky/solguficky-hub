@@ -14,7 +14,7 @@
 		"files.watcherExclude": {
 			"**/target": true
 		},
-		"explorer.compactFolders": false,
+		"explorer.compactFolders": true,
 		"explorer.excludeGitIgnore": true,
 		"editor.formatOnSave": true,
 		"editor.rulers": [

@@ -1,0 +1,48 @@
+syntax = "proto3";
+package grpc.auction;
+
+service AuctionService {
+  rpc GetAllLots(GetAllLotsRequest) returns (GetAllLotsResponse);
+  rpc GetLot(GetLotRequest) returns (GetLotResponse);
+  rpc GetAuctionStatus(GetAuctionStatusRequest) returns (GetAuctionStatusResponse);
+}
+
+message GetAllLotsRequest {
+  string auction_id = 1;
+}
+
+message GetAllLotsResponse {
+  repeated LotInfo lots = 1;
+}
+
+message GetLotRequest {
+  string auction_id = 1;
+  uint32 lot_id = 2;
+}
+
+message GetLotResponse {
+  LotInfo lot = 1;
+}
+
+message GetAuctionStatusRequest {
+  string auction_id = 1;
+}
+
+message GetAuctionStatusResponse {
+  string auction_id = 1;
+  string phase = 2;
+  repeated uint32 lot_ids = 3;
+}
+
+message LotInfo {
+  uint32 id = 1;
+  string auction_id = 2;
+  string title = 3;
+  string description = 4;
+  double starting_price = 5;
+  double min_bid_step = 6;
+  optional double current_price = 7;
+  optional int64 current_bidder_id = 8;
+  string image_url = 9;
+}
+

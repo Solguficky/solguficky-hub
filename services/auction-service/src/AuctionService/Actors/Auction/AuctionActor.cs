@@ -1,48 +1,51 @@
-namespace AuctionService.Domain.Session;
+namespace AuctionService.Actors.Auction;
 
+using System.Collections.Immutable;
 using Akka.Actor;
 using Akka.Event;
 using Akka.Persistence;
-using AuctionService.Domain.Lot;
+using AuctionService.Actors.Lot;
 
-public class AuctionSessionActor : ReceivePersistentActor
+public class AuctionActor : ReceivePersistentActor
 {
     public override string PersistenceId { get; }
     private State _state = State.Empty();
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly Dictionary<int, LotConfig> _lotConfigs = new();
 
-    public AuctionSessionActor(string eventId)
+    public AuctionActor(string auctionId)
     {
-        PersistenceId = $"auction-{eventId}";
+        PersistenceId = $"auction-{auctionId}";
 
         Command<StartAuction>(HandleStartAuction);
         Command<RouteToLot>(HandleRouteToLot);
+        Command<TransitionToFinalPhase>(HandleTransitionToFinalPhase);
         Command<FinishAuction>(HandleFinishAuction);
         Command<GetAuctionStatus>(HandleGetAuctionStatus);
 
         Recover<AuctionStarted>(ApplyAuctionStarted);
         Recover<OpenBiddingStarted>(ApplyOpenBiddingStarted);
-        Recover<Session.AuctionFinished>(ApplyAuctionFinished);
+        Recover<FinalPhaseStarted>(ApplyFinalPhaseStarted);
+        Recover<AuctionFinished>(ApplyAuctionFinished);
     }
 
     private void HandleStartAuction(StartAuction cmd)
     {
         if (_state.Phase != AuctionPhase.NotStarted)
         {
-            _log.Warning("Auction {EventId} already started", cmd.EventId);
+            _log.Warning("Auction {AuctionId} already started", cmd.AuctionId);
             Sender.Tell(new StatusMessage("Auction already started"), Self);
             return;
         }
 
-        _log.Info("Starting auction for event {EventId} with {LotCount} lots", cmd.EventId, cmd.LotIds.Count);
+        _log.Info("Starting auction {AuctionId} with {LotCount} lots", cmd.AuctionId, cmd.LotIds.Count);
 
         foreach (var (lotId, config) in cmd.LotConfigs)
         {
             _lotConfigs[lotId] = config;
         }
 
-        var startedEvt = new AuctionStarted(cmd.EventId, cmd.LotIds, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var startedEvt = new AuctionStarted(cmd.AuctionId, cmd.LotIds, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         Persist(startedEvt, e =>
         {
             ApplyAuctionStarted(e);
@@ -78,9 +81,9 @@ public class AuctionSessionActor : ReceivePersistentActor
 
     private void HandleRouteToLot(RouteToLot cmd)
     {
-        if (_state.Phase != AuctionPhase.OpenBidding)
+        if (_state.Phase == AuctionPhase.NotStarted || _state.Phase == AuctionPhase.Finished)
         {
-            _log.Warning("Auction {EventId} is not in OpenBidding phase", _state.EventId);
+            _log.Warning("Auction {AuctionId} is not active", _state.AuctionId);
             Sender.Tell(new StatusMessage("Auction is not active"), Self);
             return;
         }
@@ -98,18 +101,37 @@ public class AuctionSessionActor : ReceivePersistentActor
         lotActor.Forward(cmd.Command);
     }
 
+    private void HandleTransitionToFinalPhase(TransitionToFinalPhase cmd)
+    {
+        if (_state.Phase != AuctionPhase.OpenBidding)
+        {
+            _log.Warning("Cannot transition to Final phase. Current phase: {Phase}", _state.Phase);
+            Sender.Tell(new StatusMessage($"Cannot transition from {_state.Phase} to Final"), Self);
+            return;
+        }
+
+        _log.Info("Transitioning auction {AuctionId} to Final phase", _state.AuctionId);
+
+        var evt = new FinalPhaseStarted(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        Persist(evt, e =>
+        {
+            ApplyFinalPhaseStarted(e);
+            Sender.Tell(new StatusMessage("Transitioned to Final phase"), Self);
+        });
+    }
+
     private void HandleFinishAuction(FinishAuction cmd)
     {
         if (_state.Phase == AuctionPhase.Finished)
         {
-            _log.Warning("Auction {EventId} already finished", _state.EventId);
+            _log.Warning("Auction {AuctionId} already finished", _state.AuctionId);
             Sender.Tell(new StatusMessage("Auction already finished"), Self);
             return;
         }
 
-        _log.Info("Finishing auction {EventId}", _state.EventId);
+        _log.Info("Finishing auction {AuctionId}", _state.AuctionId);
 
-        var evt = new Session.AuctionFinished(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var evt = new AuctionFinished(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         Persist(evt, e =>
         {
             ApplyAuctionFinished(e);
@@ -120,7 +142,7 @@ public class AuctionSessionActor : ReceivePersistentActor
     private void HandleGetAuctionStatus(GetAuctionStatus cmd)
     {
         Sender.Tell(new AuctionStatusResponse(
-            _state.EventId,
+            _state.AuctionId,
             _state.Phase,
             _state.LotIds
         ), Self);
@@ -128,10 +150,10 @@ public class AuctionSessionActor : ReceivePersistentActor
 
     private void ApplyAuctionStarted(AuctionStarted evt)
     {
-        _log.Info("Applied AuctionStarted for event {EventId}", evt.EventId);
+        _log.Info("Applied AuctionStarted for auction {AuctionId}", evt.AuctionId);
         _state = _state with
         {
-            EventId = evt.EventId,
+            AuctionId = evt.AuctionId,
             LotIds = evt.LotIds.ToImmutableList()
         };
     }
@@ -142,7 +164,13 @@ public class AuctionSessionActor : ReceivePersistentActor
         _state = _state with { Phase = AuctionPhase.OpenBidding };
     }
 
-    private void ApplyAuctionFinished(Session.AuctionFinished evt)
+    private void ApplyFinalPhaseStarted(FinalPhaseStarted evt)
+    {
+        _log.Info("Applied FinalPhaseStarted");
+        _state = _state with { Phase = AuctionPhase.Final };
+    }
+
+    private void ApplyAuctionFinished(AuctionFinished evt)
     {
         _log.Info("Applied AuctionFinished");
         _state = _state with { Phase = AuctionPhase.Finished };
@@ -150,3 +178,4 @@ public class AuctionSessionActor : ReceivePersistentActor
 }
 
 public sealed record StatusMessage(string Message);
+

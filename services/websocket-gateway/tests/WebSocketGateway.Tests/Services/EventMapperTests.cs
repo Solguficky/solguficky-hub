@@ -22,7 +22,7 @@ public class EventMapperTests
     {
         var bidPlacedEvent = new BidPlacedEvent
         {
-            EventId = "event-123",
+            AuctionId = "01JBEXAMPLE123456789ABCDEF",
             LotId = 5,
             UserId = 100,
             Amount = 1500.0,

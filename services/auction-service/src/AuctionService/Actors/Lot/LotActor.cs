@@ -1,4 +1,4 @@
-namespace AuctionService.Domain.Lot;
+namespace AuctionService.Actors.Lot;
 
 using Akka.Actor;
 using Akka.Event;
@@ -196,3 +196,4 @@ public class LotActor : ReceivePersistentActor, IWithTimers
         _state = _state with { IsFinished = true };
     }
 }
+

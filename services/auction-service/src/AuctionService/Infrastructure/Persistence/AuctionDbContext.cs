@@ -2,12 +2,8 @@ namespace AuctionService.Infrastructure.Persistence;
 
 using Microsoft.EntityFrameworkCore;
 
-public class AuctionDbContext : DbContext
+public class AuctionDbContext(DbContextOptions<AuctionDbContext> options) : DbContext(options)
 {
-    public AuctionDbContext(DbContextOptions<AuctionDbContext> options) : base(options)
-    {
-    }
-
     public DbSet<LotEntity> Lots { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -19,8 +15,8 @@ public class AuctionDbContext : DbContext
             entity.ToTable("lots");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
-            entity.HasIndex(e => e.EventId);
-            entity.Property(e => e.EventId).IsRequired();
+            entity.HasIndex(e => e.AuctionId);
+            entity.Property(e => e.AuctionId).IsRequired().HasMaxLength(26);
             entity.Property(e => e.Title).IsRequired().HasMaxLength(500);
             entity.Property(e => e.Description).HasMaxLength(5000);
             entity.Property(e => e.StartingPrice).IsRequired();

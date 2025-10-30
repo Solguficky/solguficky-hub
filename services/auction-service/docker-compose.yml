@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  auction-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "5000:5000"
+    environment:
+      - Akka__Persistence__ConnectionString=Host=postgres;Port=5432;Database=auction;Username=auction;Password=auction
+      - Nats__Url=nats://nats:4222
+      - ASPNETCORE_URLS=http://+:5000
+      - Grpc__Port=8080
+    depends_on:
+      - postgres
+      - nats
+    networks:
+      - auction-net
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: auction
+      POSTGRES_USER: auction
+      POSTGRES_PASSWORD: auction
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - auction-net
+
+  nats:
+    image: nats:latest
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - auction-net
+
+volumes:
+  postgres-data:
+
+networks:
+  auction-net:
+    driver: bridge
+

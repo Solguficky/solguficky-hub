@@ -8,8 +8,8 @@ public class LotEntity
     public int Id { get; set; }
 
     [Required]
-    [MaxLength(100)]
-    public string EventId { get; set; } = string.Empty;
+    [MaxLength(26)]
+    public string AuctionId { get; set; } = string.Empty;
 
     [Required]
     [MaxLength(500)]

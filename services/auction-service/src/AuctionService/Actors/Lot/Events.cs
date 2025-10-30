@@ -1,4 +1,4 @@
-namespace AuctionService.Domain.Lot;
+namespace AuctionService.Actors.Lot;
 
 public abstract record Event;
 
