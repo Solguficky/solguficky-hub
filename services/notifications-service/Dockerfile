@@ -1,13 +1,18 @@
+# syntax=docker/dockerfile:1
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-COPY ["src/NotificationsService/NotificationsService.csproj", "src/NotificationsService/"]
-RUN dotnet restore "src/NotificationsService/NotificationsService.csproj"
+COPY ["services/notifications-service/src/NotificationsService/NotificationsService.csproj", "services/notifications-service/src/NotificationsService/"]
+RUN dotnet restore "services/notifications-service/src/NotificationsService/NotificationsService.csproj"
 
-COPY . .
-WORKDIR "/src/src/NotificationsService"
-RUN dotnet build "NotificationsService.csproj" -c Release -o /app/build
-RUN dotnet publish "NotificationsService.csproj" -c Release -o /app/publish /p:UseAppHost=false
+COPY ["services/notifications-service/", "services/notifications-service/"]
+WORKDIR "/src/services/notifications-service/src/NotificationsService"
+
+RUN --mount=type=bind,source=contracts,target=/src/contracts \
+    dotnet build "NotificationsService.csproj" -c Release -o /app/build
+
+RUN --mount=type=bind,source=contracts,target=/src/contracts \
+    dotnet publish "NotificationsService.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app

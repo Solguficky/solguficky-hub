@@ -20,6 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 
+# Generated protobuf files (committed to repo for convenience)
+# nats_tester/generated/
+
 # Virtual environments
 .venv/
 venv/

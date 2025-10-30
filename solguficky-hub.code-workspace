@@ -8,13 +8,14 @@
 	"settings": {
 		"files.exclude": {
 			"**/.git": true,
-			"**/.DS_Store": true
+			"**/.DS_Store": true,
+			"**/.env": false
 		},
 		"files.watcherExclude": {
 			"**/target": true
 		},
 		"explorer.compactFolders": false,
-		"explorer.excludeGitIgnore": false,
+		"explorer.excludeGitIgnore": true,
 		"editor.formatOnSave": true,
 		"editor.rulers": [
 			100
@@ -25,6 +26,7 @@
 		"lldb.showDisassembly": "auto",
 		"rust-analyzer.linkedProjects": [
 			"./services/telegram-gateway/Cargo.toml"
-		]
+		],
+		"explorer.fileNesting.enabled": true
 	}
 }

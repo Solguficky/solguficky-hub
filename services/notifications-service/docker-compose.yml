@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   nats:
     image: nats:2.10-alpine
-    container_name: solguficky-nats
+    container_name: solguficky-notifications-nats
     ports:
       - "4222:4222" # Client connections
       - "8222:8222" # HTTP monitoring
@@ -17,12 +15,12 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - solguficky-network
+      - solguficky-notifications-network
 
   notifications-service:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/notifications-service/Dockerfile
     container_name: notifications-service
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
@@ -32,10 +30,7 @@ services:
       nats:
         condition: service_healthy
     networks:
-      - solguficky-network
-    volumes:
-      # Mount proto files for easier debugging
-      - ../../contracts/proto:/app/contracts/proto:ro
+      - solguficky-notifications-network
 
   # Опционально: NATS Box для отладки внутри контейнера
   nats-box:
@@ -44,7 +39,7 @@ services:
     depends_on:
       - nats
     networks:
-      - solguficky-network
+      - solguficky-notifications-network
     command: sleep infinity
 
   nats-surveyor:
@@ -55,14 +50,29 @@ services:
     command:
       - "-s"
       - "nats://nats:4222"
-      - "-http_port"
-      - "7777"
     depends_on:
       - nats
     networks:
-      - solguficky-network
+      - solguficky-notifications-network
+
+  nats-nui:
+    image: ghcr.io/nats-nui/nui:latest
+    container_name: nats-nui
+    ports:
+      - "31311:31311"
+    volumes:
+      - nats-nui-db:/db
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - solguficky-notifications-network
+
+volumes:
+  nats-nui-db:
+    name: solguficky-nats-nui-db
 
 networks:
-  solguficky-network:
-    name: solguficky-network
+  solguficky-notifications-network:
+    name: solguficky-notifications-network
     driver: bridge

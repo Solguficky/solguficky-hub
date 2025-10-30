@@ -4,14 +4,8 @@ using WebSocketGateway.Models;
 
 namespace WebSocketGateway.Services;
 
-public class EventMapper
+public class EventMapper(ILogger<EventMapper> logger)
 {
-    private readonly ILogger<EventMapper> _logger;
-
-    public EventMapper(ILogger<EventMapper> logger)
-    {
-        _logger = logger;
-    }
 
     public AuctionEventDto? MapEvent(string subject, byte[] data)
     {
@@ -25,12 +19,12 @@ public class EventMapper
         }
         catch (InvalidProtocolBufferException ex)
         {
-            _logger.LogError(ex, "Failed to deserialize Protobuf for subject {Subject}", subject);
+            logger.LogError(ex, "Failed to deserialize Protobuf for subject {Subject}", subject);
             return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to map event for subject {Subject}", subject);
+            logger.LogError(ex, "Failed to map event for subject {Subject}", subject);
             return null;
         }
     }
@@ -58,7 +52,7 @@ public class EventMapper
 
     private AuctionEventDto MapUnknownEvent(string subject)
     {
-        _logger.LogWarning("Received unknown event subject: {Subject}", subject);
+        logger.LogWarning("Received unknown event subject: {Subject}", subject);
 
         return new AuctionEventDto(
             Type: "unknown",

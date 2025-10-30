@@ -22,14 +22,16 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+**Важно:** Protobuf классы уже сгенерированы и включены в репозиторий. Генерировать заново нужно только если изменились `.proto` файлы.
+
 ### 2. Установить внешние зависимости
 
-**NATS CLI:**
+**NATS CLI (обязательно):**
 ```bash
 go install github.com/nats-io/natscli/nats@latest
 ```
 
-**Protocol Buffers Compiler:**
+**Protocol Buffers Compiler (только для регенерации proto):**
 ```bash
 # Windows (Chocolatey)
 choco install protoc
@@ -49,8 +51,8 @@ nats-tester check
 
 Вы должны увидеть:
 ```
-✅ protoc: libprotoc 3.x.x
-✅ nats:   nats version 0.x.x
+✅ nats:     nats version 0.x.x
+✅ protobuf: generated classes found
 ✅ All tools installed!
 ```
 
@@ -69,26 +71,36 @@ nats-tester --help
 #### 1. Опубликовать событие
 
 ```bash
-# Опубликовать событие из JSON файла
+# Опубликовать событие из JSON файла (тип определяется автоматически по subject)
 nats-tester publish samples/bid_placed_with_previous.json
 
 # С кастомными параметрами
 nats-tester publish samples/bid_placed_with_previous.json \
     --nats-url nats://localhost:4222 \
     --subject events.auction.bid_placed
+
+# Явно указать тип события
+nats-tester publish samples/my_event.json \
+    --subject events.auction.lot_sold \
+    --event-type events.auction.lot_sold
 ```
 
-#### 2. Подписаться на команды
+#### 2. Подписаться на сообщения
 
 ```bash
-# Подписаться на все команды Telegram
+# Подписаться на все команды Telegram (по умолчанию)
 nats-tester subscribe
 
-# С кастомным subject
+# Подписаться на все события аукциона
+nats-tester subscribe --subject "events.auction.>"
+
+# Подписаться на конкретную команду
 nats-tester subscribe --subject "commands.telegram.send_message"
 
 # Остановить: Ctrl+C
 ```
+
+Сообщения автоматически декодируются в JSON на основе subject.
 
 #### 3. Запустить интеграционный тест
 
@@ -103,14 +115,24 @@ nats-tester test
 #### 4. Валидировать JSON
 
 ```bash
-# Проверить JSON файл перед отправкой
+# Проверить JSON файл перед отправкой (по умолчанию BidPlacedEvent)
 nats-tester validate samples/bid_placed_with_previous.json
+
+# Валидация для другого типа события
+nats-tester validate samples/lot_sold.json --event-type events.auction.lot_sold
 ```
 
-#### 5. Проверить зависимости
+#### 5. Просмотреть поддерживаемые типы сообщений
 
 ```bash
-# Проверить установлены ли protoc и nats CLI
+# Показать все зарегистрированные типы (события и команды)
+nats-tester list-types
+```
+
+#### 6. Проверить зависимости
+
+```bash
+# Проверить установлены ли nats CLI и protobuf классы
 nats-tester check
 ```
 
@@ -139,12 +161,44 @@ nats-tester publish samples/bid_placed_with_previous.json
 📨 Message #1
    [#1] Received on "commands.telegram.send_message"
    Decoded:
-   chat_id: 123
-   text: "❗ Ваша ставка в 100 рублей на лот 'Значок Клоун' была перебита..."
-   parse_mode: ""
+   Type: SendMessageCommand
+   JSON:
+     {
+       "chat_id": "123",
+       "text": "❗ Ваша ставка в 100 рублей на лот 'Значок Клоун' была перебита...",
+       "parse_mode": ""
+     }
 ```
 
-### Сценарий 2: Тестирование разных событий
+### Сценарий 2: Тестирование с Docker
+
+**1. Запустить инфраструктуру:**
+```bash
+cd services/notifications-service
+docker-compose up -d
+```
+
+**2. Подписаться на команды:**
+```bash
+nats-tester subscribe
+```
+
+**3. Опубликовать событие:**
+```bash
+nats-tester publish samples/bid_placed_with_previous.json
+```
+
+**4. Посмотреть логи сервиса:**
+```bash
+docker-compose logs -f notifications-service
+```
+
+**5. Остановить:**
+```bash
+docker-compose down
+```
+
+### Сценарий 3: Тестирование разных событий
 
 ```bash
 # Событие с уведомлением (есть previous_leader_id)
@@ -154,7 +208,7 @@ nats-tester publish samples/bid_placed_with_previous.json
 nats-tester publish samples/bid_placed_no_previous.json
 ```
 
-### Сценарий 3: Создание кастомного события
+### Сценарий 4: Создание кастомного события
 
 ```bash
 # Скопировать шаблон
@@ -169,7 +223,7 @@ nats-tester validate samples/my_event.json
 nats-tester publish samples/my_event.json
 ```
 
-### Сценарий 4: Подключение к удаленному NATS
+### Сценарий 5: Подключение к удаленному NATS
 
 ```bash
 # Production/Staging
@@ -199,6 +253,83 @@ nats-tester subscribe --nats-url nats://staging-nats:4222
 **Важно:**
 - Если `previous_leader_id` **присутствует** → Notifications Service отправит уведомление
 - Если `previous_leader_id` **отсутствует** → уведомление НЕ будет отправлено
+
+## Добавление новых типов событий
+
+### Шаг 1: Добавить proto определение
+
+Создайте или обновите `.proto` файл в `contracts/proto/nats/events/`:
+
+```protobuf
+// contracts/proto/nats/events/auction_events.proto
+message LotSoldEvent {
+  string event_id = 1;
+  uint32 lot_id = 2;
+  int64 winner_id = 3;
+  double final_price = 4;
+  string lot_title = 5;
+}
+```
+
+### Шаг 2: Регенерировать Python классы
+
+```bash
+cd tools/nats-tester
+
+# Убедитесь что protoc установлен
+protoc --version
+
+# Регенерировать
+python generate_proto.py
+```
+
+### Шаг 3: Зарегистрировать в CLI
+
+Отредактируйте `nats_tester/cli.py` и добавьте новый тип в соответствующий маппинг:
+
+**Для событий (Events):**
+```python
+EVENT_TYPES = {
+    'events.auction.bid_placed': auction_events_pb2.BidPlacedEvent,
+    'events.auction.lot_sold': auction_events_pb2.LotSoldEvent,  # ← новое
+}
+```
+
+**Для команд (Commands):**
+```python
+COMMAND_TYPES = {
+    'commands.telegram.send_message': telegram_commands_pb2.SendMessageCommand,
+    'commands.email.send_email': email_commands_pb2.SendEmailCommand,  # ← новое
+}
+```
+
+Маппинги используются для:
+- `EVENT_TYPES` — публикация (`publish`) и валидация (`validate`)
+- `COMMAND_TYPES` — подписка и декодирование (`subscribe`)
+- Оба автоматически объединяются в `ALL_MESSAGE_TYPES` для универсального использования
+
+### Шаг 4: Переустановить и использовать
+
+```bash
+# Переустановить пакет
+pip install -e .
+
+# Проверить что тип добавлен
+nats-tester list-types
+
+# Использовать
+nats-tester publish samples/lot_sold.json --subject events.auction.lot_sold
+```
+
+### Преимущества автоматической конвертации
+
+CLI использует `google.protobuf.json_format` для автоматической конвертации JSON → Protobuf:
+
+- ✅ Не нужно вручную маппить поля
+- ✅ Автоматическая валидация типов
+- ✅ Поддержка optional полей
+- ✅ Поддержка вложенных сообщений
+- ✅ Понятные сообщения об ошибках
 
 ## Расширенные возможности
 
@@ -242,15 +373,15 @@ pip install -e .
 pip install --user -e .
 ```
 
-### Ошибка: "protoc not found"
+### Ошибка: "Generated protobuf files not found"
 
 **Решение:**
 ```bash
-# Windows
-choco install protoc
+# Регенерировать proto файлы
+python generate_proto.py
 
-# Проверить
-protoc --version
+# Переустановить
+pip install -e .
 ```
 
 ### Ошибка: "nats not found"
@@ -273,16 +404,67 @@ docker run -p 4222:4222 nats:latest
 nats-server
 ```
 
-### Ошибка: "Proto directory not found"
+### Ошибка: "Missing required field in JSON"
 
 **Решение:**
-Убедитесь, что вы запускаете команду из правильной директории:
+Проверьте структуру JSON файла. Все поля кроме `previous_leader_id` обязательны:
 ```bash
-# Должно работать из любой директории, но если нет:
-cd tools/nats-tester
+nats-tester validate samples/my_event.json
+```
 
-# Или укажите путь явно
-nats-tester publish samples/test.json --proto-path ../../contracts/proto
+## Технические детали
+
+### Архитектура
+
+```
+nats-tester/
+├── nats_tester/
+│   ├── cli.py                   # Главный CLI (Click)
+│   │                            # EVENT_TYPES: маппинг events subject → protobuf class
+│   │                            # COMMAND_TYPES: маппинг commands subject → protobuf class
+│   │                            # ALL_MESSAGE_TYPES: объединение всех типов
+│   └── generated/               # Сгенерированные Protobuf классы
+│       └── nats/
+│           ├── events/
+│           │   └── auction_events_pb2.py
+│           └── commands/
+│               └── telegram_commands_pb2.py
+├── samples/                     # Примеры JSON событий
+├── generate_proto.py            # Скрипт генерации Protobuf
+├── pyproject.toml               # Python package config
+└── README.md                    # Документация
+```
+
+### Преимущества native Python Protobuf
+
+- ✅ Нет зависимости от `protoc` в runtime
+- ✅ Типобезопасность через Python классы
+- ✅ Автоматическая конвертация JSON → Protobuf через `json_format`
+- ✅ Быстрее (нет subprocess вызовов для encoding)
+- ✅ Лучшие сообщения об ошибках
+- ✅ Легко расширять новыми типами событий
+- ✅ Легче отлаживать
+
+### Как это работает
+
+```python
+# 1. JSON файл
+{
+  "event_id": "test-001",
+  "lot_id": 42,
+  "user_id": 200,
+  "amount": 150.0
+}
+
+# 2. Автоматическая конвертация через json_format
+from google.protobuf import json_format
+event = json_format.Parse(json_data, BidPlacedEvent())
+
+# 3. Сериализация в binary Protobuf
+protobuf_bytes = event.SerializeToString()
+
+# 4. Публикация в NATS
+nats pub events.auction.bid_placed <protobuf_bytes>
 ```
 
 ## Разработка
@@ -304,18 +486,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-## Альтернативы
-
-Если Python CLI не подходит, можно использовать:
-
-1. **justfile** - в `tools/justfile` (более простой, но менее гибкий)
-2. **Bash скрипты** - в `tools/scripts/` (для Linux/macOS/WSL)
-3. **PowerShell скрипты** - в `tools/scripts/` (для Windows)
-
 ## См. также
 
 - [Notifications Service Documentation](../../services/notifications-service/README.md)
 - [NATS CLI Documentation](https://docs.nats.io/using-nats/nats-tools/nats_cli)
 - [Protocol Buffers Guide](https://protobuf.dev/)
 - [Click Documentation](https://click.palletsprojects.com/)
-

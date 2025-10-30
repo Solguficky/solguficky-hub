@@ -45,6 +45,14 @@ Program.cs        - DI, Serilog, Health checks
 - Обрабатывает события асинхронно
 - Gracefully завершается при `CancellationToken`
 
+## Proto-файлы и Contracts
+
+Сервис использует Protobuf-контракты из общей директории `contracts/proto/` в корне монорепозитория.
+
+**Docker BuildKit:** Proto-файлы монтируются в контейнер только на этапе сборки через BuildKit bind mount, не копируются в финальный образ.
+
+**Build Context:** Docker build использует корень монорепозитория как контекст для доступа к `contracts/`. Файл `.dockerignore` в корне оптимизирует отправку данных в Docker daemon.
+
 ## Контракты NATS
 
 ### Входящие события
@@ -110,10 +118,23 @@ SERILOG__MINIMUMLEVEL__DEFAULT=Information
 
 ### Docker
 
+**Через Makefile:**
+
 ```bash
-docker build -t notifications-service .
-docker run -e NATS__URL=nats://host.docker.internal:4222 notifications-service
+make up           # Собирает + запускает
+make logs         # Просмотр логов
+make down         # Остановка
+make rebuild      # Полная пересборка
 ```
+
+**Вручную:**
+
+```bash
+docker-compose build
+docker-compose up -d
+```
+
+**Требования:** Docker BuildKit должен быть включен (по умолчанию в Docker 23.0+)
 
 ## Health Checks
 

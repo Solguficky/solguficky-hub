@@ -15,7 +15,7 @@ builder.Host.UseSerilog();
 
 builder.Services.AddSingleton<INatsPublisher, NatsPublisher>();
 builder.Services.AddTransient<IEventHandler, BidPlacedHandler>();
-builder.Services.AddScoped<EventDispatcher>();
+builder.Services.AddSingleton<EventDispatcher>();
 builder.Services.AddHostedService<NatsEventListener>();
 
 builder.Services.AddHealthChecks();

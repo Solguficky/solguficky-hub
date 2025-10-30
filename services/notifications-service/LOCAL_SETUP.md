@@ -5,8 +5,19 @@
 ## Требования
 
 - **.NET 8 SDK** - [скачать](https://dotnet.microsoft.com/download/dotnet/8.0)
-- **Docker** (для NATS)
+- **Docker** (для NATS и контейнеризации)
+- **Docker BuildKit** (включен по умолчанию в Docker 23.0+)
 - **IDE**: Visual Studio 2022, Rider или VS Code с C# extension
+
+## Proto-файлы и Contracts
+
+Сервис использует proto-файлы из общей директории `contracts/proto/` в корне монорепозитория.
+
+- **Локальная разработка**: Proto-файлы ссылаются напрямую через относительные пути (`../../../../contracts/proto/`)
+- **Docker build**:
+  - Build context - корень монорепозитория
+  - Proto-файлы монтируются временно через BuildKit bind mount (не копируются в образ)
+  - `.dockerignore` в корне исключает ненужные файлы из context
 
 ## 1. Проверка .NET SDK
 
@@ -51,7 +62,6 @@ export NATS__URL=nats://localhost:4222
 ## 4. Восстановление пакетов
 
 ```bash
-cd services/notifications-service
 dotnet restore
 ```
 
@@ -62,6 +72,8 @@ dotnet build
 ```
 
 Protobuf файлы автоматически сгенерируются в `obj/Debug/net8.0/nats/`
+
+**Примечание:** Proto-файлы должны быть доступны по пути `../../../../contracts/proto/` от `.csproj`. Убедитесь, что вы находитесь в правильной структуре монорепозитория.
 
 ## 6. Запуск
 
@@ -171,7 +183,11 @@ curl http://localhost:8222/varz
 error CS0234: The type or namespace name 'Nats' does not exist
 ```
 
-**Решение:**
+**Решение:** Proto-файлы не найдены. Убедитесь, что:
+1. Вы находитесь в правильной структуре монорепозитория
+2. Директория `contracts/proto/` существует на 4 уровня выше
+3. Proto-файлы существуют в `contracts/proto/nats/events/` и `contracts/proto/nats/commands/`
+
 ```bash
 dotnet clean
 dotnet build
@@ -187,6 +203,38 @@ dotnet build
 ```bash
 $env:ASPNETCORE_URLS="http://localhost:5001"
 dotnet run
+```
+
+## Docker
+
+### Быстрый старт с Docker
+
+```bash
+make up           # Собирает + запускает
+make build        # Только сборка
+make rebuild      # Полная пересборка с очисткой кэша
+make logs         # Просмотр логов
+make down         # Остановка
+make clean        # Остановка с удалением volumes
+```
+
+### Ручная сборка Docker
+
+```bash
+docker-compose build
+docker-compose up -d
+```
+
+**Важно:** Используется Docker BuildKit для монтирования proto-файлов на этапе сборки. BuildKit включен по умолчанию в Docker 23.0+.
+
+Если BuildKit не включен:
+```bash
+# PowerShell
+$env:DOCKER_BUILDKIT=1
+docker-compose build
+
+# Bash
+DOCKER_BUILDKIT=1 docker-compose build
 ```
 
 ## Интеграция с другими сервисами

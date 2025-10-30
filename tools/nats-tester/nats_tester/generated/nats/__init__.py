@@ -1,0 +1,2 @@
+"""NATS protobuf package."""
+

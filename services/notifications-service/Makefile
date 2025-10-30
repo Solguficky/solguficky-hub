@@ -1,4 +1,7 @@
-.PHONY: up down logs test
+.PHONY: up down logs test build
+
+build:
+	docker-compose build
 
 up:
 	docker-compose up -d
@@ -19,3 +22,6 @@ test:
 rebuild:
 	docker-compose build --no-cache
 	docker-compose up -d
+
+clean:
+	docker-compose down -v
