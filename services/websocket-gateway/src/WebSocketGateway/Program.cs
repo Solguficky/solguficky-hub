@@ -1,4 +1,3 @@
-using NATS.Client;
 using Serilog;
 using Serilog.Formatting.Compact;
 using WebSocketGateway.Hubs;
@@ -31,30 +30,10 @@ builder.Services.AddSignalR(options =>
     }
 });
 
-builder.Services.AddSingleton<IConnection>(sp =>
-{
-    var natsUrl = builder.Configuration["Nats:Url"]
-        ?? throw new InvalidOperationException("Nats:Url configuration is missing");
-
-    var factory = new ConnectionFactory();
-    var connection = factory.CreateConnection(natsUrl);
-
-    Log.Information("Connected to NATS at {NatsUrl}", natsUrl);
-
-    return connection;
-});
-
 builder.Services.AddSingleton<EventMapper>();
 builder.Services.AddHostedService<NatsEventListener>();
 
-builder.Services.AddHealthChecks()
-    .AddCheck("nats", () =>
-    {
-        var connection = builder.Services.BuildServiceProvider().GetRequiredService<IConnection>();
-        return connection.State == ConnState.CONNECTED
-            ? Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy("NATS connected")
-            : Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy("NATS disconnected");
-    });
+builder.Services.AddHealthChecks();
 
 builder.Services.AddCors(options =>
 {

@@ -109,10 +109,10 @@ public record AuctionEventDto(
 **WebSocket API (SignalR):**
 - Endpoint: `ws://<host>/auctionHub`
 - Client → Server: `SubscribeToAuction()`, `UnsubscribeFromAuction()`
-- Server → Client: `AuctionEvent(event)` - JSON событие
+- Server → Client: `Event(event)` - JSON событие (generic название для универсальности)
 
 **NATS подписка:**
-- Subject: `events.auction.*` (wildcard)
+- Subject: `events.*` (wildcard для всех типов событий, не только auction)
 - Format: Protobuf
 - Поддержка: `BidPlacedEvent` (расширяемо для других событий)
 

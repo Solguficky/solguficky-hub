@@ -93,7 +93,7 @@ const connection = new signalR.HubConnectionBuilder()
     .build();
 
 // 2. Зарегистрировать обработчик события
-connection.on("AuctionEvent", (event) => {
+connection.on("Event", (event) => {
     console.log("📨 Received event:");
     console.log("  Type:", event.type);
     console.log("  Data:", event.data);

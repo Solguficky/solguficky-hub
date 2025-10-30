@@ -1,34 +1,31 @@
 using Microsoft.AspNetCore.SignalR;
 using NATS.Client;
+using WebSocketGateway.Constants;
 using WebSocketGateway.Hubs;
 
 namespace WebSocketGateway.Services;
 
-public class NatsEventListener : BackgroundService
+public class NatsEventListener(
+    IConfiguration configuration,
+    IHubContext<AuctionHub> hubContext,
+    EventMapper eventMapper,
+    ILogger<NatsEventListener> logger) : BackgroundService
 {
-    private readonly IConnection _natsConnection;
-    private readonly IHubContext<AuctionHub> _hubContext;
-    private readonly EventMapper _eventMapper;
-    private readonly ILogger<NatsEventListener> _logger;
-    private const string LiveChannelName = "auction:live";
-    private const string NatsSubject = "events.auction.*";
+    private const string NatsSubject = "events.*";
+    private IConnection? _natsConnection;
     private IAsyncSubscription? _subscription;
-
-    public NatsEventListener(
-        IConnection natsConnection,
-        IHubContext<AuctionHub> hubContext,
-        EventMapper eventMapper,
-        ILogger<NatsEventListener> logger)
-    {
-        _natsConnection = natsConnection;
-        _hubContext = hubContext;
-        _eventMapper = eventMapper;
-        _logger = logger;
-    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("NATS Event Listener starting, subscribing to {Subject}", NatsSubject);
+        var natsUrl = configuration["Nats:Url"]
+            ?? throw new InvalidOperationException("Nats:Url configuration is missing");
+
+        logger.LogInformation("NATS Event Listener starting, connecting to {NatsUrl}", natsUrl);
+
+        var factory = new ConnectionFactory();
+        _natsConnection = factory.CreateConnection(natsUrl);
+
+        logger.LogInformation("Connected to NATS, subscribing to {Subject}", NatsSubject);
 
         _subscription = _natsConnection.SubscribeAsync(NatsSubject);
         _subscription.MessageHandler += async (sender, args) =>
@@ -37,7 +34,7 @@ public class NatsEventListener : BackgroundService
         };
         _subscription.Start();
 
-        _logger.LogInformation("NATS Event Listener started");
+        logger.LogInformation("NATS Event Listener started");
 
         try
         {
@@ -45,7 +42,7 @@ public class NatsEventListener : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("NATS Event Listener stopping");
+            logger.LogInformation("NATS Event Listener stopping");
         }
     }
 
@@ -53,30 +50,31 @@ public class NatsEventListener : BackgroundService
     {
         try
         {
-            var eventDto = _eventMapper.MapEvent(msg.Subject, msg.Data);
+            var eventDto = eventMapper.MapEvent(msg.Subject, msg.Data);
 
             if (eventDto == null)
             {
-                _logger.LogWarning("Failed to map event from subject {Subject}, skipping broadcast", msg.Subject);
+                logger.LogWarning("Failed to map event from subject {Subject}, skipping broadcast", msg.Subject);
                 return;
             }
 
-            await _hubContext.Clients
-                .Group(LiveChannelName)
-                .SendAsync("AuctionEvent", eventDto, ct);
+            await hubContext.Clients
+                .Group(SignalRConstants.Channels.AuctionLive)
+                .SendAsync(SignalRConstants.Events.Event, eventDto, ct);
 
-            _logger.LogDebug("Event broadcasted to live channel, Subject={Subject}, EventType={EventType}",
+            logger.LogDebug("Event broadcasted to live channel, Subject={Subject}, EventType={EventType}",
                 msg.Subject, eventDto.Type);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process event from subject {Subject}", msg.Subject);
+            logger.LogError(ex, "Failed to process event from subject {Subject}", msg.Subject);
         }
     }
 
     public override void Dispose()
     {
         _subscription?.Dispose();
+        _natsConnection?.Dispose();
         base.Dispose();
     }
 }

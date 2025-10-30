@@ -87,7 +87,7 @@ const connection = new signalR.HubConnectionBuilder()
     .build();
 
 // Обработчик событий
-connection.on("AuctionEvent", (event) => {
+connection.on("Event", (event) => {
     console.log("Received event:", event);
     console.log("Type:", event.type);
     console.log("Data:", event.data);
@@ -144,7 +144,7 @@ console.log("Connected and subscribed to live auction channel");
 
 ### События (Server → Client)
 
-- `AuctionEvent(event)` - получение события аукциона
+- `Event(event)` - получение события
 
 **Формат события:**
 ```typescript
