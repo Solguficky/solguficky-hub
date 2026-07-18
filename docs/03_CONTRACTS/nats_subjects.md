@@ -1,65 +1,50 @@
 # Справочник: Темы (Subjects) в NATS
 
-Этот документ является единым источником правды для именования тем и форматов сообщений в NATS.
+Единый источник правды для именования тем и форматов сообщений в NATS.
 
 ## Формат сериализации
 
-Все сообщения в NATS сериализуются в формате **Protobuf** (Protocol Buffers). Схемы (`.proto` файлы) управляются централизованно через **Apicurio Registry**, который обеспечивает:
-
-*   Централизованное хранилище всех версий схем
-*   Автоматическую проверку совместимости при регистрации новых версий
-*   Уменьшение размера сообщений (сообщения содержат только ID схемы, а не саму схему)
-*   Кодогенерацию клиентов для всех языков платформы
-
-Исходные `.proto` файлы хранятся в `contracts/proto/` и автоматически публикуются в Apicurio через CI/CD.
+Все сообщения в NATS сериализуются в **Protobuf**. Схемы — в `contracts/proto/`, подход **Protobuf-in-Git** (ADR-014): кодогенерация на этапе сборки каждого сервиса, внешний Schema Registry не используется. JSON в шине запрещён (ADR-012).
 
 ## Принципы именования
 
-Используется иерархическая структура: `<тип>.<домен>.<действие>`
+Иерархическая структура: `<тип>.<домен>.<действие>` в snake_case.
 
-*   **Тип:** `commands` (намерения), `events` (факты).
-*   **Домен:** `events`, `auction`, `users`, `notifications`, `telegram`.
-*   **Действие:** `create`, `update`, `place_bid`, `started`, `created`.
+*   **Тип:** `commands` (намерения), `events` (свершившиеся факты).
+*   **Домен:** `auction`, `telegram`, в будущем `meetup`, `notifications`.
 
-## Список тем (v1)
+## Актуальные темы
 
-### Команды (Commands)
+### Команды
 
-*   **`commands.events.create`**
-    *   *Отправитель:* Telegram Gateway
-    *   *Получатель:* Meetups Service
-    *   *Описание:* Создать новую сходку (изначально в статусе "предложена").
-*   **`commands.auction.start`**
-    *   *Отправитель:* Telegram Gateway
-    *   *Получатель:* Auction Service
-    *   *Описание:* Начать аукцион для сходки.
+| Тема | Proto | Отправитель | Получатель |
+|---|---|---|---|
+| `commands.auction.start` | `StartAuctionCommand` | Telegram Gateway / админ-инструменты | Auction Service |
+| `commands.auction.place_bid` | `PlaceBidCommand` | Telegram Gateway | Auction Service |
+| `commands.auction.set_proxy_bid` | `SetProxyBidCommand` | Telegram Gateway | Auction Service |
+| `commands.auction.end_open_bidding` | `EndOpenBiddingCommand` | админ-инструменты | Auction Service |
+| `commands.auction.start_final_phase` | `StartFinalPhaseCommand` | админ-инструменты | Auction Service |
+| `commands.telegram.send_message` | `SendMessageCommand` | Notifications Service | Telegram Gateway |
 
-*   **`commands.auction.place_bid`**
-    *   *Отправитель:* Telegram Gateway
-    *   *Получатель:* Auction Service
-    *   *Описание:* Сделать ставку на лот.
+### События
 
-*   **`commands.telegram.send_message`**
-    *   *Отправитель:* Notifications Service
-    *   *Получатель:* Telegram Gateway
-    *   *Описание:* Отправить сообщение пользователю в Telegram.
+| Тема | Proto | Отправитель | Получатели |
+|---|---|---|---|
+| `events.auction.started` | `AuctionStartedEvent` | Auction Service | WebSocket Gateway, Notifications |
+| `events.auction.bid_placed` | `BidPlacedEvent` | Auction Service | Notifications, WebSocket Gateway, Telegram Gateway |
+| `events.auction.phase_transitioned` | `PhaseTransitionedEvent` | Auction Service | WebSocket Gateway, Notifications |
 
-### События (Events)
+### Планируемые (не реализованы)
 
-*   **`events.event.created`**
-    *   *Отправитель:* Meetups Service
-    *   *Получатель:* Notifications Service, Achievements Service, etc.
-    *   *Описание:* Новая сходка была создана и одобрена.
+*   `commands.meetup.create` / `events.meetup.created` — после появления Meetups Service (roadmap P1).
+*   `events.auction.lot_sold`, `events.auction.finished` — при доработке аукциона (P3).
 
-*   **`events.auction.bid_placed`**
-    *   *Отправитель:* Auction Service
-    *   *Получатель:* Notifications Service, Real-Time Hub, Achievements Service.
-    *   *Описание:* Была сделана новая ставка. Содержит информацию о предыдущем и текущем лидере.
-*   **`events.auction.finished`**
-    *   *Отправитель:* Auction Service
-    *   *Получатель:* Notifications Service, Achievements Service
-    *   *Описание:* Аукцион для сходки завершен.
-*   **`events.auction.lot_sold`**
-    *   *Отправитель:* Auction Service
-    *   *Получатель:* Notifications Service, Achievements Service.
-    *   *Описание:* Торги по лоту завершены.
+## Правила изменения
+
+При изменении контракта следуй скиллу `.claude/skills/contract-change/` — обнови все сервисы-потребители, `nats-tester` и этот документ в одном изменении.
+
+## Известные расхождения (техдолг, roadmap P0)
+
+*   `telegram-gateway/src/app/event_listener.rs` парсит `BidPlacedEvent` и `SendMessageCommand` как JSON — должен использовать Protobuf из `generated/`.
+*   `websocket-gateway` подписан на `events.*` (одноуровневый wildcard) и не получает `events.auction.*` — нужен `events.>`.
+*   Поле `op_id` в командах зарезервировано под идемпотентность, но консьюмерами пока не проверяется.

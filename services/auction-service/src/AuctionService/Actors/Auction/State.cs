@@ -5,17 +5,18 @@ using System.Collections.Immutable;
 public enum AuctionPhase
 {
     NotStarted,
+    Idle,
     OpenBidding,
     Final,
     Finished
 }
 
 public sealed record State(
-    string AuctionId,
+    Ulid AuctionId,
     AuctionPhase Phase,
-    ImmutableList<int> LotIds
+    ImmutableList<(int LotId, int DisplayOrder)> Lots
 )
 {
-    public static State Empty() => new(string.Empty, AuctionPhase.NotStarted, ImmutableList<int>.Empty);
+    public static State Empty() => new(Ulid.Empty, AuctionPhase.NotStarted, []);
 }
 

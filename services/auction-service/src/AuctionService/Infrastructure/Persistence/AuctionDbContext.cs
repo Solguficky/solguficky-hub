@@ -22,6 +22,8 @@ public class AuctionDbContext(DbContextOptions<AuctionDbContext> options) : DbCo
             entity.Property(e => e.StartingPrice).IsRequired();
             entity.Property(e => e.MinBidStep).IsRequired();
             entity.Property(e => e.ImageUrl).HasMaxLength(1000);
+            entity.Property(e => e.DisplayOrder).IsRequired();
+            entity.HasIndex(e => new { e.AuctionId, e.DisplayOrder });
             entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("NOW()");
         });
     }

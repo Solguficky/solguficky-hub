@@ -27,6 +27,9 @@ public class LotEntity
     [MaxLength(1000)]
     public string ImageUrl { get; set; } = string.Empty;
 
+    [Required]
+    public int DisplayOrder { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? UpdatedAt { get; set; }

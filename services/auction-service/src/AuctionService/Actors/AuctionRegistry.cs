@@ -13,7 +13,7 @@ public class AuctionRegistry : ReceiveActor
         Receive<ForwardToLot>(cmd =>
         {
             var auctionActor = GetOrCreateAuction(cmd.AuctionId);
-            auctionActor.Tell(new RouteToLot(cmd.LotId, cmd.Command), Sender);
+            auctionActor.Tell(new Auction.ForwardToLot(cmd.LotId, cmd.LotCommand), Sender);
         });
 
         Receive<ForwardToAuction>(cmd =>
@@ -23,7 +23,7 @@ public class AuctionRegistry : ReceiveActor
         });
     }
 
-    private IActorRef GetOrCreateAuction(string auctionId)
+    private IActorRef GetOrCreateAuction(Ulid auctionId)
     {
         var auctionActor = Context.Child($"auction-{auctionId}");
         if (auctionActor.IsNobody())
@@ -41,7 +41,7 @@ public class AuctionRegistry : ReceiveActor
 
 public abstract record RegistryCommand;
 
-public sealed record ForwardToLot(string AuctionId, int LotId, Lot.Command Command) : RegistryCommand;
+public sealed record ForwardToLot(Ulid AuctionId, int LotId, Lot.Command LotCommand) : RegistryCommand;
 
-public sealed record ForwardToAuction(string AuctionId, Auction.Command Command) : RegistryCommand;
+public sealed record ForwardToAuction(Ulid AuctionId, Auction.Command Command) : RegistryCommand;
 

@@ -15,13 +15,12 @@ graph TD
     subgraph Backend Platform
         Gateway[Telegram Gateway<br/>Rust]
         Bus{Шина NATS JetStream}
-        Registry[Apicurio Registry<br/>Schema Registry]
 
         subgraph Stateful Services
             direction LR
-            Auction[Auction Service<br/>Scala/F# + Akka]
-            Notifications[Notifications Service<br/>Elixir]
-            Realtime[WebSocket Gateway<br/>C# (MVP)]
+            Auction[Auction Service<br/>C# + Akka.NET]
+            Notifications[Notifications Service<br/>C#]
+            Realtime[WebSocket Gateway<br/>C# + SignalR]
         end
 
         subgraph Stateless Services
@@ -76,8 +75,8 @@ graph TD
 ## Краткое описание сервисов
 
 *   **Telegram Gateway (Rust):** Принимает все внешние запросы, отвечает за авторизацию и роутинг. Команды отправляет в шину, за данными ходит напрямую.
-*   **Auction Service (Scala/F#):** Stateful-сервис, управляющий сложной логикой аукционов с помощью акторной модели и Event Sourcing.
-*   **Notifications Service (Elixir):** Stateful-сервис для формирования и планирования отложенных уведомлений.
+*   **Auction Service (C# + Akka.NET):** Stateful-сервис, управляющий сложной логикой аукционов с помощью акторной модели и Event Sourcing (см. ADR-017: миграция со Scala на C#).
+*   **Notifications Service (C#):** Сервис формирования уведомлений: слушает бизнес-события и генерирует команды на отправку сообщений (Elixir-версия — возможная будущая миграция, см. ADR-018).
 *   **WebSocket Gateway (C#):** WebSocket-шлюз для "живой" доставки событий на фронтенд-клиенты. Для MVP реализован на C# с SignalR, в будущем возможна миграция на Elixir для масштабирования.
 *   **Meetups Service (C#):** CRUD-сервис, "владелец" данных о сходках.
 *   **Identity Service (C#):** CRUD-сервис, управляет пользователями, ролями и правами.
@@ -94,13 +93,12 @@ graph TD
 *   **Хостинг:** **Railway (PaaS)** для упрощения развертывания.
 *   **Асинхронное взаимодействие:** **NATS JetStream** для надежной доставки команд и событий.
 *   **Синхронное взаимодействие:** **gRPC** для быстрых и строго типизированных Service-to-Service вызовов.
-*   **Управление схемами:** **Protobuf-in-Git**. Схемы сообщений (`.proto` файлы) хранятся в репозитории и являются частью контракта сервиса. Кодогенерация происходит на этапе сборки.
+*   **Управление схемами:** **Protobuf-in-Git** (ADR-014). Схемы сообщений (`.proto` файлы) хранятся в репозитории и являются частью контракта сервиса. Кодогенерация происходит на этапе сборки. Внешний Schema Registry (Apicurio) осознанно не используется на этапе MVP.
 *   **Хранение данных:** **PostgreSQL** как для обычных данных, так и в качестве Event Store.
 *   **Языки и роли:**
     *   **Rust (Telegram Gateway):** Высокопроизводительный и безопасный входной шлюз.
-    *   **Scala/F# (Auction Service):** Строгая типизация и акторная модель для сложной stateful-логики.
-    *   **Elixir (Notifications, Real-Time Hub):** Массовая конкурентность для уведомлений и WebSocket.
-    *   **C# (Meetups, Identity, Achievements):** Быстрая и надежная разработка CRUD-сервисов.
+    *   **C# + Akka.NET (Auction Service):** Акторная модель и Event Sourcing для сложной stateful-логики (ADR-017).
+    *   **C# (Notifications, WebSocket Gateway, будущие Meetups/Identity/Achievements):** Быстрая и надежная разработка сервисов на знакомом стеке. Elixir — кандидат для миграции уведомлений/WS при росте нагрузки (ADR-018).
     *   **TypeScript (Frontend):** Стандарт индустрии для веб-приложений (`Big Screen App`, `Admin Panel`). Рекомендуется использование современных фреймворков, таких как Svelte, Vue или React.
 
 ## Наблюдаемость (Observability)

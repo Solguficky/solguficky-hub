@@ -22,7 +22,12 @@ message StartAuctionCommand {
   string auction_id = 2;
 }
 
-message TransitionToFinalPhaseCommand {
+message EndOpenBiddingCommand {
+  string op_id = 1;
+  string auction_id = 2;
+}
+
+message StartFinalPhaseCommand {
   string op_id = 1;
   string auction_id = 2;
 }

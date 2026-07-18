@@ -11,8 +11,6 @@ public sealed record BidPlaced(
 
 public sealed record LotSold(long WinnerId, double FinalPrice, long Timestamp) : Event;
 
-public sealed record LotTimerExtended(DateTimeOffset NewEndTime, long Timestamp) : Event;
-
 public sealed record AuctionFinished(long? WinnerId, double? FinalPrice, long Timestamp) : Event;
 
 public sealed record ProxyBidSet(long UserId, double MaxAmount, long Timestamp) : Event;

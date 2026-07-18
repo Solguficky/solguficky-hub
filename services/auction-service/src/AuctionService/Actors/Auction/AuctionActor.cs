@@ -11,21 +11,24 @@ public class AuctionActor : ReceivePersistentActor
     public override string PersistenceId { get; }
     private State _state = State.Empty();
     private readonly ILoggingAdapter _log = Context.GetLogger();
-    private readonly Dictionary<int, LotConfig> _lotConfigs = new();
+    private readonly Dictionary<int, LotConfig> _lotConfigs = [];
 
-    public AuctionActor(string auctionId)
+    public AuctionActor(Ulid auctionId)
     {
         PersistenceId = $"auction-{auctionId}";
 
         Command<StartAuction>(HandleStartAuction);
-        Command<RouteToLot>(HandleRouteToLot);
-        Command<TransitionToFinalPhase>(HandleTransitionToFinalPhase);
+        Command<ForwardToLot>(HandleForwardToLot);
+        Command<EndOpenBidding>(HandleEndOpenBidding);
+        Command<StartFinalPhase>(HandleStartFinalPhase);
         Command<FinishAuction>(HandleFinishAuction);
         Command<GetAuctionStatus>(HandleGetAuctionStatus);
 
         Recover<AuctionStarted>(ApplyAuctionStarted);
         Recover<OpenBiddingStarted>(ApplyOpenBiddingStarted);
+        Recover<OpenBiddingEnded>(ApplyOpenBiddingEnded);
         Recover<FinalPhaseStarted>(ApplyFinalPhaseStarted);
+        Recover<FinalPhaseEnded>(ApplyFinalPhaseEnded);
         Recover<AuctionFinished>(ApplyAuctionFinished);
     }
 
@@ -62,7 +65,7 @@ public class AuctionActor : ReceivePersistentActor
 
     private void CreateLotActors()
     {
-        foreach (var lotId in _state.LotIds)
+        foreach (var (lotId, _) in _state.Lots)
         {
             if (!_lotConfigs.TryGetValue(lotId, out var config))
             {
@@ -79,7 +82,7 @@ public class AuctionActor : ReceivePersistentActor
         }
     }
 
-    private void HandleRouteToLot(RouteToLot cmd)
+    private void HandleForwardToLot(ForwardToLot cmd)
     {
         if (_state.Phase == AuctionPhase.NotStarted || _state.Phase == AuctionPhase.Finished)
         {
@@ -88,35 +91,56 @@ public class AuctionActor : ReceivePersistentActor
             return;
         }
 
-        _log.Debug("Routing command to Lot-{LotId}", cmd.LotId);
+        _log.Debug("Forwarding command to Lot-{LotId} in auction {AuctionId}", cmd.LotId, _state.AuctionId);
 
         var lotActor = Context.Child($"lot-{cmd.LotId}");
         if (lotActor.IsNobody())
         {
-            _log.Warning("Lot actor {LotId} not found", cmd.LotId);
+            _log.Warning("Lot actor {LotId} not found in auction {AuctionId}", cmd.LotId, _state.AuctionId);
             Sender.Tell(new StatusMessage($"Lot {cmd.LotId} not found"), Self);
             return;
         }
 
-        lotActor.Forward(cmd.Command);
+        lotActor.Forward(cmd.LotCommand);
     }
 
-    private void HandleTransitionToFinalPhase(TransitionToFinalPhase cmd)
+    private void HandleEndOpenBidding(EndOpenBidding cmd)
     {
         if (_state.Phase != AuctionPhase.OpenBidding)
         {
-            _log.Warning("Cannot transition to Final phase. Current phase: {Phase}", _state.Phase);
-            Sender.Tell(new StatusMessage($"Cannot transition from {_state.Phase} to Final"), Self);
+            _log.Warning("Cannot end OpenBidding phase. Current phase: {Phase} for auction {AuctionId}",
+                _state.Phase, _state.AuctionId);
+            Sender.Tell(new StatusMessage($"Cannot end OpenBidding from {_state.Phase}"), Self);
             return;
         }
 
-        _log.Info("Transitioning auction {AuctionId} to Final phase", _state.AuctionId);
+        _log.Info("Ending OpenBidding phase for auction {AuctionId}", _state.AuctionId);
+
+        var evt = new OpenBiddingEnded(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        Persist(evt, e =>
+        {
+            ApplyOpenBiddingEnded(e);
+            Sender.Tell(new StatusMessage("OpenBidding phase ended"), Self);
+        });
+    }
+
+    private void HandleStartFinalPhase(StartFinalPhase cmd)
+    {
+        if (_state.Phase != AuctionPhase.Idle)
+        {
+            _log.Warning("Cannot start Final phase. Current phase: {Phase} for auction {AuctionId}",
+                _state.Phase, _state.AuctionId);
+            Sender.Tell(new StatusMessage($"Cannot start Final phase from {_state.Phase}"), Self);
+            return;
+        }
+
+        _log.Info("Starting Final phase for auction {AuctionId}", _state.AuctionId);
 
         var evt = new FinalPhaseStarted(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         Persist(evt, e =>
         {
             ApplyFinalPhaseStarted(e);
-            Sender.Tell(new StatusMessage("Transitioned to Final phase"), Self);
+            Sender.Tell(new StatusMessage("Final phase started"), Self);
         });
     }
 
@@ -144,35 +168,48 @@ public class AuctionActor : ReceivePersistentActor
         Sender.Tell(new AuctionStatusResponse(
             _state.AuctionId,
             _state.Phase,
-            _state.LotIds
+            _state.Lots.Select(l => l.LotId).ToImmutableList()
         ), Self);
     }
 
     private void ApplyAuctionStarted(AuctionStarted evt)
     {
         _log.Info("Applied AuctionStarted for auction {AuctionId}", evt.AuctionId);
+        var lots = evt.LotIds.Select((lotId, index) => (lotId, DisplayOrder: index)).ToImmutableList();
         _state = _state with
         {
             AuctionId = evt.AuctionId,
-            LotIds = evt.LotIds.ToImmutableList()
+            Lots = lots
         };
     }
 
     private void ApplyOpenBiddingStarted(OpenBiddingStarted evt)
     {
-        _log.Info("Applied OpenBiddingStarted");
+        _log.Info("Applied OpenBiddingStarted for auction {AuctionId}", _state.AuctionId);
         _state = _state with { Phase = AuctionPhase.OpenBidding };
+    }
+
+    private void ApplyOpenBiddingEnded(OpenBiddingEnded evt)
+    {
+        _log.Info("Applied OpenBiddingEnded for auction {AuctionId}", _state.AuctionId);
+        _state = _state with { Phase = AuctionPhase.Idle };
     }
 
     private void ApplyFinalPhaseStarted(FinalPhaseStarted evt)
     {
-        _log.Info("Applied FinalPhaseStarted");
+        _log.Info("Applied FinalPhaseStarted for auction {AuctionId}", _state.AuctionId);
         _state = _state with { Phase = AuctionPhase.Final };
+    }
+
+    private void ApplyFinalPhaseEnded(FinalPhaseEnded evt)
+    {
+        _log.Info("Applied FinalPhaseEnded for auction {AuctionId}", _state.AuctionId);
+        _state = _state with { Phase = AuctionPhase.Finished };
     }
 
     private void ApplyAuctionFinished(AuctionFinished evt)
     {
-        _log.Info("Applied AuctionFinished");
+        _log.Info("Applied AuctionFinished for auction {AuctionId}", _state.AuctionId);
         _state = _state with { Phase = AuctionPhase.Finished };
     }
 }

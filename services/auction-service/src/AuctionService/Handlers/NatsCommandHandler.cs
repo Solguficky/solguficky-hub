@@ -5,25 +5,20 @@ using Akka.Hosting;
 using AuctionService.Actors;
 using AuctionService.Actors.Auction;
 using AuctionService.Actors.Lot;
+using AuctionService.Constants;
 using AuctionService.Services;
+using Google.Protobuf;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using NATS.Client;
 using Nats.Commands;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 
-public class NatsCommandHandler : IHostedService
+public class NatsCommandHandler : BackgroundService
 {
     private readonly IConnection _natsConnection;
     private readonly IActorRef _registry;
     private readonly LotRepository _lotRepository;
     private readonly ILogger<NatsCommandHandler> _logger;
-    private IAsyncSubscription? _placeBidSubscription;
-    private IAsyncSubscription? _setProxyBidSubscription;
-    private IAsyncSubscription? _startAuctionSubscription;
-    private IAsyncSubscription? _transitionToFinalSubscription;
+    private readonly List<IAsyncSubscription> _subscriptions = new();
 
     public NatsCommandHandler(
         IConfiguration configuration,
@@ -38,113 +33,131 @@ public class NatsCommandHandler : IHostedService
         _logger = logger;
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Starting NATS command handler...");
 
-        _placeBidSubscription = _natsConnection.SubscribeAsync("commands.auction.place_bid", (sender, args) =>
+        SubscribeCommand<PlaceBidCommand>(NatsSubjects.Commands.PlaceBid, command =>
         {
-            try
-            {
-                var command = PlaceBidCommand.Parser.ParseFrom(args.Message.Data);
-                _logger.LogInformation("Received PlaceBidCommand for Lot {LotId} in auction {AuctionId}",
-                    command.LotId, command.AuctionId);
+            var auctionId = Ulid.Parse(command.AuctionId);
+            _logger.LogInformation("Received PlaceBidCommand for Lot {LotId} in auction {AuctionId}",
+                command.LotId, auctionId);
 
-                var placeBid = new PlaceBid(command.UserId, command.Amount);
-                var forwardCommand = new ForwardToLot(command.AuctionId, (int)command.LotId, placeBid);
-
-                _registry.Tell(forwardCommand);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to process PlaceBidCommand.");
-            }
+            var placeBid = new PlaceBid(command.UserId, command.Amount);
+            var forwardCommand = new Actors.ForwardToLot(auctionId, (int)command.LotId, placeBid);
+            _registry.Tell(forwardCommand);
         });
 
-        _setProxyBidSubscription = _natsConnection.SubscribeAsync("commands.auction.set_proxy_bid", (sender, args) =>
+        SubscribeCommand<SetProxyBidCommand>(NatsSubjects.Commands.SetProxyBid, command =>
         {
-            try
-            {
-                var command = SetProxyBidCommand.Parser.ParseFrom(args.Message.Data);
-                _logger.LogInformation("Received SetProxyBidCommand for Lot {LotId} in auction {AuctionId}",
-                    command.LotId, command.AuctionId);
+            var auctionId = Ulid.Parse(command.AuctionId);
+            _logger.LogInformation("Received SetProxyBidCommand for Lot {LotId} in auction {AuctionId}",
+                command.LotId, auctionId);
 
-                var setProxyBid = new SetProxyBid(command.UserId, command.MaxAmount);
-                var forwardCommand = new ForwardToLot(command.AuctionId, (int)command.LotId, setProxyBid);
-
-                _registry.Tell(forwardCommand);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to process SetProxyBidCommand.");
-            }
+            var setProxyBid = new SetProxyBid(command.UserId, command.MaxAmount);
+            var forwardCommand = new Actors.ForwardToLot(auctionId, (int)command.LotId, setProxyBid);
+            _registry.Tell(forwardCommand);
         });
 
-        _startAuctionSubscription = _natsConnection.SubscribeAsync("commands.auction.start", async (sender, args) =>
+        SubscribeCommandAsync<StartAuctionCommand>(NatsSubjects.Commands.StartAuction, async command =>
         {
-            try
+            var auctionId = Ulid.Parse(command.AuctionId);
+            _logger.LogInformation("Received StartAuctionCommand for Auction {AuctionId}", auctionId);
+
+            var lots = await _lotRepository.GetLotsByAuctionId(command.AuctionId);
+            if (lots.Count == 0)
             {
-                var command = StartAuctionCommand.Parser.ParseFrom(args.Message.Data);
-                _logger.LogInformation("Received StartAuctionCommand for Auction {AuctionId}", command.AuctionId);
-
-                var lots = await _lotRepository.GetLotsByAuctionId(command.AuctionId);
-                if (lots.Count == 0)
-                {
-                    _logger.LogWarning("No lots found for auction {AuctionId}", command.AuctionId);
-                    return;
-                }
-
-                var lotIds = lots.Select(l => l.Id).ToList();
-                var lotConfigs = lots.ToDictionary(
-                    l => l.Id,
-                    l => new LotConfig(l.StartingPrice, l.MinBidStep)
-                );
-
-                var startAuction = new StartAuction(command.AuctionId, lotIds, lotConfigs);
-                var forwardCommand = new ForwardToAuction(command.AuctionId, startAuction);
-
-                _registry.Tell(forwardCommand);
-                _logger.LogInformation("Started auction {AuctionId} with {LotCount} lots",
-                    command.AuctionId, lots.Count);
+                _logger.LogWarning("No lots found for auction {AuctionId}", auctionId);
+                return;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to process StartAuctionCommand.");
-            }
+
+            var lotIds = lots.Select(l => l.Id).ToList();
+            var lotConfigs = lots.ToDictionary(
+                l => l.Id,
+                l => new LotConfig(l.StartingPrice, l.MinBidStep)
+            );
+
+            var startAuction = new StartAuction(auctionId, lotIds, lotConfigs);
+            var forwardCommand = new ForwardToAuction(auctionId, startAuction);
+
+            _registry.Tell(forwardCommand);
+            _logger.LogInformation("Started auction {AuctionId} with {LotCount} lots",
+                auctionId, lots.Count);
         });
 
-        _transitionToFinalSubscription = _natsConnection.SubscribeAsync("commands.auction.transition_to_final", (sender, args) =>
+        SubscribeCommand<EndOpenBiddingCommand>(NatsSubjects.Commands.EndOpenBidding, command =>
         {
-            try
-            {
-                var command = TransitionToFinalPhaseCommand.Parser.ParseFrom(args.Message.Data);
-                _logger.LogInformation("Received TransitionToFinalPhaseCommand for Auction {AuctionId}", command.AuctionId);
+            var auctionId = Ulid.Parse(command.AuctionId);
+            _logger.LogInformation("Received EndOpenBiddingCommand for Auction {AuctionId}", auctionId);
 
-                var transitionCommand = new TransitionToFinalPhase();
-                var forwardCommand = new ForwardToAuction(command.AuctionId, transitionCommand);
+            var endOpenBiddingCmd = new EndOpenBidding();
+            var forwardCommand = new ForwardToAuction(auctionId, endOpenBiddingCmd);
+            _registry.Tell(forwardCommand);
+        });
 
-                _registry.Tell(forwardCommand);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to process TransitionToFinalPhaseCommand.");
-            }
+        SubscribeCommand<StartFinalPhaseCommand>(NatsSubjects.Commands.StartFinalPhase, command =>
+        {
+            var auctionId = Ulid.Parse(command.AuctionId);
+            _logger.LogInformation("Received StartFinalPhaseCommand for Auction {AuctionId}", auctionId);
+
+            var startFinalPhaseCmd = new StartFinalPhase();
+            var forwardCommand = new ForwardToAuction(auctionId, startFinalPhaseCmd);
+            _registry.Tell(forwardCommand);
         });
 
         _logger.LogInformation("NATS command handler started.");
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    private void SubscribeCommand<TCommand>(string subject, Action<TCommand> handler)
+        where TCommand : IMessage<TCommand>, new()
     {
-        _logger.LogInformation("Stopping NATS command handler...");
-        _placeBidSubscription?.Unsubscribe();
-        _setProxyBidSubscription?.Unsubscribe();
-        _startAuctionSubscription?.Unsubscribe();
-        _transitionToFinalSubscription?.Unsubscribe();
+        var parser = new MessageParser<TCommand>(() => new TCommand());
+        var subscription = _natsConnection.SubscribeAsync(subject, (sender, args) =>
+        {
+            try
+            {
+                var command = parser.ParseFrom(args.Message.Data);
+                handler(command);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process command from subject {Subject}", subject);
+            }
+        });
+
+        _subscriptions.Add(subscription);
+    }
+
+    private void SubscribeCommandAsync<TCommand>(string subject, Func<TCommand, Task> handler)
+        where TCommand : IMessage<TCommand>, new()
+    {
+        var parser = new MessageParser<TCommand>(() => new TCommand());
+        var subscription = _natsConnection.SubscribeAsync(subject, async (sender, args) =>
+        {
+            try
+            {
+                var command = parser.ParseFrom(args.Message.Data);
+                await handler(command);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process async command from subject {Subject}", subject);
+            }
+        });
+
+        _subscriptions.Add(subscription);
+    }
+
+    public override void Dispose()
+    {
+        _logger.LogInformation("Disposing NATS command handler...");
+        foreach (var subscription in _subscriptions)
+        {
+            subscription?.Unsubscribe();
+        }
         _natsConnection.Close();
-        _logger.LogInformation("NATS command handler stopped.");
-        return Task.CompletedTask;
+        _logger.LogInformation("NATS command handler disposed.");
+        base.Dispose();
     }
 }
-

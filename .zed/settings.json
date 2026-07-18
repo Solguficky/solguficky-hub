@@ -1,0 +1,46 @@
+{
+  // Нужные расширения (ставятся вручную: ctrl+shift+x): csharp, proto, toml, dockerfile, sql.
+  // Автоустановку Zed разрешает только в пользовательском settings.json (ctrl+,):
+  //   "auto_install_extensions": { "csharp": true, "proto": true, "toml": true, "dockerfile": true, "sql": true }
+
+  // Не индексировать артефакты сборки — ускоряет поиск и снижает нагрузку на LSP
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/target",
+    "**/bin",
+    "**/obj",
+    "**/__pycache__",
+    "**/*.egg-info",
+    "**/.venv",
+    "**/node_modules"
+  ],
+
+  "languages": {
+    "Rust": {
+      "format_on_save": "on", // rustfmt через rust-analyzer — репо требует cargo fmt --check
+      "tab_size": 4
+    },
+    "CSharp": {
+      "tab_size": 4,
+      // OmniSharp-форматирование спорное — форматируем явно, а не на каждое сохранение
+      "format_on_save": "off"
+    },
+    "Python": {
+      "tab_size": 4
+    },
+    "Proto": {
+      "tab_size": 2
+    }
+  },
+
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        // Диагностика от clippy прямо в редакторе (в CI: cargo clippy -- -D warnings)
+        "check": {
+          "command": "clippy"
+        }
+      }
+    }
+  }
+}

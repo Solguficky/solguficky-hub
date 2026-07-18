@@ -62,31 +62,6 @@ public class LotActorTests(ITestOutputHelper output) : TestKit(ActorSystem.Creat
     }
 
     [Fact]
-    public async Task LotActor_AntiSnipe_ShouldExtendTimerOnLateBid()
-    {
-        var probe = CreateTestProbe();
-        var lotActor = CreateLotActor(4);
-
-        lotActor.Tell(new StartLotTimer(), probe.Ref);
-
-        await Task.Delay(100);
-
-        var initialStatus = await lotActor.Ask<StatusResponse>(new GetStatus());
-        Assert.NotNull(initialStatus.EndTime);
-
-        lotActor.Tell(new PlaceBid(1, 110), probe.Ref);
-        await probe.ExpectMsgAsync<BidAccepted>();
-
-        await Task.Delay(100);
-
-        lotActor.Tell(new PlaceBid(2, 120), probe.Ref);
-        await probe.ExpectMsgAsync<BidAccepted>();
-
-        var newStatus = await lotActor.Ask<StatusResponse>(new GetStatus());
-        Assert.NotNull(newStatus.EndTime);
-    }
-
-    [Fact]
     public async Task LotActor_ProxyBids_ShouldAutoBidWhenOutbid()
     {
         var probe = CreateTestProbe();

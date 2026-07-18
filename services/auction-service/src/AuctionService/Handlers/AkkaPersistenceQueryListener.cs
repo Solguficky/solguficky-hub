@@ -8,20 +8,21 @@ using Akka.Streams;
 using Akka.Streams.Dsl;
 using AuctionService.Actors.Lot;
 using AuctionService.Actors.Auction;
+using AuctionService.Constants;
 using AuctionService.Infrastructure;
 using Nats.Events;
 using System.Text.RegularExpressions;
 
-public class NatsEventListener : ReceiveActor
+public partial class AkkaPersistenceQueryListener : ReceiveActor
 {
     private readonly INatsPublisher _natsPublisher;
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly ActorMaterializer _materializer;
     private readonly SqlReadJournal _readJournal;
-    private string _currentAuctionId = string.Empty;
-    private readonly Regex _lotPersistenceIdRegex = new Regex(@"^lot-(\d+)$");
+    private Ulid _currentAuctionId = Ulid.Empty;
+    private readonly Regex _lotPersistenceIdRegex = MyRegex();
 
-    public NatsEventListener(INatsPublisher natsPublisher)
+    public AkkaPersistenceQueryListener(INatsPublisher natsPublisher)
     {
         _natsPublisher = natsPublisher;
         _materializer = Context.Materializer();
@@ -66,9 +67,6 @@ public class NatsEventListener : ReceiveActor
             case Actors.Auction.AuctionFinished evt:
                 HandleAuctionFinished(evt);
                 break;
-            case LotTimerExtended evt:
-                _log.Debug("Lot timer extended to {NewEndTime}", evt.NewEndTime);
-                break;
             case ProxyBidSet evt:
                 _log.Debug("Proxy bid set for user {UserId}: {MaxAmount}", evt.UserId, evt.MaxAmount);
                 break;
@@ -94,7 +92,7 @@ public class NatsEventListener : ReceiveActor
 
         var bidPlacedEvent = new BidPlacedEvent
         {
-            AuctionId = _currentAuctionId,
+            AuctionId = _currentAuctionId.ToString(),
             LotId = (uint)lotId,
             UserId = evt.UserId,
             Amount = evt.Amount,
@@ -104,7 +102,7 @@ public class NatsEventListener : ReceiveActor
             PreviousAmount = 0
         };
 
-        _natsPublisher.Publish("events.auction.bid_placed", bidPlacedEvent);
+        _natsPublisher.Publish(NatsSubjects.Events.BidPlaced, bidPlacedEvent);
     }
 
     private void HandleAuctionStarted(AuctionStarted evt)
@@ -115,11 +113,11 @@ public class NatsEventListener : ReceiveActor
 
         var auctionStartedEvent = new AuctionStartedEvent
         {
-            AuctionId = evt.AuctionId,
+            AuctionId = evt.AuctionId.ToString(),
             LotIds = { evt.LotIds.Select(id => (uint)id) }
         };
 
-        _natsPublisher.Publish("events.auction.started", auctionStartedEvent);
+        _natsPublisher.Publish(NatsSubjects.Events.AuctionStarted, auctionStartedEvent);
     }
 
     private void HandleFinalPhaseStarted(FinalPhaseStarted evt)
@@ -128,12 +126,12 @@ public class NatsEventListener : ReceiveActor
 
         var phaseTransitionedEvent = new PhaseTransitionedEvent
         {
-            AuctionId = _currentAuctionId,
+            AuctionId = _currentAuctionId.ToString(),
             FromPhase = "OpenBidding",
             ToPhase = "Final"
         };
 
-        _natsPublisher.Publish("events.auction.phase_transitioned", phaseTransitionedEvent);
+        _natsPublisher.Publish(NatsSubjects.Events.PhaseTransitioned, phaseTransitionedEvent);
     }
 
     private void HandleAuctionFinished(Actors.Auction.AuctionFinished evt)
@@ -142,12 +140,12 @@ public class NatsEventListener : ReceiveActor
 
         var phaseTransitionedEvent = new PhaseTransitionedEvent
         {
-            AuctionId = _currentAuctionId,
+            AuctionId = _currentAuctionId.ToString(),
             FromPhase = "Final",
             ToPhase = "Finished"
         };
 
-        _natsPublisher.Publish("events.auction.phase_transitioned", phaseTransitionedEvent);
+        _natsPublisher.Publish(NatsSubjects.Events.PhaseTransitioned, phaseTransitionedEvent);
     }
 
     protected override void PostStop()
@@ -155,5 +153,8 @@ public class NatsEventListener : ReceiveActor
         _materializer.Dispose();
         base.PostStop();
     }
-}
 
+    [GeneratedRegex(@"^lot-(\d+)$")]
+    private static partial Regex MyRegex();
+
+}

@@ -40,12 +40,13 @@ var eventAdapterConfig = ConfigurationFactory.ParseString(@"
         event-adapter-bindings {
             ""AuctionService.Actors.Lot.BidPlaced, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Lot.ProxyBidSet, AuctionService"" = auction-tagger
-            ""AuctionService.Actors.Lot.LotTimerExtended, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Lot.AuctionFinished, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Lot.LotSold, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Auction.AuctionStarted, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Auction.OpenBiddingStarted, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Auction.OpenBiddingEnded, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Auction.FinalPhaseStarted, AuctionService"" = auction-tagger
+            ""AuctionService.Actors.Auction.FinalPhaseEnded, AuctionService"" = auction-tagger
             ""AuctionService.Actors.Auction.AuctionFinished, AuctionService"" = auction-tagger
         }
     }
@@ -71,8 +72,8 @@ builder.Services.AddAkka("auction-service", (configBuilder, serviceProvider) =>
 
             var natsPublisher = serviceProvider.GetRequiredService<INatsPublisher>();
             var eventListener = system.ActorOf(
-                Props.Create(() => new NatsEventListener(natsPublisher)),
-                "nats-event-listener"
+                Props.Create(() => new AkkaPersistenceQueryListener(natsPublisher)),
+                "akka-persistence-query-listener"
             );
         });
 });

@@ -1,10 +1,8 @@
 # Solguficky Hub
 
-Платформа для управления сходками с микросервисной архитектурой.
+Платформа для организации сходок Telegram-сообщества. Полиглотная микросервисная архитектура; одновременно — площадка для экспериментов и обучения.
 
 ## 🚀 Быстрый старт
-
-### Запуск Telegram Gateway (для разработки)
 
 ```bash
 # 1. Клонировать репозиторий
@@ -15,58 +13,42 @@ cd solguficky-hub
 cp .env.example .env
 # Отредактируйте .env и добавьте ваш Telegram bot token
 
-# 3. Запустить инфраструктуру и сервис
+# 3. Запустить инфраструктуру и сервисы
 docker-compose up --build
 
 # 4. Написать боту /start в Telegram
 ```
 
-Подробная инструкция: [services/telegram-gateway/LOCAL_SETUP.md](services/telegram-gateway/LOCAL_SETUP.md)
-
-### Запуск Naive Auction Bot (standalone)
-
-Простой production-ready Telegram-бот для проведения аукционов с SQLite:
-
-```bash
-cd services/naive-auction-bot
-pip install -r requirements.txt
-cp .env.example .env
-# Добавьте TG_BOT_TOKEN в .env
-python bot.py
-```
-
-Деплой на Railway: см. [services/naive-auction-bot/README.md](services/naive-auction-bot/README.md)
-
-## 📚 Документация
-
-- [Архитектура](docs/01_ARCHITECTURE/architechture.md) - общая архитектура платформы
-- [Telegram Gateway](docs/02_SERVICES/telegram-gateway.md) - техническое задание
-- [NATS контракты](docs/03_CONTRACTS/nats_subjects.md) - форматы сообщений
-- [Архитектурные решения (ADR)](docs/04_DECISIONS/decisions.md) - ключевые технические решения
+Подробные инструкции — в `LOCAL_SETUP.md` внутри каждого сервиса.
 
 ## 🏗️ Структура проекта
 
 ```
 solguficky-hub/
-├── contracts/          # Protobuf схемы для всех сервисов
-│   └── proto/
-├── docs/              # Документация
-├── services/          # Микросервисы
-│   ├── telegram-gateway/    # Rust - API Gateway для Telegram
-│   ├── auction-service/     # Scala/Akka - Сервис аукционов (планируется)
-│   ├── naive-auction-bot/   # Python - Standalone аукцион-бот (production-ready)
-│   └── ...
-└── docker-compose.yml # Локальная инфраструктура
+├── contracts/proto/    # Protobuf-контракты (NATS + gRPC) — источник правды
+├── docs/               # Vision, архитектура, ADR, roadmap
+├── services/
+│   ├── telegram-gateway/      # Rust + Teloxide — входной шлюз, UI бота
+│   ├── auction-service/       # C# + Akka.NET — Event Sourcing, аукционы (отложен, см. roadmap)
+│   ├── notifications-service/ # C# — события → уведомления
+│   └── websocket-gateway/     # C# + SignalR — события NATS → WebSocket
+├── tools/nats-tester/  # Python CLI для тестирования NATS-сообщений
+├── frontend/admin-app/ # Telegram Mini App (не начато)
+└── docker-compose.yml  # Локальная инфраструктура (PostgreSQL, NATS)
 ```
 
 ## 🛠️ Технологический стек
 
-- **Telegram Gateway**: Rust + Teloxide + NATS + Protobuf
-- **Auction Service**: Scala + Akka (Event Sourcing)
-- **Notifications Service**: Elixir + Phoenix
-- **Naive Auction Bot**: Python + python-telegram-bot + SQLite (standalone)
-- **Инфраструктура**: NATS JetStream, PostgreSQL, Apicurio Registry
+- **Шина:** NATS (JetStream в планах — см. roadmap), сериализация — Protobuf
+- **Синхронные вызовы:** gRPC
+- **Хранение:** PostgreSQL (включая Event Store для Akka.Persistence)
+- **Наблюдаемость:** структурные JSON-логи → Loki + Grafana (конфиги в `infra/`)
 
-## 📖 Дополнительная информация
+## 📚 Документация
 
-См. [docs/00_VISION/vision.md](docs/00_VISION/vision.md) для понимания целей и концепции проекта.
+- [Vision](docs/00_VISION/vision.md) — цели и концепция
+- [Архитектура](docs/01_ARCHITECTURE/architecture.md) — общая схема платформы
+- [Roadmap](docs/ROADMAP.md) — актуальный план работ и приоритеты
+- [ADR](docs/04_DECISIONS/decisions.md) — журнал архитектурных решений
+- [NATS-контракты](docs/03_CONTRACTS/nats_subjects.md) — темы и форматы сообщений
+- [CLAUDE.md](CLAUDE.md) — контекст для AI-агентов (карта репо, команды, конвенции)

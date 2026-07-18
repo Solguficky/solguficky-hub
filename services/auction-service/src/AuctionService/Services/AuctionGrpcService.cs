@@ -91,18 +91,19 @@ public class AuctionGrpcService(
         GrpcAuction.GetAuctionStatusRequest request,
         ServerCallContext context)
     {
-        logger.LogInformation("GetAuctionStatus called for auction {AuctionId}", request.AuctionId);
+        var auctionId = Ulid.Parse(request.AuctionId);
+        logger.LogInformation("GetAuctionStatus called for auction {AuctionId}", auctionId);
 
         try
         {
             var status = await _registry.Ask<AuctionStatusResponse>(
-                new ForwardToAuction(request.AuctionId, new GetAuctionStatus()),
+                new ForwardToAuction(auctionId, new GetAuctionStatus()),
                 _timeout
             );
 
             return new GrpcAuction.GetAuctionStatusResponse
             {
-                AuctionId = status.AuctionId,
+                AuctionId = status.AuctionId.ToString(),
                 Phase = status.Phase.ToString(),
                 LotIds = { status.LotIds.Select(id => (uint)id) }
             };

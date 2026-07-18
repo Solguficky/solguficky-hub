@@ -27,6 +27,7 @@
 		"rust-analyzer.linkedProjects": [
 			"./services/telegram-gateway/Cargo.toml"
 		],
-		"explorer.fileNesting.enabled": true
+		"explorer.fileNesting.enabled": true,
+		"dotnet.defaultSolution": "disable"
 	}
 }

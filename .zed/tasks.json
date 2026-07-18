@@ -1,0 +1,50 @@
+[
+  {
+    "label": "infra: docker compose up (nats + postgres)",
+    "command": "docker-compose",
+    "args": ["up", "-d", "postgres", "nats"],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "auction-service: test (со сборкой)",
+    "command": "dotnet",
+    "args": ["test"],
+    "cwd": "$ZED_WORKTREE_ROOT/services/auction-service"
+  },
+  {
+    "label": "notifications-service: test (со сборкой)",
+    "command": "dotnet",
+    "args": ["test"],
+    "cwd": "$ZED_WORKTREE_ROOT/services/notifications-service"
+  },
+  {
+    "label": "websocket-gateway: test (со сборкой)",
+    "command": "dotnet",
+    "args": ["test"],
+    "cwd": "$ZED_WORKTREE_ROOT/services/websocket-gateway"
+  },
+  {
+    "label": "telegram-gateway: cargo test",
+    "command": "cargo",
+    "args": ["test"],
+    "cwd": "$ZED_WORKTREE_ROOT/services/telegram-gateway"
+  },
+  {
+    "label": "telegram-gateway: clippy -D warnings",
+    "command": "cargo",
+    "args": ["clippy", "--", "-D", "warnings"],
+    "cwd": "$ZED_WORKTREE_ROOT/services/telegram-gateway"
+  },
+  {
+    "label": "telegram-gateway: fmt --check",
+    "command": "cargo",
+    "args": ["fmt", "--check"],
+    "cwd": "$ZED_WORKTREE_ROOT/services/telegram-gateway"
+  },
+  {
+    "label": "nats-tester: regenerate proto",
+    "command": "python",
+    "args": ["generate_proto.py"],
+    "cwd": "$ZED_WORKTREE_ROOT/tools/nats-tester"
+  }
+]
