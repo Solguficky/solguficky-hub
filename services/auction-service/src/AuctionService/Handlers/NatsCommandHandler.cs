@@ -15,7 +15,8 @@ using Nats.Commands;
 public class NatsCommandHandler : BackgroundService
 {
     private readonly IConnection _natsConnection;
-    private readonly IActorRef _registry;
+    private readonly IRequiredActor<AuctionRegistry> _registryActor;
+    private IActorRef _registry = ActorRefs.Nobody;
     private readonly LotRepository _lotRepository;
     private readonly ILogger<NatsCommandHandler> _logger;
     private readonly List<IAsyncSubscription> _subscriptions = new();
@@ -28,18 +29,24 @@ public class NatsCommandHandler : BackgroundService
     {
         var natsUrl = configuration["Nats:Url"] ?? throw new InvalidOperationException("Nats:Url is not configured.");
         _natsConnection = new ConnectionFactory().CreateConnection(natsUrl);
-        _registry = registryActor.ActorRef;
+        _registryActor = registryActor;
         _lotRepository = lotRepository;
         _logger = logger;
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Starting NATS command handler...");
 
+        _registry = await _registryActor.GetAsync(stoppingToken);
+
         SubscribeCommand<PlaceBidCommand>(NatsSubjects.Commands.PlaceBid, command =>
         {
-            var auctionId = Ulid.Parse(command.AuctionId);
+            if (!TryParseAuctionId(command.AuctionId, nameof(PlaceBidCommand), out var auctionId))
+            {
+                return;
+            }
+
             _logger.LogInformation("Received PlaceBidCommand for Lot {LotId} in auction {AuctionId}",
                 command.LotId, auctionId);
 
@@ -50,7 +57,11 @@ public class NatsCommandHandler : BackgroundService
 
         SubscribeCommand<SetProxyBidCommand>(NatsSubjects.Commands.SetProxyBid, command =>
         {
-            var auctionId = Ulid.Parse(command.AuctionId);
+            if (!TryParseAuctionId(command.AuctionId, nameof(SetProxyBidCommand), out var auctionId))
+            {
+                return;
+            }
+
             _logger.LogInformation("Received SetProxyBidCommand for Lot {LotId} in auction {AuctionId}",
                 command.LotId, auctionId);
 
@@ -61,7 +72,11 @@ public class NatsCommandHandler : BackgroundService
 
         SubscribeCommandAsync<StartAuctionCommand>(NatsSubjects.Commands.StartAuction, async command =>
         {
-            var auctionId = Ulid.Parse(command.AuctionId);
+            if (!TryParseAuctionId(command.AuctionId, nameof(StartAuctionCommand), out var auctionId))
+            {
+                return;
+            }
+
             _logger.LogInformation("Received StartAuctionCommand for Auction {AuctionId}", auctionId);
 
             var lots = await _lotRepository.GetLotsByAuctionId(command.AuctionId);
@@ -87,7 +102,11 @@ public class NatsCommandHandler : BackgroundService
 
         SubscribeCommand<EndOpenBiddingCommand>(NatsSubjects.Commands.EndOpenBidding, command =>
         {
-            var auctionId = Ulid.Parse(command.AuctionId);
+            if (!TryParseAuctionId(command.AuctionId, nameof(EndOpenBiddingCommand), out var auctionId))
+            {
+                return;
+            }
+
             _logger.LogInformation("Received EndOpenBiddingCommand for Auction {AuctionId}", auctionId);
 
             var endOpenBiddingCmd = new EndOpenBidding();
@@ -97,7 +116,11 @@ public class NatsCommandHandler : BackgroundService
 
         SubscribeCommand<StartFinalPhaseCommand>(NatsSubjects.Commands.StartFinalPhase, command =>
         {
-            var auctionId = Ulid.Parse(command.AuctionId);
+            if (!TryParseAuctionId(command.AuctionId, nameof(StartFinalPhaseCommand), out var auctionId))
+            {
+                return;
+            }
+
             _logger.LogInformation("Received StartFinalPhaseCommand for Auction {AuctionId}", auctionId);
 
             var startFinalPhaseCmd = new StartFinalPhase();
@@ -106,7 +129,17 @@ public class NatsCommandHandler : BackgroundService
         });
 
         _logger.LogInformation("NATS command handler started.");
-        return Task.CompletedTask;
+    }
+
+    private bool TryParseAuctionId(string rawId, string commandName, out Guid auctionId)
+    {
+        if (Guid.TryParse(rawId, out auctionId))
+        {
+            return true;
+        }
+
+        _logger.LogError("Invalid auction_id {AuctionId} in {Command}, message dropped", rawId, commandName);
+        return false;
     }
 
     private void SubscribeCommand<TCommand>(string subject, Action<TCommand> handler)

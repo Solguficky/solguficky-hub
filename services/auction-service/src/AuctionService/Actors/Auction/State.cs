@@ -12,11 +12,11 @@ public enum AuctionPhase
 }
 
 public sealed record State(
-    Ulid AuctionId,
+    Guid AuctionId,
     AuctionPhase Phase,
     ImmutableList<(int LotId, int DisplayOrder)> Lots
 )
 {
-    public static State Empty() => new(Ulid.Empty, AuctionPhase.NotStarted, []);
+    public static State Empty() => new(Guid.Empty, AuctionPhase.NotStarted, []);
 }
 

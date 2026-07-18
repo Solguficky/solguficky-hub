@@ -2,7 +2,7 @@ namespace AuctionService.Actors.Auction;
 
 public abstract record Event;
 
-public sealed record AuctionStarted(Ulid AuctionId, List<int> LotIds, long Timestamp) : Event;
+public sealed record AuctionStarted(Guid AuctionId, List<int> LotIds, long Timestamp) : Event;
 
 public sealed record OpenBiddingStarted(long Timestamp) : Event;
 

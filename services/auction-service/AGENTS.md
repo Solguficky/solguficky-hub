@@ -4,9 +4,9 @@ Stateful-сервис аукционов: Event Sourcing + CQRS на Akka.Persis
 
 ## Структура
 
-- `Actors/AuctionRegistry.cs` — роутер: находит/создаёт `AuctionActor` по ULID.
+- `Actors/AuctionRegistry.cs` — роутер: находит/создаёт `AuctionActor` по UUIDv7 (ADR-020).
 - `Actors/Auction/` — агрегат аукциона: фазы `NotStarted → OpenBidding → Idle → Final → Finished`. Файлы: `AuctionActor.cs`, `Commands.cs`, `Events.cs`, `State.cs`, `Responses.cs`, `Types.cs`.
-- `Actors/Lot/` — дочерний актор лота: ставки, proxy-bids. PersistenceId: `auction-{ulid}` / `lot-{id}`.
+- `Actors/Lot/` — дочерний актор лота: ставки, proxy-bids. PersistenceId: `auction-{uuid}` / `lot-{id}`.
 - `Handlers/NatsCommandHandler.cs` — подписки на `commands.auction.*` (Protobuf → доменные команды → registry).
 - `Handlers/AkkaPersistenceQueryListener.cs` — читает журнал по тегу `auction` (EventsByTag), публикует события в NATS.
 - `Infrastructure/` — NatsPublisher, AuctionEventTagger (тегирует события для Persistence.Query), EF Core (`AuctionDbContext`, `LotEntity`) для CRUD лотов.
