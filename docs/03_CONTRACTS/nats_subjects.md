@@ -46,5 +46,4 @@
 ## Известные расхождения (техдолг, roadmap P0)
 
 *   `telegram-gateway/src/app/event_listener.rs` парсит `BidPlacedEvent` и `SendMessageCommand` как JSON — должен использовать Protobuf из `generated/`.
-*   `websocket-gateway` подписан на `events.*` (одноуровневый wildcard) и не получает `events.auction.*` — нужен `events.>`.
 *   Поле `op_id` в командах зарезервировано под идемпотентность, но консьюмерами пока не проверяется.

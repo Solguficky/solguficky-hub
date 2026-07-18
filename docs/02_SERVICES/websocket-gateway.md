@@ -75,7 +75,7 @@ public class NatsEventListener : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        var subscription = _natsConnection.SubscribeAsync("events.auction.*");
+        var subscription = _natsConnection.SubscribeAsync("events.auction.>");
 
         await foreach (var msg in subscription.Messages.WithCancellation(ct))
         {
@@ -117,7 +117,7 @@ connection.on("AuctionEvent", (event) => {
 
 ### 4.2. Подписка на NATS
 
-**Subject:** `events.auction.*` (wildcard для всех событий аукциона)
+**Subject:** `events.auction.>` (многотокенный wildcard для всех событий аукциона; `*` матчит ровно один токен и не подошёл бы)
 
 **События:**
 - `events.auction.bid_placed` → `BidPlacedEvent`
@@ -135,7 +135,7 @@ connection.on("AuctionEvent", (event) => {
 {
   "Nats": {
     "Url": "nats://localhost:4222",
-    "Subject": "events.auction.*"
+    "Subject": "events.auction.>"
   },
   "SignalR": {
     "KeepAliveInterval": "00:00:15",
@@ -226,7 +226,7 @@ services/websocket-gateway/
 
 ### MVP (текущий)
 - [x] SignalR Hub для auction events
-- [x] Подписка на `events.auction.*` в NATS
+- [x] Подписка на `events.auction.>` в NATS
 - [x] Роутинг по auction_id через SignalR Groups
 - [x] Десериализация Protobuf событий
 

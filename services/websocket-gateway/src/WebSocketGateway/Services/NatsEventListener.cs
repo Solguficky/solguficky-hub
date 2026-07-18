@@ -11,7 +11,9 @@ public class NatsEventListener(
     EventMapper eventMapper,
     ILogger<NatsEventListener> logger) : BackgroundService
 {
-    private const string NatsSubject = "events.*";
+    // `>` — многотокенный wildcard: матчит events.auction.bid_placed и любые
+    // будущие события домена. `*` матчит ровно один токен и не подошёл бы.
+    private const string NatsSubject = "events.auction.>";
     private IConnection? _natsConnection;
     private IAsyncSubscription? _subscription;
 

@@ -13,7 +13,7 @@
 ## Ответственность
 
 Сервис НЕ содержит бизнес-логики. Его задача:
-1. Подписаться на события `events.auction.*` в NATS
+1. Подписаться на события `events.auction.>` в NATS
 2. Десериализовать Protobuf события
 3. Преобразовать в JSON
 4. Broadcast в SignalR группу `auction:live`
@@ -192,7 +192,7 @@ console.log("Connected and subscribed to live auction channel");
          ↓
 ┌─────────────────┐
 │ NATS JetStream  │
-│ events.auction.*│
+│ events.auction.>│
 └─────────────────┘
 ```
 
