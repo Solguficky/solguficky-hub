@@ -16,7 +16,7 @@ public class AuctionDbContext(DbContextOptions<AuctionDbContext> options) : DbCo
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.HasIndex(e => e.AuctionId);
-            entity.Property(e => e.AuctionId).IsRequired().HasMaxLength(26);
+            entity.Property(e => e.AuctionId).IsRequired().HasMaxLength(36);
             entity.Property(e => e.Title).IsRequired().HasMaxLength(500);
             entity.Property(e => e.Description).HasMaxLength(5000);
             entity.Property(e => e.StartingPrice).IsRequired();

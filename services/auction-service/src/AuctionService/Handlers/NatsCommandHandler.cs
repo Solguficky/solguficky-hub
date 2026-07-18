@@ -15,27 +15,30 @@ using Nats.Commands;
 public class NatsCommandHandler : BackgroundService
 {
     private readonly IConnection _natsConnection;
-    private readonly IActorRef _registry;
-    private readonly LotRepository _lotRepository;
+    private readonly IRequiredActor<AuctionRegistry> _registryActor;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<NatsCommandHandler> _logger;
     private readonly List<IAsyncSubscription> _subscriptions = new();
+    private IActorRef _registry = ActorRefs.Nobody;
 
     public NatsCommandHandler(
         IConfiguration configuration,
         IRequiredActor<AuctionRegistry> registryActor,
-        LotRepository lotRepository,
+        IServiceScopeFactory scopeFactory,
         ILogger<NatsCommandHandler> logger)
     {
         var natsUrl = configuration["Nats:Url"] ?? throw new InvalidOperationException("Nats:Url is not configured.");
         _natsConnection = new ConnectionFactory().CreateConnection(natsUrl);
-        _registry = registryActor.ActorRef;
-        _lotRepository = lotRepository;
+        _registryActor = registryActor;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Starting NATS command handler...");
+
+        _registry = await _registryActor.GetAsync(stoppingToken);
 
         SubscribeCommand<PlaceBidCommand>(NatsSubjects.Commands.PlaceBid, command =>
         {
@@ -64,7 +67,9 @@ public class NatsCommandHandler : BackgroundService
             var auctionId = Ulid.Parse(command.AuctionId);
             _logger.LogInformation("Received StartAuctionCommand for Auction {AuctionId}", auctionId);
 
-            var lots = await _lotRepository.GetLotsByAuctionId(command.AuctionId);
+            using var scope = _scopeFactory.CreateScope();
+            var lotRepository = scope.ServiceProvider.GetRequiredService<LotRepository>();
+            var lots = await lotRepository.GetLotsByAuctionId(command.AuctionId);
             if (lots.Count == 0)
             {
                 _logger.LogWarning("No lots found for auction {AuctionId}", auctionId);
@@ -106,7 +111,6 @@ public class NatsCommandHandler : BackgroundService
         });
 
         _logger.LogInformation("NATS command handler started.");
-        return Task.CompletedTask;
     }
 
     private void SubscribeCommand<TCommand>(string subject, Action<TCommand> handler)
