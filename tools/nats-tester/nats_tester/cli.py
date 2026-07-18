@@ -16,10 +16,16 @@ import nats
 try:
     from nats_tester.generated.nats.events import auction_events_pb2
     from nats_tester.generated.nats.commands import telegram_commands_pb2
+    from nats_tester.generated.nats.commands import auction_commands_pb2
 except ImportError:
     click.secho("❌ Generated protobuf files not found!", fg='red')
     click.echo("   Run: python generate_proto.py")
     sys.exit(1)
+
+try:
+    from uuid import uuid7  # Python 3.14+
+except ImportError:
+    from uuid6 import uuid7
 
 
 EVENT_TYPES = {
@@ -28,6 +34,11 @@ EVENT_TYPES = {
 
 COMMAND_TYPES = {
     'commands.telegram.send_message': telegram_commands_pb2.SendMessageCommand,
+    'commands.auction.start': auction_commands_pb2.StartAuctionCommand,
+    'commands.auction.place_bid': auction_commands_pb2.PlaceBidCommand,
+    'commands.auction.set_proxy_bid': auction_commands_pb2.SetProxyBidCommand,
+    'commands.auction.end_open_bidding': auction_commands_pb2.EndOpenBiddingCommand,
+    'commands.auction.start_final_phase': auction_commands_pb2.StartFinalPhaseCommand,
 }
 
 ALL_MESSAGE_TYPES = {**EVENT_TYPES, **COMMAND_TYPES}
@@ -61,8 +72,8 @@ def cli():
 @click.option('--subject', default='events.auction.bid_placed',
               help='NATS subject to publish to')
 @click.option('--event-type',
-              type=click.Choice(list(EVENT_TYPES.keys())),
-              help='Event type (auto-detected from subject if not specified)')
+              type=click.Choice(list(ALL_MESSAGE_TYPES.keys())),
+              help='Message type (auto-detected from subject if not specified)')
 def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[str]):
     """Publish event from JSON file to NATS.
 
@@ -91,16 +102,16 @@ def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[st
     if not event_type:
         event_type = subject
 
-    if event_type not in EVENT_TYPES:
-        click.secho(f"❌ Unknown event type for subject: {subject}", fg='red')
+    if event_type not in ALL_MESSAGE_TYPES:
+        click.secho(f"❌ Unknown message type for subject: {subject}", fg='red')
         click.echo(f"   Supported subjects:")
-        for s in EVENT_TYPES.keys():
+        for s in ALL_MESSAGE_TYPES.keys():
             click.echo(f"     - {s}")
         click.echo()
         click.echo(f"   Run 'nats-tester list-types' to see all supported types")
         sys.exit(1)
 
-    message_class = EVENT_TYPES[event_type]
+    message_class = ALL_MESSAGE_TYPES[event_type]
     click.echo(f"✓ Event type: {message_class.DESCRIPTOR.name}")
 
     # Read and validate JSON
@@ -404,6 +415,17 @@ def validate(json_file: str, event_type: str):
     except Exception as e:
         click.secho(f"❌ Error: {e}", fg='red')
         sys.exit(1)
+
+
+@cli.command(name='gen-id')
+def gen_id():
+    """Generate a UUIDv7 for use as auction/op id (ADR-020).
+
+    \b
+    Example:
+        nats-tester gen-id
+    """
+    click.echo(str(uuid7()))
 
 
 @cli.command()

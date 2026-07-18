@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n nats/events/auction_events.proto\x12\x0bnats.events\"\xd2\x01\n\x0e\x42idPlacedEvent\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x0e\n\x06lot_id\x18\x02 \x01(\r\x12\x0f\n\x07user_id\x18\x03 \x01(\x03\x12\x0e\n\x06\x61mount\x18\x04 \x01(\x01\x12\x1f\n\x12previous_leader_id\x18\x05 \x01(\x03H\x00\x88\x01\x01\x12\x19\n\x11\x63urrent_leader_id\x18\x06 \x01(\x03\x12\x11\n\tlot_title\x18\x07 \x01(\t\x12\x17\n\x0fprevious_amount\x18\x08 \x01(\x01\x42\x15\n\x13_previous_leader_idb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n nats/events/auction_events.proto\x12\x0bnats.events\"\xd4\x01\n\x0e\x42idPlacedEvent\x12\x12\n\nauction_id\x18\x01 \x01(\t\x12\x0e\n\x06lot_id\x18\x02 \x01(\r\x12\x0f\n\x07user_id\x18\x03 \x01(\x03\x12\x0e\n\x06\x61mount\x18\x04 \x01(\x01\x12\x1f\n\x12previous_leader_id\x18\x05 \x01(\x03H\x00\x88\x01\x01\x12\x19\n\x11\x63urrent_leader_id\x18\x06 \x01(\x03\x12\x11\n\tlot_title\x18\x07 \x01(\t\x12\x17\n\x0fprevious_amount\x18\x08 \x01(\x01\x42\x15\n\x13_previous_leader_id\":\n\x13\x41uctionStartedEvent\x12\x12\n\nauction_id\x18\x01 \x01(\t\x12\x0f\n\x07lot_ids\x18\x02 \x03(\r\"R\n\x16PhaseTransitionedEvent\x12\x12\n\nauction_id\x18\x01 \x01(\t\x12\x12\n\nfrom_phase\x18\x02 \x01(\t\x12\x10\n\x08to_phase\x18\x03 \x01(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,5 +32,9 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'nats.events.auction_events_
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_BIDPLACEDEVENT']._serialized_start=50
-  _globals['_BIDPLACEDEVENT']._serialized_end=260
+  _globals['_BIDPLACEDEVENT']._serialized_end=262
+  _globals['_AUCTIONSTARTEDEVENT']._serialized_start=264
+  _globals['_AUCTIONSTARTEDEVENT']._serialized_end=322
+  _globals['_PHASETRANSITIONEDEVENT']._serialized_start=324
+  _globals['_PHASETRANSITIONEDEVENT']._serialized_end=406
 # @@protoc_insertion_point(module_scope)
