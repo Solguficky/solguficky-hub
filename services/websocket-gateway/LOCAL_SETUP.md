@@ -109,7 +109,7 @@ await connection.invoke("SubscribeToAuction");
 console.log("✅ Subscribed to auction:live channel");
 ```
 
-4. Теперь все события из NATS `events.auction.*` будут появляться в консоли
+4. Теперь все события из NATS `events.auction.>` будут появляться в консоли
 
 ### Отправка тестового события
 
