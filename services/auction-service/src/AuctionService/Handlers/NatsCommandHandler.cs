@@ -16,21 +16,21 @@ public class NatsCommandHandler : BackgroundService
 {
     private readonly IConnection _natsConnection;
     private readonly IRequiredActor<AuctionRegistry> _registryActor;
-    private IActorRef _registry = ActorRefs.Nobody;
-    private readonly LotRepository _lotRepository;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<NatsCommandHandler> _logger;
     private readonly List<IAsyncSubscription> _subscriptions = new();
+    private IActorRef _registry = ActorRefs.Nobody;
 
     public NatsCommandHandler(
         IConfiguration configuration,
         IRequiredActor<AuctionRegistry> registryActor,
-        LotRepository lotRepository,
+        IServiceScopeFactory scopeFactory,
         ILogger<NatsCommandHandler> logger)
     {
         var natsUrl = configuration["Nats:Url"] ?? throw new InvalidOperationException("Nats:Url is not configured.");
         _natsConnection = new ConnectionFactory().CreateConnection(natsUrl);
         _registryActor = registryActor;
-        _lotRepository = lotRepository;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -79,7 +79,9 @@ public class NatsCommandHandler : BackgroundService
 
             _logger.LogInformation("Received StartAuctionCommand for Auction {AuctionId}", auctionId);
 
-            var lots = await _lotRepository.GetLotsByAuctionId(command.AuctionId);
+            using var scope = _scopeFactory.CreateScope();
+            var lotRepository = scope.ServiceProvider.GetRequiredService<LotRepository>();
+            var lots = await lotRepository.GetLotsByAuctionId(command.AuctionId);
             if (lots.Count == 0)
             {
                 _logger.LogWarning("No lots found for auction {AuctionId}", auctionId);
