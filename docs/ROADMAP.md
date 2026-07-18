@@ -21,7 +21,7 @@
 - [ ] **Починить контрактные разрывы** (см. ревью 2026-07-17):
   - `SendMessageCommand`: notifications публикует Protobuf, gateway парсит JSON (+ поле `chat_id` vs `user_id`) — привести к Protobuf-контракту;
   - `events.auction.bid_placed`: `event_listener.rs` в gateway парсит JSON вместо Protobuf;
-  - websocket-gateway подписан на `events.*` (одноуровневый wildcard) — события `events.auction.*` под него не попадают, нужен `events.>` или `events.auction.>`;
+  - ~~websocket-gateway подписан на `events.*` (одноуровневый wildcard)~~ — исправлено 2026-07-18 на `events.auction.>`;
   - убрать дублирование отправки outbid-уведомлений (gateway шлёт сам И notifications-service шлёт через `commands.telegram.send_message`) — оставить один путь через notifications-service.
 - [x] CI (GitHub Actions): build + test всех сервисов, clippy/fmt для Rust — `.github/workflows/ci.yml` (2026-07-18), path-фильтры по сервисам; проверить первый прогон после пуша на GitHub.
 - [ ] Единая локальная оркестрация: **Aspire вместо трёх compose-файлов** — ТЗ [06_TASKS/aspire-orchestration.md](06_TASKS/aspire-orchestration.md) (заменяет прежний пункт «единый docker-compose.yml»).
