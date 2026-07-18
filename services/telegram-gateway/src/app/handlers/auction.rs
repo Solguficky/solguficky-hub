@@ -301,7 +301,12 @@ pub async fn bid_increase_handler(
         let user = q.from.id.0 as i64;
         let new_bid = current_bid + lot.min_bid_step;
 
-        let command = PlaceBidCommand::new(crate::constants::AUCTION_ID.to_string(), lot.id, user, new_bid);
+        let command = PlaceBidCommand::new(
+            crate::constants::AUCTION_ID.to_string(),
+            lot.id,
+            user,
+            new_bid,
+        );
 
         deps.nats.publish_place_bid(command).await?;
 
@@ -412,8 +417,12 @@ pub async fn receive_bid_amount(
             Some(amount) if amount > 0.0 => {
                 let user_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
 
-                let command =
-                    PlaceBidCommand::new(crate::constants::AUCTION_ID.to_string(), lot_id, user_id, amount);
+                let command = PlaceBidCommand::new(
+                    crate::constants::AUCTION_ID.to_string(),
+                    lot_id,
+                    user_id,
+                    amount,
+                );
 
                 deps.nats.publish_place_bid(command).await?;
 

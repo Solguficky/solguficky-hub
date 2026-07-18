@@ -4,7 +4,7 @@ using AuctionService.Actors.Lot;
 
 public abstract record Command;
 
-public sealed record StartAuction(Ulid AuctionId, List<int> LotIds, Dictionary<int, LotConfig> LotConfigs) : Command;
+public sealed record StartAuction(Guid AuctionId, List<int> LotIds, Dictionary<int, LotConfig> LotConfigs) : Command;
 
 public sealed record ForwardToLot(int LotId, Lot.Command LotCommand) : Command;
 

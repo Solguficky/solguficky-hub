@@ -23,4 +23,3 @@ pub struct SendMessageCommand {
     pub user_id: i64,
     pub text: String,
 }
-

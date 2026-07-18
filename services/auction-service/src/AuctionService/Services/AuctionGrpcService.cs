@@ -91,7 +91,11 @@ public class AuctionGrpcService(
         GrpcAuction.GetAuctionStatusRequest request,
         ServerCallContext context)
     {
-        var auctionId = Ulid.Parse(request.AuctionId);
+        if (!Guid.TryParse(request.AuctionId, out var auctionId))
+        {
+            throw new RpcException(new GrpcStatus(StatusCode.InvalidArgument, $"Invalid auction_id: '{request.AuctionId}'"));
+        }
+
         logger.LogInformation("GetAuctionStatus called for auction {AuctionId}", auctionId);
 
         try

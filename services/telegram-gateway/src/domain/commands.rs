@@ -13,7 +13,7 @@ pub struct PlaceBidCommand {
 impl PlaceBidCommand {
     pub fn new(auction_id: String, lot_id: u32, user_id: i64, amount: f64) -> Self {
         Self {
-            op_id: Uuid::new_v4(),
+            op_id: Uuid::now_v7(),
             auction_id,
             lot_id,
             user_id,
@@ -21,4 +21,3 @@ impl PlaceBidCommand {
         }
     }
 }
-

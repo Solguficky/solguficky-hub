@@ -25,4 +25,3 @@ pub enum BotAction {
     },
     Multiple(Vec<BotAction>),
 }
-

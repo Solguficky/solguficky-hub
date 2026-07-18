@@ -37,7 +37,7 @@ python generate_proto.py && pip install -e . && nats-tester --help
 - **Асинхронно через NATS** — команды к stateful-агрегатам (`commands.auction.place_bid`) и события (`events.auction.bid_placed`). **Синхронно через gRPC** — CRUD и queries. Критерии выбора — ADR-016.
 - **Сериализация в NATS и gRPC — только Protobuf** (ADR-012). JSON в шине запрещён. При изменении `.proto` обнови ВСЕХ потребителей и `docs/03_CONTRACTS/nats_subjects.md` (есть скилл `contract-change`).
 - Именование NATS-тем: `<commands|events>.<домен>.<действие>`, snake_case.
-- ID аукционов/сходок — ULID строкой в контрактах (ADR-019).
+- ID аукционов/сходок — UUIDv7 канонической строкой (36 символов, lowercase, с дефисами) в контрактах (ADR-020).
 - Stateful-логика (аукцион) — акторы + Event Sourcing (ADR-002, ADR-009); CRUD-сервисы — обычный ASP.NET Core + EF Core, без ES.
 
 ## Процесс разработки
