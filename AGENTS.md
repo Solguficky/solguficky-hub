@@ -18,8 +18,11 @@
 ## Команды
 
 ```bash
-# Инфраструктура (NATS + PostgreSQL)
-docker-compose up -d postgres nats
+# Локальная оркестрация — единая точка входа (infra/apphost/, ADR-021)
+cd infra/apphost && aspire run                      # профиль по умолчанию — core
+TOPOLOGY__PROFILE=infra aspire run                   # только NATS + PostgreSQL
+TOPOLOGY__PROFILE=full aspire run                     # весь стек
+TOPOLOGY__AUCTIONSERVICE=Container aspire run         # переопределить режим одного компонента
 
 # auction-service / notifications-service / websocket-gateway (из папки сервиса)
 dotnet build && dotnet test
@@ -32,12 +35,24 @@ cargo clippy -- -D warnings && cargo fmt --check
 python generate_proto.py && pip install -e . && nats-tester --help
 ```
 
+**Профили топологии** (`infra/apphost/`, детали — [ТЗ по Aspire](docs/06_TASKS/aspire-orchestration.md), [ADR-021](docs/04_DECISIONS/decisions.md)):
+
+| Профиль | Состав | Замена чего |
+|---|---|---|
+| `infra` | только NATS + PostgreSQL (контейнеры) | `docker-compose up -d postgres nats`, остальное запускаешь сам из IDE |
+| `core` (по умолчанию) | infra + auction-service + telegram-gateway (Local) | повседневная разработка |
+| `full` | все сервисы | end-to-end проверка перед PR |
+
+Режим отдельного компонента — `Local` (из исходников) / `Container` (образ) / `Off` (не поднимать) — переопределяется без правки кода AppHost: `TOPOLOGY__<SERVICE>=Container|Local|Off` (например, `TOPOLOGY__NOTIFICATIONSSERVICE=Local`) или в `infra/apphost/appsettings.json`.
+
+> Рукописные `docker-compose.yml` (корневой и пер-сервисные) пока не удалены — миграция на Aspire в процессе (итерации 0–2 из ТЗ выполнены, `aspire run` не проверен вживую из-за сетевых ограничений сессии, где писался код; итерации 3–4 — режимы/профили и генерация compose — тоже не подтверждены запуском). Не полагайся на эту таблицу как на единственный источник правды, пока кто-то не прогонит `aspire run` и не уберёт это предупреждение.
+
 ## Архитектурные правила (кратко, детали в ADR)
 
 - **Асинхронно через NATS** — команды к stateful-агрегатам (`commands.auction.place_bid`) и события (`events.auction.bid_placed`). **Синхронно через gRPC** — CRUD и queries. Критерии выбора — ADR-016.
 - **Сериализация в NATS и gRPC — только Protobuf** (ADR-012). JSON в шине запрещён. При изменении `.proto` обнови ВСЕХ потребителей и `docs/03_CONTRACTS/nats_subjects.md` (есть скилл `contract-change`).
 - Именование NATS-тем: `<commands|events>.<домен>.<действие>`, snake_case.
-- ID аукционов/сходок — ULID строкой в контрактах (ADR-019).
+- ID аукционов/сходок — UUIDv7 канонической строкой (36 символов, lowercase, с дефисами) в контрактах (ADR-020).
 - Stateful-логика (аукцион) — акторы + Event Sourcing (ADR-002, ADR-009); CRUD-сервисы — обычный ASP.NET Core + EF Core, без ES.
 
 ## Процесс разработки

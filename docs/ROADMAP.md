@@ -72,7 +72,7 @@
 - [ ] Read model для аукциона/сходок (CQRS query-сторона) вместо ask-запросов к акторам.
 - [ ] Observability: развернуть Loki/Grafana локально (конфиги уже есть), добавить метрики (Prometheus) и трейсы позже.
 - [ ] Money как decimal/минорные единицы вместо `double` в контрактах и коде.
-- [ ] **UUIDv7 вместо ULID** — ТЗ [06_TASKS/uuidv7-migration.md](06_TASKS/uuidv7-migration.md) (заменит ADR-019; попутно апгрейд C#-сервисов net8 → net10).
+- [x] **UUIDv7 вместо ULID** — ТЗ [06_TASKS/uuidv7-migration.md](06_TASKS/uuidv7-migration.md) (ADR-020 заменил ADR-019 в части формата ID; попутно апгрейд C#-сервисов net8 → net10).
 - [ ] **Хостинг/деплой** (решение открыто, нужен ADR): раньше сервис жил на Railway; кандидаты — дешёвый VPS (Hetzner/аналог) или домашний сервер (бот на long polling работает за NAT без белого IP; для webhook/Mini App — Cloudflare Tunnel). Домашний сервер даёт больше обучения (Linux, systemd, мониторинг), VPS — надёжность. План в два этапа: сначала деплой docker compose из GitHub Actions, затем **k3s (single-node) как учебный этап** — манифесты генерируются из Aspire-топологии (`aspire publish`, k8s-publisher), см. ТЗ по Aspire.
 
 ## Языки: учебный трек (обновлено 2026-07-17)

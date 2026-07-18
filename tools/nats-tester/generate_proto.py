@@ -33,6 +33,7 @@ def main():
     proto_files = [
         "nats/events/auction_events.proto",
         "nats/commands/telegram_commands.proto",
+        "nats/commands/auction_commands.proto",
     ]
 
     print("\n[*] Compiling proto files...")

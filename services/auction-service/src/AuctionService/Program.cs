@@ -14,6 +14,8 @@ using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
+
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
@@ -91,9 +93,9 @@ using (var scope = app.Services.CreateScope())
     Log.Information("Database migrations applied");
 }
 
-app.MapGrpcService<AuctionGrpcService>();
+app.MapDefaultEndpoints();
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "auction-service" }));
+app.MapGrpcService<AuctionGrpcService>();
 
 app.Lifetime.ApplicationStopping.Register(() =>
 {

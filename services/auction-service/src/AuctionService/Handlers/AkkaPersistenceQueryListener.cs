@@ -19,7 +19,7 @@ public partial class AkkaPersistenceQueryListener : ReceiveActor
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly ActorMaterializer _materializer;
     private readonly SqlReadJournal _readJournal;
-    private Ulid _currentAuctionId = Ulid.Empty;
+    private Guid _currentAuctionId = Guid.Empty;
     private readonly Regex _lotPersistenceIdRegex = MyRegex();
 
     public AkkaPersistenceQueryListener(INatsPublisher natsPublisher)

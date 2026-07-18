@@ -30,7 +30,6 @@ public class BidPlacedHandlerTests
     {
         var evt = new BidPlacedEvent
         {
-            EventId = "test",
             LotId = 1,
             UserId = 100
         };

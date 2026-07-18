@@ -13,7 +13,7 @@ public class AuctionActor : ReceivePersistentActor
     private readonly ILoggingAdapter _log = Context.GetLogger();
     private readonly Dictionary<int, LotConfig> _lotConfigs = [];
 
-    public AuctionActor(Ulid auctionId)
+    public AuctionActor(Guid auctionId)
     {
         PersistenceId = $"auction-{auctionId}";
 

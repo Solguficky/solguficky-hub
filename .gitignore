@@ -46,6 +46,10 @@ Thumbs.db
 # Nuget-пакеты (обычно не хранятся в репозитории)
 packages/
 
+# --- .NET Aspire (infra/apphost) ---
+# Пользовательские секреты AppHost (токены ботов и т.п.) хранятся вне репозитория
+.aspire/
+
 # --- Rust (API Gateway) ---
 # Папка сборки Cargo
 **/target/

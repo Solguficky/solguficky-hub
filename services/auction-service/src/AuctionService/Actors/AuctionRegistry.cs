@@ -23,7 +23,7 @@ public class AuctionRegistry : ReceiveActor
         });
     }
 
-    private IActorRef GetOrCreateAuction(Ulid auctionId)
+    private IActorRef GetOrCreateAuction(Guid auctionId)
     {
         var auctionActor = Context.Child($"auction-{auctionId}");
         if (auctionActor.IsNobody())
@@ -41,7 +41,7 @@ public class AuctionRegistry : ReceiveActor
 
 public abstract record RegistryCommand;
 
-public sealed record ForwardToLot(Ulid AuctionId, int LotId, Lot.Command LotCommand) : RegistryCommand;
+public sealed record ForwardToLot(Guid AuctionId, int LotId, Lot.Command LotCommand) : RegistryCommand;
 
-public sealed record ForwardToAuction(Ulid AuctionId, Auction.Command Command) : RegistryCommand;
+public sealed record ForwardToAuction(Guid AuctionId, Auction.Command Command) : RegistryCommand;
 
