@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY ["services/notifications-service/src/NotificationsService/NotificationsService.csproj", "services/notifications-service/src/NotificationsService/"]
@@ -14,7 +14,7 @@ RUN --mount=type=bind,source=contracts,target=/src/contracts \
 RUN --mount=type=bind,source=contracts,target=/src/contracts \
     dotnet publish "NotificationsService.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 EXPOSE 8080
 
