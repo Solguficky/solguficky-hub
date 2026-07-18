@@ -24,7 +24,7 @@
   - websocket-gateway подписан на `events.*` (одноуровневый wildcard) — события `events.auction.*` под него не попадают, нужен `events.>` или `events.auction.>`;
   - убрать дублирование отправки outbid-уведомлений (gateway шлёт сам И notifications-service шлёт через `commands.telegram.send_message`) — оставить один путь через notifications-service.
 - [x] CI (GitHub Actions): build + test всех сервисов, clippy/fmt для Rust — `.github/workflows/ci.yml` (2026-07-18), path-фильтры по сервисам; проверить первый прогон после пуша на GitHub.
-- [ ] Единый `docker-compose.yml`: подключить auction-service и websocket-gateway (сейчас у них свои compose-файлы).
+- [ ] Единая локальная оркестрация: **Aspire вместо трёх compose-файлов** — ТЗ [06_TASKS/aspire-orchestration.md](06_TASKS/aspire-orchestration.md) (заменяет прежний пункт «единый docker-compose.yml»).
 - [ ] Исправить DI-баг: scoped `LotRepository` инжектится в singleton `NatsCommandHandler`.
 
 ## P1 — Ядро продукта: сходки
@@ -72,7 +72,8 @@
 - [ ] Read model для аукциона/сходок (CQRS query-сторона) вместо ask-запросов к акторам.
 - [ ] Observability: развернуть Loki/Grafana локально (конфиги уже есть), добавить метрики (Prometheus) и трейсы позже.
 - [ ] Money как decimal/минорные единицы вместо `double` в контрактах и коде.
-- [ ] **Хостинг/деплой** (решение открыто, нужен ADR): раньше сервис жил на Railway; кандидаты — дешёвый VPS (Hetzner/аналог, docker compose + деплой из GitHub Actions) или домашний сервер (бот на long polling работает за NAT без белого IP; для webhook/Mini App — Cloudflare Tunnel). Домашний сервер даёт больше обучения (Linux, systemd, мониторинг), VPS — надёжность.
+- [ ] **UUIDv7 вместо ULID** — ТЗ [06_TASKS/uuidv7-migration.md](06_TASKS/uuidv7-migration.md) (заменит ADR-019; попутно апгрейд C#-сервисов net8 → net10).
+- [ ] **Хостинг/деплой** (решение открыто, нужен ADR): раньше сервис жил на Railway; кандидаты — дешёвый VPS (Hetzner/аналог) или домашний сервер (бот на long polling работает за NAT без белого IP; для webhook/Mini App — Cloudflare Tunnel). Домашний сервер даёт больше обучения (Linux, systemd, мониторинг), VPS — надёжность. План в два этапа: сначала деплой docker compose из GitHub Actions, затем **k3s (single-node) как учебный этап** — манифесты генерируются из Aspire-топологии (`aspire publish`, k8s-publisher), см. ТЗ по Aspire.
 
 ## Языки: учебный трек (обновлено 2026-07-17)
 
