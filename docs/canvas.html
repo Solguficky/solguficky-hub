@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*{box-sizing:border-box}body{margin:0}img{max-width:100%}</style>
+<title>Solguficky Hub — канвас проекта</title>
+
+<style>
+  :root {
+    --bg: #eef1ee;
+    --surface: #ffffff;
+    --surface-2: #e4e9e6;
+    --ink: #101a1b;
+    --ink-2: #40514f;
+    --ink-3: #6d817d;
+    --line: #cfd8d4;
+    --line-strong: #a9b7b2;
+    --accent: #d9700f;
+    --accent-ink: #8a4405;
+    --accent-wash: #fbeadb;
+    --blue: #2e7d92;
+    --blue-wash: #ddeaee;
+    --ok: #3f7f57;
+    --ok-wash: #dfeee4;
+    --risk: #b53a4d;
+    --risk-wash: #f7e2e5;
+    --idle: #7a8b87;
+    --idle-wash: #e3e8e6;
+    --rail: #17282a;
+    --rail-ink: #e9efec;
+    --shadow: 0 1px 2px rgba(16, 26, 27, .06), 0 8px 24px -16px rgba(16, 26, 27, .35);
+
+    --display: "Bahnschrift", "DIN Alternate", "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif;
+    --body: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", ui-monospace, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1618;
+      --surface: #15211f;
+      --surface-2: #1c2b28;
+      --ink: #eaf0ed;
+      --ink-2: #a9bab5;
+      --ink-3: #7d918c;
+      --line: #26383a;
+      --line-strong: #3a5152;
+      --accent: #ff8a1f;
+      --accent-ink: #ffb268;
+      --accent-wash: #33210f;
+      --blue: #56b3c8;
+      --blue-wash: #122e35;
+      --ok: #64bb85;
+      --ok-wash: #142c1f;
+      --risk: #e46e80;
+      --risk-wash: #331419;
+      --idle: #8298a0;
+      --idle-wash: #1b2a2b;
+      --rail: #0a1214;
+      --rail-ink: #cfdcd8;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -18px rgba(0, 0, 0, .9);
+    }
+  }
+
+  :root[data-theme="light"] {
+    --bg: #eef1ee; --surface: #ffffff; --surface-2: #e4e9e6;
+    --ink: #101a1b; --ink-2: #40514f; --ink-3: #6d817d;
+    --line: #cfd8d4; --line-strong: #a9b7b2;
+    --accent: #d9700f; --accent-ink: #8a4405; --accent-wash: #fbeadb;
+    --blue: #2e7d92; --blue-wash: #ddeaee;
+    --ok: #3f7f57; --ok-wash: #dfeee4;
+    --risk: #b53a4d; --risk-wash: #f7e2e5;
+    --idle: #7a8b87; --idle-wash: #e3e8e6;
+    --rail: #17282a; --rail-ink: #e9efec;
+    --shadow: 0 1px 2px rgba(16, 26, 27, .06), 0 8px 24px -16px rgba(16, 26, 27, .35);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0e1618; --surface: #15211f; --surface-2: #1c2b28;
+    --ink: #eaf0ed; --ink-2: #a9bab5; --ink-3: #7d918c;
+    --line: #26383a; --line-strong: #3a5152;
+    --accent: #ff8a1f; --accent-ink: #ffb268; --accent-wash: #33210f;
+    --blue: #56b3c8; --blue-wash: #122e35;
+    --ok: #64bb85; --ok-wash: #142c1f;
+    --risk: #e46e80; --risk-wash: #331419;
+    --idle: #8298a0; --idle-wash: #1b2a2b;
+    --rail: #0a1214; --rail-ink: #cfdcd8;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -18px rgba(0, 0, 0, .9);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  h1, h2, h3, h4 { font-family: var(--display); font-weight: 600; text-wrap: balance; letter-spacing: .01em; }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 12px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+
+  /* ---------- header ---------- */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 48px 0 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .masthead h1 {
+    font-size: clamp(38px, 7vw, 72px);
+    line-height: .96;
+    margin: 0;
+    letter-spacing: -.015em;
+  }
+  .masthead h1 .salt { color: var(--accent); }
+  .masthead p {
+    margin: 0;
+    max-width: 62ch;
+    font-size: 17px;
+    color: var(--ink-2);
+  }
+  .meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    padding-top: 6px;
+  }
+  .meta-strip b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- pulse tiles ---------- */
+  .pulse {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+  .tile {
+    background: var(--surface);
+    padding: 18px 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tile .num {
+    font-family: var(--display);
+    font-size: 34px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile .num small { font-size: 16px; color: var(--ink-3); }
+  .tile .lbl { font-size: 12px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; font-family: var(--display); }
+  .tile.hot .num { color: var(--accent); }
+
+  /* ---------- generic section ---------- */
+  .sec { display: flex; flex-direction: column; gap: 22px; }
+  .sec > header { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line-strong); padding-top: 14px; }
+  .sec > header h2 { font-size: 26px; margin: 0; }
+  .sec > header p { margin: 0; color: var(--ink-2); max-width: 70ch; }
+
+  /* ---------- status pills ---------- */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    padding: 3px 9px 2px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .p-ok { color: var(--ok); background: var(--ok-wash); }
+  .p-hot { color: var(--accent-ink); background: var(--accent-wash); }
+  .p-idle { color: var(--idle); background: var(--idle-wash); }
+  .p-risk { color: var(--risk); background: var(--risk-wash); }
+  .p-none { color: var(--ink-3); background: transparent; border: 1px dashed var(--line-strong); }
+
+  /* ---------- architecture schematic ---------- */
+  .schema {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    padding: 26px 22px;
+    overflow-x: auto;
+  }
+  .schema-inner { min-width: 660px; display: flex; flex-direction: column; }
+
+  .lane-label {
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 8px;
+  }
+
+  .node-row { display: grid; gap: 14px; }
+  .row-top { grid-template-columns: 1fr 1fr; }
+  .row-bottom { grid-template-columns: repeat(4, 1fr); }
+
+  .node {
+    position: relative;
+    background: var(--surface-2);
+    border: 1px solid var(--line-strong);
+    padding: 12px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-height: 84px;
+  }
+  .node .nm { font-family: var(--display); font-size: 15px; }
+  .node .tech { font-family: var(--mono); font-size: 11px; color: var(--blue); }
+  .node .note { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
+  .node.planned { border-style: dashed; background: transparent; }
+  .node.planned .nm { color: var(--ink-3); }
+
+  /* drop connectors into the rail */
+  .drop-down::after,
+  .drop-up::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    width: 2px;
+    background: var(--line-strong);
+  }
+  .drop-down::after { top: 100%; height: 22px; }
+  .drop-up::before { bottom: 100%; height: 22px; }
+
+  .rail {
+    background: var(--rail);
+    color: var(--rail-ink);
+    margin: 22px 0;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    border-left: 4px solid var(--accent);
+  }
+  .rail .rail-name { font-family: var(--display); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+  .rail .subjects { display: flex; gap: 7px; flex-wrap: wrap; }
+  .subj {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 7px;
+    border: 1px solid rgba(255, 255, 255, .18);
+    background: rgba(255, 255, 255, .05);
+    color: var(--rail-ink);
+    border-radius: 2px;
+  }
+  .subj.future { opacity: .5; border-style: dashed; }
+
+  .grpc-lane {
+    margin-top: 20px;
+    border-top: 2px dashed var(--blue);
+    padding-top: 10px;
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .grpc-lane .tag {
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--blue);
+  }
+
+  /* ---------- rules ---------- */
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+  .rule {
+    border-left: 3px solid var(--accent);
+    padding: 2px 0 2px 14px;
+  }
+  .rule h4 { margin: 0 0 3px; font-size: 14px; }
+  .rule p { margin: 0; font-size: 13px; color: var(--ink-2); }
+
+  /* ---------- service cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    padding: 16px 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .card-head h3 { margin: 0; font-size: 16px; }
+  .card .tech { font-family: var(--mono); font-size: 11.5px; color: var(--blue); }
+  .card p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+  .card ul { margin: 0; padding-left: 16px; font-size: 13px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
+  .card.ghost { background: transparent; border-style: dashed; box-shadow: none; }
+
+  /* ---------- phases ---------- */
+  .phases { display: flex; flex-direction: column; gap: 0; }
+  .phase {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 20px;
+    border-top: 1px solid var(--line);
+    padding: 20px 0;
+  }
+  .phase:last-child { border-bottom: 1px solid var(--line); }
+  .phase-key { display: flex; flex-direction: column; gap: 5px; }
+  .phase-key .code {
+    font-family: var(--display);
+    font-size: 30px;
+    line-height: 1;
+    color: var(--accent);
+  }
+  .phase-key .when { font-size: 11.5px; color: var(--ink-3); font-family: var(--display); letter-spacing: .08em; text-transform: uppercase; }
+  .phase-body h3 { margin: 0 0 10px; font-size: 18px; }
+  .items { display: flex; flex-direction: column; gap: 7px; }
+  .item { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: baseline; font-size: 13.5px; }
+  .item .txt { color: var(--ink-2); }
+  .item .txt b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--surface-2);
+  }
+  tr:last-child td { border-bottom: none; }
+  td .lang { font-family: var(--display); font-size: 15px; }
+
+  /* ---------- stack chips ---------- */
+  .stack-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+  .stack-group h4 { margin: 0 0 9px; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 3px 9px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 2px;
+  }
+  .chip.soon { border-style: dashed; color: var(--ink-3); background: transparent; }
+  .chip.core { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-wash); }
+
+  /* ---------- two column ---------- */
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; align-items: start; }
+
+  .decisions { display: flex; flex-direction: column; gap: 10px; }
+  .adr { display: grid; grid-template-columns: 74px 1fr; gap: 12px; font-size: 13.5px; align-items: baseline; }
+  .adr .id { font-family: var(--mono); font-size: 12px; color: var(--accent-ink); }
+  .adr .txt { color: var(--ink-2); }
+  .adr .txt b { color: var(--ink); font-weight: 600; }
+  .adr.dead .id, .adr.dead .txt { color: var(--ink-3); }
+  .adr.dead .txt b { color: var(--ink-3); text-decoration: line-through; }
+
+  .open-q { display: flex; flex-direction: column; gap: 12px; }
+  .q {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--blue);
+    padding: 13px 14px;
+  }
+  .q h4 { margin: 0 0 4px; font-size: 14.5px; }
+  .q p { margin: 0; font-size: 13px; color: var(--ink-2); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 12.5px; color: var(--ink-3); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  /* ---------- print / PDF ---------- */
+  @media print {
+    /* Печать всегда в светлой теме: тёмный ground съедает тонер и делает PDF нечитаемым */
+    :root, :root[data-theme="dark"], :root[data-theme="light"] {
+      --bg: #ffffff; --surface: #ffffff; --surface-2: #f1f4f2;
+      --ink: #101a1b; --ink-2: #3b4c4a; --ink-3: #667874;
+      --line: #ccd6d2; --line-strong: #9fb0ab;
+      --accent: #c4620a; --accent-ink: #8a4405; --accent-wash: #fbeadb;
+      --blue: #26697c; --blue-wash: #ddeaee;
+      --ok: #35704b; --ok-wash: #dfeee4;
+      --risk: #a53245; --risk-wash: #f7e2e5;
+      --idle: #6d7e7a; --idle-wash: #e6ebe9;
+      --rail: #17282a; --rail-ink: #ffffff;
+      --shadow: none;
+    }
+    @page { size: A4; margin: 14mm 12mm; }
+    body { font-size: 11.5px; background: #fff; }
+    /* фоновые заливки — рельса шины, пилюли статусов — иначе печатаются пустыми */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .wrap { max-width: none; padding: 0; gap: 26px; }
+    .masthead { padding: 0 0 12px; break-after: avoid; }
+    .masthead h1 { font-size: 40px; }
+    .sec { break-inside: auto; }
+    .sec > header { break-after: avoid; }
+    .card, .q, .phase, .node, .tile, .rule { break-inside: avoid; }
+    /* схема шины читается только целиком — разрыв посреди рельсы бессмыслен */
+    .schema { overflow: visible; box-shadow: none; break-inside: avoid; }
+    .schema-inner { min-width: 0; }
+    .tbl-wrap { overflow: visible; }
+    table { min-width: 0; }
+    .pulse { break-inside: avoid; }
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    footer { break-before: avoid; }
+  }
+
+  @media (max-width: 720px) {
+    .wrap { padding: 0 16px 64px; gap: 44px; }
+    .phase { grid-template-columns: 1fr; gap: 10px; }
+    .phase-key { flex-direction: row; align-items: baseline; gap: 12px; }
+    .item { grid-template-columns: 1fr; gap: 2px; }
+    .adr { grid-template-columns: 1fr; gap: 2px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Канвас проекта · срез на 18 июля 2026</div>
+    <h1>Solguficky <span class="salt">Hub</span></h1>
+    <p>Платформа для сходок Telegram-сообщества — и одновременно полигон для Event Sourcing, акторов и распределённых систем. Один продукт, две цели: польза комьюнити и рост до тех-лида.</p>
+    <div class="meta-strip">
+      <span>ветка <b>main</b></span>
+      <span>ADR: <b>21</b></span>
+      <span>сервисов в коде: <b>4</b></span>
+      <span>языков: <b>C# · Rust · Python</b></span>
+      <span>текущий фокус: <b>P0 → P1</b></span>
+    </div>
+  </header>
+
+  <section class="pulse" aria-label="Ключевые показатели">
+    <div class="tile hot">
+      <div class="num">P0<small> → P1</small></div>
+      <div class="lbl">Стадия</div>
+    </div>
+    <div class="tile">
+      <div class="num">3<small> / 7</small></div>
+      <div class="lbl">P0 закрыто</div>
+    </div>
+    <div class="tile">
+      <div class="num">4</div>
+      <div class="lbl">Сервиса в коде</div>
+    </div>
+    <div class="tile">
+      <div class="num">4</div>
+      <div class="lbl">Сервиса не начаты</div>
+    </div>
+    <div class="tile hot">
+      <div class="num">3</div>
+      <div class="lbl">Контрактных бага</div>
+    </div>
+    <div class="tile">
+      <div class="num">4</div>
+      <div class="lbl">Открытых решения</div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">Как это устроено</div>
+      <h2>Архитектура: шина посередине</h2>
+      <p>Всё асинхронное идёт через NATS одним контрактом (Protobuf), всё синхронное — мимо шины, по gRPC. Это не стилистика, а критерий выбора из ADR-016: команды к stateful-агрегатам и события — в шину; CRUD и queries — в gRPC.</p>
+    </header>
+
+    <div class="schema">
+      <div class="schema-inner">
+        <div class="lane-label">Продюсеры команд</div>
+        <div class="node-row row-top">
+          <div class="node drop-down">
+            <div class="nm">telegram-gateway</div>
+            <div class="tech">Rust · Teloxide · prost</div>
+            <div class="note">Единственная точка входа пользователя: UI бота, FSM-диалоги, роли. Публикует команды, слушает события.</div>
+          </div>
+          <div class="node drop-down">
+            <div class="nm">notifications-service</div>
+            <div class="tech">C# · net10</div>
+            <div class="note">Слушает события, порождает команды на отправку сообщений. Одновременно консьюмер и продюсер.</div>
+          </div>
+        </div>
+
+        <div class="rail">
+          <div class="rail-name">NATS</div>
+          <div class="subjects">
+            <span class="subj">commands.auction.place_bid</span>
+            <span class="subj">commands.telegram.send_message</span>
+            <span class="subj">events.auction.bid_placed</span>
+            <span class="subj">events.auction.&gt;</span>
+            <span class="subj future">events.meetup.* (P1)</span>
+          </div>
+        </div>
+
+        <div class="lane-label">Консьюмеры событий и команд</div>
+        <div class="node-row row-bottom">
+          <div class="node drop-up">
+            <div class="nm">auction-service</div>
+            <div class="tech">C# · Akka.NET · ES/CQRS</div>
+            <div class="note">AuctionActor → LotActor, журнал в PostgreSQL. Отложен до P3.</div>
+          </div>
+          <div class="node drop-up">
+            <div class="nm">websocket-gateway</div>
+            <div class="tech">C# · SignalR</div>
+            <div class="note">Проброс событий в браузер: Big Screen, консоль аукциониста.</div>
+          </div>
+          <div class="node drop-up planned">
+            <div class="nm">meetups-service</div>
+            <div class="tech">C# · EF Core · без ES</div>
+            <div class="note">Ядро продукта. Не начат — главный пробел архитектуры.</div>
+          </div>
+          <div class="node drop-up planned">
+            <div class="nm">identity / achievements / content-feed</div>
+            <div class="tech">C# · Kotlin (P2)</div>
+            <div class="note">Роли, ачивки, лента сходки.</div>
+          </div>
+        </div>
+
+        <div class="grpc-lane">
+          <span class="tag">gRPC, в обход шины</span>
+          <span>telegram-gateway → auction-service (queries, CRUD лотов) · → meetups-service (P1). Сейчас гейтвей ходит не в gRPC, а в <code>MockAuctionService</code> — это P1-долг.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="rules">
+      <div class="rule">
+        <h4>Только Protobuf</h4>
+        <p>JSON в шине запрещён (ADR-012). Контракты живут в <code>contracts/proto/</code> и генерятся при сборке каждого сервиса — без Schema Registry (ADR-014).</p>
+      </div>
+      <div class="rule">
+        <h4>Хореография, не оркестрация</h4>
+        <p>Сервисы не знают друг о друге — только о темах. Имена: <code>&lt;commands|events&gt;.&lt;домен&gt;.&lt;действие&gt;</code>, snake_case.</p>
+      </div>
+      <div class="rule">
+        <h4>ES — точечно</h4>
+        <p>Event Sourcing только там, где нужна история и конкурентные изменения (аукцион). Сходки, роли, лента — обычный CRUD на EF Core.</p>
+      </div>
+      <div class="rule">
+        <h4>UUIDv7 в контрактах</h4>
+        <p>ID генерит сервис, сортируется по времени, нативен во всех языках (ADR-020, заменил ULID). Строка 36 символов, lowercase.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">Что уже написано и в каком оно состоянии</div>
+      <h2>Сервисы и модули</h2>
+    </header>
+
+    <div class="legend">
+      <span class="pill p-ok">работает</span>
+      <span class="pill p-hot">в работе / не проверено</span>
+      <span class="pill p-risk">есть баг</span>
+      <span class="pill p-idle">заморожено</span>
+      <span class="pill p-none">не начато</span>
+    </div>
+
+    <div class="cards">
+      <article class="card">
+        <div class="card-head">
+          <h3>telegram-gateway</h3>
+          <span class="pill p-risk">есть баг</span>
+        </div>
+        <div class="tech">Rust · Teloxide · figment · prost</div>
+        <p>MVP аукционного UI: просмотр лотов, ставки, FSM создания лота, роли из конфига.</p>
+        <ul>
+          <li>Данные из <code>MockAuctionService</code>, реального gRPC-клиента нет</li>
+          <li><code>event_listener.rs</code> парсит JSON вместо Protobuf</li>
+          <li>Хендлеры возвращают <code>BotAction</code> — Bot API изолирован, FSM и UI чистые</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>auction-service</h3>
+          <span class="pill p-idle">заморожено</span>
+        </div>
+        <div class="tech">C# net10 · Akka.NET · Akka.Persistence.Sql</div>
+        <p>Каркас ES/CQRS живой: акторы, журнал в PostgreSQL, gRPC-queries, приём NATS-команд.</p>
+        <ul>
+          <li>Фазы <code>NotStarted → OpenBidding → Idle → Final</code> — рефакторинг не закончен</li>
+          <li>Таймеры и анти-снайп удалены, вернутся в P3</li>
+          <li>Нет EF-миграций: таблица <code>lots</code> не создаётся на чистой БД</li>
+          <li>DI-баг: scoped-репозиторий в singleton-хендлере</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>notifications-service</h3>
+          <span class="pill p-hot">каркас</span>
+        </div>
+        <div class="tech">C# net10 · диспетчер хендлеров</div>
+        <p>Событие → команда на отправку сообщения. Пока обслуживает только аукцион.</p>
+        <ul>
+          <li>Дублирование outbid-уведомлений с гейтвеем — оставить один путь</li>
+          <li>Первый настоящий сценарий будет в P1: напоминания по RSVP</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>websocket-gateway</h3>
+          <span class="pill p-ok">работает</span>
+        </div>
+        <div class="tech">C# net10 · SignalR</div>
+        <p>Broadcast событий NATS в канал <code>auction:live</code>.</p>
+        <ul>
+          <li>Подписка починена на <code>events.auction.&gt;</code> — раньше одноуровневый wildcard не ловил ничего</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>nats-tester</h3>
+          <span class="pill p-ok">работает</span>
+        </div>
+        <div class="tech">Python · CLI</div>
+        <p>Ручная отправка команд и чтение событий шины. Основной инструмент e2e-проверок до появления тестов.</p>
+      </article>
+
+      <article class="card ghost">
+        <div class="card-head">
+          <h3>meetups-service</h3>
+          <span class="pill p-none">P1</span>
+        </div>
+        <div class="tech">C# · ASP.NET Core · EF Core</div>
+        <p>Сходки: карточка, дата, место, статус, организаторы. Владеет продуктовыми данными, которых сейчас нет ни у кого.</p>
+      </article>
+
+      <article class="card ghost">
+        <div class="card-head">
+          <h3>Mini App (frontend)</h3>
+          <span class="pill p-none">дизайн-первый</span>
+        </div>
+        <div class="tech">TypeScript · стек через ADR</div>
+        <p>Пустая директория. Сначала макеты в <code>docs/05_DESIGN/</code> через Claude, потом вёрстка. Очередь экранов: сводка сходки → календарь → лента лотов → консоль аукциониста → Big Screen.</p>
+      </article>
+
+      <article class="card ghost">
+        <div class="card-head">
+          <h3>scheduler / identity / achievements / content-feed</h3>
+          <span class="pill p-none">P2</span>
+        </div>
+        <div class="tech">Go · Kotlin · C#</div>
+        <p>Кандидаты на новые языки — сервисы с понятными границами.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">План работ</div>
+      <h2>Стадии проекта</h2>
+      <p>Главный продуктовый разворот: ядро — сходки, аукцион — всего лишь один из модулей и осознанно отложен. Инженерный смысл P1 — перевернуть «инвертированную пирамиду», где сервисы доставки построены, а сервиса-владельца данных нет.</p>
+    </header>
+
+    <div class="phases">
+      <div class="phase">
+        <div class="phase-key">
+          <div class="code">P0</div>
+          <div class="when">сейчас</div>
+        </div>
+        <div class="phase-body">
+          <h3>Гигиена — перед любыми фичами</h3>
+          <div class="items">
+            <div class="item"><span class="pill p-ok">готово</span><span class="txt"><b>CI на GitHub Actions</b> — build + test трёх C#-сервисов, clippy/fmt/test для Rust, path-фильтры. Изменение <code>contracts/proto/</code> пересобирает всё — контрактный smoke-тест</span></div>
+            <div class="item"><span class="pill p-ok">готово</span><span class="txt"><b>WIP аукциона закоммичен</b>, ветки слиты в main</span></div>
+            <div class="item"><span class="pill p-ok">готово</span><span class="txt"><b>Wildcard websocket-gateway</b> — <code>events.*</code> → <code>events.auction.&gt;</code></span></div>
+            <div class="item"><span class="pill p-hot">код есть</span><span class="txt"><b>Aspire вместо трёх docker-compose</b> — итерации 0–3 написаны, но <b>ни разу не запущены</b>: сессия писалась без сети. Нужен прогон <code>aspire run</code></span></div>
+            <div class="item"><span class="pill p-risk">открыто</span><span class="txt"><b>JSON вместо Protobuf</b> в двух местах: <code>SendMessageCommand</code> и <code>bid_placed</code> в гейтвее</span></div>
+            <div class="item"><span class="pill p-risk">открыто</span><span class="txt"><b>Дублирование outbid-уведомлений</b> — два пути отправки вместо одного</span></div>
+            <div class="item"><span class="pill p-risk">открыто</span><span class="txt"><b>DI-баг</b> и <b>отсутствие EF-миграций</b> в auction-service</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-key">
+          <div class="code">P1</div>
+          <div class="when">следующее</div>
+        </div>
+        <div class="phase-body">
+          <h3>Ядро продукта: сходки</h3>
+          <div class="items">
+            <div class="item"><span class="pill p-none">план</span><span class="txt"><b>Meetups Service</b> — CRUD сходок, gRPC-queries, события <code>events.meetup.*</code></span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt"><b>Роли</b> из <code>configuration.yaml</code> — в сервис: участник, организатор, админ, owner</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt"><b>Меню бота вокруг сходок</b>: ближайшая, календарь, карточка с RSVP, «предложить сходку» с модерацией</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt"><b>Напоминания за 24 ч и 2 ч</b> — первый непридуманный сценарий для notifications-service</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt"><b>Реальный gRPC вместо мока</b> и авто-обновляемый закреп в чате</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-key">
+          <div class="code">P2</div>
+          <div class="when">потом</div>
+        </div>
+        <div class="phase-body">
+          <h3>Вовлечение</h3>
+          <div class="items">
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Лента сходки, подписки и тихие часы, недельный дайджест</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Ачивки и кудос-карма, профиль участника</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Пост-ивент: сбор фото и отчёта</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-key">
+          <div class="code">P3</div>
+          <div class="when">после ядра</div>
+        </div>
+        <div class="phase-body">
+          <h3>Аукцион v2 — формат уже утверждён</h3>
+          <div class="items">
+            <div class="item"><span class="pill p-idle">спека</span><span class="txt">Неделя онлайн-предаукциона с proxy-ставками + классический офлайн-финал с поднятыми руками, без soft-close</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Консоль аукциониста (↑ask, скан бейджа, «продано») и Big Screen зала</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Возврат таймеров и анти-снайпа как поведения актора, модель событий финала</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Оплата «вариант Б»: счёт-инструкция и ручное подтверждение — без платёжных провайдеров</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-key">
+          <div class="code">∞</div>
+          <div class="when">сквозное</div>
+        </div>
+        <div class="phase-body">
+          <h3>Техдолг и обучение</h3>
+          <div class="items">
+            <div class="item"><span class="pill p-risk">важно</span><span class="txt"><b>JetStream</b>: сервисы используют core NATS — at-most-once, сообщения теряются при рестарте подписчика</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Идемпотентность по <code>op_id</code> (поле есть, не проверяется), retry с backoff</span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Read model вместо ask-запросов к акторам; деньги в decimal вместо <code>double</code></span></div>
+            <div class="item"><span class="pill p-none">план</span><span class="txt">Observability: Loki/Grafana локально, метрики, трейсы</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">Полиглотность с правилами</div>
+      <h2>Языки: учебный трек</h2>
+      <p>Правило — один новый язык за раз и только под сервис с понятными границами; выбор фиксируется ADR. Ядро (сходки, роли) пишется на C#: там важнее скорость получения работающего продукта, чем обучение.</p>
+    </header>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Язык</th><th>Роль в проекте</th><th>Сервис</th><th>Когда</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="lang">C#</span></td><td>Рабочая лошадка: ES/акторы и обычный CRUD</td><td>auction, notifications, websocket, meetups, identity</td><td><span class="pill p-ok">в проде</span></td></tr>
+          <tr><td><span class="lang">Rust</span></td><td>Входной шлюз, строгость на границе с внешним миром</td><td>telegram-gateway</td><td><span class="pill p-ok">в проде</span></td></tr>
+          <tr><td><span class="lang">Python</span></td><td>Инструментальный, не продуктовый</td><td>nats-tester</td><td><span class="pill p-ok">в проде</span></td></tr>
+          <tr><td><span class="lang">Go</span></td><td>Первый новый язык: маленький stateless-сервис</td><td>scheduler (таймеры финала, напоминания, дайджест)</td><td><span class="pill p-none">P2</span></td></tr>
+          <tr><td><span class="lang">Kotlin</span></td><td>Ktor + Exposed на контентной задаче</td><td>content-feed</td><td><span class="pill p-none">P2</span></td></tr>
+          <tr><td><span class="lang">Ruby</span></td><td>Rails как самый быстрый способ получить админку</td><td>внутренняя админ-панель</td><td><span class="pill p-none">P2–P3</span></td></tr>
+          <tr><td><span class="lang">Elixir</span></td><td>Только по критериям нагрузки из ADR-018, не раньше</td><td>миграция notifications / websocket</td><td><span class="pill p-none">когда-нибудь</span></td></tr>
+          <tr><td><span class="lang" style="color: var(--ink-3); text-decoration: line-through;">Scala</span></td><td colspan="3" style="color: var(--ink-3);">Исключена из планов решением 17.07.2026</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">Чем это построено</div>
+      <h2>Технологии</h2>
+    </header>
+    <div class="stack-groups">
+      <div class="stack-group">
+        <h4>Обмен и данные</h4>
+        <div class="chips">
+          <span class="chip core">NATS</span>
+          <span class="chip core">Protobuf</span>
+          <span class="chip">gRPC</span>
+          <span class="chip core">PostgreSQL</span>
+          <span class="chip">EF Core</span>
+          <span class="chip soon">JetStream</span>
+        </div>
+      </div>
+      <div class="stack-group">
+        <h4>Приложения</h4>
+        <div class="chips">
+          <span class="chip">Akka.NET</span>
+          <span class="chip">Akka.Persistence.Sql</span>
+          <span class="chip">ASP.NET Core</span>
+          <span class="chip">SignalR</span>
+          <span class="chip">Teloxide</span>
+          <span class="chip">prost / tonic</span>
+          <span class="chip">figment</span>
+          <span class="chip">Serilog</span>
+        </div>
+      </div>
+      <div class="stack-group">
+        <h4>Оркестрация и эксплуатация</h4>
+        <div class="chips">
+          <span class="chip">docker compose</span>
+          <span class="chip core">.NET Aspire</span>
+          <span class="chip core">GitHub Actions</span>
+          <span class="chip soon">k3s</span>
+          <span class="chip soon">Loki / Grafana</span>
+          <span class="chip soon">OpenTelemetry</span>
+        </div>
+      </div>
+      <div class="stack-group">
+        <h4>AI-инфраструктура репозитория</h4>
+        <div class="chips">
+          <span class="chip core">AGENTS.md</span>
+          <span class="chip">CLAUDE.md → импорт</span>
+          <span class="chip">skills: adr</span>
+          <span class="chip">skills: contract-change</span>
+          <span class="chip">skills: subtask</span>
+          <span class="chip">worktree-подагенты</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">Зафиксированное и незакрытое</div>
+      <h2>Решения</h2>
+    </header>
+
+    <div class="cols">
+      <div>
+        <h3 style="margin: 0 0 12px; font-size: 15px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);">Опорные ADR</h3>
+        <div class="decisions">
+          <div class="adr"><span class="id">ADR-002/009</span><span class="txt"><b>ES + иерархия акторов</b> для аукциона: AuctionActor → LotActor, Persist → Apply → Reply</span></div>
+          <div class="adr"><span class="id">ADR-012</span><span class="txt"><b>Protobuf с самого начала</b>, не JSON. Главный контрактный закон проекта</span></div>
+          <div class="adr"><span class="id">ADR-014</span><span class="txt"><b>Protobuf-in-Git</b> вместо Schema Registry — сознательное упрощение</span></div>
+          <div class="adr"><span class="id">ADR-016</span><span class="txt"><b>Критерий NATS vs gRPC</b> + RBAC и Action-паттерн для тестируемости бота</span></div>
+          <div class="adr"><span class="id">ADR-013</span><span class="txt"><b>Итеративная разработка с AI</b>: обсуждение до кода, ADR на нетривиальное, доки в том же изменении</span></div>
+          <div class="adr"><span class="id">ADR-020</span><span class="txt"><b>UUIDv7 вместо ULID</b> — выполнено, попутно апгрейд на net10</span></div>
+          <div class="adr"><span class="id">ADR-021</span><span class="txt"><b>Aspire для локальной оркестрации</b> — код написан, запуск не подтверждён</span></div>
+          <div class="adr dead"><span class="id">ADR-006</span><span class="txt"><b>Railway как хостинг</b> — устарел, пересматривается</span></div>
+          <div class="adr dead"><span class="id">ADR-008</span><span class="txt"><b>Apicurio Registry</b> — отменён ADR-014</span></div>
+        </div>
+      </div>
+
+      <div>
+        <h3 style="margin: 0 0 12px; font-size: 15px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);">Открытые вопросы</h3>
+        <div class="open-q">
+          <div class="q">
+            <h4>Где это будет жить</h4>
+            <p>Railway дорожает и прячет инфраструктурную практику. Кандидаты: дешёвый VPS или домашний сервер — бот на long polling работает за NAT без белого IP, для Mini App добавится туннель. План в два шага: сначала деплой compose из Actions, потом k3s как учебный этап (манифесты генерирует Aspire).</p>
+          </div>
+          <div class="q">
+            <h4>Проверить Aspire живьём</h4>
+            <p>До прогона <code>aspire run</code> весь AppHost — непроверенный фундамент. Наращивать поверх него нельзя.</p>
+          </div>
+          <div class="q">
+            <h4>Стек Mini App</h4>
+            <p>TypeScript плюс фреймворк — решается ADR после первых утверждённых макетов, не раньше.</p>
+          </div>
+          <div class="q">
+            <h4>Когда включать JetStream</h4>
+            <p>Сейчас теряем сообщения при рестарте подписчика. Хорошее упражнение по надёжности — но требует durable consumers и идемпотентности разом.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <header>
+      <div class="eyebrow">Ради чего всё это</div>
+      <h2>Продукт в одном экране</h2>
+    </header>
+    <div class="cols">
+      <div class="card">
+        <div class="card-head"><h3>Обещание пользователю</h3></div>
+        <p>Бот — единое место правды о сходках: узнать что и когда, поучаствовать в подготовке, сохранить память о прошедшем. И не создавать шума в общем чате.</p>
+        <ul>
+          <li><b>Тихий в чате</b> — вся интерактивность в личке, в общем чате только обновляемый закреп</li>
+          <li><b>Одна кнопка до главного</b> — <code>/start</code> и сразу ближайшая сходка</li>
+          <li><b>Редактирование вместо новых сообщений</b></li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>MVP ядра</h3><span class="pill p-none">P1</span></div>
+        <p>Карточка сходки, календарь, RSVP «Пойду», авто-саммари в закрепе, создание и предложение сходки с модерацией, базовые роли.</p>
+        <ul>
+          <li>Роли: солегуфик · организатор · солеадмин и owner</li>
+          <li>Полная матрица из семи ролей — только если сообщество вырастет</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Топ идей из бэклога</h3></div>
+        <ul>
+          <li><b>Голосование за дату</b> — крошечное, бьёт в главный блокер «когда всем удобно»</li>
+          <li><b>Витрина «кто придёт»</b> — час работы поверх RSVP</li>
+          <li><b>Фото-альбом и ретро-опрос</b> — закрывают память о сходке</li>
+          <li><b>«Год в соли»</b> — лучший retention-ход и лучшая витрина Event Sourcing</li>
+          <li><b>Квизмейстер</b> — второй модуль, проверка модульности платформы</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Анти-скоуп</h3></div>
+        <p>То, что решено не делать — чтобы пет-проект не утонул:</p>
+        <ul>
+          <li>Настоящие платежи, эскроу, депозиты — только «вариант Б» со счётом и ручным подтверждением</li>
+          <li>Клиенты вне Telegram</li>
+          <li>Schema Registry</li>
+          <li>Публичность за пределами сообщества</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Источники среза: docs/ROADMAP.md · docs/04_DECISIONS/decisions.md · docs/06_TASKS/* · git log · код сервисов</span>
+    <span class="mono">18.07.2026</span>
+  </footer>
+
+</div>
+
+</html>
