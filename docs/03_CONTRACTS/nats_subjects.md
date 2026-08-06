@@ -36,14 +36,14 @@
 
 ### Планируемые (не реализованы)
 
-*   `commands.meetup.create` / `events.meetup.created` — после появления Meetups Service (roadmap P1).
+*   `commands.meetup.create` / `events.meetup.created` — возможные subjects после проектирования Meetups Service в рамках MVP; до D0–D5 не считать утверждённым контрактом.
 *   `events.auction.lot_sold`, `events.auction.finished` — при доработке аукциона (P3).
 
 ## Правила изменения
 
 При изменении контракта следуй скиллу `.claude/skills/contract-change/` — обнови все сервисы-потребители, `nats-tester` и этот документ в одном изменении.
 
-## Известные расхождения (техдолг, roadmap P0)
+## Известные расхождения текущего кода
 
 *   `telegram-gateway/src/app/event_listener.rs` парсит `BidPlacedEvent` и `SendMessageCommand` как JSON — должен использовать Protobuf из `generated/`.
 *   Поле `op_id` в командах зарезервировано под идемпотентность, но консьюмерами пока не проверяется.

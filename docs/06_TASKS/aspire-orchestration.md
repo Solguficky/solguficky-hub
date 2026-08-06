@@ -25,7 +25,7 @@
 - **один AppHost** = вся топология кодом: контейнеры (NATS, PostgreSQL), C#-проекты, Rust через `AddExecutable`/community `AddRustApp`;
 - **dashboard** из коробки: логи всех сервисов в одном месте, OTel-трейсы, health;
 - service discovery: строки подключения/env инжектятся автоматически, а не копипастятся по compose-файлам;
-- `aspire publish`: docker-compose и Kubernetes-манифесты становятся **генерируемыми артефактами** топологии (пригодится для деплоя на k3s — см. ROADMAP «Хостинг/деплой»).
+- `aspire publish`: docker-compose и Kubernetes-манифесты становятся **генерируемыми артефактами** топологии; возможное применение для production-like k3s описано в [контексте проекта](../PROJECT_CONTEXT.md#12-инфраструктура-и-hosting).
 
 ## Требование: гибкая топология
 

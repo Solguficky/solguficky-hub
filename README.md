@@ -26,10 +26,10 @@ docker-compose up --build
 ```
 solguficky-hub/
 ├── contracts/proto/    # Protobuf-контракты (NATS + gRPC) — источник правды
-├── docs/               # Vision, архитектура, ADR, roadmap
+├── docs/               # Контекст проекта, vision, архитектура, ADR и сервисные документы
 ├── services/
 │   ├── telegram-gateway/      # Rust + Teloxide — входной шлюз, UI бота
-│   ├── auction-service/       # C# + Akka.NET — Event Sourcing, аукционы (отложен, см. roadmap)
+│   ├── auction-service/       # C# + Akka.NET — legacy-прототип аукциона, не входит в MVP
 │   ├── notifications-service/ # C# — события → уведомления
 │   └── websocket-gateway/     # C# + SignalR — события NATS → WebSocket
 ├── tools/nats-tester/  # Python CLI для тестирования NATS-сообщений
@@ -39,17 +39,19 @@ solguficky-hub/
 
 ## 🛠️ Технологический стек
 
-- **Шина:** NATS (JetStream в планах — см. roadmap), сериализация — Protobuf
+- **Шина:** NATS, сериализация — Protobuf; durable delivery и JetStream требуют отдельного решения
 - **Синхронные вызовы:** gRPC
 - **Хранение:** PostgreSQL (включая Event Store для Akka.Persistence)
 - **Наблюдаемость:** структурные JSON-логи → Loki + Grafana (конфиги в `infra/`)
 
 ## 📚 Документация
 
-- **[Канвас проекта](docs/canvas.html)** — весь проект на одной странице: стадии, схема архитектуры, состояние сервисов, языки, открытые решения. Открывается двойным кликом, обновляется вместе с roadmap
+- **[Контекст проекта](docs/PROJECT_CONTEXT.md)** — актуальный срез Current / MVP / Future / Legacy и статус открытых решений
+- **[Канвас проекта](docs/canvas.html)** — архивный визуальный срез на 18.07.2026, не источник актуальных решений
 - [Vision](docs/00_VISION/vision.md) — цели и концепция
 - [Архитектура](docs/01_ARCHITECTURE/architecture.md) — общая схема платформы
-- [Roadmap](docs/ROADMAP.md) — актуальный план работ и приоритеты
 - [ADR](docs/04_DECISIONS/decisions.md) — журнал архитектурных решений
 - [NATS-контракты](docs/03_CONTRACTS/nats_subjects.md) — темы и форматы сообщений
 - [AGENTS.md](AGENTS.md) — контекст для AI-агентов (карта репо, команды, конвенции). `CLAUDE.md` — просто импорт этого файла
+
+Milestones, приоритеты, задачи и прогресс ведутся в Linear и не дублируются отдельным roadmap в Git.

@@ -1,6 +1,6 @@
 # Auction Service (C# + Akka.NET)
 
-Stateful-сервис аукционов: Event Sourcing + CQRS на Akka.Persistence (PostgreSQL). Сейчас в roadmap отложен (P3) — не наращивай фичи без запроса.
+Stateful-сервис аукционов: Event Sourcing + CQRS на Akka.Persistence (PostgreSQL). Статус: **Legacy**, сервис не входит в MVP сходок. Не наращивай фичи без явного запроса; пока код остаётся в active tree, сохраняй сборку и тесты.
 
 ## Структура
 

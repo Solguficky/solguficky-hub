@@ -7,12 +7,14 @@
 ## Карта репозитория
 
 - `contracts/proto/` — Protobuf-контракты (единственный источник правды): `nats/commands`, `nats/events`, `grpc`. Кодогенерация — на этапе сборки каждого сервиса.
-- `services/telegram-gateway/` — Rust + Teloxide. Входная точка для пользователей, UI бота, FSM-диалоги.
-- `services/auction-service/` — C# + Akka.NET. Event Sourcing/CQRS, акторы AuctionActor→LotActor, персистентность в PostgreSQL.
-- `services/notifications-service/` — C#. Слушает события, генерирует команды на отправку сообщений.
-- `services/websocket-gateway/` — C# + SignalR. Проброс событий NATS в WebSocket-клиенты.
+- `services/telegram-gateway/` — **Current/Legacy:** Rust + Teloxide, преимущественно UI старого аукциона. **MVP:** новая реализация на TypeScript + grammY после ADR.
+- `services/auction-service/` — **Legacy:** C# + Akka.NET, Event Sourcing/CQRS. Не входит в MVP и не развивается без явного запроса.
+- `services/notifications-service/` — **Current:** C#-каркас с аукционным handler. **MVP:** кандидат для напоминаний, дизайн ещё не принят.
+- `services/websocket-gateway/` — **Legacy/Frozen:** C# + SignalR, обслуживает только аукцион. Пока остаётся в сборке.
+- `meetups` и `identity` — **MVP:** ещё не реализованы; Identity остаётся отдельным сервисом, языки backend пока не выбраны.
 - `tools/nats-tester/` — Python CLI для ручного тестирования NATS-сообщений.
-- `docs/` — vision, архитектура, ADR (`docs/04_DECISIONS/decisions.md`), roadmap (`docs/ROADMAP.md`).
+- `docs/PROJECT_CONTEXT.md` — основной контекст Current / MVP / Future / Legacy на время синхронизации документации.
+- `docs/` — vision, архитектура, ADR (`docs/04_DECISIONS/decisions.md`), контракты и сервисные документы.
 - `frontend/admin-app/` — заглушка под Telegram Mini App (не начато).
 
 ## Команды
@@ -60,10 +62,12 @@ python generate_proto.py && pip install -e . && nats-tester --help
 - Итеративно: маленькие шаги, обсуждение архитектурного решения до кода (ADR-013).
 - Нетривиальные технические решения фиксируются как ADR в `docs/04_DECISIONS/decisions.md` (есть скилл `adr`).
 - Документация обновляется в том же изменении, что и код. Если код противоречит докам — почини доки или скажи об этом явно.
-- Приоритеты работ — `docs/ROADMAP.md`. Аукционный модуль сейчас отложен (P3), ядро — сходки.
+- Milestones, приоритеты, задачи и прогресс ведутся в Linear. Репозиторий хранит устойчивый контекст, требования и решения; отдельного Git-roadmap нет.
+- Аукционный модуль не входит в MVP. Перед удалением legacy-кода нужно извлечь доменную модель, actor/event-логику, полезные тест-кейсы и непроверенные гипотезы.
+- Продуктовые и архитектурные решения принимает владелец. Агент исследует, оппонирует и реализует утверждённый срез; не создаёт новый сервис, ADR или межсервисный контракт без явного запроса.
 
 ## Конвенции по языкам
 
 - **C#**: records для Commands/Events/State; nullable reference types; switch expressions; Serilog со структурными логами. В Akka: `Command<T>`/`Recover<T>`-роутинг, `Persist → Apply → Reply`, PersistenceId = `<тип>-<id>`.
-- **Rust**: без `unwrap()`/`expect()` на внешних данных; `thiserror` в `domain`/`infra`, `anyhow` в `app`; хендлеры возвращают `BotAction` (не дёргают Bot API напрямую), FSM и UI-билдеры — чистые функции (ADR-016).
-- В боте: предпочитай `editMessageText` новым сообщениям; сразу отвечай на callback_query; бот в общем чате «тихий».
+- **Rust (только текущий legacy gateway)**: без `unwrap()`/`expect()` на внешних данных; `thiserror` в `domain`/`infra`, `anyhow` в `app`; хендлеры возвращают `BotAction` (не дёргают Bot API напрямую), FSM и UI-билдеры — чистые функции (ADR-016).
+- В боте: соблюдай тишину, ненавязчивость, privacy by design и минимальные Telegram-права. Конкретный способ взаимодействия (`editMessageText`, silent messages, команды, личка, закреп) определяется требованиями сценария, а не глобальной конвенцией.
