@@ -1,146 +1,51 @@
-# Контракты платформы Solguficky
+# Контракты Solguficky Hub
 
-Этот каталог содержит все Protobuf схемы для асинхронной (NATS) и синхронной (gRPC) коммуникации между сервисами.
+`contracts/proto/` — единственный источник Protobuf wire-схем для NATS и gRPC. Generated code создаётся сборкой потребляющего сервиса и не является источником правды.
 
-## Структура
+## Фактическая структура
 
-```
-contracts/
-├── proto/
-│   ├── common/               # Общие типы, переиспользуемые везде
-│   │   └── types.proto       # UUID, Money, Timestamp и т.д.
-│   ├── nats/                 # Контракты для NATS сообщений
-│   │   ├── commands/         # Команды (намерения изменить состояние)
-│   │   │   └── auction_commands.proto
-│   │   └── events/           # События (факты о произошедших изменениях)
-│   │       └── auction_events.proto
-│   └── grpc/                 # gRPC сервисные контракты
-│       └── (будет добавлено позже)
-└── README.md                 # Этот файл
-```
-
-## Принципы именования
-
-### NATS контракты
-
-#### Команды (Commands)
-- **Формат:** `<Действие><Сущность>Command`
-- **Примеры:** `PlaceBidCommand`, `CreateEventCommand`, `UpdateUserCommand`
-- **Пакет:** `nats.commands`
-- **Файлы:** Группируются по доменам (`auction_commands.proto`, `event_commands.proto`)
-
-#### События (Events)
-- **Формат:** `<Сущность><Действие>Event` (прошедшее время)
-- **Примеры:** `BidPlacedEvent`, `EventCreatedEvent`, `UserUpdatedEvent`
-- **Пакет:** `nats.events`
-- **Файлы:** Группируются по доменам (`auction_events.proto`, `event_events.proto`)
-
-### gRPC контракты
-
-- **Формат:** `<Домен>Service`
-- **Примеры:** `AuctionService`, `EventsService`, `UsersService`
-- **Пакет:** `grpc.<домен>`
-- **Файлы:** Один файл на сервис (`auction_service.proto`)
-
-## Правила работы со схемами
-
-### Добавление новой схемы
-
-1. Создать `.proto` файл в соответствующей папке
-2. Использовать `syntax = "proto3";`
-3. Указать правильный пакет (`nats.commands`, `nats.events`, `grpc.<домен>`)
-4. Добавить комментарии к полям
-5. Сгенерировать код для нужных языков в CI/CD пайплайнах сервисов.
-
-### Изменение существующей схемы
-
-**Правила обратной совместимости:**
-
-✅ **Можно:**
-- Добавлять новые поля (используя новые номера)
-- Помечать поля как `optional`
-- Добавлять новые сообщения
-- Добавлять новые enum значения
-
-❌ **Нельзя:**
-- Удалять или переименовывать поля
-- Изменять номера полей
-- Изменять типы полей
-- Изменять `repeated` на не-`repeated` и наоборот
-
-### Версионирование
-
-- **Git** - единый источник правды для схем
-- **CI/CD** - автоматическая кодогенерация.
-- При breaking changes создавать новый файл с суффиксом версии (`_v2.proto`)
-
-## Кодогенерация
-
-Каждый сервис генерирует код из `.proto` файлов при компиляции:
-
-### Rust (prost)
-```rust
-// build.rs
-prost_build::compile_protos(
-    &["../../contracts/proto/nats/commands/auction_commands.proto"],
-    &["../../contracts/proto"],
-)?;
+```text
+contracts/proto/
+├── common/
+│   └── types.proto
+├── grpc/
+│   └── auction_service.proto
+└── nats/
+    ├── commands/
+    │   ├── auction_commands.proto
+    │   └── telegram_commands.proto
+    └── events/
+        └── auction_events.proto
 ```
 
-### C# (Grpc.Tools)
-```xml
-<Protobuf Include="..\..\contracts\proto\grpc\auction_service.proto" />
-```
+Существующие схемы относятся преимущественно к Legacy-аукционной ветке. Контракты Meetups, Identity и нового Telegram Gateway ещё не спроектированы.
 
-### Scala (ScalaPB)
-```scala
-PB.targets in Compile := Seq(
-  scalapb.gen() -> (sourceManaged in Compile).value
-)
-```
+## Владение
 
-### Elixir (protobuf-elixir)
-```elixir
-defmodule Contracts.MixProject do
-  use Mix.Project
+- `.proto` задаёт сообщение и номера полей.
+- [Integration catalog](../docs/architecture/integration.md) задаёт NATS subject, producer и consumers.
+- Каждый сервис хранит только configuration кодогенерации и использует сгенерированные типы.
+- `tools/nats-tester` генерирует Python-типы из тех же схем.
 
-  def project do
-    [
-      app: :contracts,
-      elixirc_paths: ["lib", "gen"]
-    ]
-  end
-end
-```
+## Изменение
 
-## 👑 Принципы управления контрактами
+Норматив совместимости — в [Protobuf standard](../docs/standards/contracts/protobuf.md). Пошаговый workflow — в skill `contract-change`.
 
-- **Git** - единственный источник правды (Source of Truth) для `.proto` файлов.
-- **CI/CD** - автоматическая кодогенерация.
+Минимальный порядок:
 
-## 🧬 Эволюция контрактов
+1. изменить схему без переиспользования field numbers;
+2. найти всех producers и consumers по имени сообщения и subject;
+3. обновить их в одном изменении;
+4. пересобрать затронутые сервисы;
+5. обновить `nats-tester` и integration catalog;
+6. отдельно зафиксировать версионирование любого breaking change.
 
-- **Никогда не удалять поля** существующих сообщений.
-- **Никогда не переименовывать поля** существующих сообщений.
-- **Никогда не изменять номера тегов** существующих полей.
+## Текущее управление схемами
 
-##  NATS сообщения
+Git остаётся источником схем. ADR-014 описывает текущий Protobuf-in-Git подход, но не запрещает навсегда compatibility tooling или Schema Registry. Их необходимость и роль остаются открытым архитектурным вопросом.
 
-### Команды (Commands)
+## Ссылки
 
-Сообщение **ДОЛЖНО** содержать следующие заголовки:
-
-- **`Content-Type: application/x-protobuf`**
-
-### События (Events)
-
-Сообщение **ДОЛЖНО** содержать следующие заголовки:
-
-- **`Content-Type: application/x-protobuf`**
-
-## Дополнительные ресурсы
-
-- [Protocol Buffers Language Guide](https://protobuf.dev/programming-guides/proto3/)
-- [Архитектура платформы](../docs/01_ARCHITECTURE/architechture.md)
-- [NATS Subjects](../docs/03_CONTRACTS/nats_subjects.md)
-
+- [Protobuf language guide](https://protobuf.dev/programming-guides/proto3/)
+- [Integration catalog](../docs/architecture/integration.md)
+- [ADR index](../docs/decisions/README.md)

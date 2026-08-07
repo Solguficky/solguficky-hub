@@ -19,7 +19,7 @@ model: opus
 
 Если задача касается `contracts/proto/` — открой `.claude/skills/contract-change/SKILL.md`
 и пройди чеклист. Изменение контракта без обновления всех потребителей и
-`docs/03_CONTRACTS/nats_subjects.md` считается незавершённой работой.
+`docs/architecture/integration.md` считается незавершённой работой.
 
 ## Границы
 

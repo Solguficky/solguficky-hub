@@ -1,10 +1,12 @@
 # Auction Service
 
-Stateful-сервис для проведения аукционов на платформе Solguficky.
+> **Статус: Legacy/Frozen.** Сервис не входит в MVP и не развивается без явного запроса. Перед удалением из него нужно извлечь полезные доменные решения, actor/event-логику, тест-кейсы и непроверенные гипотезы. Целевое будущее аукциона описано отдельно и не является автоматической миграцией этого кода.
+
+Stateful-прототип для проведения аукционов на платформе Solguficky.
 
 ## Описание
 
-Auction Service — это ключевой компонент платформы, отвечающий за всю бизнес-логику проведения торгов. Сервис построен на **Akka.NET** с использованием **Event Sourcing** для полного аудита всех операций аукциона.
+Сервис содержит прежнюю реализацию бизнес-логики торгов на **Akka.NET** с использованием **Event Sourcing**. Описание ниже относится к legacy-реализации, а не к архитектуре MVP.
 
 ### Основные возможности
 
@@ -259,36 +261,15 @@ dotnet format
 - **Immutability:** record types с `with`, `ImmutableList`
 - **Команды в повелительном наклонении:** `PlaceBid`, `StartAuction`
 - **События в прошедшем времени:** `BidPlaced`, `AuctionStarted`
-- **Без комментариев в коде** (правило проекта)
 
-Подробные правила: [.cursor/rules/auction-service-rules.mdc](../../.cursor/rules/auction-service-rules.mdc)
+Общие нормативные правила: [инженерные стандарты](../../docs/standards/README.md). Локальные ограничения сервиса: [AGENTS.md](./AGENTS.md).
 
 ## Документация
 
-- **Техническая спецификация:** [docs/02_SERVICES/auction-service.md](../../docs/02_SERVICES/auction-service.md)
-- **ADR технологического стека:** [docs/04_DECISIONS/decisions.md](../../docs/04_DECISIONS/decisions.md#adr-017-технологический-стек-auction-service)
+- **Историческая техническая спецификация:** [auction-service-akka-design.md](../../docs/archive/services/auction-service-akka-design.md)
+- **ADR технологического стека legacy-сервиса:** [ADR-017](../../docs/decisions/ADR-017-auction-service-stack.md)
+- **Будущее направление аукциона:** [auction-v2.md](../../docs/product/future/auction-v2.md)
 - **Локальная разработка:** [LOCAL_SETUP.md](./LOCAL_SETUP.md)
-
-## Roadmap
-
-### MVP (текущая фаза)
-
-- [x] Базовая структура проекта .NET
-- [x] Скелет `LotActor` с Event Sourcing
-- [x] Unit-тесты с Akka.TestKit
-- [x] Настройка PostgreSQL Event Store
-- [ ] gRPC endpoint `GetAuctionStatus`
-- [ ] NATS subscriber для команд `place_bid`
-- [ ] NATS publisher для событий
-
-### Следующие итерации
-
-- [ ] `AuctionSessionActor` (координатор)
-- [ ] `AuctionRegistry` (роутинг по eventId)
-- [ ] Различные режимы торгов (Slotted, Dutch, Vickrey)
-- [ ] Анти-снайп механика
-- [ ] Proxy-bids (автоставки)
-- [ ] Cluster Sharding для масштабирования
 
 ## Лицензия
 

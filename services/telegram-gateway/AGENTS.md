@@ -1,6 +1,8 @@
 # Telegram Gateway (Rust + Teloxide)
 
-Входной шлюз платформы: принимает апдейты Telegram, показывает UI, публикует команды в NATS, слушает события.
+Статус: **Current/Legacy**. Входной шлюз принимает апдейты Telegram, показывает старый аукционный UI, публикует команды в NATS и слушает события. Не расширяй его как целевую реализацию MVP без явного запроса.
+
+Этот файл содержит только service-specific delta. Общие требования к тестированию, контрактам и логированию наследуются из [docs/standards](../../docs/standards/README.md).
 
 ## Структура
 
@@ -23,7 +25,7 @@
 ## Запуск
 
 ```bash
-docker-compose up -d nats   # из корня
+# Предпочтительно: профиль infra из infra/apphost; compose остаётся fallback
 cargo run
 cargo test && cargo clippy -- -D warnings
 ```
