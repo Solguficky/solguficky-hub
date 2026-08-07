@@ -1,5 +1,7 @@
 # Auction Service: Локальная Разработка
 
+> **Статус: Legacy.** Это руководство относится к замороженной C#/Akka.NET-реализации аукциона и не является планом MVP.
+
 Руководство по настройке окружения и запуску Auction Service локально на C# + Akka.NET.
 
 ## Предварительные требования
@@ -450,14 +452,9 @@ services/auction-service/
 └── README.md
 ```
 
-## 11. Следующие шаги
+## 11. Статус дальнейшей работы
 
-1. Реализуйте `LotActor` (см. примеры в `docs/02_SERVICES/auction-service.md`)
-2. Напишите unit-тесты с `Akka.TestKit`
-3. Реализуйте `AuctionSessionActor` (координатор)
-4. Подключите gRPC Service
-5. Подключите NATS Subscriber/Publisher
-6. Интеграционные тесты с TestContainers
+Сервис заморожен и не входит в MVP. Не реализуйте перечисленные в старых документах следующие фазы без отдельного решения владельца. Перед удалением кода нужно пройти gate из [контекста проекта](../../docs/PROJECT_CONTEXT.md#114-gate-удаления).
 
 ## 12. Полезные ссылки
 
@@ -469,4 +466,4 @@ services/auction-service/
 
 ---
 
-**Если возникли проблемы:** проверьте `.cursor/rules/auction-service-rules.mdc` для best practices и `docs/02_SERVICES/auction-service.md` для примеров кода.
+**Если возникли проблемы:** сначала проверьте локальный [AGENTS.md](./AGENTS.md), общие [инженерные стандарты](../../docs/standards/README.md) и [историческую спецификацию](../../docs/archive/services/auction-service-akka-design.md).

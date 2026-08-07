@@ -1,57 +1,58 @@
 # Solguficky Hub
 
-Платформа для организации сходок Telegram-сообщества. Полиглотная микросервисная архитектура; одновременно — площадка для экспериментов и обучения.
+Платформа для организации сходок Telegram-сообщества: узнать о встрече, зарегистрироваться, участвовать в подготовке и сохранить историю прошедших событий — без лишнего шума в общем чате.
 
-## 🚀 Быстрый старт
+Проект одновременно является продуктом для сообщества и учебным полигоном для микросервисов, Event Sourcing, акторов и распределённых систем. Ближайшая продуктовая цель — провести живую сходку через бота без ручных исправлений данных в день мероприятия.
+
+## Текущее состояние
+
+Продуктовое ядро MVP ещё не реализовано. В репозитории сейчас находятся:
+
+- Rust/Teloxide Telegram Gateway, связанный в основном со старым аукционом; целевое направление — новая реализация на TypeScript + grammY после ADR;
+- legacy-аукцион на C# + Akka.NET и обслуживающий его WebSocket Gateway — вне MVP;
+- C#-каркас Notifications Service;
+- общие Protobuf-контракты, NATS/PostgreSQL и AppHost на .NET Aspire;
+- заготовки для будущих `meetups`, `identity` и Telegram Mini App.
+
+Актуальные статусы Current / MVP / Future / Legacy собраны в [контексте проекта](docs/PROJECT_CONTEXT.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
+
+## Структура
+
+```text
+contracts/proto/              Protobuf-контракты NATS и gRPC
+docs/                         продукт, архитектура, решения и руководства
+frontend/admin-app/           заготовка Telegram Mini App
+infra/apphost/                локальная оркестрация .NET Aspire
+services/auction-service/     legacy C# + Akka.NET
+services/notifications-service/ C#-каркас уведомлений
+services/telegram-gateway/    current/legacy Rust + Teloxide
+services/websocket-gateway/   legacy C# + SignalR
+tools/nats-tester/            ручная проверка NATS-сообщений
+```
+
+## Локальный запуск
+
+Основная точка входа — AppHost:
 
 ```bash
-# 1. Клонировать репозиторий
-git clone https://github.com/your-org/solguficky-hub.git
-cd solguficky-hub
-
-# 2. Настроить окружение
-cp .env.example .env
-# Отредактируйте .env и добавьте ваш Telegram bot token
-
-# 3. Запустить инфраструктуру и сервисы
-docker-compose up --build
-
-# 4. Написать боту /start в Telegram
+cd infra/apphost
+aspire run
 ```
 
-Подробные инструкции — в `LOCAL_SETUP.md` внутри каждого сервиса.
+Доступны профили `infra`, `core` и `full`, а также режимы компонентов `Local`, `Container` и `Off`. Миграция с рукописных compose-файлов ещё не завершена и требует живой проверки. Команды, переменные и известные ограничения описаны в [руководстве по локальной разработке](docs/development/local-development.md).
 
-## 🏗️ Структура проекта
+## Документация
 
-```
-solguficky-hub/
-├── contracts/proto/    # Protobuf-контракты (NATS + gRPC) — источник правды
-├── docs/               # Контекст проекта, vision, архитектура, ADR и сервисные документы
-├── services/
-│   ├── telegram-gateway/      # Rust + Teloxide — входной шлюз, UI бота
-│   ├── auction-service/       # C# + Akka.NET — legacy-прототип аукциона, не входит в MVP
-│   ├── notifications-service/ # C# — события → уведомления
-│   └── websocket-gateway/     # C# + SignalR — события NATS → WebSocket
-├── tools/nats-tester/  # Python CLI для тестирования NATS-сообщений
-├── frontend/admin-app/ # Telegram Mini App (не начато)
-└── docker-compose.yml  # Локальная инфраструктура (PostgreSQL, NATS)
-```
+- [Навигатор по документации](docs/README.md)
+- [Контекст, состояние и направление](docs/PROJECT_CONTEXT.md)
+- [Продукт](docs/product/README.md)
+- [Архитектура](docs/architecture/README.md)
+- [Архитектурные решения](docs/decisions/README.md)
+- [Инженерные стандарты](docs/standards/README.md)
+- [RFC](docs/rfcs/README.md)
+- [Архив](docs/archive/README.md)
+- [Правила для AI-агентов](AGENTS.md)
 
-## 🛠️ Технологический стек
+## Разработка
 
-- **Шина:** NATS, сериализация — Protobuf; durable delivery и JetStream требуют отдельного решения
-- **Синхронные вызовы:** gRPC
-- **Хранение:** PostgreSQL (включая Event Store для Akka.Persistence)
-- **Наблюдаемость:** структурные JSON-логи → Loki + Grafana (конфиги в `infra/`)
-
-## 📚 Документация
-
-- **[Контекст проекта](docs/PROJECT_CONTEXT.md)** — актуальный срез Current / MVP / Future / Legacy и статус открытых решений
-- **[Канвас проекта](docs/canvas.html)** — архивный визуальный срез на 18.07.2026, не источник актуальных решений
-- [Vision](docs/00_VISION/vision.md) — цели и концепция
-- [Архитектура](docs/01_ARCHITECTURE/architecture.md) — общая схема платформы
-- [ADR](docs/04_DECISIONS/decisions.md) — журнал архитектурных решений
-- [NATS-контракты](docs/03_CONTRACTS/nats_subjects.md) — темы и форматы сообщений
-- [AGENTS.md](AGENTS.md) — контекст для AI-агентов (карта репо, команды, конвенции). `CLAUDE.md` — просто импорт этого файла
-
-Milestones, приоритеты, задачи и прогресс ведутся в Linear и не дублируются отдельным roadmap в Git.
+Обсуждайте нетривиальные решения до реализации и фиксируйте принятые решения отдельными ADR. Изменения Protobuf-контрактов должны обновлять всех потребителей и документацию в том же изменении. Подробные нормативные правила находятся в [docs/standards/](docs/standards/README.md), а локальные команды и ограничения — во вложенных `AGENTS.md` сервисов.

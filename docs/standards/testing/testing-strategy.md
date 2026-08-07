@@ -1,0 +1,41 @@
+# Standard: стратегия тестирования
+
+> **Статус:** Active  
+> **Применимость:** все product services и инструменты  
+> **Связанные документы:** service-local README и nested `AGENTS.md`
+
+Выбирай минимальный уровень, на котором ошибка воспроизводится надёжно и наблюдаемо.
+
+## Уровни
+
+| Уровень | Что проверяет | Текущие инструменты |
+|---|---|---|
+| Unit | чистая доменная логика, FSM, UI builders, mapping, error branches | Rust built-in tests; C# xUnit 2 |
+| Actor | command/event/state transitions, recovery и actor infrastructure | Akka.TestKit.Xunit2; сначала тестируй чистую логику, если она отделена |
+| Integration | реальный boundary одного сервиса: PostgreSQL, NATS, gRPC, SignalR | service-specific test host или локальная инфраструктура |
+| Contract | producer и consumer одинаково понимают Protobuf и subject | сборка всех потребителей, сериализационные тесты, `nats-tester` |
+| E2E | пользовательский вертикальный срез через несколько компонентов | Aspire и наблюдаемый ответ внешнему клиенту |
+
+## Правила
+
+- Не проверяй бизнес-инвариант через E2E, если его можно детерминированно проверить unit-тестом.
+- Для Event Sourcing отдельно проверяй решение команды, применение события и recovery.
+- Фиксируй время, UUID, random seed и внешние ответы; тест не должен зависеть от часов машины или порядка соседних тестов.
+- Не обращайся к production-сервисам из автоматического теста.
+- Ошибочный, пограничный и повторный запрос являются частью набора сценариев, если сервис меняет состояние.
+- Изменение Protobuf требует contract-level проверки всех consumers.
+- Новый стек тестирования не вводится только ради единообразия с другим языком.
+
+## Текущие команды
+
+```bash
+# C# service directory
+dotnet build && dotnet test
+
+# Rust legacy gateway
+cargo test
+cargo clippy -- -D warnings
+cargo fmt --check
+```
+
+Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Этот документ не назначает стек ещё не созданным TypeScript, F#, Kotlin или Scala-сервисам.

@@ -1001,9 +1001,9 @@ Loki/Grafana-конфигурация и Aspire dashboard являются за�
 
 ### A. Синхронизация контекста
 
-Основной контекст и инструкции агентам уже переключены на модель Current / MVP / Future / Legacy, отдельный Git-roadmap удалён. Оставшаяся работа:
+Основной контекст и инструкции агентам переключены на модель Current / MVP / Future / Legacy, отдельный Git-roadmap удалён, а каталоги документации приведены к семантической структуре. Оставшаяся работа:
 
-1. Синхронизировать `docs/00_VISION/`, `docs/01_ARCHITECTURE/` и сервисные документы с принятыми частями этого контекста.
+1. В отдельном подходе разнести устойчивые части этого переходного документа по `docs/product/`, `docs/architecture/` и `docs/services/`, не создавая дублирующих источников правды.
 2. Обновить статусы и при необходимости добавить заменяющие ADR отдельными решениями.
 3. Подтвердить живой запуск Aspire или зафиксировать конкретный blocker.
 
@@ -1054,17 +1054,19 @@ Telegram user
 
 | Информация | Источник правды |
 |---|---|
-| Цель, принципы, scope | `docs/00_VISION/` после синхронизации |
+| Цель, принципы, scope | `docs/product/` после смысловой декомпозиции этого документа |
 | Текущий общий контекст перехода | `docs/PROJECT_CONTEXT.md` |
-| Current/target architecture | `docs/01_ARCHITECTURE/` после синхронизации |
-| Принятые технические решения | `docs/04_DECISIONS/decisions.md` |
-| Сервисные требования и дизайн | `docs/02_SERVICES/` |
-| Контракты | `contracts/proto/` + `docs/03_CONTRACTS/` |
-| Локальные технические задания | `docs/06_TASKS/`, пока они актуальны |
-| Неприоритизированные идеи | `docs/00_VISION/feature-backlog.md` |
+| Current/target architecture | `docs/architecture/` после смысловой декомпозиции этого документа |
+| Принятые технические решения | отдельные ADR в `docs/decisions/` |
+| Сервисные требования и дизайн | `docs/services/<service>/`, когда такой документ нужен |
+| Машиночитаемые контракты | `contracts/proto/` |
+| Каталог интеграций и эксплуатационные детали контрактов | `docs/architecture/integration.md` |
+| Локальная разработка и технические руководства | `docs/development/` |
+| Неприоритизированные идеи | `docs/product/ideas.md` |
 | Приоритеты, milestones, задачи, прогресс | Linear |
 | Инструкции агентам | `AGENTS.md` и вложенные `AGENTS.md` |
-| Исторические материалы | `docs/_archive/` |
+| Нормативные инженерные соглашения | `docs/standards/` |
+| Исторические материалы | `docs/archive/` |
 
 Отдельный `ROADMAP.md` не используется. Репозиторий хранит причины, решения, требования и устойчивые ограничения; Linear хранит изменчивый порядок исполнения.
 
@@ -1091,12 +1093,12 @@ Telegram user
 | Meetups и Identity отсутствуют | дерево `services/` и `contracts/proto/` |
 | Current core profile включает Auction и Rust Gateway | `infra/apphost/Topology.cs` |
 | AppHost запускает gateway через Cargo | `infra/apphost/Program.cs` |
-| Aspire не подтверждён живым запуском | `docs/06_TASKS/aspire-orchestration.md` |
+| Aspire не подтверждён живым запуском | `docs/development/local-development.md` |
 | CI workflow существует | `.github/workflows/ci.yml` |
-| ADR-006 выбирает Railway | `docs/04_DECISIONS/decisions.md` |
-| ADR-016 смешивает transport и gateway design | `docs/04_DECISIONS/decisions.md` |
-| ADR-017 хранит историю Scala → C#/Akka.NET | `docs/04_DECISIONS/decisions.md` |
-| ADR-021 ограничивает Aspire local orchestration | `docs/04_DECISIONS/decisions.md` |
+| ADR-006 выбирает Railway | `docs/decisions/ADR-006-railway-hosting.md` |
+| ADR-016 смешивает transport и gateway design | `docs/decisions/ADR-016-rbac-action-pattern-and-transport.md` |
+| ADR-017 хранит историю Scala → C#/Akka.NET | `docs/decisions/ADR-017-auction-service-stack.md` |
+| ADR-021 ограничивает Aspire local orchestration | `docs/decisions/ADR-021-aspire-local-orchestration.md` |
 
 ## Приложение B. Внешние технические источники
 
