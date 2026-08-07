@@ -1,69 +1,79 @@
 # Solguficky Hub
 
-> Этот файл — единый контекст для всех AI-агентов (Claude Code, Codex, Cursor читают `AGENTS.md`; `CLAUDE.md` — просто импорт этого файла, не редактируй его). Вложенные `AGENTS.md` лежат в папках сервисов. Чеклисты в `.claude/skills/*/SKILL.md` — обычный markdown: Claude Code подхватывает их как скиллы, из других агентов открывай и следуй вручную.
+> Единая точка входа для AI-агентов. `CLAUDE.md` только импортирует этот файл — не редактируй его. Вложенные `AGENTS.md` содержат локальные правила сервисов.
 
-Полиглотная микросервисная платформа для организации сходок (локальных мероприятий) Telegram-сообщества. Пет-проект: одновременно продукт для комьюнити и площадка для обучения (Event Sourcing, акторы, распределённые системы).
+Платформа для организации сходок Telegram-сообщества. Проект одновременно решает продуктовую задачу и служит полигоном для Event Sourcing, акторов и распределённых систем. При конфликте приоритетов выигрывает работающий продукт.
+
+## Сначала прочитай
+
+- [Документация](docs/README.md) — карта источников правды и статусов документов.
+- [Продукт](docs/product/overview.md) — цель, принципы и границы MVP.
+- [Архитектура](docs/architecture/overview.md) — Current / MVP / Future / Legacy и общие границы.
+- [Сервисы](docs/services/README.md) — ответственность и открытые вопросы компонентов.
+- [Архитектурные решения](docs/decisions/README.md) — индекс ADR и их применимость.
+- [Стандарты](docs/standards/README.md) — нормативные инженерные соглашения.
+- [Процесс проектирования](docs/development/design-process.md) — human-owned design loop и граница роли агента.
+- [Локальная разработка](docs/development/local-development.md) — Aspire, профили и известные ограничения.
+
+Milestones, приоритеты, задачи и прогресс ведутся в Linear. В Git хранятся устойчивый контекст, требования, решения и технические руководства; отдельного roadmap-файла нет.
 
 ## Карта репозитория
 
-- `contracts/proto/` — Protobuf-контракты (единственный источник правды): `nats/commands`, `nats/events`, `grpc`. Кодогенерация — на этапе сборки каждого сервиса.
-- `services/telegram-gateway/` — Rust + Teloxide. Входная точка для пользователей, UI бота, FSM-диалоги.
-- `services/auction-service/` — C# + Akka.NET. Event Sourcing/CQRS, акторы AuctionActor→LotActor, персистентность в PostgreSQL.
-- `services/notifications-service/` — C#. Слушает события, генерирует команды на отправку сообщений.
-- `services/websocket-gateway/` — C# + SignalR. Проброс событий NATS в WebSocket-клиенты.
-- `tools/nats-tester/` — Python CLI для ручного тестирования NATS-сообщений.
-- `docs/` — vision, архитектура, ADR (`docs/04_DECISIONS/decisions.md`), roadmap (`docs/ROADMAP.md`).
-- `frontend/admin-app/` — заглушка под Telegram Mini App (не начато).
+- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC; код генерируется потребителями при сборке.
+- `services/telegram-gateway/` — Current/Legacy: Rust + Teloxide, преимущественно UI старого аукциона. MVP-направление: новая реализация на TypeScript + grammY после ADR.
+- `services/auction-service/` — Legacy: C# + Akka.NET, CQRS/Event Sourcing. Не входит в MVP и не развивается без явного запроса.
+- `services/notifications-service/` — Current: C#-каркас с аукционным обработчиком. Возможная роль в MVP ещё проектируется.
+- `services/websocket-gateway/` — Legacy/Frozen: C# + SignalR только для аукциона; пока остаётся в сборке.
+- `meetups` и `identity` — MVP-сервисы, ещё не реализованы. Identity остаётся отдельной границей; языки backend не выбраны.
+- `frontend/admin-app/` — заглушка будущего Telegram Mini App.
+- `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
+- `infra/apphost/` — локальная оркестрация .NET Aspire.
 
 ## Команды
 
 ```bash
-# Локальная оркестрация — единая точка входа (infra/apphost/, ADR-021)
-cd infra/apphost && aspire run                      # профиль по умолчанию — core
-TOPOLOGY__PROFILE=infra aspire run                   # только NATS + PostgreSQL
-TOPOLOGY__PROFILE=full aspire run                     # весь стек
-TOPOLOGY__AUCTIONSERVICE=Container aspire run         # переопределить режим одного компонента
+# Локальная оркестрация — из infra/apphost/
+aspire run
 
-# auction-service / notifications-service / websocket-gateway (из папки сервиса)
-dotnet build && dotnet test
+# Профили топологии
+TOPOLOGY__PROFILE=infra aspire run
+TOPOLOGY__PROFILE=full aspire run
 
-# telegram-gateway (из services/telegram-gateway)
-cargo build && cargo test
-cargo clippy -- -D warnings && cargo fmt --check
+# Режим компонента: Local | Container | Off
+TOPOLOGY__AUCTIONSERVICE=Container aspire run
 
-# nats-tester (из tools/nats-tester)
-python generate_proto.py && pip install -e . && nats-tester --help
+# C#-сервисы — из папки сервиса
+dotnet build
+dotnet test
+
+# Текущий legacy gateway — из services/telegram-gateway/
+cargo build
+cargo test
+cargo clippy -- -D warnings
+cargo fmt --check
+
+# nats-tester — из tools/nats-tester/
+python generate_proto.py
+pip install -e .
+nats-tester --help
 ```
 
-**Профили топологии** (`infra/apphost/`, детали — [ТЗ по Aspire](docs/06_TASKS/aspire-orchestration.md), [ADR-021](docs/04_DECISIONS/decisions.md)):
+`aspire run` и часть профилей ещё не подтверждены живым прогоном после миграции. Не удаляй compose-файлы и не объявляй Aspire полностью проверенным, пока не выполнен gate из [руководства](docs/development/local-development.md).
 
-| Профиль | Состав | Замена чего |
-|---|---|---|
-| `infra` | только NATS + PostgreSQL (контейнеры) | `docker-compose up -d postgres nats`, остальное запускаешь сам из IDE |
-| `core` (по умолчанию) | infra + auction-service + telegram-gateway (Local) | повседневная разработка |
-| `full` | все сервисы | end-to-end проверка перед PR |
+## Критические правила
 
-Режим отдельного компонента — `Local` (из исходников) / `Container` (образ) / `Off` (не поднимать) — переопределяется без правки кода AppHost: `TOPOLOGY__<SERVICE>=Container|Local|Off` (например, `TOPOLOGY__NOTIFICATIONSSERVICE=Local`) или в `infra/apphost/appsettings.json`.
+- Продуктовые и архитектурные решения принимает владелец. Агент исследует, оппонирует и реализует утверждённый срез.
+- Не создавай новый сервис, ADR или межсервисный контракт без явного запроса.
+- Для нетривиального принятого решения используй skill `adr`; ADR хранится отдельным файлом в `docs/decisions/`.
+- Любое изменение `contracts/proto/` требует skill `contract-change`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
+- NATS и gRPC используют Protobuf. JSON в шине запрещён.
+- Не считай Core NATS надёжной доставкой: JetStream, durable consumers и идемпотентность требуют согласованного решения.
+- Документация меняется вместе с кодом. При конфликте кода и документации выясни временной слой и зрелость решения, а не выбирай источник молча.
+- Аукцион не входит в MVP. До удаления legacy-кода нужно извлечь доменную модель, actor/event-логику, полезные тест-кейсы и непроверенные гипотезы.
+- Соблюдай тишину и ненавязчивость бота, privacy by design, минимизацию данных и минимальные Telegram-права. Способ взаимодействия определяется сценарием, а не глобальным правилом.
 
-> Рукописные `docker-compose.yml` (корневой и пер-сервисные) пока не удалены — миграция на Aspire в процессе (итерации 0–2 из ТЗ выполнены, `aspire run` не проверен вживую из-за сетевых ограничений сессии, где писался код; итерации 3–4 — режимы/профили и генерация compose — тоже не подтверждены запуском). Не полагайся на эту таблицу как на единственный источник правды, пока кто-то не прогонит `aspire run` и не уберёт это предупреждение.
+## Стандарты и локальные правила
 
-## Архитектурные правила (кратко, детали в ADR)
+Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-- **Асинхронно через NATS** — команды к stateful-агрегатам (`commands.auction.place_bid`) и события (`events.auction.bid_placed`). **Синхронно через gRPC** — CRUD и queries. Критерии выбора — ADR-016.
-- **Сериализация в NATS и gRPC — только Protobuf** (ADR-012). JSON в шине запрещён. При изменении `.proto` обнови ВСЕХ потребителей и `docs/03_CONTRACTS/nats_subjects.md` (есть скилл `contract-change`).
-- Именование NATS-тем: `<commands|events>.<домен>.<действие>`, snake_case.
-- ID аукционов/сходок — UUIDv7 канонической строкой (36 символов, lowercase, с дефисами) в контрактах (ADR-020).
-- Stateful-логика (аукцион) — акторы + Event Sourcing (ADR-002, ADR-009); CRUD-сервисы — обычный ASP.NET Core + EF Core, без ES.
-
-## Процесс разработки
-
-- Итеративно: маленькие шаги, обсуждение архитектурного решения до кода (ADR-013).
-- Нетривиальные технические решения фиксируются как ADR в `docs/04_DECISIONS/decisions.md` (есть скилл `adr`).
-- Документация обновляется в том же изменении, что и код. Если код противоречит докам — почини доки или скажи об этом явно.
-- Приоритеты работ — `docs/ROADMAP.md`. Аукционный модуль сейчас отложен (P3), ядро — сходки.
-
-## Конвенции по языкам
-
-- **C#**: records для Commands/Events/State; nullable reference types; switch expressions; Serilog со структурными логами. В Akka: `Command<T>`/`Recover<T>`-роутинг, `Persist → Apply → Reply`, PersistenceId = `<тип>-<id>`.
-- **Rust**: без `unwrap()`/`expect()` на внешних данных; `thiserror` в `domain`/`infra`, `anyhow` в `app`; хендлеры возвращают `BotAction` (не дёргают Bot API напрямую), FSM и UI-билдеры — чистые функции (ADR-016).
-- В боте: предпочитай `editMessageText` новым сообщениям; сразу отвечай на callback_query; бот в общем чате «тихий».
+Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.

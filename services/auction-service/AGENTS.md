@@ -1,6 +1,8 @@
 # Auction Service (C# + Akka.NET)
 
-Stateful-сервис аукционов: Event Sourcing + CQRS на Akka.Persistence (PostgreSQL). Сейчас в roadmap отложен (P3) — не наращивай фичи без запроса.
+Stateful-сервис аукционов: Event Sourcing + CQRS на Akka.Persistence (PostgreSQL). Статус: **Legacy**, сервис не входит в MVP сходок. Не наращивай фичи без явного запроса; пока код остаётся в active tree, сохраняй сборку и тесты.
+
+Этот файл содержит только service-specific delta. Общие требования к тестированию, контрактам и логированию наследуются из [docs/standards](../../docs/standards/README.md).
 
 ## Структура
 
@@ -22,7 +24,7 @@ Stateful-сервис аукционов: Event Sourcing + CQRS на Akka.Persis
 ## Запуск
 
 ```bash
-docker-compose up -d   # из корня: postgres + nats
+# Предпочтительно: профиль infra из infra/apphost; compose остаётся fallback
 dotnet run --project src/AuctionService
 dotnet test
 ```

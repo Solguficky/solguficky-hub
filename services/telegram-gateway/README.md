@@ -1,6 +1,8 @@
 # Telegram Gateway
 
-API Gateway для платформы Solguficky. Единственная точка входа для всех внешних запросов от Telegram.
+> **Статус: Current/Legacy.** Этот Rust/Teloxide-код обслуживает преимущественно старые аукционные сценарии. Для MVP принято направление новой реализации на TypeScript + grammY; окончательные границы и детали должны быть зафиксированы ADR до переписывания.
+
+Текущая точка входа для запросов от Telegram.
 
 ## Технологический стек
 
@@ -262,9 +264,10 @@ Subject: `events.auction.bid_placed`
 
 ## Документация
 
-- [Архитектура платформы](../../docs/01_ARCHITECTURE/architechture.md)
-- [ТЗ на Telegram Gateway](../../docs/02_SERVICES/telegram-gateway.md)
-- [Контракты NATS](../../docs/03_CONTRACTS/nats_subjects.md)
+- [Service brief и целевое направление](../../docs/services/telegram-gateway.md)
+- [Исторический дизайн Rust Gateway](../../docs/archive/services/telegram-gateway-rust-design.md)
+- [Каталог межсервисного взаимодействия](../../docs/architecture/integration.md)
+- [Архитектурные решения](../../docs/decisions/README.md)
 
 ## Лицензия
 
