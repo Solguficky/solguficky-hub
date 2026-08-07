@@ -42,6 +42,45 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 Subjects и gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
 
+## Выбор sync и async
+
+Правило «команды к stateful aggregates через NATS, CRUD и queries через gRPC» остаётся отправной точкой, но не применяется механически. Для каждой операции нужно определить:
+
+- требуется ли немедленный ответ пользователю;
+- кто владеет состоянием;
+- допустима ли eventual consistency;
+- что происходит при timeout;
+- как клиент узнаёт итог асинхронной команды;
+- нужна ли durable delivery;
+- как обеспечивается idempotency.
+
+ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Needs review`.
+
+## Contract governance до новых proto
+
+До добавления Meetups и Identity контрактов нужно принять минимум:
+
+- правила совместимости;
+- package/version naming;
+- ownership;
+- codegen matrix для TypeScript и выбранного backend stack;
+- CI breaking checks;
+- правила удаления Legacy auction contracts;
+- границу отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
+
+Schema Registry — не одно бинарное решение:
+
+| Задача | Ближайший разумный уровень |
+|---|---|
+| Source control схем | Git остаётся источником |
+| Breaking-change detection | Compatibility check в CI, например Buf |
+| Code generation | Единые команды и версии generators |
+| Distribution/discovery | Оценивать при независимых lifecycle или repositories |
+| Runtime schema resolution | Не вводить без реального сценария |
+| Учебная эксплуатация Registry | Отдельная итерация после product slice |
+
+Возврат Schema Registry остаётся Open. Сначала формулируется проблема, которую он должен решить.
+
 ## Delivery semantics
 
 - В коде используются обычные NATS subscriptions; наличие JetStream в локальной конфигурации не делает consumers durable автоматически.
@@ -49,6 +88,35 @@ Subjects и gRPC API для Meetups, Identity, нового Telegram Gateway и 
 - Наличие `op_id` в части команд само по себе не обеспечивает идемпотентность: consumer должен сохранять или проверять обработанные операции.
 - Требования к допустимой потере, повтору и порядку задаются отдельно для каждого сценария.
 
+Перед использованием durable delivery в продуктовом потоке совместно проектируются:
+
+- stream и retention policy;
+- durable consumer;
+- ack/retry policy;
+- idempotency key и проверка `op_id`;
+- consumer inbox/dedup storage;
+- идемпотентность внешнего Telegram side effect;
+- dead-letter либо операционный способ разбирать необрабатываемые сообщения;
+- метрики lag, redelivery и failed delivery.
+
+Read model вводится, когда query-нагрузка, UX или изоляция stateful aggregate делает прямые обращения неудобными, а не как обязательный CQRS-ритуал.
+
+## Observability baseline MVP
+
+- структурные логи без персональных данных и Telegram authentication material;
+- correlation/operation id через межсервисный путь;
+- health и readiness checks;
+- метрики ошибок, latency и delivery attempts;
+- trace первого вертикального среза Gateway → Identity → Meetups;
+- операторский способ увидеть и повторить неуспешное действие без ручной правки БД.
+
+Loki/Grafana и Aspire dashboard являются заделом. Наличие конфигурации не подтверждает работающую наблюдаемость.
+
 ## Изменение
 
 При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `contract-change`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
+
+## Технические источники
+
+- [Buf breaking change detection](https://buf.build/docs/breaking/)
+- [Apicurio Registry compatibility modes](https://www.apicur.io/registry/docs/apicurio-registry/3.3.x/getting-started/assembly-registry-compatibility-modes.html)

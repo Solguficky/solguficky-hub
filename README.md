@@ -12,9 +12,9 @@
 - legacy-аукцион на C# + Akka.NET и обслуживающий его WebSocket Gateway — вне MVP;
 - C#-каркас Notifications Service;
 - общие Protobuf-контракты, NATS/PostgreSQL и AppHost на .NET Aspire;
-- заготовки для будущих `meetups`, `identity` и Telegram Mini App.
+- Meetups и Identity ещё отсутствуют; для Telegram Mini App существует только пустая заготовка.
 
-Актуальные статусы Current / MVP / Future / Legacy собраны в [контексте проекта](docs/PROJECT_CONTEXT.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
+Актуальные статусы Current / MVP / Future / Legacy собраны в [архитектурном обзоре](docs/architecture/overview.md) и [service briefs](docs/services/README.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
 
 ## Структура
 
@@ -44,11 +44,12 @@ aspire run
 ## Документация
 
 - [Навигатор по документации](docs/README.md)
-- [Контекст, состояние и направление](docs/PROJECT_CONTEXT.md)
-- [Продукт](docs/product/README.md)
-- [Архитектура](docs/architecture/README.md)
+- [Продукт и границы MVP](docs/product/overview.md)
+- [Архитектура и текущее направление](docs/architecture/overview.md)
+- [Карта сервисов](docs/services/README.md)
 - [Архитектурные решения](docs/decisions/README.md)
 - [Инженерные стандарты](docs/standards/README.md)
+- [Процесс проектирования](docs/development/design-process.md)
 - [RFC](docs/rfcs/README.md)
 - [Архив](docs/archive/README.md)
 - [Правила для AI-агентов](AGENTS.md)

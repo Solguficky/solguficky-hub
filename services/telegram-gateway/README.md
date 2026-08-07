@@ -264,7 +264,7 @@ Subject: `events.auction.bid_placed`
 
 ## Документация
 
-- [Контекст и целевое направление](../../docs/PROJECT_CONTEXT.md#6-telegram-gateway-целевое-направление)
+- [Service brief и целевое направление](../../docs/services/telegram-gateway.md)
 - [Исторический дизайн Rust Gateway](../../docs/archive/services/telegram-gateway-rust-design.md)
 - [Каталог межсервисного взаимодействия](../../docs/architecture/integration.md)
 - [Архитектурные решения](../../docs/decisions/README.md)

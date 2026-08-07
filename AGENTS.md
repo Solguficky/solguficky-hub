@@ -7,9 +7,12 @@
 ## Сначала прочитай
 
 - [Документация](docs/README.md) — карта источников правды и статусов документов.
-- [Контекст проекта](docs/PROJECT_CONTEXT.md) — временный основной срез Current / MVP / Future / Legacy до завершения декомпозиции.
+- [Продукт](docs/product/overview.md) — цель, принципы и границы MVP.
+- [Архитектура](docs/architecture/overview.md) — Current / MVP / Future / Legacy и общие границы.
+- [Сервисы](docs/services/README.md) — ответственность и открытые вопросы компонентов.
 - [Архитектурные решения](docs/decisions/README.md) — индекс ADR и их применимость.
 - [Стандарты](docs/standards/README.md) — нормативные инженерные соглашения.
+- [Процесс проектирования](docs/development/design-process.md) — human-owned design loop и граница роли агента.
 - [Локальная разработка](docs/development/local-development.md) — Aspire, профили и известные ограничения.
 
 Milestones, приоритеты, задачи и прогресс ведутся в Linear. В Git хранятся устойчивый контекст, требования, решения и технические руководства; отдельного roadmap-файла нет.

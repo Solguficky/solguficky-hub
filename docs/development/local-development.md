@@ -2,6 +2,8 @@
 
 > **Статус:** Current, частично подтверждено. AppHost-код существует, но `aspire run` ещё не был успешно проверен в живой среде.
 
+Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
+
 .NET Aspire — принятый инструмент локальной оркестрации (ADR-021). Рукописные `docker-compose.yml` пока сохраняются как рабочий fallback до проверки замены.
 
 ## AppHost

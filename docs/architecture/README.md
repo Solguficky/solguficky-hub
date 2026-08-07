@@ -1,9 +1,10 @@
 # Architecture
 
-Документы этого раздела объясняют устройство системы. Нормы реализации находятся в [standards/](../standards/), а причины конкретных решений — в [decisions/](../decisions/).
+Раздел описывает устройство системы. Нормы реализации находятся в [standards/](../standards/), причины решений — в [decisions/](../decisions/).
 
-До завершения синхронизации общий Current / MVP / Future / Legacy контекст находится в [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md).
+- [overview.md](overview.md) — Current / MVP / Future / Legacy и общие границы;
+- [integration.md](integration.md) — transports, subjects, contract governance и delivery semantics;
+- [infrastructure.md](infrastructure.md) — local, production-like и production hosting;
+- [technology-selection.md](technology-selection.md) — критерии выбора языков и runtime budget.
 
-- [integration.md](integration.md) — действующие способы и контракты межсервисного обмена;
-- будущий `overview.md` — карта Current и MVP;
-- будущий `technology-selection.md` — критерии выбора языков и технологий.
+Фактическое состояние подтверждается кодом и конфигурацией. Нетривиальные принятые решения закрепляются отдельными ADR.
