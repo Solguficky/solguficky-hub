@@ -82,7 +82,7 @@ Telegram user
 → новый TypeScript Gateway
 → Identity
 → Meetups
-→ просмотр опубликованной сходки или RSVP
+→ просмотр сходки и связанного Telegram-сообщения
 → наблюдаемый ответ пользователю
 ```
 

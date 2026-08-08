@@ -20,3 +20,16 @@ Current workflow: `.github/workflows/ci.yml`.
 4. Current и оставшийся Legacy код не выпадают из build незаметно.
 
 Конкретные задачи и их прогресс ведутся в Linear.
+
+## Презентация аукционного модуля
+
+Workflow `.github/workflows/deploy-auction-slides.yml` публикует автономную историческую презентацию на [Netlify](https://solguficky-auction-module-slides.netlify.app/) после изменения HTML-файла в `develop`. Его также можно запустить вручную через `workflow_dispatch`.
+
+Для работы workflow в настройках GitHub repository должны быть заданы:
+
+- secret `NETLIFY_AUTH_TOKEN` — персональный Netlify access token с доступом к проекту;
+- variable `NETLIFY_AUCTION_SLIDES_SITE_ID` — Netlify Project ID сайта `solguficky-auction-module-slides`.
+
+Workflow собирает отдельный каталог, копирует презентацию в `index.html` и выполняет production deploy через зафиксированную версию Netlify CLI. Токен и Project ID не хранятся в Git.
+
+Если Netlify-проект уже связан с Git-репозиторием и сам выполняет continuous deployment, перед включением GitHub workflow нужно оставить только один production-механизм. Иначе один push может породить два независимых deploy.
