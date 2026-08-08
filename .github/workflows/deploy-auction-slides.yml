@@ -1,0 +1,49 @@
+name: Deploy auction slides
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'docs/archive/services/auction-module-presentation.html'
+      - '.github/workflows/deploy-auction-slides.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auction-slides-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: ${{ vars.NETLIFY_AUCTION_SLIDES_SITE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify Netlify configuration
+        shell: bash
+        run: |
+          if [[ -z "${NETLIFY_AUTH_TOKEN}" ]]; then
+            echo "::error::GitHub secret NETLIFY_AUTH_TOKEN is not configured"
+            exit 1
+          fi
+          if [[ -z "${NETLIFY_SITE_ID}" ]]; then
+            echo "::error::GitHub variable NETLIFY_AUCTION_SLIDES_SITE_ID is not configured"
+            exit 1
+          fi
+
+      - name: Prepare static site
+        run: |
+          mkdir -p dist/auction-slides
+          cp docs/archive/services/auction-module-presentation.html dist/auction-slides/index.html
+
+      - name: Deploy production site
+        run: npx --yes netlify-cli@27.0.1 deploy --prod --dir dist/auction-slides

@@ -8,3 +8,11 @@
 - `context/` — исходные исторические обсуждения.
 
 Каждый материал используется только для восстановления истории или извлечения знаний. Текущий контекст находится в профильных документах [product/](../product/), [architecture/](../architecture/) и [services/](../services/). Полный переходный срез сохранён в `snapshots/project-context-2026-08-06.md`.
+
+## Материалы аукционного модуля
+
+- [исходник презентации в Marp Markdown](services/auction-module-slides.md);
+- [автономная HTML-презентация для администраторов](services/auction-module-presentation.html);
+- [опубликованная презентация](https://solguficky-auction-module-slides.netlify.app/).
+
+Презентация отражает состояние обсуждения на 28.10.2025 и не определяет текущий scope MVP.
