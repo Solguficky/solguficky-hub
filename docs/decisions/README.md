@@ -40,8 +40,10 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Legacy scope | Не определяет Scala/Pekko auction v2 |
 | [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Legacy scope | Сервис заморожен и обслуживает только аукцион |
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
-| [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов |
+| [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов; уточнён ADR-023 |
 | [ADR-021](ADR-021-aspire-local-orchestration.md) | Aspire local orchestration | Active, limited scope | AppHost ещё не подтверждён живым запуском |
+| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение решается в RFC-004 |
+| [ADR-023](ADR-023-meetup-public-number.md) | Публичный номер сходки рядом с UUIDv7 | Active | Уточняет ADR-020 только для сходок |
 
 ## Правила изменения
 
