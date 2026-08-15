@@ -240,5 +240,5 @@ flowchart LR
 - **ADR:** вероятно один — механика представления Gateway. Кандидат на объединение с ADR о Telegram Gateway, который макет уже считает необходимым.
 - **Standard:** не нужен.
 - **Обновление документов:** [design/bot/storyboard.html](../design/bot/README.md) — таблица механик Bot API, кадры P-04, P-05, P-07, сводка открытых вопросов; [RFC-001](RFC-001-meetup-modules-topology.md) — решение 6 в части того, что модуль отдаёт; [product/ideas.md](../product/ideas.md) — строка про постеры.
-- **Задачи Linear:** проверка живым ботом — первая, до всего остального.
+- **Задачи Linear:** [PER-20](https://linear.app/anticnvm/issue/PER-20/rfc-003-proverit-rich-messages-i-ephemeral-mehaniku-zhivym-botom) — проверка Rich Messages и ephemeral-механики живым ботом в следующем цикле, как отдельная подзадача PER-4 milestone «Технический дизайн и backlog готовы».
 - **`contracts/proto/`:** не трогается до принятия решения 3.
