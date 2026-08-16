@@ -1,0 +1,2707 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solguficky Hub - storyboard Bot UI MVP</title>
+<style>
+  /* Дизайн-система Organic: токены и типографика перенесены из
+     claude.ai/design (проект "Bot UI MVP storyboard"). Разметка кадров
+     остаётся классовой, чтобы макет правился текстом, а не инспектором. */
+  @import url('https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;600;700&display=swap');
+
+  :root {
+    --bg: #f5ead8;
+    --surface: #ebddc5;
+    --ink: #201e1d;
+    --accent: #c67139;
+    --accent-2: #7a8a5e;
+    --divider: color-mix(in srgb, #201e1d 16%, transparent);
+
+    --n100: #f9f4ed; --n200: #eee7db; --n300: #dcd3c4; --n400: #c0b6a5;
+    --n500: #a19786; --n600: #82796a; --n700: #645c50; --n800: #474238; --n900: #2e2b25;
+
+    --a100: #fff2eb; --a200: #ffe1d0; --a300: #ffc6a5; --a400: #f6a06b;
+    --a500: #d67f48; --a600: #b2622d; --a700: #8c491a; --a800: #643312; --a900: #402310;
+
+    --g100: #f0fae1; --g200: #e1eecc; --g300: #ccdbb2; --g400: #aebf92;
+    --g500: #8fa073; --g600: #728157; --g700: #56633f; --g800: #3d472b; --g900: #272e1b;
+
+    --font-heading: "Caprasimo", Georgia, "Times New Roman", serif;
+    --font-body: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", ui-monospace, monospace;
+
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --radius-lg: 32px;
+
+    --shadow-sm: 0 1px 2px color-mix(in srgb, #2e2b25 14%, transparent);
+    --shadow-md: 0 3px 10px color-mix(in srgb, #2e2b25 16%, transparent);
+    --shadow-lg: 0 12px 32px color-mix(in srgb, #2e2b25 22%, transparent);
+
+    /* Тёмная тема Telegram: фиксирована, страница остаётся светлой */
+    --tg-app: #0e1621;
+    --tg-head: #17212b;
+    --tg-bot: #182533;
+    --tg-user: #2b5278;
+    --tg-ink: #f2f6f9;
+    --tg-ink-2: #7e93a6;
+    --tg-link: #62bcf9;
+    --tg-key: #1e2c3a;
+    --tg-key-ink: #dfe9f2;
+    --tg-line: rgba(255, 255, 255, .07);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 24px 100px; }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-heading); font-weight: 400;
+    line-height: 1.12; letter-spacing: -.015em; margin: 0;
+  }
+  h1 { font-size: 40px; }
+  h2 { font-size: 30px; }
+  h3 { font-size: 20px; }
+  h4 { font-size: 16px; }
+  p { margin: 10px 0; }
+  a { color: var(--a700); text-underline-offset: 3px; }
+  a:hover { color: var(--a800); }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+
+  /* ---------- шапка ---------- */
+
+  .doc-head { border-bottom: 2px solid var(--divider); padding-bottom: 24px; margin-bottom: 28px; }
+  .eyebrow { font: 600 11px/1 var(--font-body); letter-spacing: .16em; text-transform: uppercase; color: var(--a700); }
+  .doc-head h1 { margin: 12px 0 14px; }
+  .lede { max-width: 78ch; opacity: .82; }
+  .status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 12px; border-radius: 999px;
+    font: 400 11.5px/1.6 var(--font-body); letter-spacing: .02em;
+    background: var(--n100); color: var(--n800);
+  }
+  .chip.ok { background: var(--g100); color: var(--g800); }
+  .chip.hyp { background: var(--a100); color: var(--a800); }
+  .chip.open { border: 1px solid var(--accent); color: var(--accent); background: transparent; }
+  .chip.info { border: 1px solid var(--divider); color: var(--n800); background: transparent; }
+  .chip.out { background: var(--n200); color: var(--n700); }
+  .chip.new { background: var(--g200); color: var(--g900); font-family: var(--font-heading); }
+
+  /* ---------- навигация ---------- */
+
+  nav.toc { background: var(--surface); border-radius: var(--radius-lg); padding: 18px 22px; box-shadow: var(--shadow-sm); margin-bottom: 36px; }
+  nav.toc h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--a700); margin-bottom: 10px; font-family: var(--font-body); font-weight: 600; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  nav.toc li { margin: 3px 0; break-inside: avoid; }
+
+  /* ---------- секции ---------- */
+
+  section { margin: 0 0 56px; scroll-margin-top: 16px; }
+  .sec-head { border-left: 4px solid var(--accent); padding-left: 16px; margin-bottom: 20px; }
+  .sec-head p { max-width: 82ch; opacity: .8; margin: 8px 0 0; }
+
+  .note {
+    background: var(--surface); border-left: 4px solid var(--accent-2);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    padding: 14px 18px; margin: 18px 0; font-size: 14px;
+  }
+  .note.warn { border-left-color: var(--accent); }
+  .note b { font-weight: 700; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; vertical-align: top; }
+  th {
+    font: 600 11px/1.4 var(--font-body); text-transform: uppercase; letter-spacing: .08em;
+    color: color-mix(in srgb, var(--ink) 60%, transparent);
+    border-bottom: 1px solid var(--divider);
+  }
+  td { border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); }
+  tbody tr:hover, tr:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+
+  /* ---------- кадр ---------- */
+
+  .frames { display: flex; flex-direction: column; gap: 20px; }
+
+  .frame {
+    background: var(--surface); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm); overflow: hidden; scroll-margin-top: 16px;
+  }
+  .frame-body { display: grid; grid-template-columns: 336px 1fr; }
+  .frame-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 18px; background: var(--n200);
+  }
+  .fid {
+    font-family: var(--font-heading); font-size: 12px; letter-spacing: .04em;
+    padding: 3px 12px; border-radius: 999px; color: #fff; background: var(--n800);
+  }
+  .t-p .fid { background: var(--g800); }
+  .t-a .fid { background: var(--a700); }
+  .t-e .fid { background: #8f3a2f; }
+  .t-v .fid { background: var(--n700); }
+  .frame-head h3 { flex: 1 1 220px; font-size: 19px; }
+
+  .frame-body > .stage { padding: 18px; background: var(--n100); }
+  .frame-body > .meta { padding: 18px 20px; min-width: 0; }
+
+  @media (max-width: 880px) {
+    .frame-body { grid-template-columns: 1fr; }
+    nav.toc ol { columns: 1; }
+  }
+
+  /* Широкие таблицы прокручиваются внутри себя, а не растягивают страницу */
+  @media (max-width: 760px) {
+    table { display: block; max-width: 100%; overflow-x: auto; }
+  }
+
+  dl.meta-list { display: grid; grid-template-columns: 116px 1fr; gap: 5px 14px; margin: 0 0 12px; font-size: 13px; }
+  dl.meta-list dt {
+    font: 600 10px/1.7 var(--font-body); text-transform: uppercase; letter-spacing: .08em;
+    color: color-mix(in srgb, var(--ink) 55%, transparent);
+  }
+  dl.meta-list dd { margin: 0; opacity: .88; }
+  dl.meta-list dd b { font-weight: 700; opacity: 1; }
+
+  .qs, .decided {
+    margin: 10px 0 0; padding: 11px 14px; border-radius: var(--radius-sm); font-size: 12.5px;
+  }
+  .decided { background: var(--g100); }
+  .qs { background: var(--a100); }
+  .qs h4, .decided h4 {
+    font: 400 10px/1.6 var(--font-heading); text-transform: uppercase; letter-spacing: .08em;
+    margin-bottom: 5px;
+  }
+  .decided h4 { color: var(--g800); }
+  .qs h4 { color: var(--a800); }
+  .qs ul, .decided ul { margin: 0; padding-left: 16px; }
+  .qs li, .decided li { margin: 3px 0; }
+
+  /* ---------- Telegram ---------- */
+
+  .phone {
+    width: 100%; max-width: 300px; margin: 0 auto; border-radius: var(--radius-md); overflow: hidden;
+    background: var(--tg-app); color: var(--tg-ink);
+    box-shadow: var(--shadow-md); font: 12.5px/1.4 var(--font-body); position: relative;
+  }
+  .tg-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--tg-head); }
+  .tg-head .ava { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(160deg, #4e8cc7, #2b5278); display: grid; place-items: center; font: 700 10px/1 var(--font-body); color: #fff; }
+  .tg-head .who { min-width: 0; }
+  .tg-head .who b { display: block; font-size: 12.5px; font-weight: 700; }
+  .tg-head .who span { display: block; font-size: 10.5px; color: var(--tg-ink-2); }
+
+  .tg-chat { padding: 9px; min-height: 80px; display: flex; flex-direction: column; gap: 6px; }
+  .tg-chat:not(:last-child) { padding-bottom: 4px; }
+  .tg-date { align-self: center; font-size: 10px; color: var(--tg-ink-2); background: rgba(255, 255, 255, .06); border-radius: 999px; padding: 2px 10px; }
+
+  .row { display: flex; flex-direction: column; max-width: 90%; }
+  .row.bot { align-self: flex-start; }
+  .row.user { align-self: flex-end; align-items: flex-end; }
+
+  .bubble { background: var(--tg-bot); border-radius: 12px 12px 12px 4px; padding: 7px 10px 5px; white-space: pre-line; }
+  .row.user .bubble { background: var(--tg-user); border-radius: 12px 12px 4px 12px; }
+  .bubble .name { display: block; font-size: 11px; font-weight: 700; color: #6ab3f3; margin-bottom: 2px; }
+  .bubble .time { display: block; text-align: right; font-size: 9.5px; color: var(--tg-ink-2); margin-top: 3px; }
+  .bubble em { color: var(--tg-ink-2); font-style: normal; }
+  .bubble b { font-weight: 700; }
+  .bubble a, .bubble .link { color: var(--tg-link); text-decoration: none; }
+  .bubble .quote { border-left: 2px solid var(--tg-link); padding-left: 7px; margin-bottom: 4px; font-size: 11.5px; color: var(--tg-ink-2); display: block; }
+  .bubble .only-you { display: block; font-size: 9.5px; color: var(--tg-ink-2); margin-bottom: 3px; letter-spacing: .02em; }
+  .row.ghost .bubble { opacity: .62; border: 1px dashed var(--tg-line); }
+
+  /* Inline-клавиатура в Telegram шире пузыря и тянется по ширине экрана */
+  .row:has(.kb) { width: 100%; max-width: 100%; }
+  .row:has(.kb) > .bubble { align-self: flex-start; max-width: 90%; }
+  .kb { display: flex; flex-direction: column; gap: 3px; margin-top: 3px; width: 100%; }
+  .kb .kb-row { display: flex; gap: 3px; }
+  .key {
+    flex: 1; text-align: center; background: var(--tg-key); color: var(--tg-key-ink);
+    border-radius: var(--radius-sm); padding: 6px 8px; font-size: 11.5px;
+  }
+  .key.url::after { content: " \2197"; color: var(--tg-link); font-size: 10px; }
+  .key.press { outline: 2px solid var(--tg-link); outline-offset: -2px; }
+  .key.muted { color: var(--tg-ink-2); }
+
+  .tg-input { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--tg-head); color: var(--tg-ink-2); font-size: 12px; }
+  .tg-input.reply { flex-direction: column; align-items: stretch; gap: 5px; }
+  .tg-input .reply-to { border-left: 2px solid var(--tg-link); padding-left: 7px; font-size: 11px; }
+  .tg-input .reply-to b { display: block; color: var(--tg-link); font-weight: 700; }
+
+  .tg-menu { padding: 6px 10px 9px; background: var(--tg-head); }
+  .tg-menu .cmd { display: flex; gap: 8px; padding: 4px 2px; font-size: 11.5px; border-bottom: 1px solid var(--tg-line); }
+  .tg-menu .cmd:last-child { border-bottom: 0; }
+  .tg-menu .cmd b { color: var(--tg-link); font-weight: 700; min-width: 92px; }
+  .tg-menu .cmd span { color: var(--tg-ink-2); }
+
+  .toast {
+    position: absolute; left: 10px; right: 10px; top: 50px; z-index: 3;
+    background: rgba(20, 30, 40, .96); border: 1px solid var(--tg-line); border-radius: var(--radius-sm);
+    padding: 8px 11px; font-size: 11.5px; color: var(--tg-ink);
+  }
+  .alert { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; background: rgba(0, 0, 0, .55); padding: 20px; }
+  .alert .box { background: #1c2733; border-radius: var(--radius-md); padding: 14px; text-align: center; font-size: 12px; width: 100%; }
+  .alert .box .ok { display: block; margin-top: 10px; color: var(--tg-link); font-weight: 700; text-transform: uppercase; font-size: 11px; }
+
+  .stage-label { font: 600 10px/1.4 var(--font-body); text-transform: uppercase; letter-spacing: .09em; color: color-mix(in srgb, var(--ink) 50%, transparent); text-align: center; margin-bottom: 10px; }
+  .stage-note { font-size: 11.5px; color: color-mix(in srgb, var(--ink) 55%, transparent); text-align: center; margin-top: 10px; }
+
+  /* ---------- новая возможность Bot API ---------- */
+
+  .eph { background: var(--g100); border: 2px solid var(--accent-2); border-radius: var(--radius-lg); padding: 20px 22px; box-shadow: var(--shadow-md); }
+  .eph-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .eph-head h2 { font-size: 24px; }
+  .eph-body { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; margin-top: 16px; }
+  .eph-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 14px 0 0; }
+  @media (max-width: 880px) { .eph-body { grid-template-columns: 1fr; } }
+  .eph-card { background: var(--surface); border-radius: var(--radius-md); padding: 11px 14px; font-size: 12.5px; }
+  .eph-card h4 { font: 400 10px/1.6 var(--font-heading); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+  .eph-card.known h4 { color: var(--g800); }
+  .eph-card.cand h4 { color: var(--a800); }
+  .eph-card.no h4 { color: #8f3a2f; }
+
+  /* ---------- варианты ---------- */
+
+  .variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+  .variant { background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 18px; }
+  .variant.pick { box-shadow: var(--shadow-md); outline: 2px solid var(--accent-2); }
+  .variant h3 { font-size: 19px; margin-bottom: 4px; }
+  .variant .sub { font-size: 12px; opacity: .65; margin-bottom: 10px; }
+  .variant .phone { max-width: none; }
+  .pro-con { display: grid; gap: 4px; margin-top: 12px; font-size: 13px; }
+  .pro-con div { padding-left: 18px; position: relative; }
+  .pro-con .p::before { content: "+"; position: absolute; left: 2px; color: var(--g600); font-weight: 700; }
+  .pro-con .c::before { content: "-"; position: absolute; left: 2px; color: var(--accent); font-weight: 700; }
+
+  /* ---------- карта переходов ---------- */
+
+  .map { background: var(--surface); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-sm); overflow-x: auto; }
+  .map svg { display: block; min-width: 760px; width: 100%; height: auto; }
+  .map .n-box { fill: var(--n200); stroke: var(--n400); }
+  .map .n-p { fill: var(--g200); stroke: var(--g500); }
+  .map .n-a { fill: var(--a200); stroke: var(--a500); }
+  .map .n-e { fill: #f6ded6; stroke: #c07a68; }
+  .map .n-id { fill: var(--n700); font: 700 9px var(--mono); }
+  .map .n-t { fill: var(--ink); font: 600 11px var(--font-body); }
+  .map .edge { fill: none; stroke: var(--n500); stroke-width: 1.4; marker-end: url(#arrow); }
+  .map .edge.soft { stroke-dasharray: 4 3; }
+  .map .e-lbl { fill: var(--n700); font: 10px var(--font-body); }
+
+  footer.doc-foot { border-top: 2px solid var(--divider); padding-top: 20px; font-size: 13px; opacity: .8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc-head">
+  <div class="eyebrow">docs / design / bot</div>
+  <h1>Storyboard Bot UI MVP</h1>
+  <p class="lede">
+    Статический макет Bot-only интерфейса MVP: кадры экранов Telegram, переходы между ними и тексты сообщений.
+    Документ существует как продуктовый артефакт планирования и вход для технического дизайна Gateway.
+    Это не работающий прототип: здесь нет JavaScript, backend, bot token и подключения к Telegram.
+  </p>
+  <div class="status-row">
+    <span class="chip info">Статус: Draft</span>
+    <span class="chip info">Слой: MVP</span>
+    <span class="chip ok">Базовая навигация: B — один хаб-экран, решено</span>
+    <span class="chip new">Учтён Bot API 10.2 от 14 июля 2026</span>
+    <span class="chip out">PNG-экспорты: не создаются в этой итерации</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Содержание</h2>
+  <ol>
+    <li><a href="#read">Как читать макет</a></li>
+    <li><a href="#tg">Какие элементы Telegram используются</a></li>
+    <li><a href="#eph">Невидимые команды и исчезающие сообщения</a></li>
+    <li><a href="#variants">Варианты навигации, поиска и входа админа</a></li>
+    <li><a href="#modules">Модули сходки: точка расширения</a></li>
+    <li><a href="#track-p">Трек 1: путь солегуфика</a></li>
+    <li><a href="#track-a">Трек 2: путь администратора и организатора</a></li>
+    <li><a href="#track-e">Трек 3: ошибки и служебные состояния</a></li>
+    <li><a href="#map">Карта переходов</a></li>
+    <li><a href="#open">Сводка открытых вопросов</a></li>
+    <li><a href="#next">Что дальше</a></li>
+  </ol>
+</nav>
+
+<section id="read">
+  <div class="sec-head">
+    <h2>Как читать макет</h2>
+    <p>
+      Кадр - это одно наблюдаемое состояние интерфейса. Слева отрисован экран Telegram в тёмной теме,
+      справа - метаданные состояния: роль, контекст, действие пользователя, переход и механика Telegram,
+      которой это состояние реализуется. Тексты сообщений в кадрах считаются частью макета, а не иллюстрацией.
+    </p>
+  </div>
+
+  <table>
+    <tr><th>Метка</th><th>Значение</th></tr>
+    <tr><td><span class="chip ok">решено</span></td><td>Следует из <a href="../../product/overview.md">product/overview.md</a> или из ограничения Telegram Bot API. Менять только вместе с продуктовым документом.</td></tr>
+    <tr><td><span class="chip hyp">гипотеза</span></td><td>Разумное умолчание макета, выбранное чтобы кадр был целым. Владелец подтверждает или заменяет.</td></tr>
+    <tr><td><span class="chip open">открытый вопрос</span></td><td>Решения нет. Кадр показывает один из возможных вариантов и явно называет вопрос.</td></tr>
+    <tr><td><span class="chip out">вне MVP</span></td><td>Показано для контекста границы, реализовывать в MVP не нужно.</td></tr>
+  </table>
+
+  <div class="note">
+    <b>Имена и данные в кадрах вымышленные.</b>
+    Бот назван <code>@solguficky_hub_bot</code> как placeholder. Даты кадров привязаны к августу 2026 только ради связности примера.
+  </div>
+
+  <div class="note warn">
+    <b>Что макет намеренно не решает.</b>
+    Схему хранения, контракты NATS и gRPC, границу Meetups и Identity, язык Gateway, формат <code>callback_data</code>.
+    Там, где интерфейс упирается в такое решение, кадр помечает вопрос, а не выбирает ответ.
+  </div>
+</section>
+
+<section id="tg">
+  <div class="sec-head">
+    <h2>Какие элементы Telegram используются</h2>
+    <p>
+      Макет ограничен тем, что бот действительно умеет. Список ниже - контракт с реализацией: если в кадре
+      появился элемент, он должен отображаться на строку из этой таблицы.
+    </p>
+  </div>
+
+  <table>
+    <tr><th>Элемент кадра</th><th>Механика Bot API</th><th>Ограничение, влияющее на дизайн</th></tr>
+    <tr>
+      <td>Сообщение бота с inline-кнопками</td>
+      <td><code>sendMessage</code> + <code>reply_markup: InlineKeyboardMarkup</code></td>
+      <td><code>callback_data</code> не более 64 байт: идентификатор сходки и экран должны кодироваться компактно</td>
+    </tr>
+    <tr>
+      <td>Переход внутри одного сообщения</td>
+      <td><code>editMessageText</code> / <code>editMessageReplyMarkup</code></td>
+      <td>Редактировать можно своё сообщение; текст без изменений вызывает ошибку <code>message is not modified</code></td>
+    </tr>
+    <tr>
+      <td>Всплывающая подсказка после нажатия</td>
+      <td><code>answerCallbackQuery</code>, при необходимости <code>show_alert</code></td>
+      <td>Ответить нужно в пределах таймаута, иначе у пользователя останется крутящийся индикатор на кнопке</td>
+    </tr>
+    <tr>
+      <td>Кнопка-ссылка на сообщение чата</td>
+      <td><code>InlineKeyboardButton.url</code> вида <code>t.me/c/&lt;chat&gt;/&lt;id&gt;</code></td>
+      <td>Ссылка на закрытый чат откроется только у его участника; у остальных будет ошибка Telegram, а не бота</td>
+    </tr>
+    <tr>
+      <td>Пошаговый ввод данных</td>
+      <td>обычное сообщение пользователя, при необходимости <code>ForceReply</code></td>
+      <td>Формы и модальных окон нет: длинный ввод разбивается на шаги, каждый шаг нужно уметь отменить</td>
+    </tr>
+    <tr>
+      <td>Меню команд</td>
+      <td><code>setMyCommands</code> с разными scope</td>
+      <td>Scope позволяет не показывать админ-команды всем, но не является проверкой прав</td>
+    </tr>
+    <tr>
+      <td>Вход по ссылке из чата</td>
+      <td>deep link <code>t.me/&lt;bot&gt;?start=m_&lt;uuid&gt;</code></td>
+      <td>payload ограничен по длине и попадает в открытую ссылку: секретов в нём быть не должно</td>
+    </tr>
+    <tr>
+      <td>Прикрепление сообщения пересылкой</td>
+      <td>forwarded message в личном чате с ботом</td>
+      <td>При запрете пересылки или скрытом источнике ссылку на оригинал восстановить нельзя</td>
+    </tr>
+    <tr>
+      <td>Прикрепление командой в группе</td>
+      <td>ответ командой <code>/attach</code> на нужное сообщение</td>
+      <td>Расчёт на то, что при включённом Privacy Mode боту достаётся команда вместе с <code>reply_to_message</code>. Проверить на живом боте до нарезки задач</td>
+    </tr>
+    <tr>
+      <td>Невидимая команда в группе</td>
+      <td><code>BotCommand.is_ephemeral</code></td>
+      <td>Bot API 10.2 от 14 июля 2026. Команду не видят остальные участники чата</td>
+    </tr>
+    <tr>
+      <td>Ответ, видимый одному человеку в группе</td>
+      <td><code>sendMessage</code> с <code>receiver_user_id</code> либо <code>callback_query_id</code>; правка через <code>editEphemeralMessage*</code>, удаление через <code>deleteEphemeralMessage</code></td>
+      <td>Отдельный набор методов и <code>ephemeral_message_id</code> вместо обычного <code>message_id</code>: обращаться к такому сообщению как к обычному нельзя</td>
+    </tr>
+    <tr>
+      <td>Тихое уведомление</td>
+      <td><code>disable_notification</code></td>
+      <td>Управляет звуком, но не заменяет продуктовые правила частоты и quiet hours</td>
+    </tr>
+  </table>
+
+  <div class="note">
+    <b>Чего в макете нет намеренно.</b>
+    Reply-клавиатуры под полем ввода (конфликтует с обычной перепиской в личном чате), inline mode,
+    Mini App кнопок (Mini App вне Bot-only среза MVP), автоматического чтения переписки группы
+    и любых элементов, требующих отключения Privacy Mode.
+  </div>
+</section>
+
+<section id="eph">
+  <div class="eph">
+    <div class="eph-head">
+      <span class="chip new">Bot API 10.2, 14 июля 2026</span>
+      <h2>Невидимые команды и исчезающие сообщения</h2>
+    </div>
+    <p style="max-width: 82ch;">
+      Бот в группе может получать команды, невидимые остальным участникам, и отвечать сообщением,
+      которое видит только один человек. В API это <code>is_ephemeral</code> у <code>BotCommand</code>,
+      параметры <code>receiver_user_id</code> и <code>callback_query_id</code> у методов отправки,
+      поля <code>receiver_user</code> и <code>ephemeral_message_id</code> у <code>Message</code>,
+      плюс отдельные <code>editEphemeralMessage*</code> и <code>deleteEphemeralMessage</code>.
+    </p>
+    <p style="max-width: 82ch;">
+      Это меняет главный компромисс макета. Кадры собраны исходя из того, что бот в группе неизбежно шумит,
+      поэтому всё уводится в личный чат. Часть сценариев теперь можно вернуть в общий чат, не создавая шума
+      и не требуя от человека заранее запустить бота.
+    </p>
+
+    <div class="eph-body">
+      <div class="phone">
+        <div class="tg-head"><div class="ava">СГ</div><div class="who"><b>Солегуфики</b><span>184 участника</span></div></div>
+        <div class="tg-chat">
+          <div class="row user ghost"><div class="bubble"><span class="only-you">видно только тебе</span>/сходки</div></div>
+          <div class="row bot ghost"><div class="bubble"><span class="only-you">видно только тебе</span>Ближайшие сходки</div>
+            <div class="kb">
+              <div class="kb-row"><div class="key">15 авг, пт - Настолки у Лёши</div></div>
+              <div class="kb-row"><div class="key muted">Мои уведомления</div></div>
+            </div>
+          </div>
+          <div class="row bot"><div class="bubble"><span class="name">Лёша</span>кто-нибудь берёт свою Каркассон?</div></div>
+        </div>
+      </div>
+      <div>
+        <div class="eph-grid">
+          <div class="eph-card known">
+            <h4>Уже в макете: A-12</h4>
+            Подтверждение "прикрепил к сходке" видит только организатор. Снимает вопрос про шум,
+            не прибегая к удалению своего сообщения по таймеру.
+          </div>
+          <div class="eph-card known">
+            <h4>Уже в макете: E-07</h4>
+            Призыв "открой бота и нажми Запустить" адресуется одному человеку, а не всей группе.
+            Кадр остаётся, но перестаёт быть публичным.
+          </div>
+          <div class="eph-card cand">
+            <h4>Новый кандидат</h4>
+            Карточка сходки P-04 по невидимой команде прямо в группе, без перехода в личку и без <code>/start</code>.
+          </div>
+          <div class="eph-card cand">
+            <h4>Новый кандидат</h4>
+            Подписка и отписка P-07 невидимой командой из группы: экран настроек приходит исчезающим ответом.
+          </div>
+          <div class="eph-card cand">
+            <h4>Новый кандидат</h4>
+            Пошаговое создание сходки A-03...A-06 в группе: диалог не виден остальным.
+            Наименее очевидный кандидат: длинная форма в общем чате хуже, чем в личке.
+          </div>
+          <div class="eph-card no">
+            <h4>Что не решается</h4>
+            Уведомления P-09...P-11 приходят вне контекста группы. Для них по-прежнему нужен личный чат,
+            то есть <code>/start</code> и кадр E-07 из макета не исчезают.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="qs" style="margin-top: 16px;">
+      <h4>Что проверить до того, как считать это решением</h4>
+      <ul>
+        <li>Сколько живёт исчезающее сообщение и что видит человек после его исчезновения. Если оно пропадает само, экран-хаб в группе нельзя считать устойчивым состоянием.</li>
+        <li>Работают ли callback-кнопки на таком сообщении и что приходит в ответ на нажатие. От этого зависит, переносится ли вариант B в группу целиком или только как разовые ответы.</li>
+        <li>Как <code>ephemeral_message_id</code> ложится на диалоговое состояние и идемпотентность из E-09: это второй идентификатор сообщения рядом с обычным.</li>
+        <li>Лимиты и поведение при ошибке отправки исчезающего сообщения.</li>
+        <li>Поддержка в grammY на момент реализации: возможность есть в Bot API, но это не то же самое, что готовый слой в библиотеке.</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 12.5px; opacity: .8; margin: 12px 0 0;">
+      Источник: <a href="https://core.telegram.org/bots/api-changelog">Bot API changelog</a> и
+      <a href="https://telegram.org/blog/communities-editor-invisible-messages">анонс Telegram</a>.
+      Статус в макете: гипотеза. Ни один кадр не переписан под эту механику, добавлен только вариант D и пометки в A-12 и E-07.
+    </p>
+  </div>
+</section>
+
+<section id="variants">
+  <div class="sec-head">
+    <h2>Варианты навигации, поиска и входа админа</h2>
+    <p>
+      Четыре способа устроить одно и то же: как солегуфик попадает в продукт, как находит нужную сходку
+      и как администратор входит в свой сценарий. Дальше по документу все кадры собраны на варианте B,
+      поэтому смена варианта меняет кадры входа и списка, но почти не трогает карточку сходки,
+      уведомления и ошибки. Вариант D появился после Bot API 10.2 и опирается на непроверенную механику.
+    </p>
+  </div>
+
+  <div class="variants">
+
+    <article class="variant">
+      <h3>A. Команды и отдельные сообщения</h3>
+      <div class="sub">Каждое действие - новая команда и новое сообщение в чате</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat">
+          <div class="row user"><div class="bubble">/meetups</div></div>
+          <div class="row bot"><div class="bubble">Ближайшие сходки:
+1. Настолки у Лёши - 15 авг, 19:00
+2. Прогулка по набережной - 22 авг, 12:00
+Открыть: /meetup_1 или /meetup_2</div></div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Проще реализовать: нет состояния экрана</div>
+        <div class="c">Чат замусоривается, актуальное уезжает вверх</div>
+        <div class="c">Команды с идентификаторами надо запоминать</div>
+        <div class="c">Админ-команды видны всем и провоцируют попытки без прав</div>
+      </div>
+    </article>
+
+    <article class="variant pick">
+      <h3>B. Один хаб-экран</h3>
+      <div class="sub">Одно сообщение бота, которое перерисовывается на месте</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat">
+          <div class="row bot"><div class="bubble">Ближайшие сходки</div>
+            <div class="kb">
+              <div class="kb-row"><div class="key">15 авг, пт - Настолки у Лёши</div></div>
+              <div class="kb-row"><div class="key">22 авг, сб - Прогулка по набережной</div></div>
+              <div class="kb-row"><div class="key muted">Мои уведомления</div><div class="key muted">Обновить</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Одно живое сообщение вместо ленты команд</div>
+        <div class="p">Навигация кнопками: команды и id не нужны</div>
+        <div class="p">Админ-действия в том же экране и только для админа</div>
+        <div class="c">Нужны состояние экрана и <code>callback_data</code></div>
+        <div class="c">Старые копии хаба остаются кликабельными</div>
+      </div>
+    </article>
+
+    <article class="variant">
+      <h3>C. Точка входа в общем чате</h3>
+      <div class="sub">Анонс в группе, deep link, карточка открывается в личке</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">СГ</div><div class="who"><b>Солегуфики</b><span>группа</span></div></div>
+        <div class="tg-chat">
+          <div class="tg-date">закреплено</div>
+          <div class="row bot"><div class="bubble"><span class="name">Solguficky Hub</span><b>Настолки у Лёши</b>
+15 августа, 19:00
+Циферблат, Ленина 5</div>
+            <div class="kb">
+              <div class="kb-row"><div class="key url">Открыть сходку в боте</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Не требует заранее знать о боте</div>
+        <div class="p">Закреп остаётся привычной точкой входа</div>
+        <div class="c">Бот пишет в общий чат: напряжение с принципом тишины</div>
+        <div class="c">Нужны права на публикацию и закреп в группе</div>
+        <div class="c">Дополнение к A или B, а не замена</div>
+      </div>
+    </article>
+
+    <article class="variant">
+      <h3>D. Невидимые команды в группе</h3>
+      <div class="sub">Bot API 10.2: команда не видна остальным, ответ видит только автор</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">СГ</div><div class="who"><b>Солегуфики</b><span>группа</span></div></div>
+        <div class="tg-chat">
+          <div class="row user ghost"><div class="bubble"><span class="only-you">видно только тебе</span>/сходки</div></div>
+          <div class="row bot ghost"><div class="bubble"><span class="only-you">видно только тебе</span>Ближайшие сходки</div>
+            <div class="kb">
+              <div class="kb-row"><div class="key">15 авг, пт - Настолки у Лёши</div></div>
+              <div class="kb-row"><div class="key">22 авг, сб - Прогулка по набережной</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Не нужен ни переход в личку, ни <code>/start</code> заранее</div>
+        <div class="p">Тишина сохраняется: остальные ничего не видят</div>
+        <div class="p">Естественно ложится на A-12 и E-07</div>
+        <div class="c">Callback, состояние экрана и время жизни не проверены</div>
+        <div class="c">Уведомления не покрывает: личный чат всё равно нужен</div>
+        <div class="c">Длинные диалоги в группе неудобнее, чем в личке</div>
+      </div>
+    </article>
+
+  </div>
+
+  <table>
+    <tr><th>Критерий</th><th>A. Команды</th><th>B. Хаб-экран</th><th>C. Вход из чата</th><th>D. Невидимые команды</th></tr>
+    <tr><td>Главная навигация</td><td>меню команд</td><td>кнопки одного сообщения</td><td>кнопка в закрепе плюс A или B внутри</td><td>невидимая команда в группе</td></tr>
+    <tr><td>Поиск сходки</td><td>команда со списком, выбор командой</td><td>список кнопок, при росте нужна пагинация</td><td>прямой переход на конкретную сходку</td><td>как в B, но ответом в группе</td></tr>
+    <tr><td>Вход администратора</td><td>отдельные команды <code>/new</code>, <code>/manage</code></td><td>дополнительная строка кнопок в том же хабе</td><td>не решает, наследует A или B</td><td>невидимые админ-команды там же</td></tr>
+    <tr><td>Шум в общем чате</td><td>нет, если бот работает в личке</td><td>нет</td><td>есть по определению</td><td>нет: видно только адресату</td></tr>
+    <tr><td>Нужен ли <code>/start</code> заранее</td><td>да</td><td>да</td><td>да</td><td>нет, кроме уведомлений</td></tr>
+    <tr><td>Стоимость реализации</td><td>низкая</td><td>средняя: экранное состояние и идемпотентность кнопок</td><td>средняя плюс права в группе</td><td>средняя плюс непроверенная механика</td></tr>
+    <tr><td>Поведение старых сообщений</td><td>естественное: сообщения исторические</td><td>требует явного решения об устаревших экранах</td><td>требует поддержки актуальности закрепа</td><td>неизвестно: сообщение может исчезнуть само</td></tr>
+    <tr><td>Соответствие принципу тишины</td><td>среднее: лента команд в личке</td><td>высокое</td><td>ниже: продукт пишет в общий чат</td><td>высокое</td></tr>
+  </table>
+
+  <div class="note">
+    <b>Решение владельца: вариант B — базовая навигация Bot UI MVP.</b>
+    B даёт навигацию без знания команд и оставляет личный чат чистым, а это ровно та проблема,
+    из-за которой закреп сейчас неудобен. C не является альтернативой B: он решает задачу первого
+    попадания в продукт и может быть добавлен поверх B после отдельного решения о правах бота в группе.
+    D выглядит лучше C по тишине и снимает требование заранее запустить бота, но опирается на механику,
+    которой на момент написания макета никто в проекте не пробовал: пока не проверено время жизни
+    исчезающего сообщения и поведение callback, строить на нём основной путь нельзя.
+    A остаётся запасным вариантом, если стоимость экранного состояния окажется выше пользы.
+    Выбор B принят 15 августа 2026 года. C и D не входят в базовую навигацию; их можно пересмотреть
+    отдельно после проверки Bot API и появления наблюдаемой продуктовой потребности.
+  </div>
+</section>
+
+
+<section id="modules">
+  <div class="sec-head">
+    <h2>Модули сходки: точка расширения</h2>
+    <p>
+      Аукцион, выбор фильма, плейлист, потлак-лист, попутки - всё это отдельные механики, которые живут
+      вокруг сходки, но не входят в её базовую модель. В MVP ни одного модуля нет. Слот обозначается сейчас,
+      чтобы карточка сходки, права и уведомления не пришлось переделывать при появлении первого из них.
+    </p>
+  </div>
+
+  <div class="note">
+    <b>Что здесь зафиксировано, а что нет.</b>
+    Зафиксировано место в интерфейсе, роль, которая подключает модуль, и правила слота.
+    Не зафиксировано: список модулей, их экраны, кто рисует эти экраны и как модуль общается с ядром.
+    Ни один конкретный модуль в макете не спроектирован и не должен быть.
+  </div>
+
+  <div class="variants">
+
+    <article class="variant">
+      <h3>Сходка без модулей</h3>
+      <div class="sub">Состояние MVP: строки модулей в карточке нет вовсе</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat">
+          <div class="row bot"><div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована
+
+Когда: 15 августа, пятница, 19:00
+Где: Циферблат, Ленина 5
+Организатор: Лёша</div>
+            <div class="kb">
+              <div class="kb-row"><div class="key">Связанные сообщения (3)</div></div>
+              <div class="kb-row"><div class="key">Уведомления: выключены</div></div>
+              <div class="kb-row"><div class="key muted">К списку</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Пустой слот не занимает место и ничего не обещает</div>
+        <div class="p">Кадры P-04 и A-08 остаются такими, как нарисованы в треках</div>
+      </div>
+    </article>
+
+    <article class="variant pick">
+      <h3>Сходка с подключённым модулем</h3>
+      <div class="sub">Модуль абстрактный: ядро знает имя, состояние одной строкой и точку входа</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat">
+          <div class="row bot"><div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована
+
+Когда: 15 августа, пятница, 19:00
+Где: Циферблат, Ленина 5
+Организатор: Лёша
+
+<em>Модуль: активен, есть изменения</em></div>
+            <div class="kb">
+              <div class="kb-row"><div class="key">Название модуля</div></div>
+              <div class="kb-row"><div class="key">Связанные сообщения (3)</div></div>
+              <div class="kb-row"><div class="key">Уведомления: выключены</div></div>
+              <div class="kb-row"><div class="key muted">К списку</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Одна кнопка на модуль в том же экране: навигация не разрывается</div>
+        <div class="p">Строка состояния позволяет понять, нужен ли заход внутрь</div>
+        <div class="c">Кнопок в карточке становится больше: при трёх модулях нужен свой экран списка</div>
+      </div>
+    </article>
+
+    <article class="variant">
+      <h3>Подключение модуля</h3>
+      <div class="sub">Экран организатора: доступные модули и переключатель</div>
+      <div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat">
+          <div class="row bot"><div class="bubble"><b>Модули: Настолки у Лёши</b>
+
+Модуль добавляет к сходке отдельную механику. Базовые данные сходки он не меняет.</div>
+            <div class="kb">
+              <div class="kb-row"><div class="key">[x] Название модуля</div></div>
+              <div class="kb-row"><div class="key muted">[ ] Другой модуль</div></div>
+              <div class="kb-row"><div class="key muted">Назад к сходке</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pro-con">
+        <div class="p">Тот же язык, что у настройки уведомлений в P-07: список с отметками</div>
+        <div class="c">Что происходит с данными модуля при отключении, решения ещё нет</div>
+      </div>
+    </article>
+
+  </div>
+
+  <h3 style="margin: 28px 0 6px;">Правила слота</h3>
+  <p style="max-width: 82ch; opacity: .8; margin-top: 0;">
+    Это ограничения расширения, а не описание модулей. Они выводятся из уже принятых продуктовых решений
+    и должны выполняться любым будущим модулем.
+  </p>
+  <table>
+    <tr><th>Правило</th><th>Откуда следует</th></tr>
+    <tr><td>Модуль подключается к конкретной сходке и виден только в её контексте</td><td>сходка остаётся единицей навигации; модуль сообщества без сходки - отдельный открытый вопрос</td></tr>
+    <tr><td>Ядро не знает семантику модуля: ни ставок, ни фильмов, ни треков</td><td>иначе Gateway и Meetups превращаются в god object, неявно зависящий от всех модулей</td></tr>
+    <tr><td>Модуль не меняет базовые атрибуты и статус сходки</td><td>владение данными сходки принадлежит Meetups, а не расширению</td></tr>
+    <tr><td>Права модуля не шире прав того, кто его открыл</td><td>авторизацию решает ядро, модуль её не переопределяет (см. E-01)</td></tr>
+    <tr><td>Уведомления модуля подчиняются подписке на сходку и её категориям</td><td>принцип тишины и управляемости уведомлений из P-07</td></tr>
+    <tr><td>Отключение модуля не удаляет сходку и не трогает связанные сообщения</td><td>сходка существует независимо от расширений</td></tr>
+    <tr><td>Недоступный модуль не ломает карточку сходки</td><td>деградация как в E-05: сходка читается, модуль показывает своё состояние отдельно</td></tr>
+  </table>
+
+  <h3 style="margin: 28px 0 6px;">Кто рисует экраны модуля: три варианта</h3>
+  <p style="max-width: 82ch; opacity: .8; margin-top: 0;">
+    Вопрос определяет, что происходит после нажатия на кнопку модуля. На вид самого слота он не влияет,
+    поэтому кадры выше верны при любом из вариантов.
+  </p>
+  <table>
+    <tr><th>Критерий</th><th>A. Ядро рисует по описанию</th><th>B. Гибрид: сводка в ядре</th><th>C. Модуль сам себе UI</th></tr>
+    <tr><td>Что знает ядро</td><td>как отрисовать абстрактный экран: заголовок, строки, кнопки с непрозрачным payload</td><td>плюс формат карточки-сводки</td><td>только имя модуля и точку входа</td></tr>
+    <tr><td>Знает ли ядро семантику модуля</td><td>нет, если контракт описан в терминах представления</td><td>нет</td><td>нет</td></tr>
+    <tr><td>Бесшовность навигации</td><td>полная: тот же хаб и та же кнопка назад</td><td>до входа вглубь модуля</td><td>нет: другой бот или Mini App, свой <code>/start</code></td></tr>
+    <tr><td>Где риск разрастания</td><td>в контракте представления: он дрейфует к сумме потребностей всех модулей</td><td>там же, но контракт меньше</td><td>риска нет</td></tr>
+    <tr><td>Отказ модуля</td><td>виден внутри хаба, нужен кадр деградации</td><td>то же</td><td>ядра не касается</td></tr>
+    <tr><td>Бюджет <code>callback_data</code></td><td>namespace модуля забирает часть из 64 байт</td><td>то же</td><td>не расходуется</td></tr>
+  </table>
+  <div class="note">
+    <b>Связность - это про знание, а не про трафик.</b>
+    Gateway, через который проходят callback всех модулей, ещё не god object: он становится им тогда,
+    когда начинает знать, что такое ставка, лот или плейлист. В варианте A зависимость инвертирована:
+    модули зависят от контракта представления, ядро держит только реестр владельцев namespace.
+    Настоящая опасность там не в коде, а в контракте, поэтому правило "что не может попасть в контракт представления"
+    нужно записать в ADR раньше первого модуля.
+  </div>
+
+  <div class="qs">
+    <h4>Открытые вопросы</h4>
+    <ul>
+      <li>Кто рисует экраны модуля: A, B или C. Решения нет, влияет на контракты и на ADR Gateway.</li>
+      <li>Кто подключает модуль: организатор из списка, разрешённого администратором; организатор без ограничений; либо организатор включает, а администратор подтверждает. В MVP организатор всегда администратор, поэтому разница пока не наблюдается, но правило нужно до появления организаторов без роли админа.</li>
+      <li>Существует ли модуль вне сходки. Аукцион в <a href="../../product/future/auction-v2.md">спецификации v2</a> описан как механика сообщества, а <a href="../../decisions/ADR-019-meetup-auction-separation-and-ulid.md">ADR-019</a> прямо допускает несколько аукционов на одну сходку. Значит слот в карточке может оказаться не единственной точкой входа.</li>
+      <li>Сколько модулей помещается в карточку до того, как понадобится отдельный экран списка.</li>
+      <li>Что происходит с данными модуля при его отключении и при отмене сходки.</li>
+      <li>Как модуль участвует в уведомлениях: своей категорией в P-07, внутри общей категории изменений или вообще без права слать сообщения.</li>
+      <li>Кто владеет фактом подключения: Meetups как атрибут сходки или отдельный реестр модулей.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="track-p">
+  <div class="sec-head">
+    <h2>Трек 1: путь солегуфика</h2>
+    <p>
+      Сценарии 5-9 из product/overview: найти сходку, посмотреть актуальную информацию, перейти к оригиналу
+      сообщения, настроить уведомления и получить их. Все кадры происходят в личном чате с ботом.
+    </p>
+  </div>
+
+  <div class="frames">
+
+  <article class="frame t-p" id="P-01">
+    <div class="frame-head"><span class="fid">P-01</span><h3>Первый запуск бота</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">личный чат, /start</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row user"><div class="bubble">/start</div></div>
+            <div class="row bot"><div class="bubble">Привет. Здесь живёт информация о сходках солегуфиков.
+
+Можно посмотреть, что запланировано, открыть связанные сообщения из чата и подписаться на уведомления о конкретной сходке.
+
+Писать буду только по твоей подписке.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Ближайшие сходки</div></div>
+                <div class="kb-row"><div class="key muted">Мои уведомления</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Приветствие остаётся в истории. Хаб появляется следующим сообщением.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Первое открытие бота или переход по deep link из общего чата</dd>
+          <dt>Действие</dt><dd>Нажимает <b>Ближайшие сходки</b></dd>
+          <dt>Переход</dt><dd>-> P-03, если сходки есть; -> P-02, если список пуст</dd>
+          <dt>Механика</dt><dd><code>sendMessage</code> с inline-клавиатурой; deep link payload <code>m_&lt;uuid&gt;</code> ведёт сразу в P-04</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Обещание тишины даётся текстом на первом экране: бот пишет только по подписке.</li>
+            <li>Никаких данных при старте не запрашивается у человека.</li>
+            <li>Внутренний профиль создаётся именно в момент <code>/start</code>, а не при первом значимом действии: иначе администратору нечего просматривать при ручной сверке состава. Сохраняются внутренний идентификатор, Telegram user id и ник как обновляемый кэш.</li>
+            <li>Первый экран - единственное место, где можно сообщить о рассылке про новые сходки: бот не может написать первым. Категория включена по умолчанию, отключение доступно из любого такого уведомления.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Что происходит, если человек не состоит в сообществе. В MVP автоматической проверки нет: администратор просматривает список зарегистрировавшихся вручную. Автоматическая проверка отвергнута - <code>getChatMember</code> про чужих пользователей требует, чтобы бот был администратором чата, а такой бот получает все сообщения группы.</li>
+            <li>Нужен ли отдельный экран "как это работает" или достаточно текста приветствия.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-02">
+    <div class="frame-head"><span class="fid">P-02</span><h3>Список сходок пуст</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">пустое состояние</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Пока ни одной запланированной сходки нет.
+
+Когда организатор создаст новую, она появится здесь.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted">Обновить</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Активных сходок нет: продукт только запущен либо всё прошедшее скрыто</dd>
+          <dt>Действие</dt><dd>Нажимает <b>Обновить</b></dd>
+          <dt>Переход</dt><dd>-> P-02 повторно или -> P-03</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code>; при неизменившемся тексте Telegram вернёт ошибку, поэтому ответ идёт через <code>answerCallbackQuery</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Пустое состояние не предлагает создать сходку: это действие администратора, а не солегуфика.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Подписка на появление любой новой сходки продуктом пока не предусмотрена: в MVP подписка привязана к конкретной сходке. Если такая потребность подтвердится, это отдельное продуктовое решение, а не кнопка в пустом состоянии.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-03">
+    <div class="frame-head"><span class="fid">P-03</span><h3>Хаб: список сходок</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">основной экран навигации</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Ближайшие сходки</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key press">15 авг, пт - Настолки у Лёши</div></div>
+                <div class="kb-row"><div class="key">22 авг, сб - Прогулка по набережной</div></div>
+                <div class="kb-row"><div class="key">29 авг, сб - Кинопросмотр (перенесена)</div></div>
+                <div class="kb-row"><div class="key muted">Мои уведомления</div><div class="key muted">Обновить</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Синяя рамка показывает нажатую кнопку.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Сценарий 5: найти сходку</dd>
+          <dt>Действие</dt><dd>Нажимает строку конкретной сходки</dd>
+          <dt>Переход</dt><dd>-> P-04</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code> того же сообщения; <code>callback_data</code> вида <code>m:v:&lt;uuid&gt;</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Одна кнопка на сходку: дата, день недели и название, чтобы выбирать без открытия карточки.</li>
+            <li>Нестандартный статус виден прямо в списке.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Сколько сходок помещается на экран и нужна ли пагинация. Для сообщества одного города список короткий, но правило нужно задать заранее.</li>
+            <li>Показывать ли завершённые и отменённые сходки и как долго. Зависит от жизненного цикла сходки, который ещё не определён.</li>
+            <li>Помечается ли сходка, на которую пользователь уже подписан.</li>
+            <li>Длина названия: в кнопку помещается заметно меньше, чем в текст сообщения.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-04">
+    <div class="frame-head"><span class="fid">P-04</span><h3>Карточка сходки</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 6: актуальная информация</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована
+
+Когда: 15 августа, пятница, 19:00
+Где: Циферблат, Ленина 5
+Организатор: Лёша
+
+Берём свои игры, места хватит на 12 человек.
+
+Обновлено 10 августа в 13:40</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Связанные сообщения (3)</div></div>
+                <div class="kb-row"><div class="key">Уведомления: выключены</div></div>
+                <div class="kb-row"><div class="key muted">К списку</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Открыта карточка конкретной сходки</dd>
+          <dt>Действие</dt><dd>Открывает связанные сообщения, настраивает уведомления или возвращается к списку</dd>
+          <dt>Переход</dt><dd>-> P-05 / P-06 / P-07 / P-03</dd>
+          <dt>Механика</dt><dd>то же сообщение, <code>editMessageText</code>; для админа в этом же кадре появляется строка управления (A-01)</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Набор полей карточки повторяет продуктовый список атрибутов: название, статус, дата и время, место, описание, организатор.</li>
+            <li>Состояние подписки видно прямо на кнопке, отдельного индикатора нет.</li>
+            <li>Обязателен только заголовок и только при публикации. Остальные атрибуты информационные, поэтому карточка обязана читаться при пустом описании, месте и расписании (<a href="../../decisions/ADR-022-meetup-state-axes-and-visibility.md">ADR-022</a>).</li>
+            <li>Расписание показывается в одной из трёх форм: даты нет, дата обсуждается, дата зафиксирована. Точность бывает разной: только день, день и время, интервал. Неизвестное окончание не подставляется.</li>
+            <li>Часовой пояс задаётся одной настройкой сообщества и в карточке явно не указывается. Дата без времени остаётся календарной датой и не превращается в полночь.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Как показывать организатора: имя, <code>@username</code> или упоминание. Это выдача персональных данных, решение продуктовое.</li>
+            <li>Нужна ли строка "обновлено": она полезна, но заставляет хранить время последнего изменения.</li>
+            <li>Что показывать вместо описания, если организатор его не заполнил.</li>
+            <li>Это же место - слот расширения: строка состояния и кнопка модуля появляются здесь, когда модуль подключён (см. <a href="#modules">Модули сходки</a>). В MVP модулей нет, поэтому кадр нарисован без них.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-05">
+    <div class="frame-head"><span class="fid">P-05</span><h3>Связанные сообщения</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 7: перейти к оригиналу</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Настолки у Лёши</b>
+Связанные сообщения из чата солегуфиков:</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key url">Опрос: кто идёт</div></div>
+                <div class="kb-row"><div class="key url">Уточнение по времени</div></div>
+                <div class="kb-row"><div class="key url">Как добраться и где парковка</div></div>
+                <div class="kb-row"><div class="key muted">Назад к сходке</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Стрелка на кнопке означает переход в Telegram, а не в бота.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>У сходки есть явно прикреплённые сообщения</dd>
+          <dt>Действие</dt><dd>Нажимает кнопку и попадает в исходное сообщение чата</dd>
+          <dt>Переход</dt><dd>наружу, в чат сообщества; экран бота остаётся на P-05</dd>
+          <dt>Механика</dt><dd><code>url</code>-кнопки на <code>t.me/c/&lt;chat&gt;/&lt;message&gt;</code>; бот не пересылает содержимое</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Продукт хранит связь, а не копию переписки: пользователь уходит читать оригинал.</li>
+            <li>Ответы в опросе остаются в Telegram и продуктом не интерпретируются.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Откуда берётся подпись кнопки: ручной ввод организатора, начало текста оригинала или категория. Автоматическая подпись означает хранение снимка содержимого.</li>
+            <li>Нужны ли категории сообщений и порядок сортировки.</li>
+            <li>Поведение при удалении оригинала: скрывать связь, помечать её или оставлять как есть.</li>
+            <li>Что видит человек, не состоящий в чате: ссылка не откроется, и это ошибка Telegram, а не бота.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-06">
+    <div class="frame-head"><span class="fid">P-06</span><h3>Связанных сообщений нет</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">пустое состояние</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Прогулка по набережной</b>
+К этой сходке пока не прикреплено ни одного сообщения.
+
+Если в чате появится что-то важное, организатор добавит ссылку сюда.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted">Назад к сходке</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Сходка создана, но связей ещё нет</dd>
+          <dt>Действие</dt><dd>Возвращается к карточке</dd>
+          <dt>Переход</dt><dd>-> P-04</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Пустое состояние объясняет, кто и когда наполняет раздел, вместо сухого "ничего нет".</li>
+            <li>Солегуфик не может прикрепить сообщение сам: это действие организатора.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-07">
+    <div class="frame-head"><span class="fid">P-07</span><h3>Настройка уведомлений сходки</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 8: подписка</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Уведомления: Настолки у Лёши</b>
+
+Отметь, о чём присылать. Настройка действует только для этой сходки.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key on">[x] Изменения данных и статуса</div></div>
+                <div class="kb-row"><div class="key on">[x] Новые связанные сообщения</div></div>
+                <div class="kb-row"><div class="key muted">[ ] Напоминание перед началом</div></div>
+                <div class="kb-row"><div class="key on">[x] Сообщения организатора</div></div>
+                <div class="kb-row"><div class="key muted">Отключить все</div><div class="key muted">Назад</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Подписка оформляется явным действием и не следует из ответа в опросе</dd>
+          <dt>Действие</dt><dd>Переключает категорию</dd>
+          <dt>Переход</dt><dd>-> P-08, экран остаётся на месте</dd>
+          <dt>Механика</dt><dd><code>editMessageReplyMarkup</code> плюс <code>answerCallbackQuery</code> с подтверждением</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Четыре категории соответствуют четырём настраиваемым у сходки категориям из product/overview: изменения, новый материал, приближение времени, сообщение организатора. Пятая категория, новая опубликованная сходка, настраивается только глобально и на этом экране отсутствовать обязана.</li>
+            <li>Подписка привязана к конкретной сходке.</li>
+            <li>Изменение применяется сразу, без кнопки "сохранить".</li>
+            <li>Напоминание одно, за сутки, по умолчанию выключено и доступно только при точном времени начала. Расписание только с днём напоминания не создаёт.</li>
+            <li>Изменения данных и статуса, новые материалы и сообщения организатора включены по умолчанию. Quiet hours и группировка не входят в первую версию.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Есть ли обязательная категория. Отмена сходки, на которую человек рассчитывает, - кандидат на неотключаемое уведомление.</li>
+            <li>Кому принадлежит подписка: Meetups или Notifications. На интерфейс не влияет, на контракты влияет.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-08">
+    <div class="frame-head"><span class="fid">P-08</span><h3>Подтверждение переключения</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">ответ на нажатие</div>
+        <div class="phone">
+          <div class="toast">Напоминание включено. Напишу за 2 часа до начала.</div>
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Уведомления: Настолки у Лёши</b>
+
+Отметь, о чём присылать. Настройка действует только для этой сходки.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key on">[x] Изменения данных и статуса</div></div>
+                <div class="kb-row"><div class="key on">[x] Новые связанные сообщения</div></div>
+                <div class="kb-row"><div class="key on press">[x] Напоминание перед началом</div></div>
+                <div class="kb-row"><div class="key muted">Отключить все</div><div class="key muted">Назад</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Подсказка исчезает сама и не создаёт нового сообщения.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Категория переключена</dd>
+          <dt>Действие</dt><dd>Продолжает настройку или возвращается</dd>
+          <dt>Переход</dt><dd>-> P-07 / P-04</dd>
+          <dt>Механика</dt><dd><code>answerCallbackQuery</code> с текстом; клавиатура обновляется на месте</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Подтверждение действия не порождает сообщение в чате: это прямое следствие принципа тишины.</li>
+            <li>Текст подтверждения называет последствие, а не факт записи в базу.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-09">
+    <div class="frame-head"><span class="fid">P-09</span><h3>Уведомление: данные изменились</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 9: входящее уведомление</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="tg-date">сегодня</div>
+            <div class="row bot"><div class="bubble"><b>Изменилась сходка: Настолки у Лёши</b>
+
+Время: было 19:00, стало 20:00
+Место: без изменений
+
+Изменил организатор, 12 августа в 10:15</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Открыть сходку</div></div>
+                <div class="kb-row"><div class="key muted">Настроить уведомления</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик, подписанный на категорию изменений</dd>
+          <dt>Контекст</dt><dd>Организатор изменил данные в A-09</dd>
+          <dt>Действие</dt><dd>Открывает сходку или идёт менять настройки</dd>
+          <dt>Переход</dt><dd>-> P-04 / P-07</dd>
+          <dt>Механика</dt><dd>отдельное <code>sendMessage</code>; хаб при этом не трогается</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Уведомление называет конкретное изменение, чтобы не заставлять открывать карточку ради сравнения.</li>
+            <li>Из уведомления доступен путь к отключению: это часть управляемости.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Как показывать несколько изменений подряд: отдельные сообщения, склейка за интервал или редактирование предыдущего уведомления.</li>
+            <li>Какие изменения вообще считаются достойными уведомления. Правка опечатки в описании вряд ли.</li>
+            <li>Отправлять ли тихо через <code>disable_notification</code> и в каких случаях.</li>
+            <li>Нужно ли показывать, кто именно изменил, или достаточно роли.</li>
+            <li>Идемпотентность доставки: повтор обработки события не должен приводить ко второму сообщению.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-10">
+    <div class="frame-head"><span class="fid">P-10</span><h3>Уведомление: новое связанное сообщение</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">входящее уведомление</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">К сходке <b>Настолки у Лёши</b> прикреплено сообщение:
+
+<em>Опрос: кто идёт</em></div>
+              <div class="kb">
+                <div class="kb-row"><div class="key url">Открыть сообщение</div></div>
+                <div class="kb-row"><div class="key muted">Открыть сходку</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик, подписанный на категорию связанных сообщений</dd>
+          <dt>Контекст</dt><dd>Организатор прикрепил сообщение в A-11 или A-12</dd>
+          <dt>Действие</dt><dd>Переходит к оригиналу</dd>
+          <dt>Переход</dt><dd>наружу в чат или -> P-04</dd>
+          <dt>Механика</dt><dd><code>sendMessage</code> с <code>url</code>-кнопкой</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Показывать ли подпись связи в уведомлении. Если подпись берётся из текста оригинала, продукт начинает пересылать содержимое чата в личку, и это меняет разговор про минимизацию данных.</li>
+            <li>Нужен ли этот тип уведомления отдельной категорией или он сливается с изменениями сходки.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-11">
+    <div class="frame-head"><span class="fid">P-11</span><h3>Уведомление: напоминание</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">входящее уведомление</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Через 2 часа: Настолки у Лёши</b>
+
+19:00, Циферблат, Ленина 5<span class="time">17:00</span></div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Открыть сходку</div></div>
+                <div class="kb-row"><div class="key muted">Отключить напоминания</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик с включённым напоминанием</dd>
+          <dt>Контекст</dt><dd>Приближается время проведения</dd>
+          <dt>Действие</dt><dd>Открывает сходку или отключает напоминания одним нажатием</dd>
+          <dt>Переход</dt><dd>-> P-04 / P-07</dd>
+          <dt>Механика</dt><dd>запланированная отправка; отмена или перенос сходки должны отменить запланированное напоминание</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Интервал и количество напоминаний. В notifications.md прямо сказано, что "24 часа" и "2 часа" - гипотеза.</li>
+            <li>Что происходит с запланированным напоминанием при переносе сходки на другое время и при отмене.</li>
+            <li>Допустимая задержка доставки и поведение после перезапуска сервиса.</li>
+            <li>Ночные напоминания: нужны ли quiet hours.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-12">
+    <div class="frame-head"><span class="fid">P-12</span><h3>Отменённая сходка</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">карточка в терминальном статусе</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Кинопросмотр</b>
+Статус: отменена
+
+Была запланирована на 29 августа, 18:00
+Циферблат, Ленина 5
+
+Отменено 12 августа в 09:30</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Связанные сообщения (2)</div></div>
+                <div class="kb-row"><div class="key muted">К списку</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Кнопки уведомлений нет: подписываться больше не на что.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Организатор перевёл сходку в отменённое состояние</dd>
+          <dt>Действие</dt><dd>Смотрит связанные сообщения или возвращается к списку</dd>
+          <dt>Переход</dt><dd>-> P-05 / P-03</dd>
+          <dt>Механика</dt><dd>та же карточка с другим набором кнопок</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Полный список состояний сходки и допустимых переходов пока не определён. Макет показывает минимально нужные: запланирована, перенесена, отменена, завершена.</li>
+            <li>Показывается ли причина отмены и обязательна ли она.</li>
+            <li>Сколько времени отменённая сходка остаётся доступной и видна ли она в общем списке.</li>
+            <li>Что происходит с существующими подписками: молча удаляются или помечаются завершёнными.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-13">
+    <div class="frame-head"><span class="fid">P-13</span><h3>Мои уведомления</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сводка подписок</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Мои уведомления</b>
+
+Ты подписан на две сходки. Нажми, чтобы изменить настройки.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Настолки у Лёши - 3 из 3</div></div>
+                <div class="kb-row"><div class="key">Прогулка по набережной - 1 из 3</div></div>
+                <div class="kb-row"><div class="key muted">Отписаться от всего</div></div>
+                <div class="kb-row"><div class="key muted">К списку сходок</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик</dd>
+          <dt>Контекст</dt><dd>Управление своими подписками в одном месте</dd>
+          <dt>Действие</dt><dd>Открывает настройки конкретной сходки или отписывается полностью</dd>
+          <dt>Переход</dt><dd>-> P-07 / P-03</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code>; полная отписка требует подтверждения через <code>show_alert</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Отписаться можно не открывая каждую сходку: это требование управляемости уведомлений.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Нужен ли этот экран в MVP или достаточно настройки внутри карточки. Экран стоит недорого, но добавляет ещё одно состояние.</li>
+            <li>Что означает "отписаться от всего": выключить категории или удалить подписки.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  </div>
+</section>
+
+
+<section id="track-a">
+  <div class="sec-head">
+    <h2>Трек 2: путь администратора и организатора</h2>
+    <p>
+      Сценарии 1-4 из product/overview: создать сходку, актуализировать её, прикрепить сообщение,
+      убрать или заменить связь. В MVP организатор всегда администратор, поэтому кадры показывают одного
+      человека, но роли в текстах и проверках прав разделены.
+    </p>
+  </div>
+
+  <div class="frames">
+
+  <article class="frame t-a" id="A-01">
+    <div class="frame-head"><span class="fid">A-01</span><h3>Вход в административный сценарий</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">тот же хаб глазами админа</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Ближайшие сходки</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">15 авг, пт - Настолки у Лёши</div></div>
+                <div class="kb-row"><div class="key">22 авг, сб - Прогулка по набережной</div></div>
+                <div class="kb-row"><div class="key muted">Мои уведомления</div><div class="key muted">Обновить</div></div>
+                <div class="kb-row"><div class="key press">Управление сходками</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Нижняя строка есть только у администратора.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Тот же экран, что у солегуфика, с дополнительной строкой</dd>
+          <dt>Действие</dt><dd>Нажимает <b>Управление сходками</b></dd>
+          <dt>Переход</dt><dd>-> A-02; при отсутствии прав -> E-01</dd>
+          <dt>Механика</dt><dd>клавиатура собирается по роли; права проверяются на сервере при каждом нажатии, а не только при отрисовке</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Отдельного админского бота и отдельного чата нет: одна точка входа, разные возможности.</li>
+            <li>Скрытая кнопка не является защитой. Решение об авторизации принимает backend.</li>
+            <li>Роль не задаётся хардкодом Telegram <code>user_id</code> в конфиге.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Откуда Gateway узнаёт роль: синхронный вызов Identity на каждое действие, кеш или включение роли в состояние экрана. Влияет на поведение при недоступности Identity (см. E-05).</li>
+            <li>Как выдаётся первая роль администратора при развёртывании продукта.</li>
+            <li>Нужны ли параллельно команды <code>/new</code> и <code>/manage</code> для быстрого доступа.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-02">
+    <div class="frame-head"><span class="fid">A-02</span><h3>Меню управления</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">админский экран</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Управление сходками</b>
+
+Активных: 2. Черновиков: 0.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key press">Создать сходку</div></div>
+                <div class="kb-row"><div class="key">Настолки у Лёши</div></div>
+                <div class="kb-row"><div class="key">Прогулка по набережной</div></div>
+                <div class="kb-row"><div class="key muted">Назад</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Точка, из которой начинаются создание и редактирование</dd>
+          <dt>Действие</dt><dd>Создаёт новую сходку или выбирает существующую</dd>
+          <dt>Переход</dt><dd>-> A-03 или -> A-09</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code> того же хаба</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Администратор видит и правит любую сходку, организатор - только свою. В MVP это одно и то же, правило заложено на будущее.</li>
+            <li>Черновик существует: это сходка в состоянии "скрыта", которую ещё не публиковали. Публикация - отдельное действие (<a href="../../decisions/ADR-022-meetup-state-axes-and-visibility.md">ADR-022</a>).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-03">
+    <div class="frame-head"><span class="fid">A-03</span><h3>Создание, шаг 1: название</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">пошаговый ввод</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Новая сходка, шаг 1 из 4</b>
+
+Как назовём? Одна строка, до 60 символов.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted">Отмена</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="tg-input reply">
+            <div class="reply-to"><b>Ответ боту</b>Как назовём? Одна строка, до 60 символов.</div>
+            <span>Настолки у Лёши</span>
+          </div>
+        </div>
+        <div class="stage-note">ForceReply подставляет цитату и не даёт потерять контекст в личном чате.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Начало создания сходки</dd>
+          <dt>Действие</dt><dd>Отправляет название текстом</dd>
+          <dt>Переход</dt><dd>-> A-04; кнопка Отмена -> A-02</dd>
+          <dt>Механика</dt><dd><code>ForceReply</code> и диалоговое состояние на стороне Gateway</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Форма разбита на шаги: модальных окон у бота нет.</li>
+            <li>Номер шага виден: пользователь понимает, сколько осталось.</li>
+            <li>Из любого шага есть отмена.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Где живёт диалоговое состояние: в памяти процесса или в хранилище. Текущий Rust-gateway держит его в памяти, и для MVP это нужно решить осознанно.</li>
+            <li>Что происходит с незаконченным вводом после перезапуска сервиса.</li>
+            <li>Максимальная длина названия: 60 символов - гипотеза, привязанная к читаемости кнопки в списке.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-04">
+    <div class="frame-head"><span class="fid">A-04</span><h3>Создание, шаг 2: дата и время</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">ввод с форматом</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row user"><div class="bubble">Настолки у Лёши</div></div>
+            <div class="row bot"><div class="bubble"><b>Шаг 2 из 4</b>
+
+Когда? Формат: 15.08 19:00
+
+Год подставлю ближайший, время местное.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted">Назад</div><div class="key muted">Отмена</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Самое ошибкоопасное поле формы</dd>
+          <dt>Действие</dt><dd>Вводит дату и время</dd>
+          <dt>Переход</dt><dd>-> A-05; при непонятном вводе -> E-02</dd>
+          <dt>Механика</dt><dd>разбор текста; календарь кнопками возможен, но это 30+ кнопок и отдельное состояние</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Часовой пояс. Один пояс на сообщество - простое решение, но его нужно принять явно и написать в тексте.</li>
+            <li>Нужна ли длительность или время окончания.</li>
+            <li>Разрешать ли сходку без точного времени, например "вечером в пятницу". Сейчас продуктовая модель этого не описывает.</li>
+            <li>Календарь кнопками вместо текста: удобнее для мобильного ввода, дороже в реализации.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-05">
+    <div class="frame-head"><span class="fid">A-05</span><h3>Создание, шаги 3 и 4: место и описание</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">остальные поля</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row user"><div class="bubble">15.08 19:00</div></div>
+            <div class="row bot"><div class="bubble"><b>Шаг 3 из 4</b>
+
+Где? Название места и адрес одной строкой.</div></div>
+            <div class="row user"><div class="bubble">Циферблат, Ленина 5</div></div>
+            <div class="row bot"><div class="bubble"><b>Шаг 4 из 4</b>
+
+Короткое описание. Можно пропустить.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Пропустить</div></div>
+                <div class="kb-row"><div class="key muted">Назад</div><div class="key muted">Отмена</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Завершение обязательных и необязательных полей</dd>
+          <dt>Действие</dt><dd>Вводит описание или пропускает</dd>
+          <dt>Переход</dt><dd>-> A-06</dd>
+          <dt>Механика</dt><dd>та же диалоговая последовательность; шаги с ответом пользователя остаются в истории чата</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Место как свободный текст или структура с ссылкой на карту. Свободный текст дешевле и достаточен для первой сходки.</li>
+            <li>Разрешать ли форматирование в описании и как его безопасно отображать.</li>
+            <li>Решено: обязателен только заголовок и только при публикации, поэтому любой шаг формы можно пропустить, а вернуться к нему позже.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-06">
+    <div class="frame-head"><span class="fid">A-06</span><h3>Проверка перед публикацией</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">предпросмотр</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Так будет выглядеть сходка:
+
+<b>Настолки у Лёши</b>
+Статус: запланирована
+
+Когда: 15 августа, пятница, 19:00
+Где: Циферблат, Ленина 5
+Организатор: Лёша
+
+Берём свои игры, места хватит на 12 человек.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key press">Опубликовать</div></div>
+                <div class="kb-row"><div class="key muted">Изменить поле</div><div class="key muted">Удалить</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Все поля собраны, публикации ещё не было</dd>
+          <dt>Действие</dt><dd>Публикует или правит поле</dd>
+          <dt>Переход</dt><dd>-> A-07 или -> A-09</dd>
+          <dt>Механика</dt><dd>предпросмотр повторяет P-04, чтобы админ видел ровно то, что увидит солегуфик</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Публикация - отдельное явное действие, а не побочный эффект последнего шага формы.</li>
+            <li>Предпросмотр использует ту же вёрстку карточки: расхождение текстов было бы источником ошибок.</li>
+            <li>Неопубликованная сходка хранится в Meetups той же сущностью, а не в диалоговом состоянии Gateway: черновик переживает рестарт, к нему можно вернуться позже.</li>
+            <li>Публикация - единственное место, где что-то проверяется: без заголовка опубликовать нельзя. Остальные поля могут остаться пустыми.</li>
+            <li>Публикацию можно отложить на выбранное время и снять в любой момент. При снятии минимальное сообщение получают пользователи, у которых на момент отправки остаётся подписка и разрешена категория изменений состояния; карточка после этого не открывается.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-07">
+    <div class="frame-head"><span class="fid">A-07</span><h3>Сходка опубликована</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">результат создания</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Сходка создана. Теперь она видна в списке.
+
+Ссылка для чата:
+<span class="link">t.me/solguficky_hub_bot?start=m_01J8Z4</span></div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Прикрепить сообщение</div></div>
+                <div class="kb-row"><div class="key muted">Открыть сходку</div><div class="key muted">К управлению</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Ссылку в чат отправляет человек, а не бот.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор и организатор</dd>
+          <dt>Контекст</dt><dd>Сценарий 1 завершён</dd>
+          <dt>Действие</dt><dd>Копирует ссылку в чат или сразу идёт прикреплять сообщения</dd>
+          <dt>Переход</dt><dd>-> A-10 / P-04 / A-02</dd>
+          <dt>Механика</dt><dd>deep link <code>?start=m_&lt;uuid&gt;</code>; до появления проверяемой membership-границы внешний идентификатор должен быть непредсказуемым</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Организатор назначается автоматически из числа администраторов, отдельного шага в форме нет.</li>
+            <li>По умолчанию бот сам ничего в общий чат не пишет.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Публикует ли бот анонс в общий чат сам. Это ровно вариант C из раздела вариантов и требует прав в группе. В MVP закреп продуктом не управляется.</li>
+            <li>Решено: внешний deep link использует UUIDv7. Публичный номер сходки показывается человеку и используется в административной поддержке, но не маршрутизирует публичный вход, пока membership проверяется только постфактум (<a href="../../decisions/ADR-023-meetup-public-number.md">ADR-023</a>).</li>
+            <li>Нужно ли назначать другого организатора уже в MVP. Продукт говорит, что нет: организатор один и он же администратор. Модель допускает нескольких.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-08">
+    <div class="frame-head"><span class="fid">A-08</span><h3>Карточка сходки для организатора</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">та же карточка, больше действий</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована
+
+Когда: 15 августа, пятница, 19:00
+Где: Циферблат, Ленина 5
+Организатор: Лёша
+
+Подписаны: 7 человек</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Связанные сообщения (3)</div></div>
+                <div class="kb-row"><div class="key">Уведомления: включены</div></div>
+                <div class="kb-row"><div class="key">Изменить</div><div class="key">Статус</div></div>
+                <div class="kb-row"><div class="key muted">К списку</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор конкретной сходки</dd>
+          <dt>Контекст</dt><dd>Сценарий 2: актуализировать сходку</dd>
+          <dt>Действие</dt><dd>Идёт менять данные или статус</dd>
+          <dt>Переход</dt><dd>-> A-09 / A-10 / A-11</dd>
+          <dt>Механика</dt><dd>та же карточка P-04 плюс строка организатора; права проверяются при нажатии</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Показывать ли количество подписчиков. Это агрегат, а не персональные данные, но он создаёт соблазн считать его списком участников, чего в MVP нет.</li>
+            <li>Что видит администратор, не являющийся организатором этой сходки. В MVP различие незаметно, но правило нужно заранее.</li>
+            <li>Отсюда же подключаются модули: рядом с кнопками "Изменить" и "Статус" появится "Модули" (см. <a href="#modules">Модули сходки</a>). Кто именно имеет на это право - открытый вопрос того раздела.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-09">
+    <div class="frame-head"><span class="fid">A-09</span><h3>Изменение поля</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">точечная правка</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Что меняем?</b>
+Настолки у Лёши</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Название</div><div class="key press">Дата и время</div></div>
+                <div class="kb-row"><div class="key">Место</div><div class="key">Описание</div></div>
+                <div class="kb-row"><div class="key muted">Назад</div></div>
+              </div>
+            </div>
+            <div class="row bot"><div class="bubble">Сейчас: 15 августа, 19:00
+Новое значение в формате 15.08 19:00</div></div>
+            <div class="row user"><div class="bubble">15.08 20:00</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Правится одно поле, остальные не трогаются</dd>
+          <dt>Действие</dt><dd>Выбирает поле и вводит новое значение</dd>
+          <dt>Переход</dt><dd>-> A-10 для подтверждения рассылки</dd>
+          <dt>Механика</dt><dd>показ текущего значения перед вводом; частичное обновление, а не пересоздание сходки</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Правка одного поля не требует проходить всю форму заново: это прямой ответ на проблему перетирания данных в закрепе.</li>
+            <li>Текущее значение всегда показывается перед вводом нового.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Что происходит при одновременной правке двумя администраторами. Продукту нужно правило разрешения конфликта, а интерфейсу - сообщение о нём.</li>
+            <li>Нужна ли история изменений. Продукт говорит, что полная история не является требованием MVP.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-10">
+    <div class="frame-head"><span class="fid">A-10</span><h3>Статус и рассылка подписчикам</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">подтверждение последствий</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Время изменилось: было 19:00, стало 20:00.
+
+Сообщить 7 подписчикам?</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key press">Сообщить</div><div class="key muted">Без уведомления</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Для отмены сходки этот выбор, скорее всего, недопустим.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Изменение уже сохранено, решается вопрос рассылки</dd>
+          <dt>Действие</dt><dd>Подтверждает рассылку или подавляет её</dd>
+          <dt>Переход</dt><dd>-> A-08, у подписчиков -> P-09</dd>
+          <dt>Механика</dt><dd>смена статуса живёт здесь же: перенести, отменить, завершить</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Может ли организатор вообще подавлять уведомление. Опечатка в описании - да, отмена сходки - вряд ли.</li>
+            <li>Полный список статусов и допустимых переходов.</li>
+            <li>Нужен ли текст причины при отмене и переносе.</li>
+            <li>Что происходит с запланированными напоминаниями при переносе.</li>
+            <li>Как ведёт себя интерфейс, если изменение сохранено, а рассылка не удалась. Это две разные операции с разной надёжностью.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-11">
+    <div class="frame-head"><span class="fid">A-11</span><h3>Прикрепить сообщение: пересылка боту</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 3, способ 1</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Перешли мне сообщение из чата солегуфиков, и я привяжу его к сходке <b>Настолки у Лёши</b>.
+
+Читать чат целиком я не умею и не собираюсь.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted">Отмена</div></div>
+              </div>
+            </div>
+            <div class="row user"><div class="bubble"><span class="quote">Переслано из: Солегуфики
+Лёша</span>Кто идёт в пятницу? Голосуем до среды</div></div>
+            <div class="row bot"><div class="bubble">Нашёл сообщение в чате солегуфиков. Прикрепить к сходке?</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Прикрепить</div><div class="key muted">Отмена</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Явное действие над конкретным сообщением</dd>
+          <dt>Действие</dt><dd>Пересылает сообщение и подтверждает</dd>
+          <dt>Переход</dt><dd>-> A-13; при невозможности построить ссылку -> E-06</dd>
+          <dt>Механика</dt><dd>из пересланного сообщения берутся идентификаторы чата и сообщения для ссылки <code>t.me/c/...</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Связь возникает только из явного действия уполномоченного человека.</li>
+            <li>Обещание не читать чат сформулировано в интерфейсе, а не только в документации.</li>
+            <li>Оригинальное сообщение не меняется и не удаляется.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Сохраняется ли снимок текста или только ссылка. Снимок удобнее для подписи связи, но это уже хранение содержимого переписки.</li>
+            <li>Что делать с повторной привязкой того же сообщения.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-12">
+    <div class="frame-head"><span class="fid">A-12</span><h3>Прикрепить сообщение: команда в группе</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 3, способ 2</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">СГ</div><div class="who"><b>Солегуфики</b><span>184 участника</span></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><span class="name">Лёша</span>Кто идёт в пятницу? Голосуем до среды</div></div>
+            <div class="row user ghost"><div class="bubble"><span class="only-you">видно только тебе</span><span class="quote">Лёша: Кто идёт в пятницу?</span>/attach</div></div>
+            <div class="row bot ghost"><div class="bubble"><span class="only-you">видно только тебе</span><span class="name">Solguficky Hub</span>Прикрепил к сходке "Настолки у Лёши".</div></div>
+          </div>
+        </div>
+        <div class="stage-note">Кадр происходит в общем чате, а не в личке.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Сообщение уже в чате, переключаться в личку неудобно</dd>
+          <dt>Действие</dt><dd>Отвечает на нужное сообщение командой</dd>
+          <dt>Переход</dt><dd>-> A-13 в личном чате</dd>
+          <dt>Механика</dt><dd>команда с ответом на сообщение; Privacy Mode не отключается. Кадр нарисован в варианте с <code>is_ephemeral</code> из Bot API 10.2: команду и ответ видит только организатор</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Способ не требует расширенных прав на чтение чата и отключения Privacy Mode.</li>
+            <li>К какой сходке привязывать, определяется не текстом сообщения, а явным выбором организатора.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Кадр опирается на то, что бот с включённым Privacy Mode получает команду вместе с <code>reply_to_message</code>. Это нужно подтвердить живым ботом: если предположение неверно, способ отпадает целиком и остаётся только пересылка из A-11.</li>
+            <li>Ответ бота в общем чате - это шум. Исчезающее сообщение из Bot API 10.2 решает вопрос лучше остальных вариантов (промолчать, ответить и удалить по таймеру, ответить реакцией), но требует подтверждения владельцем и проверки механики.</li>
+            <li>Если исчезающие сообщения окажутся ненадёжными, запасной вариант - ответ в личку, а в группе не отвечать вовсе. Тогда кадр теряет смысл при отсутствии личного чата.</li>
+            <li>Как выбирается сходка, если активных несколько: <code>/attach</code> с указанием или последующий выбор в личке.</li>
+            <li>Что делать, если у организатора нет открытого личного чата с ботом (см. E-07).</li>
+            <li>Нужен ли этот способ в MVP вообще или достаточно пересылки из A-11.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-13">
+    <div class="frame-head"><span class="fid">A-13</span><h3>Подпись связи</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">чем связь подписана в списке</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Сообщение прикреплено.
+
+Как назвать его в списке? Напиши коротко или оставь как есть.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Оставить "Кто идёт в пятницу"</div></div>
+                <div class="kb-row"><div class="key muted">К сходке</div></div>
+              </div>
+            </div>
+            <div class="row user"><div class="bubble">Опрос: кто идёт</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Связь создана, подпись определяет, как она выглядит для солегуфика в P-05</dd>
+          <dt>Действие</dt><dd>Вводит подпись или принимает предложенную</dd>
+          <dt>Переход</dt><dd>-> A-14</dd>
+          <dt>Механика</dt><dd>предложенная подпись - обрезанное начало оригинала</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Автоматическая подпись из текста оригинала означает хранение фрагмента переписки. Это прямо влияет на принцип минимизации данных и должно быть решено до контрактов.</li>
+            <li>Нужна ли категория связи вместо свободной подписи.</li>
+            <li>Обязателен ли этот шаг или его можно пропускать по умолчанию.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-14">
+    <div class="frame-head"><span class="fid">A-14</span><h3>Убрать или заменить связь</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">сценарий 4</div>
+        <div class="phone">
+          <div class="alert"><div class="box">Убрать связь "Уточнение по времени"? Само сообщение в чате останется.<span class="ok">Убрать</span></div></div>
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Связанные сообщения</b>
+Настолки у Лёши</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Опрос: кто идёт</div><div class="key muted">убрать</div></div>
+                <div class="kb-row"><div class="key">Уточнение по времени</div><div class="key muted press">убрать</div></div>
+                <div class="kb-row"><div class="key">Прикрепить ещё</div></div>
+                <div class="kb-row"><div class="key muted">К сходке</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Подтверждение показано системным окном Telegram.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Ссылка устарела и мешает</dd>
+          <dt>Действие</dt><dd>Убирает связь, при необходимости прикрепляет новую</dd>
+          <dt>Переход</dt><dd>-> A-14 обновлённый, или -> A-11</dd>
+          <dt>Механика</dt><dd><code>answerCallbackQuery</code> с <code>show_alert</code> как подтверждение необратимого действия</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Удаление связи не трогает сообщение в Telegram, и текст подтверждения говорит это прямо.</li>
+            <li>Замена - это удаление плюс прикрепление, отдельного сценария нет.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Уведомлять ли подписчиков об удалении связи. Макет считает, что нет.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  </div>
+</section>
+
+
+<section id="track-e">
+  <div class="sec-head">
+    <h2>Трек 3: ошибки и служебные состояния</h2>
+    <p>
+      Состояния, которые обычно не рисуют и потом придумывают в коде. Здесь они заданы явно: что видит человек,
+      что происходит с уже введёнными данными и какое техническое решение за этим стоит.
+    </p>
+  </div>
+
+  <div class="frames">
+
+  <article class="frame t-e" id="E-01">
+    <div class="frame-head"><span class="fid">E-01</span><h3>Нет прав на действие</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">права проверяются на сервере</div>
+        <div class="phone">
+          <div class="alert"><div class="box">Это действие доступно организатору сходки.<span class="ok">Ок</span></div></div>
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована
+
+Когда: 15 августа, пятница, 19:00
+Где: Циферблат, Ленина 5</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Связанные сообщения (3)</div></div>
+                <div class="kb-row"><div class="key press">Изменить</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Экран открыт из старого сообщения, где кнопка ещё была.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик, у которого отозвали роль, или чужая пересланная кнопка</dd>
+          <dt>Контекст</dt><dd>Клавиатура была отрисована раньше, чем изменились права</dd>
+          <dt>Действие</dt><dd>Закрывает окно</dd>
+          <dt>Переход</dt><dd>экран перерисовывается в вид без админских кнопок</dd>
+          <dt>Механика</dt><dd><code>answerCallbackQuery</code> с <code>show_alert</code>; отказ формулируется без раскрытия чужих данных</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Отсутствие кнопки не является проверкой прав: сервер отвергает действие независимо от вида клавиатуры.</li>
+            <li>Текст говорит, кому доступно действие, и не показывает, что именно пытались сделать.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-02">
+    <div class="frame-head"><span class="fid">E-02</span><h3>Ввод не понят</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">валидация без потери прогресса</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row user"><div class="bubble">в пятницу вечером</div></div>
+            <div class="row bot"><div class="bubble">Не разобрал дату.
+
+Жду в формате 15.08 19:00. Название я запомнил, начинать заново не нужно.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted">Назад</div><div class="key muted">Отмена</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Администратор</dd>
+          <dt>Контекст</dt><dd>Шаг A-04, ввод не разобран</dd>
+          <dt>Действие</dt><dd>Вводит значение ещё раз</dd>
+          <dt>Переход</dt><dd>-> A-05 при успехе, -> E-02 при повторной ошибке</dd>
+          <dt>Механика</dt><dd>диалоговое состояние сохраняется; шаг не сбрасывается</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Ошибка ввода не отбрасывает пользователя в начало формы и прямо это обещает.</li>
+            <li>Сообщение показывает ожидаемый формат, а не название внутренней ошибки.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Сколько неудачных попыток допустимо до предложения отменить создание.</li>
+            <li>Принимать ли дату в прошлом. Скорее всего это отдельная ошибка с другим текстом.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-03">
+    <div class="frame-head"><span class="fid">E-03</span><h3>Сходка больше недоступна</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">объект исчез между отрисовкой и нажатием</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Этой сходки больше нет. Возможно, её удалил организатор.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">К списку сходок</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Любая</dd>
+          <dt>Контекст</dt><dd>Нажата кнопка из сообщения, отрисованного раньше</dd>
+          <dt>Действие</dt><dd>Возвращается к списку</dd>
+          <dt>Переход</dt><dd>-> P-03</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code> того сообщения, из которого пришло нажатие</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Существует ли удаление сходки вообще или есть только отмена. От этого зависит, нужен ли этот кадр.</li>
+            <li>Что происходит с уведомлениями, уже отправленными по удалённой сходке.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-04">
+    <div class="frame-head"><span class="fid">E-04</span><h3>Устаревший экран в истории</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">плата за вариант B</div>
+        <div class="phone">
+          <div class="toast">Открыл актуальную версию ниже.</div>
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="tg-date">3 августа</div>
+            <div class="row bot"><div class="bubble"><em>Экран устарел</em>
+Ближайшие сходки<span class="time">12:02</span></div>
+              <div class="kb">
+                <div class="kb-row"><div class="key muted press">1 авг - Велопрогулка</div></div>
+              </div>
+            </div>
+            <div class="tg-date">сегодня</div>
+            <div class="row bot"><div class="bubble">Ближайшие сходки<span class="time">14:01</span></div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">15 авг, пт - Настолки у Лёши</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Любая</dd>
+          <dt>Контекст</dt><dd>В истории личного чата остались старые копии хаба</dd>
+          <dt>Действие</dt><dd>Нажимает кнопку в старом сообщении</dd>
+          <dt>Переход</dt><dd>-> P-03 в актуальном сообщении</dd>
+          <dt>Механика</dt><dd>версия экрана внутри <code>callback_data</code> или сравнение с последним отправленным хабом</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Что делать со старым сообщением: пометить текстом, снять клавиатуру или обслуживать наравне с новым. Макет показывает пометку и снятие активности.</li>
+            <li>Есть ли у экрана срок жизни и как он соотносится с ограничением Telegram на редактирование старых сообщений.</li>
+            <li>Один хаб на пользователя или новый хаб на каждый вход.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-05">
+    <div class="frame-head"><span class="fid">E-05</span><h3>Сервис недоступен</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">деградация без выдумывания данных</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Не получилось загрузить сходки. Это на моей стороне.
+
+Попробуй ещё раз через минуту.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Повторить</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Любая</dd>
+          <dt>Контекст</dt><dd>Meetups или Identity не отвечают</dd>
+          <dt>Действие</dt><dd>Повторяет запрос</dd>
+          <dt>Переход</dt><dd>-> P-03 при успехе, -> E-05 при повторной ошибке</dd>
+          <dt>Механика</dt><dd>Gateway не показывает пустой список вместо ошибки и не подставляет устаревшие данные молча</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Недоступность сервиса и пустой список - разные экраны. Путать их нельзя.</li>
+            <li>Человеку сообщается, что проблема на стороне продукта, без технических подробностей.</li>
+            <li>Незавершённый ввод при сбое не теряется.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Что доступно при живом Meetups и мёртвом Identity: показывать ли данные в режиме "только чтение".</li>
+            <li>Различаются ли тексты для сбоя чтения и сбоя записи. При записи человек должен понимать, применилось изменение или нет.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-06">
+    <div class="frame-head"><span class="fid">E-06</span><h3>Ссылку на сообщение построить нельзя</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">ограничение Telegram, а не бага</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row user"><div class="bubble"><span class="quote">Переслано от скрытого пользователя</span>Встречаемся у входа</div></div>
+            <div class="row bot"><div class="bubble">На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена.
+
+Попробуй переслать сообщение из чата солегуфиков или ответь на него командой /attach прямо в чате.</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Организатор</dd>
+          <dt>Контекст</dt><dd>Шаг A-11, пересланное сообщение не даёт идентификаторов оригинала</dd>
+          <dt>Действие</dt><dd>Пробует другой способ</dd>
+          <dt>Переход</dt><dd>-> A-11 или -> A-12</dd>
+          <dt>Механика</dt><dd>скрытый источник, приватность пересылки и личные сообщения не позволяют построить <code>t.me/c/...</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Продукт не пытается обойти ограничение сохранением копии содержимого.</li>
+            <li>Сообщение сразу предлагает рабочий обходной путь.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Прикреплять ли сообщения из других чатов, кроме основного чата сообщества.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-07">
+    <div class="frame-head"><span class="fid">E-07</span><h3>Бот не может написать первым</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">подписка есть, доставки нет</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">СГ</div><div class="who"><b>Солегуфики</b><span>184 участника</span></div></div>
+          <div class="tg-chat">
+            <div class="row bot ghost"><div class="bubble"><span class="only-you">видно только тебе</span><span class="name">Solguficky Hub</span>Чтобы получать уведомления о сходке, открой бота и нажми Запустить.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key url">Открыть бота</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Telegram не даёт боту писать тому, кто его не запускал. Призыв показан исчезающим сообщением: его видит только адресат.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Солегуфик или организатор без личного чата с ботом</dd>
+          <dt>Контекст</dt><dd>Ограничение платформы, ломающее сценарий уведомлений</dd>
+          <dt>Действие</dt><dd>Открывает бота по ссылке и запускает его</dd>
+          <dt>Переход</dt><dd>-> P-01</dd>
+          <dt>Механика</dt><dd>ошибка <code>bot can't initiate conversation</code> или <code>bot was blocked by the user</code> при отправке</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Исчезающее сообщение убирает публичность призыва, но не отменяет саму проблему: уведомления P-09...P-11 приходят вне группы и без личного чата не доставляются.</li>
+            <li>Что делает продукт с подпиской, доставка по которой стабильно падает: помечает, отключает или продолжает пытаться.</li>
+            <li>Видит ли организатор, что часть подписчиков недостижима, и является ли это персональными данными.</li>
+            <li>Как об этом узнаёт maintainer: метрика неудачных доставок или только логи.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-08">
+    <div class="frame-head"><span class="fid">E-08</span><h3>Долгий ответ</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">между нажатием и результатом</div>
+        <div class="phone">
+          <div class="toast">Загружаю...</div>
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Ближайшие сходки</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key press">15 авг, пт - Настолки у Лёши</div></div>
+                <div class="kb-row"><div class="key muted">Мои уведомления</div><div class="key muted">Обновить</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Любая</dd>
+          <dt>Контекст</dt><dd>Ответ backend занимает заметное время</dd>
+          <dt>Действие</dt><dd>Ждёт или нажимает ещё раз (см. E-09)</dd>
+          <dt>Переход</dt><dd>-> целевой экран или -> E-05</dd>
+          <dt>Механика</dt><dd>ранний <code>answerCallbackQuery</code> снимает индикатор загрузки на кнопке; результат приходит редактированием</dd>
+        </dl>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Порог, после которого показывается промежуточное состояние.</li>
+            <li>Поведение при упоре в rate limit Telegram: очередь, задержка или отказ с текстом.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-e" id="E-09">
+    <div class="frame-head"><span class="fid">E-09</span><h3>Повторное нажатие</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">идемпотентность видна пользователю</div>
+        <div class="phone">
+          <div class="toast">Уже включено.</div>
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Уведомления: Настолки у Лёши</b>
+
+Отметь, о чём присылать. Настройка действует только для этой сходки.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key on press">[x] Изменения данных и статуса</div></div>
+                <div class="kb-row"><div class="key on">[x] Новые связанные сообщения</div></div>
+                <div class="kb-row"><div class="key muted">[ ] Напоминание перед началом</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Второе нажатие не создаёт вторую подписку и не отправляет второе сообщение.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Любая</dd>
+          <dt>Контекст</dt><dd>Человек нажал дважды из-за задержки</dd>
+          <dt>Действие</dt><dd>Ничего не делает</dd>
+          <dt>Переход</dt><dd>состояние не меняется</dd>
+          <dt>Механика</dt><dd>идемпотентность по <code>callback_query.id</code> и по целевому состоянию, а не по факту первого нажатия</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Повторное нажатие приводит к тому же результату и к сообщению, объясняющему это.</li>
+            <li>Кнопка-переключатель описывает желаемое состояние, а не операцию: повтор не переворачивает значение обратно.</li>
+          </ul>
+        </div>
+        <div class="qs">
+          <h4>Открытые вопросы</h4>
+          <ul>
+            <li>Где живёт идемпотентность: только в Gateway, как сейчас в Rust-реализации в памяти, или сквозным ключом до Meetups и Notifications.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  </div>
+</section>
+
+
+<section id="map">
+  <div class="sec-head">
+    <h2>Карта переходов</h2>
+    <p>
+      Схема показывает основные пути. Полный список переходов, включая возвраты и ошибочные ветки, приведён в таблице ниже.
+    </p>
+  </div>
+
+  <div class="map">
+    <svg viewBox="0 0 900 470" role="img" aria-label="Схема переходов между кадрами storyboard">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+        </marker>
+      </defs>
+      <g color="#8a9a96">
+
+        <text class="n-t" x="20" y="18" style="letter-spacing:.1em; text-transform:uppercase; font-size:10px">Солегуфик</text>
+        <rect class="n-p" x="20" y="28" width="140" height="40" rx="8"/>
+        <text class="n-id" x="32" y="45">P-01</text><text class="n-t" x="32" y="60">Старт</text>
+        <rect class="n-p" x="192" y="28" width="140" height="40" rx="8"/>
+        <text class="n-id" x="204" y="45">P-03</text><text class="n-t" x="204" y="60">Список сходок</text>
+        <rect class="n-p" x="364" y="28" width="140" height="40" rx="8"/>
+        <text class="n-id" x="376" y="45">P-04</text><text class="n-t" x="376" y="60">Карточка сходки</text>
+        <rect class="n-p" x="536" y="28" width="140" height="40" rx="8"/>
+        <text class="n-id" x="548" y="45">P-05</text><text class="n-t" x="548" y="60">Связанные сообщ.</text>
+        <rect class="n-box" x="708" y="28" width="140" height="40" rx="8"/>
+        <text class="n-id" x="720" y="45">TELEGRAM</text><text class="n-t" x="720" y="60">Оригинал в чате</text>
+
+        <rect class="n-p" x="192" y="100" width="140" height="40" rx="8"/>
+        <text class="n-id" x="204" y="117">P-13</text><text class="n-t" x="204" y="132">Мои уведомления</text>
+        <rect class="n-p" x="364" y="100" width="140" height="40" rx="8"/>
+        <text class="n-id" x="376" y="117">P-07</text><text class="n-t" x="376" y="132">Настройка подписки</text>
+        <rect class="n-p" x="536" y="100" width="140" height="40" rx="8"/>
+        <text class="n-id" x="548" y="117">P-09 ... P-11</text><text class="n-t" x="548" y="132">Входящие уведомл.</text>
+
+        <path class="edge" d="M 160 48 L 186 48"/>
+        <path class="edge" d="M 332 48 L 358 48"/>
+        <path class="edge" d="M 504 48 L 530 48"/>
+        <path class="edge soft" d="M 676 48 L 702 48"/>
+        <path class="edge" d="M 262 68 L 262 94"/>
+        <path class="edge" d="M 434 68 L 434 94"/>
+        <path class="edge" d="M 530 120 L 510 120"/>
+        <text class="e-lbl" x="352" y="88">подписка</text>
+        <text class="e-lbl" x="180" y="88">мои подписки</text>
+
+        <text class="n-t" x="20" y="178" style="letter-spacing:.1em; text-transform:uppercase; font-size:10px">Администратор и организатор</text>
+        <rect class="n-a" x="20" y="188" width="140" height="40" rx="8"/>
+        <text class="n-id" x="32" y="205">A-01</text><text class="n-t" x="32" y="220">Вход админа</text>
+        <rect class="n-a" x="192" y="188" width="140" height="40" rx="8"/>
+        <text class="n-id" x="204" y="205">A-02</text><text class="n-t" x="204" y="220">Управление</text>
+        <rect class="n-a" x="364" y="188" width="140" height="40" rx="8"/>
+        <text class="n-id" x="376" y="205">A-03 ... A-06</text><text class="n-t" x="376" y="220">Создание, 4 шага</text>
+        <rect class="n-a" x="536" y="188" width="140" height="40" rx="8"/>
+        <text class="n-id" x="548" y="205">A-07</text><text class="n-t" x="548" y="220">Опубликована</text>
+        <rect class="n-a" x="708" y="188" width="140" height="40" rx="8"/>
+        <text class="n-id" x="720" y="205">A-08</text><text class="n-t" x="720" y="220">Управление сходкой</text>
+
+        <rect class="n-a" x="364" y="260" width="140" height="40" rx="8"/>
+        <text class="n-id" x="376" y="277">A-13, A-14</text><text class="n-t" x="376" y="292">Связи и удаление</text>
+        <rect class="n-a" x="536" y="260" width="140" height="40" rx="8"/>
+        <text class="n-id" x="548" y="277">A-11, A-12</text><text class="n-t" x="548" y="292">Прикрепить сообщ.</text>
+        <rect class="n-a" x="708" y="260" width="140" height="40" rx="8"/>
+        <text class="n-id" x="720" y="277">A-09, A-10</text><text class="n-t" x="720" y="292">Изменение и статус</text>
+
+        <path class="edge" d="M 160 208 L 186 208"/>
+        <path class="edge" d="M 332 208 L 358 208"/>
+        <path class="edge" d="M 504 208 L 530 208"/>
+        <path class="edge" d="M 676 208 L 702 208"/>
+        <path class="edge" d="M 778 228 L 778 254"/>
+        <path class="edge" d="M 748 228 L 748 244 L 646 244 L 646 254"/>
+        <path class="edge" d="M 530 280 L 510 280"/>
+        <path class="edge soft" d="M 848 280 L 880 280 L 880 120 L 682 120"/>
+        <text class="e-lbl" x="872" y="112" text-anchor="end">уведомление подписчикам</text>
+        <text class="e-lbl" x="368" y="182">создать</text>
+
+        <text class="n-t" x="20" y="338" style="letter-spacing:.1em; text-transform:uppercase; font-size:10px">Ошибки и служебные состояния</text>
+        <rect class="n-e" x="20" y="348" width="140" height="36" rx="8"/>
+        <text class="n-id" x="32" y="365">E-01</text><text class="n-t" x="32" y="378">Нет прав</text>
+        <rect class="n-e" x="192" y="348" width="140" height="36" rx="8"/>
+        <text class="n-id" x="204" y="365">E-02</text><text class="n-t" x="204" y="378">Ввод не понят</text>
+        <rect class="n-e" x="364" y="348" width="140" height="36" rx="8"/>
+        <text class="n-id" x="376" y="365">E-03</text><text class="n-t" x="376" y="378">Сходки больше нет</text>
+        <rect class="n-e" x="536" y="348" width="140" height="36" rx="8"/>
+        <text class="n-id" x="548" y="365">E-04</text><text class="n-t" x="548" y="378">Устаревший экран</text>
+        <rect class="n-e" x="708" y="348" width="140" height="36" rx="8"/>
+        <text class="n-id" x="720" y="365">E-05</text><text class="n-t" x="720" y="378">Сервис недоступен</text>
+
+        <rect class="n-e" x="20" y="404" width="140" height="36" rx="8"/>
+        <text class="n-id" x="32" y="421">E-06</text><text class="n-t" x="32" y="434">Ссылки нет</text>
+        <rect class="n-e" x="192" y="404" width="140" height="36" rx="8"/>
+        <text class="n-id" x="204" y="421">E-07</text><text class="n-t" x="204" y="434">Нет чата с ботом</text>
+        <rect class="n-e" x="364" y="404" width="140" height="36" rx="8"/>
+        <text class="n-id" x="376" y="421">E-08</text><text class="n-t" x="376" y="434">Долгий ответ</text>
+        <rect class="n-e" x="536" y="404" width="140" height="36" rx="8"/>
+        <text class="n-id" x="548" y="421">E-09</text><text class="n-t" x="548" y="434">Повторное нажатие</text>
+        <text class="e-lbl" x="700" y="426">Источники перечислены в таблице ниже</text>
+
+      </g>
+    </svg>
+  </div>
+
+  <table>
+    <tr><th>Из</th><th>Действие</th><th>В</th></tr>
+    <tr><td>P-01</td><td>Ближайшие сходки</td><td>P-03, при пустом списке P-02</td></tr>
+    <tr><td>P-01</td><td>вход по deep link <code>?start=m_&lt;uuid&gt;</code></td><td>P-04</td></tr>
+    <tr><td>P-02</td><td>Обновить</td><td>P-02 или P-03</td></tr>
+    <tr><td>P-03</td><td>выбор сходки</td><td>P-04, для отменённой P-12</td></tr>
+    <tr><td>P-03</td><td>Мои уведомления</td><td>P-13</td></tr>
+    <tr><td>P-04</td><td>Связанные сообщения</td><td>P-05, при отсутствии связей P-06</td></tr>
+    <tr><td>P-04</td><td>Уведомления</td><td>P-07</td></tr>
+    <tr><td>P-04</td><td>К списку</td><td>P-03</td></tr>
+    <tr><td>P-05</td><td>кнопка-ссылка</td><td>Telegram, оригинал сообщения</td></tr>
+    <tr><td>P-05, P-06</td><td>Назад к сходке</td><td>P-04</td></tr>
+    <tr><td>P-07</td><td>переключение категории</td><td>P-08, экран остаётся P-07</td></tr>
+    <tr><td>P-07</td><td>Отключить все</td><td>P-07 со снятыми отметками</td></tr>
+    <tr><td>P-09, P-10, P-11</td><td>Открыть сходку</td><td>P-04</td></tr>
+    <tr><td>P-09, P-11</td><td>Настроить уведомления</td><td>P-07</td></tr>
+    <tr><td>P-13</td><td>выбор сходки</td><td>P-07</td></tr>
+    <tr><td>P-13</td><td>Отписаться от всего</td><td>подтверждение, затем P-13</td></tr>
+    <tr><td>A-01</td><td>Управление сходками</td><td>A-02, без прав E-01</td></tr>
+    <tr><td>A-02</td><td>Создать сходку</td><td>A-03</td></tr>
+    <tr><td>A-02</td><td>выбор сходки</td><td>A-08</td></tr>
+    <tr><td>A-03</td><td>название</td><td>A-04</td></tr>
+    <tr><td>A-04</td><td>дата и время</td><td>A-05, при непонятном вводе E-02</td></tr>
+    <tr><td>A-05</td><td>место и описание</td><td>A-06</td></tr>
+    <tr><td>A-06</td><td>Опубликовать</td><td>A-07</td></tr>
+    <tr><td>A-06</td><td>Изменить поле</td><td>A-09</td></tr>
+    <tr><td>A-07</td><td>Прикрепить сообщение</td><td>A-11</td></tr>
+    <tr><td>A-07</td><td>Открыть сходку</td><td>A-08</td></tr>
+    <tr><td>A-08</td><td>Изменить</td><td>A-09</td></tr>
+    <tr><td>A-08</td><td>Статус</td><td>A-10</td></tr>
+    <tr><td>A-09</td><td>новое значение</td><td>A-10</td></tr>
+    <tr><td>A-10</td><td>Сообщить</td><td>A-08, у подписчиков P-09</td></tr>
+    <tr><td>A-11</td><td>пересылка сообщения</td><td>A-13, при отсутствии ссылки E-06</td></tr>
+    <tr><td>A-12</td><td><code>/attach</code> в группе</td><td>A-13 в личном чате, без личного чата E-07</td></tr>
+    <tr><td>A-13</td><td>подпись</td><td>A-14, у подписчиков P-10</td></tr>
+    <tr><td>A-14</td><td>убрать связь</td><td>подтверждение, затем A-14</td></tr>
+    <tr><td>любой экран</td><td>backend не ответил</td><td>E-05</td></tr>
+    <tr><td>любой экран</td><td>нажатие в старом сообщении</td><td>E-04, при удалённой сходке E-03</td></tr>
+    <tr><td>любая кнопка</td><td>повторное нажатие</td><td>E-09, состояние не меняется</td></tr>
+    <tr><td>любая длинная операция</td><td>ожидание ответа</td><td>E-08</td></tr>
+  </table>
+</section>
+
+
+<section id="open">
+  <div class="sec-head">
+    <h2>Сводка открытых вопросов</h2>
+    <p>
+      Всё, что макет не решил сам. Продуктовые вопросы закрывает владелец, технические уходят в ADR Gateway,
+      privacy-вопросы влияют на то, какие данные вообще появятся в хранилище.
+    </p>
+  </div>
+
+  <table>
+    <tr><th>Вопрос</th><th>Кадры</th><th>Тип</th><th>Куда попадёт ответ</th></tr>
+    <tr><td>Надёжность исчезающих сообщений: время жизни, callback, лимиты, поддержка в grammY</td><td><a href="#eph">раздел про Bot API 10.2</a>, A-12, E-07</td><td>проверка платформы</td><td><a href="https://linear.app/anticnvm/issue/PER-20/rfc-003-proverit-rich-messages-i-ephemeral-mehaniku-zhivym-botom">PER-20</a>, эксперимент на живом боте до ADR Gateway</td></tr>
+    <tr><td>Переносить ли часть сценариев из лички в группу невидимыми командами</td><td>вариант D, P-04, P-07</td><td>продукт</td><td>решение владельца после проверки механики</td></tr>
+    <tr><td>Как отображается организатор: имя, username или упоминание</td><td>P-04, A-08</td><td>privacy</td><td>продуктовое решение</td></tr>
+    <tr><td>Есть ли неотключаемая категория уведомлений</td><td>P-07, A-10</td><td>продукт</td><td>требования Notifications</td></tr>
+    <tr><td>Может ли организатор подавить уведомление об изменении</td><td>A-10</td><td>продукт</td><td>продуктовое решение</td></tr>
+    <tr><td>Публикует ли бот анонс в общий чат</td><td>A-07, вариант C</td><td>продукт и права бота</td><td>решение владельца, возможно ADR</td></tr>
+    <tr><td>Подпись связи: ручная, автоматическая или категория</td><td>P-05, A-13</td><td>privacy и продукт</td><td>продуктовое решение, затем модель данных</td></tr>
+    <tr><td>Хранится ли снимок текста прикреплённого сообщения</td><td>A-11, A-13, P-10</td><td>privacy</td><td>модель данных Meetups</td></tr>
+    <tr><td>Поведение при удалении оригинального сообщения</td><td>P-05</td><td>продукт</td><td>решено: узнать об удалении нельзя, связь убирает организатор вручную</td></tr>
+    <tr><td>Нужен ли способ <code>/attach</code> в группе, работает ли он при Privacy Mode и как бот отвечает в чате</td><td>A-12</td><td>продукт, тишина бота, проверка платформы</td><td>проверка живым ботом, затем решение владельца</td></tr>
+    <tr><td>Показывать ли число подписчиков организатору</td><td>A-08, E-07</td><td>privacy</td><td>продуктовое решение</td></tr>
+    <tr><td>Где живёт диалоговое состояние и что с ним при перезапуске</td><td>A-03 ... A-06, E-02</td><td>техника</td><td>ADR Telegram Gateway</td></tr>
+    <tr><td>Формат <code>callback_data</code>, версия экрана и судьба старых сообщений</td><td>P-03, E-04</td><td>техника</td><td>ADR Telegram Gateway</td></tr>
+    <tr><td>Где обеспечивается идемпотентность нажатий, дедупликация и retry доставки</td><td>E-09, P-09</td><td>техника</td><td>ADR Telegram Gateway, дизайн Notifications</td></tr>
+    <tr><td>Как Gateway узнаёт роль и что делает при недоступности Identity</td><td>A-01, E-05</td><td>техника</td><td>дизайн Identity, ADR Gateway</td></tr>
+    <tr><td>Владелец подписки: Meetups или Notifications</td><td>P-07</td><td>граница сервисов</td><td>RFC-005</td></tr>
+    <tr><td>Кто рисует экраны модуля: ядро по описанию, гибрид или сам модуль</td><td><a href="#modules">Модули сходки</a></td><td>архитектура и UX</td><td>ADR о контракте расширения, до первого модуля</td></tr>
+    <tr><td>Кто подключает модуль и нужно ли подтверждение администратора</td><td><a href="#modules">Модули сходки</a>, A-08</td><td>продукт и права</td><td>решение владельца</td></tr>
+    <tr><td>Существует ли модуль вне сходки и где тогда его точка входа</td><td><a href="#modules">Модули сходки</a>, P-03</td><td>продукт</td><td>решение владельца, с учётом ADR-019</td></tr>
+    <tr><td>Участвуют ли модули в уведомлениях и своей ли категорией</td><td><a href="#modules">Модули сходки</a>, P-07</td><td>продукт</td><td>требования Notifications</td></tr>
+    <tr><td>Планирование, отмена и перенос напоминаний</td><td>P-11, A-10</td><td>техника</td><td>дизайн Notifications</td></tr>
+    <tr><td>Одновременное редактирование двумя администраторами</td><td>A-09</td><td>домен</td><td>дизайн Meetups</td></tr>
+    <tr><td>Кто является участником сообщества и что видит посторонний</td><td>P-01</td><td>продукт и Identity</td><td>дизайн Identity</td></tr>
+  </table>
+</section>
+
+<section id="next">
+  <div class="sec-head">
+    <h2>Что дальше</h2>
+    <p>Макет закрывает свою часть работы и передаёт эстафету трём разным решениям.</p>
+  </div>
+
+  <table>
+    <tr><th>Шаг</th><th>Кто</th><th>Результат</th></tr>
+    <tr><td>Проверить Rich Messages и исчезающие сообщения живым ботом (<a href="https://linear.app/anticnvm/issue/PER-20/rfc-003-proverit-rich-messages-i-ephemeral-mehaniku-zhivym-botom">PER-20</a>)</td><td>агент или владелец</td><td>RFC-003 получает факты для решения; вариант D либо становится реальным, либо отпадает вместе с пометками в A-12 и E-07</td></tr>
+    <tr><td>Закрыть продуктовые вопросы из сводки</td><td>владелец</td><td>обновлённый product/overview и требования сервисов</td></tr>
+    <tr><td>Принять ADR Telegram Gateway</td><td>владелец, с подготовкой агентом</td><td>диалоговое состояние, <code>callback_data</code>, идемпотентность, transport</td></tr>
+    <tr><td>Решить границу модуля до первого расширения</td><td>владелец</td><td>ADR о контракте расширения и правило о том, что в этот контракт попадать не должно</td></tr>
+    <tr><td>Нарезать вертикальный срез</td><td>владелец</td><td>задачи в Linear, в которых нет невидимых UI-решений</td></tr>
+    <tr><td>PNG-экспорты кадров</td><td>по потребности</td><td>не создаются в этой итерации: источником остаётся этот файл</td></tr>
+  </table>
+
+  <div class="note">
+    <b>Как менять макет.</b>
+    Кадр правится вместе с решением, которое его изменило. Если решение зафиксировано в ADR или product/overview,
+    метка кадра меняется с гипотезы или открытого вопроса на "решено", а сам вопрос убирается из сводки.
+    Макет без открытых вопросов означает, что интерфейс готов к нарезке задач.
+  </div>
+</section>
+
+
+<footer class="doc-foot">
+  Связанные документы:
+  <a href="../../product/overview.md">Продукт и границы MVP</a>,
+  <a href="../../services/telegram-gateway.md">Telegram Gateway</a>,
+  <a href="../../services/meetups.md">Meetups Service</a>,
+  <a href="../../services/notifications.md">Notifications Service</a>,
+  <a href="../../services/identity.md">Identity Service</a>,
+  <a href="../mini-app/README.md">Дизайн Mini App</a>.
+</footer>
+
+</div>
+</body>
+</html>

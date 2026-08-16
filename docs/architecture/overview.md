@@ -45,7 +45,7 @@ Linear является источником правды для порядка 
 | WebSocket Gateway | C# + SignalR, только `auction:live` | Frozen legacy |
 | Meetups | Отсутствует | Владелец данных о сходках |
 | Identity | Отсутствует | Telegram identity, membership и системные роли |
-| Mini App | Пустая заготовка | Scope определяется сценариями и макетами |
+| Mini App | Пустая заготовка | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `nats-tester` | Python CLI | Current tooling |
 | Aspire AppHost | Код и профили существуют; живой полный запуск не подтверждён | Current, verification pending |
 
@@ -59,7 +59,7 @@ Linear является источником правды для порядка 
 | Meetups | Граница Accepted, дизайн и язык Open | Владелец продуктовых данных сходок |
 | Identity | Отдельный сервис Accepted, детали Open | Telegram identity, membership и общие роли |
 | Notifications | Design Open | Напоминания как первый реальный сценарий |
-| Mini App | Scope и stack Open | Сначала сценарии и макеты |
+| Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, verification pending | Aspire как inner loop |
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
 | Contract governance | Open | Compatibility, codegen и ownership до новых proto |
@@ -82,7 +82,7 @@ Telegram user
 → новый TypeScript Gateway
 → Identity
 → Meetups
-→ просмотр опубликованной сходки или RSVP
+→ просмотр сходки и связанного Telegram-сообщения
 → наблюдаемый ответ пользователю
 ```
 
