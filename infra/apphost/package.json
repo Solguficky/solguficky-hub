@@ -1,0 +1,8 @@
+{
+  "name": "@solguficky/apphost",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

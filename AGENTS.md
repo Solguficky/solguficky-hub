@@ -27,20 +27,20 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `meetups` и `identity` — MVP-сервисы, ещё не реализованы. Identity остаётся отдельной границей; языки backend не выбраны.
 - `frontend/admin-app/` — заглушка будущего Telegram Mini App.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
-- `infra/apphost/` — локальная оркестрация .NET Aspire.
+- `infra/apphost/apphost.mts` — каноническая топология локальной оркестрации Aspire на TypeScript; C# AppHost временно сохраняется до прохождения gate.
 
 ## Команды
 
 ```bash
 # Локальная оркестрация — из infra/apphost/
-aspire run
+aspire run apphost.mts
 
 # Профили топологии
-TOPOLOGY__PROFILE=infra aspire run
-TOPOLOGY__PROFILE=full aspire run
+TOPOLOGY__PROFILE=infra aspire run apphost.mts
+TOPOLOGY__PROFILE=full aspire run apphost.mts
 
 # Режим компонента: Local | Container | Off
-TOPOLOGY__AUCTIONSERVICE=Container aspire run
+TOPOLOGY__AUCTIONSERVICE=Container aspire run apphost.mts
 
 # C#-сервисы — из папки сервиса
 dotnet build

@@ -4,7 +4,7 @@
 
 ## Daily local development
 
-.NET Aspire является принятой точкой локальной оркестрации:
+Aspire с TypeScript AppHost является принятой точкой локальной оркестрации:
 
 - запуск инфраструктуры и нужных сервисов;
 - service discovery и конфигурация;
@@ -12,7 +12,7 @@
 - логи, health и traces;
 - возможность отключить компонент и запустить его из IDE.
 
-AppHost существует, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем адаптировать topology под новый TypeScript Gateway и MVP-сервисы.
+TypeScript AppHost существует рядом с временным C# fallback, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем удалить fallback и адаптировать topology под новый TypeScript Gateway и MVP-сервисы.
 
 ## Production-like integration
 
@@ -42,7 +42,7 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 - профиль Aspire `core` пока поднимает Legacy Auction и Rust Gateway;
 - Gateway запускается через Cargo;
-- AppHost/ServiceDefaults и C#-сервисы используют разные поколения target framework;
+- прежний C# AppHost временно остаётся рядом с каноническим TypeScript AppHost до миграционного gate;
 - рукописные compose-файлы остаются fallback до подтверждения Aspire;
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
@@ -50,4 +50,5 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 - [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Needs review
 - [ADR-021: Aspire local orchestration](../decisions/ADR-021-aspire-local-orchestration.md)
+- [ADR-024: TypeScript для Aspire AppHost](../decisions/ADR-024-typescript-aspire-apphost.md)
 - [Aspire 13: JavaScript hosting](https://aspire.dev/whats-new/aspire-13/)
