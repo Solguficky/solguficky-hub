@@ -62,6 +62,8 @@ Scala + Apache Pekko — принятое стратегическое Future-н
 
 Pekko предпочтителен как Apache-проект и открытая actor ecosystem после изменения лицензирования новых версий Akka. До проектирования нужен отдельный ADR.
 
+Открытым остаётся продукт хранения событий: PostgreSQL с собственной append-only таблицей, KurrentDB или Marten при выборе .NET. Это единственное место платформы, где выбор специализированного event store вообще стоит на повестке; критерии сравнения и acceptance test удаления субъекта описаны в решении 5 [RFC-004](../rfcs/RFC-004-meetups-domain-events-persistence.md). Закрывается отдельным spike до проектирования сервиса.
+
 ## Свидетельства и ссылки
 
 - Current code: `services/auction-service/`

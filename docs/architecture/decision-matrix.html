@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solguficky Hub - матрица технических решений по сервисам</title>
+<style>
+  /* Токены дизайн-системы Organic перенесены из docs/design/bot/storyboard.html,
+     чтобы документы репозитория выглядели одинаково. Страница светлая намеренно. */
+  @import url('https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;600;700&display=swap');
+
+  :root {
+    --bg: #f5ead8;
+    --surface: #ebddc5;
+    --card: #fbf5ea;
+    --ink: #201e1d;
+    --divider: color-mix(in srgb, #201e1d 16%, transparent);
+
+    --n100: #f9f4ed; --n200: #eee7db; --n300: #dcd3c4; --n400: #c0b6a5;
+    --n500: #a19786; --n600: #82796a; --n700: #645c50; --n800: #474238; --n900: #2e2b25;
+
+    --a100: #fff2eb; --a200: #ffe1d0; --a300: #ffc6a5; --a400: #f6a06b;
+    --a500: #d67f48; --a600: #b2622d; --a700: #8c491a; --a800: #643312;
+
+    --g100: #f0fae1; --g200: #e1eecc; --g300: #ccdbb2; --g400: #aebf92;
+    --g500: #8fa073; --g600: #728157; --g700: #56633f; --g800: #3d472b;
+
+    --b100: #e9f1f7; --b200: #d3e3ef; --b400: #8fb4cf; --b700: #3d6a8a;
+
+    --font-heading: "Caprasimo", Georgia, "Times New Roman", serif;
+    --font-body: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", "Consolas", "DejaVu Sans Mono", ui-monospace, monospace;
+
+    --radius-sm: 8px;
+    --radius-md: 16px;
+    --shadow-sm: 0 1px 2px color-mix(in srgb, #2e2b25 14%, transparent);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 var(--font-body); -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 40px 24px 96px; }
+
+  h1, h2, h3 { font-family: var(--font-heading); font-weight: 400; line-height: 1.14; letter-spacing: -.015em; margin: 0; }
+  h1 { font-size: 38px; }
+  h2 { font-size: 27px; margin: 52px 0 6px; }
+  h3 { font-size: 19px; margin: 30px 0 4px; }
+  p { margin: 10px 0; }
+  a { color: var(--a700); text-underline-offset: 3px; }
+  a:hover { color: var(--a800); }
+  code { font-family: var(--mono); font-size: .88em; background: var(--n200); padding: 1px 5px; border-radius: 5px; }
+  .lede { font-size: 17px; color: var(--n800); max-width: 78ch; }
+  .muted { color: var(--n600); }
+  .small { font-size: 13px; }
+
+  header.top { border-bottom: 2px solid var(--divider); padding-bottom: 22px; }
+  .meta { margin-top: 12px; font-size: 13px; color: var(--n700); }
+
+  .note {
+    background: var(--card); border: 1px solid var(--n300); border-left: 4px solid var(--a500);
+    border-radius: var(--radius-sm); padding: 14px 18px; margin: 18px 0; max-width: 88ch;
+  }
+  .note strong { color: var(--a800); }
+
+  /* ---- статусы ---- */
+  .st { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+        text-transform: uppercase; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+  .st-accepted { background: var(--g200); color: var(--g800); border: 1px solid var(--g400); }
+  .st-proposed { background: var(--a200); color: var(--a800); border: 1px solid var(--a400); }
+  .st-open     { background: var(--n100); color: var(--n700); border: 1px dashed var(--n400); }
+  .st-na       { background: transparent; color: var(--n500); border: 1px solid var(--n300); }
+  .st-mvp      { background: var(--b200); color: var(--b700); border: 1px solid var(--b400); }
+  .st-future   { background: var(--n200); color: var(--n700); border: 1px solid var(--n400); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 14px 0 4px; }
+  .legend div { display: flex; align-items: baseline; gap: 8px; font-size: 13.5px; max-width: 40ch; }
+
+  /* ---- таблицы вариантов ---- */
+  .scroll { overflow-x: auto; margin: 14px -4px 0; padding: 4px; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%;
+          background: var(--card); border: 1px solid var(--n300); border-radius: var(--radius-md); overflow: hidden; }
+  table th, table td { text-align: left; vertical-align: top; padding: 10px 13px;
+                       border-bottom: 1px solid var(--n300); border-right: 1px solid var(--n200); }
+  table thead th { background: var(--surface); font-family: var(--font-body); font-weight: 700;
+                   font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--n800); }
+  table tr:last-child td, table tr:last-child th { border-bottom: none; }
+
+  table.opts { min-width: 880px; font-size: 13.5px; }
+  table.opts tbody th { background: var(--n100); font-family: var(--font-body); font-weight: 700;
+                        font-size: 13.5px; width: 22%; min-width: 190px; }
+  table.opts td.side { font-size: 12px; color: var(--n700); width: 108px; }
+  table.opts .cost { color: var(--a800); }
+
+  /* ---- матрица ---- */
+  table.matrix { min-width: 1160px; }
+  table.matrix thead th { position: sticky; top: 0; z-index: 2; }
+  table.matrix tbody th { background: var(--n100); font-family: var(--font-body); font-weight: 700; font-size: 14px;
+                          position: sticky; left: 0; z-index: 1; min-width: 172px; box-shadow: 1px 0 0 var(--n300); }
+  td .val { display: block; font-weight: 600; font-size: 13.5px; margin: 4px 0 3px; }
+  td .why { display: block; font-size: 11.5px; line-height: 1.4; color: var(--n700); }
+  td.accepted { background: color-mix(in srgb, var(--g200) 55%, transparent); }
+  td.proposed { background: color-mix(in srgb, var(--a200) 45%, transparent); }
+  td.open     { background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--n300) 28%, transparent) 7px 8px); }
+  td.na       { background: transparent; color: var(--n500); }
+  tbody th .layer { display: block; margin-top: 5px; }
+
+  .spike { background: var(--card); border: 1px solid var(--n300); border-radius: var(--radius-md);
+           padding: 16px 20px; margin-top: 14px; box-shadow: var(--shadow-sm); max-width: 88ch; }
+  .spike ol { margin: 8px 0 0; padding-left: 20px; }
+  .spike li { margin: 4px 0; font-size: 14px; }
+
+  ul.rules { max-width: 86ch; }
+  ul.rules li { margin: 8px 0; }
+
+  footer { margin-top: 56px; padding-top: 18px; border-top: 2px solid var(--divider); font-size: 13px; color: var(--n700); }
+  @media (max-width: 640px) { .wrap { padding: 28px 14px 64px; } h1 { font-size: 30px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>Матрица технических решений по сервисам</h1>
+  <p class="lede">Документ показывает, какие клетки уже определены продуктом и доменом, а какие остаются свободными и поэтому доступны для исследовательского выбора. Матрица <b>фиксирует состояние выбора и его обоснование</b>, она не назначает технологии сервисам заранее.</p>
+  <p class="meta"><b>Статус документа:</b> Draft, заполняется постепенно. <b>Слой:</b> сквозной. <b>Правило перевода клетки в Accepted:</b> только через ADR. Критерии выбора языка и метод эксперимента остаются в <a href="technology-selection.md">technology-selection.md</a>.</p>
+</header>
+
+<div class="note">
+  <p><strong>Два требования к каждой клетке.</strong> Первое: у выбора есть обоснование, привязанное к домену, продукту или проверяемому свойству. Второе: свободная клетка называет не «пока не решили», а <b>критерий, который её закроет</b>. Развёрнутый вопрос при этом живёт в brief сервиса, а матрица показывает только его наличие и статус.</p>
+  <p class="small muted" style="margin-bottom:0">Продуктовая ценность и полигонная ценность обе учитываются. Полигонный интерес не может назначить решение, которому нет доменного обоснования, но при сопоставимых кандидатах он решает выбор.</p>
+</div>
+
+<h2>Легенда</h2>
+<div class="legend">
+  <div><span class="st st-accepted">Accepted</span><span>решено владельцем, есть ADR</span></div>
+  <div><span class="st st-proposed">Proposed</span><span>есть обоснованное предпочтение, ADR ещё нет</span></div>
+  <div><span class="st st-open">Open</span><span>варианты исследуются, назван критерий закрытия</span></div>
+  <div><span class="st st-na">N/A</span><span>ось к сервису не применима</span></div>
+  <div><span class="st st-mvp">MVP</span><span>требуется для первой живой сходки</span></div>
+  <div><span class="st st-future">Future / гипотеза</span><span>направление или непроверенная идея</span></div>
+</div>
+
+<h2>Множества, из которых выбираем</h2>
+<p class="lede">Каталог доступных вариантов с их сильными и слабыми сторонами. Где какой вариант применён — видно в матрице, здесь это не дублируется.</p>
+
+<h3>Языки и рантаймы</h3>
+<p class="small muted">По ADR-007 общего лимита backend runtime нет: каждый сервис выбирает стек независимо, а стоимость нового operational stack остаётся обязательным критерием.</p>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Язык и рантайм</th><th>Сильные стороны</th><th>Слабые стороны</th><th>Где обычно оправдан</th></tr></thead>
+  <tbody>
+    <tr><th>TypeScript / Node</th>
+      <td>Живая экосистема Telegram Bot API; общий язык и типы с браузерным клиентом; быстрый цикл правок UI.</td>
+      <td>Типы стираются в рантайме и не защищают границу; CPU-bound работа упирается в один поток; строгость зависит от настройки инструментов.</td>
+      <td>Edge и интеграция с внешними API, презентационный слой, всё, что меняется часто.</td></tr>
+    <tr><th>C# / .NET</th>
+      <td>Зрелая инфраструктура под gRPC, PostgreSQL и Aspire; лучший tooling на Windows; знаком владельцу; есть Akka.NET и Orleans.</td>
+      <td>Изменяемость по умолчанию; недопустимые состояния выражаются дисциплиной, а не типами.</td>
+      <td>Сервисы с обычной транзакционной моделью, где важнее скорость и предсказуемость.</td></tr>
+    <tr><th>F# / .NET</th>
+      <td>Суммарные типы и неизменяемость по умолчанию: недопустимое состояние можно сделать невыразимым; тот же рантайм и те же библиотеки, что у C#.</td>
+      <td>Меньше примеров; часть .NET-библиотек рассчитана на объектный стиль и требует прослоек на границах.</td>
+      <td>Домен с инвариантами и переходами состояний, где точность модели важнее скорости набора кода.</td></tr>
+    <tr><th>Kotlin / JVM</th>
+      <td>Запечатанные типы, защита от null, корутины; богатая экосистема JVM.</td>
+      <td>Отдельный operational stack, если JVM ещё нет в проекте; время сборки.</td>
+      <td>Backend с богатой доменной моделью, когда JVM уже нужна по другим причинам.</td></tr>
+    <tr><th>Scala 3 / JVM</th>
+      <td>Самая выразительная система типов в списке; Pekko с persistent entities, шардированием и проекциями.</td>
+      <td>Тяжёлая сборка и tooling, на чём проект уже обжигался; высокая кривая входа.</td>
+      <td>Акторные системы с потоком событий, где нужны порядок, восстановление и таймеры.</td></tr>
+    <tr><th>Go</th>
+      <td>Простой рантайм, быстрый старт, лёгкий деплой, сильная сетевая стандартная библиотека.</td>
+      <td>Бедная выразительность для домена: нет суммарных типов, много ручной обработки ошибок.</td>
+      <td>Инфраструктурные и сетевые компоненты, прокси, вспомогательные шлюзы.</td></tr>
+    <tr><th>Elixir / BEAM</th>
+      <td>Миллионы лёгких процессов, supervision, готовые каналы, presence и fan-out в Phoenix.</td>
+      <td>Динамическая типизация; отдельный operational stack; меньше знакомых библиотек.</td>
+      <td>Постоянные соединения, presence, широковещательная рассылка.</td></tr>
+    <tr><th>Python</th>
+      <td>Самый быстрый путь от идеи к работающему скрипту; лучшая экосистема для данных, аналитики и LLM; уже используется в инструментах репозитория.</td>
+      <td>Динамическая типизация, проверки опциональны; слабее для долгоживущих stateful-сервисов; производительность.</td>
+      <td>Инструменты, разовые проверки, аналитика, будущие AI-сценарии вроде дайджеста или генерации афиши.</td></tr>
+    <tr><th>Rust</th>
+      <td>Предсказуемая память и производительность без сборщика мусора.</td>
+      <td>Медленнее всех по скорости разработки; нет зрелого фреймворка событийного хранения; асинхронный код сложен.</td>
+      <td>Там, где ресурсы действительно ограничены. В проекте остаётся только в legacy-шлюзе.</td></tr>
+    <tr><th>Ruby</th>
+      <td>Быстрая разработка CRUD-интерфейсов и админок, зрелые соглашения.</td>
+      <td>Отдельный стек ради одной задачи; производительность.</td>
+      <td>Административный интерфейс, если он когда-нибудь будет обоснован.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Источник истины</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>Текущее состояние в строках</th><td>Строка описывает актуальный факт, изменение выполняется обновлением.</td><td>Данные по природе являются текущими фактами, история не нужна.</td><td class="cost">Различие «что именно изменилось» и историю приходится строить отдельным механизмом.</td></tr>
+    <tr><th>Строки плюс журнал доменных событий</th><td>Событие пишется в одной транзакции с состоянием и является единственным способом его изменить.</td><td>Нужны различие изменений, история и надёжная публикация наружу, но не нужен пересчёт состояния из прошлого.</td><td class="cost">У журнала своя схема, ретеншен и версионирование; запись мимо приложения по-прежнему возможна.</td></tr>
+    <tr><th>Поток событий как источник истины</th><td>Состояние выводится сворачиванием событий, прошлое неизменяемо.</td><td>Аудит принадлежит домену по существу, нужны восстановление на момент и защита от расхождения.</td><td class="cost">Дорожают чтение, эволюция схемы событий и удаление персональных данных.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Выполнение команд</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>Обычная транзакция на команду</th><td>Состояние читается и записывается в пределах обработки запроса.</td><td>К одной сущности не идёт поток конкурирующих команд.</td><td class="cost">Инварианты защищает транзакция, а не единственный владелец состояния.</td></tr>
+    <tr><th>Актор на агрегат</th><td>Состояние живёт в памяти, очередь сообщений сериализует команды к сущности.</td><td>На одну сущность приходится поток команд с требованием порядка.</td><td class="cost">Нужны actor runtime, восстановление состояния и решение о размещении акторов.</td></tr>
+    <tr><th>Виртуальный актор</th><td>Сущность активируется по обращению, рантайм сам хранит и восстанавливает её состояние.</td><td>Много мелких долгоживущих сущностей, например по одной на человека.</td><td class="cost">Тот же actor runtime плюс зависимость от его модели хранения.</td></tr>
+    <tr><th>Процессы под supervision</th><td>Лёгкие изолированные процессы с деревом надзора.</td><td>Множество независимых недолговечных задач или соединений.</td><td class="cost">Отдельный operational stack.</td></tr>
+    <tr><th>Очередь задач или фоновый воркер</th><td>Работа берётся из устойчивой таблицы или очереди и выполняется вне запроса.</td><td>Действие отложено во времени и обязано пережить рестарт.</td><td class="cost">Нужны наблюдаемость очереди и защита от двойного выполнения.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Конкурентность</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>Версия строки</th><td>Запись проходит, только если версия совпала с прочитанной.</td><td>Конкурентные правки редки, а конфликт можно показать человеку.</td><td class="cost">Нужен понятный отказ и возможность повторить.</td></tr>
+    <tr><th>Ожидаемая ревизия потока</th><td>Добавление событий проходит, только если поток не сдвинулся.</td><td>Источником истины является поток событий.</td><td class="cost">Доступно только вместе с потоком событий.</td></tr>
+    <tr><th>Единственный писатель</th><td>Все команды к сущности проходят через одного владельца состояния.</td><td>Есть настоящая конкуренция за одну сущность.</td><td class="cost">Конфликт исчезает из виду: правки применяются по очереди, а не отвергаются.</td></tr>
+    <tr><th>Блокировка строки</th><td>Строка удерживается до конца транзакции.</td><td>Критическая секция коротка, а конфликты часты.</td><td class="cost">Ожидание вместо отказа, риск удержания и взаимных блокировок.</td></tr>
+    <tr><th>Ключ идемпотентности</th><td>Повтор той же команды не даёт второго эффекта.</td><td>Повторные нажатия и повторная доставка сообщений.</td><td class="cost">Не разрешает конфликт двух разных правок: это защита от повтора, а не от гонки.</td></tr>
+    <tr><th>Последняя запись побеждает</th><td>Проверки нет, побеждает тот, кто записал позже.</td><td>Данные, где потеря чужой правки безразлична.</td><td class="cost">Тихая потеря изменения. Выбирается только явно, а не по умолчанию.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Чтение</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>Запросы к тем же таблицам</th><td>Читающая сторона обращается к тому же состоянию, отдельной модели чтения нет.</td><td>Форма чтения близка к форме записи, и своё изменение должно быть видно сразу.</td><td class="cost">Сложный запрос упирается в нормализованную схему.</td></tr>
+    <tr><th>Денормализованная модель в той же транзакции</th><td>Модель чтения обновляется вместе с записью.</td><td>Нужна другая форма данных, но отставание недопустимо.</td><td class="cost">Запись дорожает, а сбой обновления модели чтения роняет команду.</td></tr>
+    <tr><th>Денормализованная модель, обновляемая подписчиком</th><td>Модель чтения догоняет асинхронно.</td><td>Чтений много, форма сильно отличается, отставание допустимо.</td><td class="cost">Нужны восстановление модели и явное решение про чтение сразу после своей записи.</td></tr>
+    <tr><th>Кэш готового ответа</th><td>Ответ сохраняется и обновляется по событию или по времени.</td><td>Ответ дорогой и часто повторяется.</td><td class="cost">Инвалидация; для фактов авторизации требует отдельного решения, иначе устаревшая роль работает как пропущенная проверка.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Хранилище</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>PostgreSQL</th><td>Основное хранилище платформы по ADR-004.</td><td>Любая реляционная модель; состояние, журнал и модель чтения живут в одной транзакции.</td><td class="cost">Поток событий требует собственной append-only таблицы и своей механики версий.</td></tr>
+    <tr><th>Marten поверх PostgreSQL</th><td>Библиотека потоков и проекций над той же СУБД, только для .NET.</td><td>Нужен готовый событийный слой без второй базы.</td><td class="cost">Привязка к .NET; компромисс с удалением данных не снимается.</td></tr>
+    <tr><th>KurrentDB</th><td>Специализированное хранилище потоков с подписками и проекциями.</td><td>Поток событий является продуктом, а не деталью реализации.</td><td class="cost">Вторая СУБД в эксплуатации; освобождение места после удаления требует отдельного обслуживания.</td></tr>
+    <tr><th>Redis</th><td>Быстрое хранилище ключ-значение со сроком жизни записей.</td><td>Недолговечное состояние: диалог, ключи идемпотентности, кэш.</td><td class="cost">Не является источником истины; потеря данных должна быть безболезненной.</td></tr>
+    <tr><th>JetStream KV и потоки</th><td>Устойчивое хранилище рядом с шиной.</td><td>Состояние доставки и координация потребителей.</td><td class="cost">Удаление и ретеншен работают на уровне потока, а не отдельной записи.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Публикация и потребление событий</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Сторона</th><th>Что это значит</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>Журнал как outbox</th><td class="side">публикация</td><td>Наружу отправляется то, что записано в журнал домена той же транзакцией.</td><td class="cost">Нужен релей и наблюдаемость за его отставанием.</td></tr>
+    <tr><th>Отдельная таблица outbox</th><td class="side">публикация</td><td>Запись для отправки кладётся рядом с состоянием в той же транзакции.</td><td class="cost">Лишняя таблица; нужна там, где журнала домена нет.</td></tr>
+    <tr><th>Подписка на хранилище событий</th><td class="side">публикация</td><td>Потребители читают поток напрямую из хранилища.</td><td class="cost">Связывает потребителей с внутренней моделью событий сервиса.</td></tr>
+    <tr><th>Прямая отправка без журнала</th><td class="side">публикация</td><td>Сообщение уходит в шину прямо из обработчика.</td><td class="cost">Событие теряется при сбое между записью состояния и отправкой.</td></tr>
+    <tr><th>Устойчивый потребитель</th><td class="side">потребление</td><td>Позиция хранится брокером, доставка повторяется до подтверждения.</td><td class="cost">Требует подтверждений и готовности к повторам.</td></tr>
+    <tr><th>Журнал обработанных сообщений</th><td class="side">потребление</td><td>Идентификаторы обработанных событий запоминаются и повтор подавляется.</td><td class="cost">Своя таблица и её ретеншен.</td></tr>
+    <tr><th>Подписка без сохранения позиции</th><td class="side">потребление</td><td>Пропущенное во время простоя не восстанавливается.</td><td class="cost">Допустимо только там, где потеря события безразлична.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Транспорт границы</h3>
+<div class="scroll">
+<table class="opts">
+  <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
+  <tbody>
+    <tr><th>gRPC</th><td>Синхронный вызов с типизированным контрактом.</td><td>Ответ нужен здесь и сейчас, и без него сценарий не продолжается.</td><td class="cost">Требует явного таймаута и решения о поведении при недоступности.</td></tr>
+    <tr><th>NATS и Protobuf</th><td>Асинхронное сообщение через шину.</td><td>Отправитель не ждёт ответа и переживёт задержку.</td><td class="cost">Доставка не реже одного раза; порядок и повторы обрабатывает потребитель.</td></tr>
+    <tr><th>Внутрипроцессный вызов</th><td>Прямой вызов внутри одного сервиса.</td><td>Граница сервисов не пересекается.</td><td class="cost">Не является интеграцией и не требует контракта.</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="small muted">Транспорт не является осью сервиса: он выбирается для каждой операции отдельно по её failure semantics, поэтому в матрицу колонкой не входит.</p>
+
+<h2>Матрица</h2>
+<p class="lede">Строка — сервис или граница. Значение в клетке сопровождается коротким обоснованием; у свободной клетки вместо обоснования указан критерий, который её закроет.</p>
+
+<div class="scroll">
+<table class="matrix">
+  <thead>
+    <tr>
+      <th>Сервис</th>
+      <th>Язык и рантайм</th>
+      <th>Источник истины</th>
+      <th>Выполнение команд</th>
+      <th>Конкурентность</th>
+      <th>Чтение</th>
+      <th>Хранилище</th>
+      <th>Интеграция</th>
+    </tr>
+  </thead>
+  <tbody>
+
+  <tr>
+    <th>Telegram Gateway<span class="layer"><span class="st st-mvp">MVP</span></span></th>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">Стек принят владельцем для быстро меняющегося Telegram edge; ADR ещё не оформлен. Текущий Rust-шлюз остаётся legacy аукциона до migration gate.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Доменных правил в шлюзе быть не должно: это требование первого среза.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Обработка обновления без удержания состояния между сообщениями.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">ключ идемпотентности</span><span class="why">Повторное нажатие кнопки не должно создавать второй объект (E-09).</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">читает через Meetups</span><span class="why">Все чтения сходки идут одним путём внутри Meetups.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | Redis | память</span><span class="why">Закроется требованием к диалоговому состоянию и ключу идемпотентности: переживают ли они рестарт и как долго живут. Вопрос ведётся в brief шлюза.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">gRPC | NATS</span><span class="why">Закроется failure semantics каждой операции первого среза.</span></td>
+  </tr>
+
+  <tr>
+    <th>Identity<span class="layer"><span class="st st-mvp">MVP</span></span></th>
+    <td class="open"><span class="st st-open">Open</span><span class="val">F# | C# | Kotlin | Go</span><span class="why">Закроется экспериментом по backend. Совпадение с Meetups не обязательно, но удешевляет эксплуатацию.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">текущее состояние в строках</span><span class="why">Изменяемые PII предполагается держать в Identity, но собственная модель хранения Identity ещё требует отдельного решения.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Установление личности и выдача роли не образуют конкурирующего потока команд.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">не требуется</span><span class="why">Одновременной правки одного профиля в сценариях MVP нет.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">запросы к тем же таблицам</span><span class="why">Чтение по внутреннему идентификатору. Кэш отображаемых данных допустим, кэш фактов авторизации требует отдельного решения.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004, основное хранилище.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">нужны ли события наружу</span><span class="why">Закроется вопросом, обязаны ли потребители узнавать об удалении профиля, а не только Meetups.</span></td>
+  </tr>
+
+  <tr>
+    <th>Meetups<span class="layer"><span class="st st-mvp">MVP</span></span></th>
+    <td class="open"><span class="st st-open">Open</span><span class="val">F# | C# | Kotlin | Go</span><span class="why">Закроется экспериментом: выразительность инвариантов, транзакции, зрелость инструментов, скорость итераций. Критерии ведутся в brief сервиса.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">строки плюс журнал доменных событий</span><span class="why">ADR-024: строки остаются источником истины, а доменное событие сохраняется в той же транзакции; это не Event Sourcing.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Конкуренции за одну сходку не ожидается, окупать актора нечем. Решение владельца по этой оси ещё не принято.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">версия строки</span><span class="why">При выбранном источнике истины это единственный доступный механизм; конфликт становится видимым отказом, а не тихой потерей правки. Не принято.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">запросы к тем же таблицам</span><span class="why">Бот обязан показать собственную запись сразу, отдельная модель чтения здесь только удорожает. Не принято.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004; специализированное хранилище имело бы смысл только при потоке событий.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">журнал как outbox</span><span class="why">Публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим. Не принято.</span></td>
+  </tr>
+
+  <tr>
+    <th>Notifications<span class="layer"><span class="st st-mvp">MVP</span></span></th>
+    <td class="open"><span class="st st-open">Open</span><span class="val">существующий C# | другой</span><span class="why">Закроется первым реальным сценарием напоминания: подтверждает ли текущий каркас пригодность или переписывается.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">строки плюс история попыток</span><span class="why">Закроется требованием к разбору инцидента доставки и ретеншену попыток.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">очередь задач | актор | процессы</span><span class="why">Единственная открытая ось выполнения команд в MVP. Закроется требованиями к напоминанию: перенос времени, отмена, рестарт, допустимая задержка. Вопросы ведутся в brief сервиса.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">ключ идемпотентности доставки</span><span class="why">Повтор из шины не должен превращаться во второе сообщение человеку.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">запросы к тем же таблицам</span><span class="why">Подписки читаются по человеку и сходке, отдельная модель не нужна.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | плюс JetStream KV</span><span class="why">Закроется вместе с моделью выполнения: где живёт отложенное напоминание.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">устойчивый потребитель</span><span class="why">Потребление событий Meetups обязано пережить рестарт и подавить известный повтор.</span></td>
+  </tr>
+
+  <tr>
+    <th>Auction v2<span class="layer"><span class="st st-future">Future</span></span></th>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">Scala 3 + Apache Pekko</span><span class="why">Принятое стратегическое направление; Pekko как открытая actor-экосистема. ADR будет собственным.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">поток событий</span><span class="why">Аудит ставок является продуктовым требованием, а прошлое лота неизменяемо по природе домена.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">актор на агрегат</span><span class="why">На один лот приходится поток конкурирующих ставок с требованием порядка. Единственное место, где актор окупается доменом.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">единственный писатель</span><span class="why">Следствие актора: команды к лоту выполняются по очереди.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">синхронная | асинхронная модель</span><span class="why">Закроется требованием к задержке табло ставок.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | KurrentDB | Marten</span><span class="why">Единственное место, где выбор специализированного хранилища вообще стоит на повестке. Закроется spike; критерии ведутся в brief аукциона.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">подписка на хранилище | outbox</span><span class="why">Закроется вместе с продуктом хранения.</span></td>
+  </tr>
+
+  <tr>
+    <th>Achievements<span class="layer"><span class="st st-future">гипотеза</span></span></th>
+    <td class="open"><span class="st st-open">Open</span><span class="val">C# и виртуальные акторы как гипотеза</span><span class="why">Сервис не спроектирован. Строка существует, чтобы виртуальные акторы были видны как незанятый вариант, а не как назначение.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">—</span><span class="why">Закроется продуктовым вопросом: достижение это вычисляемое представление чужих событий или собственное состояние.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">виртуальный актор | обычная транзакция</span><span class="why">Виртуальные акторы окупаются множеством мелких долгоживущих сущностей; нужно подтверждение, что достижений много и они активны.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">—</span><span class="why">Зависит от предыдущей клетки.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">—</span><span class="why">Зависит от того, вычисляется достижение на лету или хранится.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">—</span><span class="why">Отдельного хранилища гипотеза не требует до появления сценария.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">потребитель чужих событий</span><span class="why">Наиболее вероятная роль: только чтение шины без собственных событий наружу.</span></td>
+  </tr>
+
+  <tr>
+    <th>Realtime Gateway<span class="layer"><span class="st st-future">гипотеза</span></span></th>
+    <td class="open"><span class="st st-open">Open</span><span class="val">Elixir + Phoenix как гипотеза</span><span class="why">Открывается только при подтверждённом сценарии с постоянными соединениями. Текущий SignalR-шлюз заморожен и обслуживает только аукцион.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Транспортная граница, состояние домена ей не принадлежит.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">процессы под supervision | другое</span><span class="why">Закроется числом одновременных соединений и требованием к их живучести.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">не применимо</span><span class="why">Команд домена не выполняет.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">подписка на поток</span><span class="why">Закроется вместе с моделью соединений.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">без собственного хранилища</span><span class="why">Наиболее вероятно; проверяется наличием состояния сессии, которое обязано пережить рестарт.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">потребитель шины</span><span class="why">Закроется требованием к задержке и порядку доставки в браузер.</span></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<h2>Проверка вне production-границы</h2>
+<p class="lede">Вариант «поток событий как источник истины без акторов» не назначен ни одному сервису и не должен получать сервис под себя. Проверяется ограниченным spike на существующем домене.</p>
+<div class="spike">
+  <p style="margin-top:0"><b>Spike: поток событий без акторов.</b> Берётся один срез команды из Meetups или будущего аукциона и реализуется отдельно от production-кода.</p>
+  <ol>
+    <li>обработчик без состояния в памяти;</li>
+    <li>загрузка потока и сворачивание агрегата;</li>
+    <li>добавление события с ожидаемой ревизией;</li>
+    <li>построение модели чтения;</li>
+    <li>изменение схемы события и повторное проигрывание потока;</li>
+    <li>удаление данных одного человека и проверка того, что осталось.</li>
+  </ol>
+  <p class="small muted" style="margin-bottom:0">Результат spike — свидетельства для решения, а не работающий сервис. Если он покажет, что модель окупается, это станет доводом в конкретной клетке, а не поводом завести новую границу.</p>
+</div>
+
+<h2>Правила заполнения</h2>
+<ul class="rules">
+  <li><b>Клетка заполняется требованием, а не интересом.</b> Сначала выясняется, следует ли значение из домена, продукта или уже принятого решения. Если следует, клетка не является свободной, каким бы интересным ни был альтернативный вариант.</li>
+  <li><b>Полигонный интерес решает выбор между сопоставимыми кандидатами.</b> Когда два варианта одинаково пригодны, предпочтение отдаётся дающему новое знание. Это законный довод, и он записывается в обоснование наравне с остальными.</li>
+  <li><b>Повторение уже освоенного считается платой, а не отдачей.</b> Если вариант воспроизводит сделанное в другом сервисе, его учебная ценность равна нулю, и решать должны продуктовые критерии.</li>
+  <li><b>Свободная клетка называет критерий закрытия,</b> а развёрнутый вопрос живёт в brief сервиса. Матрица не является местом ведения открытых вопросов.</li>
+  <li><b>Accepted появляется только вместе с ADR.</b> Матрица показывает состояние решений, а не принимает их.</li>
+  <li><b>Гипотетический сервис не получает назначений.</b> Незанятый вариант не является причиной завести сервис.</li>
+  <li><b>Если сравниваются два состояния одного сервиса во времени,</b> между ними меняется ровно одна клетка: иначе наблюдаемая разница объясняется несколькими причинами сразу и ничего не доказывает.</li>
+</ul>
+
+<footer>
+  <p><b>Связанные документы:</b>
+    <a href="technology-selection.md">technology-selection.md</a> — критерии выбора языка и метод эксперимента;
+    <a href="overview.md">overview.md</a> — Current / MVP / Future / Legacy;
+    <a href="first-slice.md">first-slice.md</a> — состав первого среза;
+    <a href="../services/README.md">services/</a> — открытые вопросы каждого сервиса;
+    <a href="../decisions/README.md">decisions/</a> — принятые решения;
+    <a href="../rfcs/RFC-004-meetups-domain-events-persistence.md">RFC-004</a> — происхождение осей и разбор вариантов хранения.</p>
+  <p class="muted">Матрица обновляется вместе с решениями. Расхождение матрицы с ADR является дефектом матрицы.</p>
+</footer>
+
+</div>
+</body>
+</html>
