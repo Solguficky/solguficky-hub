@@ -26,12 +26,20 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `services/websocket-gateway/` — Legacy/Frozen: C# + SignalR только для аукциона; пока остаётся в сборке.
 - `meetups` и `identity` — MVP-сервисы, ещё не реализованы. Identity остаётся отдельной границей; языки backend не выбраны.
 - `frontend/admin-app/` — заглушка будущего Telegram Mini App.
+- `tools/git-hooks/` — POSIX sh скрипты проверок, общие для локальных хуков и CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 
 ## Команды
 
 ```bash
+# Git-хуки — один раз после клонирования, из корня
+lefthook install
+
+# Проверки, которые выполняют хуки и CI (можно запускать вручную)
+sh tools/git-hooks/check-commit-message.sh <файл-с-сообщением>
+sh tools/git-hooks/check-skills-mirror.sh
+
 # Локальная оркестрация — из infra/apphost/
 aspire run
 
@@ -68,6 +76,8 @@ nats-tester --help
 - Любое изменение `contracts/proto/` требует skill `sgh-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
 - Не коммить без явной просьбы. Закончил правки — покажи `git status --short` и остановись. Push и PR — тоже отдельные явные решения владельца.
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `sgh-write-commit`.
+- Формат сообщения проверяет локальный хук `commit-msg` (lefthook), синхронность скиллов — хук `pre-commit` и джоба `repo-hygiene` в CI. Скрипты проверок — в `tools/git-hooks/`.
+- Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
 - Не считай Core NATS надёжной доставкой: JetStream, durable consumers и идемпотентность требуют согласованного решения.
 - Документация меняется вместе с кодом. При конфликте кода и документации выясни временной слой и зрелость решения, а не выбирай источник молча.

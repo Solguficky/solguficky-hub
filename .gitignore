@@ -108,3 +108,6 @@ pnpm-debug.log*
 /coverage/
 .nyc_output/
 .fake
+# --- lefthook ---
+# Локальные переопределения хуков, не общие для команды
+lefthook-local.yml

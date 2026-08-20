@@ -27,8 +27,19 @@ services/auction-service/     legacy C# + Akka.NET
 services/notifications-service/ C#-каркас уведомлений
 services/telegram-gateway/    current/legacy Rust + Teloxide
 services/websocket-gateway/   legacy C# + SignalR
+tools/git-hooks/              скрипты проверок для хуков и CI
 tools/nats-tester/            ручная проверка NATS-сообщений
 ```
+
+## Первая настройка
+
+Git-хуки репозитория ставятся один раз через [lefthook](https://github.com/evilmartians/lefthook):
+
+```bash
+lefthook install
+```
+
+Хуки проверяют формат сообщения коммита и синхронность скиллов. Формат сообщения — проверка только локальная: стандарт распространяется на обычные коммиты, а заголовки PR и merge-коммиты под него не подпадают.
 
 ## Локальный запуск
 
