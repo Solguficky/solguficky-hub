@@ -325,7 +325,7 @@
   <tr>
     <th>Identity<span class="layer"><span class="st st-mvp">MVP</span></span></th>
     <td class="open"><span class="st st-open">Open</span><span class="val">F# | C# | Kotlin | Go</span><span class="why">Закроется экспериментом по backend. Совпадение с Meetups не обязательно, но удешевляет эксплуатацию.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">текущее состояние в строках</span><span class="why">Изменяемые PII предполагается держать в Identity, но собственная модель хранения Identity ещё требует отдельного решения.</span></td>
+    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">текущее состояние в строках</span><span class="why">По ADR-024 изменяемые PII остаются в Identity, а события Meetups несут внутренний идентификатор; собственная модель хранения Identity требует отдельного решения.</span></td>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Установление личности и выдача роли не образуют конкурирующего потока команд.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">не требуется</span><span class="why">Одновременной правки одного профиля в сценариях MVP нет.</span></td>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">запросы к тем же таблицам</span><span class="why">Чтение по внутреннему идентификатору. Кэш отображаемых данных допустим, кэш фактов авторизации требует отдельного решения.</span></td>
@@ -335,13 +335,13 @@
 
   <tr>
     <th>Meetups<span class="layer"><span class="st st-mvp">MVP</span></span></th>
-    <td class="open"><span class="st st-open">Open</span><span class="val">F# | C# | Kotlin | Go</span><span class="why">Закроется экспериментом: выразительность инвариантов, транзакции, зрелость инструментов, скорость итераций. Критерии ведутся в brief сервиса.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">F# + Dapper</span><span class="why">ADR-025: устройство из ADR-024 сводится к двум функциям над неизменяемым состоянием; runtime остаётся .NET, третьего operational stack не появляется.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">строки плюс журнал доменных событий</span><span class="why">ADR-024: строки остаются источником истины, а доменное событие сохраняется в той же транзакции; это не Event Sourcing.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Конкуренции за одну сходку не ожидается, окупать актора нечем. Решение владельца по этой оси ещё не принято.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">версия строки</span><span class="why">При выбранном источнике истины это единственный доступный механизм; конфликт становится видимым отказом, а не тихой потерей правки. Не принято.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">запросы к тем же таблицам</span><span class="why">Бот обязан показать собственную запись сразу, отдельная модель чтения здесь только удорожает. Не принято.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-024: конкуренции за одну сходку нет, окупать актора нечем. Следствие выбранного источника истины, а не отдельная цель.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">версия строки</span><span class="why">ADR-024: конфликт становится видимой ошибкой, а не тихой потерей чужой правки.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-024: бот обязан показать собственную запись сразу, отдельная модель чтения здесь только удорожает.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004; специализированное хранилище имело бы смысл только при потоке событий.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">журнал как outbox</span><span class="why">Публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим. Не принято.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">журнал как outbox</span><span class="why">ADR-024: публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим.</span></td>
   </tr>
 
   <tr>
