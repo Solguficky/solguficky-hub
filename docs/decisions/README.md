@@ -27,7 +27,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-004](ADR-004-postgresql-primary-database.md) | PostgreSQL | Active | Current primary storage |
 | [ADR-005](ADR-005-grpc-synchronous-communication.md) | gRPC | Active, limited scope | Конкретный transport определяется failure semantics сценария |
 | [ADR-006](ADR-006-railway-hosting.md) | Railway hosting | Needs review | Railway — вариант наряду с собственным железом и VPS |
-| [ADR-007](ADR-007-polyglot-service-stacks.md) | Полиглотные service stacks | Needs review | Большинство назначений языков больше не определяет направление |
+| [ADR-007](ADR-007-polyglot-service-stacks.md) | Полиглотная модель выбора стека | Active | Язык выбирается под задачу сервиса; назначения языков из исходной редакции удалены |
 | [ADR-008](ADR-008-apicurio-schema-registry.md) | Apicurio Registry | Superseded | Заменён ADR-014; возврат Registry требует нового решения |
 | [ADR-009](ADR-009-auction-actor-hierarchy.md) | Иерархия акторов аукциона | Legacy scope | Источник знаний для вывода C#/Akka.NET-кода |
 | [ADR-010](ADR-010-hybrid-auction-clients.md) | Клиенты гибридного аукциона | Needs review | Future-направление, вне MVP |
@@ -42,8 +42,10 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
 | [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов; уточнён ADR-023 |
 | [ADR-021](ADR-021-aspire-local-orchestration.md) | Aspire local orchestration | Active, limited scope | AppHost ещё не подтверждён живым запуском |
-| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение решается в RFC-004 |
+| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение принято в ADR-024 |
 | [ADR-023](ADR-023-meetup-public-number.md) | Публичный номер сходки рядом с UUIDv7 | Active | Номер — для человека и поддержки; внешний routing остаётся на UUID |
+| [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Внутреннее устройство Meetups: строки состояния плюс журнал доменных событий | Active | Один ADR на весь RFC-004: 1b, чтение из тех же таблиц, версия строки, опрос для отложенной публикации |
+| [ADR-025](ADR-025-meetups-fsharp-stack.md) | Стек Meetups: F#, Dapper, контракты через C#-проект | Active | Язык выбран под устройство из ADR-024; runtime остаётся .NET |
 
 ## Правила изменения
 
