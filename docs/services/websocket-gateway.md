@@ -15,6 +15,6 @@
 
 ## Свидетельства
 
-- Current implementation: `services/websocket-gateway/src/WebSocketGateway/Services/`
+- Current implementation: `legacy/websocket-gateway/src/WebSocketGateway/Services/`
 - Current integration catalog: [integration.md](../architecture/integration.md)
 - Historical design: [websocket-gateway-auction-design.md](../archive/services/websocket-gateway-auction-design.md)

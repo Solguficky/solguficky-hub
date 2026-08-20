@@ -37,7 +37,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\infra\servicedefaults\ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\..\..\shared\dotnet\service-defaults\ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>

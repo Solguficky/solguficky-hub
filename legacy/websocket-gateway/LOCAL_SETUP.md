@@ -30,7 +30,7 @@
 ## Установка зависимостей
 
 ```bash
-cd services/websocket-gateway
+cd legacy/websocket-gateway
 dotnet restore
 ```
 
@@ -255,7 +255,7 @@ dotnet run | jq .
 ## Docker Build (локально)
 
 ```bash
-cd services/websocket-gateway
+cd legacy/websocket-gateway
 docker build -t websocket-gateway:local .
 ```
 

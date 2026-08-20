@@ -12,6 +12,12 @@ Current workflow: `.github/workflows/ci.yml`.
 - Aspire AppHost требует отдельного restore/build/smoke-test gate;
 - compatibility check Protobuf ещё не внедрён.
 
+## Проверки репозитория
+
+Джоба `repo-hygiene` не зависит от сервисов и path filters: она проверяет, что скиллы в `.claude/skills` и `.agents/skills` не разошлись, и запускается на push и pull request. Джоба вызывает `tools/git-hooks/check-skills-mirror.sh` — тот же скрипт, что и локальный хук `pre-commit`, поэтому локальная и удалённая проверки не расходятся.
+
+[Формат сообщений коммитов](../standards/git/commit-messages.md) в CI не проверяется: стандарт распространяется на обычные коммиты, а в `main` при squash-merge попадает заголовок PR, к которому он не применяется. Контроль формата остаётся локальным хуком.
+
 Целевой минимум для документационных и контрактных изменений:
 
 1. Markdown links не содержат битых активных относительных ссылок.

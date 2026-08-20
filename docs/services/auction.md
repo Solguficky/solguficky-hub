@@ -66,9 +66,9 @@ Pekko предпочтителен как Apache-проект и открыта�
 
 ## Свидетельства и ссылки
 
-- Current code: `services/auction-service/`
-- EF migrations: `services/auction-service/src/AuctionService/Migrations/`
-- NATS handler scope: `services/auction-service/src/AuctionService/Handlers/NatsCommandHandler.cs`
+- Current code: `legacy/auction-service/`
+- EF migrations: `legacy/auction-service/src/AuctionService/Migrations/`
+- NATS handler scope: `legacy/auction-service/src/AuctionService/Handlers/NatsCommandHandler.cs`
 - [Архивный Akka.NET design](../archive/services/auction-service-akka-design.md)
 - [Future product specification](../product/future/auction-v2.md)
 - [Apache Pekko](https://pekko.apache.org/)

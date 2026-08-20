@@ -66,5 +66,5 @@ JetStream может участвовать во втором пункте и в
 
 ## Свидетельства и ссылки
 
-- Current handler: `services/notifications-service/src/NotificationsService/Handlers/BidPlacedHandler.cs`
+- Current handler: `legacy/notifications-service/src/NotificationsService/Handlers/BidPlacedHandler.cs`
 - [NATS JetStream schedules](https://docs.nats.io/nats-concepts/jetstream/headers)

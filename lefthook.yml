@@ -1,0 +1,22 @@
+# Git-хуки репозитория. Включаются один раз командой `lefthook install`.
+#
+# Хук — это быстрая обратная связь, а не гейт: он локальный и обходится
+# через `--no-verify`. Настоящая проверка живёт в .github/workflows/ci.yml
+# и вызывает те же скрипты из tools/git-hooks/.
+#
+# Локальные переопределения — в lefthook-local.yml, он в .gitignore.
+
+commit-msg:
+  commands:
+    conventional-commit:
+      # {1} — путь к файлу с сообщением коммита, который git передаёт хуку.
+      run: sh tools/git-hooks/check-commit-message.sh {1}
+
+pre-commit:
+  parallel: true
+  commands:
+    skills-mirror:
+      glob:
+        - '.claude/skills/**'
+        - '.agents/skills/**'
+      run: sh tools/git-hooks/check-skills-mirror.sh

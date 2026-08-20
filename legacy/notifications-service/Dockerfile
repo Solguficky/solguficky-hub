@@ -2,11 +2,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY ["services/notifications-service/src/NotificationsService/NotificationsService.csproj", "services/notifications-service/src/NotificationsService/"]
-RUN dotnet restore "services/notifications-service/src/NotificationsService/NotificationsService.csproj"
+COPY ["legacy/notifications-service/src/NotificationsService/NotificationsService.csproj", "legacy/notifications-service/src/NotificationsService/"]
+RUN dotnet restore "legacy/notifications-service/src/NotificationsService/NotificationsService.csproj"
 
-COPY ["services/notifications-service/", "services/notifications-service/"]
-WORKDIR "/src/services/notifications-service/src/NotificationsService"
+COPY ["legacy/notifications-service/", "legacy/notifications-service/"]
+WORKDIR "/src/legacy/notifications-service/src/NotificationsService"
 
 RUN --mount=type=bind,source=contracts,target=/src/contracts \
     dotnet build "NotificationsService.csproj" -c Release -o /app/build

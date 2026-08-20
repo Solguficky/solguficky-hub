@@ -37,7 +37,7 @@ docker run -p 4222:4222 nats:latest
 ### Запуск сервиса
 
 ```bash
-cd services/websocket-gateway/src/WebSocketGateway
+cd legacy/websocket-gateway/src/WebSocketGateway
 dotnet run
 ```
 
@@ -54,7 +54,7 @@ curl http://localhost:5000/health
 ### Build
 
 ```bash
-cd services/websocket-gateway
+cd legacy/websocket-gateway
 docker build -t websocket-gateway .
 ```
 
@@ -71,7 +71,7 @@ docker run -p 5000:5000 \
 ### Unit тесты
 
 ```bash
-cd services/websocket-gateway
+cd legacy/websocket-gateway
 dotnet test
 ```
 

@@ -225,7 +225,7 @@ docker-compose down --rmi all
 Если нужно запустить telegram-gateway локально без Docker:
 
 ```bash
-cd services/telegram-gateway
+cd legacy/telegram-gateway
 
 # Запустите только инфраструктуру в Docker
 docker-compose up -d nats apicurio-registry postgres

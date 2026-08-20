@@ -20,7 +20,7 @@ services:
   notifications-service:
     build:
       context: ../..
-      dockerfile: services/notifications-service/Dockerfile
+      dockerfile: legacy/notifications-service/Dockerfile
     container_name: notifications-service
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
