@@ -79,7 +79,7 @@ docker-compose up --build auction-service
 ### Локальная разработка
 
 ```bash
-cd services/auction-service
+cd legacy/auction-service
 
 dotnet restore
 dotnet build

@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "telegram-gateway (debug)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/legacy/telegram-gateway/target/debug/telegram-gateway.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/legacy/telegram-gateway",
+            "env": {
+                "APP__TELEGRAM__TOKEN": "${env:APP__TELEGRAM__TOKEN}",
+                "RUST_LOG": "info,teloxide=info,telegram_gateway=debug"
+            },
+            "preLaunchTask": "cargo build telegram-gateway (debug)"
+        }
+    ]
+}

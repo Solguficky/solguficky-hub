@@ -12,21 +12,23 @@
 - legacy-аукцион на C# + Akka.NET и обслуживающий его WebSocket Gateway — вне MVP;
 - C#-каркас Notifications Service;
 - общие Protobuf-контракты, NATS/PostgreSQL и AppHost на .NET Aspire;
-- Meetups и Identity ещё отсутствуют; для Telegram Mini App существует только пустая заготовка.
+- Meetups, Identity и Telegram Mini App ещё не реализованы.
 
 Актуальные статусы Current / MVP / Future / Legacy собраны в [архитектурном обзоре](docs/architecture/overview.md) и [service briefs](docs/services/README.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
 
 ## Структура
 
 ```text
+apps/                         MVP-сервисы платформы; пока пуст
 contracts/proto/              Protobuf-контракты NATS и gRPC
 docs/                         продукт, архитектура, решения и руководства
-frontend/admin-app/           заготовка Telegram Mini App
 infra/apphost/                локальная оркестрация .NET Aspire
-services/auction-service/     legacy C# + Akka.NET
-services/notifications-service/ C#-каркас уведомлений
-services/telegram-gateway/    current/legacy Rust + Teloxide
-services/websocket-gateway/   legacy C# + SignalR
+infra/observability/          конфигурация Loki, Promtail и Grafana
+legacy/auction-service/       C# + Akka.NET, вне MVP
+legacy/notifications-service/ C#-каркас уведомлений
+legacy/telegram-gateway/      Rust + Teloxide
+legacy/websocket-gateway/     C# + SignalR
+shared/dotnet/                общая обвязка .NET-сервисов (ServiceDefaults)
 tools/git-hooks/              скрипты проверок для хуков и CI
 tools/nats-tester/            ручная проверка NATS-сообщений
 ```

@@ -9,37 +9,37 @@
     "label": "auction-service: test (со сборкой)",
     "command": "dotnet",
     "args": ["test"],
-    "cwd": "$ZED_WORKTREE_ROOT/services/auction-service"
+    "cwd": "$ZED_WORKTREE_ROOT/legacy/auction-service"
   },
   {
     "label": "notifications-service: test (со сборкой)",
     "command": "dotnet",
     "args": ["test"],
-    "cwd": "$ZED_WORKTREE_ROOT/services/notifications-service"
+    "cwd": "$ZED_WORKTREE_ROOT/legacy/notifications-service"
   },
   {
     "label": "websocket-gateway: test (со сборкой)",
     "command": "dotnet",
     "args": ["test"],
-    "cwd": "$ZED_WORKTREE_ROOT/services/websocket-gateway"
+    "cwd": "$ZED_WORKTREE_ROOT/legacy/websocket-gateway"
   },
   {
     "label": "telegram-gateway: cargo test",
     "command": "cargo",
     "args": ["test"],
-    "cwd": "$ZED_WORKTREE_ROOT/services/telegram-gateway"
+    "cwd": "$ZED_WORKTREE_ROOT/legacy/telegram-gateway"
   },
   {
     "label": "telegram-gateway: clippy -D warnings",
     "command": "cargo",
     "args": ["clippy", "--", "-D", "warnings"],
-    "cwd": "$ZED_WORKTREE_ROOT/services/telegram-gateway"
+    "cwd": "$ZED_WORKTREE_ROOT/legacy/telegram-gateway"
   },
   {
     "label": "telegram-gateway: fmt --check",
     "command": "cargo",
     "args": ["fmt", "--check"],
-    "cwd": "$ZED_WORKTREE_ROOT/services/telegram-gateway"
+    "cwd": "$ZED_WORKTREE_ROOT/legacy/telegram-gateway"
   },
   {
     "label": "nats-tester: regenerate proto",

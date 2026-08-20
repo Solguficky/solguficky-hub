@@ -21,7 +21,7 @@
 ## Быстрый старт
 
 ```bash
-cd services/auction-service
+cd legacy/auction-service
 
 dotnet restore
 dotnet build
@@ -72,7 +72,7 @@ sudo apt-get install -y dotnet-sdk-8.0
 1. Откройте Cursor/VS Code
 2. Установите **C# Dev Kit** (Microsoft)
    - ID: `ms-dotnettools.csdevkit`
-3. Откройте проект: `services/auction-service/AuctionService.sln`
+3. Откройте проект: `legacy/auction-service/AuctionService.sln`
 4. OmniSharp LSP запустится автоматически
 
 ### Настройка IntelliSense
@@ -140,7 +140,7 @@ SELECT * FROM events LIMIT 10;
 ### Вариант 1: dotnet run
 
 ```bash
-cd services/auction-service
+cd legacy/auction-service
 
 dotnet run --project src/AuctionService
 ```
@@ -409,7 +409,7 @@ kill <PID>
 ```bash
 dotnet --version
 
-code services/auction-service/AuctionService.sln
+code legacy/auction-service/AuctionService.sln
 ```
 
 Перезапустите OmniSharp: `Ctrl+Shift+P` → "Restart OmniSharp".
@@ -427,7 +427,7 @@ dotnet run
 ## 10. Структура проекта (напоминание)
 
 ```
-services/auction-service/
+legacy/auction-service/
 ├── AuctionService.sln
 ├── src/
 │   └── AuctionService/

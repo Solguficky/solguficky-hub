@@ -25,7 +25,7 @@
 		"lldb.displayFormat": "auto",
 		"lldb.showDisassembly": "auto",
 		"rust-analyzer.linkedProjects": [
-			"./services/telegram-gateway/Cargo.toml"
+			"./legacy/telegram-gateway/Cargo.toml"
 		],
 		"explorer.fileNesting.enabled": true,
 		"dotnet.defaultSolution": "disable"
