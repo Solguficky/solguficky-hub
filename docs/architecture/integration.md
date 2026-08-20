@@ -8,7 +8,7 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 - Асинхронные команды и события передаются через NATS.
 - Синхронные queries и CRUD-вызовы могут использовать gRPC.
-- Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 требует последующего разделения на более узкие решения.
+- Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 переведён в `Legacy scope` и новые решения принимаются отдельными ADR.
 - NATS и gRPC payload сериализуется только в Protobuf.
 
 ## Subjects
@@ -56,7 +56,7 @@ Identity не публикует событий в MVP. Gateway устанавл
 - нужна ли durable delivery;
 - как обеспечивается idempotency.
 
-ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Needs review`.
+ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Legacy scope`: часть про роли заменена [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), остальное описывает аукционный Gateway. Правило выбора transport из него используется как отправная точка, а не как действующее решение для MVP.
 
 ## Contract governance до новых proto
 

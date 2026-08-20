@@ -50,6 +50,6 @@ Kotlin частично повторяет исследовательскую ц
 
 ## Связанные документы
 
-- ADR: [ADR-026](ADR-026-identity-mvp-model-and-access.md), [ADR-007](ADR-007-polyglot-service-stacks.md), [ADR-014](ADR-014-protobuf-in-git.md), [ADR-021](ADR-021-aspire-local-orchestration.md), [ADR-025](ADR-025-meetups-fsharp-stack.md)
+- Другие ADR: [ADR-026](ADR-026-identity-mvp-model-and-access.md) — модель сервиса, под которую выбран язык; [ADR-007](ADR-007-polyglot-service-stacks.md) — полиглотная модель; [ADR-014](ADR-014-protobuf-in-git.md) — proto в git; [ADR-021](ADR-021-aspire-local-orchestration.md) — локальная оркестрация; [ADR-025](ADR-025-meetups-fsharp-stack.md) — прецедент изоляции сгенерированного кода
 - Сервис: [Identity](../services/identity.md)
 - Процесс: [technology-selection.md](../architecture/technology-selection.md)

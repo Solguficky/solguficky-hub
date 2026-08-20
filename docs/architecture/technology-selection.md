@@ -31,7 +31,7 @@
 | Scala + Apache Pekko | Future-направление для auction v2 |
 | Elixir + Phoenix | Кандидат для будущего realtime gateway при появлении подтверждённых сценариев с постоянными соединениями, presence или массовым fan-out; не входит в MVP и не означает решение о замене Legacy WebSocket Gateway |
 | Kotlin | Интересен для Notifications с конкурентными задачами, но не закреплён решением |
-| Go | Интересен, но не закреплён за Scheduler |
+| Go | Принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); за Scheduler не закреплён |
 | Ruby | Интересен, но отдельная админка не обоснована |
 | C# + Orleans | Future-гипотеза для Achievements |
 

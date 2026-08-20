@@ -20,7 +20,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, Identity относится к MVP, но язык реализации остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, Notifications относится к MVP, но владение подпиской и семантика доставки остаются Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -44,7 +44,7 @@ Linear является источником правды для порядка 
 | Notifications Service | C#-каркас с единственным аукционным handler | Кандидат для reminders |
 | WebSocket Gateway | C# + SignalR, только `auction:live` | Frozen legacy |
 | Meetups | Отсутствует | Владелец данных о сходках |
-| Identity | Отсутствует | Telegram identity, membership и системные роли |
+| Identity | Отсутствует | Telegram identity, допуск к продукту и системные роли |
 | Mini App | Пустая заготовка | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `nats-tester` | Python CLI | Current tooling |
 | Aspire AppHost | Код и профили существуют; живой полный запуск не подтверждён | Current, verification pending |
@@ -57,7 +57,7 @@ Linear является источником правды для порядка 
 |---|---|---|
 | Telegram Gateway | Accepted, ADR pending | Новая реализация TypeScript + grammY |
 | Meetups | Граница, техническая модель и стек Accepted: ADR-024, ADR-025; словарь событий Open | Владелец продуктовых данных сходок |
-| Identity | Отдельный сервис Accepted, детали Open | Telegram identity, membership и общие роли |
+| Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; wire-контракты Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Design Open | Напоминания как первый реальный сценарий |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, verification pending | Aspire как inner loop |

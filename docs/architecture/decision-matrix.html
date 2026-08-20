@@ -231,6 +231,7 @@
     <tr><th>Единственный писатель</th><td>Все команды к сущности проходят через одного владельца состояния.</td><td>Есть настоящая конкуренция за одну сущность.</td><td class="cost">Конфликт исчезает из виду: правки применяются по очереди, а не отвергаются.</td></tr>
     <tr><th>Блокировка строки</th><td>Строка удерживается до конца транзакции.</td><td>Критическая секция коротка, а конфликты часты.</td><td class="cost">Ожидание вместо отказа, риск удержания и взаимных блокировок.</td></tr>
     <tr><th>Ключ идемпотентности</th><td>Повтор той же команды не даёт второго эффекта.</td><td>Повторные нажатия и повторная доставка сообщений.</td><td class="cost">Не разрешает конфликт двух разных правок: это защита от повтора, а не от гонки.</td></tr>
+    <tr><th>Уникальный ключ и upsert</th><td>Гонку разрешает ограничение уникальности: параллельные вставки схлопываются в одну запись, вторая переходит в обновление.</td><td>Конкурируют только операции создания одной и той же сущности по естественному внешнему ключу.</td><td class="cost">Работает лишь на создании; конкурирующие правки уже существующей строки не защищает.</td></tr>
     <tr><th>Последняя запись побеждает</th><td>Проверки нет, побеждает тот, кто записал позже.</td><td>Данные, где потеря чужой правки безразлична.</td><td class="cost">Тихая потеря изменения. Выбирается только явно, а не по умолчанию.</td></tr>
   </tbody>
 </table>
@@ -325,9 +326,9 @@
   <tr>
     <th>Identity<span class="layer"><span class="st st-mvp">MVP</span></span></th>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Go</span><span class="why">ADR-027: простой CRUD не назначает язык; Go выбран ради самого дешёвого operational-эксперимента с gRPC, PostgreSQL и не-.NET deployment.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">текущее состояние в строках</span><span class="why">ADR-026: профиль, статус доступа и роли — изменяемые факты; журнал событий и replay не дают продуктовой ценности.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">текущее состояние в строках</span><span class="why">ADR-026: профиль, статус допуска и роли — изменяемые факты, replay не нужен. Журнал изменений допуска и отметки выдачи ролей ведутся отдельным механизмом и источником истины не являются.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-026: CRUD выполняется ACID-транзакциями без CQRS, Event Sourcing и actor runtime.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">upsert по Telegram user id</span><span class="why">ADR-026: INSERT ON CONFLICT устраняет гонку параллельных /start; остальные updates не создают профиль, а ник записывают только при фактическом изменении.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">уникальный ключ и upsert</span><span class="why">ADR-026: INSERT ON CONFLICT по telegram_user_id устраняет гонку параллельных /start; остальные updates не создают профиль, а ник записывают только при фактическом изменении.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-026: отдельной read model и кэша фактов авторизации нет; Gateway вызывает Identity на каждом update.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004, основное хранилище.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">синхронный gRPC, без событий</span><span class="why">ADR-026: ответ нужен для текущего действия; при недоступности fail-closed. Исходящих событий Identity в MVP нет.</span></td>
