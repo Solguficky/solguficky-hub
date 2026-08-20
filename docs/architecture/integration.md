@@ -116,7 +116,7 @@ Loki/Grafana и Aspire dashboard являются заделом. Наличие
 
 ## Изменение
 
-При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `contract-change`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
+При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `sgh-change-contract`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
 
 ## Технические источники
 

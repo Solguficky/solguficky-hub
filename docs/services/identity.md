@@ -118,11 +118,11 @@ Identity реализуется на Go. Сложного домена здес�
 ## Открытые вопросы реализации
 
 - точная схема профиля, статуса, журнала доступа, whitelist и токенов; перечень глобальных ролей;
-- service authentication и авторизация служебного endpoint;
+- service authentication и авторизация служебного endpoint — [PER-30](https://linear.app/anticnvm/issue/per-30);
 - набор и формат административных команд бота;
-- срок жизни инвайт-токена и формат payload рядом с уже занятым `m_<uuid>`;
-- package/version naming и выбор `buf` или `protoc` для генерации Go-кода;
-- timeout и текст ответа человеку при fail-closed и в состоянии `pending`;
-- retention заблокированных профилей, погашенных записей whitelist и истёкших токенов.
+- формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29);
+- package/version naming и выбор `buf` или `protoc` для генерации Go-кода — [PER-31](https://linear.app/anticnvm/issue/per-31);
+- timeout при fail-closed; тексты ответов человеку — часть дизайн-сессии [PER-32](https://linear.app/anticnvm/issue/per-32);
+- retention заблокированных профилей, погашенных записей whitelist и истёкших токенов — [PER-29](https://linear.app/anticnvm/issue/per-29).
 
 Wire-контракт появится отдельным contract change после закрытия этих вопросов. Решения зафиксированы в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) и [ADR-027](../decisions/ADR-027-identity-go-stack.md).

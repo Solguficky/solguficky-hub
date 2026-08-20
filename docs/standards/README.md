@@ -9,6 +9,7 @@ Standards — канонические нормативы для реализа�
 | [contracts/protobuf.md](contracts/protobuf.md) | Protobuf, совместимость схем и изменение потребителей |
 | [testing/testing-strategy.md](testing/testing-strategy.md) | выбор уровня и обязательные свойства тестов |
 | [observability/logging.md](observability/logging.md) | структурные логи, correlation и privacy |
+| [git/commit-messages.md](git/commit-messages.md) | формат сообщения коммита |
 
 Новый документ создаётся по [template.md](template.md).
 
