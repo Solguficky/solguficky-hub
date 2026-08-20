@@ -99,10 +99,10 @@ Rust увеличивает стоимость освоения, async glue, к�
 
 ## Свидетельства и ссылки
 
-- Current composition и in-memory dialogue state: `services/telegram-gateway/src/lib.rs`
-- JSON event path: `services/telegram-gateway/src/app/event_listener.rs`
-- Protobuf event path: `services/telegram-gateway/src/infra/nats_client.rs`
-- In-memory callback idempotency: `services/telegram-gateway/src/app/idempotency.rs`
+- Current composition и in-memory dialogue state: `legacy/telegram-gateway/src/lib.rs`
+- JSON event path: `legacy/telegram-gateway/src/app/event_listener.rs`
+- Protobuf event path: `legacy/telegram-gateway/src/infra/nats_client.rs`
+- In-memory callback idempotency: `legacy/telegram-gateway/src/app/idempotency.rs`
 - [grammY Getting Started](https://grammy.dev/guide/getting-started)
 - [grammY Conversations](https://grammy.dev/plugins/conversations)
 - [grammY Runner](https://grammy.dev/plugins/runner)

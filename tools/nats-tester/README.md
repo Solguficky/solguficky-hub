@@ -142,7 +142,7 @@ nats-tester check
 
 **Терминал 1 - Запустить Notifications Service:**
 ```bash
-cd services/notifications-service
+cd legacy/notifications-service
 dotnet run
 ```
 
@@ -174,7 +174,7 @@ nats-tester publish samples/bid_placed_with_previous.json
 
 **1. Запустить инфраструктуру:**
 ```bash
-cd services/notifications-service
+cd legacy/notifications-service
 docker-compose up -d
 ```
 
@@ -488,7 +488,7 @@ pytest
 
 ## См. также
 
-- [Notifications Service Documentation](../../services/notifications-service/README.md)
+- [Notifications Service Documentation](../../legacy/notifications-service/README.md)
 - [NATS CLI Documentation](https://docs.nats.io/using-nats/nats-tools/nats_cli)
 - [Protocol Buffers Guide](https://protobuf.dev/)
 - [Click Documentation](https://click.palletsprojects.com/)

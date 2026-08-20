@@ -5,9 +5,9 @@ RUN cargo install cargo-chef
 
 # Stage 2: Planner - analyze dependencies
 FROM chef AS planner
-COPY services/telegram-gateway/Cargo.toml services/telegram-gateway/Cargo.lock ./
-COPY services/telegram-gateway/src ./src
-COPY services/telegram-gateway/build.rs ./build.rs
+COPY legacy/telegram-gateway/Cargo.toml legacy/telegram-gateway/Cargo.lock ./
+COPY legacy/telegram-gateway/src ./src
+COPY legacy/telegram-gateway/build.rs ./build.rs
 COPY contracts/proto ../../contracts/proto
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -25,9 +25,9 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy source code and proto files
-COPY services/telegram-gateway/Cargo.toml services/telegram-gateway/Cargo.lock ./
-COPY services/telegram-gateway/src ./src
-COPY services/telegram-gateway/build.rs ./build.rs
+COPY legacy/telegram-gateway/Cargo.toml legacy/telegram-gateway/Cargo.lock ./
+COPY legacy/telegram-gateway/src ./src
+COPY legacy/telegram-gateway/build.rs ./build.rs
 COPY contracts/proto ../../contracts/proto
 
 # Build application
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /app/target/release/telegram-gateway /app/telegram-gateway
 
 # Copy configuration
-COPY services/telegram-gateway/configuration.yaml /app/configuration.yaml
+COPY legacy/telegram-gateway/configuration.yaml /app/configuration.yaml
 
 # Set environment
 ENV RUST_LOG=info

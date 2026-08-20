@@ -6,7 +6,7 @@
 
 #### Контекст
 
-Локальный запуск платформы сейчас держится на трёх независимых docker-compose файлах (корневой + `services/auction-service/docker-compose.yml` + `services/notifications-service/docker-compose.yml`), которые разошлись по портам, именам сетей и версиям образов NATS/PostgreSQL. Топология «что поднять для конкретной задачи» каждый раз собирается руками, нет единого дашборда логов/трейсов, а строки подключения копипастятся между compose-файлами и `appsettings.json`.
+Локальный запуск платформы сейчас держится на трёх независимых docker-compose файлах (корневой + `legacy/auction-service/docker-compose.yml` + `legacy/notifications-service/docker-compose.yml`), которые разошлись по портам, именам сетей и версиям образов NATS/PostgreSQL. Топология «что поднять для конкретной задачи» каждый раз собирается руками, нет единого дашборда логов/трейсов, а строки подключения копипастятся между compose-файлами и `appsettings.json`.
 
 **Требования:**
 - Один источник правды для локальной топологии.
@@ -47,7 +47,7 @@
 
 Используем **.NET Aspire** как единственный инструмент локальной оркестрации. AppHost-проект — в `infra/apphost/`. NATS и PostgreSQL — всегда контейнерные ресурсы Aspire; C#-сервисы и Rust-шлюз получают три режима на компонент (`Local`/`Container`/`Off`), управляемые параметрами AppHost без правки кода топологии. Текущее состояние режимов и профиль запуска описаны в `docs/development/local-development.md`.
 
-Рукописные docker-compose файлы (`docker-compose.yml`, `services/auction-service/docker-compose.yml`, `services/notifications-service/docker-compose.yml`) удаляются по итогам миграции; при необходимости compose-файл генерируется через `aspire publish`.
+Рукописные docker-compose файлы (`docker-compose.yml`, `legacy/auction-service/docker-compose.yml`, `legacy/notifications-service/docker-compose.yml`) удаляются по итогам миграции; при необходимости compose-файл генерируется через `aspire publish`.
 
 #### Обоснование
 
