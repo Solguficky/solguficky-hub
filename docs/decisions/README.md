@@ -36,7 +36,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-013](ADR-013-iterative-ai-assisted-development.md) | Итеративная работа с агентом | Needs review | Инициатива и решение должны принадлежать владельцу |
 | [ADR-014](ADR-014-protobuf-in-git.md) | Protobuf-in-Git | Active, limited scope | Compatibility tooling и Registry остаются открытыми |
 | [ADR-015](ADR-015-loki-centralized-logging.md) | Loki | Active, limited scope | Конфигурация существует, живой контур требует проверки |
-| [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Needs review | Смешивает несколько решений и требует разделения |
+| [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Legacy scope | Hardcoded-роли заменены ADR-026; остальные части относятся к legacy-аукционному Gateway |
 | [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Legacy scope | Не определяет Scala/Pekko auction v2 |
 | [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Legacy scope | Сервис заморожен и обслуживает только аукцион |
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
@@ -46,6 +46,8 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-023](ADR-023-meetup-public-number.md) | Публичный номер сходки рядом с UUIDv7 | Active | Номер — для человека и поддержки; внешний routing остаётся на UUID |
 | [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Внутреннее устройство Meetups: строки состояния плюс журнал доменных событий | Active | Один ADR на весь RFC-004: 1b, чтение из тех же таблиц, версия строки, опрос для отложенной публикации |
 | [ADR-025](ADR-025-meetups-fsharp-stack.md) | Стек Meetups: F#, Dapper, контракты через C#-проект | Active | Язык выбран под устройство из ADR-024; runtime остаётся .NET |
+| [ADR-026](ADR-026-identity-mvp-model-and-access.md) | Модель Identity и проверка доступа в MVP | Active | Строки PostgreSQL, gRPC на каждом действии, fail-closed, ручной контроль состава |
+| [ADR-027](ADR-027-identity-go-stack.md) | Стек Identity: Go | Active | Operational-эксперимент на простом CRUD-сервисе; generated-код изолирован в `gen/` |
 
 ## Правила изменения
 

@@ -324,13 +324,13 @@
 
   <tr>
     <th>Identity<span class="layer"><span class="st st-mvp">MVP</span></span></th>
-    <td class="open"><span class="st st-open">Open</span><span class="val">F# | C# | Kotlin | Go</span><span class="why">Закроется экспериментом по backend. Совпадение с Meetups не обязательно, но удешевляет эксплуатацию.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">текущее состояние в строках</span><span class="why">По ADR-024 изменяемые PII остаются в Identity, а события Meetups несут внутренний идентификатор; собственная модель хранения Identity требует отдельного решения.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Установление личности и выдача роли не образуют конкурирующего потока команд.</span></td>
-    <td class="na"><span class="st st-na">N/A</span><span class="val">не требуется</span><span class="why">Одновременной правки одного профиля в сценариях MVP нет.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">запросы к тем же таблицам</span><span class="why">Чтение по внутреннему идентификатору. Кэш отображаемых данных допустим, кэш фактов авторизации требует отдельного решения.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Go</span><span class="why">ADR-027: простой CRUD не назначает язык; Go выбран ради самого дешёвого operational-эксперимента с gRPC, PostgreSQL и не-.NET deployment.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">текущее состояние в строках</span><span class="why">ADR-026: профиль, статус доступа и роли — изменяемые факты; журнал событий и replay не дают продуктовой ценности.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-026: CRUD выполняется ACID-транзакциями без CQRS, Event Sourcing и actor runtime.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">upsert по Telegram user id</span><span class="why">ADR-026: INSERT ON CONFLICT устраняет гонку параллельных /start; остальные updates не создают профиль, а ник записывают только при фактическом изменении.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-026: отдельной read model и кэша фактов авторизации нет; Gateway вызывает Identity на каждом update.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004, основное хранилище.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">нужны ли события наружу</span><span class="why">Закроется вопросом, обязаны ли потребители узнавать об удалении профиля, а не только Meetups.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">синхронный gRPC, без событий</span><span class="why">ADR-026: ответ нужен для текущего действия; при недоступности fail-closed. Исходящих событий Identity в MVP нет.</span></td>
   </tr>
 
   <tr>
