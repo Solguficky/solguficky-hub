@@ -31,6 +31,7 @@ legacy/websocket-gateway/     C# + SignalR
 shared/dotnet/                общая обвязка .NET-сервисов (ServiceDefaults)
 tools/git-hooks/              скрипты проверок для хуков и CI
 tools/nats-tester/            ручная проверка NATS-сообщений
+justfile                      единая точка входа для команд репозитория
 ```
 
 ## Первая настройка
