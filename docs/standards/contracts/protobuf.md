@@ -29,4 +29,4 @@
 - Обнови `tools/nats-tester`, если он поддерживает изменённое сообщение.
 - Обнови `architecture/integration.md` при добавлении или изменении subject.
 
-Пошаговый workflow находится в skill `contract-change`.
+Пошаговый workflow находится в skill `sgh-change-contract`.
