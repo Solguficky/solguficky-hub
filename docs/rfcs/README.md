@@ -37,9 +37,9 @@ RFC не нужен для локального bugfix или очевидной
 | [RFC-001](RFC-001-meetup-modules-topology.md) | Модули сходки: модель композиции, размещение и транспорт | Draft, рассмотрение отложено |
 | [RFC-002](RFC-002-meetup-publication-visibility-materials.md) | Модель сходки: публикация, видимость и материалы | Accepted |
 | [RFC-003](RFC-003-bot-presentation-rich-blocks.md) | Представление бота: плоский текст или блоки Rich Messages | Draft, ожидает проверки Bot API |
-| [RFC-004](RFC-004-meetups-domain-events-persistence.md) | Дизайн Meetups: домен, события и persistence | Draft; принято решение 1 (ADR-024), остальные оси открыты |
+| [RFC-004](RFC-004-meetups-domain-events-persistence.md) | Дизайн Meetups: домен, события и persistence | Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md); открыт словарь домена |
 | [RFC-005](RFC-005-notifications-subscription-scheduling-delivery.md) | Notifications: владение подпиской, scheduling и семантика доставки | Draft |
 
 Документы разделены по границе, которую каждый блокирует: RFC-001 — контракт расширения, RFC-002 — продуктовую модель сходки, RFC-003 — механику Gateway и ревизию макета, RFC-004 — схему и язык Meetups, RFC-005 — границу владения подписками.
 
-Порядок рассмотрения: RFC-004 решается первым, RFC-005 — после него, потому что владение подпиской зависит от того, как устроен домен сходки. RFC-001 отложен до появления первого реального модуля.
+Порядок рассмотрения: RFC-004 решён первым, следующий — RFC-005, потому что владение подпиской зависит от того, как устроен домен сходки. RFC-001 отложен до появления первого реального модуля.

@@ -42,9 +42,10 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
 | [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов; уточнён ADR-023 |
 | [ADR-021](ADR-021-aspire-local-orchestration.md) | Aspire local orchestration | Active, limited scope | AppHost ещё не подтверждён живым запуском |
-| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение решается в RFC-004 |
+| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение принято в ADR-024 |
 | [ADR-023](ADR-023-meetup-public-number.md) | Публичный номер сходки рядом с UUIDv7 | Active | Номер — для человека и поддержки; внешний routing остаётся на UUID |
-| [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Хранение Meetups: строки состояния плюс журнал доменных событий | Active | Принят вариант 1b; остальные оси RFC-004 остаются открытыми |
+| [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Внутреннее устройство Meetups: строки состояния плюс журнал доменных событий | Active | Один ADR на весь RFC-004: 1b, чтение из тех же таблиц, версия строки, опрос для отложенной публикации |
+| [ADR-025](ADR-025-meetups-fsharp-stack.md) | Стек Meetups: F#, Dapper, контракты через C#-проект | Active | Язык выбран под устройство из ADR-024; runtime остаётся .NET |
 
 ## Правила изменения
 
