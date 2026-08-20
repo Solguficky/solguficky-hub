@@ -27,11 +27,11 @@
 | Технология | Текущая позиция |
 |---|---|
 | TypeScript + grammY | Accepted для нового Telegram Gateway; ADR pending |
-| F#, C#, Kotlin, Go | F# принят для Meetups ([ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md)); остальные остаются кандидатами для Identity |
+| F#, C#, Kotlin, Go | F# принят для Meetups ([ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md)); Go принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)) |
 | Scala + Apache Pekko | Future-направление для auction v2 |
 | Elixir + Phoenix | Кандидат для будущего realtime gateway при появлении подтверждённых сценариев с постоянными соединениями, presence или массовым fan-out; не входит в MVP и не означает решение о замене Legacy WebSocket Gateway |
-| Kotlin | Интересен, но не закреплён за Content Feed |
-| Go | Интересен, но не закреплён за Scheduler |
+| Kotlin | Интересен для Notifications с конкурентными задачами, но не закреплён решением |
+| Go | Принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); за Scheduler не закреплён |
 | Ruby | Интересен, но отдельная админка не обоснована |
 | C# + Orleans | Future-гипотеза для Achievements |
 

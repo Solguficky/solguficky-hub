@@ -60,7 +60,7 @@ RFC собирает варианты и их цену, чтобы решени�
 | NATS JetStream принят, но consumers не durable автоматически | [ADR-003](../decisions/ADR-003-nats-jetstream-message-bus.md) | durable delivery проектируется отдельно |
 | Разделение Meetup/Auction принято, допускается несколько аукционов на одну сходку | [ADR-019](../decisions/ADR-019-meetup-auction-separation-and-ulid.md) | связь «сходка — модуль» заведомо один-ко-многим |
 | UUIDv7 — канонический формат идентификаторов | [ADR-020](../decisions/ADR-020-uuidv7-identifiers.md) | влияет на бюджет `callback_data` |
-| ADR-016 смешивает transport, RBAC и Gateway-решения, applicability `Needs review` | [decisions/README.md](../decisions/README.md) | часть решений отсюда должна его разделить |
+| ADR-016 переведён в `Legacy scope`: роли заменены ADR-026, остальное описывает аукционный Gateway | [decisions/README.md](../decisions/README.md) | опираться на него как на действующее решение MVP нельзя |
 | «Feature flags и модульность» — гипотеза с вопросом «нужен ли каталог модулей или достаточно конфигурации» | [ideas.md](../product/ideas.md) | вопрос каталога уже поставлен продуктом |
 | Слот расширения и правила зафиксированы в макете | [design/bot/storyboard.html](../design/bot/README.md) | интерфейсная часть уже ограничена |
 | Аукцион вне MVP | [AGENTS.md](../../AGENTS.md) | первый реальный модуль появится после MVP |

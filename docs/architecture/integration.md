@@ -8,7 +8,7 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 - Асинхронные команды и события передаются через NATS.
 - Синхронные queries и CRUD-вызовы могут использовать gRPC.
-- Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 требует последующего разделения на более узкие решения.
+- Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 переведён в `Legacy scope` и новые решения принимаются отдельными ADR.
 - NATS и gRPC payload сериализуется только в Protobuf.
 
 ## Subjects
@@ -40,7 +40,9 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 ## MVP-контракты
 
-Subjects и gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
+Wire-схемы gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Для Gateway → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Состав методов, сообщений и service authentication остаётся предметом contract design. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
+
+Identity не публикует событий в MVP. Gateway устанавливает Telegram identity после проверки secret token вебхука, Identity разрешает Telegram user id во внутренний id, статус доступа и глобальные роли, а Meetups принимает доменные authorization-решения. Authentication material через Identity не проходит.
 
 ## Выбор sync и async
 
@@ -54,7 +56,7 @@ Subjects и gRPC API для Meetups, Identity, нового Telegram Gateway и 
 - нужна ли durable delivery;
 - как обеспечивается idempotency.
 
-ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Needs review`.
+ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Legacy scope`: часть про роли заменена [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), остальное описывает аукционный Gateway. Правило выбора transport из него используется как отправная точка, а не как действующее решение для MVP.
 
 ## Contract governance до новых proto
 
@@ -114,7 +116,7 @@ Loki/Grafana и Aspire dashboard являются заделом. Наличие
 
 ## Изменение
 
-При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `contract-change`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
+При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `sgh-change-contract`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
 
 ## Технические источники
 
