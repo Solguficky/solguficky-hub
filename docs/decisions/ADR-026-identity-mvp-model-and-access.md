@@ -55,7 +55,7 @@ Identity должен разрешать Telegram user id во внутренн�
 
 - Gateway вызывает Identity синхронно по gRPC на каждом Telegram update, которому требуется продуктовое действие. Кэша фактов доступа нет. При недоступности Identity операция завершается fail-closed.
 - Authentication выполняет Telegram, а Gateway устанавливает Telegram identity после проверки secret token вебхука. Identity не проверяет authentication material. Meetups принимает доменные authorization-решения.
-- Identity не публикует событий в MVP и не использует CQRS, Event Sourcing, акторов или отдельную read model.
+- Identity не использует CQRS, Event Sourcing, акторов или отдельную read model.
 
 Wire-контракт, service authentication, timeout и точная схема проектируются перед реализацией отдельным contract change.
 
@@ -96,11 +96,11 @@ Whitelist применяется один раз, а не на каждом де
 
 ## Предсказание и пересмотр
 
-Ожидается, что индексный lookup не будет заметен на фоне Telegram API. Кэш или подписанный контекст рассматривается только если наблюдаемый p95 Identity существенно влияет на UX. Срок жизни инвайт-токена пересматривается, если в журнале появятся погашения не тем человеком. Автоматическая проверка через Bot API требует отдельного изменения privacy-принципа. Исходящие события вводятся только при появлении потребителя, которому недостаточна синхронная проверка. Отдельная админка рассматривается, если набор администраторских операций перестанет помещаться в диалог бота.
+Ожидается, что индексный lookup не будет заметен на фоне Telegram API. Кэш или подписанный контекст рассматривается только если наблюдаемый p95 Identity существенно влияет на UX. Срок жизни инвайт-токена пересматривается, если в журнале появятся погашения не тем человеком. Автоматическая проверка через Bot API требует отдельного изменения privacy-принципа. Сигнал по исходящим событиям сработал: такой потребитель появился, и события о регистрации и смене статуса допуска введены [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md). Отдельная админка рассматривается, если набор администраторских операций перестанет помещаться в диалог бота.
 
 ## Связанные документы
 
-- Другие ADR: [ADR-004](ADR-004-postgresql-primary-database.md) — PostgreSQL; [ADR-005](ADR-005-grpc-synchronous-communication.md) — gRPC; [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) — заменяется часть про hardcoded-роли; [ADR-020](ADR-020-uuidv7-identifiers.md) — формат идентификаторов; [ADR-027](ADR-027-identity-go-stack.md) — стек, выбранный под эту модель
+- Другие ADR: [ADR-004](ADR-004-postgresql-primary-database.md) — PostgreSQL; [ADR-005](ADR-005-grpc-synchronous-communication.md) — gRPC; [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) — заменяется часть про hardcoded-роли; [ADR-020](ADR-020-uuidv7-identifiers.md) — формат идентификаторов; [ADR-027](ADR-027-identity-go-stack.md) — стек, выбранный под эту модель; [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) — вводит исходящие события Identity
 - Сервис: [Identity](../services/identity.md)
 - Продукт: [overview.md](../product/overview.md)
 - Архитектура: [decision-matrix.html](../architecture/decision-matrix.html), [integration.md](../architecture/integration.md)

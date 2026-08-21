@@ -42,7 +42,7 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 Wire-схемы gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Для Gateway → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Состав методов, сообщений и service authentication остаётся предметом contract design. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
 
-Identity не публикует событий в MVP. Gateway устанавливает Telegram identity после проверки secret token вебхука, Identity разрешает Telegram user id во внутренний id, статус доступа и глобальные роли, а Meetups принимает доменные authorization-решения. Authentication material через Identity не проходит.
+Identity публикует события о регистрации и смене статуса допуска: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md)). Gateway устанавливает Telegram identity после проверки secret token вебхука, Identity разрешает Telegram user id во внутренний id, статус доступа и глобальные роли, а Meetups принимает доменные authorization-решения. Authentication material через Identity не проходит.
 
 ## Выбор sync и async
 
