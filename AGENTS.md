@@ -15,7 +15,7 @@
 - [Процесс проектирования](docs/development/design-process.md) — human-owned design loop и граница роли агента.
 - [Локальная разработка](docs/development/local-development.md) — Aspire, профили и известные ограничения.
 
-Milestones, приоритеты, задачи и прогресс ведутся в Linear. В Git хранятся устойчивый контекст, требования, решения и технические руководства; отдельного roadmap-файла нет.
+Milestones, приоритеты, задачи и прогресс ведутся в Linear. Правила их ведения — [standards/backlog/linear.md](docs/standards/backlog/linear.md); задача не заводится и не переписывается в обход этого норматива. В Git хранятся устойчивый контекст, требования, решения и технические руководства; отдельного roadmap-файла нет.
 
 ## Карта репозитория
 
@@ -94,6 +94,6 @@ nats-tester --help
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-Скиллы репозитория лежат в `.claude/skills/`. Общие зеркалятся в `.agents/skills/` побайтово; специфичные для возможностей Claude Code живут только в `.claude/skills/` и перечислены в `CLAUDE_ONLY` скрипта `check-skills-mirror.sh` — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`. Все они носят префикс `sgh-`, чтобы отличаться от персональных и плагинных. Имя скилла называет действие: `sgh-record-decision`, `sgh-change-contract`, `sgh-delegate-subtask`, `sgh-write-commit`, `sgh-draft-commit-message`.
+Скиллы репозитория лежат в `.claude/skills/`. Общие зеркалятся в `.agents/skills/` побайтово; специфичные для возможностей Claude Code живут только в `.claude/skills/` и перечислены в `CLAUDE_ONLY` скрипта `check-skills-mirror.sh` — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`. Все они носят префикс `sgh-`, чтобы отличаться от персональных и плагинных. Имя скилла называет действие: `sgh-record-decision`, `sgh-change-contract`, `sgh-create-task`, `sgh-delegate-subtask`, `sgh-write-commit`, `sgh-draft-commit-message`.
 
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.

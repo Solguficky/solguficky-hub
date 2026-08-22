@@ -10,6 +10,7 @@ Standards — канонические нормативы для реализа�
 | [testing/testing-strategy.md](testing/testing-strategy.md) | выбор уровня и обязательные свойства тестов |
 | [observability/logging.md](observability/logging.md) | структурные логи, correlation и privacy |
 | [git/commit-messages.md](git/commit-messages.md) | формат сообщения коммита |
+| [backlog/linear.md](backlog/linear.md) | структура бэклога, метки, оценки и форма задачи |
 
 Новый документ создаётся по [template.md](template.md).
 
