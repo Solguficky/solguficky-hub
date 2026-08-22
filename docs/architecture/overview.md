@@ -20,7 +20,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, Notifications относится к MVP, но владение подпиской и семантика доставки остаются Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Gateway стек принят, а persistence диалогового состояния остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -41,7 +41,7 @@ Linear является источником правды для порядка 
 |---|---|---|
 | Telegram Gateway | Rust + Teloxide, преимущественно UI старого аукциона | Будет заменён новой реализацией |
 | Auction Service | C# + Akka.NET, actors, persistence, gRPC и NATS | Legacy, вне MVP |
-| Notifications Service | C#-каркас с единственным аукционным handler | Кандидат для reminders |
+| Notifications Service | C#-каркас с единственным аукционным handler | Legacy; не переносится, сервис пишется заново |
 | WebSocket Gateway | C# + SignalR, только `auction:live` | Frozen legacy |
 | Meetups | Отсутствует | Владелец данных о сходках |
 | Identity | Отсутствует | Telegram identity, допуск к продукту и системные роли |
@@ -58,7 +58,7 @@ Linear является источником правды для порядка 
 | Telegram Gateway | Accepted, ADR pending | Новая реализация TypeScript + grammY |
 | Meetups | Граница, техническая модель и стек Accepted: ADR-024, ADR-025; словарь событий Open | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; wire-контракты Open | Telegram identity, допуск к продукту и общие роли |
-| Notifications | Design Open | Напоминания как первый реальный сценарий |
+| Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, verification pending | Aspire как inner loop |
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |

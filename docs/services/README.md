@@ -7,7 +7,7 @@ Service brief описывает ответственность, жизненн�
 | Telegram Gateway | Current/Legacy → MVP replacement | [telegram-gateway.md](telegram-gateway.md) |
 | Meetups | MVP | [meetups.md](meetups.md) |
 | Identity | MVP | [identity.md](identity.md) |
-| Notifications | Current / MVP candidate | [notifications.md](notifications.md) |
+| Notifications | MVP | [notifications.md](notifications.md) |
 | Mini App | Вне MVP, Deferred | [mini-app.md](mini-app.md) |
 | Auction Service / auction v2 | Legacy / Future | [auction.md](auction.md) |
 | WebSocket Gateway | Legacy / Frozen | [websocket-gateway.md](websocket-gateway.md) |

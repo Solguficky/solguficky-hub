@@ -30,10 +30,10 @@
 | F#, C#, Kotlin, Go | F# принят для Meetups ([ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md)); Go принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)) |
 | Scala + Apache Pekko | Future-направление для auction v2 |
 | Elixir + Phoenix | Кандидат для будущего realtime gateway при появлении подтверждённых сценариев с постоянными соединениями, presence или массовым fan-out; не входит в MVP и не означает решение о замене Legacy WebSocket Gateway |
-| Kotlin | Интересен для Notifications с конкурентными задачами, но не закреплён решением |
-| Go | Принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); за Scheduler не закреплён |
+| Kotlin | Остаётся в пуле как интерес; за конкретным сервисом не закреплён |
+| Go | Принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); отдельного Scheduler-сервиса не предполагается |
 | Ruby | Интересен, но отдельная админка не обоснована |
-| C# + Orleans | Future-гипотеза для Achievements |
+| C# + Orleans | Принят для Notifications ([ADR-029](../decisions/ADR-029-notifications-orleans-stack.md)) |
 
 Для списка интересов ADR не нужен. ADR нужен, когда реальный сервис, требования и последствия дают выбору архитектурный вес.
 
