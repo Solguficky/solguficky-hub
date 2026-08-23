@@ -1,0 +1,5 @@
+{
+  "name": "Solguficky Hub",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh"
+}
