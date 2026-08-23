@@ -115,7 +115,7 @@ PostgreSQL — единственный источник истины, кома�
 
 ## Стек
 
-Identity реализуется на Go. Сложного домена здесь нет; исследовательская ценность находится в operational-контуре gRPC/Protobuf, PostgreSQL, миграций, контейнера, Railway, Aspire и observability. Сгенерированный Protobuf-код живёт в отдельном пакете `gen/` без рукописного кода. Выбор `buf` или `protoc` остаётся частью проектирования контрактного конвейера.
+Identity реализуется на Go. Сложного домена здесь нет; исследовательская ценность находится в operational-контуре gRPC/Protobuf, PostgreSQL, миграций, контейнера, Railway, Aspire и observability. Сгенерированный Protobuf-код живёт в отдельном пакете `gen/` без рукописного кода. Выбор `buf` или `protoc` открыт: варианты и рекомендация — [RFC-006](../rfcs/RFC-006-go-protobuf-codegen.md), решение — [PER-31](https://linear.app/anticnvm/issue/per-31).
 
 ## Цена отдельного сервиса
 
@@ -139,7 +139,8 @@ Identity реализуется на Go. Сложного домена здес�
 - service authentication и авторизация служебного endpoint — [PER-30](https://linear.app/anticnvm/issue/per-30);
 - набор и формат административных команд бота;
 - формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29);
-- package/version naming и выбор `buf` или `protoc` для генерации Go-кода — [PER-31](https://linear.app/anticnvm/issue/per-31);
+- package/version naming — задаёт первый контракт, не [RFC-006](../rfcs/RFC-006-go-protobuf-codegen.md);
+- выбор `buf` или `protoc` для генерации Go-кода — [PER-31](https://linear.app/anticnvm/issue/per-31), записка [RFC-006](../rfcs/RFC-006-go-protobuf-codegen.md);
 - timeout при fail-closed; тексты ответов человеку — часть дизайн-сессии [PER-32](https://linear.app/anticnvm/issue/per-32);
 - retention заблокированных профилей, погашенных записей whitelist и истёкших токенов — [PER-29](https://linear.app/anticnvm/issue/per-29).
 

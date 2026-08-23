@@ -67,7 +67,7 @@ ADR-016 объединяет transport, RBAC и Gateway-specific решения 
 - правила совместимости;
 - package/version naming;
 - ownership;
-- codegen matrix для TypeScript и выбранного backend stack;
+- codegen matrix для TypeScript и выбранного backend stack; Go-часть разобрана в [RFC-006](../rfcs/RFC-006-go-protobuf-codegen.md) и ждёт решения владельца ([PER-31](https://linear.app/anticnvm/issue/per-31));
 - CI breaking checks;
 - правила удаления Legacy auction contracts;
 - границу отдельного контрактного изменения, когда оно затрагивает несколько потребителей.

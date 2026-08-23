@@ -2,7 +2,7 @@
 
 > **Статус:** Active  
 > **Применимость:** `contracts/proto/`, все NATS/gRPC producers и consumers  
-> **Связанные документы:** ADR-012, ADR-014, [integration.md](../../architecture/integration.md)
+> **Связанные документы:** ADR-012, ADR-014, ADR-025, ADR-027, [RFC-006](../../rfcs/RFC-006-go-protobuf-codegen.md), [integration.md](../../architecture/integration.md)
 
 `contracts/proto/` — единственный источник wire-схем межсервисного обмена.
 
@@ -30,3 +30,11 @@
 - Обнови `architecture/integration.md` при добавлении или изменении subject.
 
 Пошаговый workflow находится в skill `sgh-change-contract`.
+
+## Кодогенерация
+
+Сгенерированный код создаёт сборка потребляющего сервиса и не является источником правды.
+
+- F#: штатный `Grpc.Tools` в отдельном C#-проекте ([ADR-025](../../decisions/ADR-025-meetups-fsharp-stack.md)).
+- Go: инструмент ещё не выбран. Варианты и рекомендация — [RFC-006](../../rfcs/RFC-006-go-protobuf-codegen.md), задача — [PER-31](https://linear.app/anticnvm/issue/per-31).
+- TypeScript: решается сервисом-потребителем.

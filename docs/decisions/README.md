@@ -47,7 +47,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Внутреннее устройство Meetups: строки состояния плюс журнал доменных событий | Active | Один ADR на весь RFC-004: 1b, чтение из тех же таблиц, версия строки, опрос для отложенной публикации |
 | [ADR-025](ADR-025-meetups-fsharp-stack.md) | Стек Meetups: F#, Dapper, контракты через C#-проект | Active | Язык выбран под устройство из ADR-024; runtime остаётся .NET |
 | [ADR-026](ADR-026-identity-mvp-model-and-access.md) | Модель Identity, контроль состава и проверка доступа в MVP | Active | Строки PostgreSQL и журнал доступа, три состояния допуска, премодерация в MVP, gRPC на каждом действии, fail-closed |
-| [ADR-027](ADR-027-identity-go-stack.md) | Стек Identity: Go | Active | Operational-эксперимент на простом CRUD-сервисе; generated-код изолирован в `gen/` |
+| [ADR-027](ADR-027-identity-go-stack.md) | Стек Identity: Go | Active | Operational-эксперимент на простом CRUD-сервисе; generated-код изолирован в `gen/`; выбор `buf`/`protoc` — [RFC-006](../rfcs/RFC-006-go-protobuf-codegen.md), [PER-31](https://linear.app/anticnvm/issue/per-31) |
 | [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) | Устройство Notifications: подписки, реплика чужих фактов и граница доставки | Active | Подписки принадлежат Notifications; факты берутся из реплики по событиям; ответственность заканчивается на публикации в шину |
 | [ADR-029](ADR-029-notifications-orleans-stack.md) | Стек Notifications: C# и Orleans | Active | Reminders как механизм заданий; источник истины остаётся в PostgreSQL |
 
