@@ -20,7 +20,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Gateway стек принят, а persistence диалогового состояния остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Gateway стек и операционное устройство приняты в [ADR-030](../decisions/ADR-030-telegram-gateway.md), а transport к Meetups остаётся предметом контрактной задачи. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -55,7 +55,7 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Gateway | Accepted, ADR pending | Новая реализация TypeScript + grammY |
+| Telegram Gateway | Accepted: [ADR-030](../decisions/ADR-030-telegram-gateway.md) | TypeScript + grammY; polling локально, webhook в среде с HTTPS; диспетчер приложения вне Telegram-слоя |
 | Meetups | Граница, техническая модель и стек Accepted: ADR-024, ADR-025; словарь событий Open | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; wire-контракты Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |

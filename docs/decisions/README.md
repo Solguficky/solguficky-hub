@@ -50,6 +50,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-027](ADR-027-identity-go-stack.md) | Стек Identity: Go | Active | Operational-эксперимент на простом CRUD-сервисе; generated-код изолирован в `gen/` |
 | [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) | Устройство Notifications: подписки, реплика чужих фактов и граница доставки | Active | Подписки принадлежат Notifications; факты берутся из реплики по событиям; ответственность заканчивается на публикации в шину |
 | [ADR-029](ADR-029-notifications-orleans-stack.md) | Стек Notifications: C# и Orleans | Active | Reminders как механизм заданий; источник истины остаётся в PostgreSQL |
+| [ADR-030](ADR-030-telegram-gateway.md) | Telegram Gateway: TypeScript, grammY и граница приложения | Active | Имя `telegram-gateway`; polling локально, webhook в среде с HTTPS; юзкейс вызывается диспетчером приложения; своя PostgreSQL для курсора, ключей и журнала доставки |
 
 ## Когда решение заслуживает ADR
 

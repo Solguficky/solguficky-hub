@@ -12,7 +12,7 @@
 - логи, health и traces;
 - возможность отключить компонент и запустить его из IDE.
 
-AppHost существует, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем адаптировать topology под новый TypeScript Gateway и MVP-сервисы.
+AppHost существует, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем адаптировать topology под новый TypeScript Gateway ([ADR-030](../decisions/ADR-030-telegram-gateway.md): локально long polling) и MVP-сервисы.
 
 ## Production-like integration
 

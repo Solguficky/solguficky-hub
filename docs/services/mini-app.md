@@ -23,7 +23,7 @@ Mini App вводится только для сценариев, которые
 
 TypeScript является естественным языком клиента. Из этого не следует автоматический выбор React, Vue или Svelte и не следует прямой доступ браузера к внутренним сервисам.
 
-С новым Telegram Gateway допустим общий presentation package, описанный в [service brief Gateway](telegram-gateway.md). Домен Meetups и авторизация не должны переезжать в этот package.
+С новым Telegram Gateway допустим общий presentation package, когда Mini App действительно появится. Правило зафиксировано в [ADR-030](../decisions/ADR-030-telegram-gateway.md): пакет не создаётся заранее и не становится источником инвариантов или авторизации. Backend-транспорт Mini App этим ADR не выбран; браузер на внутренний gRPC не ходит.
 
 ## Следующая работа
 

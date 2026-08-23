@@ -16,7 +16,7 @@ Identity отвечает за общие факты идентичности:
 
 Identity не решает, кто может изменить конкретную сходку. Он сообщает факты и общие роли, а Meetups применяет правила своего домена.
 
-Authentication в MVP выполняет Telegram, а доверенной границей продукта является Telegram Gateway с проверкой secret token вебхука. Identity не принимает и не проверяет authentication material: Gateway передаёт установленный Telegram user id, Identity отвечает внутренним идентификатором, статусом доступа и глобальными ролями.
+Authentication в MVP выполняет Telegram, а доверенной границей продукта является Telegram Gateway: в среде с HTTPS он проверяет secret token вебхука, при локальном long polling — владение bot token ([ADR-030](../decisions/ADR-030-telegram-gateway.md)). Identity не принимает и не проверяет authentication material: Gateway передаёт установленный Telegram user id, Identity отвечает внутренним идентификатором, статусом доступа и глобальными ролями.
 
 ## Регистрация и данные профиля
 

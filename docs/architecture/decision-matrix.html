@@ -314,13 +314,13 @@
 
   <tr>
     <th>Telegram Gateway<span class="layer"><span class="st st-mvp">MVP</span></span></th>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">Стек принят владельцем для быстро меняющегося Telegram edge; ADR ещё не оформлен. Текущий Rust-шлюз остаётся legacy аукциона до migration gate.</span></td>
-    <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Доменных правил в шлюзе быть не должно: это требование первого среза.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Обработка обновления без удержания состояния между сообщениями.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">ключ идемпотентности</span><span class="why">Повторное нажатие кнопки не должно создавать второй объект (E-09).</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-030: быстро меняющийся Telegram edge; Conversations не используется. Текущий Rust-шлюз остаётся legacy аукциона до migration gate.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">операционные строки, домена нет</span><span class="why">ADR-030: курсор шага, ключи и журнал доставки принадлежат шлюзу; инварианты сходки и допуска — нет.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">диспетчер приложения</span><span class="why">ADR-030: юзкейс вызывается in-process без типов Telegram; адаптеры, тесты и CLI входят в одну точку.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">update_id и ключ команды</span><span class="why">ADR-030: повтор update гасится в Gateway; повтор создания связывает ключ в Meetups. Курсор версионируется оптимистично, без транзакции через сеть.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">читает через Meetups</span><span class="why">Все чтения сходки идут одним путём внутри Meetups.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | Redis | память</span><span class="why">Закроется требованием к диалоговому состоянию и ключу идемпотентности: переживают ли они рестарт и как долго живут. Вопрос ведётся в brief шлюза.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">gRPC | NATS</span><span class="why">Закроется failure semantics каждой операции первого среза.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL, отдельная база</span><span class="why">ADR-030: курсор, дедуп, ключи и журнал доставки переживают рестарт. Redis не вводится.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">gRPC к Identity; Meetups Open</span><span class="why">Identity — синхронный gRPC (ADR-026). Шина уведомлений: свой durable consumer (ADR-030). Transport к Meetups закроется failure semantics операции в контрактной задаче.</span></td>
   </tr>
 
   <tr>
