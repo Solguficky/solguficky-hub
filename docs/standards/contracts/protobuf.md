@@ -12,7 +12,13 @@
 - Не переиспользуй номер удалённого поля; помечай удалённые номера и имена как `reserved`.
 - Новое поле добавляй так, чтобы старый consumer мог его проигнорировать, а новый consumer корректно обработал отсутствие значения.
 - Breaking change требует явного решения о версии или миграции потребителей до изменения схемы.
-- Идентификаторы сходок и аукционов передаются канонической lowercase UUIDv7-строкой с дефисами.
+- Межсервисные UUID-идентификаторы, включая identity, сходки и аукционы, передаются канонической lowercase UUIDv7-строкой с дефисами.
+
+## Packages gRPC MVP
+
+- Контракт владеемого доменом gRPC-сервиса лежит в `contracts/proto/grpc/<domain>/v<major>/`.
+- Protobuf package имеет форму `solguficky.<domain>.v<major>`: например, `solguficky.identity.v1`. Имя не включает transport или язык потребителя.
+- Major-версия является частью пути и package с первой версии. Новый major вводится только для breaking change с согласованной миграцией.
 
 ## Transport
 
@@ -27,7 +33,8 @@
 - Код генерируют локальные официальные плагины `protoc-gen-go` и `protoc-gen-go-grpc` с закреплёнными версиями. Remote plugins и Buf Schema Registry не входят в build path.
 - Сгенерированный код находится в отдельном пакете `gen/`, не содержит рукописного кода и не является источником правды.
 - Для Identity команда из корня репозитория — `buf generate --template apps/identity/buf.gen.yaml`. Её оборачивают рецепт `just identity-proto` и локальная, CI- и container-сборка сервиса; Aspire запускает уже подготовленный Go-процесс и сам кодогенерацию не выполняет.
-- Конкретные пути пакетов и managed-настройка `go_package_prefix` появляются вместе с первым Go-контрактом: они зависят от Go module path и раскладки `contracts/proto/`.
+- Для Identity версии инструментов закреплены в рецепте `just identity-proto-tools`: Buf `v1.47.2`, `protoc-gen-go` `v1.36.6`, `protoc-gen-go-grpc` `v1.5.1`.
+- Identity задаёт Go import prefix `github.com/anticnvm/solguficky-hub/apps/identity/gen` через managed-настройку `go_package_prefix`; к нему добавляется путь `.proto` относительно `contracts/proto`.
 
 Buf выбран вместо прямого вызова `protoc`, потому что генерирует код теми же Go-плагинами, но хранит список входов и параметры декларативно и оставляет единый путь к `buf lint` и `buf breaking`. Эти проверки не включаются самим выбором генератора: существующие Legacy-схемы не проходят стандартный lint, а compatibility gate вводится отдельным изменением контрактного CI.
 

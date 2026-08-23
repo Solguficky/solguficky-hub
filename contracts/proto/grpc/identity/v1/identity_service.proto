@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package solguficky.identity.v1;
+
+service IdentityService {
+  rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+}
+
+message ResolveIdentityRequest {
+  // Stable Telegram identifier received from an authenticated update.
+  int64 telegram_user_id = 1;
+  // Current Telegram username without the leading '@', when it is present.
+  optional string telegram_username = 2;
+}
+
+message ResolveIdentityResponse {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+  // Service-wide roles; domain-specific roles are not returned here.
+  repeated GlobalRole global_roles = 2;
+}
+
+enum GlobalRole {
+  GLOBAL_ROLE_UNSPECIFIED = 0;
+  GLOBAL_ROLE_ADMIN = 1;
+}

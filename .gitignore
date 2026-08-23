@@ -82,3 +82,10 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+
+# ===================================================================
+# Go — apps/identity
+# ===================================================================
+
+# Protobuf types are generated from contracts/proto/ during the build.
+apps/identity/gen/

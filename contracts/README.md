@@ -9,7 +9,10 @@ contracts/proto/
 ├── common/
 │   └── types.proto
 ├── grpc/
-│   └── auction_service.proto
+│   ├── auction_service.proto
+│   └── identity/
+│       └── v1/
+│           └── identity_service.proto
 └── nats/
     ├── commands/
     │   ├── auction_commands.proto
@@ -18,7 +21,7 @@ contracts/proto/
         └── auction_events.proto
 ```
 
-Существующие схемы относятся преимущественно к Legacy-аукционной ветке. Контракты Meetups, Identity и нового Telegram Gateway ещё не спроектированы.
+Корневые `.proto` в `grpc/` относятся к Legacy-аукционной ветке. MVP gRPC API раскладываются по владельцу и major-версии: `grpc/<domain>/v<major>/`. Первым таким контрактом стал `grpc/identity/v1/identity_service.proto`; остальные контракты Meetups и нового Telegram Gateway ещё не спроектированы.
 
 ## Владение
 

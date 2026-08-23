@@ -1,6 +1,6 @@
 # Межсервисное взаимодействие
 
-> **Статус:** Canonical для Current/Legacy-интеграций. Контракты MVP ещё не спроектированы.
+> **Статус:** Canonical для Current/Legacy-интеграций и принятых MVP-контрактов.
 
 Wire-схемы находятся в `contracts/proto/`. Этот документ описывает transport boundaries и имена NATS subjects, которые не являются частью `.proto`.
 
@@ -40,7 +40,11 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 ## MVP-контракты
 
-Wire-схемы gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Для Gateway → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Состав методов, сообщений и service authentication остаётся предметом contract design. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
+| Transport / operation | Proto | Caller | Provider | Semantics |
+|---|---|---|---|---|
+| gRPC `solguficky.identity.v1.IdentityService/ResolveIdentity` | `ResolveIdentityRequest`, `ResolveIdentityResponse` | Telegram Gateway | Identity | По Telegram user id и optional-нику устанавливает identity для `/start` и возвращает канонический UUIDv7 и общие роли. |
+
+Вызов `ResolveIdentity` синхронный; при недоступности Identity операция завершается fail-closed. Контракт не передаёт статус допуска, whitelist, инвайты или service authentication. Wire-схемы gRPC API для Meetups, остальных операций Identity, нового Telegram Gateway и reminders ещё не приняты. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
 
 Notifications публикует наружу не команду каналу, а факт «человеку положено такое уведомление»: явный получатель во внутреннем идентификаторе, тип уведомления со структурированными данными — типизированным `oneof`, а не строковым кодом со свободным словарём. Готового текста и `chat_id` в сообщении нет, обратных событий о доставке нет. Legacy-команда `commands.telegram.send_message` формой будущего контракта не является: она несёт `chat_id` и готовый текст, то есть ровно то, от чего [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) отказался. Словарь кодов типов уведомлений становится межсервисным контрактом и меняется согласованно с потребителями.
 
@@ -60,12 +64,11 @@ Identity публикует события о регистрации и смен
 
 ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Legacy scope`: часть про роли заменена [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), остальное описывает аукционный Gateway. Правило выбора transport из него используется как отправная точка, а не как действующее решение для MVP.
 
-## Contract governance до новых proto
+## Contract governance
 
-До добавления Meetups и Identity контрактов нужно принять минимум:
+До расширения набора MVP-контрактов нужно закрыть оставшиеся вопросы:
 
 - правила совместимости;
-- package/version naming;
 - ownership;
 - codegen matrix для TypeScript и выбранного backend stack;
 - CI breaking checks;

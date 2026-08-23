@@ -1,0 +1,22 @@
+version: v2
+
+clean: true
+
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/anticnvm/solguficky-hub/apps/identity/gen
+
+plugins:
+  - local: protoc-gen-go
+    out: apps/identity/gen
+    opt:
+      - paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: apps/identity/gen
+    opt:
+      - paths=source_relative
+
+inputs:
+  - directory: contracts/proto/grpc/identity/v1

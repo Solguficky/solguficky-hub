@@ -1,6 +1,6 @@
 # Identity Service
 
-> **Слой:** MVP. **Граница, модель и язык:** Accepted. **Wire-контракты:** ещё не спроектированы.
+> **Слой:** MVP. **Граница, модель и язык:** Accepted. **Wire-контракты:** принят контракт разрешения identity для первого среза; остальные ещё не спроектированы.
 
 ## Ответственность
 
@@ -139,7 +139,6 @@ Identity реализуется на Go. Сложного домена здес�
 - service authentication и авторизация служебного endpoint — [PER-30](https://linear.app/anticnvm/issue/per-30);
 - набор и формат административных команд бота;
 - формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29);
-- package/version naming первого контракта и соответствующая настройка `go_package_prefix`;
 - timeout при fail-closed; тексты ответов человеку — часть дизайн-сессии [PER-32](https://linear.app/anticnvm/issue/per-32);
 - retention заблокированных профилей, погашенных записей whitelist и истёкших токенов — [PER-29](https://linear.app/anticnvm/issue/per-29).
 

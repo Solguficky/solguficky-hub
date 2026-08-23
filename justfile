@@ -40,6 +40,16 @@ aspire profile="core":
 
 # --- Инструменты -----------------------------------------------------------
 
+# Установить закреплённые Buf и Go plugins для Identity
+identity-proto-tools:
+    go install github.com/bufbuild/buf/cmd/buf@v1.47.2
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.6
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+
+# Сгенерировать Go types и gRPC stubs Identity в apps/identity/gen/
+identity-proto:
+    buf generate --template apps/identity/buf.gen.yaml
+
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
