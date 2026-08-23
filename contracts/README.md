@@ -9,7 +9,10 @@ contracts/proto/
 ├── common/
 │   └── types.proto
 ├── grpc/
-│   └── auction_service.proto
+│   ├── auction_service.proto
+│   └── identity/
+│       └── v1/
+│           └── identity.proto
 └── nats/
     ├── commands/
     │   ├── auction_commands.proto
@@ -18,7 +21,7 @@ contracts/proto/
         └── auction_events.proto
 ```
 
-Существующие схемы относятся преимущественно к Legacy-аукционной ветке. Контракты Meetups, Identity и нового Telegram Gateway ещё не спроектированы.
+gRPC-сервисы MVP лежат в `grpc/<service>/v1/` с пакетом `grpc.<service>.v1`. Legacy-аукционные схемы остаются в плоском `grpc/` и `nats/` и не перекладываются. Контракты Meetups, нового Telegram Gateway и NATS-событий Identity ещё не спроектированы.
 
 ## Владение
 

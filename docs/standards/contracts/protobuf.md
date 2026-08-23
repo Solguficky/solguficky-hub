@@ -12,7 +12,7 @@
 - Не переиспользуй номер удалённого поля; помечай удалённые номера и имена как `reserved`.
 - Новое поле добавляй так, чтобы старый consumer мог его проигнорировать, а новый consumer корректно обработал отсутствие значения.
 - Breaking change требует явного решения о версии или миграции потребителей до изменения схемы.
-- Идентификаторы сходок и аукционов передаются канонической lowercase UUIDv7-строкой с дефисами.
+- Идентификаторы сущностей (сходки, аукционы, внутренние identity) передаются канонической lowercase UUIDv7-строкой с дефисами.
 
 ## Transport
 
@@ -21,13 +21,21 @@
 - Имя NATS subject не является частью `.proto`; оно документируется в [integration.md](../../architecture/integration.md) и задаётся константой или конфигурацией producer/consumer.
 - Subjects именуются `<commands|events>.<домен>.<действие>` в `snake_case`.
 
+## Раскладка и пакеты gRPC MVP
+
+- gRPC-сервисы MVP лежат в `contracts/proto/grpc/<service>/v1/<service>.proto`.
+- Protobuf package — `grpc.<service>.v1`. Каталог на диске совпадает с пакетом: `grpc/<service>/v1/`.
+- Несовместимая версия — новый каталог и пакет `v2`, а не правка `v1`.
+- В `.proto` нет языковых `option` вроде `go_package`: их задаёт потребитель через managed mode.
+- Legacy-схемы в `contracts/proto/grpc/*.proto` и `contracts/proto/nats/` это правило не меняют и не перекладываются.
+
 ## Кодогенерация Go
 
 - Go-потребители вызывают `buf generate` как единый frontend кодогенерации. Конфигурация конкретного потребителя хранится в его `buf.gen.yaml`.
 - Код генерируют локальные официальные плагины `protoc-gen-go` и `protoc-gen-go-grpc` с закреплёнными версиями. Remote plugins и Buf Schema Registry не входят в build path.
 - Сгенерированный код находится в отдельном пакете `gen/`, не содержит рукописного кода и не является источником правды.
 - Для Identity команда из корня репозитория — `buf generate --template apps/identity/buf.gen.yaml`. Её оборачивают рецепт `just identity-proto` и локальная, CI- и container-сборка сервиса; Aspire запускает уже подготовленный Go-процесс и сам кодогенерацию не выполняет.
-- Конкретные пути пакетов и managed-настройка `go_package_prefix` появляются вместе с первым Go-контрактом: они зависят от Go module path и раскладки `contracts/proto/`.
+- `go_package_prefix` Identity — `github.com/Solguficky/solguficky-hub/apps/identity/gen`. Схема `grpc.identity.v1` даёт пакет `.../gen/grpc/identity/v1` с именем `identityv1`.
 
 Buf выбран вместо прямого вызова `protoc`, потому что генерирует код теми же Go-плагинами, но хранит список входов и параметры декларативно и оставляет единый путь к `buf lint` и `buf breaking`. Эти проверки не включаются самим выбором генератора: существующие Legacy-схемы не проходят стандартный lint, а compatibility gate вводится отдельным изменением контрактного CI.
 
@@ -37,6 +45,6 @@ Buf выбран вместо прямого вызова `protoc`, потому
 - Обнови всех затронутых потребителей в одном изменении.
 - Пересобери каждый затронутый сервис, чтобы выполнить кодогенерацию.
 - Обнови `tools/nats-tester`, если он поддерживает изменённое сообщение.
-- Обнови `architecture/integration.md` при добавлении или изменении subject.
+- Обнови `architecture/integration.md` при добавлении или изменении subject либо gRPC-операции.
 
 Пошаговый workflow находится в skill `sgh-change-contract`.

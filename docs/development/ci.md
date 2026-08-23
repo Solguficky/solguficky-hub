@@ -7,7 +7,7 @@ Current workflow: `.github/workflows/ci.yml`.
 Известные gaps:
 
 - workflow устанавливает .NET 8 для сервисов, переведённых на net10;
-- изменение `contracts/proto/` должно проверять всех producers и consumers, а не только проекты, выбранные обычными path filters;
+- изменение `contracts/proto/` должно проверять всех producers и consumers, а не только проекты, выбранные обычными path filters; Identity уже входит в этот контур через джобу `identity`;
 - оставленные Legacy-сервисы должны продолжать собираться до согласованного удаления;
 - Aspire AppHost требует отдельного restore/build/smoke-test gate;
 - compatibility check Protobuf ещё не внедрён.

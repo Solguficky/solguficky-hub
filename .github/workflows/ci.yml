@@ -15,6 +15,7 @@ jobs:
       notifications: ${{ steps.filter.outputs.notifications }}
       websocket: ${{ steps.filter.outputs.websocket }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      identity: ${{ steps.filter.outputs.identity }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -36,6 +37,10 @@ jobs:
             gateway:
               - *shared
               - 'services/telegram-gateway/**'
+            identity:
+              - *shared
+              - 'apps/identity/**'
+              - 'justfile'
 
   auction-service:
     needs: changes
@@ -103,6 +108,23 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  identity:
+    needs: changes
+    if: needs.changes.outputs.identity == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: apps/identity/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.54.0'
+      - run: sh apps/identity/generate.sh
+      - run: go test ./...
+        working-directory: apps/identity
 
   repo-hygiene:
     runs-on: ubuntu-latest

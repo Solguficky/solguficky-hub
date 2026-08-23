@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package grpc.identity.v1;
+
+service IdentityService {
+  rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+}
+
+message ResolveIdentityRequest {
+  int64 telegram_user_id = 1;
+  optional string telegram_username = 2;
+}
+
+message ResolveIdentityResponse {
+  string identity_id = 1;
+  repeated GlobalRole roles = 2;
+}
+
+enum GlobalRole {
+  GLOBAL_ROLE_UNSPECIFIED = 0;
+  GLOBAL_ROLE_ADMINISTRATOR = 1;
+}

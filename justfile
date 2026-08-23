@@ -1,8 +1,8 @@
 # Единая точка входа для команд репозитория.
 #
 # Репозиторий полиязычный: каждый компонент собирается своим инструментом
-# (dotnet, cargo, pip). Здесь они собраны в одном месте, чтобы не держать
-# в голове, в какую папку зайти и чем собрать.
+# (dotnet, cargo, pip, go, buf). Здесь они собраны в одном месте, чтобы не
+# держать в голове, в какую папку зайти и чем собрать.
 #
 # Требуется just: https://github.com/casey/just
 #
@@ -37,6 +37,23 @@ check-commit-message file:
 # и не соберётся до актуализации. См. infra/apphost/Program.cs.
 aspire profile="core":
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
+
+# --- Identity (Go) ---------------------------------------------------------
+#
+# Кодогенерация — часть сборки сервиса. Исполняемого Identity ещё нет;
+# рецепты проверяют, что контракт собирается в gen/.
+
+# Сгенерировать Go-типы Identity из contracts/proto
+identity-proto:
+    sh apps/identity/generate.sh
+
+# Сборка сгенерированного пакета Identity
+identity-build: identity-proto
+    cd apps/identity && go build ./...
+
+# Проверка wire-типов Identity
+identity-test: identity-proto
+    cd apps/identity && go test ./...
 
 # --- Инструменты -----------------------------------------------------------
 

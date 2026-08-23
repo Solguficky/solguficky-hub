@@ -1,6 +1,6 @@
 # Межсервисное взаимодействие
 
-> **Статус:** Canonical для Current/Legacy-интеграций. Контракты MVP ещё не спроектированы.
+> **Статус:** Canonical для Current/Legacy-интеграций и первого gRPC-контракта Identity. Остальные контракты MVP ещё не спроектированы.
 
 Wire-схемы находятся в `contracts/proto/`. Этот документ описывает transport boundaries и имена NATS subjects, которые не являются частью `.proto`.
 
@@ -40,11 +40,23 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 ## MVP-контракты
 
-Wire-схемы gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Для Gateway → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Состав методов, сообщений и service authentication остаётся предметом contract design. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
+### Identity gRPC
+
+| RPC | Proto | Caller | Callee |
+|---|---|---|---|
+| `IdentityService.ResolveIdentity` | `grpc.identity.v1` в `contracts/proto/grpc/identity/v1/identity.proto` | Telegram Gateway | Identity |
+
+Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMINISTRATOR`; пустой набор — обычный пользователь.
+
+Операция устанавливает личность: создаёт профиль при первом обращении и обновляет ник как кэш. Статус допуска, whitelist, инвайты и служебные endpoints премодерации в этот контракт не входят — полей под них нет. Отказы передаются статусами gRPC, отдельного error-message нет.
+
+Для Gateway → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Service authentication остаётся предметом отдельного контракта.
+
+Wire-схемы gRPC API для Meetups, нового Telegram Gateway и reminders ещё не приняты. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
 
 Notifications публикует наружу не команду каналу, а факт «человеку положено такое уведомление»: явный получатель во внутреннем идентификаторе, тип уведомления со структурированными данными — типизированным `oneof`, а не строковым кодом со свободным словарём. Готового текста и `chat_id` в сообщении нет, обратных событий о доставке нет. Legacy-команда `commands.telegram.send_message` формой будущего контракта не является: она несёт `chat_id` и готовый текст, то есть ровно то, от чего [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) отказался. Словарь кодов типов уведомлений становится межсервисным контрактом и меняется согласованно с потребителями.
 
-Identity публикует события о регистрации и смене статуса допуска: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md)). Gateway устанавливает Telegram identity после проверки secret token вебхука, Identity разрешает Telegram user id во внутренний id, статус доступа и глобальные роли, а Meetups принимает доменные authorization-решения. Authentication material через Identity не проходит.
+Identity публикует события о регистрации и смене статуса допуска: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md)). Эти события вне среза и в текущем `.proto` не описаны. Gateway устанавливает Telegram identity после проверки secret token вебхука, Identity разрешает Telegram user id во внутренний id и глобальные роли, а Meetups принимает доменные authorization-решения. Статус допуска входит в полную модель ADR-026, но в контракт среза не входит. Authentication material через Identity не проходит.
 
 ## Выбор sync и async
 
@@ -60,17 +72,16 @@ Identity публикует события о регистрации и смен
 
 ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Legacy scope`: часть про роли заменена [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), остальное описывает аукционный Gateway. Правило выбора transport из него используется как отправная точка, а не как действующее решение для MVP.
 
-## Contract governance до новых proto
+## Contract governance
 
-До добавления Meetups и Identity контрактов нужно принять минимум:
+Для gRPC MVP приняты раскладка `contracts/proto/grpc/<service>/v1/` и пакет `grpc.<service>.v1`; для Go — `buf generate` с локальными плагинами и `go_package_prefix` потребителя. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
 
-- правила совместимости;
-- package/version naming;
-- ownership;
-- codegen matrix для TypeScript и выбранного backend stack;
+До следующих контрактов остаются открытыми:
+
+- codegen matrix для TypeScript и F#;
 - CI breaking checks;
 - правила удаления Legacy auction contracts;
-- границу отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
+- граница отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
 
 Schema Registry — не одно бинарное решение:
 
@@ -118,7 +129,7 @@ Loki/Grafana и Aspire dashboard являются заделом. Наличие
 
 ## Изменение
 
-При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `sgh-change-contract`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
+При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `sgh-change-contract`. При изменении subject или gRPC-операции обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
 
 ## Технические источники
 
