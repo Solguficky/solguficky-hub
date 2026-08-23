@@ -21,6 +21,16 @@
 - Имя NATS subject не является частью `.proto`; оно документируется в [integration.md](../../architecture/integration.md) и задаётся константой или конфигурацией producer/consumer.
 - Subjects именуются `<commands|events>.<домен>.<действие>` в `snake_case`.
 
+## Кодогенерация Go
+
+- Go-потребители вызывают `buf generate` как единый frontend кодогенерации. Конфигурация конкретного потребителя хранится в его `buf.gen.yaml`.
+- Код генерируют локальные официальные плагины `protoc-gen-go` и `protoc-gen-go-grpc` с закреплёнными версиями. Remote plugins и Buf Schema Registry не входят в build path.
+- Сгенерированный код находится в отдельном пакете `gen/`, не содержит рукописного кода и не является источником правды.
+- Для Identity команда из корня репозитория — `buf generate --template apps/identity/buf.gen.yaml`. Её оборачивают рецепт `just identity-proto` и локальная, CI- и container-сборка сервиса; Aspire запускает уже подготовленный Go-процесс и сам кодогенерацию не выполняет.
+- Конкретные пути пакетов и managed-настройка `go_package_prefix` появляются вместе с первым Go-контрактом: они зависят от Go module path и раскладки `contracts/proto/`.
+
+Buf выбран вместо прямого вызова `protoc`, потому что генерирует код теми же Go-плагинами, но хранит список входов и параметры декларативно и оставляет единый путь к `buf lint` и `buf breaking`. Эти проверки не включаются самим выбором генератора: существующие Legacy-схемы не проходят стандартный lint, а compatibility gate вводится отдельным изменением контрактного CI.
+
 ## Изменение контракта
 
 - Найди producers, consumers, тестовые инструменты и generated-code configuration по имени сообщения и subject.
