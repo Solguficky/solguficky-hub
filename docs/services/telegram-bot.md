@@ -184,8 +184,7 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 - transport операций к Meetups и его wire-контракт — [PER-51](https://linear.app/anticnvm/issue/PER-51);
 - устройство второго входа и политика доставки уведомлений — [PER-72](https://linear.app/anticnvm/issue/PER-72)…[PER-74](https://linear.app/anticnvm/issue/PER-74);
 - норматив логирования персональных данных — [PER-63](https://linear.app/anticnvm/issue/PER-63);
-- исчезающие сообщения и Rich Messages — [PER-20](https://linear.app/anticnvm/issue/PER-20);
-- внешний идентификатор в deep link — [PER-28](https://linear.app/anticnvm/issue/PER-28).
+- исчезающие сообщения и Rich Messages — [PER-20](https://linear.app/anticnvm/issue/PER-20).
 
 Решается при реализации, ADR не требуется: конкретные тексты и локализация, числа таймаутов и повторов, версии Node и grammY, способ подключения в Aspire 13 (`AddJavaScriptApp`, а не устаревший `AddNpmApp`).
 
