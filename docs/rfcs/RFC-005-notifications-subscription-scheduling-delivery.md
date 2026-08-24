@@ -56,7 +56,7 @@
 
 ### Две плоскости
 
-**Command plane.** Синхронный gRPC API управления подписками, настройками категорий и ручными рассылками. В MVP его единственный клиент — Telegram Gateway, но контракт этого не знает: вызывающая сторона предъявляет внутренний идентификатор человека, а Notifications не знает, из какого интерфейса пришла команда. Мини-приложение позже становится вторым клиентом того же API, а не вторым путём.
+**Command plane.** Синхронный gRPC API управления подписками, настройками категорий и ручными рассылками. В MVP его единственный клиент — Telegram Bot, но контракт этого не знает: вызывающая сторона предъявляет внутренний идентификатор человека, а Notifications не знает, из какого интерфейса пришла команда. Мини-приложение позже становится вторым клиентом того же API, а не вторым путём.
 
 **Event plane.** Асинхронное потребление событий Meetups и Identity. Из них сервис делает две разные вещи: триггерит уведомления и поддерживает собственную реплику. Синхронных запросов в чужие сервисы в горячем пути нет.
 
@@ -265,7 +265,7 @@ Identity начинает публиковать события об измен�
 | Identity | outbox и события о регистрации и смене статуса допуска | подписочная модель |
 | Identity | метод перечисления текущего состава | bootstrap и пересборка реплики |
 | Identity | метод разрешения внутреннего идентификатора в Telegram id | сейчас в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь |
-| Telegram Gateway | роль потребителя уведомлений: **собственный** durable consumer, резолвинг получателя, рендеринг текста, retry и журнал попыток | Notifications каналов не знает, а каналы не должны конкурировать за одно сообщение |
+| Telegram Bot | роль потребителя уведомлений: **собственный** durable consumer, резолвинг получателя, рендеринг текста, retry и журнал попыток | Notifications каналов не знает, а каналы не должны конкурировать за одно сообщение |
 
 ## Что станет сложнее
 
@@ -305,6 +305,6 @@ Identity начинает публиковать события об измен�
 - **ADR:** два, по образцу пары ADR-024 и ADR-025. Первый — устройство Notifications и границы: две плоскости, реплика, триггеры, конец ответственности на публикации в шину, ручная рассылка, события Identity. Второй — стек: C# и Orleans, PostgreSQL как источник истины.
 - **Поправка:** [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) отредактирован, применимость осталась `Active`.
 - **Standard:** не нужен.
-- **Обновление документов:** [services/notifications.md](../services/notifications.md), [services/identity.md](../services/identity.md), [services/telegram-gateway.md](../services/telegram-gateway.md), [architecture/integration.md](../architecture/integration.md), строка Notifications в [матрице решений](../architecture/decision-matrix.html).
+- **Обновление документов:** [services/notifications.md](../services/notifications.md), [services/identity.md](../services/identity.md), [services/telegram-bot.md](../services/telegram-bot.md), [architecture/integration.md](../architecture/integration.md), строка Notifications в [матрице решений](../architecture/decision-matrix.html).
 - **`contracts/proto/`:** словарь типов уведомлений и gRPC API подписок проектируются отдельным contract change после утверждения словаря событий Meetups.
 - **Задачи Linear:** после принятия ADR.

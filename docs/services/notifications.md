@@ -19,7 +19,7 @@ Notifications отвечает на вопрос **«кому и что поло
 
 ## Две плоскости взаимодействия
 
-**Command plane — синхронный gRPC.** Управление подписками, настройками категорий и ручными рассылками. Вызывающая сторона предъявляет внутренний идентификатор человека; из какого интерфейса пришла команда, сервис не знает. В MVP единственный клиент — Telegram Gateway, но это свойство текущего состава платформы, а не контракта: мини-приложение становится вторым клиентом того же API, а не вторым путём.
+**Command plane — синхронный gRPC.** Управление подписками, настройками категорий и ручными рассылками. Вызывающая сторона предъявляет внутренний идентификатор человека; из какого интерфейса пришла команда, сервис не знает. В MVP единственный клиент — Telegram Bot, но это свойство текущего состава платформы, а не контракта: мини-приложение становится вторым клиентом того же API, а не вторым путём.
 
 **Event plane — потребление шины.** События Meetups и Identity в Protobuf через NATS JetStream. Из одного и того же потока сервис делает две разные вещи: порождает поводы к уведомлению и поддерживает реплику. Синхронных запросов в чужие сервисы в горячем пути рассылки нет.
 
@@ -173,7 +173,7 @@ JetStream участвует в первой границе, но не заме�
 | Identity | outbox и события о регистрации и смене статуса допуска |
 | Identity | вне MVP: метод перечисления состава, когда понадобится наполнение и пересборка реплики |
 | Identity | метод разрешения внутреннего идентификатора в Telegram id |
-| Telegram Gateway | роль потребителя уведомлений: подписка на шину, резолвинг получателя, рендеринг текста, retry и журнал попыток |
+| Telegram Bot | роль потребителя уведомлений: собственный durable consumer, резолвинг получателя, рендеринг текста, retry и журнал попыток. Устройство этого входа решается вместе с эпиками уведомлений, а не в [ADR-030](../decisions/ADR-030-telegram-bot.md) |
 
 Метод разрешения внутреннего идентификатора в Telegram id нужен каналу, а не Notifications: в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь.
 
@@ -203,5 +203,5 @@ Quiet hours и группировка уведомлений в первую в�
 
 - Legacy handler, который не переносится: `legacy/notifications-service/src/NotificationsService/Handlers/BidPlacedHandler.cs`
 - [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md), [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md), [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md)
-- Соседи: [Meetups](meetups.md), [Identity](identity.md), [Telegram Gateway](telegram-gateway.md)
+- Соседи: [Meetups](meetups.md), [Identity](identity.md), [Telegram Bot](telegram-bot.md)
 - [integration.md](../architecture/integration.md), [product/overview.md](../product/overview.md)

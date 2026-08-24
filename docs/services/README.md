@@ -4,7 +4,7 @@ Service brief описывает ответственность, жизненн�
 
 | Компонент | Слой | Brief |
 |---|---|---|
-| Telegram Gateway | Current/Legacy → MVP replacement | [telegram-gateway.md](telegram-gateway.md) |
+| Telegram Bot | MVP | [telegram-bot.md](telegram-bot.md) |
 | Meetups | MVP | [meetups.md](meetups.md) |
 | Identity | MVP | [identity.md](identity.md) |
 | Notifications | MVP | [notifications.md](notifications.md) |

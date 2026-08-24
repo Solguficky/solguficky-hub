@@ -19,9 +19,9 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 
 ## Карта репозитория
 
-- `apps/` — деплоимые компоненты платформы. Сейчас здесь контур кодогенерации Identity; исполняемых Meetups, Identity, Mini App и нового Telegram Gateway ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
+- `apps/` — деплоимые компоненты платформы. Сейчас здесь контур кодогенерации Identity; исполняемых Meetups, Identity, Mini App и Telegram Bot ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `legacy/` — код предыдущего поколения. Не собирается как часть платформы, не деплоится и не развивается; хранится до извлечения знаний, после чего удаляется целиком.
-  - `legacy/telegram-gateway/` — Rust + Teloxide, преимущественно UI старого аукциона. Заменяется новой реализацией на TypeScript + grammY после ADR.
+  - `legacy/telegram-gateway/` — Rust + Teloxide, преимущественно UI старого аукциона. Заменяется компонентом `telegram-bot` на TypeScript + grammY ([ADR-030](docs/decisions/ADR-030-telegram-bot.md)); каталог сохраняет прежнее имя как имя мёртвого кода.
   - `legacy/auction-service/` — C# + Akka.NET, CQRS/Event Sourcing.
   - `legacy/notifications-service/` — C#-каркас с аукционным обработчиком. Роль уведомлений в MVP проектируется заново.
   - `legacy/websocket-gateway/` — C# + SignalR только для аукциона.

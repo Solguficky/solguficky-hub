@@ -192,6 +192,6 @@ Notifications ведёт локальную проекцию фактов, ну�
 
 - RFC: [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md) — разбор вариантов, сценарии и открытые вопросы
 - Другие ADR: [ADR-029](ADR-029-notifications-orleans-stack.md) — стек под это устройство; [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md), [ADR-022](ADR-022-meetup-state-axes-and-visibility.md), [ADR-026](ADR-026-identity-mvp-model-and-access.md), [ADR-003](ADR-003-nats-jetstream-message-bus.md), [ADR-004](ADR-004-postgresql-primary-database.md)
-- Сервисы: [Notifications](../services/notifications.md), [Identity](../services/identity.md), [Telegram Gateway](../services/telegram-gateway.md)
+- Сервисы: [Notifications](../services/notifications.md), [Identity](../services/identity.md), [Telegram Bot](../services/telegram-bot.md)
 - Архитектура: [integration.md](../architecture/integration.md)
 - Продукт: [overview.md](../product/overview.md)

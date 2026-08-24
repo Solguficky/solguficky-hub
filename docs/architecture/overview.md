@@ -20,7 +20,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Gateway стек принят, а persistence диалогового состояния остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а transport к Meetups остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -39,7 +39,7 @@ Linear является источником правды для порядка 
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
-| Telegram Gateway | Rust + Teloxide, преимущественно UI старого аукциона | Будет заменён новой реализацией |
+| Telegram Gateway (legacy) | Rust + Teloxide, преимущественно UI старого аукциона | Будет заменён компонентом Telegram Bot |
 | Auction Service | C# + Akka.NET, actors, persistence, gRPC и NATS | Legacy, вне MVP |
 | Notifications Service | C#-каркас с единственным аукционным handler | Legacy; не переносится, сервис пишется заново |
 | WebSocket Gateway | C# + SignalR, только `auction:live` | Frozen legacy |
@@ -55,7 +55,7 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Gateway | Accepted, ADR pending | Новая реализация TypeScript + grammY |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
 | Meetups | Граница, техническая модель и стек Accepted: ADR-024, ADR-025; словарь событий Open | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
@@ -81,7 +81,7 @@ Linear является источником правды для порядка 
 
 ```text
 Telegram user
-→ новый TypeScript Gateway
+→ новый Telegram Bot на TypeScript
 → Identity
 → Meetups
 → наблюдаемый ответ пользователю
