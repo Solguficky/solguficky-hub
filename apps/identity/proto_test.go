@@ -3,7 +3,7 @@ package identity_test
 import (
 	"testing"
 
-	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/grpc/identity/v1"
+	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -39,8 +39,8 @@ func TestResolveIdentityRequestOmitsUsername(t *testing.T) {
 func TestResolveIdentityResponseRoundTrip(t *testing.T) {
 	id := "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"
 	in := &identityv1.ResolveIdentityResponse{
-		IdentityId: id,
-		Roles:      []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMINISTRATOR},
+		IdentityId:  id,
+		GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN},
 	}
 	raw, err := proto.Marshal(in)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestResolveIdentityResponseRoundTrip(t *testing.T) {
 	if out.GetIdentityId() != id {
 		t.Fatalf("identity_id: got %q want %q", out.GetIdentityId(), id)
 	}
-	if len(out.GetRoles()) != 1 || out.GetRoles()[0] != identityv1.GlobalRole_GLOBAL_ROLE_ADMINISTRATOR {
-		t.Fatalf("roles: got %v", out.GetRoles())
+	if len(out.GetGlobalRoles()) != 1 || out.GetGlobalRoles()[0] != identityv1.GlobalRole_GLOBAL_ROLE_ADMIN {
+		t.Fatalf("global_roles: got %v", out.GetGlobalRoles())
 	}
 }

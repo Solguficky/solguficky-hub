@@ -9,6 +9,14 @@
 # Новый компонент добавляет свои рецепты сюда в том же коммите, в котором
 # появляется его сборка.
 
+# --- Версии инструментов ---------------------------------------------------
+#
+# Единственное место, где закреплена версия buf. Джоба identity в CI читает
+# её отсюда, чтобы локальная и CI-генерация шли одним бинарником.
+# Версии protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
+
+BUF_VERSION := "1.54.0"
+
 # Список рецептов
 default:
     @just --list
@@ -43,9 +51,14 @@ aspire profile="core":
 # Кодогенерация — часть сборки сервиса. Исполняемого Identity ещё нет;
 # рецепты проверяют, что контракт собирается в gen/.
 
+# Установить buf и Go-плагины кодогенерации закреплённых версий в $(go env GOPATH)/bin
+identity-proto-tools:
+    go install github.com/bufbuild/buf/cmd/buf@v{{BUF_VERSION}}
+    cd apps/identity && go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
+
 # Сгенерировать Go-типы Identity из contracts/proto
 identity-proto:
-    sh apps/identity/generate.sh
+    buf generate --template apps/identity/buf.gen.yaml
 
 # Сборка сгенерированного пакета Identity
 identity-build: identity-proto

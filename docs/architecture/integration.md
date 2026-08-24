@@ -1,6 +1,6 @@
 # Межсервисное взаимодействие
 
-> **Статус:** Canonical для Current/Legacy-интеграций и первого gRPC-контракта Identity. Остальные контракты MVP ещё не спроектированы.
+> **Статус:** Canonical для принятых MVP-контрактов. Legacy-разделы описывают существующую аукционную ветку как знание, а не как действующий контракт: её схемы удалены из `contracts/proto/`.
 
 Wire-схемы находятся в `contracts/proto/`. Этот документ описывает transport boundaries и имена NATS subjects, которые не являются частью `.proto`.
 
@@ -36,7 +36,7 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 | `events.auction.bid_placed` | `BidPlacedEvent` | Auction Service | Notifications, WebSocket Gateway, Rust Telegram Gateway |
 | `events.auction.phase_transitioned` | `PhaseTransitionedEvent` | Auction Service | Нет специализированного consumer; wildcard listeners получают subject без доменной обработки |
 
-Таблица описывает существующую аукционную ветку, а не обязательный контракт будущего auction v2.
+Таблицы описывают существующую аукционную ветку, а не обязательный контракт будущего auction v2. Сами `.proto` удалены из репозитория и восстанавливаются из истории Git.
 
 ## MVP-контракты
 
@@ -44,9 +44,9 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `IdentityService.ResolveIdentity` | `grpc.identity.v1` в `contracts/proto/grpc/identity/v1/identity.proto` | Telegram Gateway | Identity |
+| `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Telegram Gateway | Identity |
 
-Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMINISTRATOR`; пустой набор — обычный пользователь.
+Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `global_roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMIN`; пустой набор — обычный пользователь.
 
 Операция устанавливает личность: создаёт профиль при первом обращении и обновляет ник как кэш. Статус допуска, whitelist, инвайты и служебные endpoints премодерации в этот контракт не входят — полей под них нет. Отказы передаются статусами gRPC, отдельного error-message нет.
 
@@ -74,13 +74,19 @@ ADR-016 объединяет transport, RBAC и Gateway-specific решения 
 
 ## Contract governance
 
-Для gRPC MVP приняты раскладка `contracts/proto/grpc/<service>/v1/` и пакет `grpc.<service>.v1`; для Go — `buf generate` с локальными плагинами и `go_package_prefix` потребителя. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
+Приняты раскладка `contracts/proto/<domain>/v<major>/` с совпадающим Protobuf package и кодогенерация Go через `buf generate` с локальными плагинами и `go_package_prefix` потребителя. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
+
+Закрыто и записано нормативно:
+
+- правила совместимости — раздел «Совместимость» в [protobuf.md](../standards/contracts/protobuf.md);
+- ownership схем, каталога и generated-code configuration — раздел «Владение» в [contracts/README.md](../../contracts/README.md);
+- раскладка каталогов, именование пакетов и кодогенерация Go — [protobuf.md](../standards/contracts/protobuf.md).
 
 До следующих контрактов остаются открытыми:
 
 - codegen matrix для TypeScript и F#;
-- CI breaking checks;
-- правила удаления Legacy auction contracts;
+- CI breaking checks и `buf lint`;
+- машинно-проверяемые ограничения полей. Единственный рабочий механизм — protovalidate: опция вида `[(buf.validate.field).string.uuid = true]` прямо в схеме и рантайм-библиотека у каждого потребителя. Он требует зависимости из Buf Schema Registry, которая по [protobuf.md](../standards/contracts/protobuf.md) сейчас вне build path, поэтому вводится не вместе с отдельным контрактом, а решением по всем схемам сразу;
 - граница отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
 
 Schema Registry — не одно бинарное решение:

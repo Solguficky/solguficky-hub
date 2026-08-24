@@ -17,4 +17,4 @@ plugins:
 inputs:
   - directory: contracts/proto
     paths:
-      - contracts/proto/grpc/identity
+      - contracts/proto/identity

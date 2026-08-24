@@ -25,7 +25,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
   - `legacy/auction-service/` — C# + Akka.NET, CQRS/Event Sourcing.
   - `legacy/notifications-service/` — C#-каркас с аукционным обработчиком. Роль уведомлений в MVP проектируется заново.
   - `legacy/websocket-gateway/` — C# + SignalR только для аукциона.
-- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC; код генерируется потребителями при сборке.
+- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.

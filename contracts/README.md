@@ -6,22 +6,17 @@
 
 ```text
 contracts/proto/
-├── common/
-│   └── types.proto
-├── grpc/
-│   ├── auction_service.proto
-│   └── identity/
-│       └── v1/
-│           └── identity.proto
-└── nats/
-    ├── commands/
-    │   ├── auction_commands.proto
-    │   └── telegram_commands.proto
-    └── events/
-        └── auction_events.proto
+├── buf.yaml
+└── identity/
+    └── v1/
+        └── identity_service.proto
 ```
 
-gRPC-сервисы MVP лежат в `grpc/<service>/v1/` с пакетом `grpc.<service>.v1`. Legacy-аукционные схемы остаются в плоском `grpc/` и `nats/` и не перекладываются. Контракты Meetups, нового Telegram Gateway и NATS-событий Identity ещё не спроектированы.
+Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
+
+Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Потребитель сужает генерацию фильтром `paths` в своём `buf.gen.yaml`, а не переносом корня.
+
+Аукционные схемы удалены: аукцион не входит в MVP. Контракты Meetups, нового Telegram Gateway и NATS-событий Identity ещё не спроектированы.
 
 ## Владение
 

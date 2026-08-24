@@ -11,10 +11,6 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      auction: ${{ steps.filter.outputs.auction }}
-      notifications: ${{ steps.filter.outputs.notifications }}
-      websocket: ${{ steps.filter.outputs.websocket }}
-      gateway: ${{ steps.filter.outputs.gateway }}
       identity: ${{ steps.filter.outputs.identity }}
     steps:
       - uses: actions/checkout@v4
@@ -22,92 +18,11 @@ jobs:
         id: filter
         with:
           filters: |
-            shared: &shared
-              - 'contracts/proto/**'
-              - '.github/workflows/ci.yml'
-            auction:
-              - *shared
-              - 'services/auction-service/**'
-            notifications:
-              - *shared
-              - 'services/notifications-service/**'
-            websocket:
-              - *shared
-              - 'services/websocket-gateway/**'
-            gateway:
-              - *shared
-              - 'services/telegram-gateway/**'
             identity:
-              - *shared
+              - 'contracts/proto/**'
               - 'apps/identity/**'
               - 'justfile'
-
-  auction-service:
-    needs: changes
-    if: needs.changes.outputs.auction == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/auction-service
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - run: dotnet build --configuration Release
-      - run: dotnet test --configuration Release --no-build
-
-  notifications-service:
-    needs: changes
-    if: needs.changes.outputs.notifications == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/notifications-service
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - run: dotnet build --configuration Release
-      - run: dotnet test --configuration Release --no-build
-
-  websocket-gateway:
-    needs: changes
-    if: needs.changes.outputs.websocket == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/websocket-gateway
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - run: dotnet build --configuration Release
-      - run: dotnet test --configuration Release --no-build
-
-  telegram-gateway:
-    needs: changes
-    if: needs.changes.outputs.gateway == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/telegram-gateway
-    steps:
-      - uses: actions/checkout@v4
-      # prost-build в build.rs требует системный protoc (в отличие от C#-сервисов,
-      # где Grpc.Tools несёт protoc внутри NuGet-пакета)
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: services/telegram-gateway
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+              - '.github/workflows/ci.yml'
 
   identity:
     needs: changes
@@ -119,10 +34,14 @@ jobs:
         with:
           go-version: '1.22'
           cache-dependency-path: apps/identity/go.sum
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - uses: bufbuild/buf-setup-action@v1
         with:
-          version: '1.54.0'
-      - run: sh apps/identity/generate.sh
+          version: ${{ steps.tools.outputs.buf }}
+      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
+        working-directory: apps/identity
+      - run: buf generate --template apps/identity/buf.gen.yaml
       - run: go test ./...
         working-directory: apps/identity
 
