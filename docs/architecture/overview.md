@@ -35,7 +35,7 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Репозиторий содержит преимущественно аукционный прототип и инфраструктурный задел. Продуктовое ядро сходок ещё не реализовано: Meetups и Identity отсутствуют как исполняемые сервисы и как межсервисные контракты.
+Репозиторий содержит преимущественно аукционный прототип и инфраструктурный задел. Продуктовое ядро сходок ещё не реализовано: Meetups и Identity отсутствуют как исполняемые сервисы. У Identity принят первый межсервисный контракт; исполняемого кода сервиса нет.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
@@ -44,7 +44,7 @@ Linear является источником правды для порядка 
 | Notifications Service | C#-каркас с единственным аукционным handler | Legacy; не переносится, сервис пишется заново |
 | WebSocket Gateway | C# + SignalR, только `auction:live` | Frozen legacy |
 | Meetups | Отсутствует | Владелец данных о сходках |
-| Identity | Отсутствует | Telegram identity, допуск к продукту и системные роли |
+| Identity | Принят первый wire-контракт; исполняемого сервиса нет | Telegram identity, допуск к продукту и системные роли |
 | Mini App | Пустая заготовка | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `nats-tester` | Python CLI | Current tooling |
 | Aspire AppHost | Код и профили существуют; живой полный запуск не подтверждён | Current, verification pending |
@@ -57,12 +57,12 @@ Linear является источником правды для порядка 
 |---|---|---|
 | Telegram Gateway | Accepted, ADR pending | Новая реализация TypeScript + grammY |
 | Meetups | Граница, техническая модель и стек Accepted: ADR-024, ADR-025; словарь событий Open | Владелец продуктовых данных сходок |
-| Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; wire-контракты Open | Telegram identity, допуск к продукту и общие роли |
+| Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, verification pending | Aspire как inner loop |
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
-| Contract governance | Open | Compatibility, codegen и ownership до новых proto |
+| Contract governance | Open, частично закрыто | Раскладка контрактов и Go codegen приняты; CI breaking checks и codegen TypeScript/F# ещё нет |
 
 Основной архитектурный поток должен строиться вокруг сходок, а не развивать аукционную ветку.
 

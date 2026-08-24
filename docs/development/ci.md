@@ -4,13 +4,12 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
+Workflow собирает Identity и проверяет гигиену репозитория. Legacy-сервисы в CI не входят.
+
 Известные gaps:
 
-- workflow устанавливает .NET 8 для сервисов, переведённых на net10;
-- изменение `contracts/proto/` должно проверять всех producers и consumers, а не только проекты, выбранные обычными path filters;
-- оставленные Legacy-сервисы должны продолжать собираться до согласованного удаления;
 - Aspire AppHost требует отдельного restore/build/smoke-test gate;
-- compatibility check Protobuf ещё не внедрён.
+- `buf lint` и compatibility check Protobuf ещё не внедрены.
 
 ## Проверки репозитория
 
@@ -23,7 +22,7 @@ Current workflow: `.github/workflows/ci.yml`.
 1. Markdown links не содержат битых активных относительных ссылок.
 2. Protobuf change запускает codegen/build/tests всех потребителей.
 3. Breaking changes проверяются выбранным compatibility tooling.
-4. Current и оставшийся Legacy код не выпадают из build незаметно.
+4. Current код не выпадает из build незаметно.
 
 Конкретные задачи и их прогресс ведутся в Linear.
 

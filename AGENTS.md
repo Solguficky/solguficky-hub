@@ -19,13 +19,13 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 
 ## Карта репозитория
 
-- `apps/` — деплоимые компоненты платформы. Каталог намеренно пуст: Meetups, Identity, Mini App и новый Telegram Gateway ещё не реализованы. Что сюда попадает — в [apps/README.md](apps/README.md).
+- `apps/` — деплоимые компоненты платформы. Сейчас здесь контур кодогенерации Identity; исполняемых Meetups, Identity, Mini App и нового Telegram Gateway ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `legacy/` — код предыдущего поколения. Не собирается как часть платформы, не деплоится и не развивается; хранится до извлечения знаний, после чего удаляется целиком.
   - `legacy/telegram-gateway/` — Rust + Teloxide, преимущественно UI старого аукциона. Заменяется новой реализацией на TypeScript + grammY после ADR.
   - `legacy/auction-service/` — C# + Akka.NET, CQRS/Event Sourcing.
   - `legacy/notifications-service/` — C#-каркас с аукционным обработчиком. Роль уведомлений в MVP проектируется заново.
   - `legacy/websocket-gateway/` — C# + SignalR только для аукциона.
-- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC; код генерируется потребителями при сборке.
+- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
@@ -54,6 +54,11 @@ TOPOLOGY__PROFILE=full aspire run
 
 # Режим компонента: Local | Container | Off
 TOPOLOGY__AUCTIONSERVICE=Container aspire run
+
+# Identity — кодогенерация и проверка контракта
+just identity-proto
+just identity-build
+just identity-test
 
 # C#-сервисы — из папки сервиса
 dotnet build
