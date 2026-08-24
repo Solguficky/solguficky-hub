@@ -24,6 +24,12 @@ pip install -e .
 
 **Важно:** Protobuf классы уже сгенерированы и включены в репозиторий. Генерировать заново нужно только если изменились `.proto` файлы.
 
+## Текущее состояние
+
+Аукционные схемы удалены из `contracts/proto/` вместе с аукционом, но их сгенерированные классы в `nats_tester/generated/nats/` оставлены: только по ним ещё можно разговаривать с legacy-сервисами. Они заморожены — регенерация их не воспроизводит.
+
+Ни одного NATS-контракта MVP пока не спроектировано, поэтому новых subject у инструмента нет. Единственная действующая схема — `identity/v1`, и это gRPC: subject у неё не бывает, в `EVENT_TYPES` и `COMMAND_TYPES` она не попадает. Генерируется она потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
+
 ### 2. Установить внешние зависимости
 
 **NATS CLI (обязательно):**
@@ -258,10 +264,10 @@ nats-tester subscribe --nats-url nats://staging-nats:4222
 
 ### Шаг 1: Добавить proto определение
 
-Создайте или обновите `.proto` файл в `contracts/proto/nats/events/`:
+Создайте или обновите `.proto` файл в `contracts/proto/<домен>/v<major>/` — раскладка по домену-владельцу и major-версии описана в [Protobuf standard](../../docs/standards/contracts/protobuf.md):
 
 ```protobuf
-// contracts/proto/nats/events/auction_events.proto
+// contracts/proto/meetups/v1/meetup_events.proto
 message LotSoldEvent {
   string event_id = 1;
   uint32 lot_id = 2;
@@ -282,6 +288,8 @@ protoc --version
 # Регенерировать
 python generate_proto.py
 ```
+
+Список файлов в скрипте не ведётся: он обходит `contracts/proto/` и компилирует всё, что найдёт. Захардкоженный перечень пережил бы удаление схем, которые называет, и упал бы много позже самого удаления.
 
 ### Шаг 3: Зарегистрировать в CLI
 
@@ -424,10 +432,13 @@ nats-tester/
 │   │                            # COMMAND_TYPES: маппинг commands subject → protobuf class
 │   │                            # ALL_MESSAGE_TYPES: объединение всех типов
 │   └── generated/               # Сгенерированные Protobuf классы
-│       └── nats/
+│       ├── identity/v1/         # действующая схема; gRPC, subject не имеет
+│       │   └── identity_service_pb2.py
+│       └── nats/                # заморожено: схем в contracts/proto больше нет
 │           ├── events/
 │           │   └── auction_events_pb2.py
 │           └── commands/
+│               ├── auction_commands_pb2.py
 │               └── telegram_commands_pb2.py
 ├── samples/                     # Примеры JSON событий
 ├── generate_proto.py            # Скрипт генерации Protobuf
