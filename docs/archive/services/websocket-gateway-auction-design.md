@@ -1,6 +1,6 @@
 # ТЗ: WebSocket Gateway (C# Implementation)
 
-> **Historical / Legacy.** Описывает замороженный gateway для `auction:live`, который не входит в MVP.
+> **Историческое.** Описывает C#/SignalR-шлюз для `auction:live`, удалённый из репозитория. Возврат realtime-шлюза решается вместе с аукционом.
 
 ## 1. Ответственность
 

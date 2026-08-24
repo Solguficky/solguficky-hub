@@ -42,13 +42,14 @@ model: opus
 Перед тем как отчитаться, прогони то, что относится к затронутым сервисам:
 
 ```bash
-# C# (auction-service / notifications-service / websocket-gateway)
-dotnet build && dotnet test
+# Identity (Go) — из корня репозитория
+just identity-build && just identity-test
 
-# Rust (telegram-gateway)
-cargo build && cargo test
-cargo clippy -- -D warnings && cargo fmt --check
+# .NET (infra/apphost, shared/dotnet) — из папки проекта
+dotnet build && dotnet test
 ```
+
+Команды нового стека появляются в `justfile` вместе с его первой сборкой.
 
 Не отчитывайся об успехе, если проверки красные. Красный результат — это
 нормальный исход подзадачи, просто скажи об этом прямо и покажи вывод.

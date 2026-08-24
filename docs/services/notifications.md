@@ -158,7 +158,7 @@ JetStream участвует в первой границе, но не заме�
 - **C# и Orleans.** Грин на задание даёт единственного владельца без ручного лизинга строк, а reminder будит его к моменту срабатывания. Устойчивость момента рантайм не обеспечивает и обеспечивать не обязан — она лежит в таблице заданий.
 - **PostgreSQL, отдельная база** от Meetups и Identity.
 - **Источник истины остаётся в PostgreSQL.** Состояние гринов — это исполнение и таймеры, а не хранилище. Orleans занимает ось «выполнение команд», а не ось «источник истины»; дрейф подписок и заданий в storage provider — известный риск, который удерживается на review.
-- Существующий аукционный каркас не переносится: его судьба решается вместе с остальным legacy-кодом аукциона.
+- Аукционный каркас предыдущего поколения не переносится и удалён из репозитория.
 
 Нагрузка выбор не определяла: сходки заводятся людьми вручную, поток измеряется десятками событий в день. Обоснование — в [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md).
 
@@ -201,7 +201,7 @@ Quiet hours и группировка уведомлений в первую в�
 
 ## Свидетельства и ссылки
 
-- Legacy handler, который не переносится: `legacy/notifications-service/src/NotificationsService/Handlers/BidPlacedHandler.cs`
+- Разбор дефектов прежнего обработчика: [архив](../archive/services/auction-domain-and-lessons.md)
 - [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md), [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md), [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md)
 - Соседи: [Meetups](meetups.md), [Identity](identity.md), [Telegram Bot](telegram-bot.md)
 - [integration.md](../architecture/integration.md), [product/overview.md](../product/overview.md)

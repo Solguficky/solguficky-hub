@@ -186,7 +186,7 @@
     <tr><th>Rust</th>
       <td>Предсказуемая память и производительность без сборщика мусора.</td>
       <td>Медленнее всех по скорости разработки; нет зрелого фреймворка событийного хранения; асинхронный код сложен.</td>
-      <td>Там, где ресурсы действительно ограничены. В проекте остаётся только в legacy-шлюзе.</td></tr>
+      <td>Там, где ресурсы действительно ограничены. В проекте не используется.</td></tr>
     <tr><th>Ruby</th>
       <td>Быстрая разработка CRUD-интерфейсов и админок, зрелые соглашения.</td>
       <td>Отдельный стек ради одной задачи; производительность.</td>
@@ -315,7 +315,7 @@
 
   <tr>
     <th>Telegram Bot<span class="layer"><span class="st st-mvp">MVP</span></span></th>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-030: быстро меняющийся Telegram edge; плагин Conversations не используется. Legacy Rust-шлюз остаётся аукционным до migration gate.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-030: быстро меняющийся Telegram edge; плагин Conversations не используется. Rust-шлюз предыдущего поколения удалён.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">ADR-030: собственного состояния у компонента нет вовсе, инварианты сходки и допуска ему не принадлежат.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-030: апдейт обрабатывается без удержания состояния между сообщениями; юзкейс вызывается через диспетчер приложения, вне типов Telegram.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">ключ идемпотентности</span><span class="why">ADR-030: ключ создания рождается при отрисовке кнопки и разрешается в Meetups (E-09). Остальные команды идемпотентны формой: кнопка несёт целевое состояние.</span></td>
@@ -358,7 +358,7 @@
   </tr>
 
   <tr>
-    <th>Auction v2<span class="layer"><span class="st st-future">Future</span></span></th>
+    <th>Аукцион<span class="layer"><span class="st st-future">Future</span></span></th>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">Scala 3 + Apache Pekko</span><span class="why">Принятое стратегическое направление; Pekko как открытая actor-экосистема. ADR будет собственным.</span></td>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">поток событий</span><span class="why">Аудит ставок является продуктовым требованием, а прошлое лота неизменяемо по природе домена.</span></td>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">актор на агрегат</span><span class="why">На один лот приходится поток конкурирующих ставок с требованием порядка. Единственное место, где актор окупается доменом.</span></td>
@@ -423,7 +423,7 @@
 <footer>
   <p><b>Связанные документы:</b>
     <a href="technology-selection.md">technology-selection.md</a> — критерии выбора языка и метод эксперимента;
-    <a href="overview.md">overview.md</a> — Current / MVP / Future / Legacy;
+    <a href="overview.md">overview.md</a> — Current / MVP / Future;
     <a href="first-slice.md">first-slice.md</a> — состав первого среза;
     <a href="../services/README.md">services/</a> — открытые вопросы каждого сервиса;
     <a href="../decisions/README.md">decisions/</a> — принятые решения;

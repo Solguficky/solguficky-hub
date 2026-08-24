@@ -91,7 +91,7 @@ Membership моделируется статусом доступа профил
 
 Конкретные transport и authentication служебных операций проектируются вместе с контрактами Identity; до их принятия это требование к реализации, а не готовый API-контракт.
 
-Это заменяет hardcoded-список из [ADR-016](../decisions/ADR-016-rbac-action-pattern-and-transport.md), который применим только к legacy-ветке аукциона.
+Это заменяет hardcoded-список из [ADR-016](../decisions/ADR-016-rbac-action-pattern-and-transport.md), который относился к удалённой аукционной ветке.
 
 ## Взаимодействие и отказ
 

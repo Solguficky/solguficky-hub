@@ -12,34 +12,22 @@ from google.protobuf import json_format
 from google.protobuf.message import Message
 import nats
 
-# Import generated protobuf classes
-try:
-    from nats_tester.generated.nats.events import auction_events_pb2
-    from nats_tester.generated.nats.commands import telegram_commands_pb2
-    from nats_tester.generated.nats.commands import auction_commands_pb2
-except ImportError:
-    click.secho("❌ Generated protobuf files not found!", fg='red')
-    click.echo("   Run: python generate_proto.py")
-    sys.exit(1)
-
 try:
     from uuid import uuid7  # Python 3.14+
 except ImportError:
     from uuid6 import uuid7
 
 
-EVENT_TYPES = {
-    'events.auction.bid_placed': auction_events_pb2.BidPlacedEvent,
-}
+# Реестр subjects: subject -> сгенерированный класс сообщения.
+#
+# Пуст: принятых NATS-контрактов в contracts/proto пока нет. Единственная
+# схема, identity/v1, обслуживает gRPC и subject не имеет.
+#
+# Запись добавляется вместе с принятием контракта, одновременно с
+# docs/architecture/integration.md.
+EVENT_TYPES: dict[str, Type[Message]] = {}
 
-COMMAND_TYPES = {
-    'commands.telegram.send_message': telegram_commands_pb2.SendMessageCommand,
-    'commands.auction.start': auction_commands_pb2.StartAuctionCommand,
-    'commands.auction.place_bid': auction_commands_pb2.PlaceBidCommand,
-    'commands.auction.set_proxy_bid': auction_commands_pb2.SetProxyBidCommand,
-    'commands.auction.end_open_bidding': auction_commands_pb2.EndOpenBiddingCommand,
-    'commands.auction.start_final_phase': auction_commands_pb2.StartFinalPhaseCommand,
-}
+COMMAND_TYPES: dict[str, Type[Message]] = {}
 
 ALL_MESSAGE_TYPES = {**EVENT_TYPES, **COMMAND_TYPES}
 
@@ -53,14 +41,14 @@ def cli():
 
     Examples:
 
-        # Publish an event
-        nats-tester publish samples/bid_placed_with_previous.json
+        # Show which subjects the tool knows
+        nats-tester list-types
 
-        # Subscribe to commands
+        # Publish a message from JSON
+        nats-tester publish message.json --subject commands.example.do
+
+        # Watch everything on the bus
         nats-tester subscribe
-
-        # Run full test
-        nats-tester test
     """
     pass
 
@@ -69,10 +57,9 @@ def cli():
 @click.argument('json_file', type=click.Path(exists=True))
 @click.option('--nats-url', default='nats://localhost:4222',
               help='NATS server URL')
-@click.option('--subject', default='events.auction.bid_placed',
+@click.option('--subject', required=True,
               help='NATS subject to publish to')
 @click.option('--event-type',
-              type=click.Choice(list(ALL_MESSAGE_TYPES.keys())),
               help='Message type (auto-detected from subject if not specified)')
 def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[str]):
     """Publish event from JSON file to NATS.
@@ -82,9 +69,8 @@ def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[st
 
     \b
     Example:
-        nats-tester publish samples/bid_placed_with_previous.json
-        nats-tester publish samples/my_event.json --subject events.auction.lot_sold
-        nats-tester list-types  # Show all supported event types
+        nats-tester publish message.json --subject commands.example.do
+        nats-tester list-types  # Show all registered subjects
     """
     click.echo(click.style("📦 Publishing event to NATS", fg='cyan', bold=True))
     click.echo(f"   JSON file: {json_file}")
@@ -190,7 +176,7 @@ def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[st
 @cli.command()
 @click.option('--nats-url', default='nats://localhost:4222',
               help='NATS server URL')
-@click.option('--subject', default='commands.telegram.>',
+@click.option('--subject', default='>',
               help='NATS subject pattern to subscribe to')
 def subscribe(nats_url: str, subject: str):
     """Subscribe to NATS messages and decode them.
@@ -201,9 +187,8 @@ def subscribe(nats_url: str, subject: str):
     \b
     Examples:
         nats-tester subscribe
-        nats-tester subscribe --subject "commands.telegram.>"
-        nats-tester subscribe --subject "events.auction.>"
-        nats-tester list-types  # Show all supported message types
+        nats-tester subscribe --subject "events.>"
+        nats-tester list-types  # Show all registered subjects
     """
     asyncio.run(_subscribe_async(nats_url, subject))
 
@@ -289,48 +274,6 @@ async def _subscribe_async(nats_url: str, subject: str):
 
 
 @cli.command()
-@click.option('--nats-url', default='nats://localhost:4222',
-              help='NATS server URL')
-def test(nats_url: str):
-    """Run integration test.
-
-    Publishes a test event with previous_leader_id and shows how to verify.
-
-    \b
-    Example:
-        nats-tester test
-    """
-    click.echo(click.style("🧪 Running integration test", fg='cyan', bold=True))
-    click.echo()
-
-    # Find sample file
-    sample_file = Path(__file__).parent.parent / 'samples' / 'bid_placed_with_previous.json'
-
-    if not sample_file.exists():
-        click.secho(f"❌ Sample file not found: {sample_file}", fg='red')
-        sys.exit(1)
-
-    click.echo("1️⃣  Publishing test event with previous_leader_id...")
-    click.echo()
-
-    # Trigger publish command
-    ctx = click.get_current_context()
-    ctx.invoke(publish, json_file=str(sample_file), nats_url=nats_url,
-               subject='events.auction.bid_placed')
-
-    click.echo()
-    click.secho("✅ Test event published!", fg='green', bold=True)
-    click.echo()
-    click.echo("💡 To verify the result, run in another terminal:")
-    click.echo(click.style("   nats-tester subscribe", fg='yellow'))
-    click.echo()
-    click.echo("Expected output:")
-    click.echo("   chat_id: 123")
-    click.echo("   text: \"❗ Ваша ставка в 100 рублей...\"")
-    click.echo("   parse_mode: \"\"")
-
-
-@cli.command()
 def check():
     """Check if required tools are installed.
 
@@ -369,9 +312,7 @@ def check():
 
 @cli.command()
 @click.argument('json_file', type=click.Path(exists=True))
-@click.option('--event-type',
-              type=click.Choice(list(EVENT_TYPES.keys())),
-              default='events.auction.bid_placed',
+@click.option('--event-type', required=True,
               help='Event type to validate against')
 def validate(json_file: str, event_type: str):
     """Validate JSON file against Protobuf schema.
@@ -380,8 +321,7 @@ def validate(json_file: str, event_type: str):
 
     \b
     Example:
-        nats-tester validate samples/bid_placed_with_previous.json
-        nats-tester validate samples/lot_sold.json --event-type events.auction.lot_sold
+        nats-tester validate message.json --event-type events.example.happened
     """
     click.echo(f"🔍 Validating {json_file}")
     click.echo(f"   Event type: {event_type}")
@@ -419,7 +359,7 @@ def validate(json_file: str, event_type: str):
 
 @cli.command(name='gen-id')
 def gen_id():
-    """Generate a UUIDv7 for use as auction/op id (ADR-020).
+    """Generate a UUIDv7 for use as an entity or operation id (ADR-020).
 
     \b
     Example:

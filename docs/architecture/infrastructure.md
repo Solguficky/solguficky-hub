@@ -40,10 +40,9 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Current-ограничения
 
-- профиль Aspire `core` пока поднимает Legacy Auction и Rust Gateway;
-- Rust Gateway запускается через Cargo;
-- AppHost/ServiceDefaults и C#-сервисы используют разные поколения target framework;
-- рукописные compose-файлы остаются fallback до подтверждения Aspire;
+- AppHost поднимает только PostgreSQL и NATS: исполняемых компонентов платформы ещё нет;
+- рукописных compose-файлов больше нет, fallback-пути к ним не существует;
+- живой `aspire run` не подтверждён;
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения

@@ -13,9 +13,11 @@ ADR сохраняет принятое решение, контекст и пр
 
 - `Active`;
 - `Active, limited scope`;
-- `Legacy scope`;
+- `Historical` — решение относилось к коду, которого больше нет в репозитории; сохраняется как контекст и к текущей платформе не применяется;
 - `Superseded`;
 - `Needs review`.
+
+Тексты ADR фиксируют момент принятия решения и не переписываются задним числом. Поэтому старый ADR может ссылаться на каталоги и файлы, которых в репозитории уже нет: это свидетельство, а не инструкция.
 
 ## Индекс
 
@@ -29,16 +31,16 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-006](ADR-006-railway-hosting.md) | Railway hosting | Needs review | Railway — вариант наряду с собственным железом и VPS |
 | [ADR-007](ADR-007-polyglot-service-stacks.md) | Полиглотная модель выбора стека | Active | Язык выбирается под задачу сервиса; назначения языков из исходной редакции удалены |
 | [ADR-008](ADR-008-apicurio-schema-registry.md) | Apicurio Registry | Superseded | Заменён ADR-014; возврат Registry требует нового решения |
-| [ADR-009](ADR-009-auction-actor-hierarchy.md) | Иерархия акторов аукциона | Legacy scope | Источник знаний для вывода C#/Akka.NET-кода |
+| [ADR-009](ADR-009-auction-actor-hierarchy.md) | Иерархия акторов аукциона | Historical | Код удалён; извлечённое знание — в [архиве](../archive/services/auction-domain-and-lessons.md) |
 | [ADR-010](ADR-010-hybrid-auction-clients.md) | Клиенты гибридного аукциона | Needs review | Future-направление, вне MVP |
-| [ADR-011](ADR-011-notifications-realtime-separation.md) | Notifications и Real-Time Hub | Legacy scope | Описывает старую аукционную ветку |
+| [ADR-011](ADR-011-notifications-realtime-separation.md) | Notifications и Real-Time Hub | Historical | Описывает удалённую аукционную ветку; устройство Notifications принято ADR-028 |
 | [ADR-012](ADR-012-protobuf-from-start.md) | Protobuf вместо JSON | Active | Известные нарушения в коде считаются дефектами |
 | [ADR-013](ADR-013-iterative-ai-assisted-development.md) | Итеративная работа с агентом | Needs review | Инициатива и решение должны принадлежать владельцу |
 | [ADR-014](ADR-014-protobuf-in-git.md) | Protobuf-in-Git | Active, limited scope | Compatibility tooling и Registry остаются открытыми |
 | [ADR-015](ADR-015-loki-centralized-logging.md) | Loki | Active, limited scope | Конфигурация существует, живой контур требует проверки |
-| [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Legacy scope | Hardcoded-роли заменены ADR-026; остальные части относятся к legacy-аукционному Gateway |
-| [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Legacy scope | Не определяет Scala/Pekko auction v2 |
-| [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Legacy scope | Сервис заморожен и обслуживает только аукцион |
+| [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Historical | Hardcoded-роли заменены ADR-026; остальные части относятся к удалённому аукционному шлюзу |
+| [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Historical | Код удалён; будущий аукцион на Scala/Pekko проектируется с нуля |
+| [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Historical | Код удалён; realtime-шлюз возвращается вместе с аукционом отдельным решением |
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
 | [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов; уточнён ADR-023 |
 | [ADR-021](ADR-021-aspire-local-orchestration.md) | Aspire local orchestration | Active, limited scope | AppHost ещё не подтверждён живым запуском |
@@ -66,7 +68,7 @@ ADR сохраняет принятое решение, контекст и пр
 
 ## Переименования
 
-Компонент, который в ADR-016, ADR-023 и ADR-028 назван Telegram Gateway, с [ADR-030](ADR-030-telegram-bot.md) называется **Telegram Bot** (`telegram-bot`). Тексты прежних ADR под новое имя не переписываются: они фиксируют решение на момент его принятия. Каталог `legacy/telegram-gateway/` сохраняет имя как имя мёртвого кода.
+Компонент, который в ADR-016, ADR-023 и ADR-028 назван Telegram Gateway, с [ADR-030](ADR-030-telegram-bot.md) называется **Telegram Bot** (`telegram-bot`). Тексты прежних ADR под новое имя не переписываются: они фиксируют решение на момент его принятия.
 
 ## Правила изменения
 

@@ -192,7 +192,7 @@ worktree:
 
 ```bash
 git -C "$INTEGRATION_WT" status --short   # должно быть пусто
-# затем dotnet build && dotnet test / cargo test — из соответствующей папки
+# затем сборка и тесты затронутого компонента — рецепты в justfile
 # внутри $INTEGRATION_WT
 ```
 

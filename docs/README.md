@@ -5,7 +5,7 @@
 ## С чего начать
 
 1. [Продукт и границы MVP](product/overview.md)
-2. [Архитектурный обзор Current / MVP / Future / Legacy](architecture/overview.md)
+2. [Архитектурный обзор Current / MVP / Future](architecture/overview.md)
 3. [Карта сервисов](services/README.md)
 4. [Индекс архитектурных решений](decisions/README.md)
 5. [Процесс проектирования](development/design-process.md)
@@ -31,7 +31,7 @@
 | Информация | Источник |
 |---|---|
 | Цель, принципы и scope | [product/overview.md](product/overview.md) |
-| Current / MVP / Future / Legacy | [architecture/overview.md](architecture/overview.md) и service briefs |
+| Current / MVP / Future | [architecture/overview.md](architecture/overview.md) и service briefs |
 | Принятые технические решения | [decisions/](decisions/) |
 | Нормы реализации и review | [standards/](standards/) |
 | Wire-контракты | `contracts/proto/` |
@@ -50,8 +50,7 @@
 
 - **Current** — существует сейчас;
 - **MVP** — требуется для первой живой сходки через бота;
-- **Future** — направление после MVP без текущего обязательства;
-- **Legacy** — существующий код или дизайн вне активного направления.
+- **Future** — направление после MVP без текущего обязательства.
 
 Зрелость решения:
 

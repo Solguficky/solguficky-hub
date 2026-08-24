@@ -9,7 +9,6 @@ Service brief описывает ответственность, жизненн�
 | Identity | MVP | [identity.md](identity.md) |
 | Notifications | MVP | [notifications.md](notifications.md) |
 | Mini App | Вне MVP, Deferred | [mini-app.md](mini-app.md) |
-| Auction Service / auction v2 | Legacy / Future | [auction.md](auction.md) |
-| WebSocket Gateway | Legacy / Frozen | [websocket-gateway.md](websocket-gateway.md) |
+| Auction | Future | [auction.md](auction.md) |
 
-Старые технические ТЗ сохранены в [archive/services/](../archive/services/). Они используются только для истории и извлечения знаний.
+Технические ТЗ и извлечённое знание выведенных из эксплуатации сервисов сохранены в [archive/services/](../archive/services/). Они используются только для истории и как отправная точка нового проектирования.

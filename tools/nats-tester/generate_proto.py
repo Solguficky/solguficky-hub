@@ -5,11 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Modules kept in the repository although their schemas were removed from
-# contracts/proto together with the auction. They are frozen: regenerating
-# will not reproduce them, and only legacy services still use these subjects.
-FROZEN_PACKAGE = "nats"
-
 
 def discover_proto_files(proto_dir: Path) -> list[str]:
     """Return proto paths relative to the buf module root, sorted."""
@@ -95,13 +90,6 @@ def main():
         print("[ERROR] protoc not found. Please install Protocol Buffers compiler.")
         print("   https://grpc.io/docs/protoc-installation/")
         sys.exit(1)
-
-    if (output_dir / FROZEN_PACKAGE).exists():
-        print(
-            f"\n[NOTE] {FROZEN_PACKAGE}/ holds frozen classes: their schemas were "
-            "removed from contracts/proto together with the auction and are not "
-            "regenerated. Only legacy services still use those subjects."
-        )
 
 
 if __name__ == "__main__":

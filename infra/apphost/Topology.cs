@@ -17,8 +17,27 @@ public enum ComponentMode
 /// </summary>
 public static class Topology
 {
-    public static string ResolveProfile(IConfiguration config) =>
-        config["Topology:Profile"] ?? "core";
+    private static readonly string[] KnownProfiles = ["infra", "core", "full"];
+
+    /// <summary>
+    /// Компоненты первого вертикального среза: в профиле <c>core</c> поднимаются
+    /// из исходников, остальные — выключены. Пополняется вместе с регистрацией
+    /// компонента в <c>Program.cs</c>.
+    /// </summary>
+    private static readonly HashSet<string> CoreComponents = [];
+
+    public static string ResolveProfile(IConfiguration config)
+    {
+        var profile = (config["Topology:Profile"] ?? "core").ToLowerInvariant();
+
+        if (!KnownProfiles.Contains(profile))
+        {
+            throw new InvalidOperationException(
+                $"Неизвестный профиль топологии '{profile}'. Ожидались: {string.Join(", ", KnownProfiles)}.");
+        }
+
+        return profile;
+    }
 
     public static ComponentMode ResolveMode(IConfiguration config, string profile, string component)
     {
@@ -31,12 +50,12 @@ public static class Topology
         return ProfileDefault(profile, component);
     }
 
-    private static ComponentMode ProfileDefault(string profile, string component) => profile.ToLowerInvariant() switch
+    private static ComponentMode ProfileDefault(string profile, string component) => profile switch
     {
         "infra" => ComponentMode.Off,
-        "core" => component is "AuctionService" or "TelegramGateway" ? ComponentMode.Local : ComponentMode.Off,
+        "core" => CoreComponents.Contains(component) ? ComponentMode.Local : ComponentMode.Off,
         "full" => ComponentMode.Local,
         _ => throw new InvalidOperationException(
-            $"Неизвестный профиль топологии '{profile}'. Ожидались: infra, core, full."),
+            $"Неизвестный профиль топологии '{profile}'. Ожидались: {string.Join(", ", KnownProfiles)}."),
     };
 }

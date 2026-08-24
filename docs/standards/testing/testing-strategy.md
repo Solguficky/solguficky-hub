@@ -29,13 +29,11 @@
 ## Текущие команды
 
 ```bash
-# C# service directory
-dotnet build && dotnet test
+# Identity (Go) — из корня репозитория
+just identity-test
 
-# Rust legacy gateway
-cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+# .NET — из папки проекта
+dotnet build && dotnet test
 ```
 
 Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Этот документ не назначает стек ещё не созданным TypeScript, F#, Kotlin или Scala-сервисам.

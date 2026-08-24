@@ -1,6 +1,6 @@
 # Telegram Bot
 
-> **Слой:** MVP. **Устройство и стек:** Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md), разбор вариантов — [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). **Не спроектированы:** transport к Meetups, второй вход для уведомлений, migration gate legacy-реализации.
+> **Слой:** MVP. **Устройство и стек:** Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md), разбор вариантов — [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). **Не спроектированы:** transport к Meetups и второй вход для уведомлений.
 
 Компонент **владеет Telegram-представлением продукта**. Он не «делает работу бота»: работу выполняют Meetups, Identity и Notifications. Идентификатор в репозитории и конфигурации — `telegram-bot`, код появится в `apps/telegram-bot`.
 
@@ -159,28 +159,20 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 8. недоступность Meetups даёт кадр E-05, а не пустой список;
 9. сценарий «создал и опубликовал» проходится без единой телеграмовской структуры.
 
-## Legacy: Rust + Teloxide
+## Опыт предыдущей реализации
 
-Существующий `legacy/telegram-gateway/` ориентирован на аукцион и фундаментом MVP не является:
+Rust/Teloxide-шлюз предыдущего поколения удалён из репозитория. Что из него взято и что признано ошибкой — в [архиве](../archive/services/auction-domain-and-lessons.md).
 
-- использует `MockAuctionService` в production composition root;
-- хранит dialogue state и черновик лота в памяти;
-- содержит одновременно JSON- и Protobuf-пути обработки NATS-событий;
-- связывает `BotAction` с Teloxide-типами;
-- дедуплицирует по `callback_query.id`, что не защищает от двойного нажатия: у каждого нажатия свой идентификатор.
+Переносится: обработчик возвращает действие, а отдельный executor вызывает Telegram API; UI builders и сценарная логика остаются чистыми функциями; transport и presentation тестируются раздельно.
 
-Полезный опыт, который переносится: handler возвращает действие, а отдельный executor вызывает Telegram API; UI builders и сценарная логика остаются чистыми функциями; transport и presentation тестируются раздельно.
+Не переносится: дедупликация по `callback_query.id` (у каждого нажатия свой идентификатор, от двойного нажатия она не защищает), диалоговое состояние в памяти процесса, `BotAction` в типах Telegram и одновременное существование JSON- и Protobuf-путей на шине.
 
-Каталог сохраняет прежнее имя: это имя мёртвого кода.
-
-## Gate замены
+## Gate реализации
 
 1. Утвердить первые пользовательские сценарии — сделано.
 2. Принять ADR — сделано: [ADR-030](../decisions/ADR-030-telegram-bot.md).
 3. Реализовать один вертикальный срез с Identity и Meetups.
 4. Подтвердить локальный запуск и observability.
-5. Явно решить судьбу старых auction callbacks и subscriptions.
-6. Удалить Rust-реализацию и её topology только после отсутствия нужных потребителей.
 
 ## Что решено и что осталось
 
@@ -192,8 +184,7 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 - устройство второго входа и политика доставки уведомлений — [PER-72](https://linear.app/anticnvm/issue/PER-72)…[PER-74](https://linear.app/anticnvm/issue/PER-74);
 - норматив логирования персональных данных — [PER-63](https://linear.app/anticnvm/issue/PER-63);
 - исчезающие сообщения и Rich Messages — [PER-20](https://linear.app/anticnvm/issue/PER-20);
-- внешний идентификатор в deep link — [PER-28](https://linear.app/anticnvm/issue/PER-28);
-- судьба legacy-аукционных callback и удаление Rust-реализации.
+- внешний идентификатор в deep link — [PER-28](https://linear.app/anticnvm/issue/PER-28).
 
 Решается при реализации, ADR не требуется: конкретные тексты и локализация, числа таймаутов и повторов, версии Node и grammY, способ подключения в Aspire 13 (`AddJavaScriptApp`, а не устаревший `AddNpmApp`).
 
@@ -201,10 +192,7 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 
 - Разбор вариантов: [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md)
 - Решение: [ADR-030](../decisions/ADR-030-telegram-bot.md)
-- Legacy composition и in-memory dialogue state: `legacy/telegram-gateway/src/lib.rs`
-- Legacy идемпотентность по `callback_query.id`: `legacy/telegram-gateway/src/app/idempotency.rs`
-- JSON event path: `legacy/telegram-gateway/src/app/event_listener.rs`
-- Protobuf event path: `legacy/telegram-gateway/src/infra/nats_client.rs`
+- Разбор дефектов предыдущей реализации: [архив](../archive/services/auction-domain-and-lessons.md)
 - [grammY Getting Started](https://grammy.dev/guide/getting-started)
 - [grammY Runner](https://grammy.dev/plugins/runner)
 - [Telegram Bot API](https://core.telegram.org/bots/api)

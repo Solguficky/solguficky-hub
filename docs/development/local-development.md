@@ -4,7 +4,7 @@
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
-.NET Aspire — принятый инструмент локальной оркестрации (ADR-021). Рукописные `docker-compose.yml` пока сохраняются как рабочий fallback до проверки замены.
+.NET Aspire — принятый и единственный инструмент локальной оркестрации ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md)). Рукописные `docker-compose.yml` жили внутри сервисов предыдущего поколения и удалены вместе с ними, поэтому fallback-пути больше нет: если `aspire run` не работает, инфраструктура поднимается вручную.
 
 ## AppHost
 
@@ -13,15 +13,17 @@ cd infra/apphost
 aspire run
 ```
 
-AppHost всегда объявляет контейнеры PostgreSQL и NATS. Режим остальных компонентов задаётся профилем и может быть переопределён переменной окружения.
+AppHost объявляет контейнеры PostgreSQL и NATS. Исполняемых компонентов платформы пока нет, поэтому больше он ничего не поднимает.
 
 ## Профили
 
 | Профиль | Компоненты |
 |---|---|
-| `infra` | PostgreSQL + NATS; product services выключены |
-| `core` | infra + Auction Service Local + Rust Telegram Gateway Local |
-| `full` | infra + все существующие сервисы Local |
+| `infra` | PostgreSQL + NATS; компоненты платформы выключены |
+| `core` | infra + компоненты первого вертикального среза в режиме Local |
+| `full` | infra + все зарегистрированные компоненты в режиме Local |
+
+Пока ни один компонент не зарегистрирован, все три профиля дают одинаковый результат — только инфраструктуру. Неизвестное имя профиля отвергается на старте.
 
 ```powershell
 $env:TOPOLOGY__PROFILE='infra'
@@ -30,40 +32,30 @@ aspire run
 
 ## Режим компонента
 
-Допустимы `Local`, `Container`, `Off`:
+Допустимы `Local` (из исходников), `Container` (через Dockerfile) и `Off` (владелец запускает сам):
 
 ```powershell
-$env:TOPOLOGY__NOTIFICATIONSSERVICE='Local'
-$env:TOPOLOGY__TELEGRAMGATEWAY='Off'
+$env:TOPOLOGY__MEETUPS='Off'
 aspire run
 ```
 
-Имена конфигурации определены в `infra/apphost/Topology.cs` и `Program.cs`:
-
-- `AuctionService`;
-- `NotificationsService`;
-- `WebsocketGateway`;
-- `TelegramGateway`.
+Имена компонентов появляются в `infra/apphost/Program.cs` вместе с их регистрацией; состав первого среза — в `Topology.CoreComponents`. Сейчас список пуст.
 
 ## Неподтверждённые места
 
-- restore/build самого AppHost после добавления Aspire NATS/PostgreSQL packages;
-- `AddExecutable("cargo", "run", ...)` и управление Rust-процессом на Windows;
-- Docker build context существующих сервисов при режиме `Container`;
-- запуск всех компонентов профиля `full`;
+- `dotnet restore` и `dotnet build` самого AppHost после удаления ссылок на выведенные сервисы;
+- `aspire run` и здоровье контейнеров PostgreSQL и NATS в живой среде;
 - пригодность `aspire publish` для production-like k3s.
 
-Пока эти проверки не выполнены, не удаляй compose-файлы и не описывай Aspire как подтверждённую production-топологию.
+Пока эти проверки не выполнены, не описывай Aspire как подтверждённую production-топологию.
 
-## Проверка замены compose
+## Acceptance check
 
-Минимальный acceptance check:
+Минимальная проверка, закрывающая gate:
 
 1. `dotnet restore` и `dotnet build` для `infra/apphost` успешны.
 2. `aspire run` показывает здоровые PostgreSQL и NATS.
-3. Профиль `infra` не запускает product services.
-4. Профиль `core` запускает оба Current/Legacy core-компонента или выдаёт конкретный диагностируемый blocker.
-5. `Off` позволяет запустить сервис отдельно из IDE/терминала.
-6. После подтверждения `Container` и fallback только тогда планируется удаление рукописных compose-файлов.
+3. Неизвестное значение `TOPOLOGY__PROFILE` завершает запуск с понятной ошибкой.
+4. Данные PostgreSQL переживают перезапуск AppHost (том `solguficky-postgres-data`).
 
 Работа и её прогресс должны быть заведены в Linear; этот документ хранит только устойчивые правила и проверяемый gap.
