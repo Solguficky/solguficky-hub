@@ -55,21 +55,8 @@ else
   log "lefthook already installed"
 fi
 
-log "Ensuring Rust stable toolchain with clippy and rustfmt"
-rustup toolchain install stable --profile minimal \
-  --component clippy --component rustfmt --no-self-update
-rustup default stable
-
-log "Restoring .NET solutions"
-for sln in \
-  "legacy/auction-service/AuctionService.sln" \
-  "legacy/notifications-service/NotificationsService.sln" \
-  "legacy/websocket-gateway/WebSocketGateway.sln"; do
-  dotnet restore "$REPO_ROOT/$sln"
-done
-
-log "Fetching Rust crates"
-( cd "$REPO_ROOT/legacy/telegram-gateway" && cargo fetch )
+log "Restoring AppHost"
+dotnet restore "$REPO_ROOT/infra/apphost/AppHost.csproj"
 
 log "Installing nats-tester CLI"
 pip install --break-system-packages -e "$REPO_ROOT/tools/nats-tester"

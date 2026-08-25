@@ -41,8 +41,8 @@ check-commit-message file:
 
 # --- Локальная оркестрация -------------------------------------------------
 
-# ВНИМАНИЕ: AppHost ссылается на пути services/, которых больше нет,
-# и не соберётся до актуализации. См. infra/apphost/Program.cs.
+# AppHost поднимает только инфраструктуру: исполняемых компонентов ещё нет.
+# Профили: infra | core | full (см. infra/apphost/Topology.cs).
 aspire profile="core":
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
 
@@ -73,32 +73,3 @@ identity-test: identity-proto
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
-
-# --- legacy ----------------------------------------------------------------
-#
-# legacy/ не входит в платформу и не собирается как её часть. Эти рецепты
-# нужны для извлечения знаний: прогнать тесты, посмотреть поведение,
-# снять доменную модель перед удалением. Уходят вместе с legacy/.
-
-legacy-build-auction:
-    dotnet build legacy/auction-service/AuctionService.sln
-
-legacy-test-auction:
-    dotnet test legacy/auction-service/AuctionService.sln
-
-legacy-build-notifications:
-    dotnet build legacy/notifications-service/NotificationsService.sln
-
-legacy-test-notifications:
-    dotnet test legacy/notifications-service/NotificationsService.sln
-
-legacy-build-websocket:
-    dotnet build legacy/websocket-gateway/WebSocketGateway.sln
-
-legacy-test-websocket:
-    dotnet test legacy/websocket-gateway/WebSocketGateway.sln
-
-legacy-check-gateway:
-    cd legacy/telegram-gateway && cargo fmt --check
-    cd legacy/telegram-gateway && cargo clippy --all-targets -- -D warnings
-    cd legacy/telegram-gateway && cargo test

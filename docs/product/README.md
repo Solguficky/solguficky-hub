@@ -4,6 +4,6 @@
 
 - [overview.md](overview.md) — продукт и принципы;
 - [ideas.md](ideas.md) — непринятые и неприоритизированные идеи;
-- [future/auction-v2.md](future/auction-v2.md) — сохранённая спецификация будущего аукциона.
+- [future/auction.md](future/auction.md) — сохранённая спецификация будущего аукциона.
 
 Milestones, порядок исполнения и прогресс ведутся в Linear.

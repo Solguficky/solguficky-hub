@@ -186,7 +186,7 @@
     <tr><th>Rust</th>
       <td>Предсказуемая память и производительность без сборщика мусора.</td>
       <td>Медленнее всех по скорости разработки; нет зрелого фреймворка событийного хранения; асинхронный код сложен.</td>
-      <td>Там, где ресурсы действительно ограничены. В проекте остаётся только в legacy-шлюзе.</td></tr>
+      <td>Там, где ресурсы действительно ограничены. В проекте не используется.</td></tr>
     <tr><th>Ruby</th>
       <td>Быстрая разработка CRUD-интерфейсов и админок, зрелые соглашения.</td>
       <td>Отдельный стек ради одной задачи; производительность.</td>
@@ -258,6 +258,7 @@
     <tr><th>PostgreSQL</th><td>Основное хранилище платформы по ADR-004.</td><td>Любая реляционная модель; состояние, журнал и модель чтения живут в одной транзакции.</td><td class="cost">Поток событий требует собственной append-only таблицы и своей механики версий.</td></tr>
     <tr><th>Marten поверх PostgreSQL</th><td>Библиотека потоков и проекций над той же СУБД, только для .NET.</td><td>Нужен готовый событийный слой без второй базы.</td><td class="cost">Привязка к .NET; компромисс с удалением данных не снимается.</td></tr>
     <tr><th>KurrentDB</th><td>Специализированное хранилище потоков с подписками и проекциями.</td><td>Поток событий является продуктом, а не деталью реализации.</td><td class="cost">Вторая СУБД в эксплуатации; освобождение места после удаления требует отдельного обслуживания.</td></tr>
+    <tr><th>Память процесса</th><td>Состояние живёт внутри процесса и не переживает его перезапуск.</td><td>Факт восстановим из внешнего источника или его потеря наблюдаема и приемлема.</td><td class="cost">Требует единственного экземпляра; при масштабировании исчезает вместе с ним.</td></tr>
     <tr><th>Redis</th><td>Быстрое хранилище ключ-значение со сроком жизни записей.</td><td>Недолговечное состояние: диалог, ключи идемпотентности, кэш.</td><td class="cost">Не является источником истины; потеря данных должна быть безболезненной.</td></tr>
     <tr><th>JetStream KV и потоки</th><td>Устойчивое хранилище рядом с шиной.</td><td>Состояние доставки и координация потребителей.</td><td class="cost">Удаление и ретеншен работают на уровне потока, а не отдельной записи.</td></tr>
   </tbody>
@@ -313,14 +314,14 @@
   <tbody>
 
   <tr>
-    <th>Telegram Gateway<span class="layer"><span class="st st-mvp">MVP</span></span></th>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">Стек принят владельцем для быстро меняющегося Telegram edge; ADR ещё не оформлен. Текущий Rust-шлюз остаётся legacy аукциона до migration gate.</span></td>
-    <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Доменных правил в шлюзе быть не должно: это требование первого среза.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">обычная транзакция</span><span class="why">Обработка обновления без удержания состояния между сообщениями.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">ключ идемпотентности</span><span class="why">Повторное нажатие кнопки не должно создавать второй объект (E-09).</span></td>
+    <th>Telegram Bot<span class="layer"><span class="st st-mvp">MVP</span></span></th>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-030: быстро меняющийся Telegram edge; плагин Conversations не используется. Rust-шлюз предыдущего поколения удалён.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">ADR-030: собственного домена у компонента нет, инварианты сходки и допуска ему не принадлежат. Состояние экрана живёт в <code>callback_data</code>, память процесса — в клетке «Хранилище».</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-030: апдейт обрабатывается без удержания состояния между сообщениями; юзкейс вызывается через диспетчер приложения, вне типов Telegram.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">ключ идемпотентности</span><span class="why">ADR-030: ключ создания рождается при отрисовке кнопки и разрешается в Meetups (E-09). Остальные команды идемпотентны формой: кнопка несёт целевое состояние.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">читает через Meetups</span><span class="why">Все чтения сходки идут одним путём внутри Meetups.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | Redis | память</span><span class="why">Закроется требованием к диалоговому состоянию и ключу идемпотентности: переживают ли они рестарт и как долго живут. Вопрос ведётся в brief шлюза.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">gRPC | NATS</span><span class="why">Закроется failure semantics каждой операции первого среза.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">память процесса</span><span class="why">ADR-030: состояние экрана живёт в <code>callback_data</code>, своего хранилища нет. В памяти держится только карта «идентификатор вопроса — черновик и поле». Сигнал пересмотра: журнал попыток доставки уведомлений.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">gRPC | NATS и Protobuf</span><span class="why">Контракт ResolveIdentity к Identity принят и синхронен (integration.md). Transport к Meetups закроется failure semantics операции в контрактной задаче; шина уведомлений вне первого среза.</span></td>
   </tr>
 
   <tr>
@@ -329,7 +330,7 @@
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">текущее состояние в строках</span><span class="why">ADR-026: профиль, статус допуска и роли — изменяемые факты, replay не нужен. Журнал изменений допуска и отметки выдачи ролей ведутся отдельным механизмом и источником истины не являются.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-026: CRUD выполняется ACID-транзакциями без CQRS, Event Sourcing и actor runtime.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">уникальный ключ и upsert</span><span class="why">ADR-026: INSERT ON CONFLICT по telegram_user_id устраняет гонку параллельных /start; остальные updates не создают профиль, а ник записывают только при фактическом изменении.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-026: отдельной read model и кэша фактов авторизации нет; Gateway вызывает Identity на каждом update.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-026: отдельной read model и кэша фактов авторизации нет; бот вызывает Identity на каждом update.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004, основное хранилище.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">синхронный gRPC плюс outbox</span><span class="why">ADR-026: ответ нужен для текущего действия, при недоступности fail-closed. ADR-028 добавил исходящие события о регистрации и смене статуса допуска: у Identity нет журнала домена, поэтому они публикуются из отдельной таблицы outbox.</span></td>
   </tr>
@@ -357,7 +358,7 @@
   </tr>
 
   <tr>
-    <th>Auction v2<span class="layer"><span class="st st-future">Future</span></span></th>
+    <th>Аукцион<span class="layer"><span class="st st-future">Future</span></span></th>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">Scala 3 + Apache Pekko</span><span class="why">Принятое стратегическое направление; Pekko как открытая actor-экосистема. ADR будет собственным.</span></td>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">поток событий</span><span class="why">Аудит ставок является продуктовым требованием, а прошлое лота неизменяемо по природе домена.</span></td>
     <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">актор на агрегат</span><span class="why">На один лот приходится поток конкурирующих ставок с требованием порядка. Единственное место, где актор окупается доменом.</span></td>
@@ -422,7 +423,7 @@
 <footer>
   <p><b>Связанные документы:</b>
     <a href="technology-selection.md">technology-selection.md</a> — критерии выбора языка и метод эксперимента;
-    <a href="overview.md">overview.md</a> — Current / MVP / Future / Legacy;
+    <a href="overview.md">overview.md</a> — Current / MVP / Future;
     <a href="first-slice.md">first-slice.md</a> — состав первого среза;
     <a href="../services/README.md">services/</a> — открытые вопросы каждого сервиса;
     <a href="../decisions/README.md">decisions/</a> — принятые решения;

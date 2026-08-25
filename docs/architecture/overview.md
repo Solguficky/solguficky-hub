@@ -1,6 +1,6 @@
 # Архитектурный обзор
 
-> **Статус:** Canonical для общего состояния Current / MVP / Future / Legacy. Фактическое поведение подтверждается кодом и конфигурацией; принятые решения — ADR.
+> **Статус:** Canonical для общего состояния Current / MVP / Future. Фактическое поведение подтверждается кодом и конфигурацией; принятые решения — ADR.
 
 ## Как читать статусы
 
@@ -11,7 +11,6 @@
 | **Current** | Фактически существует в репозитории |
 | **MVP** | Требуется для первой живой сходки через бота |
 | **Future** | Возможное направление после MVP без текущего обязательства реализации |
-| **Legacy** | Существующий код или дизайн, не определяющий активное продуктовое направление |
 
 | Зрелость | Значение |
 |---|---|
@@ -20,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Gateway стек принят, а persistence диалогового состояния остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а transport к Meetups остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -35,27 +34,26 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Репозиторий содержит преимущественно аукционный прототип и инфраструктурный задел. Продуктовое ядро сходок ещё не реализовано: Meetups и Identity отсутствуют как исполняемые сервисы. У Identity принят первый межсервисный контракт; исполняемого кода сервиса нет.
+Исполняемых компонентов платформы в репозитории нет. Продуктовое ядро сходок не реализовано: Meetups, Identity, Telegram Bot и Notifications существуют как принятые решения и контракты, но не как код. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
-| Telegram Gateway | Rust + Teloxide, преимущественно UI старого аукциона | Будет заменён новой реализацией |
-| Auction Service | C# + Akka.NET, actors, persistence, gRPC и NATS | Legacy, вне MVP |
-| Notifications Service | C#-каркас с единственным аукционным handler | Legacy; не переносится, сервис пишется заново |
-| WebSocket Gateway | C# + SignalR, только `auction:live` | Frozen legacy |
+| Telegram Bot | Устройство и стек приняты; кода нет | Единственный вход пользователя |
 | Meetups | Отсутствует | Владелец данных о сходках |
 | Identity | Принят первый wire-контракт; исполняемого сервиса нет | Telegram identity, допуск к продукту и системные роли |
-| Mini App | Пустая заготовка | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `nats-tester` | Python CLI | Current tooling |
-| Aspire AppHost | Код и профили существуют; живой полный запуск не подтверждён | Current, verification pending |
+| Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
+| Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
+| `contracts/proto` | Раскладка и Go-кодогенерация Identity | Current, единственный принятый контракт |
+| `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
+| Aspire AppHost | Поднимает только инфраструктуру; живой запуск не подтверждён | Current, verification pending |
 
-Наличие реализации не означает production readiness. В частности, заново не подтверждались полный `aspire run`, end-to-end через живого Telegram-бота, production deployment, восстановление аукциона из production Event Store и доставка сообщений во время рестартов подписчиков.
+Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни `aspire run`, ни end-to-end через живого Telegram-бота, ни production deployment.
 
 ## MVP
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Gateway | Accepted, ADR pending | Новая реализация TypeScript + grammY |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
 | Meetups | Граница, техническая модель и стек Accepted: ADR-024, ADR-025; словарь событий Open | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
@@ -64,12 +62,12 @@ Linear является источником правды для порядка 
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
 | Contract governance | Open, частично закрыто | Раскладка контрактов и Go codegen приняты; CI breaking checks и codegen TypeScript/F# ещё нет |
 
-Основной архитектурный поток должен строиться вокруг сходок, а не развивать аукционную ветку.
+Основной архитектурный поток строится вокруг сходок.
 
-## Future и Legacy
+## Future
 
-- C#/Akka.NET Auction и WebSocket Gateway остаются Legacy до извлечения знаний и согласованного вывода.
-- Scala + Apache Pekko Auction v2 — Future-направление после MVP, не миграция текущего сервиса.
+- Аукцион — Future-направление после MVP: новый сервис на Scala + Apache Pekko, проектируемый с нуля. Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md).
+- Realtime-шлюз для Big Screen возвращается вместе с аукционом и отдельным решением о стеке.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
 - Kotlin, Go и Ruby остаются technology pool и не назначаются вымышленным сервисам заранее.
 
@@ -81,7 +79,7 @@ Linear является источником правды для порядка 
 
 ```text
 Telegram user
-→ новый TypeScript Gateway
+→ новый Telegram Bot на TypeScript
 → Identity
 → Meetups
 → наблюдаемый ответ пользователю

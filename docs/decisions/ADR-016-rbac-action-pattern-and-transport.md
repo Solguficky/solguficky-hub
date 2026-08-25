@@ -1,6 +1,6 @@
 # ADR-016: Архитектура RBAC для MVP + Action паттерн для тестируемости
 
-> **Текущая применимость:** Legacy scope. Hardcoded-роли заменены [ADR-026](ADR-026-identity-mvp-model-and-access.md); остальные решения этого ADR относятся к legacy-аукционному Telegram Gateway.
+> **Текущая применимость:** Historical. Hardcoded-роли заменены [ADR-026](ADR-026-identity-mvp-model-and-access.md); остальные решения этого ADR относятся к аукционному Telegram Gateway предыдущего поколения, код которого удалён.
 
 *   **Дата:** 24.10.2025
 *   **Статус:** Принято

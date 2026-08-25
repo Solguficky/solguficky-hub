@@ -6,28 +6,23 @@
 
 ## Текущее состояние
 
-Продуктовое ядро MVP ещё не реализовано. В репозитории сейчас находятся:
+Исполняемых компонентов платформы в репозитории нет: продуктовое ядро MVP спроектировано, но не написано. Сейчас здесь находятся:
 
-- Rust/Teloxide Telegram Gateway, связанный в основном со старым аукционом; целевое направление — новая реализация на TypeScript + grammY после ADR;
-- legacy-аукцион на C# + Akka.NET и обслуживающий его WebSocket Gateway — вне MVP;
-- C#-каркас Notifications Service;
-- общие Protobuf-контракты, NATS/PostgreSQL и AppHost на .NET Aspire;
-- Meetups, Identity и Telegram Mini App ещё не реализованы.
+- Protobuf-контракты и контур Go-кодогенерации Identity;
+- AppHost на .NET Aspire, поднимающий NATS и PostgreSQL;
+- конфигурация локального стека логов и инструменты разработки;
+- проектные решения по Meetups, Identity, Telegram Bot и Notifications — в ADR и service briefs.
 
-Актуальные статусы Current / MVP / Future / Legacy собраны в [архитектурном обзоре](docs/architecture/overview.md) и [service briefs](docs/services/README.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
+Актуальные статусы Current / MVP / Future собраны в [архитектурном обзоре](docs/architecture/overview.md) и [service briefs](docs/services/README.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
 
 ## Структура
 
 ```text
-apps/                         MVP-сервисы платформы; пока пуст
+apps/                         компоненты платформы; пока только контур Identity
 contracts/proto/              Protobuf-контракты NATS и gRPC
 docs/                         продукт, архитектура, решения и руководства
 infra/apphost/                локальная оркестрация .NET Aspire
 infra/observability/          конфигурация Loki, Promtail и Grafana
-legacy/auction-service/       C# + Akka.NET, вне MVP
-legacy/notifications-service/ C#-каркас уведомлений
-legacy/telegram-gateway/      Rust + Teloxide
-legacy/websocket-gateway/     C# + SignalR
 shared/dotnet/                общая обвязка .NET-сервисов (ServiceDefaults)
 tools/git-hooks/              скрипты проверок для хуков и CI
 tools/nats-tester/            ручная проверка NATS-сообщений

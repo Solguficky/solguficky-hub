@@ -1,75 +1,38 @@
-# Auction Service
+# Auction
 
-> **Current:** C# + Akka.NET, Legacy. **MVP:** не входит. **Future:** новый Scala + Apache Pekko service после MVP; не миграция текущего кода.
+> **Слой:** Future. **MVP:** не входит. **Направление:** новый сервис на Scala + Apache Pekko, проектируемый с нуля после MVP.
 
-## Current
+Реализация предыдущего поколения (C# + Akka.NET) удалена из репозитория. Аукцион существует как продуктовая гипотеза и как накопленный опыт, но не как код.
 
-Существующий сервис содержит:
+## Что уже известно
 
-- `AuctionActor` и `LotActor`;
-- Event Sourcing/CQRS на Akka.Persistence;
-- persistence в PostgreSQL;
-- gRPC queries и CRUD лотов;
-- NATS command handler;
-- публикацию событий через persistence query.
+Доменная модель, actor/event-логика, контрактный след, тест-кейсы, каталог дефектов и непроверенные гипотезы прежней реализации извлечены в [архив](../archive/services/auction-domain-and-lessons.md). Это единственный источник, из которого стоит отталкиваться при проектировании; сам код восстанавливается из истории Git и спецификацией не является.
 
-EF migration существует и применяется при старте. Scoped `LotRepository` разрешается через создаваемый scope, а не напрямую удерживается singleton-handler.
-
-Актуальные ограничения:
-
-- runtime/e2e-поведение в production не подтверждалось;
-- рефакторинг фаз нельзя считать законченным;
-- деньги представлены `double` и не должны переноситься в новые контракты;
-- текущая модель является источником опыта и гипотез, а не спецификацией auction v2.
-
-## Что сохранить
-
-- карту агрегатов и actor hierarchy;
-- команды, события и состояния;
-- найденные инварианты;
-- concurrency и ordering assumptions;
-- recovery assumptions;
-- удачные тестовые сценарии;
-- ошибки реализации и выводы;
-- непроверенные production-гипотезы;
-- границы gRPC, NATS и read model;
-- ретро Akka.NET-реализации.
+Продуктовые механики — форматы торгов, анти-снайп, Buy-Now — собраны в [продуктовой спецификации](../product/future/auction.md). Ни одна из них не проверена ни кодом, ни живым мероприятием.
 
 ## Что не переносить автоматически
 
-- текущие proto как вечный публичный контракт;
+- прежние proto как вечный публичный контракт;
 - `double` для денег;
-- незавершённую FSM фаз;
+- незавершённую машину фаз;
 - actor topology без нового design cycle;
 - persistence schema;
-- предположение, что unit tests подтверждают live auction behavior;
-- связь текущего WebSocket Gateway с будущей topology.
+- предположение, что unit-тесты подтверждают поведение живого аукциона;
+- топологию прежнего realtime-шлюза как обязательную для Big Screen.
 
-## Gate вывода Legacy
+## Стек и открытые вопросы
 
-1. Зафиксировать фактическое состояние.
-2. Извлечь domain/actor/event артефакты.
-3. Разделить проверенное и непроверенное.
-4. Сохранить полезные test cases или их описание.
-5. Решить судьбу auction proto и consumers.
-6. Удалить код, topology, CI paths и активные инструкции одним согласованным изменением.
-
-Пока gate не пройден, сервис остаётся в репозитории, собирается в CI и не развивается без явного запроса.
-
-## Auction v2
-
-Scala + Apache Pekko — принятое стратегическое Future-направление. Новый сервис проектируется с нуля после MVP. Он должен пройти собственный problem/domain/design cycle; текущий actor topology не является обязательной основой.
-
-Pekko предпочтителен как Apache-проект и открытая actor ecosystem после изменения лицензирования новых версий Akka. До проектирования нужен отдельный ADR.
+Scala + Apache Pekko — принятое стратегическое направление. Pekko предпочтителен как Apache-проект и открытая actor ecosystem после изменения лицензирования новых версий Akka. Сервис должен пройти собственный problem/domain/design cycle, и до начала проектирования нужен отдельный ADR.
 
 Открытым остаётся продукт хранения событий: PostgreSQL с собственной append-only таблицей, KurrentDB или Marten при выборе .NET. Это единственное место платформы, где выбор специализированного event store вообще стоит на повестке; критерии сравнения и acceptance test удаления субъекта описаны в решении 5 [RFC-004](../rfcs/RFC-004-meetups-domain-events-persistence.md). Закрывается отдельным spike до проектирования сервиса.
 
+Возврат realtime-шлюза для Big Screen решается вместе с аукционом и отдельным решением о стеке.
+
 ## Свидетельства и ссылки
 
-- Current code: `legacy/auction-service/`
-- EF migrations: `legacy/auction-service/src/AuctionService/Migrations/`
-- NATS handler scope: `legacy/auction-service/src/AuctionService/Handlers/NatsCommandHandler.cs`
+- [Извлечённое знание: доменная модель и уроки реализации](../archive/services/auction-domain-and-lessons.md)
 - [Архивный Akka.NET design](../archive/services/auction-service-akka-design.md)
-- [Future product specification](../product/future/auction-v2.md)
+- [Архивный design realtime-шлюза](../archive/services/websocket-gateway-auction-design.md)
+- [Продуктовая спецификация](../product/future/auction.md)
 - [Apache Pekko](https://pekko.apache.org/)
 - [Akka migration and licensing notes](https://doc.akka.io/libraries/akka-core/current/project/migration-guide-2.6.x-2.7.x.html)

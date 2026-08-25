@@ -1,9 +1,0 @@
-{
-    "event_id": "test-bid-002",
-    "lot_id": 43,
-    "user_id": 200,
-    "amount": 50.0,
-    "current_leader_id": 200,
-    "lot_title": "Значок Пингвин",
-    "previous_amount": 0.0
-}

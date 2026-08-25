@@ -12,7 +12,7 @@
 - логи, health и traces;
 - возможность отключить компонент и запустить его из IDE.
 
-AppHost существует, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем адаптировать topology под новый TypeScript Gateway и MVP-сервисы.
+AppHost существует, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем адаптировать topology под Telegram Bot и MVP-сервисы. Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
 
 ## Production-like integration
 
@@ -40,10 +40,9 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Current-ограничения
 
-- профиль Aspire `core` пока поднимает Legacy Auction и Rust Gateway;
-- Gateway запускается через Cargo;
-- AppHost/ServiceDefaults и C#-сервисы используют разные поколения target framework;
-- рукописные compose-файлы остаются fallback до подтверждения Aspire;
+- AppHost поднимает только PostgreSQL и NATS: исполняемых компонентов платформы ещё нет;
+- рукописных compose-файлов больше нет, fallback-пути к ним не существует;
+- живой `aspire run` не подтверждён;
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения

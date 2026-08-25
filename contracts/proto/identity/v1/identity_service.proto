@@ -8,7 +8,8 @@ service IdentityService {
 }
 
 message ResolveIdentityRequest {
-  // Telegram user id already established by the trusted Gateway boundary.
+  // Telegram user id taken from a Telegram update. The caller establishes it
+  // at its own trusted boundary; this message carries no proof of that.
   int64 telegram_user_id = 1;
 
   // Username without the leading '@'. Absent when the account has none.

@@ -4,7 +4,7 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
-Workflow собирает Identity и проверяет гигиену репозитория. Legacy-сервисы в CI не входят.
+Workflow собирает Identity и проверяет гигиену репозитория.
 
 Известные gaps:
 
