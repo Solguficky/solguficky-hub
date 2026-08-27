@@ -3,8 +3,7 @@
 # Хук — это быстрая обратная связь, а не гейт: он локальный и обходится
 # через `--no-verify`.
 #
-# Синхронность скиллов дублирует джоба repo-hygiene в .github/workflows/ci.yml
-# тем же скриптом. Формат сообщения коммита в CI не проверяется намеренно
+# Формат сообщения коммита в CI не проверяется намеренно
 # (причина — в docs/development/ci.md), поэтому здесь он единственная
 # автоматическая проверка.
 #
@@ -15,12 +14,3 @@ commit-msg:
     conventional-commit:
       # {1} — путь к файлу с сообщением коммита, который git передаёт хуку.
       run: sh tools/git-hooks/check-commit-message.sh {1}
-
-pre-commit:
-  parallel: true
-  commands:
-    skills-mirror:
-      glob:
-        - '.claude/skills/**'
-        - '.agents/skills/**'
-      run: sh tools/git-hooks/check-skills-mirror.sh

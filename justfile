@@ -29,11 +29,7 @@ setup:
 
 # --- Проверки --------------------------------------------------------------
 #
-# Те же скрипты вызывают git-хуки через lefthook.yml.
-
-# Синхронность скиллов .claude/skills и .agents/skills
-check-skills:
-    sh tools/git-hooks/check-skills-mirror.sh
+# Тот же скрипт вызывает git-хук через lefthook.yml.
 
 # Сообщение коммита из файла: just check-commit-message .git/COMMIT_EDITMSG
 check-commit-message file:
