@@ -6,6 +6,11 @@ targets:
   - name: claude
     skills:
       mode: copy
+skills:
+  - name: skillshare
+    source: https://github.com/runkids/skillshare/skills/skillshare
+  - name: find-skills
+    source: https://github.com/vercel-labs/skills/find-skills
 ignore:
   - .DS_Store
   - .git/

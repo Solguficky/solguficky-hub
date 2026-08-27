@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "entries": {
+    "find-skills": {
+      "source": "https://github.com/vercel-labs/skills/find-skills",
+      "type": "github-subdir",
+      "installed_at": "2026-08-27T03:45:29.7020151+03:00",
+      "repo_url": "https://github.com/vercel-labs/skills.git",
+      "subdir": "skills/find-skills",
+      "version": "435076e",
+      "tree_hash": "76a98a285cb0434f3d39e1a873823556330e398b",
+      "file_hashes": {
+        "SKILL.md": "sha256:c1d9628984991d7ed59ab3a7bf6a4dad3d731ef68c71f409f64a0ca258e8028e"
+      }
+    },
+    "skillshare": {
+      "source": "https://github.com/runkids/skillshare/skills/skillshare",
+      "type": "github-subdir",
+      "installed_at": "2026-08-27T03:36:27.2109925+03:00",
+      "repo_url": "https://github.com/runkids/skillshare.git",
+      "subdir": "skills/skillshare",
+      "version": "06429ce",
+      "tree_hash": "4a841ea0a8cf1d04f8b9c82fd00a67fcd466658c",
+      "file_hashes": {
+        "SKILL.md": "sha256:190d20890ce97c2ef3bcd7f2ab8e94f7e5edd8adf5e1460a92fa28de25760aef",
+        "references/TROUBLESHOOTING.md": "sha256:963ef806ee223dd4abe9e5cdf3911dc21d8cbba6ca545c3c72d18fb925d767ec",
+        "references/audit.md": "sha256:27c64924222212ca383a6426d842339c998a5b04a6ba8955de7af1108d854850",
+        "references/backup.md": "sha256:1b7833a3e0b4d9cb5cc1f9ba8b9aa49f85d04ddf2e3849e8b20fd3fe0ae3e0f1",
+        "references/extras.md": "sha256:b65949421b11428ac35a948841fa8245afe93bf246ed62d66d93df59d845adbc",
+        "references/init.md": "sha256:2afba29bbaa6ea2d6b373f4e14cfdd6a1c93d53339226d42dd95902cbcd7b145",
+        "references/install.md": "sha256:ac2f33a33d790f5a51e64072af138329a10c98b718524efc26280989e7755fa2",
+        "references/log.md": "sha256:882d3f3f94f8b3534cacfe4c9958c2649dccd84a80bca64392d6a77bddedf0c8",
+        "references/status.md": "sha256:f25c597ae1c169afdd20e3469760b6f5fa4e826bde39a879a87729e31caa5745",
+        "references/sync.md": "sha256:30cba80c9932cdffc0263e6b735323299e05547f7c83de3fd7d0a93ba26c1000",
+        "references/targets.md": "sha256:e918e52b19baf4c93e4e9920070dc9f67173213a5d4e94cca920afc8cb5d077e",
+        "references/trash.md": "sha256:e4d00cab0541297d2773aac41660ecc95416721bfc3c7fac4e7677f000cafccf",
+        "scripts/run.sh": "sha256:ce5532a4ab4fc64f3fcc24a6af1775508020bcd0c5c1c3c20e023b65f5ce3131"
+      }
+    }
+  }
+}

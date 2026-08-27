@@ -1,4 +1,11 @@
 {
-  "managed": {},
-  "updated_at": "2026-08-27T03:32:19.4243421+03:00"
+  "managed": {
+    "find-skills": "aaee69a61d5c332bb96296338f643390f0dd3807224802c339bfa75f728ea94f",
+    "skillshare": "11116403a018bcedf2e1768fe0392a9db9adf37adc4dd418377dfb1e51f39a32"
+  },
+  "mtimes": {
+    "find-skills": 1787791529684161300,
+    "skillshare": 1787790987094533200
+  },
+  "updated_at": "2026-08-27T03:45:45.7764451+03:00"
 }
