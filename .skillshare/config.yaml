@@ -11,6 +11,10 @@ skills:
     source: https://github.com/runkids/skillshare/skills/skillshare
   - name: find-skills
     source: https://github.com/vercel-labs/skills/find-skills
+  - name: grill-me
+    source: https://github.com/mattpocock/skills/skills/productivity/grill-me
+  - name: grill-with-docs
+    source: https://github.com/mattpocock/skills/skills/engineering/grill-with-docs
 ignore:
   - .DS_Store
   - .git/

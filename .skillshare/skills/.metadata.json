@@ -13,6 +13,32 @@
         "SKILL.md": "sha256:c1d9628984991d7ed59ab3a7bf6a4dad3d731ef68c71f409f64a0ca258e8028e"
       }
     },
+    "grill-me": {
+      "source": "https://github.com/mattpocock/skills/skills/productivity/grill-me",
+      "type": "github-subdir",
+      "installed_at": "2026-08-27T03:51:27.4484031+03:00",
+      "repo_url": "https://github.com/mattpocock/skills.git",
+      "subdir": "skills/productivity/grill-me",
+      "version": "6654f6b",
+      "tree_hash": "3df14e2d3a89459bf300614be9247e3ce74798f8",
+      "file_hashes": {
+        "SKILL.md": "sha256:19e660207b447acf6ee0d600471c02e549c7aca8fb3ab38fdc2c7056aa442fc8",
+        "agents/openai.yaml": "sha256:c03a1eee1161bb70ca360b3d17705638b93bc8eec41319732725dc05a53196a5"
+      }
+    },
+    "grill-with-docs": {
+      "source": "https://github.com/mattpocock/skills/skills/engineering/grill-with-docs",
+      "type": "github-subdir",
+      "installed_at": "2026-08-27T03:51:27.371784+03:00",
+      "repo_url": "https://github.com/mattpocock/skills.git",
+      "subdir": "skills/engineering/grill-with-docs",
+      "version": "6654f6b",
+      "tree_hash": "eedaf2562c83155115e9c649fa3ecaac2e10e81d",
+      "file_hashes": {
+        "SKILL.md": "sha256:abc0fa7948db18b5fb0e1cc1c522ac5ff47d874e2da1e5df60619d79be11f38b",
+        "agents/openai.yaml": "sha256:81e6af95559517a292767439da8f46a468b4d88a6773a3316d511a428eb16ff3"
+      }
+    },
     "skillshare": {
       "source": "https://github.com/runkids/skillshare/skills/skillshare",
       "type": "github-subdir",

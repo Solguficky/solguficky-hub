@@ -1,11 +1,15 @@
 {
   "managed": {
     "find-skills": "aaee69a61d5c332bb96296338f643390f0dd3807224802c339bfa75f728ea94f",
+    "grill-me": "d5add49d69d598c7a1d4a72c57008026a44eb58eec580fb55c7d73691bd1903d",
+    "grill-with-docs": "8c73ab212f47b3981cc1c9278404b9c699465e9c174dad9d1d399de51a2a291a",
     "skillshare": "11116403a018bcedf2e1768fe0392a9db9adf37adc4dd418377dfb1e51f39a32"
   },
   "mtimes": {
     "find-skills": 1787791529684161300,
+    "grill-me": 1787791887446822400,
+    "grill-with-docs": 1787791887359243700,
     "skillshare": 1787790987094533200
   },
-  "updated_at": "2026-08-27T03:45:45.7764451+03:00"
+  "updated_at": "2026-08-27T03:51:38.5790706+03:00"
 }
