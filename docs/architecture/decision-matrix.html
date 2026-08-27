@@ -343,7 +343,7 @@
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">версия строки</span><span class="why">ADR-024: конфликт становится видимой ошибкой, а не тихой потерей чужой правки.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-024: бот обязан показать собственную запись сразу, отдельная модель чтения здесь только удорожает.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004; специализированное хранилище имело бы смысл только при потоке событий.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">журнал как outbox</span><span class="why">ADR-024: публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">журнал как outbox, событие снимком</span><span class="why">ADR-024: публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим. ADR-031: тело события — снимок состояния, тип называет повод, «что изменилось» вычисляет потребитель по своей реплике; версия агрегата несущая, апкаст не требуется.</span></td>
   </tr>
 
   <tr>
