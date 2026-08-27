@@ -15,6 +15,15 @@ skills:
     source: https://github.com/mattpocock/skills/skills/productivity/grill-me
   - name: grill-with-docs
     source: https://github.com/mattpocock/skills/skills/engineering/grill-with-docs
+  - name: ask-matt
+    source: https://github.com/mattpocock/skills/skills/engineering/ask-matt
+  - name: setup-matt-pocock-skills
+    source: https://github.com/mattpocock/skills/skills/engineering/setup-matt-pocock-skills
+extras:
+  - name: commands
+    targets:
+      - path: .claude/commands
+        mode: copy
 ignore:
   - .DS_Store
   - .git/

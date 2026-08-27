@@ -1,15 +1,19 @@
 {
   "managed": {
+    "ask-matt": "b3b84a36f0ba1a5757132be91900dc751c194175c2c29990f933d9fc8f2dc4d6",
     "find-skills": "aaee69a61d5c332bb96296338f643390f0dd3807224802c339bfa75f728ea94f",
     "grill-me": "d5add49d69d598c7a1d4a72c57008026a44eb58eec580fb55c7d73691bd1903d",
     "grill-with-docs": "8c73ab212f47b3981cc1c9278404b9c699465e9c174dad9d1d399de51a2a291a",
+    "setup-matt-pocock-skills": "9d17e56a6fabc4751cf1b37a566d4407ebab602684919a203f3e4e73c0296db9",
     "skillshare": "11116403a018bcedf2e1768fe0392a9db9adf37adc4dd418377dfb1e51f39a32"
   },
   "mtimes": {
+    "ask-matt": 1787864148816696700,
     "find-skills": 1787791529684161300,
     "grill-me": 1787791887446822400,
     "grill-with-docs": 1787791887359243700,
+    "setup-matt-pocock-skills": 1787864149017737800,
     "skillshare": 1787790987094533200
   },
-  "updated_at": "2026-08-27T03:51:38.5813039+03:00"
+  "updated_at": "2026-08-27T23:56:03.2778012+03:00"
 }

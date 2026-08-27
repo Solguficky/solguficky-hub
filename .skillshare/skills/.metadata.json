@@ -1,6 +1,20 @@
 {
   "version": 1,
   "entries": {
+    "ask-matt": {
+      "source": "https://github.com/mattpocock/skills/skills/engineering/ask-matt",
+      "type": "github-subdir",
+      "installed_at": "2026-08-27T23:55:48.8608312+03:00",
+      "repo_url": "https://github.com/mattpocock/skills.git",
+      "subdir": "skills/engineering/ask-matt",
+      "version": "6654f6b",
+      "tree_hash": "85f3ba59f22c16de988e36b781ae46d0d9098f94",
+      "file_hashes": {
+        "PHASE-BOUNDARIES.md": "sha256:4e2a891beb182df8c2eb2a7dfbff20ba43ae008d29c77ac41b005181018f7ccd",
+        "SKILL.md": "sha256:d8934db5ccf28b8c6e43d44d88801936d3831ab5666280b26d6f0852a312dc63",
+        "agents/openai.yaml": "sha256:d30cfa5b0e84e2ca10b8d263b9dfcc13c3aa089ae6bc26096bc549fc037d274e"
+      }
+    },
     "find-skills": {
       "source": "https://github.com/vercel-labs/skills/find-skills",
       "type": "github-subdir",
@@ -37,6 +51,24 @@
       "file_hashes": {
         "SKILL.md": "sha256:abc0fa7948db18b5fb0e1cc1c522ac5ff47d874e2da1e5df60619d79be11f38b",
         "agents/openai.yaml": "sha256:81e6af95559517a292767439da8f46a468b4d88a6773a3316d511a428eb16ff3"
+      }
+    },
+    "setup-matt-pocock-skills": {
+      "source": "https://github.com/mattpocock/skills/skills/engineering/setup-matt-pocock-skills",
+      "type": "github-subdir",
+      "installed_at": "2026-08-27T23:55:49.058272+03:00",
+      "repo_url": "https://github.com/mattpocock/skills.git",
+      "subdir": "skills/engineering/setup-matt-pocock-skills",
+      "version": "6654f6b",
+      "tree_hash": "ec07f82df54064d01aa1648670e81da41e2cbdc2",
+      "file_hashes": {
+        "SKILL.md": "sha256:86c0dee483fb69f7f5ecfcd010f6d7cbb30df2c47a9b059ac95f98380f383d86",
+        "agents/openai.yaml": "sha256:53d0bf3786862a1cb5013ca78f12013b166d0819823dae0d3f9eb13eee2acdf2",
+        "domain.md": "sha256:19f59c9e72afd05199a79f82500baae05f0c445528636282dcd4400da3facd54",
+        "issue-tracker-github.md": "sha256:0809582ea8cf5f91fd72ae2b59aa62a07c1236ad194ef7dd40d9e2f01c3e753b",
+        "issue-tracker-gitlab.md": "sha256:6fe462c8dbffdf90e66d2ee62f6fa74666d777d0933c244e2a22a295848cb3ab",
+        "issue-tracker-local.md": "sha256:a604b658f0730eae3107671b09323ed8382bd546e82dc3bedc265bccbeb35021",
+        "triage-labels.md": "sha256:493d08d7a8007d3604cdf64d45717045034a5037c9e9917bae1ad9340fad75b8"
       }
     },
     "skillshare": {
