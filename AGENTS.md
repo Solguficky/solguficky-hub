@@ -82,7 +82,8 @@ nats-tester --help
 - Не создавай новый сервис, ADR или межсервисный контракт без явного запроса.
 - Для нетривиального принятого решения используй skill `proj-record-decision`; ADR хранится отдельным файлом в `docs/decisions/`.
 - Любое изменение `contracts/proto/` требует skill `proj-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
-- Не коммить без явной просьбы. Закончил правки — покажи `git status --short` и остановись. Push и PR — тоже отдельные явные решения владельца.
+- Внутри контура задачи, открытого владельцем на конкретную задачу Linear, доводи работу до pull request сам. Вне контура закончил правки — покажи `git status --short` и остановись. Границы контура, чекпоинты и стоп-триггеры — [agent-execution-loop.md](docs/development/agent-execution-loop.md).
+- Ветка задачи — `feature/PER-N` от `develop`, один pull request на задачу; `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
