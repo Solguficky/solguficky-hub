@@ -1,6 +1,18 @@
 {
   "version": 1,
   "entries": {
+    "cli-for-agents": {
+      "source": "github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents",
+      "type": "github-subdir",
+      "installed_at": "2026-08-28T22:04:03.5732665+03:00",
+      "repo_url": "https://github.com/cursor/plugins.git",
+      "subdir": "cli-for-agent/skills/cli-for-agents",
+      "version": "68836dd",
+      "tree_hash": "732b15173f44c2dc3129cd010e2b2f6113d066e0",
+      "file_hashes": {
+        "SKILL.md": "sha256:446670e3200df30dacc91667837e56f6d55b589eb457f617933874b11e05d423"
+      }
+    },
     "find-skills": {
       "source": "https://github.com/vercel-labs/skills/find-skills",
       "type": "github-subdir",
@@ -53,6 +65,18 @@
         "references/targets.md": "sha256:e918e52b19baf4c93e4e9920070dc9f67173213a5d4e94cca920afc8cb5d077e",
         "references/trash.md": "sha256:e4d00cab0541297d2773aac41660ecc95416721bfc3c7fac4e7677f000cafccf",
         "scripts/run.sh": "sha256:ce5532a4ab4fc64f3fcc24a6af1775508020bcd0c5c1c3c20e023b65f5ce3131"
+      }
+    },
+    "verify-this": {
+      "source": "github.com/cursor/plugins/cursor-team-kit/skills/verify-this",
+      "type": "github-subdir",
+      "installed_at": "2026-08-28T22:04:03.9590418+03:00",
+      "repo_url": "https://github.com/cursor/plugins.git",
+      "subdir": "cursor-team-kit/skills/verify-this",
+      "version": "68836dd",
+      "tree_hash": "11c9aa1407bc647693437c510bcf5a508244c738",
+      "file_hashes": {
+        "SKILL.md": "sha256:0d3879e17df701eebc0c3580218328b85d204ddbc79dbbfafbaab55594e679bb"
       }
     }
   }
