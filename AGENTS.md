@@ -83,7 +83,7 @@ nats-tester --help
 - Для нетривиального принятого решения используй skill `proj-record-decision`; ADR хранится отдельным файлом в `docs/decisions/`.
 - Любое изменение `contracts/proto/` требует skill `proj-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
 - Внутри контура задачи, открытого владельцем на конкретную задачу Linear, доводи работу до pull request сам. Вне контура закончил правки — покажи `git status --short` и остановись. Границы контура, чекпоинты и стоп-триггеры — [agent-execution-loop.md](docs/development/agent-execution-loop.md).
-- Ветка задачи — `feature/PER-N` от `develop`, один pull request на задачу; `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
+- В локальном контуре самостоятельно создавай ветку задачи `feature/PER-N` от `develop`; одна задача — один pull request, `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
@@ -105,7 +105,7 @@ nats-tester --help
 
 Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `proj-`скилл поверх норматива, чем чинить чужой.
 
-Скилл, завязанный на возможности Claude Code, помечается во фронтматтере `metadata: targets: [claude]` и в `.agents/skills/` не попадает — сейчас это `proj-delegate-subtask`. Команды — в `.claude/commands/`, их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-delegate-subtask`, `proj-record-learning`, `proj-write-commit`; команда `proj-draft-commit-message`.
+Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-write-commit`; команда `proj-draft-commit-message`.
 
 Скилл, который агент не должен запускать сам, помечается `disable-model-invocation: true` — сейчас это `proj-record-learning`. Он не занимает контекст описанием и вызывается только владельцем; напоминание о нём живёт в критических правилах выше.
 

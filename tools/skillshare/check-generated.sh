@@ -3,7 +3,7 @@
 #
 # Skillshare 0.20.x does not track native agents copied to a target in a
 # manifest, so `skillshare diff` reports every copied agent as a local override.
-# This check compares the actual files and verifies the Claude-only boundary.
+# This check compares the actual files.
 
 set -eu
 
@@ -14,8 +14,6 @@ UNIVERSAL_SKILLS='.agents/skills'
 CLAUDE_SKILLS='.claude/skills'
 CLAUDE_AGENTS='.claude/agents'
 CLAUDE_COMMANDS='.claude/commands'
-CLAUDE_ONLY='proj-delegate-subtask'
-
 errors=''
 
 fail() {
@@ -53,13 +51,7 @@ for source in "$SOURCE_SKILLS"/*; do
 
     compare_tree "$source" "$CLAUDE_SKILLS/$name" "skill ${name} -> claude"
 
-    if [ "$name" = "$CLAUDE_ONLY" ]; then
-        if [ -e "$UNIVERSAL_SKILLS/$name" ]; then
-            fail "skill ${name}: Claude-only skill exists in universal target"
-        fi
-    else
-        compare_tree "$source" "$UNIVERSAL_SKILLS/$name" "skill ${name} -> universal"
-    fi
+    compare_tree "$source" "$UNIVERSAL_SKILLS/$name" "skill ${name} -> universal"
 done
 
 # External Skillshare sources are ignored. Their committed target copies must
@@ -67,7 +59,6 @@ done
 for claude_skill in "$CLAUDE_SKILLS"/*; do
     [ -d "$claude_skill" ] || continue
     name=$(basename "$claude_skill")
-    [ "$name" = "$CLAUDE_ONLY" ] && continue
     compare_tree "$claude_skill" "$UNIVERSAL_SKILLS/$name" "shared skill ${name}"
 done
 
