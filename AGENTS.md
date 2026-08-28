@@ -42,6 +42,9 @@ sh tools/git-hooks/check-commit-message.sh <файл-с-сообщением>
 # Скиллы: раскладка по таргетам после правок в .skillshare/skills/
 skillshare sync -p
 
+# Команды: отдельная раскладка, обычный sync их не трогает
+skillshare sync extras -p
+
 # Локальная оркестрация — из infra/apphost/
 aspire run
 
@@ -94,7 +97,7 @@ nats-tester --help
 
 Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `sgh-`скилл поверх норматива, чем чинить чужой.
 
-Скилл, завязанный на возможности Claude Code, помечается во фронтматтере `metadata: targets: [claude]` и в `.agents/skills/` не попадает — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`, они синхронизируются через `extras`. Свои скиллы и команды носят префикс `sgh-`, чтобы отличаться от внешних, персональных и плагинных. Имя скилла называет действие: `sgh-record-decision`, `sgh-change-contract`, `sgh-create-task`, `sgh-delegate-subtask`, `sgh-write-commit`, `sgh-draft-commit-message`.
+Скилл, завязанный на возможности Claude Code, помечается во фронтматтере `metadata: targets: [claude]` и в `.agents/skills/` не попадает — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`, их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `sgh-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `sgh-record-decision`, `sgh-change-contract`, `sgh-create-task`, `sgh-delegate-subtask`, `sgh-write-commit`; команда `sgh-draft-commit-message`.
 
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.
 
