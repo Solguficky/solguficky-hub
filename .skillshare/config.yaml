@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/runkids/skillshare/main/schemas/project-config.schema.json
+targets:
+  - name: universal
+    skills:
+      mode: copy
+      target_naming: standard
+  - agents:
+      mode: copy
+    name: claude
+    skills:
+      mode: copy
+      target_naming: standard
+skills:
+  - name: skillshare
+    source: https://github.com/runkids/skillshare/skills/skillshare
+  - name: find-skills
+    source: https://github.com/vercel-labs/skills/find-skills
+  - name: _skills
+    source: https://github.com/mattpocock/skills.git
+    tracked: true
+    group: mattpocock
+    branch: main
+extras:
+  - name: commands
+    targets:
+      - path: .claude/commands
+        mode: copy
+ignore:
+  - .DS_Store
+  - .git/
+  - __pycache__/
+audit:
+  block_threshold: CRITICAL

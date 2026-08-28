@@ -24,7 +24,8 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
-- `tools/git-hooks/` — POSIX sh скрипты проверок. `check-skills-mirror.sh` вызывают и хук `pre-commit`, и джоба `repo-hygiene` в CI; `check-commit-message.sh` — только локальный хук.
+- `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
+- `tools/skillshare/` — проверка закоммиченных Skillshare-таргетов; её вызывают `just check-agent-tools` и CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет свои рецепты туда вместе со сборкой.
 
@@ -36,9 +37,17 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 # Git-хуки — один раз после клонирования, из корня
 lefthook install
 
-# Проверки из хуков (можно запускать вручную); в CI из них идёт только skills-mirror
+# Проверка из хука (можно запускать вручную); в CI не дублируется
 sh tools/git-hooks/check-commit-message.sh <файл-с-сообщением>
-sh tools/git-hooks/check-skills-mirror.sh
+
+# Скиллы: раскладка по таргетам после правок в .skillshare/skills/
+skillshare sync -p
+
+# Команды: отдельная раскладка, обычный sync их не трогает
+skillshare sync extras -p
+
+# Проверка закоммиченных skills, agents и commands после sync
+just check-agent-tools
 
 # Локальная оркестрация — из infra/apphost/
 aspire run
@@ -75,7 +84,7 @@ nats-tester --help
 - Любое изменение `contracts/proto/` требует skill `sgh-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
 - Не коммить без явной просьбы. Закончил правки — покажи `git status --short` и остановись. Push и PR — тоже отдельные явные решения владельца.
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `sgh-write-commit`.
-- Формат сообщения проверяет локальный хук `commit-msg` (lefthook), синхронность скиллов — хук `pre-commit` и джоба `repo-hygiene` в CI. Скрипты проверок — в `tools/git-hooks/`.
+- Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
 - Не считай Core NATS надёжной доставкой: JetStream, durable consumers и идемпотентность требуют согласованного решения.
@@ -88,6 +97,20 @@ nats-tester --help
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-Скиллы репозитория лежат в `.claude/skills/`. Общие зеркалятся в `.agents/skills/` побайтово; специфичные для возможностей Claude Code живут только в `.claude/skills/` и перечислены в `CLAUDE_ONLY` скрипта `check-skills-mirror.sh` — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`. Все они носят префикс `sgh-`, чтобы отличаться от персональных и плагинных. Имя скилла называет действие: `sgh-record-decision`, `sgh-change-contract`, `sgh-create-task`, `sgh-delegate-subtask`, `sgh-write-commit`, `sgh-draft-commit-message`.
+Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p` и руками не правятся. Раскладка источника: `sgh/` — свои скиллы репозитория, `mattpocock/_skills/` — tracked-клон [mattpocock/skills](https://github.com/mattpocock/skills) (обновляется `skillshare update _skills -p`, сам клон в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
+
+Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `sgh-`скилл поверх норматива, чем чинить чужой.
+
+Скилл, завязанный на возможности Claude Code, помечается во фронтматтере `metadata: targets: [claude]` и в `.agents/skills/` не попадает — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`, их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `sgh-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `sgh-record-decision`, `sgh-change-contract`, `sgh-create-task`, `sgh-delegate-subtask`, `sgh-write-commit`; команда `sgh-draft-commit-message`.
 
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.
+
+## Agent skills
+
+### Issue tracker
+
+Задачи живут в Linear; GitHub несёт только код и review. См. [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Domain docs
+
+Single-context: словарь домена в ADR, решения — в `docs/decisions/`. См. [docs/agents/domain.md](docs/agents/domain.md).
