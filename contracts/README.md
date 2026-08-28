@@ -27,7 +27,7 @@ contracts/proto/
 
 ## Изменение
 
-Норматив совместимости — в [Protobuf standard](../docs/standards/contracts/protobuf.md). Пошаговый workflow — в skill `sgh-change-contract`.
+Норматив совместимости — в [Protobuf standard](../docs/standards/contracts/protobuf.md). Пошаговый workflow — в skill `proj-change-contract`.
 
 Минимальный порядок:
 

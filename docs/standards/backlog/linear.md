@@ -3,7 +3,7 @@
 > **Статус:** Active  
 > **Применимость:** все задачи проекта в Linear — заведённые вручную и агентом  
 > **Не применяется:** issues и PR на GitHub; там нет планирования, только код и review  
-> **Связанные документы:** [design-process.md](../../development/design-process.md), [docs/README.md](../../README.md), skill `sgh-create-task`
+> **Связанные документы:** [design-process.md](../../development/design-process.md), [docs/README.md](../../README.md), skill `proj-create-task`
 
 Задача существует, чтобы её можно было отдать в работу без разговора. Standard задаёт структуру бэклога, таксономию меток, шкалу оценок и форму самой задачи. Состав бэклога и статусы живут только в Linear и в `docs/` не копируются.
 
