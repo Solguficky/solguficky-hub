@@ -35,6 +35,10 @@ setup:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
+# Сгенерированные skills, agents и commands совпадают с источниками Skillshare
+check-agent-tools:
+    sh tools/skillshare/check-generated.sh
+
 # --- Локальная оркестрация -------------------------------------------------
 
 # AppHost поднимает только инфраструктуру: исполняемых компонентов ещё нет.

@@ -4,7 +4,9 @@ targets:
     skills:
       mode: copy
       target_naming: standard
-  - name: claude
+  - agents:
+      mode: copy
+    name: claude
     skills:
       mode: copy
       target_naming: standard

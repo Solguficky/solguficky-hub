@@ -12,6 +12,10 @@
     "research": "0931e8d767eda3793dfbc35c32b44e47824802ec9ebc7c716bd1dd901aa4c2f2",
     "resolving-merge-conflicts": "b5b3e7481946ed121383ffc6f89ad6c5ca3f9c177afdc976c5ab34c10762ea78",
     "retro": "b74860a4f402d96349cbce68afcea75de91c57915c8e40789c32b06f7b9603ef",
+    "sgh-change-contract": "0e156e02e59cbbbe4d98ff2f928b9b61c31e3c67fd870b357d3c1b25ad94a433",
+    "sgh-create-task": "60e8507b2f8d4a3959186db4c3a0e575ef298c6dc6ba2ab146ffcc64f10c3e90",
+    "sgh-record-decision": "1128f5717d7fe4ea2f01fa0a0ddab4a9525dac5d058a9b9c8620b64c3a1ec5f4",
+    "sgh-write-commit": "71c8da5f4f0cf6229acacdaabe55aef117c2844fcf802b77729752f6fd2d97d6",
     "skillshare": "11116403a018bcedf2e1768fe0392a9db9adf37adc4dd418377dfb1e51f39a32",
     "tdd": "2072a10a057da5cbe50915ed2a739196000b6e871f1d193989bca0a9e3e3d227",
     "teach": "3ddf98b430c38292438fb774b24ff3c2b554e4c4c23daffc34756d193974aa2a",
@@ -36,6 +40,10 @@
     "research": 1787866344042693600,
     "resolving-merge-conflicts": 1787866344047084300,
     "retro": 1787866344096889900,
+    "sgh-change-contract": 1787260224682655500,
+    "sgh-create-task": 1787412122977680500,
+    "sgh-record-decision": 1787260224685756800,
+    "sgh-write-commit": 1787260224687783700,
     "skillshare": 1787790987094533200,
     "tdd": 1787866344060948500,
     "teach": 1787866344153841900,
@@ -47,5 +55,5 @@
     "writing-fragments": 1787866344107665000,
     "writing-shape": 1787866344110662500
   },
-  "updated_at": "2026-08-28T10:52:09.3717072+03:00"
+  "updated_at": "2026-08-28T11:14:02.7322046+03:00"
 }

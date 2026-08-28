@@ -13,7 +13,9 @@ Workflow собирает Identity.
 
 ## Проверки репозитория
 
-Проверок гигиены репозитория в CI нет. Джоба `repo-hygiene` сверяла `.claude/skills` и `.agents/skills` между собой; она удалена вместе со скриптом `check-skills-mirror.sh`, потому что оба каталога теперь генерируются из общего источника `.skillshare/skills/` командой `skillshare sync -p`, и расходиться им нечем.
+Джоба `repo-hygiene` запускает `tools/skillshare/check-generated.sh`. Скрипт сверяет собственные `sgh-` skills с обоими таргетами, проверяет Claude-only границу, сверяет общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agent и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
+
+Проверка не полагается на `skillshare diff` для native agents в режиме `copy`: Skillshare 0.20.x не создаёт для них manifest и помечает даже идентичную копию как local override. Фактическая синхронность этого файла проверяется по содержимому.
 
 [Формат сообщений коммитов](../standards/git/commit-messages.md) в CI не проверяется: стандарт распространяется на обычные коммиты, а в `main` при squash-merge попадает заголовок PR, к которому он не применяется. Контроль формата остаётся локальным хуком.
 
