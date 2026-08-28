@@ -1,6 +1,6 @@
 module github.com/Solguficky/solguficky-hub/apps/identity
 
-go 1.22.2
+go 1.27.0
 
 require (
 	google.golang.org/grpc v1.70.0

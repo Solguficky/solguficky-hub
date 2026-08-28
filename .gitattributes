@@ -5,3 +5,8 @@
 
 # Скрипты хуков и CI выполняются через sh: CRLF в них ломает shebang.
 *.sh text eol=lf
+
+# skillshare читает .skillignore как данные, а не как текст для человека: CRLF
+# превращает паттерн в "name\r", он перестаёт совпадать с именем каталога, и
+# отключённые скиллы молча возвращаются в .claude/skills и .agents/skills.
+.skillignore text eol=lf
