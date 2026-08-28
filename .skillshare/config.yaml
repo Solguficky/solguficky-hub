@@ -20,6 +20,8 @@ skills:
     tracked: true
     group: mattpocock
     branch: main
+  - name: show-me
+    source: https://github.com/humanlayer/skills/plugins/show-me/skills/show-me
 extras:
   - name: commands
     targets:

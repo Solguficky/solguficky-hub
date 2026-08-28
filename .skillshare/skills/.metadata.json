@@ -19,6 +19,18 @@
       "group": "mattpocock",
       "branch": "main"
     },
+    "show-me": {
+      "source": "https://github.com/humanlayer/skills/plugins/show-me/skills/show-me",
+      "type": "github-subdir",
+      "installed_at": "2026-08-28T17:24:54.787378+03:00",
+      "repo_url": "https://github.com/humanlayer/skills.git",
+      "subdir": "plugins/show-me/skills/show-me",
+      "version": "3c26291",
+      "tree_hash": "0bdb821a21e793a4f6f82a7078c052154447e5cc",
+      "file_hashes": {
+        "SKILL.md": "sha256:2b5635cce0185faee035df02e058ab8f50d7e3b495e84d68efce135b4c550662"
+      }
+    },
     "skillshare": {
       "source": "https://github.com/runkids/skillshare/skills/skillshare",
       "type": "github-subdir",
