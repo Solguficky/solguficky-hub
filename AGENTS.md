@@ -80,10 +80,10 @@ nats-tester --help
 
 - Продуктовые и архитектурные решения принимает владелец. Агент исследует, оппонирует и реализует утверждённый срез.
 - Не создавай новый сервис, ADR или межсервисный контракт без явного запроса.
-- Для нетривиального принятого решения используй skill `sgh-record-decision`; ADR хранится отдельным файлом в `docs/decisions/`.
-- Любое изменение `contracts/proto/` требует skill `sgh-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
+- Для нетривиального принятого решения используй skill `proj-record-decision`; ADR хранится отдельным файлом в `docs/decisions/`.
+- Любое изменение `contracts/proto/` требует skill `proj-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
 - Не коммить без явной просьбы. Закончил правки — покажи `git status --short` и остановись. Push и PR — тоже отдельные явные решения владельца.
-- Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `sgh-write-commit`.
+- Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
@@ -97,11 +97,11 @@ nats-tester --help
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p` и руками не правятся. Раскладка источника: `sgh/` — свои скиллы репозитория, `mattpocock/_skills/` — tracked-клон [mattpocock/skills](https://github.com/mattpocock/skills) (обновляется `skillshare update _skills -p`, сам клон в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
+Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p` и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `mattpocock/_skills/` — tracked-клон [mattpocock/skills](https://github.com/mattpocock/skills) (обновляется `skillshare update _skills -p`, сам клон в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
 
-Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `sgh-`скилл поверх норматива, чем чинить чужой.
+Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `proj-`скилл поверх норматива, чем чинить чужой.
 
-Скилл, завязанный на возможности Claude Code, помечается во фронтматтере `metadata: targets: [claude]` и в `.agents/skills/` не попадает — сейчас это `sgh-delegate-subtask`. Команды — в `.claude/commands/`, их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `sgh-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `sgh-record-decision`, `sgh-change-contract`, `sgh-create-task`, `sgh-delegate-subtask`, `sgh-write-commit`; команда `sgh-draft-commit-message`.
+Скилл, завязанный на возможности Claude Code, помечается во фронтматтере `metadata: targets: [claude]` и в `.agents/skills/` не попадает — сейчас это `proj-delegate-subtask`. Команды — в `.claude/commands/`, их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-delegate-subtask`, `proj-write-commit`; команда `proj-draft-commit-message`.
 
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.
 

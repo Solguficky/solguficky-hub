@@ -7,14 +7,14 @@
 
 set -eu
 
-SOURCE_SKILLS='.skillshare/skills/sgh'
+SOURCE_SKILLS='.skillshare/skills/proj'
 SOURCE_AGENTS='.skillshare/agents'
 SOURCE_COMMANDS='.skillshare/extras/commands'
 UNIVERSAL_SKILLS='.agents/skills'
 CLAUDE_SKILLS='.claude/skills'
 CLAUDE_AGENTS='.claude/agents'
 CLAUDE_COMMANDS='.claude/commands'
-CLAUDE_ONLY='sgh-delegate-subtask'
+CLAUDE_ONLY='proj-delegate-subtask'
 
 errors=''
 
