@@ -1,7 +1,7 @@
 ---
 name: proj-start-task
-description: Открыть контур исполнения задачи Linear по идентификатору PER-N
-disable-model-invocation: true
+description: Открыть контур исполнения задачи Linear — ветка от develop, чтение задачи и контекста, чекпоинт плана до кода. Использовать, когда владелец назвал идентификатор PER-N и попросил начать по нему работу, или вызвал /proj-take-task.
+disable-model-invocation: false
 ---
 
 # Открыть контур задачи
