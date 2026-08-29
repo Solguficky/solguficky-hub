@@ -1,7 +1,6 @@
 {
   "managed": {
     "cli-for-agents": "7a5fd065e0273d698f279a5c3e2b4493092237004f5c2e4758db4ab77bd6a0c4",
-    "code-review": "11456e2c81c67994c7b15fc32c962b960f18c3ff968d9d98c2fe1f58aa5011cb",
     "codebase-design": "37c6f20dc93849c64550049a38f0c0670b03599999eb3a7bfbc7b26696bceb9b",
     "diagnosing-bugs": "193848c1b6f5b83127f72e7f7b3aba137594fe304b090efd40e3f79b3f003396",
     "find-skills": "aaee69a61d5c332bb96296338f643390f0dd3807224802c339bfa75f728ea94f",
@@ -14,6 +13,7 @@
     "proj-deliver-task": "714a1ee376a492ad6a996e4e9cddf6c4a21d6bc42c1cee0e9c27a86e0041dd3e",
     "proj-record-decision": "3034c90ff22691ed01e958e763f9d251e081a58bc1edbeb9ec78cc7807302ae4",
     "proj-record-learning": "76549f7d7428bd0d8a0a0f9264e7c619ae58c6917b6c6ec1bd9b1a3c84e81ce3",
+    "proj-review-change": "266c9a8ed9a9089df930406abbf055746741944aee0bca3eeb960d6b2a781ad4",
     "proj-start-task": "fbe37232f4939bc2aecc5f5b595d40aa517eaea01a90989c352873ecdb25b9da",
     "proj-write-commit": "67f5c84433ab70a4ca1d39b3c34322ae9efbc18f03a7a6b4a9ab9ac685ab5182",
     "prototype": "0ab3bde2a6bd18e20e1bc6def960fa756b7257af9fd406478b15294166de825a",
@@ -35,7 +35,6 @@
   },
   "mtimes": {
     "cli-for-agents": 1787943843538156200,
-    "code-review": 1787866344008201800,
     "codebase-design": 1787866344014130500,
     "diagnosing-bugs": 1787866344019080000,
     "find-skills": 1787791529684161300,
@@ -48,6 +47,7 @@
     "proj-deliver-task": 1788040991649392400,
     "proj-record-decision": 1787926836770459500,
     "proj-record-learning": 1788004389355987300,
+    "proj-review-change": 1788043352337433900,
     "proj-start-task": 1788042911592907700,
     "proj-write-commit": 1788006501145060400,
     "prototype": 1787866344040024500,
@@ -67,5 +67,5 @@
     "writing-fragments": 1787866344107665000,
     "writing-shape": 1787866344110662500
   },
-  "updated_at": "2026-08-30T01:35:13.5454933+03:00"
+  "updated_at": "2026-08-30T01:42:49.1165567+03:00"
 }
