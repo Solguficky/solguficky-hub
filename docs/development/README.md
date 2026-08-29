@@ -6,4 +6,4 @@
 - [agent-execution-loop.md](agent-execution-loop.md) — границы автономии агента, чекпоинты и стоп-триггеры;
 - [local-development.md](local-development.md) — Aspire, профили и незакрытый smoke-test gate;
 - [ci.md](ci.md) — текущая область CI и известные gaps;
-- [observations.md](observations.md) — журнал повторяющихся сигналов до перевода в норматив.
+- [observations.md](observations.md) — журнал повторяющихся сигналов до перевода в действующее правило.
