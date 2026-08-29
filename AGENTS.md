@@ -115,6 +115,8 @@ nats-tester --help
 
 Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`; команды `proj-draft-commit-message`, `proj-take-task`.
 
+Плагины включаются полем `enabledPlugins` в `.claude/settings.json` и действуют на весь проект. Сейчас включён `codex@openai-codex`: он приносит скиллы с префиксом `codex:` и агента `codex-rescue`, которые делегируют работу локальному Codex CLI. Плагин приходит мимо `.skillshare/` — `skillshare sync` его не раскладывает, `just check-agent-tools` его не проверяет, а без установленного Codex CLI его скиллы бесполезны.
+
 Скилл, который агент не должен запускать сам, помечается `disable-model-invocation: true` — сейчас это `proj-record-learning`. Он не занимает контекст описанием и вызывается только владельцем; напоминание о нём живёт в критических правилах выше.
 
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.

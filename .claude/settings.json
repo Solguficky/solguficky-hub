@@ -6,18 +6,21 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Edit(.skillshare/**)",
             "command": "just check-agent-tools || exit 2",
+            "if": "Edit(.skillshare/**)",
             "statusMessage": "Проверяю раскладку agent tooling"
           },
           {
             "type": "command",
-            "if": "Edit(contracts/proto/**)",
             "command": "just identity-proto || exit 2",
+            "if": "Edit(contracts/proto/**)",
             "statusMessage": "Проверяю Identity-кодогенерацию"
           }
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
   }
 }
