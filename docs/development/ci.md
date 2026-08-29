@@ -13,7 +13,7 @@ Workflow собирает Identity.
 
 ## Проверки репозитория
 
-Джоба `repo-hygiene` запускает `tools/skillshare/check-generated.sh`. Скрипт сверяет собственные `proj-` skills с обоими таргетами, проверяет Claude-only границу, сверяет общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agent и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
+Джоба `repo-hygiene` запускает `tools/skillshare/check-generated.sh`. Скрипт сверяет собственные `proj-` skills с обоими таргетами, общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agents и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
 
 Проверка не полагается на `skillshare diff` для native agents в режиме `copy`: Skillshare 0.20.x не создаёт для них manifest и помечает даже идентичную копию как local override. Фактическая синхронность этого файла проверяется по содержимому.
 
