@@ -6,8 +6,8 @@
 #
 # Требуется just: https://github.com/casey/just
 #
-# Новый компонент добавляет свои рецепты сюда в том же коммите, в котором
-# появляется его сборка.
+# Новый компонент добавляет свои рецепты и свою проверку в `verify` в том же
+# коммите, в котором появляется его сборка.
 
 # --- Версии инструментов ---------------------------------------------------
 #
@@ -38,6 +38,10 @@ check-commit-message file:
 # Сгенерированные skills, agents и commands совпадают с источниками Skillshare
 check-agent-tools:
     sh tools/skillshare/check-generated.sh
+
+# Skill verify-this проверяет отдельное утверждение экспериментом.
+# Механический гейт перед сдачей: agent tooling, Identity и затронутые тесты
+verify: check-agent-tools identity-proto identity-build identity-test
 
 # --- Локальная оркестрация -------------------------------------------------
 

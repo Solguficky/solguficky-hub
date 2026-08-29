@@ -7,7 +7,10 @@
 
 set -eu
 
-SOURCE_SKILLS='.skillshare/skills/proj'
+SOURCE_SKILLS='.skillshare/skills'
+PROJECT_SKILLS="$SOURCE_SKILLS/proj"
+TRACKED_SKILLS="$SOURCE_SKILLS/mattpocock/_skills/skills"
+SKILLIGNORE="$SOURCE_SKILLS/.skillignore"
 SOURCE_AGENTS='.skillshare/agents'
 SOURCE_COMMANDS='.skillshare/extras/commands'
 UNIVERSAL_SKILLS='.agents/skills'
@@ -22,40 +25,73 @@ fail() {
 }
 
 compare_file() {
-    source=$1
-    target=$2
-    label=$3
-
-    if [ ! -f "$target" ]; then
-        fail "${label}: missing target ${target}"
-    elif ! diff "$source" "$target" >/dev/null 2>&1; then
-        fail "${label}: ${source} and ${target} differ"
+    if [ ! -f "$2" ]; then
+        fail "$3: missing target $2"
+    elif ! diff "$1" "$2" >/dev/null 2>&1; then
+        fail "$3: $1 and $2 differ"
     fi
 }
 
 compare_tree() {
-    source=$1
-    target=$2
-    label=$3
-
-    if [ ! -d "$target" ]; then
-        fail "${label}: missing target ${target}"
-    elif ! diff -r "$source" "$target" >/dev/null 2>&1; then
-        fail "${label}: ${source} and ${target} differ"
+    if [ ! -d "$2" ]; then
+        fail "$3: missing target $2"
+    elif ! git diff --no-index --ignore-cr-at-eol --exit-code -- "$1" "$2" >/dev/null 2>&1; then
+        fail "$3: $1 and $2 differ"
     fi
 }
 
+compare_skill_targets() {
+    source=$1
+    name=$2
+    label=$3
+
+    compare_tree "$source" "$CLAUDE_SKILLS/$name" "${label} ${name} -> claude"
+    compare_tree "$source" "$UNIVERSAL_SKILLS/$name" "${label} ${name} -> universal"
+}
+
+for source in "$PROJECT_SKILLS"/*; do
+    [ -d "$source" ] || continue
+    name=$(basename "$source")
+
+    compare_skill_targets "$source" "$name" "skill"
+done
+
+# Installed external sources are not committed, but a local check must still
+# catch a source edit that has not been synced to either target. The tracked
+# mattpocock group is checked separately below because its sources are nested
+# by category while its enabled targets are flat.
 for source in "$SOURCE_SKILLS"/*; do
     [ -d "$source" ] || continue
     name=$(basename "$source")
 
-    compare_tree "$source" "$CLAUDE_SKILLS/$name" "skill ${name} -> claude"
+    case "$name" in
+        proj|mattpocock)
+            continue
+            ;;
+    esac
 
-    compare_tree "$source" "$UNIVERSAL_SKILLS/$name" "skill ${name} -> universal"
+    if [ -f "$SKILLIGNORE" ] && grep -Fxq "$name" "$SKILLIGNORE"; then
+        continue
+    fi
+
+    compare_skill_targets "$source" "$name" "external skill"
 done
 
-# External Skillshare sources are ignored. Their committed target copies must
-# still remain identical between Claude and the universal target.
+# The tracked repository groups skills by category, while target_naming=standard
+# flattens enabled skills into the target root.
+for source in "$TRACKED_SKILLS"/*/*; do
+    [ -d "$source" ] || continue
+    name=$(basename "$source")
+
+    if [ -f "$SKILLIGNORE" ] && grep -Fxq "$name" "$SKILLIGNORE"; then
+        continue
+    fi
+
+    compare_skill_targets "$source" "$name" "tracked skill"
+done
+
+# Committed target copies must also remain identical when external sources are
+# absent, as they are in a fresh checkout used by CI.
 for claude_skill in "$CLAUDE_SKILLS"/*; do
     [ -d "$claude_skill" ] || continue
     name=$(basename "$claude_skill")
