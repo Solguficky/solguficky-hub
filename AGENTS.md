@@ -89,6 +89,7 @@ nats-tester --help
 - Любое изменение `contracts/proto/` требует skill `proj-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
 - Внутри контура задачи, открытого владельцем на конкретную задачу Linear, доводи работу до pull request сам. Вне контура закончил правки — покажи `git status --short` и остановись. Границы контура, чекпоинты и стоп-триггеры — [agent-execution-loop.md](docs/development/agent-execution-loop.md).
 - Текущая ветка `feature/PER-N` означает открытый контур на задачу `PER-N`. Признак читается из репозитория, поэтому переживает `/compact` и рестарт сессии; проверяй его по `git branch --show-current`, а не по памяти о разговоре. Открывает контур команда `/proj-take-task PER-N` (skill `proj-start-task`), закрывает — skill `proj-deliver-task` открытым pull request.
+- Сам контур не открывай. Владелец назвал задачу, но контура нет — напомни про `/proj-take-task PER-N` одной строкой и не начинай работу по задаче: скилл старта вызывается только владельцем.
 - В локальном контуре самостоятельно создавай ветку задачи `feature/PER-N` от `develop`; одна задача — один pull request, `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
@@ -114,7 +115,7 @@ nats-tester --help
 
 Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`; команды `proj-draft-commit-message`, `proj-take-task`.
 
-Скилл, который агент не должен запускать сам, помечается `disable-model-invocation: true` — сейчас это `proj-record-learning`. Он не занимает контекст описанием и вызывается только владельцем; напоминание о нём живёт в критических правилах выше.
+Скилл, который агент не должен запускать сам, помечается `disable-model-invocation: true` — сейчас это `proj-record-learning` и `proj-start-task`. Такой скилл не занимает контекст описанием и вызывается только владельцем; напоминание о каждом живёт в критических правилах выше.
 
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.
 

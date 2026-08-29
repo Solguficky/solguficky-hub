@@ -14,7 +14,7 @@
     "proj-deliver-task": "714a1ee376a492ad6a996e4e9cddf6c4a21d6bc42c1cee0e9c27a86e0041dd3e",
     "proj-record-decision": "3034c90ff22691ed01e958e763f9d251e081a58bc1edbeb9ec78cc7807302ae4",
     "proj-record-learning": "76549f7d7428bd0d8a0a0f9264e7c619ae58c6917b6c6ec1bd9b1a3c84e81ce3",
-    "proj-start-task": "66263c389d7fb567ce236726de9d2d45464cbc1e65c9027623ffc991fd55d2a8",
+    "proj-start-task": "fbe37232f4939bc2aecc5f5b595d40aa517eaea01a90989c352873ecdb25b9da",
     "proj-write-commit": "67f5c84433ab70a4ca1d39b3c34322ae9efbc18f03a7a6b4a9ab9ac685ab5182",
     "prototype": "0ab3bde2a6bd18e20e1bc6def960fa756b7257af9fd406478b15294166de825a",
     "research": "0931e8d767eda3793dfbc35c32b44e47824802ec9ebc7c716bd1dd901aa4c2f2",
@@ -48,7 +48,7 @@
     "proj-deliver-task": 1788040991649392400,
     "proj-record-decision": 1787926836770459500,
     "proj-record-learning": 1788004389355987300,
-    "proj-start-task": 1788040756239053000,
+    "proj-start-task": 1788042911592907700,
     "proj-write-commit": 1788006501145060400,
     "prototype": 1787866344040024500,
     "research": 1787866344042693600,
@@ -67,5 +67,5 @@
     "writing-fragments": 1787866344107665000,
     "writing-shape": 1787866344110662500
   },
-  "updated_at": "2026-08-30T01:03:12.5034084+03:00"
+  "updated_at": "2026-08-30T01:35:13.5454933+03:00"
 }
