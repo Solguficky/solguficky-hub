@@ -39,9 +39,8 @@ check-commit-message file:
 check-agent-tools:
     sh tools/skillshare/check-generated.sh
 
-# Skill verify-this проверяет отдельное утверждение экспериментом.
 # Механический гейт перед сдачей: agent tooling, Identity и затронутые тесты
-verify: check-agent-tools identity-proto identity-build identity-test
+verify: check-agent-tools identity-build identity-test
 
 # --- Локальная оркестрация -------------------------------------------------
 

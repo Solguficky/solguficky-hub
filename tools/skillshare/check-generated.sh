@@ -7,10 +7,10 @@
 
 set -eu
 
-SOURCE_SKILLS='.skillshare/skills'
-PROJECT_SKILLS="$SOURCE_SKILLS/proj"
-TRACKED_SKILLS="$SOURCE_SKILLS/mattpocock/_skills/skills"
-SKILLIGNORE="$SOURCE_SKILLS/.skillignore"
+SKILLS_ROOT='.skillshare/skills'
+PROJECT_SKILLS="$SKILLS_ROOT/proj"
+TRACKED_SKILLS="$SKILLS_ROOT/mattpocock/_skills/skills"
+SKILLIGNORE="$SKILLS_ROOT/.skillignore"
 SOURCE_AGENTS='.skillshare/agents'
 SOURCE_COMMANDS='.skillshare/extras/commands'
 UNIVERSAL_SKILLS='.agents/skills'
@@ -24,45 +24,62 @@ fail() {
 "
 }
 
+# A target is a copy of its source, so both comparisons allow exactly one
+# difference: the line ending Git may have used on checkout.
 compare_file() {
-    if [ ! -f "$2" ]; then
-        fail "$3: missing target $2"
-    elif ! diff "$1" "$2" >/dev/null 2>&1; then
-        fail "$3: $1 and $2 differ"
+    source=$1
+    target=$2
+    label=$3
+
+    if [ ! -f "$target" ]; then
+        fail "${label}: missing target ${target}"
+    elif ! git diff --no-index --ignore-cr-at-eol --exit-code -- "$source" "$target" >/dev/null 2>&1; then
+        fail "${label}: ${source} and ${target} differ"
     fi
 }
 
 compare_tree() {
-    if [ ! -d "$2" ]; then
-        fail "$3: missing target $2"
-    elif ! git diff --no-index --ignore-cr-at-eol --exit-code -- "$1" "$2" >/dev/null 2>&1; then
-        fail "$3: $1 and $2 differ"
+    source=$1
+    target=$2
+    label=$3
+
+    if [ ! -d "$target" ]; then
+        fail "${label}: missing target ${target}"
+    elif ! git diff --no-index --ignore-cr-at-eol --exit-code -- "$source" "$target" >/dev/null 2>&1; then
+        fail "${label}: ${source} and ${target} differ"
     fi
 }
 
+# sh has no local variables, so the parameters carry a prefix: compare_tree
+# below assigns source, target and label of its own.
 compare_skill_targets() {
-    source=$1
-    name=$2
-    label=$3
+    skill_source=$1
+    skill_name=$2
+    skill_label=$3
 
-    compare_tree "$source" "$CLAUDE_SKILLS/$name" "${label} ${name} -> claude"
-    compare_tree "$source" "$UNIVERSAL_SKILLS/$name" "${label} ${name} -> universal"
+    compare_tree "$skill_source" "$CLAUDE_SKILLS/$skill_name" "${skill_label} ${skill_name} -> claude"
+    compare_tree "$skill_source" "$UNIVERSAL_SKILLS/$skill_name" "${skill_label} ${skill_name} -> universal"
 }
 
-for source in "$PROJECT_SKILLS"/*; do
-    [ -d "$source" ] || continue
-    name=$(basename "$source")
+is_ignored() {
+    [ -f "$SKILLIGNORE" ] && grep -Fxq "$1" "$SKILLIGNORE"
+}
 
-    compare_skill_targets "$source" "$name" "skill"
+for skill_dir in "$PROJECT_SKILLS"/*; do
+    [ -d "$skill_dir" ] || continue
+    name=$(basename "$skill_dir")
+
+    compare_skill_targets "$skill_dir" "$name" "skill"
 done
 
-# Installed external sources are not committed, but a local check must still
-# catch a source edit that has not been synced to either target. The tracked
-# mattpocock group is checked separately below because its sources are nested
-# by category while its enabled targets are flat.
-for source in "$SOURCE_SKILLS"/*; do
-    [ -d "$source" ] || continue
-    name=$(basename "$source")
+# Installed external sources are not committed, so these two loops find nothing
+# in CI and run only locally: they catch a source edit that has not been synced
+# to either target before it is pushed. The tracked mattpocock group is checked
+# separately because its sources are nested by category while its enabled
+# targets are flat.
+for skill_dir in "$SKILLS_ROOT"/*; do
+    [ -d "$skill_dir" ] || continue
+    name=$(basename "$skill_dir")
 
     case "$name" in
         proj|mattpocock)
@@ -70,24 +87,22 @@ for source in "$SOURCE_SKILLS"/*; do
             ;;
     esac
 
-    if [ -f "$SKILLIGNORE" ] && grep -Fxq "$name" "$SKILLIGNORE"; then
+    if is_ignored "$name"; then
         continue
     fi
 
-    compare_skill_targets "$source" "$name" "external skill"
+    compare_skill_targets "$skill_dir" "$name" "external skill"
 done
 
-# The tracked repository groups skills by category, while target_naming=standard
-# flattens enabled skills into the target root.
-for source in "$TRACKED_SKILLS"/*/*; do
-    [ -d "$source" ] || continue
-    name=$(basename "$source")
+for skill_dir in "$TRACKED_SKILLS"/*/*; do
+    [ -d "$skill_dir" ] || continue
+    name=$(basename "$skill_dir")
 
-    if [ -f "$SKILLIGNORE" ] && grep -Fxq "$name" "$SKILLIGNORE"; then
+    if is_ignored "$name"; then
         continue
     fi
 
-    compare_skill_targets "$source" "$name" "tracked skill"
+    compare_skill_targets "$skill_dir" "$name" "tracked skill"
 done
 
 # Committed target copies must also remain identical when external sources are
@@ -106,36 +121,40 @@ for universal_skill in "$UNIVERSAL_SKILLS"/*; do
     fi
 done
 
-for source in "$SOURCE_AGENTS"/*.md; do
-    [ -f "$source" ] || continue
-    name=$(basename "$source")
-    compare_file "$source" "$CLAUDE_AGENTS/$name" "agent ${name}"
+for agent_source in "$SOURCE_AGENTS"/*.md; do
+    [ -f "$agent_source" ] || continue
+    name=$(basename "$agent_source")
+    compare_file "$agent_source" "$CLAUDE_AGENTS/$name" "agent ${name}"
 done
 
-for target in "$CLAUDE_AGENTS"/*.md; do
-    [ -f "$target" ] || continue
-    name=$(basename "$target")
+for agent_target in "$CLAUDE_AGENTS"/*.md; do
+    [ -f "$agent_target" ] || continue
+    name=$(basename "$agent_target")
     if [ ! -f "$SOURCE_AGENTS/$name" ]; then
         fail "agent ${name}: target has no source"
     fi
 done
 
-for source in "$SOURCE_COMMANDS"/*; do
-    [ -f "$source" ] || continue
-    name=$(basename "$source")
-    compare_file "$source" "$CLAUDE_COMMANDS/$name" "command ${name}"
+for command_source in "$SOURCE_COMMANDS"/*; do
+    [ -f "$command_source" ] || continue
+    name=$(basename "$command_source")
+    compare_file "$command_source" "$CLAUDE_COMMANDS/$name" "command ${name}"
 done
 
-for target in "$CLAUDE_COMMANDS"/*; do
-    [ -f "$target" ] || continue
-    name=$(basename "$target")
+for command_target in "$CLAUDE_COMMANDS"/*; do
+    [ -f "$command_target" ] || continue
+    name=$(basename "$command_target")
     if [ ! -f "$SOURCE_COMMANDS/$name" ]; then
         fail "command ${name}: target has no source"
     fi
 done
 
 if [ -n "$errors" ]; then
-    printf 'Agent tooling is not synchronized:\n\n%s' "$errors" >&2
+    printf 'Agent tooling is not synchronized:\n\n%s\n' "$errors" >&2
+    printf 'Sync the targets from .skillshare/ and re-run the check:\n\n' >&2
+    printf '  skillshare sync -p          # skills and agents\n' >&2
+    printf '  skillshare sync extras -p   # commands\n' >&2
+    printf '  just check-agent-tools\n' >&2
     exit 1
 fi
 

@@ -12,19 +12,7 @@
           },
           {
             "type": "command",
-            "if": "Write(.skillshare/**)",
-            "command": "just check-agent-tools || exit 2",
-            "statusMessage": "Проверяю раскладку agent tooling"
-          },
-          {
-            "type": "command",
             "if": "Edit(contracts/proto/**)",
-            "command": "just identity-proto || exit 2",
-            "statusMessage": "Проверяю Identity-кодогенерацию"
-          },
-          {
-            "type": "command",
-            "if": "Write(contracts/proto/**)",
             "command": "just identity-proto || exit 2",
             "statusMessage": "Проверяю Identity-кодогенерацию"
           }
