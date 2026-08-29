@@ -27,7 +27,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
 - `tools/skillshare/` — проверка закоммиченных Skillshare-таргетов; её вызывают `just check-agent-tools` и CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
-- `justfile` — единая точка входа для команд репозитория; новый компонент добавляет свои рецепты туда вместе со сборкой.
+- `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
 ## Команды
 
@@ -48,6 +48,9 @@ skillshare sync extras -p
 
 # Проверка закоммиченных skills, agents и commands после sync
 just check-agent-tools
+
+# Механический гейт перед сдачей: agent tooling, Identity и тесты
+just verify
 
 # Локальная оркестрация — из infra/apphost/
 aspire run
@@ -74,6 +77,8 @@ pip install -e .
 nats-tester --help
 ```
 
+Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
+
 `aspire run` ещё не подтверждён живым прогоном. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Не объявляй Aspire проверенным, пока не выполнен gate из [руководства](docs/development/local-development.md).
 
 ## Критические правила
@@ -85,6 +90,7 @@ nats-tester --help
 - Внутри контура задачи, открытого владельцем на конкретную задачу Linear, доводи работу до pull request сам. Вне контура закончил правки — покажи `git status --short` и остановись. Границы контура, чекпоинты и стоп-триггеры — [agent-execution-loop.md](docs/development/agent-execution-loop.md).
 - В локальном контуре самостоятельно создавай ветку задачи `feature/PER-N` от `develop`; одна задача — один pull request, `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
