@@ -69,7 +69,7 @@ nats-tester --help
 
 ### Шаг 1. Схема
 
-Создайте или обновите `.proto` в `contracts/proto/<домен>/v<major>/` — раскладка по домену-владельцу и major-версии описана в [Protobuf standard](../../docs/standards/contracts/protobuf.md). Изменение контракта выполняется через skill `sgh-change-contract` и обновляет [integration catalog](../../docs/architecture/integration.md) в том же изменении.
+Создайте или обновите `.proto` в `contracts/proto/<домен>/v<major>/` — раскладка по домену-владельцу и major-версии описана в [Protobuf standard](../../docs/standards/contracts/protobuf.md). Изменение контракта выполняется через skill `proj-change-contract` и обновляет [integration catalog](../../docs/architecture/integration.md) в том же изменении.
 
 ```protobuf
 // contracts/proto/meetups/v1/meetup_events.proto

@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "just check-agent-tools || exit 2",
+            "if": "Edit(.skillshare/**)",
+            "statusMessage": "Проверяю раскладку agent tooling"
+          },
+          {
+            "type": "command",
+            "command": "just identity-proto || exit 2",
+            "if": "Edit(contracts/proto/**)",
+            "statusMessage": "Проверяю Identity-кодогенерацию"
+          }
+        ]
+      }
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
+  }
+}

@@ -20,6 +20,12 @@ skills:
     tracked: true
     group: mattpocock
     branch: main
+  - name: show-me
+    source: https://github.com/humanlayer/skills/plugins/show-me/skills/show-me
+  - name: cli-for-agents
+    source: github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents
+  - name: verify-this
+    source: github.com/cursor/plugins/cursor-team-kit/skills/verify-this
 extras:
   - name: commands
     targets:

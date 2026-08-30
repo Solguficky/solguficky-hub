@@ -58,4 +58,4 @@ Buf выбран вместо прямого вызова `protoc`, потому
 - Обнови `tools/nats-tester`, если он поддерживает изменённое сообщение.
 - Обнови `architecture/integration.md` при добавлении или изменении subject либо gRPC-операции.
 
-Пошаговый workflow находится в skill `sgh-change-contract`.
+Пошаговый workflow находится в skill `proj-change-contract`.
