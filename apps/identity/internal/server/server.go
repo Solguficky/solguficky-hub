@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
@@ -15,6 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const ServiceName = "identity"
+
 func New(log *slog.Logger) *grpc.Server {
 	if log == nil {
 		log = slog.Default()
@@ -22,8 +25,12 @@ func New(log *slog.Logger) *grpc.Server {
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
-			recoveryInterceptor(log),
-			loggingInterceptor(log),
+			unaryLogging(log),
+			unaryRecovery(log),
+		),
+		grpc.ChainStreamInterceptor(
+			streamLogging(log),
+			streamRecovery(log),
 		),
 	)
 	identityv1.RegisterIdentityServiceServer(srv, identityService{})
@@ -37,51 +44,93 @@ func New(log *slog.Logger) *grpc.Server {
 	return srv
 }
 
-func loggingInterceptor(log *slog.Logger) grpc.UnaryServerInterceptor {
+func unaryLogging(log *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		start := time.Now()
 		resp, err := handler(ctx, req)
-		code := status.Code(err)
-		attrs := []any{
-			slog.String("service", "identity"),
-			slog.String("operation", info.FullMethod),
-			slog.String("result", code.String()),
-			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
-		}
-		if id := requestID(ctx); id != "" {
-			attrs = append(attrs, slog.String("request_id", id))
-		}
-		if resolve, ok := req.(*identityv1.ResolveIdentityRequest); ok {
-			attrs = append(attrs, slog.Int64("telegram_user_id", resolve.GetTelegramUserId()))
-		}
-		if err != nil {
-			attrs = append(attrs, slog.String("error_category", code.String()))
-			if code == codes.InvalidArgument {
-				log.WarnContext(ctx, "rpc failed", attrs...)
-			} else {
-				log.ErrorContext(ctx, "rpc failed", attrs...)
-			}
-			return resp, err
-		}
-		log.DebugContext(ctx, "rpc completed", attrs...)
+		logRPC(ctx, log, info.FullMethod, start, req, err)
 		return resp, err
 	}
 }
 
-func recoveryInterceptor(log *slog.Logger) grpc.UnaryServerInterceptor {
+func streamLogging(log *slog.Logger) grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		start := time.Now()
+		err := handler(srv, ss)
+		logRPC(ss.Context(), log, info.FullMethod, start, nil, err)
+		return err
+	}
+}
+
+func unaryRecovery(log *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.ErrorContext(ctx, "rpc panic",
-					slog.String("service", "identity"),
-					slog.String("operation", info.FullMethod),
-					slog.String("error_category", "panic"),
-					slog.Any("error", rec),
-				)
+				logPanic(ctx, log, info.FullMethod, rec)
 				err = status.Error(codes.Internal, "internal")
 			}
 		}()
 		return handler(ctx, req)
+	}
+}
+
+func streamRecovery(log *slog.Logger) grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				logPanic(ss.Context(), log, info.FullMethod, rec)
+				err = status.Error(codes.Internal, "internal")
+			}
+		}()
+		return handler(srv, ss)
+	}
+}
+
+func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req any, err error) {
+	code := status.Code(err)
+	attrs := []any{
+		slog.String("service", ServiceName),
+		slog.String("operation", method),
+		slog.String("result", code.String()),
+		slog.Int64("duration_us", time.Since(start).Microseconds()),
+	}
+	if id := requestID(ctx); id != "" {
+		attrs = append(attrs, slog.String("request_id", id))
+	}
+	if resolve, ok := req.(*identityv1.ResolveIdentityRequest); ok {
+		attrs = append(attrs, slog.Int64("telegram_user_id", resolve.GetTelegramUserId()))
+	}
+	if err == nil {
+		log.DebugContext(ctx, "rpc completed", attrs...)
+		return
+	}
+
+	level := slog.LevelWarn
+	category := "client_error"
+	if serverFault(code) {
+		level = slog.LevelError
+		category = "server_error"
+	}
+	attrs = append(attrs, slog.String("error_category", category))
+	log.Log(ctx, level, "rpc failed", attrs...)
+}
+
+func logPanic(ctx context.Context, log *slog.Logger, method string, rec any) {
+	log.ErrorContext(ctx, "rpc panic",
+		slog.String("service", ServiceName),
+		slog.String("operation", method),
+		slog.String("error_category", "panic"),
+		slog.Any("error", rec),
+		slog.String("stack", string(debug.Stack())),
+	)
+}
+
+func serverFault(code codes.Code) bool {
+	switch code {
+	case codes.Internal, codes.Unknown, codes.Unavailable, codes.DataLoss:
+		return true
+	default:
+		return false
 	}
 }
 

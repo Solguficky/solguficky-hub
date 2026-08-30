@@ -8,7 +8,11 @@
 
 Заглушка в `resolve.go` принимает только `telegram_user_id > 0` и возвращает фиксированный UUIDv7 `0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd` с пустым `global_roles`. Отказ — `status.Error(codes.InvalidArgument, ...)`. Сырой `error` стал бы `Unknown`, и клиент не отличил бы его от сбоя.
 
-Два unary-interceptor'а в `ChainUnaryInterceptor`: сначала recovery, затем logging. Первый в цепочке — внешний. Logging пишет `service`, `operation` (`info.FullMethod`), `result`, `duration_ms`; для `ResolveIdentity` ещё `telegram_user_id`; ник не берётся. Если в metadata есть `x-request-id` или `x-correlation-id`, поле `request_id` едет в ту же запись. Успех — `Debug`, поэтому при уровне процесса `Info` успешного вызова в stdout нет. `InvalidArgument` — `Warn`. Остальные коды, включая ожидаемый `NotFound` у Health на неизвестное имя сервиса, сейчас уходят в `Error`.
+Interceptor'ы стоят парой в `ChainUnaryInterceptor` и такой же парой в `ChainStreamInterceptor`: сначала logging, затем recovery. Первый в цепочке — внешний, поэтому recovery успевает превратить панику в `Internal` до того, как logging запишет строку, и запись доступа у паники такая же полная, как у обычного отказа. Stream-пара обязательна: `Health/Watch` и `ServerReflectionInfo` — потоковые методы, и `ChainUnaryInterceptor` их не видит вовсе; паника в таком хендлере без recovery уносит процесс.
+
+Logging пишет `service`, `operation` (`info.FullMethod`), `result`, `duration_us`; для `ResolveIdentity` ещё `telegram_user_id`; ник не берётся. Микросекунды, а не миллисекунды: заглушка отвечает за десятки микросекунд, и `Milliseconds()` писал бы `0` в каждую строку. Если в metadata есть `x-request-id` или `x-correlation-id`, поле `request_id` едет в ту же запись. Успех — `Debug`, поэтому при уровне процесса `Info` успешного вызова в stdout нет.
+
+Уровень отказа выбирает `serverFault`: `Internal`, `Unknown`, `Unavailable` и `DataLoss` — `Error` и `error_category: server_error`, всё остальное — `Warn` и `client_error`. Это требование [logging.md](../../standards/observability/logging.md): «ожидаемый отказ входных данных — `Warning`». `NotFound`, которым `grpc.health.v1` отвечает на неизвестное имя сервиса, — именно такой отказ, и на `Error` он поднимал бы алерт на здоровом процессе. Отдельная строка `rpc panic` несёт `debug.Stack()`: без кадров значение паники не указывает на место отказа.
 
 Health выставляет `SERVING` на пустое имя (весь процесс) и на `identity.v1.IdentityService`. Reflection нужна, чтобы `grpcurl` без `-proto` умел `list` и `describe`. Тесты гоняют тот же `server.New` через `bufconn`: in-memory listener, полный стек сериализации и interceptor'ов, без TCP.
 
@@ -19,6 +23,8 @@ Health выставляет `SERVING` на пустое имя (весь про�
 | HTTP `/health` рядом с gRPC | второй порт и второй протокол на скелете, у которого единственный клиентский путь — gRPC. Задача сказала «health endpoint»; для gRPC это [health checking protocol](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) |
 | Выключить reflection | `grpcurl list` без локальных `.proto` не видит сервисы. На скелете без production-контура reflection оставляют; в проде её обычно гасят, потому что она отдаёт полный список методов |
 | Случайный UUIDv7 на каждый вызов | `grpcurl` и тест перестают быть детерминированными; схема и запись профиля — следующие задачи |
+| `error_category` = код gRPC | дублирует `result` слово в слово; категория нужна как грубый класс, по которому группируется алерт |
+| Только unary-interceptor'ы | `Health/Watch` и `ServerReflectionInfo` остаются без recovery: паника в них не станет `Internal`, а уронит процесс |
 | Логировать username из запроса | нарушает [logging.md](../../standards/observability/logging.md): в лог идёт технический идентификатор, не атрибут профиля Telegram |
 | Тест через реальный порт | гонки за `:50051`, зависимость от файрвола; `bufconn` проверяет тот же `New` |
 | Не встраивать `Unimplemented*` | компилятор не заставит заметить новый RPC; вызов уйдёт в отсутствующий метод |
@@ -62,4 +68,5 @@ sequenceDiagram
 - `ResolveIdentity` с `telegram_user_id: 1` → `{"identityId":"0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"}`. Нулевой id → `InvalidArgument`. Проверено.
 - `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Успешный вызов при `LevelInfo` новой строки `rpc completed` не пишет. Проверено.
 - Тот же RPC с `-import-path contracts/proto -proto identity/v1/identity_service.proto` работает и без reflection. Проверено.
-- Паника в хендлере должна стать `Internal` через recovery — в диффе теста нет. Проверь сам: временно `panic` в `ResolveIdentity` и повтори `grpcurl`.
+- Паника в хендлере становится `Internal`, а в stdout уходит `rpc panic` со стеком: `TestUnaryRecoveryConvertsPanicToInternalWithStack` и `TestStreamRecoveryConvertsPanicToInternal` в `internal/server/interceptor_test.go`. Проверено `go test`.
+- `NotFound` от Health пишется на `Warn`, `Internal` — на `Error`: `TestUnaryLoggingLevelByCode`. Проверено `go test`.
