@@ -4,17 +4,20 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
+Workflow собирает Identity.
+
 Известные gaps:
 
-- workflow устанавливает .NET 8 для сервисов, переведённых на net10;
-- изменение `contracts/proto/` должно проверять всех producers и consumers, а не только проекты, выбранные обычными path filters;
-- оставленные Legacy-сервисы должны продолжать собираться до согласованного удаления;
 - Aspire AppHost требует отдельного restore/build/smoke-test gate;
-- compatibility check Protobuf ещё не внедрён.
+- `buf lint` и compatibility check Protobuf ещё не внедрены.
 
 ## Проверки репозитория
 
-Джоба `repo-hygiene` не зависит от сервисов и path filters: она проверяет, что скиллы в `.claude/skills` и `.agents/skills` не разошлись, и запускается на push и pull request. Джоба вызывает `tools/git-hooks/check-skills-mirror.sh` — тот же скрипт, что и локальный хук `pre-commit`, поэтому локальная и удалённая проверки не расходятся.
+Джоба `repo-hygiene` запускает `tools/skillshare/check-generated.sh`. Скрипт сверяет собственные `proj-` skills с обоими таргетами, доступные локально источники внешних skills с их таргетами, общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agents и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
+
+Источники внешних skills не коммитятся, поэтому в CI сверка источников ничего не находит и пропускается: удалённо остаётся сравнение закоммиченных таргетов между собой. Локальный прогон строже удалённого намеренно — рассинхрон источника ловится до push, а не в review.
+
+Проверка не полагается на `skillshare diff` для native agents в режиме `copy`: Skillshare 0.20.x не создаёт для них manifest и помечает даже идентичную копию как local override. Фактическая синхронность этого файла проверяется по содержимому, с точностью до перевода строки: таргет — копия источника, и различаться они могут только тем, как Git выполнил checkout.
 
 [Формат сообщений коммитов](../standards/git/commit-messages.md) в CI не проверяется: стандарт распространяется на обычные коммиты, а в `main` при squash-merge попадает заголовок PR, к которому он не применяется. Контроль формата остаётся локальным хуком.
 
@@ -23,7 +26,7 @@ Current workflow: `.github/workflows/ci.yml`.
 1. Markdown links не содержат битых активных относительных ссылок.
 2. Protobuf change запускает codegen/build/tests всех потребителей.
 3. Breaking changes проверяются выбранным compatibility tooling.
-4. Current и оставшийся Legacy код не выпадают из build незаметно.
+4. Current код не выпадает из build незаметно.
 
 Конкретные задачи и их прогресс ведутся в Linear.
 

@@ -13,9 +13,11 @@ ADR сохраняет принятое решение, контекст и пр
 
 - `Active`;
 - `Active, limited scope`;
-- `Legacy scope`;
+- `Historical` — решение относилось к коду, которого больше нет в репозитории; сохраняется как контекст и к текущей платформе не применяется;
 - `Superseded`;
 - `Needs review`.
+
+Тексты ADR фиксируют момент принятия решения и не переписываются задним числом. Поэтому старый ADR может ссылаться на каталоги и файлы, которых в репозитории уже нет: это свидетельство, а не инструкция.
 
 ## Индекс
 
@@ -29,25 +31,30 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-006](ADR-006-railway-hosting.md) | Railway hosting | Needs review | Railway — вариант наряду с собственным железом и VPS |
 | [ADR-007](ADR-007-polyglot-service-stacks.md) | Полиглотная модель выбора стека | Active | Язык выбирается под задачу сервиса; назначения языков из исходной редакции удалены |
 | [ADR-008](ADR-008-apicurio-schema-registry.md) | Apicurio Registry | Superseded | Заменён ADR-014; возврат Registry требует нового решения |
-| [ADR-009](ADR-009-auction-actor-hierarchy.md) | Иерархия акторов аукциона | Legacy scope | Источник знаний для вывода C#/Akka.NET-кода |
+| [ADR-009](ADR-009-auction-actor-hierarchy.md) | Иерархия акторов аукциона | Historical | Код удалён; извлечённое знание — в [архиве](../archive/services/auction-domain-and-lessons.md) |
 | [ADR-010](ADR-010-hybrid-auction-clients.md) | Клиенты гибридного аукциона | Needs review | Future-направление, вне MVP |
-| [ADR-011](ADR-011-notifications-realtime-separation.md) | Notifications и Real-Time Hub | Legacy scope | Описывает старую аукционную ветку |
+| [ADR-011](ADR-011-notifications-realtime-separation.md) | Notifications и Real-Time Hub | Historical | Описывает удалённую аукционную ветку; устройство Notifications принято ADR-028 |
 | [ADR-012](ADR-012-protobuf-from-start.md) | Protobuf вместо JSON | Active | Известные нарушения в коде считаются дефектами |
 | [ADR-013](ADR-013-iterative-ai-assisted-development.md) | Итеративная работа с агентом | Needs review | Инициатива и решение должны принадлежать владельцу |
 | [ADR-014](ADR-014-protobuf-in-git.md) | Protobuf-in-Git | Active, limited scope | Compatibility tooling и Registry остаются открытыми |
 | [ADR-015](ADR-015-loki-centralized-logging.md) | Loki | Active, limited scope | Конфигурация существует, живой контур требует проверки |
-| [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Legacy scope | Hardcoded-роли заменены ADR-026; остальные части относятся к legacy-аукционному Gateway |
-| [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Legacy scope | Не определяет Scala/Pekko auction v2 |
-| [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Legacy scope | Сервис заморожен и обслуживает только аукцион |
+| [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Historical | Hardcoded-роли заменены ADR-026; остальные части относятся к удалённому аукционному шлюзу |
+| [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Historical | Код удалён; будущий аукцион на Scala/Pekko проектируется с нуля |
+| [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Historical | Код удалён; realtime-шлюз возвращается вместе с аукционом отдельным решением |
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
 | [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов; уточнён ADR-023 |
 | [ADR-021](ADR-021-aspire-local-orchestration.md) | Aspire local orchestration | Active, limited scope | AppHost ещё не подтверждён живым запуском |
-| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение принято в ADR-024 |
-| [ADR-023](ADR-023-meetup-public-number.md) | Публичный номер сходки рядом с UUIDv7 | Active | Номер — для человека и поддержки; внешний routing остаётся на UUID. **Сигнал пересмотра сработал:** ADR-026 ввёл премодерацию доступа, то есть ту самую membership-границу, отсутствием которой обосновано решение. Требует отдельного разбора с threat model, а не молчаливого изменения — [PER-28](https://linear.app/anticnvm/issue/per-28) |
-| [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Внутреннее устройство Meetups: строки состояния плюс журнал доменных событий | Active | Один ADR на весь RFC-004: 1b, чтение из тех же таблиц, версия строки, опрос для отложенной публикации |
+| [ADR-022](ADR-022-meetup-state-axes-and-visibility.md) | Оси состояния сходки, расписание и видимость | Active | Модель принята до реализации Meetups; хранение принято в ADR-024. В срезе организаторов нет ([ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md)): скрытую видят все администраторы, изменяет администратор; правило «организатор — только свою» не применяется, пока организаторов нет |
+| [ADR-023](ADR-023-meetup-public-number.md) | Публичный номер сходки рядом с UUIDv7 | Active, limited scope | Публичный номер снят [ADR-032](ADR-032-drop-meetup-public-number.md). В силе остаётся всё прочее: UUIDv7 как канонический идентификатор, UUID во внешнем deep link и `callback_data`, запрет сортировать сходки идентификатором. Раздел «Пересмотр 2026-08-25» сохраняется как история: он подтвердил номер, но вынес его из всех несущих ролей |
+| [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md) | Внутреннее устройство Meetups: строки состояния плюс журнал доменных событий | Active | Один ADR на весь RFC-004: 1b, чтение из тех же таблиц, версия строки, опрос для отложенной публикации. Утверждение «diff не нужно вычислять сравнением снимков» поправлено [ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md): событие несёт снимок, diff считает потребитель |
 | [ADR-025](ADR-025-meetups-fsharp-stack.md) | Стек Meetups: F#, Dapper, контракты через C#-проект | Active | Язык выбран под устройство из ADR-024; runtime остаётся .NET |
-| [ADR-026](ADR-026-identity-mvp-model-and-access.md) | Модель Identity, контроль состава и проверка доступа в MVP | Active | Строки PostgreSQL и журнал доступа, три состояния допуска, премодерация в MVP, gRPC на каждом действии, fail-closed |
+| [ADR-026](ADR-026-identity-mvp-model-and-access.md) | Модель Identity, контроль состава и проверка доступа в MVP | Active | Строки PostgreSQL и журнал доступа, три состояния допуска, премодерация в MVP, gRPC на каждом действии, fail-closed. Способ входа апдейтов уточнён [ADR-030](ADR-030-telegram-bot.md): long polling, secret token вебхука не используется |
 | [ADR-027](ADR-027-identity-go-stack.md) | Стек Identity: Go | Active | Operational-эксперимент на простом CRUD-сервисе; generated-код изолирован в `gen/` |
+| [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) | Устройство Notifications: подписки, реплика чужих фактов и граница доставки | Active | Подписки принадлежат Notifications; факты берутся из реплики по событиям; ответственность заканчивается на публикации в шину. Уточнено [ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md): повод различается типом события, а «что именно изменилось» — сравнением снимка с репликой |
+| [ADR-029](ADR-029-notifications-orleans-stack.md) | Стек Notifications: C# и Orleans | Active | Reminders как механизм заданий; источник истины остаётся в PostgreSQL |
+| [ADR-030](ADR-030-telegram-bot.md) | Telegram Bot: граница юзкейса, состояние в сообщении и ключ создания | Active | Собственного хранилища у компонента нет; идемпотентность принадлежит домену; вход — только long polling |
+| [ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md) | Словарь домена Meetups для среза и форма доменного события | Active | Четыре команды и два запроса, три типа событий со снимком в теле и в ответе команды. Автор — администратор, заведший запись; организаторов нет. PublishMeetup — целевое состояние. Поправляет утверждение ADR-024 про diff |
+| [ADR-032](ADR-032-drop-meetup-public-number.md) | Публичный номер сходки не заводится | Active | Заменяет ADR-023 в части номера: у сходки один идентификатор, человеку она предъявляется заголовком. Сигнал возврата — повторяющиеся заголовки |
 
 ## Когда решение заслуживает ADR
 
@@ -60,6 +67,10 @@ ADR сохраняет принятое решение, контекст и пр
 Если решение меняется правкой конфигурации, переименованием или локальным рефакторингом, ему хватает записи в брифе сервиса или в задаче Linear. Решение, у которого нет альтернативы, тоже не требует ADR: фиксировать нечего.
 
 Из этого критерия следует, что один ADR может закрывать несколько связанных вопросов, если они образуют одно решение с общей ценой. Разделять их на отдельные документы стоит тогда, когда у каждого своя цена, свой сигнал пересмотра и своя судьба.
+
+## Переименования
+
+Компонент, который в ADR-016, ADR-023 и ADR-028 назван Telegram Gateway, с [ADR-030](ADR-030-telegram-bot.md) называется **Telegram Bot** (`telegram-bot`). Тексты прежних ADR под новое имя не переписываются: они фиксируют решение на момент его принятия.
 
 ## Правила изменения
 

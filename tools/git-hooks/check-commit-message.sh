@@ -2,7 +2,7 @@
 # Проверяет сообщение коммита по docs/standards/git/commit-messages.md.
 #
 #   check-commit-message.sh <файл>   — режим хука commit-msg
-#   ... | check-commit-message.sh    — режим CI, сообщение из stdin
+#   ... | check-commit-message.sh    — режим пайплайна, сообщение из stdin
 #
 # Возвращает 0, если сообщение соответствует стандарту, иначе 1 со списком
 # всех нарушений сразу: чинить по одному за прогон неудобно.

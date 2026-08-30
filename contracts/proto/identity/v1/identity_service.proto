@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package identity.v1;
+
+// Resolves a Telegram identity into the platform's internal identity.
+service IdentityService {
+  rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+}
+
+message ResolveIdentityRequest {
+  // Telegram user id taken from a Telegram update. The caller establishes it
+  // at its own trusted boundary; this message carries no proof of that.
+  int64 telegram_user_id = 1;
+
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+}
+
+message ResolveIdentityResponse {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Platform-wide roles. Domain permissions are not returned here; the owning
+  // domain applies them. An empty set means an ordinary user.
+  repeated GlobalRole global_roles = 2;
+}
+
+enum GlobalRole {
+  // No value: the field is unset or the role is unknown to the consumer.
+  GLOBAL_ROLE_UNSPECIFIED = 0;
+
+  GLOBAL_ROLE_ADMIN = 1;
+}

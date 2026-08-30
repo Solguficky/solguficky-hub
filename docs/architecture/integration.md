@@ -1,6 +1,6 @@
 # Межсервисное взаимодействие
 
-> **Статус:** Canonical для Current/Legacy-интеграций. Контракты MVP ещё не спроектированы.
+> **Статус:** Canonical для принятых MVP-контрактов.
 
 Wire-схемы находятся в `contracts/proto/`. Этот документ описывает transport boundaries и имена NATS subjects, которые не являются частью `.proto`.
 
@@ -8,7 +8,7 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 - Асинхронные команды и события передаются через NATS.
 - Синхронные queries и CRUD-вызовы могут использовать gRPC.
-- Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 переведён в `Legacy scope` и новые решения принимаются отдельными ADR.
+- Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 переведён в `Historical` и новые решения принимаются отдельными ADR.
 - NATS и gRPC payload сериализуется только в Protobuf.
 
 ## Subjects
@@ -17,32 +17,33 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 `>` — многоуровневый wildcard. Например, `events.auction.>` получает все события аукциона; одноуровневый `*` не заменяет его.
 
-### Current/Legacy-команды
+Действующих NATS-контрактов нет: ни один subject не принят. Реестр `nats-tester` пуст, и запись в него добавляется одновременно с записью в этот каталог.
 
-| Subject | Proto | Producer | Consumer |
-|---|---|---|---|
-| `commands.auction.start` | `StartAuctionCommand` | `nats-tester` / ручной publisher | Auction Service |
-| `commands.auction.place_bid` | `PlaceBidCommand` | Rust Telegram Gateway, `nats-tester` | Auction Service |
-| `commands.auction.set_proxy_bid` | `SetProxyBidCommand` | `nats-tester` / ручной publisher | Auction Service |
-| `commands.auction.end_open_bidding` | `EndOpenBiddingCommand` | `nats-tester` / ручной publisher | Auction Service |
-| `commands.auction.start_final_phase` | `StartFinalPhaseCommand` | `nats-tester` / ручной publisher | Auction Service |
-| `commands.telegram.send_message` | `SendMessageCommand` | Notifications Service | Rust Telegram Gateway |
-
-### Current/Legacy-события
-
-| Subject | Proto | Producer | Consumers |
-|---|---|---|---|
-| `events.auction.started` | `AuctionStartedEvent` | Auction Service | Нет специализированного consumer; wildcard listeners получают subject без доменной обработки |
-| `events.auction.bid_placed` | `BidPlacedEvent` | Auction Service | Notifications, WebSocket Gateway, Rust Telegram Gateway |
-| `events.auction.phase_transitioned` | `PhaseTransitionedEvent` | Auction Service | Нет специализированного consumer; wildcard listeners получают subject без доменной обработки |
-
-Таблица описывает существующую аукционную ветку, а не обязательный контракт будущего auction v2.
+Subjects удалённой аукционной ветки перечислены в [архиве](../archive/services/auction-domain-and-lessons.md) как историческое свидетельство. Обязательным контрактом будущего аукциона они не являются; сами `.proto` восстанавливаются из истории Git.
 
 ## MVP-контракты
 
-Wire-схемы gRPC API для Meetups, Identity, нового Telegram Gateway и reminders ещё не приняты. Для Gateway → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Состав методов, сообщений и service authentication остаётся предметом contract design. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
+### Identity gRPC
 
-Identity не публикует событий в MVP. Gateway устанавливает Telegram identity после проверки secret token вебхука, Identity разрешает Telegram user id во внутренний id, статус доступа и глобальные роли, а Meetups принимает доменные authorization-решения. Authentication material через Identity не проходит.
+| RPC | Proto | Caller | Callee |
+|---|---|---|---|
+| `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Telegram Bot | Identity |
+
+Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `global_roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMIN`; пустой набор — обычный пользователь.
+
+Операция устанавливает личность: создаёт профиль при первом обращении и обновляет ник как кэш. Статус допуска, whitelist, инвайты и служебные endpoints премодерации в этот контракт не входят — полей под них нет. Отказы передаются статусами gRPC, отдельного error-message нет.
+
+Для вызова бот → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Service authentication остаётся предметом отдельного контракта.
+
+Wire-схемы gRPC API для Meetups, Telegram Bot и reminders ещё не приняты. Примеры вроде `commands.meetup.create` не являются зарезервированным контрактом до human-led сценариев, требований и явного contract design.
+
+Словарь домена Meetups для среза при этом утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), и контракт обязан ему соответствовать: четыре команды и два запроса, три типа событий, таблица «русский термин — идентификатор», вход каждой команды и снимок в ответе. Требования к команде создания черновика: она принимает идентификатор сходки, сгенерированный вызывающей стороной, он же служит ключом идемпотентности ([ADR-030](../decisions/ADR-030-telegram-bot.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md)); повтор с тем же идентификатором и тем же автором возвращает текущий снимок, а повтор с чужим автором отвечает «не найдено» наравне с несуществующей сходкой. `PublishMeetup` на уже видимой сходке — успех без нового события. `ChangeMeetupAttributes` несёт все информационные атрибуты целиком.
+
+Форма публикуемого наружу события среза не касается: без уведомлений событий в шину не уходит. ADR-031 фиксирует только доменное событие и строку журнала; конверт публикации, subject'ы и wire-формат остаются открытыми и решаются вместе со словарём уведомлений.
+
+Notifications публикует наружу не команду каналу, а факт «человеку положено такое уведомление»: явный получатель во внутреннем идентификаторе, тип уведомления со структурированными данными — типизированным `oneof`, а не строковым кодом со свободным словарём. Готового текста и `chat_id` в сообщении нет, обратных событий о доставке нет. Команда `commands.telegram.send_message` из удалённой аукционной ветки формой будущего контракта не является: она несла `chat_id` и готовый текст, то есть ровно то, от чего [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) отказался. Словарь кодов типов уведомлений становится межсервисным контрактом и меняется согласованно с потребителями.
+
+Identity публикует события о регистрации и смене статуса допуска: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md)). Эти события вне среза и в текущем `.proto` не описаны. Telegram Bot устанавливает Telegram identity из принятого апдейта: вход идёт long polling, доверенностью служит владение bot token, входящего HTTP и secret token у компонента нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity разрешает Telegram user id во внутренний id и глобальные роли, а Meetups принимает доменные authorization-решения. Статус допуска входит в полную модель ADR-026, но в контракт среза не входит. Authentication material через Identity не проходит.
 
 ## Выбор sync и async
 
@@ -56,19 +57,24 @@ Identity не публикует событий в MVP. Gateway устанавл
 - нужна ли durable delivery;
 - как обеспечивается idempotency.
 
-ADR-016 объединяет transport, RBAC и Gateway-specific решения и имеет applicability `Legacy scope`: часть про роли заменена [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), остальное описывает аукционный Gateway. Правило выбора transport из него используется как отправная точка, а не как действующее решение для MVP.
+ADR-016 объединяет transport, RBAC и решения аукционного шлюза и имеет applicability `Historical`: часть про роли заменена [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), остальное описывает удалённый код. Правило выбора transport из него используется как отправная точка, а не как действующее решение для MVP.
 
-## Contract governance до новых proto
+## Contract governance
 
-До добавления Meetups и Identity контрактов нужно принять минимум:
+Приняты раскладка `contracts/proto/<domain>/v<major>/` с совпадающим Protobuf package и кодогенерация Go через `buf generate` с локальными плагинами и `go_package_prefix` потребителя. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
 
-- правила совместимости;
-- package/version naming;
-- ownership;
-- codegen matrix для TypeScript и выбранного backend stack;
-- CI breaking checks;
-- правила удаления Legacy auction contracts;
-- границу отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
+Закрыто и записано нормативно:
+
+- правила совместимости — раздел «Совместимость» в [protobuf.md](../standards/contracts/protobuf.md);
+- ownership схем, каталога и generated-code configuration — раздел «Владение» в [contracts/README.md](../../contracts/README.md);
+- раскладка каталогов, именование пакетов и кодогенерация Go — [protobuf.md](../standards/contracts/protobuf.md).
+
+До следующих контрактов остаются открытыми:
+
+- codegen matrix для TypeScript и F#;
+- CI breaking checks и `buf lint`;
+- машинно-проверяемые ограничения полей. Единственный рабочий механизм — protovalidate: опция вида `[(buf.validate.field).string.uuid = true]` прямо в схеме и рантайм-библиотека у каждого потребителя. Он требует зависимости из Buf Schema Registry, которая по [protobuf.md](../standards/contracts/protobuf.md) сейчас вне build path, поэтому вводится не вместе с отдельным контрактом, а решением по всем схемам сразу;
+- граница отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
 
 Schema Registry — не одно бинарное решение:
 
@@ -109,14 +115,14 @@ Read model вводится, когда query-нагрузка, UX или изо
 - correlation/operation id через межсервисный путь;
 - health и readiness checks;
 - метрики ошибок, latency и delivery attempts;
-- trace первого вертикального среза Gateway → Identity → Meetups;
+- trace первого вертикального среза Telegram Bot → Identity → Meetups;
 - операторский способ увидеть и повторить неуспешное действие без ручной правки БД.
 
 Loki/Grafana и Aspire dashboard являются заделом. Наличие конфигурации не подтверждает работающую наблюдаемость.
 
 ## Изменение
 
-При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `sgh-change-contract`. При изменении subject обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
+При изменении `.proto` следуй [Protobuf standard](../standards/contracts/protobuf.md) и skill `proj-change-contract`. При изменении subject или gRPC-операции обновляй producer, consumers, тестовый инструмент и этот каталог в одном изменении.
 
 ## Технические источники
 

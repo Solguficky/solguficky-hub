@@ -4,12 +4,11 @@ Service brief описывает ответственность, жизненн�
 
 | Компонент | Слой | Brief |
 |---|---|---|
-| Telegram Gateway | Current/Legacy → MVP replacement | [telegram-gateway.md](telegram-gateway.md) |
+| Telegram Bot | MVP | [telegram-bot.md](telegram-bot.md) |
 | Meetups | MVP | [meetups.md](meetups.md) |
 | Identity | MVP | [identity.md](identity.md) |
-| Notifications | Current / MVP candidate | [notifications.md](notifications.md) |
+| Notifications | MVP | [notifications.md](notifications.md) |
 | Mini App | Вне MVP, Deferred | [mini-app.md](mini-app.md) |
-| Auction Service / auction v2 | Legacy / Future | [auction.md](auction.md) |
-| WebSocket Gateway | Legacy / Frozen | [websocket-gateway.md](websocket-gateway.md) |
+| Auction | Future | [auction.md](auction.md) |
 
-Старые технические ТЗ сохранены в [archive/services/](../archive/services/). Они используются только для истории и извлечения знаний.
+Технические ТЗ и извлечённое знание выведенных из эксплуатации сервисов сохранены в [archive/services/](../archive/services/). Они используются только для истории и как отправная точка нового проектирования.

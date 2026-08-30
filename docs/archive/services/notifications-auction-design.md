@@ -1,6 +1,6 @@
 # ТЗ: Notifications Service (C# Implementation)
 
-> **Historical / Current legacy scenario.** Описывает аукционные уведомления, а не ещё не спроектированные MVP reminders.
+> **Историческое.** Описывает аукционные уведомления удалённого сервиса, а не устройство Notifications в MVP — оно принято [ADR-028](../../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md).
 
 ## 1. Ответственность
 

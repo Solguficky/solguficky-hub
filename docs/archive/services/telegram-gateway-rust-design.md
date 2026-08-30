@@ -1,6 +1,6 @@
 # ТЗ (Живой документ): API Gateway
 
-> **Historical / Legacy.** Технический дизайн текущего Rust/Teloxide gateway; не является дизайном MVP replacement.
+> **Историческое.** Технический дизайн Rust/Teloxide-шлюза, удалённого из репозитория. Устройство Telegram Bot в MVP принято [ADR-030](../../decisions/ADR-030-telegram-bot.md).
 
 ## 1. Ответственность
 
