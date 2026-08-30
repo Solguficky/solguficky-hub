@@ -35,15 +35,25 @@ jobs:
           go-version-file: apps/identity/go.mod
           cache-dependency-path: apps/identity/go.sum
       - id: tools
-        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "golangci=$(grep '^GOLANGCI_LINT_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: ${{ steps.tools.outputs.buf }}
       - run: go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
         working-directory: apps/identity
       - run: buf generate --template apps/identity/buf.gen.yaml
+      - run: go build ./...
+        working-directory: apps/identity
       - run: go test ./...
         working-directory: apps/identity
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v${{ steps.tools.outputs.golangci }}
+          working-directory: apps/identity
+          install-mode: goinstall
+          args: --timeout 5m
 
   repo-hygiene:
     runs-on: ubuntu-latest

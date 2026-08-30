@@ -4,7 +4,7 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
-Workflow собирает Identity.
+Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow.
 
 Известные gaps:
 

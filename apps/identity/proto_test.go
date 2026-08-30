@@ -8,6 +8,8 @@ import (
 )
 
 func TestResolveIdentityRequestRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	username := "alice"
 	in := &identityv1.ResolveIdentityRequest{
 		TelegramUserId:   123456789,
@@ -30,6 +32,8 @@ func TestResolveIdentityRequestRoundTrip(t *testing.T) {
 }
 
 func TestResolveIdentityRequestOmitsUsername(t *testing.T) {
+	t.Parallel()
+
 	in := &identityv1.ResolveIdentityRequest{TelegramUserId: 1}
 	if in.TelegramUsername != nil {
 		t.Fatal("expected unset telegram_username")
@@ -37,6 +41,8 @@ func TestResolveIdentityRequestOmitsUsername(t *testing.T) {
 }
 
 func TestResolveIdentityResponseRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	id := "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"
 	in := &identityv1.ResolveIdentityResponse{
 		IdentityId:  id,
