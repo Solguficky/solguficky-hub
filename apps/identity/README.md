@@ -9,6 +9,7 @@ gRPC-сервис разрешения Telegram-личности во внутр
 Из корня репозитория:
 
 ```bash
+just identity-tools
 just identity-proto
 just identity-build
 just identity-test
@@ -17,6 +18,8 @@ just identity-run
 ```
 
 По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`.
+
+`just identity-tools` ставит buf, плагины кодогенерации и golangci-lint закреплённых в `justfile` версий; без него `just verify` падает на линте.
 
 ## Проверка
 

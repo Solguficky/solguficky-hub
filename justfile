@@ -12,9 +12,10 @@
 # --- Версии инструментов ---------------------------------------------------
 #
 # Единственное место, где закреплены версии buf и golangci-lint. Джоба
-# identity в CI читает их отсюда, чтобы локальная и CI-проверка шли
-# одними бинарниками. Версии protoc-gen-go и protoc-gen-go-grpc
-# закреплены в apps/identity/go.mod.
+# identity в CI читает их отсюда, а `just identity-tools` ставит их
+# локально, чтобы локальная и CI-проверка шли одними бинарниками;
+# identity-lint отказывается работать на другой версии. Версии
+# protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
 GOLANGCI_LINT_VERSION := "2.13.2"
@@ -56,10 +57,17 @@ aspire profile="core":
 # Кодогенерация — часть сборки. Рецепты собирают скелет gRPC-сервера
 # и проверяют заглушку ResolveIdentity.
 
+# Весь инструментарий Identity закреплённых версий в $(go env GOPATH)/bin
+identity-tools: identity-proto-tools identity-lint-tools
+
 # Установить buf и Go-плагины кодогенерации закреплённых версий в $(go env GOPATH)/bin
 identity-proto-tools:
     go install github.com/bufbuild/buf/cmd/buf@v{{BUF_VERSION}}
     cd apps/identity && go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
+
+# Установить golangci-lint закреплённой версии в $(go env GOPATH)/bin
+identity-lint-tools:
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v{{GOLANGCI_LINT_VERSION}}
 
 # Сгенерировать Go-типы Identity из contracts/proto
 identity-proto:
@@ -73,8 +81,10 @@ identity-build: identity-proto
 identity-test: identity-proto
     cd apps/identity && go test ./...
 
-# Линт Identity; версия golangci-lint закреплена выше, как BUF_VERSION
+# Линт Identity закреплённой версией; чужая версия читает тот же
+# .golangci.yml иначе, поэтому расхождение — ошибка, а не предупреждение
 identity-lint: identity-proto
+    @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
     cd apps/identity && golangci-lint run ./...
 
 # Локальный запуск скелета; адрес — IDENTITY_GRPC_ADDR, по умолчанию :50051

@@ -9,6 +9,9 @@ issues:
   max-same-issues: 50
 
 linters:
+  # none: enable ниже — полный список активных линтеров.
+  # При default: standard блок disable не выключал ничего.
+  default: none
   enable:
     - govet
     - staticcheck
@@ -53,47 +56,10 @@ linters:
     - usestdlibvars
     - nolintlint
     - protogetter
-  disable:
-    - godot
-    - lll
-    - prealloc
-    - wrapcheck
-    - err113
-    - mnd
-    - iface
-    - nakedret
-    - noinlineerr
-    - gocognit
-    - cyclop
-    - depguard
-    - goheader
-    - importas
-    - funcorder
-    - godoclint
-    - varnamelen
-    - exhaustruct
-    - gochecknoglobals
-    - gochecknoinits
-    - unparam
-    - makezero
-    - testpackage
-    - embeddedstructfieldcheck
-    - iotamixing
-    - unqueryvet
-    - recvcheck
-    - mirror
-    - spancheck
-    - zerologlint
-    - wsl_v5
-    - exhaustive
-    - testifylint
-    - sqlclosecheck
-    - rowserrcheck
   exclusions:
     generated: lax
     paths:
-      - vendor$
-      - gen$
+      - (^|/)gen/
   settings:
     errcheck:
       check-type-assertions: true
@@ -122,4 +88,4 @@ formatters:
   exclusions:
     generated: lax
     paths:
-      - gen$
+      - (^|/)gen/

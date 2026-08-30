@@ -62,7 +62,8 @@ TOPOLOGY__PROFILE=full aspire run
 # Режим компонента: Local | Container | Off
 TOPOLOGY__AUCTIONSERVICE=Container aspire run
 
-# Identity — кодогенерация, сборка, тесты и линт
+# Identity — инструменты, кодогенерация, сборка, тесты и линт
+just identity-tools
 just identity-proto
 just identity-build
 just identity-test

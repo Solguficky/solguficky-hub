@@ -10,7 +10,9 @@
 
 `main` вызывает `os.Exit(run())`. `defer` стоит внутри `run`: иначе `os.Exit` оборвал бы `signal.NotifyContext`. Слушать сокет сервис начинает через `net.ListenConfig.Listen` с тем же `ctx`, а не через `net.Listen`: линтер `noctx` в `.golangci.yml` отвергает вызов без контекста.
 
-Версия языка в `go.mod` — `1.27.0`. `golangci-lint` 2.6.0, собранный более старым toolchain, отказывался анализировать модуль. В `justfile` закреплена `2.13.2`; CI ставит её через `golangci-lint-action` с `install-mode: goinstall`, чтобы бинарник собрался тем же Go, что и сервис.
+Версия языка в `go.mod` — `1.27.0`. `golangci-lint` 2.6.0, собранный более старым toolchain, отказывался анализировать модуль. В `justfile` закреплена `2.13.2`; CI ставит её через `golangci-lint-action` с `install-mode: goinstall`, локально — `just identity-lint-tools`, чтобы бинарник собрался тем же Go, что и сервис. `identity-lint` сверяет `golangci-lint version --short` с закреплённой версией и отказывается работать на другой.
+
+`.gitattributes` держит `*.go` в `eol=lf`. При `core.autocrlf=true` рабочее дерево Windows иначе получает CRLF, и `gofumpt` считает нарушением формата каждый файл, хотя в индексе и на Linux-раннере тот же файл в порядке.
 
 ## Почему так, а не иначе
 
