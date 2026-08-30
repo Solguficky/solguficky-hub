@@ -14,10 +14,10 @@
 
 ## Реестр тем
 
-Пуст. Первая запись появится вместе с первым срезом на незнакомом стеке.
-
 | Тема | Что покрыто | Статус |
 |---|---|---|
+| [go/service-layout.md](go/service-layout.md) | модуль Identity, `cmd`/`internal`, `slog` JSON, `golangci-lint` 2.13.2 и цепочка `just identity-*` | разобрано |
+| [grpc/unary-server.md](grpc/unary-server.md) | unary-сервер, health, reflection, interceptor'ы, заглушка `ResolveIdentity`, `bufconn` | разобрано |
 
 Статус ставится по факту, а не по ощущению:
 
