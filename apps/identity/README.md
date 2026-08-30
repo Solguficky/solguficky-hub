@@ -17,7 +17,7 @@ just identity-lint
 just identity-run
 ```
 
-По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`.
+По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). Успешный RPC пишется на `Debug`, поэтому журнал доступа включает `IDENTITY_LOG_LEVEL=debug`.
 
 `just identity-tools` ставит buf, плагины кодогенерации и golangci-lint закреплённых в `justfile` версий; без него `just verify` падает на линте.
 

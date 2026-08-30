@@ -6,7 +6,7 @@
 
 Модуль `github.com/Solguficky/solguficky-hub/apps/identity` остаётся одним. Точка входа — `cmd/identity`: флаги и сигналы, затем `server.New`. Обработчики живут в `internal/server`, снаружи модуля их импортировать нельзя. Сгенерированный контракт по-прежнему в `gen/` и в Git не лежит: `apps/identity/.gitignore` игнорирует каталог, сборка сначала вызывает `buf generate`.
 
-Логгер процесса — `log/slog` с `JSONHandler` на stdout и уровнем `Info`. Сообщение — короткая фраза, значения — поля. Успешный RPC в диффе пишется через `DebugContext`, поэтому при уровне `Info` его нет. Ожидаемый отказ входа — `Warn`. Это семантика [logging.md](../../standards/observability/logging.md), не выбор библиотеки: стандарт не требует конкретный пакет.
+Логгер процесса — `log/slog` с `JSONHandler` на stdout. Уровень читается из `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`), по умолчанию `Info`. Сообщение — короткая фраза, значения — поля. Успешный RPC пишется через `DebugContext`, поэтому на `Info` его нет, а `IDENTITY_LOG_LEVEL=debug` включает журнал доступа без пересборки. Ожидаемый отказ входа — `Warn`. Это семантика [logging.md](../../standards/observability/logging.md), не выбор библиотеки: стандарт не требует конкретный пакет.
 
 `main` вызывает `os.Exit(run())`. `defer` стоит внутри `run`: иначе `os.Exit` оборвал бы `signal.NotifyContext`. Слушать сокет сервис начинает через `net.ListenConfig.Listen` с тем же `ctx`, а не через `net.Listen`: линтер `noctx` в `.golangci.yml` отвергает вызов без контекста. Это единственная причина: `ctx` здесь используется при резолве адреса и на возвращённый `Listener` не влияет.
 

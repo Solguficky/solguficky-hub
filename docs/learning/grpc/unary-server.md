@@ -4,13 +4,13 @@
 
 ## Что появилось и зачем
 
-`server.New` собирает `grpc.Server`, регистрирует сгенерированный `IdentityService`, стандартный `grpc.health.v1` и reflection. Хендлер встраивает `UnimplementedIdentityServiceServer`: новый RPC в `.proto` без реализации не оставит пустой метод, а вернёт `Unimplemented`.
+`server.New` собирает `grpc.Server`, регистрирует сгенерированный `IdentityService`, стандартный `grpc.health.v1` и reflection, и возвращает `server.Server` — обёртку над `grpc.Server` и `health.Server`. Обёртка нужна ради `GracefulStop`: он сначала зовёт `health.Shutdown()` (все имена → `NOT_SERVING`), и только потом сливает соединения. Иначе балансировщик весь слив читает `SERVING` и продолжает слать трафик в сокет, который его уже не примет. Хендлер встраивает `UnimplementedIdentityServiceServer`: новый RPC в `.proto` без реализации не оставит пустой метод, а вернёт `Unimplemented`.
 
 Заглушка в `resolve.go` принимает только `telegram_user_id > 0` и возвращает фиксированный UUIDv7 `0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd` с пустым `global_roles`. Отказ — `status.Error(codes.InvalidArgument, ...)`. Сырой `error` стал бы `Unknown`, и клиент не отличил бы его от сбоя.
 
 Interceptor'ы стоят парой в `ChainUnaryInterceptor` и такой же парой в `ChainStreamInterceptor`: сначала logging, затем recovery. Первый в цепочке — внешний, поэтому recovery успевает превратить панику в `Internal` до того, как logging запишет строку, и запись доступа у паники такая же полная, как у обычного отказа. Stream-пара обязательна: `Health/Watch` и `ServerReflectionInfo` — потоковые методы, и `ChainUnaryInterceptor` их не видит вовсе; паника в таком хендлере без recovery уносит процесс.
 
-Logging пишет `service`, `operation` (`info.FullMethod`), `result`, `duration_us`; для `ResolveIdentity` ещё `telegram_user_id`; ник не берётся. Микросекунды, а не миллисекунды: заглушка отвечает за десятки микросекунд, и `Milliseconds()` писал бы `0` в каждую строку. Если в metadata есть `x-request-id` или `x-correlation-id`, поле `request_id` едет в ту же запись. Успех — `Debug`, поэтому при уровне процесса `Info` успешного вызова в stdout нет.
+Logging пишет `service`, `operation` (`info.FullMethod`), `result`, `duration_us`; для `ResolveIdentity` ещё `telegram_user_id`; ник не берётся. Микросекунды, а не миллисекунды: заглушка отвечает за десятки микросекунд, и `Milliseconds()` писал бы `0` в каждую строку. Если в metadata есть `x-request-id` или `x-correlation-id`, поле `request_id` едет в ту же запись. Успех — `Debug`, поэтому при уровне процесса `Info` успешного вызова в stdout нет; `IDENTITY_LOG_LEVEL=debug` его включает.
 
 Уровень отказа выбирает `serverFault`: `Internal`, `Unknown`, `Unavailable` и `DataLoss` — `Error` и `error_category: server_error`, всё остальное — `Warn` и `client_error`. Это требование [logging.md](../../standards/observability/logging.md): «ожидаемый отказ входных данных — `Warning`». `NotFound`, которым `grpc.health.v1` отвечает на неизвестное имя сервиса, — именно такой отказ, и на `Error` он поднимал бы алерт на здоровом процессе. Отдельная строка `rpc panic` несёт `debug.Stack()`: без кадров значение паники не указывает на место отказа.
 
@@ -66,7 +66,9 @@ sequenceDiagram
 - `grpcurl -plaintext 127.0.0.1:50051 list` показывает `identity.v1.IdentityService` и `grpc.health.v1.Health`. Проверено на живом `just identity-run`.
 - `Health/Check` без `service` и с `identity.v1.IdentityService` → `SERVING`. С `no.such.Service` → `NotFound` / `unknown service`. Проверено.
 - `ResolveIdentity` с `telegram_user_id: 1` → `{"identityId":"0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"}`. Нулевой id → `InvalidArgument`. Проверено.
-- `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Успешный вызов при `LevelInfo` новой строки `rpc completed` не пишет. Проверено.
+- `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Успешный вызов при `LevelInfo` новой строки `rpc completed` не пишет, при `IDENTITY_LOG_LEVEL=debug` пишет. Проверено на `x-request-id`; `IDENTITY_LOG_LEVEL` покрыт тестом, живым процессом не проверялся.
 - Тот же RPC с `-import-path contracts/proto -proto identity/v1/identity_service.proto` работает и без reflection. Проверено.
 - Паника в хендлере становится `Internal`, а в stdout уходит `rpc panic` со стеком: `TestUnaryRecoveryConvertsPanicToInternalWithStack` и `TestStreamRecoveryConvertsPanicToInternal` в `internal/server/interceptor_test.go`. Проверено `go test`.
 - `NotFound` от Health пишется на `Warn`, `Internal` — на `Error`: `TestUnaryLoggingLevelByCode`. Проверено `go test`.
+- `GracefulStop` переводит `""` и `identity.v1.IdentityService` в `NOT_SERVING`: `TestGracefulStopMarksHealthNotServing`. Проверено `go test`, в том числе мутацией — без `health.Shutdown()` тест падает.
+- `kill -TERM` по pid `just identity-run` пишет `shutdown signal received` и `graceful shutdown complete` — живым процессом не проверялось: msys `kill` на Windows не доставляет сигнал в обработчик Go.

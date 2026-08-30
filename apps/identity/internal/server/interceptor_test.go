@@ -11,6 +11,7 @@ import (
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -211,5 +212,36 @@ func TestRequestIDFromMetadata(t *testing.T) {
 				t.Fatalf("requestID: got %q want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGracefulStopMarksHealthNotServing(t *testing.T) {
+	t.Parallel()
+
+	srv := New(slog.New(slog.DiscardHandler))
+	names := []string{"", identityv1.IdentityService_ServiceDesc.ServiceName}
+
+	for _, name := range names {
+		resp, err := srv.health.Check(t.Context(), &healthgrpc.HealthCheckRequest{Service: name})
+		if err != nil {
+			t.Fatalf("check %q before stop: %v", name, err)
+		}
+		if resp.GetStatus() != healthgrpc.HealthCheckResponse_SERVING {
+			t.Fatalf("status %q before stop: got %s want %s",
+				name, resp.GetStatus(), healthgrpc.HealthCheckResponse_SERVING)
+		}
+	}
+
+	srv.GracefulStop()
+
+	for _, name := range names {
+		resp, err := srv.health.Check(t.Context(), &healthgrpc.HealthCheckRequest{Service: name})
+		if err != nil {
+			t.Fatalf("check %q after stop: %v", name, err)
+		}
+		if resp.GetStatus() != healthgrpc.HealthCheckResponse_NOT_SERVING {
+			t.Fatalf("status %q after stop: got %s want %s",
+				name, resp.GetStatus(), healthgrpc.HealthCheckResponse_NOT_SERVING)
+		}
 	}
 }

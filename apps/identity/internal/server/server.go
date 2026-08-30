@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net"
 	"runtime/debug"
 	"time"
 
@@ -18,7 +19,12 @@ import (
 
 const ServiceName = "identity"
 
-func New(log *slog.Logger) *grpc.Server {
+type Server struct {
+	grpc   *grpc.Server
+	health *health.Server
+}
+
+func New(log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -41,7 +47,20 @@ func New(log *slog.Logger) *grpc.Server {
 	healthgrpc.RegisterHealthServer(srv, healthSrv)
 	reflection.Register(srv)
 
-	return srv
+	return &Server{grpc: srv, health: healthSrv}
+}
+
+func (s *Server) Serve(lis net.Listener) error {
+	return s.grpc.Serve(lis)
+}
+
+func (s *Server) GracefulStop() {
+	s.health.Shutdown()
+	s.grpc.GracefulStop()
+}
+
+func (s *Server) Stop() {
+	s.grpc.Stop()
 }
 
 func unaryLogging(log *slog.Logger) grpc.UnaryServerInterceptor {
