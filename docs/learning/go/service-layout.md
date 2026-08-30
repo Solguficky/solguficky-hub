@@ -8,7 +8,7 @@
 
 Логгер процесса — `log/slog` с `JSONHandler` на stdout и уровнем `Info`. Сообщение — короткая фраза, значения — поля. Успешный RPC в диффе пишется через `DebugContext`, поэтому при уровне `Info` его нет. Ожидаемый отказ входа — `Warn`. Это семантика [logging.md](../../standards/observability/logging.md), не выбор библиотеки: стандарт не требует конкретный пакет.
 
-`main` вызывает `os.Exit(run())`. `defer` стоит внутри `run`: иначе `os.Exit` оборвал бы `signal.NotifyContext`. Слушать сокет сервис начинает через `net.ListenConfig.Listen` с тем же `ctx`, а не через `net.Listen`: линтер `noctx` в `.golangci.yml` отвергает вызов без контекста.
+`main` вызывает `os.Exit(run())`. `defer` стоит внутри `run`: иначе `os.Exit` оборвал бы `signal.NotifyContext`. Слушать сокет сервис начинает через `net.ListenConfig.Listen` с тем же `ctx`, а не через `net.Listen`: линтер `noctx` в `.golangci.yml` отвергает вызов без контекста. Это единственная причина: `ctx` здесь используется при резолве адреса и на возвращённый `Listener` не влияет.
 
 Версия языка в `go.mod` — `1.27.0`. `golangci-lint` 2.6.0, собранный более старым toolchain, отказывался анализировать модуль. В `justfile` закреплена `2.13.2`; CI ставит её через `golangci-lint-action` с `install-mode: goinstall`, локально — `just identity-lint-tools`, чтобы бинарник собрался тем же Go, что и сервис. `identity-lint` сверяет `golangci-lint version --short` с закреплённой версией и отказывается работать на другой.
 
@@ -20,7 +20,7 @@
 |---|---|
 | Плоский пакет в корне модуля | `main` и тесты контракта смешиваются с сервером; `internal/` отрезает случайный импорт из соседнего приложения |
 | zap / zerolog | лишняя зависимость; стандарт просит семантику полей, не конкретный sink. `slog` в стандартной библиотеке с Go 1.21 |
-| `net.Listen` | короче, но `noctx` падает, и отмена при shutdown не доходит до `Accept` |
+| `net.Listen` | короче, но `noctx` падает. Отмена `ctx` слушателя всё равно не касается: по [документации](https://pkg.go.dev/net#ListenConfig.Listen) он влияет только на резолв адреса, а сокет закрывает `GracefulStop`/`Stop` |
 | `os.Exit` прямо в `run` после `defer` | `gocritic` `exitAfterDefer`: отложенные `stop()` не выполнятся |
 | Только `go vet` в CI | не ловит `slog`/`noctx`/`protogetter`; задача просила линт, не минимальный vet |
 | Коммитить `gen/` | ломает правило ADR-027 и [protobuf.md](../../standards/contracts/protobuf.md): generated — не источник правды |
