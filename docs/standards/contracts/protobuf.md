@@ -70,7 +70,7 @@ Buf выбран вместо прямого вызова `protoc`, потому
 - Для сборки Telegram Bot команда из корня репозитория — `buf generate --template apps/telegram-bot/buf.gen.yaml`. Плагин вызывается как `local: apps/telegram-bot/node_modules/.bin/protoc-gen-es`, чтобы генерация не зависела от `PATH`. Рецепт `just` и джоба CI появятся вместе со скелетом сервиса; Aspire запускает уже подготовленный процесс и сам кодогенерацию не выполняет. Каталог `apps/telegram-bot` этой нормой не заводится.
 - Well-known types TypeScript берёт из `@bufbuild/protobuf/wkt`, а не генерирует `google/protobuf` в `gen/`. `import` резолвится от корня модуля: `inputs.directory` указывает на `contracts/proto/`, фильтр `paths` сужает генерацию так же, как у Go.
 
-`protoc-gen-es` выбран вместо `ts-proto`, потому что это официальный плагин того же контура, что уже стоит у Go, даёт дискриминированный `oneof` без отдельной опции и не копирует WKT в `gen/`. `ts-proto` 2.x сам сериализует через `@bufbuild/protobuf/wire`, то есть community-генератор садится на тот же рантайм и добавляет опции, callback-клиент и сгенерированные `google/protobuf`. Connect с `createGrpcTransport` говорит с Identity обычным gRPC и не требует менять сервер; протокол Connect к `grpc-go` отвечает HTTP 415. Сравнение и прогон — [RFC-007](../../rfcs/RFC-007-typescript-protobuf-codegen.md).
+Плагин вызывается через `buf generate`, потому что `protoc-gen-es` — локальный `protoc`-plugin, как `protoc-gen-go`: отдельный toolchain не появляется, remote plugins остаются вне path. Клиент Connect с `createGrpcTransport` говорит с Identity обычным gRPC; протокол Connect сервер не принимает. Сравнение с `ts-proto` и `@grpc/grpc-js` — [RFC-007](../../rfcs/RFC-007-typescript-protobuf-codegen.md).
 
 ## Изменение контракта
 

@@ -1,7 +1,7 @@
 # RFC-007: Кодогенерация Protobuf для TypeScript
 
 > **Статус:** Accepted, раздел «Кодогенерация TypeScript» в [protobuf.md](../standards/contracts/protobuf.md#кодогенерация-typescript)
-> **Автор:** агент по задаче [PER-93](https://linear.app/anticnvm/issue/per-93)
+> **Автор:** владелец
 > **Дата:** 2026-08-31
 
 ## Кратко
