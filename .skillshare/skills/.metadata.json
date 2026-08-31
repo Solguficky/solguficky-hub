@@ -25,6 +25,12 @@
         "SKILL.md": "sha256:c1d9628984991d7ed59ab3a7bf6a4dad3d731ef68c71f409f64a0ca258e8028e"
       }
     },
+    "golang/_golang": {
+      "source": "https://github.com/samber/cc-skills-golang.git",
+      "tracked": true,
+      "group": "golang",
+      "branch": "main"
+    },
     "mattpocock/_skills": {
       "source": "https://github.com/mattpocock/skills.git",
       "tracked": true,

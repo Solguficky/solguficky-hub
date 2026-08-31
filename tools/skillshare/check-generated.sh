@@ -9,7 +9,7 @@ set -eu
 
 SKILLS_ROOT='.skillshare/skills'
 PROJECT_SKILLS="$SKILLS_ROOT/proj"
-GOLANG_SKILLS="$SKILLS_ROOT/golang"
+GOLANG_SKILLS="$SKILLS_ROOT/golang/_golang/skills"
 TRACKED_SKILLS="$SKILLS_ROOT/mattpocock/_skills/skills"
 SKILLIGNORE="$SKILLS_ROOT/.skillignore"
 SOURCE_AGENTS='.skillshare/agents'
@@ -73,18 +73,11 @@ for skill_dir in "$PROJECT_SKILLS"/*; do
     compare_skill_targets "$skill_dir" "$name" "skill"
 done
 
-for skill_dir in "$GOLANG_SKILLS"/*; do
-    [ -d "$skill_dir" ] || continue
-    name=$(basename "$skill_dir")
-
-    compare_skill_targets "$skill_dir" "$name" "golang skill"
-done
-
-# Installed external sources are not committed, so these two loops find nothing
+# Installed external sources are not committed, so the loops below find nothing
 # in CI and run only locally: they catch a source edit that has not been synced
-# to either target before it is pushed. The tracked mattpocock group is checked
-# separately because its sources are nested by category while its enabled
-# targets are flat.
+# to either target before it is pushed. Tracked clones are checked separately
+# because their sources are nested inside the clone while the enabled targets
+# stay flat.
 for skill_dir in "$SKILLS_ROOT"/*; do
     [ -d "$skill_dir" ] || continue
     name=$(basename "$skill_dir")
@@ -111,6 +104,19 @@ for skill_dir in "$TRACKED_SKILLS"/*/*; do
     fi
 
     compare_skill_targets "$skill_dir" "$name" "tracked skill"
+done
+
+# Пак Go — тоже tracked-клон, но его скиллы лежат в repo/skills плоско, без
+# категорий, поэтому у него свой цикл с одной звёздочкой.
+for skill_dir in "$GOLANG_SKILLS"/*; do
+    [ -d "$skill_dir" ] || continue
+    name=$(basename "$skill_dir")
+
+    if is_ignored "$name"; then
+        continue
+    fi
+
+    compare_skill_targets "$skill_dir" "$name" "golang skill"
 done
 
 # Committed target copies must also remain identical when external sources are
