@@ -22,7 +22,7 @@ contracts/proto/
 
 - `.proto` задаёт сообщение и номера полей.
 - [Integration catalog](../docs/architecture/integration.md) задаёт NATS subject, producer и consumers.
-- Каждый сервис хранит только configuration кодогенерации и использует сгенерированные типы. У Go это `buf.gen.yaml`, у .NET — элементы `Protobuf` и `ProtoRoot` в контрактном `.csproj`, у TypeScript — вызов `protoc-gen-es`, который задаёт скелет потребителя.
+- Каждый сервис хранит только configuration кодогенерации и использует сгенерированные типы. У Go и TypeScript это `buf.gen.yaml`, у .NET — элементы `Protobuf` и `ProtoRoot` в контрактном `.csproj`.
 - `tools/nats-tester` генерирует Python-типы из тех же схем.
 
 ## Изменение

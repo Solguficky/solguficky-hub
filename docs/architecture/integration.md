@@ -61,7 +61,7 @@ ADR-016 объединяет transport, RBAC и решения аукционн�
 
 ## Contract governance
 
-Приняты раскладка `contracts/proto/<domain>/v<major>/` с совпадающим Protobuf package, кодогенерация Go через `buf generate` с локальными плагинами, кодогенерация .NET через `Grpc.Tools` в отдельном C#-проекте и кодогенерация TypeScript через локальный `protoc-gen-es`. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
+Приняты раскладка `contracts/proto/<domain>/v<major>/` с совпадающим Protobuf package, кодогенерация Go и TypeScript через `buf generate` с локальными плагинами и кодогенерация .NET через `Grpc.Tools` в отдельном C#-проекте. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
 
 Закрыто и записано нормативно:
 
