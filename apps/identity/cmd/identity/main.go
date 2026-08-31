@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
+	"google.golang.org/grpc"
 )
 
 const shutdownTimeout = 15 * time.Second
@@ -65,14 +67,27 @@ func run() int {
 				"service", server.ServiceName, "timeout", shutdownTimeout.String())
 			srv.Stop()
 		}
+		// Serve уже вернулся: и GracefulStop, и Stop его завершают. Читать
+		// errCh обязательно — при готовности обоих case select выбирает ветку
+		// псевдослучайно, поэтому отказ листенера, совпавший с сигналом, иначе
+		// потерялся бы, и процесс отчитался бы кодом 0.
+		if serveErr := <-errCh; !serveDone(serveErr) {
+			log.Error("serve failed", "service", server.ServiceName, "error", serveErr)
+			return 1
+		}
 	case serveErr := <-errCh:
-		if serveErr != nil {
+		if !serveDone(serveErr) {
 			log.Error("serve failed", "service", server.ServiceName, "error", serveErr)
 			return 1
 		}
 	}
 
 	return 0
+}
+
+// serveDone отличает штатное завершение Serve от собственного отказа сервера.
+func serveDone(err error) bool {
+	return err == nil || errors.Is(err, grpc.ErrServerStopped)
 }
 
 func logLevel() (slog.Level, error) {
