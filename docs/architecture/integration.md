@@ -69,7 +69,7 @@ ADR-016 объединяет transport, RBAC и решения аукционн�
 - ownership схем, каталога и generated-code configuration — раздел «Владение» в [contracts/README.md](../../contracts/README.md);
 - раскладка каталогов, именование пакетов и кодогенерация Go — [protobuf.md](../standards/contracts/protobuf.md);
 - кодогенерация .NET — раздел «Кодогенерация .NET» в [protobuf.md](../standards/contracts/protobuf.md);
-- кодогенерация TypeScript — раздел «Кодогенерация TypeScript» в [protobuf.md](../standards/contracts/protobuf.md), сравнение — [RFC-007](../rfcs/RFC-007-typescript-protobuf-codegen.md).
+- кодогенерация TypeScript — раздел «Кодогенерация TypeScript» в [protobuf.md](../standards/contracts/protobuf.md).
 
 До следующих контрактов остаются открытыми:
 
