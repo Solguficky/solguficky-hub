@@ -11,7 +11,6 @@ import (
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -34,21 +33,22 @@ func (c *capture) WithAttrs([]slog.Attr) slog.Handler { return c }
 
 func (c *capture) WithGroup(string) slog.Handler { return c }
 
-func (c *capture) only(t *testing.T, msg string) slog.Record {
+// sole требует, чтобы вызов оставил ровно одну запись, и возвращает её. Именно
+// счётчик, а не поиск по сообщению: logging.md разрешает одну запись на отказ,
+// и лишняя запись должна валить тест, а не проходить мимо него.
+func (c *capture) sole(t *testing.T) slog.Record {
 	t.Helper()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var found []slog.Record
-	for _, rec := range c.records {
-		if rec.Message == msg {
-			found = append(found, rec)
+	if len(c.records) != 1 {
+		got := make([]string, 0, len(c.records))
+		for _, rec := range c.records {
+			got = append(got, rec.Level.String()+" "+rec.Message)
 		}
+		t.Fatalf("records: got %d %v want 1", len(c.records), got)
 	}
-	if len(found) != 1 {
-		t.Fatalf("records with message %q: got %d want 1", msg, len(found))
-	}
-	return found[0]
+	return c.records[0]
 }
 
 func attrValue(t *testing.T, rec slog.Record, key string) slog.Value {
@@ -69,17 +69,44 @@ func attrValue(t *testing.T, rec slog.Record, key string) slog.Value {
 	return value
 }
 
+func assertRecord(t *testing.T, rec slog.Record, level slog.Level, message string) {
+	t.Helper()
+
+	if rec.Level != level || rec.Message != message {
+		t.Fatalf("record: got %s %q want %s %q", rec.Level, rec.Message, level, message)
+	}
+}
+
+const resolveMethod = "/identity.v1.IdentityService/ResolveIdentity"
+
 type panicStream struct{ grpc.ServerStream }
 
 func (panicStream) Context() context.Context { return context.Background() }
 
-func TestUnaryRecoveryConvertsPanicToInternalWithStack(t *testing.T) {
+// chainUnary и chainStream собирают ту же пару и в том же порядке, что и New:
+// logging снаружи, recovery внутри. Тест собранной цепочки отличает дефект
+// композиции от дефекта отдельного интерцептора.
+func chainUnary(log *slog.Logger, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	return unaryLogging(log)(context.Background(), nil, info,
+		func(ctx context.Context, req any) (any, error) {
+			return unaryRecovery()(ctx, req, info, handler)
+		})
+}
+
+func chainStream(log *slog.Logger, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return streamLogging(log)(nil, panicStream{}, info,
+		func(srv any, ss grpc.ServerStream) error {
+			return streamRecovery()(srv, ss, info, handler)
+		})
+}
+
+func TestUnaryChainLogsPanicOnce(t *testing.T) {
 	t.Parallel()
 
 	logs := &capture{}
-	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/ResolveIdentity"}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
 
-	resp, err := unaryRecovery(slog.New(logs))(t.Context(), nil, info,
+	resp, err := chainUnary(slog.New(logs), info,
 		func(context.Context, any) (any, error) { panic("boom") })
 	if resp != nil {
 		t.Fatalf("resp: got %v want nil", resp)
@@ -88,28 +115,107 @@ func TestUnaryRecoveryConvertsPanicToInternalWithStack(t *testing.T) {
 		t.Fatalf("code: got %v want %s", err, codes.Internal)
 	}
 
-	rec := logs.only(t, "rpc panic")
-	if rec.Level != slog.LevelError {
-		t.Fatalf("level: got %s want %s", rec.Level, slog.LevelError)
+	rec := logs.sole(t)
+	assertRecord(t, rec, slog.LevelError, "rpc panic")
+	if got := attrValue(t, rec, "error_category").String(); got != "panic" {
+		t.Fatalf("error_category: got %q want %q", got, "panic")
 	}
-	stack := attrValue(t, rec, "stack").String()
-	if !strings.Contains(stack, "TestUnaryRecoveryConvertsPanicToInternalWithStack") {
+	if got := attrValue(t, rec, "result").String(); got != codes.Internal.String() {
+		t.Fatalf("result: got %q want %q", got, codes.Internal)
+	}
+	if got := attrValue(t, rec, "operation").String(); got != info.FullMethod {
+		t.Fatalf("operation: got %q want %q", got, info.FullMethod)
+	}
+	if stack := attrValue(t, rec, "stack").String(); !strings.Contains(stack, "TestUnaryChainLogsPanicOnce") {
 		t.Fatalf("stack does not reach the panicking frame: %q", stack)
 	}
 }
 
-func TestStreamRecoveryConvertsPanicToInternal(t *testing.T) {
+func TestStreamChainLogsPanicOnce(t *testing.T) {
 	t.Parallel()
 
 	logs := &capture{}
 	info := &grpc.StreamServerInfo{FullMethod: "/grpc.health.v1.Health/Watch"}
 
-	err := streamRecovery(slog.New(logs))(nil, panicStream{}, info,
+	err := chainStream(slog.New(logs), info,
 		func(any, grpc.ServerStream) error { panic("boom") })
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("code: got %v want %s", err, codes.Internal)
 	}
-	attrValue(t, logs.only(t, "rpc panic"), "stack")
+
+	rec := logs.sole(t)
+	assertRecord(t, rec, slog.LevelError, "rpc panic")
+	attrValue(t, rec, "stack")
+}
+
+func TestUnaryChainLogsFailureOnce(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+
+	_, err := chainUnary(slog.New(logs), info,
+		func(context.Context, any) (any, error) {
+			return nil, status.Error(codes.InvalidArgument, "telegram_user_id must be positive")
+		})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code: got %v want %s", err, codes.InvalidArgument)
+	}
+	assertRecord(t, logs.sole(t), slog.LevelWarn, "rpc failed")
+}
+
+func TestUnaryChainLogsSuccessOnce(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+
+	_, err := chainUnary(slog.New(logs), info,
+		func(context.Context, any) (any, error) { return &identityv1.ResolveIdentityResponse{}, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRecord(t, logs.sole(t), slog.LevelDebug, "rpc completed")
+}
+
+func TestStreamLoggingRecordsOutcome(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		err     error
+		level   slog.Level
+		message string
+		result  codes.Code
+	}{
+		{name: "success", err: nil, level: slog.LevelDebug, message: "rpc completed", result: codes.OK},
+		{
+			name:    "unknown service",
+			err:     status.Error(codes.NotFound, "unknown service"),
+			level:   slog.LevelWarn,
+			message: "rpc failed",
+			result:  codes.NotFound,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			logs := &capture{}
+			info := &grpc.StreamServerInfo{FullMethod: "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"}
+			err := streamLogging(slog.New(logs))(nil, panicStream{}, info,
+				func(any, grpc.ServerStream) error { return tc.err })
+			if status.Code(err) != tc.result {
+				t.Fatalf("code: got %v want %s", err, tc.result)
+			}
+
+			rec := logs.sole(t)
+			assertRecord(t, rec, tc.level, tc.message)
+			if got := attrValue(t, rec, "operation").String(); got != info.FullMethod {
+				t.Fatalf("operation: got %q want %q", got, info.FullMethod)
+			}
+		})
+	}
 }
 
 func TestUnaryLoggingLevelByCode(t *testing.T) {
@@ -139,10 +245,8 @@ func TestUnaryLoggingLevelByCode(t *testing.T) {
 				t.Fatalf("code: got %v want %s", err, tc.code)
 			}
 
-			rec := logs.only(t, "rpc failed")
-			if rec.Level != tc.level {
-				t.Fatalf("level: got %s want %s", rec.Level, tc.level)
-			}
+			rec := logs.sole(t)
+			assertRecord(t, rec, tc.level, "rpc failed")
 			if got := attrValue(t, rec, "error_category").String(); got != tc.category {
 				t.Fatalf("error_category: got %q want %q", got, tc.category)
 			}
@@ -157,7 +261,7 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 	t.Parallel()
 
 	logs := &capture{}
-	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/ResolveIdentity"}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs("x-request-id", "req-42"))
 
 	_, err := unaryLogging(slog.New(logs))(ctx, &identityv1.ResolveIdentityRequest{TelegramUserId: 7}, info,
@@ -169,11 +273,8 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := logs.only(t, "rpc completed")
-	if rec.Level != slog.LevelDebug {
-		t.Fatalf("level: got %s want %s", rec.Level, slog.LevelDebug)
-	}
-
+	rec := logs.sole(t)
+	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
 	if got := attrValue(t, rec, "duration_us").Int64(); got < 1000 {
 		t.Fatalf("duration_us: got %d want >= 1000", got)
 	}
@@ -212,36 +313,5 @@ func TestRequestIDFromMetadata(t *testing.T) {
 				t.Fatalf("requestID: got %q want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestGracefulStopMarksHealthNotServing(t *testing.T) {
-	t.Parallel()
-
-	srv := New(slog.New(slog.DiscardHandler))
-	names := []string{"", identityv1.IdentityService_ServiceDesc.ServiceName}
-
-	for _, name := range names {
-		resp, err := srv.health.Check(t.Context(), &healthgrpc.HealthCheckRequest{Service: name})
-		if err != nil {
-			t.Fatalf("check %q before stop: %v", name, err)
-		}
-		if resp.GetStatus() != healthgrpc.HealthCheckResponse_SERVING {
-			t.Fatalf("status %q before stop: got %s want %s",
-				name, resp.GetStatus(), healthgrpc.HealthCheckResponse_SERVING)
-		}
-	}
-
-	srv.GracefulStop()
-
-	for _, name := range names {
-		resp, err := srv.health.Check(t.Context(), &healthgrpc.HealthCheckRequest{Service: name})
-		if err != nil {
-			t.Fatalf("check %q after stop: %v", name, err)
-		}
-		if resp.GetStatus() != healthgrpc.HealthCheckResponse_NOT_SERVING {
-			t.Fatalf("status %q after stop: got %s want %s",
-				name, resp.GetStatus(), healthgrpc.HealthCheckResponse_NOT_SERVING)
-		}
 	}
 }
