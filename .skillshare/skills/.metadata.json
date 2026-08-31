@@ -78,6 +78,19 @@
       "file_hashes": {
         "SKILL.md": "sha256:0d3879e17df701eebc0c3580218328b85d204ddbc79dbbfafbaab55594e679bb"
       }
+    },
+    "typescript-best-practices": {
+      "source": "github.com/cursor/plugins/pstack/skills/typescript-best-practices",
+      "type": "github-subdir",
+      "installed_at": "2026-08-31T06:30:08.690957078Z",
+      "repo_url": "https://github.com/cursor/plugins.git",
+      "subdir": "pstack/skills/typescript-best-practices",
+      "version": "fd87869",
+      "tree_hash": "1fb484a7b093b399e4726516f1bcd3370216bc59",
+      "file_hashes": {
+        "SKILL.md": "sha256:df0ecd7518b33778f4b02c2f85ee577bbaea52caa1c49df6816b0594e128bb64",
+        "references/patterns.md": "sha256:83d89dd2fdb81021eb18c77c57437f60314a60da79447756a547f08ece64b433"
+      }
     }
   }
 }

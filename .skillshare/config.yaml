@@ -26,6 +26,8 @@ skills:
     source: github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents
   - name: verify-this
     source: github.com/cursor/plugins/cursor-team-kit/skills/verify-this
+  - name: typescript-best-practices
+    source: github.com/cursor/plugins/pstack/skills/typescript-best-practices
 extras:
   - name: commands
     targets:

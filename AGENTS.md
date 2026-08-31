@@ -113,6 +113,21 @@ nats-tester --help
 
 Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. По этой причине выключен `retro`: он несёт свои категории улучшений, опирается на `CODING_STANDARDS.md`, которого в репозитории нет, и не знает про журнал наблюдений; нужная функция вынесена в свой `proj-record-observation`. Вторая причина выключить внешний скилл — занятое имя: скиллы, команды и встроенные команды Claude Code делят одно пространство `/`, и вендоренный скилл перекрывает одноимённую встроенную команду молча. Так выключен `code-review`: имя вернулось встроенной команде, а нужная функция вынесена в свой `proj-review-change`. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `proj-`скилл поверх норматива, чем чинить чужой.
 
+Набор TypeScript — один скилл `typescript-best-practices` из [cursor/plugins](https://github.com/cursor/plugins) (`pstack/skills/typescript-best-practices`): языковые правила без выбранной runtime-валидации, срабатывает на `.ts`/`.tsx`. Готового пака уровня `samber/cc-skills-golang` нет, поэтому в `.skillignore` из этого набора ничего не добавлялось. Дубли клона `mattpocock/_skills` (`codebase-design`, `tdd`, `writing-for-agents`) не ставились. Отвергнутые кандидаты не устанавливались:
+
+- `typescript-expert` (sickn33/agentic-awesome-skills) — type-level programming и маршрутизация в бандлер-субагентов;
+- `typescript` (lobehub/lobehub) — правила монорепозитория LobeHub (`@lobechat`, Ant Design, `simple-import-sort`);
+- `typescript-pro` (jeffallan/claude-skills) — tRPC, обязательный type-level и state machines;
+- `typescript-best-practices` (alleneubank/claude-code) — Zod как стандарт, чужой `CLAUDE.md`, 52 звезды и то же имя, что у отобранного;
+- `typescript-advanced-types` (wshobson/agents) — type-level сложность;
+- `node` (mcollina/skills) — type stripping и `node:test` как невыбранный стек;
+- `typescript-magician` (mcollina/skills) — дубль Matt Pocock и advanced types;
+- `Paldom/node-skills` — 1 звезда и Next.js в том же паке;
+- скиллы grammY / `telegram-bot-builder` — спорят с [ADR-030](docs/decisions/ADR-030-telegram-bot.md): webhook, Conversations, Telegraf;
+- остальной pstack — `tdd` и `teach` уже заняты клоном, `poteto-mode` спорит с контуром исполнения.
+
+Полезного MCP или CLI для grammY и Bot API нет: `@grammyjs/create-grammy` — scaffold, от которого отказались сами авторы; существующие Telegram MCP требуют bot token и сами держат polling, что ломает правило одного поллера.
+
 Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-record-observation`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`; команды `proj-draft-commit-message`, `proj-take-task`.
 
 Плагины включаются полем `enabledPlugins` в `.claude/settings.json` и действуют на весь проект. Сейчас включён `codex@openai-codex`: он приносит скиллы с префиксом `codex:` и агента `codex-rescue`, которые делегируют работу локальному Codex CLI. Плагин приходит мимо `.skillshare/` — `skillshare sync` его не раскладывает, `just check-agent-tools` его не проверяет, а без установленного Codex CLI его скиллы бесполезны.
