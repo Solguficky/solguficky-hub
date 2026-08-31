@@ -61,18 +61,18 @@ ADR-016 объединяет transport, RBAC и решения аукционн�
 
 ## Contract governance
 
-Приняты раскладка `contracts/proto/<domain>/v<major>/` с совпадающим Protobuf package, кодогенерация Go через `buf generate` с локальными плагинами и `go_package_prefix` потребителя, кодогенерация .NET через `Grpc.Tools` в отдельном C#-проекте. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
+Приняты раскладка `contracts/proto/<domain>/v<major>/` с совпадающим Protobuf package, кодогенерация Go и TypeScript через `buf generate` с локальными плагинами и кодогенерация .NET через `Grpc.Tools` в отдельном C#-проекте. Норматив — [protobuf.md](../standards/contracts/protobuf.md).
 
 Закрыто и записано нормативно:
 
 - правила совместимости — раздел «Совместимость» в [protobuf.md](../standards/contracts/protobuf.md);
 - ownership схем, каталога и generated-code configuration — раздел «Владение» в [contracts/README.md](../../contracts/README.md);
 - раскладка каталогов, именование пакетов и кодогенерация Go — [protobuf.md](../standards/contracts/protobuf.md);
-- кодогенерация .NET — раздел «Кодогенерация .NET» в [protobuf.md](../standards/contracts/protobuf.md).
+- кодогенерация .NET — раздел «Кодогенерация .NET» в [protobuf.md](../standards/contracts/protobuf.md);
+- кодогенерация TypeScript — раздел «Кодогенерация TypeScript» в [protobuf.md](../standards/contracts/protobuf.md).
 
 До следующих контрактов остаются открытыми:
 
-- codegen matrix для TypeScript;
 - CI breaking checks и `buf lint`;
 - машинно-проверяемые ограничения полей. Единственный рабочий механизм — protovalidate: опция вида `[(buf.validate.field).string.uuid = true]` прямо в схеме и рантайм-библиотека у каждого потребителя. Он требует зависимости из Buf Schema Registry, которая по [protobuf.md](../standards/contracts/protobuf.md) сейчас вне build path, поэтому вводится не вместе с отдельным контрактом, а решением по всем схемам сразу;
 - граница отдельного контрактного изменения, когда оно затрагивает несколько потребителей.
