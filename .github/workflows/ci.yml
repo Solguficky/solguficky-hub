@@ -49,6 +49,10 @@ jobs:
         working-directory: apps/identity
       - run: go test ./...
         working-directory: apps/identity
+      # Отдельным шагом: -race требует cgo и на Windows-машине разработчика
+      # не запускается без toolchain C, поэтому детектор гонок живёт в CI.
+      - run: go test -race ./...
+        working-directory: apps/identity
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v${{ steps.tools.outputs.golangci }}
