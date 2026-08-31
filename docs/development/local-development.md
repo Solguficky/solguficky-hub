@@ -6,6 +6,8 @@
 
 .NET Aspire — принятый и единственный инструмент локальной оркестрации ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md)). Рукописные `docker-compose.yml` жили внутри сервисов предыдущего поколения и удалены вместе с ними, поэтому fallback-пути больше нет: если `aspire run` не работает, инфраструктура поднимается вручную.
 
+SDK закреплён в корневом `global.json`: .NET 10, `rollForward: latestFeature` разрешает более новый патч той же линейки 10.0.
+
 ## AppHost
 
 ```powershell

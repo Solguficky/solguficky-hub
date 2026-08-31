@@ -102,7 +102,7 @@ meetups-build:
 
 # Проверка, что в схеме ровно шесть операций среза
 meetups-test:
-    DOTNET_ROLL_FORWARD=LatestMajor dotnet test apps/meetups/Meetups.sln --nologo
+    dotnet test apps/meetups/Meetups.sln --nologo
 
 # --- Инструменты -----------------------------------------------------------
 
