@@ -26,6 +26,11 @@ skills:
     source: github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents
   - name: verify-this
     source: github.com/cursor/plugins/cursor-team-kit/skills/verify-this
+  - name: _golang
+    source: https://github.com/samber/cc-skills-golang.git
+    tracked: true
+    group: golang
+    branch: main
 extras:
   - name: commands
     targets:

@@ -117,6 +117,8 @@ PostgreSQL — единственный источник истины, кома�
 
 Identity реализуется на Go. Сложного домена здесь нет; исследовательская ценность находится в operational-контуре gRPC/Protobuf, PostgreSQL, миграций, контейнера, Railway, Aspire и observability. Сгенерированный Protobuf-код живёт в отдельном пакете `gen/` без рукописного кода. Кодогенерация выполняется командой `buf generate --template apps/identity/buf.gen.yaml` с локальными официальными Go-плагинами по [стандарту Protobuf](../standards/contracts/protobuf.md#кодогенерация-go).
 
+Текущий код — скелет в `apps/identity`: gRPC-сервер, заглушка `ResolveIdentity`, `grpc.health.v1` и структурные логи `log/slog`. Схемы, базы и логики разрешения в нём нет.
+
 ## Цена отдельного сервиса
 
 Разделение требует явно спроектировать:

@@ -31,6 +31,7 @@
 ```bash
 # Identity (Go) — из корня репозитория
 just identity-test
+just identity-lint
 
 # .NET — из папки проекта
 dotnet build && dotnet test
