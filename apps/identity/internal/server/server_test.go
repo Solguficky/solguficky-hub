@@ -16,18 +16,39 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
+// Чёрный ящик: значение заглушки — деталь реализации и проверяется
+// внутренним тестом. Снаружи наблюдаемы непустой ответ, его повторяемость и
+// то, что optional-поле контракта проходит по проводу в обоих состояниях.
 func TestResolveIdentityOverGRPC(t *testing.T) {
 	t.Parallel()
 
-	client := newIdentityClient(t)
-	resp, err := client.ResolveIdentity(t.Context(), &identityv1.ResolveIdentityRequest{
-		TelegramUserId: 42,
-	})
-	if err != nil {
-		t.Fatal(err)
+	username := "alice"
+	cases := []struct {
+		name string
+		req  *identityv1.ResolveIdentityRequest
+	}{
+		{name: "with username", req: &identityv1.ResolveIdentityRequest{TelegramUserId: 42, TelegramUsername: &username}},
+		{name: "without username", req: &identityv1.ResolveIdentityRequest{TelegramUserId: 42}},
 	}
-	if resp.GetIdentityId() != server.StubIdentityID {
-		t.Fatalf("identity_id: got %q want %q", resp.GetIdentityId(), server.StubIdentityID)
+
+	client := newIdentityClient(t)
+	var first string
+	for _, tc := range cases {
+		resp, err := client.ResolveIdentity(t.Context(), tc.req)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if resp.GetIdentityId() == "" {
+			t.Fatalf("%s: identity_id is empty", tc.name)
+		}
+		if len(resp.GetGlobalRoles()) != 0 {
+			t.Fatalf("%s: global_roles: got %v want empty", tc.name, resp.GetGlobalRoles())
+		}
+		if first == "" {
+			first = resp.GetIdentityId()
+		} else if resp.GetIdentityId() != first {
+			t.Fatalf("%s: identity_id: got %q want %q from the previous call", tc.name, resp.GetIdentityId(), first)
+		}
 	}
 }
 

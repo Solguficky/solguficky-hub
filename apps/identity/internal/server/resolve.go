@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const StubIdentityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"
+const stubIdentityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"
 
 type identityService struct {
 	identityv1.UnimplementedIdentityServiceServer
@@ -20,6 +20,6 @@ func (identityService) ResolveIdentity(_ context.Context, req *identityv1.Resolv
 	}
 
 	return &identityv1.ResolveIdentityResponse{
-		IdentityId: StubIdentityID,
+		IdentityId: stubIdentityID,
 	}, nil
 }

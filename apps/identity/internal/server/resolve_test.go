@@ -19,8 +19,8 @@ func TestResolveIdentityReturnsStub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.GetIdentityId() != StubIdentityID {
-		t.Fatalf("identity_id: got %q want %q", resp.GetIdentityId(), StubIdentityID)
+	if resp.GetIdentityId() != stubIdentityID {
+		t.Fatalf("identity_id: got %q want %q", resp.GetIdentityId(), stubIdentityID)
 	}
 	if len(resp.GetGlobalRoles()) != 0 {
 		t.Fatalf("global_roles: got %v want empty", resp.GetGlobalRoles())
