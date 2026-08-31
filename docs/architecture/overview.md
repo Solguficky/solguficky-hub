@@ -60,7 +60,7 @@ Linear является источником правды для порядка 
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, verification pending | Aspire как inner loop |
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
-| Contract governance | Open, частично закрыто | Раскладка контрактов, Go codegen и .NET codegen приняты; CI breaking checks и codegen TypeScript ещё нет |
+| Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks ещё нет |
 
 Основной архитектурный поток строится вокруг сходок.
 

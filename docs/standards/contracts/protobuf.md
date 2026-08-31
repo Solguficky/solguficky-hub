@@ -2,7 +2,7 @@
 
 > **Статус:** Active  
 > **Применимость:** `contracts/proto/`, все NATS/gRPC producers и consumers  
-> **Связанные документы:** ADR-012, ADR-014, ADR-025, [integration.md](../../architecture/integration.md)
+> **Связанные документы:** ADR-012, ADR-014, ADR-025, [RFC-007](../../rfcs/RFC-007-typescript-protobuf-codegen.md), [integration.md](../../architecture/integration.md)
 
 `contracts/proto/` — единственный источник wire-схем межсервисного обмена.
 
@@ -28,7 +28,7 @@
 - Транспорт каталогом и частью package не является. То, что операция идёт по gRPC, а не по NATS, документируется в [integration.md](../../architecture/integration.md).
 - Организационного префикса в package нет: все потребители свои, Buf Schema Registry вне build path. Появится внешняя публикация — префикс вводится вместе с новым major.
 - Несовместимая версия — новый каталог и package `v<major+1>`, а не правка существующего.
-- Корень buf-модуля — `contracts/proto/`. Потребитель не переносит корень: от него считаются пути в `import`. Go сужает генерацию фильтром `paths` в `buf.gen.yaml` и считает от него же `go_package` в managed mode. .NET задаёт тот же корень как `ProtoRoot` у элемента `Protobuf`.
+- Корень buf-модуля — `contracts/proto/`. Потребитель не переносит корень: от него считаются пути в `import`. Go сужает генерацию фильтром `paths` в `buf.gen.yaml` и считает от него же `go_package` в managed mode. TypeScript задаёт тот же корень как `inputs.directory` в своём `buf.gen.yaml`. .NET задаёт тот же корень как `ProtoRoot` у элемента `Protobuf`.
 - В `.proto` нет языковых `option` вроде `go_package`: их задаёт потребитель через managed mode.
 
 ## Комментарии
@@ -59,7 +59,18 @@ Buf выбран вместо прямого вызова `protoc`, потому
 - `import` резолвится от корня модуля: у каждого элемента `Protobuf` атрибут `ProtoRoot` указывает на `contracts/proto/`, а путь в `Include` лежит внутри этого корня. Well-known types .NET берёт из поставки `Grpc.Tools`, не из buf-модуля.
 - Для сборки Meetups команда генерации — `dotnet build` контрактного C#-проекта. Локальная, CI- и container-сборка сервиса включают эту команду; Aspire запускает уже подготовленный процесс и сам кодогенерацию не выполняет.
 
-Генерацию запускает `dotnet build` через `Grpc.Tools`, потому что C#-генератор встроен в `protoc`, а `grpc_csharp_plugin` — нативный бинарник из того же NuGet: вызов через `buf generate` не убирает `Grpc.Tools`, а оркестрирует его бинарники вторым toolchain. `buf generate` остаётся frontend только Go-потребителей. Цена двух frontend: в репозитории два `protoc` — `BUF_VERSION` у Go и тот, что внутри `Grpc.Tools`; синтаксис схемы, который принимает один, другой может отвергнуть. `buf lint` и breaking check проверяют схемы, а не C# codegen.
+Генерацию запускает `dotnet build` через `Grpc.Tools`, потому что C#-генератор встроен в `protoc`, а `grpc_csharp_plugin` — нативный бинарник из того же NuGet: вызов через `buf generate` не убирает `Grpc.Tools`, а оркестрирует его бинарники вторым toolchain. `buf generate` остаётся frontend Go- и TypeScript-потребителей. Цена двух frontend: в репозитории два `protoc` — `BUF_VERSION` у Go и TypeScript и тот, что внутри `Grpc.Tools`; синтаксис схемы, который принимает один, другой может отвергнуть. `buf lint` и breaking check проверяют схемы, а не C# codegen.
+
+## Кодогенерация TypeScript
+
+- TypeScript-потребители вызывают `buf generate` как frontend кодогенерации. Конфигурация конкретного потребителя хранится в его `buf.gen.yaml`.
+- Сообщения и schema сервиса генерирует локальный официальный плагин `protoc-gen-es` с рантаймом `@bufbuild/protobuf`. RPC-клиент — Connect с транспортом gRPC: пакеты `@connectrpc/connect` и `@connectrpc/connect-node`, вызов `createGrpcTransport`. Identity отвечает обычным gRPC поверх HTTP/2; протокол Connect к нему не применяется. Remote plugins и Buf Schema Registry не входят в build path.
+- Версии закреплены в одном месте на инструмент: `buf` — переменной `BUF_VERSION` в корневом `justfile`, плагин `protoc-gen-es`, рантайм и Connect — в `package.json` потребителя. Джоба CI читает `BUF_VERSION` из `justfile`, а не дублирует значение; npm-пакеты ставит `npm ci` того же `package.json`.
+- Сгенерированный код находится в отдельном каталоге `gen/`, не содержит рукописного кода и не является источником правды.
+- Для сборки Telegram Bot команда из корня репозитория — `buf generate --template apps/telegram-bot/buf.gen.yaml`. Плагин вызывается как `local: apps/telegram-bot/node_modules/.bin/protoc-gen-es`, чтобы генерация не зависела от `PATH`. Рецепт `just` и джоба CI появятся вместе со скелетом сервиса; Aspire запускает уже подготовленный процесс и сам кодогенерацию не выполняет. Каталог `apps/telegram-bot` этой нормой не заводится.
+- Well-known types TypeScript берёт из `@bufbuild/protobuf/wkt`, а не генерирует `google/protobuf` в `gen/`. `import` резолвится от корня модуля: `inputs.directory` указывает на `contracts/proto/`, фильтр `paths` сужает генерацию так же, как у Go.
+
+`protoc-gen-es` выбран вместо `ts-proto`, потому что это официальный плагин того же контура, что уже стоит у Go, даёт дискриминированный `oneof` без отдельной опции и не копирует WKT в `gen/`. `ts-proto` 2.x сам сериализует через `@bufbuild/protobuf/wire`, то есть community-генератор садится на тот же рантайм и добавляет опции, callback-клиент и сгенерированные `google/protobuf`. Connect с `createGrpcTransport` говорит с Identity обычным gRPC и не требует менять сервер; протокол Connect к `grpc-go` отвечает HTTP 415. Сравнение и прогон — [RFC-007](../../rfcs/RFC-007-typescript-protobuf-codegen.md).
 
 ## Изменение контракта
 
