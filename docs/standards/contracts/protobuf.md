@@ -2,7 +2,7 @@
 
 > **Статус:** Active  
 > **Применимость:** `contracts/proto/`, все NATS/gRPC producers и consumers  
-> **Связанные документы:** ADR-012, ADR-014, [integration.md](../../architecture/integration.md)
+> **Связанные документы:** ADR-012, ADR-014, ADR-025, [integration.md](../../architecture/integration.md)
 
 `contracts/proto/` — единственный источник wire-схем межсервисного обмена.
 
@@ -28,7 +28,7 @@
 - Транспорт каталогом и частью package не является. То, что операция идёт по gRPC, а не по NATS, документируется в [integration.md](../../architecture/integration.md).
 - Организационного префикса в package нет: все потребители свои, Buf Schema Registry вне build path. Появится внешняя публикация — префикс вводится вместе с новым major.
 - Несовместимая версия — новый каталог и package `v<major+1>`, а не правка существующего.
-- Корень buf-модуля — `contracts/proto/`. Потребитель сужает генерацию фильтром `paths` в своём `buf.gen.yaml`, а не переносом корня: от корня считаются и пути в `import`, и Go import path в managed mode.
+- Корень buf-модуля — `contracts/proto/`. Потребитель не переносит корень: от него считаются пути в `import`. Go сужает генерацию фильтром `paths` в `buf.gen.yaml` и считает от него же `go_package` в managed mode. .NET задаёт тот же корень как `ProtoRoot` у элемента `Protobuf`.
 - В `.proto` нет языковых `option` вроде `go_package`: их задаёт потребитель через managed mode.
 
 ## Комментарии
@@ -49,6 +49,17 @@
 - `go_package_prefix` Identity — `github.com/Solguficky/solguficky-hub/apps/identity/gen`. К нему добавляется путь файла относительно корня модуля, поэтому схема `identity/v1/` даёт Go-пакет `.../gen/identity/v1`.
 
 Buf выбран вместо прямого вызова `protoc`, потому что генерирует код теми же Go-плагинами, но хранит список входов и параметры декларативно и оставляет единый путь к `buf lint` и `buf breaking`. Эти проверки не включаются самим выбором генератора: contract CI с lint и compatibility gate вводится отдельным изменением.
+
+## Кодогенерация .NET
+
+- .NET-потребители генерируют C# штатным `Grpc.Tools` внутри MSBuild. `buf generate` для C# не вызывается. Форма сгенерированного кода — отдельный C#-проект без рукописных строк, на который ссылается F#-сервис; это [ADR-025](../../decisions/ADR-025-meetups-fsharp-stack.md).
+- Сообщения даёт встроенный генератор `protoc --csharp_out`, стабы — `grpc_csharp_plugin`. Оба бинарника поставляет пакет `Grpc.Tools`; отдельного `protoc-gen-csharp` в build path нет. Remote plugins и Buf Schema Registry не входят в build path.
+- Версии `protoc` и `grpc_csharp_plugin` закреплены одним `PackageReference` на `Grpc.Tools` в контрактном C#-проекте потребителя. Рантайм-пакеты `Google.Protobuf` и `Grpc.*` закрепляются рядом отдельными ссылками.
+- Сгенерированный код — артефакт сборки в `obj/`, не коммитится и не является источником правды. В контрактном проекте нет рукописного C#.
+- `import` резолвится от корня модуля: у каждого элемента `Protobuf` атрибут `ProtoRoot` указывает на `contracts/proto/`, а путь в `Include` лежит внутри этого корня. Well-known types .NET берёт из поставки `Grpc.Tools`, не из buf-модуля.
+- Для сборки Meetups команда генерации — `dotnet build` контрактного C#-проекта. Локальная, CI- и container-сборка сервиса включают эту команду; Aspire запускает уже подготовленный процесс и сам кодогенерацию не выполняет.
+
+Генерацию запускает `dotnet build` через `Grpc.Tools`, потому что C#-генератор встроен в `protoc`, а `grpc_csharp_plugin` — нативный бинарник из того же NuGet: вызов через `buf generate` не убирает `Grpc.Tools`, а оркестрирует его бинарники вторым toolchain. Единый frontend `buf generate` для .NET не удержан. Цена исключения: в репозитории два `protoc` — `BUF_VERSION` у Go-потребителей и тот, что внутри `Grpc.Tools`; синтаксис схемы, который принимает один, другой может отвергнуть; `buf lint` и breaking check на C# codegen не распространяются.
 
 ## Изменение контракта
 

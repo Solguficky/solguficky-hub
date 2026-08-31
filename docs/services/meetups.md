@@ -95,7 +95,7 @@ Identity сообщает факты о человеке и общие сист�
 
 ## Стек и как он выбирался
 
-Принят F# на .NET с Dapper; Protobuf-контракты генерируются в отдельном C#-проекте — [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). Критерии и сравнение ниже сохранены как образец метода: тем же способом был выбран Go для Identity — [ADR-027](../decisions/ADR-027-identity-go-stack.md).
+Принят F# на .NET с Dapper; Protobuf-контракты генерируются штатным `Grpc.Tools` в отдельном C#-проекте — [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). Кто запускает плагины, команда генерации и место закрепления версий — раздел «Кодогенерация .NET» в [стандарте Protobuf](../standards/contracts/protobuf.md#кодогенерация-net). Критерии и сравнение ниже сохранены как образец метода: тем же способом был выбран Go для Identity — [ADR-027](../decisions/ADR-027-identity-go-stack.md).
 
 Критерии сравнения:
 
