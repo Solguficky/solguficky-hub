@@ -14,7 +14,7 @@ contracts/proto/
 
 Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
 
-Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Потребитель не переносит корень: Go сужает генерацию фильтром `paths` в `buf.gen.yaml`, .NET задаёт тот же корень как `ProtoRoot` в `.csproj`.
+Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Как потребитель указывает этот корень — в [стандарте Protobuf](../docs/standards/contracts/protobuf.md).
 
 Аукционные схемы удалены: аукцион не входит в MVP. Контракты Meetups, Telegram Bot и NATS-событий Identity ещё не спроектированы.
 
