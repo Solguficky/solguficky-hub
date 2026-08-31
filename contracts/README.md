@@ -14,7 +14,7 @@ contracts/proto/
 
 Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
 
-Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Потребитель сужает генерацию фильтром `paths` в своём `buf.gen.yaml`, а не переносом корня.
+Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Как потребитель указывает этот корень — в [стандарте Protobuf](../docs/standards/contracts/protobuf.md).
 
 Аукционные схемы удалены: аукцион не входит в MVP. Контракты Meetups, Telegram Bot и NATS-событий Identity ещё не спроектированы.
 
@@ -22,7 +22,7 @@ contracts/proto/
 
 - `.proto` задаёт сообщение и номера полей.
 - [Integration catalog](../docs/architecture/integration.md) задаёт NATS subject, producer и consumers.
-- Каждый сервис хранит только configuration кодогенерации и использует сгенерированные типы.
+- Каждый сервис хранит только configuration кодогенерации и использует сгенерированные типы. У Go это `buf.gen.yaml`, у .NET — элементы `Protobuf` и `ProtoRoot` в контрактном `.csproj`.
 - `tools/nats-tester` генерирует Python-типы из тех же схем.
 
 ## Изменение
