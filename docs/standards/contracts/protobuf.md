@@ -43,7 +43,7 @@
 
 - Go-потребители вызывают `buf generate` как единый frontend кодогенерации. Конфигурация конкретного потребителя хранится в его `buf.gen.yaml`.
 - Код генерируют локальные официальные плагины `protoc-gen-go` и `protoc-gen-go-grpc` с закреплёнными версиями. Remote plugins и Buf Schema Registry не входят в build path.
-- Версии закреплены в одном месте на инструмент: `buf` — переменной `BUF_VERSION` в корневом `justfile`, плагины — модулем `apps/identity/go.mod` и файлом `tools.go`. Джоба `identity` в CI читает `BUF_VERSION` из `justfile`, а не дублирует значение. Установка — `just identity-proto-tools`.
+- Версии закреплены в одном месте на инструмент: `buf` — переменной `BUF_VERSION` в корневом `justfile`, плагины — директивой `tool` в `apps/identity/go.mod`. Джоба `identity` в CI читает `BUF_VERSION` из `justfile`, а не дублирует значение. Установка — `just identity-proto-tools`.
 - Сгенерированный код находится в отдельном пакете `gen/`, не содержит рукописного кода и не является источником правды.
 - Для Identity команда из корня репозитория — `buf generate --template apps/identity/buf.gen.yaml`. Её оборачивают рецепт `just identity-proto` и локальная, CI- и container-сборка сервиса; Aspire запускает уже подготовленный Go-процесс и сам кодогенерацию не выполняет.
 - `go_package_prefix` Identity — `github.com/Solguficky/solguficky-hub/apps/identity/gen`. К нему добавляется путь файла относительно корня модуля, поэтому схема `identity/v1/` даёт Go-пакет `.../gen/identity/v1`.

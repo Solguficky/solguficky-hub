@@ -42,7 +42,7 @@ jobs:
         with:
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
-      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
+      - run: go install tool
         working-directory: apps/identity
       - run: buf generate --template apps/identity/buf.gen.yaml
       - run: go build ./...

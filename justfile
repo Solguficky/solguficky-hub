@@ -63,7 +63,7 @@ identity-tools: identity-proto-tools identity-lint-tools
 # Установить buf и Go-плагины кодогенерации закреплённых версий в $(go env GOPATH)/bin
 identity-proto-tools:
     go install github.com/bufbuild/buf/cmd/buf@v{{BUF_VERSION}}
-    cd apps/identity && go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
+    cd apps/identity && go install tool
 
 # Установить golangci-lint закреплённой версии в $(go env GOPATH)/bin
 identity-lint-tools:
