@@ -1,6 +1,6 @@
 # Meetups Service
 
-> **Слой:** MVP. **Граница и техническая модель:** Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md). **Стек:** Accepted, [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). **Словарь домена:** Accepted для среза, [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md). **Контракты:** Open.
+> **Слой:** MVP. **Граница и техническая модель:** Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md). **Стек:** Accepted, [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). **Словарь домена:** Accepted для среза, [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md). **Контракты среза:** Accepted, синхронный gRPC, [integration.md](../architecture/integration.md).
 
 ## Ответственность
 
@@ -91,7 +91,7 @@ Identity сообщает факты о человеке и общие сист�
 
 **Персональные данные.** Требования удалять данные по запросу продукт не предъявляет, механизм стирания в MVP не проектируется, ретеншен журнала не вводится. Минимизация остаётся в силе: изменяемые Telegram-атрибуты человека принадлежат Identity, а события Meetups ссылаются на человека внутренним идентификатором.
 
-До утверждения словаря событий нельзя окончательно выбирать transport каждой операции.
+Доменные события среза в шину не публикуются, поэтому их transport остаётся открытым вместе с конвертом публикации. Шесть синхронных операций бот → Meetups идут по gRPC ([integration.md](../architecture/integration.md)).
 
 ## Стек и как он выбирался
 

@@ -12,6 +12,7 @@ jobs:
       pull-requests: read
     outputs:
       identity: ${{ steps.filter.outputs.identity }}
+      meetups: ${{ steps.filter.outputs.meetups }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -21,6 +22,11 @@ jobs:
             identity:
               - 'contracts/proto/**'
               - 'apps/identity/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            meetups:
+              - 'contracts/proto/**'
+              - 'apps/meetups/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
 
@@ -59,6 +65,22 @@ jobs:
           working-directory: apps/identity
           install-mode: goinstall
           args: --timeout 5m
+
+  meetups:
+    needs: changes
+    if: needs.changes.outputs.meetups == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet build Meetups.sln --nologo
+        working-directory: apps/meetups
+      - run: dotnet test Meetups.sln --nologo --no-build
+        working-directory: apps/meetups
+        env:
+          DOTNET_ROLL_FORWARD: LatestMajor
 
   repo-hygiene:
     runs-on: ubuntu-latest

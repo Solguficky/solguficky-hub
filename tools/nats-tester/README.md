@@ -6,7 +6,7 @@ CLI для ручной проверки сообщений на шине: пу�
 
 **Реестр subjects пуст.** Ни одного NATS-контракта пока не принято, поэтому `publish`, `subscribe` и `validate` не знают ни одного типа сообщений и `list-types` показывает ноль.
 
-Единственная действующая схема — `identity/v1`, и это gRPC: subject у неё не бывает, в реестр она не попадает. Генерируется она потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
+Действующие схемы — `identity/v1` и `meetups/v1`, обе gRPC: subject у них не бывает, в реестр они не попадают. Генерируются они потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
 
 Инструмент оживает, когда появится первый принятый NATS-контракт: схема кладётся в `contracts/proto/`, классы генерируются, subject добавляется в реестр — см. «Добавление типа сообщения».
 

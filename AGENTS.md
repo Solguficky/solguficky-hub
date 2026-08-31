@@ -19,7 +19,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 
 ## Карта репозитория
 
-- `apps/` — деплоимые компоненты платформы. Сейчас здесь скелет Identity на Go; исполняемых Meetups, Mini App и Telegram Bot ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
+- `apps/` — деплоимые компоненты платформы. Сейчас здесь скелет Identity на Go и контрактная граница Meetups (C#-кодогенерация и F#-ссылка); исполняемых Meetups, Mini App и Telegram Bot ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
@@ -52,7 +52,7 @@ skillshare sync extras -p
 # Проверка закоммиченных skills, agents и commands после sync
 just check-agent-tools
 
-# Механический гейт перед сдачей: agent tooling, Identity и тесты
+# Механический гейт перед сдачей: agent tooling, Identity, Meetups и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -72,6 +72,10 @@ just identity-build
 just identity-test
 just identity-lint
 just identity-run
+
+# Meetups — кодогенерация C#, F#-ссылка и проверка схемы
+just meetups-build
+just meetups-test
 
 # .NET — из папки проекта
 dotnet build

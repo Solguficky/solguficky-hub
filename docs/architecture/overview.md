@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а transport к Meetups остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -34,16 +34,16 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Продуктовое ядро сходок не реализовано: Meetups, Telegram Bot и Notifications существуют как принятые решения и контракты, но не как код. Identity есть как скелет gRPC-сервера с заглушкой. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
+Продуктовое ядро сходок не реализовано: исполняемых Meetups, Telegram Bot и Notifications нет. Identity есть как скелет gRPC-сервера с заглушкой. У Meetups принят gRPC-контракт среза и проекты кодогенерации. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
 | Telegram Bot | Устройство и стек приняты; кода нет | Единственный вход пользователя |
-| Meetups | Отсутствует | Владелец данных о сходках |
+| Meetups | Контракт среза: gRPC-схема, C#-кодогенерация и F#-ссылка; исполняемого сервиса нет | Владелец данных о сходках |
 | Identity | Скелет gRPC-сервера: заглушка `ResolveIdentity`, health и структурные логи; схемы и логики разрешения нет | Telegram identity, допуск к продукту и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Раскладка и Go-кодогенерация Identity | Current, единственный принятый контракт |
+| `contracts/proto` | Identity `ResolveIdentity` и шесть gRPC-операций Meetups среза | Current |
 | `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
 | Aspire AppHost | Поднимает только инфраструктуру; живой запуск не подтверждён | Current, verification pending |
 
@@ -54,7 +54,7 @@ Linear является источником правды для порядка 
 | Область | Зрелость | Направление |
 |---|---|---|
 | Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
-| Meetups | Граница, техническая модель, стек и словарь домена среза Accepted: ADR-024, ADR-025, ADR-031; контракты Open | Владелец продуктовых данных сходок |
+| Meetups | Граница, техническая модель, стек, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
@@ -85,7 +85,7 @@ Telegram user
 → наблюдаемый ответ пользователю
 ```
 
-Это не roadmap и не зафиксированный transport. Срез проверяет реальные границы сервисов, authentication/authorization, persistence, failure semantics и локальную оркестрацию. Порядок исполнения ведётся в Linear.
+Это не roadmap. Transport шести операций бот → Meetups зафиксирован как gRPC ([integration.md](integration.md)). Срез проверяет реальные границы сервисов, authentication/authorization, persistence, failure semantics и локальную оркестрацию. Порядок исполнения ведётся в Linear.
 
 ## Сквозные ограничения
 

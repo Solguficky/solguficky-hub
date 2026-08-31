@@ -42,8 +42,8 @@ check-commit-message file:
 check-agent-tools:
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity и затронутые тесты
-verify: check-agent-tools identity-build identity-test identity-lint
+# Механический гейт перед сдачей: agent tooling, Identity, Meetups и тесты
+verify: check-agent-tools identity-build identity-test identity-lint meetups-build meetups-test
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -90,6 +90,19 @@ identity-lint: identity-proto
 # Локальный запуск скелета; адрес — IDENTITY_GRPC_ADDR, по умолчанию :50051
 identity-run: identity-proto
     cd apps/identity && go run ./cmd/identity
+
+# --- Meetups (F# / .NET) ---------------------------------------------------
+#
+# Кодогенерация C# — часть `dotnet build` контрактного проекта.
+# Исполняемого сервиса ещё нет: собираются контракты и F#-ссылка на них.
+
+# Сборка контрактного C#-проекта и F#-библиотеки
+meetups-build:
+    dotnet build apps/meetups/Meetups.sln --nologo
+
+# Проверка, что в схеме ровно шесть операций среза
+meetups-test:
+    DOTNET_ROLL_FORWARD=LatestMajor dotnet test apps/meetups/Meetups.sln --nologo
 
 # --- Инструменты -----------------------------------------------------------
 
