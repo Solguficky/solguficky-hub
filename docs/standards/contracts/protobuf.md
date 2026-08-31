@@ -59,7 +59,7 @@ Buf выбран вместо прямого вызова `protoc`, потому
 - `import` резолвится от корня модуля: у каждого элемента `Protobuf` атрибут `ProtoRoot` указывает на `contracts/proto/`, а путь в `Include` лежит внутри этого корня. Well-known types .NET берёт из поставки `Grpc.Tools`, не из buf-модуля.
 - Для сборки Meetups команда генерации — `dotnet build` контрактного C#-проекта. Локальная, CI- и container-сборка сервиса включают эту команду; Aspire запускает уже подготовленный процесс и сам кодогенерацию не выполняет.
 
-Генерацию запускает `dotnet build` через `Grpc.Tools`, потому что C#-генератор встроен в `protoc`, а `grpc_csharp_plugin` — нативный бинарник из того же NuGet: вызов через `buf generate` не убирает `Grpc.Tools`, а оркестрирует его бинарники вторым toolchain. Единый frontend `buf generate` для .NET не удержан. Цена исключения: в репозитории два `protoc` — `BUF_VERSION` у Go-потребителей и тот, что внутри `Grpc.Tools`; синтаксис схемы, который принимает один, другой может отвергнуть; `buf lint` и breaking check на C# codegen не распространяются.
+Генерацию запускает `dotnet build` через `Grpc.Tools`, потому что C#-генератор встроен в `protoc`, а `grpc_csharp_plugin` — нативный бинарник из того же NuGet: вызов через `buf generate` не убирает `Grpc.Tools`, а оркестрирует его бинарники вторым toolchain. `buf generate` остаётся frontend только Go-потребителей. Цена двух frontend: в репозитории два `protoc` — `BUF_VERSION` у Go и тот, что внутри `Grpc.Tools`; синтаксис схемы, который принимает один, другой может отвергнуть. `buf lint` и breaking check проверяют схемы, а не C# codegen.
 
 ## Изменение контракта
 
