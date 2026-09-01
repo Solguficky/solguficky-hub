@@ -12,7 +12,7 @@
           },
           {
             "type": "command",
-            "command": "just identity-proto || exit 2",
+            "command": "just identity-proto && just telegram-bot-proto || exit 2",
             "if": "Edit(contracts/proto/**)",
             "statusMessage": "Проверяю Identity-кодогенерацию"
           }

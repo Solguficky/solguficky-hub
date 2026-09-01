@@ -2,7 +2,7 @@
 
 > **Слой:** MVP. **Устройство и стек:** Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md), разбор вариантов — [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). **Не спроектированы:** transport к Meetups и второй вход для уведомлений.
 
-Компонент **владеет Telegram-представлением продукта**. Он не «делает работу бота»: работу выполняют Meetups, Identity и Notifications. Идентификатор в репозитории и конфигурации — `telegram-bot`, код появится в `apps/telegram-bot`.
+Компонент **владеет Telegram-представлением продукта**. Он не «делает работу бота»: работу выполняют Meetups, Identity и Notifications. Идентификатор в репозитории и конфигурации — `telegram-bot`, код — `apps/telegram-bot`.
 
 ## Ответственность MVP
 
@@ -179,6 +179,22 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 
 Принято в [ADR-030](../decisions/ADR-030-telegram-bot.md): имя и граница компонента, стек, long polling, диспетчер приложения, отсутствие собственного хранилища, состояние в сообщении, ключ создания внутри кнопки как требование к контракту Meetups. Кодогенерация Protobuf — `protoc-gen-es` и Connect с транспортом gRPC, команда и место версий — раздел «Кодогенерация TypeScript» в [стандарте Protobuf](../standards/contracts/protobuf.md#кодогенерация-typescript).
 
+Скелет в `apps/telegram-bot` фиксирует toolchain первого TypeScript-компонента:
+
+| Вопрос | Решение |
+|---|---|
+| Package manager | **npm**. Lockfile — `apps/telegram-bot/package-lock.json`. Поле `packageManager` и CI/`just` вызывают только `npm ci`. Выбор уже стоял в [protobuf.md](../standards/contracts/protobuf.md#кодогенерация-typescript). |
+| Module system | **ESM + `NodeNext`**. `"type": "module"` и `module`/`moduleResolution`: `NodeNext`. |
+| Strictness | `strict` и явно: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noPropertyAccessFromIndexSignature`, `useUnknownInCatchVariables`. Для TypeScript 7 обязателен `"types": ["node"]`. |
+| Linting и formatting | **Biome**. `npm run lint` → `biome check .`, `npm run format` → `biome format --write .`. Один инструмент, без TypeScript compiler API, который 7.0 не отдаёт. |
+| Testing | **Vitest**, `vitest run` без watch. Coverage — `npm run coverage` без порога. |
+| Type checking | отдельный `tsc --noEmit`; сборка — `tsc -p tsconfig.build.json`. |
+| Zod | `^4.5.4`. Схемы в `src/presentation/schemas.ts`, типы через `z.infer`. |
+| Coverage gate | команды без порога. |
+| Dependency boundaries | на скелете component test диспетчера без grammY и review. Lint-rule на запрет импорта grammY в application не вводится. |
+| TypeScript | **7.0.x**, нативный `tsc`. Совместимость с Zod 4.5 и grammY 1.46 проверена в контуре PER-92. |
+| Aspire | `AddJavaScriptApp`, скрипт `start`. |
+
 Осталось вне этого брифа:
 
 - transport операций к Meetups и его wire-контракт — [PER-51](https://linear.app/anticnvm/issue/PER-51);
@@ -186,7 +202,7 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 - норматив логирования персональных данных — [PER-63](https://linear.app/anticnvm/issue/PER-63);
 - исчезающие сообщения и Rich Messages — [PER-20](https://linear.app/anticnvm/issue/PER-20).
 
-Решается при реализации, ADR не требуется: конкретные тексты и локализация, числа таймаутов и повторов, версии Node и grammY, способ подключения в Aspire 13 (`AddJavaScriptApp`, а не устаревший `AddNpmApp`).
+Решается при реализации следующих задач, ADR не требуется: конкретные тексты и локализация, числа таймаутов и повторов.
 
 ## Свидетельства и ссылки
 

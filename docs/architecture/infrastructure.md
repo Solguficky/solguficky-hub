@@ -40,7 +40,7 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Current-ограничения
 
-- AppHost поднимает только PostgreSQL и NATS: исполняемых компонентов платформы ещё нет;
+- AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены;
 - Identity применяет свои миграции при старте процесса (`just identity-run`), но в AppHost ещё не зарегистрирован;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - живой `aspire run` не подтверждён;

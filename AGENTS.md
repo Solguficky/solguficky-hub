@@ -19,7 +19,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 
 ## Карта репозитория
 
-- `apps/` — деплоимые компоненты платформы. Сейчас здесь Identity на Go: скелет gRPC с заглушкой `ResolveIdentity` и миграции PostgreSQL профиля и ролей; исполняемых Meetups, Mini App и Telegram Bot ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
+- `apps/` — деплоимые компоненты платформы. Сейчас здесь Identity на Go (скелет gRPC с заглушкой `ResolveIdentity` и миграции PostgreSQL) и скелет Telegram Bot на TypeScript + grammY; исполняемых Meetups и Mini App ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
@@ -52,7 +52,7 @@ skillshare sync extras -p
 # Проверка закоммиченных skills, agents и commands после sync
 just check-agent-tools
 
-# Механический гейт перед сдачей: agent tooling, Identity и тесты
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -74,6 +74,15 @@ just identity-lint
 just identity-run
 # IDENTITY_DATABASE_URL обязателен для identity-run; интеграционные тесты схемы требуют PostgreSQL
 
+# Telegram Bot — зависимости, кодогенерация, сборка, тесты, линт и запуск
+just telegram-bot-tools
+just telegram-bot-proto
+just telegram-bot-build
+just telegram-bot-typecheck
+just telegram-bot-test
+just telegram-bot-lint
+just telegram-bot-run
+
 # .NET — из папки проекта
 dotnet build
 dotnet test
@@ -84,7 +93,7 @@ pip install -e .
 nats-tester --help
 ```
 
-Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
+Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
 `aspire run` ещё не подтверждён живым прогоном. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Не объявляй Aspire проверенным, пока не выполнен gate из [руководства](docs/development/local-development.md).
 
@@ -99,7 +108,7 @@ nats-tester --help
 - Открывай контур скиллом `proj-start-task`, только когда владелец назвал `PER-N` и явно попросил начать или взять задачу; команда `/proj-take-task PER-N` выражает это намерение и подкладывает состояние git. Простое упоминание задачи в запросе на чтение, обсуждение или ревью контуром не является и рабочее дерево не меняет.
 - В локальном контуре самостоятельно создавай ветку задачи `feature/PER-N` от `develop`; одна задача — один pull request, `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
