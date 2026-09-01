@@ -13,7 +13,7 @@ cd infra/apphost
 aspire run
 ```
 
-AppHost объявляет контейнеры PostgreSQL и NATS. Исполняемых компонентов платформы пока нет, поэтому больше он ничего не поднимает.
+AppHost объявляет контейнеры PostgreSQL и NATS. Исполняемых компонентов платформы пока нет, поэтому больше он ничего не поднимает. Identity применяет миграции при `just identity-run`, если задан `IDENTITY_DATABASE_URL` на эту PostgreSQL.
 
 ## Профили
 

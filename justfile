@@ -54,8 +54,8 @@ aspire profile="core":
 
 # --- Identity (Go) ---------------------------------------------------------
 #
-# Кодогенерация — часть сборки. Рецепты собирают скелет gRPC-сервера
-# и проверяют заглушку ResolveIdentity.
+# Кодогенерация — часть сборки. Рецепты собирают gRPC-сервер,
+# применяют миграции PostgreSQL при запуске и проверяют схему.
 
 # Весь инструментарий Identity закреплённых версий в $(go env GOPATH)/bin
 identity-tools: identity-proto-tools identity-lint-tools
@@ -87,7 +87,7 @@ identity-lint: identity-proto
     @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
     cd apps/identity && golangci-lint run ./...
 
-# Локальный запуск скелета; адрес — IDENTITY_GRPC_ADDR, по умолчанию :50051
+# Локальный запуск; адрес — IDENTITY_GRPC_ADDR, база — IDENTITY_DATABASE_URL
 identity-run: identity-proto
     cd apps/identity && go run ./cmd/identity
 

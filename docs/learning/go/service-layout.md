@@ -95,13 +95,23 @@ func serveDone(err error) bool {
 
 Логгер процесса — `log/slog` из стандартной библиотеки, с `JSONHandler` на stdout. Уровень читается из `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`), по умолчанию `Info`. Сообщение — короткая фраза, значения — поля. Успешный RPC пишется через `DebugContext`, поэтому на `Info` его нет, а `IDENTITY_LOG_LEVEL=debug` включает журнал доступа без пересборки. Ожидаемый отказ входа — `Warn`. Это семантика [logging.md](../../standards/observability/logging.md), а не выбор библиотеки: стандарт не требует конкретного пакета.
 
+### Встроенные файлы и миграции
+
+SQL-миграции — обычные файлы рядом с пакетом `internal/migrations`. Компилятор кладёт их внутрь бинарника директивой `//go:embed *.sql`: отдельного тома и `goose -dir` на машине разработчика нет. Это ближе к `EmbeddedResource` в .NET, чем к копированию `appsettings.json` рядом с exe.
+
+При старте `main` сначала применяет миграции, потом слушает порт. Повторный старт на той же базе — успех без ошибки: goose сравнивает таблицу `goose_db_version` с файлами и ничего не делает, если версия уже текущая. Строка подключения читается из `IDENTITY_DATABASE_URL` и в лог не попадает — [logging.md](../../standards/observability/logging.md) запрещает connection strings.
+
+Провайдер goose создаётся на каждый вызов `Apply`, а не глобальной настройкой `SetBaseFS`. Глобальное состояние сломалось бы на параллельных тестах, которые поднимают разные базы.
+
 ## Урок
 
-Три вещи переносятся дальше и не зависят от Go.
+Четыре вещи переносятся дальше и не зависят от Go.
 
 **Границу видимости лучше проверять сборкой, чем договорённостью.** `internal/` даёт то, чего не даёт соглашение об именах: случайный импорт из соседнего приложения не проходит компиляцию. Когда в репозитории появится второй Go-сервис, эта граница уже стоит и ничего не стоит.
 
 **Порядок завершения процесса — часть контракта с оркестратором.** Код возврата читает не человек, а Kubernetes или systemd. Любая ветка, в которой ошибка не доезжает до кода возврата, превращает отказ в «успешное завершение» и молча ломает рестарт-политику. Отсюда правило: у каждой ветки выхода есть свой код, и ни одна не игнорирует уже полученный результат.
+
+**Схема применяется тем же процессом, который ей пользуется.** Отдельная CLI-команда миграций забывается в CI и в локальном запуске. Старт без базы — отказ с кодом 1, а не «поднимем сервер, схему потом».
 
 **Генерируемый код не хранится в Git, но обязан быть предусловием каждой команды.** Здесь это выражено зависимостями: `identity-build`, `identity-test` и `identity-lint` зависят от `identity-proto`. Иначе первая же чистая копия репозитория не собирается, и разница между «у меня работает» и CI объясняется состоянием рабочего дерева.
 
@@ -118,6 +128,10 @@ func serveDone(err error) bool {
 | `tools.go` с `//go:build tools` | приём до Go 1.24; директива `tool` в `go.mod` делает то же явно, а `go install tool` ставит всё одной командой |
 | Только `go vet` в CI | не ловит `slog`/`noctx`/`protogetter`; задача просила линт, не минимальный vet |
 | Коммитить `gen/` | ломает правило ADR-027 и [protobuf.md](../../standards/contracts/protobuf.md): generated — не источник правды |
+| `golang-migrate` вместо goose | `Up()` без контекста; линтер `noctx` отвергает. У goose есть `Provider.Up(ctx)` |
+| Глобальные `goose.SetBaseFS` / `SetDialect` | гонка между параллельными тестами на разных базах |
+| Применять миграции отдельной CLI | `just identity-run` и интеграционные тесты расходятся; задача требовала оба пути |
+| Слушать порт, если базы нет | заглушка `ResolveIdentity` работала бы, а схема — нет; отказ конфигурации должен быть виден оркестратору |
 
 ## Схема
 
@@ -127,9 +141,12 @@ flowchart LR
   buf --> gen["apps/identity/gen"]
   gen --> build["go build ./..."]
   src["cmd + internal"] --> build
+  sql["embedded SQL"] --> build
   build --> test["go test ./..."]
   gen --> lint["golangci-lint run"]
   src --> lint
+  sql --> migrate["Apply at process start"]
+  migrate --> listen["gRPC Serve"]
 ```
 
 `just identity-build`, `identity-test` и `identity-lint` все зависят от `identity-proto`. Без `gen/` пакет `internal/server` не компилируется.
@@ -144,6 +161,8 @@ flowchart LR
 - [`net.ListenConfig`](https://pkg.go.dev/net#ListenConfig) — что `ctx` делает и чего не делает.
 - [golangci-lint configuration](https://golangci-lint.run/docs/configuration/file/) — формат v2, которым написан `apps/identity/.golangci.yml`.
 - Скилл `.skillshare/skills/golang/golang-lint/SKILL.md` — из него взят состав линтеров в `.golangci.yml`; `golang-project-layout/SKILL.md` — раскладка `cmd`/`internal`; `golang-modernize/SKILL.md` — замена `tools.go` на директиву `tool`.
+- [`embed`](https://pkg.go.dev/embed) — как SQL попадает в бинарник.
+- [goose Provider](https://github.com/pressly/goose) — `NewProvider` + `Up(ctx)` вместо глобального `SetBaseFS`.
 
 ## Проверь себя
 
@@ -153,4 +172,5 @@ flowchart LR
 - `cd apps/identity && go run` маленькой программы с `JSONHandler` и `LevelInfo`: `Info` и `Warn` печатают JSON с ключами `time`, `level`, `msg`; `Debug` молчит. Проверено.
 - `golangci-lint version` на закреплённой 2.13.2, собранной `go1.27.0`, проходит `golangci-lint run ./...` в модуле. Проверено. 2.6.0 на том же `go.mod` падала с ошибкой версии export data.
 - `go test -race ./...` локально не запускается: `-race requires cgo`, а `gcc` в `PATH` нет. Проверено — поэтому детектор гонок стоит шагом в CI, а не в `just identity-test`.
-- `kill -TERM` по pid `just identity-run` и выход без `serve failed` — проверь сам, когда будет чем: msys `kill` на Windows не доставляет сигнал в обработчик Go.
+- `IDENTITY_DATABASE_URL` пустой → процесс пишет `database configuration failed` и выходит с кодом 1. Проверено `go run ./cmd/identity`.
+- Повторный `just identity-run` на той же базе пишет `migrations applied` и не падает на goose. Проверено: таблица `goose_db_version` после второго старта остаётся на version 1.
