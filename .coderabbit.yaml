@@ -1,0 +1,35 @@
+language: ru
+
+reviews:
+  profile: chill
+  path_filters:
+    - "!.claude/skills/**"
+    - "!.agents/skills/**"
+    - "!.claude/commands/**"
+  path_instructions:
+    - path: "contracts/proto/**"
+      instructions: >-
+        Проверяй обратную совместимость Protobuf, обновление всех producers и
+        consumers и синхронизацию docs/architecture/integration.md. Изменение
+        контракта должно следовать skill proj-change-contract.
+    - path: "apps/identity/**/*.go"
+      instructions: >-
+        Проверяй границы Identity, обработку ошибок и контекстов, отсутствие
+        утечек чувствительных данных и соответствие существующим Go-тестам и
+        стандартам репозитория.
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - develop
+
+knowledge_base:
+  linear:
+    usage: enabled
+    team_keys:
+      - PER
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/AGENTS.md"
+      - "docs/standards/**"
