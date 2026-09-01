@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"log/slog"
 	"net"
 
@@ -18,7 +19,7 @@ type Server struct {
 	health *health.Server
 }
 
-func New(log *slog.Logger) *Server {
+func New(log *slog.Logger, db *sql.DB, adminTelegramUserID int64) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -33,7 +34,10 @@ func New(log *slog.Logger) *Server {
 			streamRecovery(),
 		),
 	)
-	identityv1.RegisterIdentityServiceServer(srv, identityService{})
+	identityv1.RegisterIdentityServiceServer(srv, identityService{
+		db:                  db,
+		adminTelegramUserID: adminTelegramUserID,
+	})
 
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)

@@ -3,6 +3,7 @@ module github.com/Solguficky/solguficky-hub/apps/identity
 go 1.27.0
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/pressly/goose/v3 v3.27.3
 	google.golang.org/grpc v1.83.2
