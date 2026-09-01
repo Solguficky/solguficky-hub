@@ -39,6 +39,22 @@ func TestApplyDSNIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestApplyDSNConcurrently(t *testing.T) {
+	t.Parallel()
+	dsn := isolatedDSN(t)
+	errCh := make(chan error, 2)
+	for range 2 {
+		go func() {
+			errCh <- migrations.ApplyDSN(t.Context(), dsn)
+		}()
+	}
+	for range 2 {
+		if err := <-errCh; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDuplicateTelegramUserIDIsRejected(t *testing.T) {
 	t.Parallel()
 	db := isolatedDB(t)

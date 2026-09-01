@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 )
 
 //go:embed *.sql
@@ -26,7 +27,11 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 }
 
 func Apply(ctx context.Context, db *sql.DB) error {
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, files)
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return fmt.Errorf("migration locker: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, files, goose.WithSessionLocker(locker))
 	if err != nil {
 		return fmt.Errorf("migration provider: %w", err)
 	}
