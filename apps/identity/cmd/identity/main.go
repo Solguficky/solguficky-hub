@@ -10,9 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
 	"google.golang.org/grpc"
 )
+
+var errDatabaseURLMissing = errors.New("IDENTITY_DATABASE_URL is not set")
 
 const shutdownTimeout = 15 * time.Second
 
@@ -36,6 +39,17 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	dsn, err := databaseURL()
+	if err != nil {
+		log.Error("database configuration failed", "service", server.ServiceName, "error", err)
+		return 1
+	}
+	if err := migrations.ApplyDSN(ctx, dsn); err != nil {
+		log.Error("migrations failed", "service", server.ServiceName, "error", err)
+		return 1
+	}
+	log.Info("migrations applied", "service", server.ServiceName)
 
 	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -88,6 +102,14 @@ func run() int {
 // serveDone отличает штатное завершение Serve от собственного отказа сервера.
 func serveDone(err error) bool {
 	return err == nil || errors.Is(err, grpc.ErrServerStopped)
+}
+
+func databaseURL() (string, error) {
+	dsn := os.Getenv("IDENTITY_DATABASE_URL")
+	if dsn == "" {
+		return "", errDatabaseURLMissing
+	}
+	return dsn, nil
 }
 
 func logLevel() (slog.Level, error) {

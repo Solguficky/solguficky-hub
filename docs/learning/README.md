@@ -20,8 +20,8 @@
 
 | Тема | Что покрыто | Статус |
 |---|---|---|
-| [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal` как правило компилятора, горутины, каналы и `select`, ошибки, директива `tool`, `slog` JSON, цепочка `just identity-*` | вернуться |
-| [go/testing.md](go/testing.md) | раскладка тестов, внутренний и внешний тестовый пакет, табличные тесты, подмена через интерфейс, `bufconn`, `-race` и cgo | вернуться |
+| [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal` как правило компилятора, горутины, каналы и `select`, ошибки, директива `tool`, `slog` JSON, `go:embed`, goose-миграции при старте, цепочка `just identity-*` | вернуться |
+| [go/testing.md](go/testing.md) | раскладка тестов, внутренний и внешний тестовый пакет, табличные тесты, подмена через интерфейс, `bufconn`, изолированные базы PostgreSQL, `-race` и cgo | вернуться |
 | [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание, статус-коды, интерцепторы как middleware, recovery и владелец записи, health и reflection | вернуться |
 
 Статус ставится по факту, а не по ощущению:

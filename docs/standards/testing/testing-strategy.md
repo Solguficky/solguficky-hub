@@ -32,6 +32,7 @@
 # Identity (Go) — из корня репозитория
 just identity-test
 just identity-lint
+# интеграционные тесты схемы требуют PostgreSQL; в CI поднимается сервис postgres:16-alpine
 
 # .NET — из папки проекта
 dotnet build && dotnet test
