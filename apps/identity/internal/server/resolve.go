@@ -13,14 +13,14 @@ import (
 )
 
 const (
-	accessAllowed = "allowed"
+	accessPending = "pending"
 	roleAdmin     = "admin"
 )
 
 const (
 	upsertProfileSQL = `
 INSERT INTO profiles (id, telegram_user_id, username, access_status)
-VALUES ($1, $2, $3, '` + accessAllowed + `')
+VALUES ($1, $2, $3, '` + accessPending + `')
 ON CONFLICT (telegram_user_id) DO UPDATE
 SET username = EXCLUDED.username,
     updated_at = now()
@@ -29,11 +29,6 @@ RETURNING id`
 
 	selectProfileIDSQL = `SELECT id FROM profiles WHERE telegram_user_id = $1`
 
-	grantAdminSQL = `
-INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-VALUES ($1, $2, '` + roleAdmin + `', now(), $2)
-ON CONFLICT (identity_id, role) WHERE revoked_at IS NULL DO NOTHING`
-
 	listRolesSQL = `
 SELECT role FROM identity_roles
 WHERE identity_id = $1 AND revoked_at IS NULL`
@@ -41,8 +36,7 @@ WHERE identity_id = $1 AND revoked_at IS NULL`
 
 type identityService struct {
 	identityv1.UnimplementedIdentityServiceServer
-	db                  *sql.DB
-	adminTelegramUserID int64
+	db *sql.DB
 }
 
 func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.ResolveIdentityRequest) (*identityv1.ResolveIdentityResponse, error) {
@@ -59,12 +53,6 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	identityID, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "upsert profile: %v", err)
-	}
-
-	if s.adminTelegramUserID != 0 && req.GetTelegramUserId() == s.adminTelegramUserID {
-		if err := grantAdmin(ctx, tx, identityID); err != nil {
-			return nil, status.Errorf(codes.Internal, "grant admin: %v", err)
-		}
 	}
 
 	roles, err := listRoles(ctx, tx, identityID)
@@ -109,15 +97,6 @@ func upsertProfile(ctx context.Context, tx *sql.Tx, telegramUserID int64, userna
 		return "", err
 	}
 	return identityID, nil
-}
-
-func grantAdmin(ctx context.Context, tx *sql.Tx, identityID string) error {
-	grantID, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("generate grant id: %w", err)
-	}
-	_, err = tx.ExecContext(ctx, grantAdminSQL, grantID.String(), identityID)
-	return err
 }
 
 func listRoles(ctx context.Context, tx *sql.Tx, identityID string) ([]identityv1.GlobalRole, error) {

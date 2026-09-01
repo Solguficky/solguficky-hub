@@ -19,8 +19,7 @@ gRPC — RPC поверх HTTP/2 с бинарной сериализацией 
 ```go
 type identityService struct {
 	identityv1.UnimplementedIdentityServiceServer
-	db                  *sql.DB
-	adminTelegramUserID int64
+	db *sql.DB
 }
 ```
 
@@ -120,7 +119,7 @@ Reflection — ещё один библиотечный сервис: он от�
 | Отдать панику наружу как есть | значение паники и стек уезжают клиенту; `GRPCStatus()` даёт скупой `Internal` и оставляет диагностику внутри |
 | Выключить reflection | `grpcurl list` без локальных `.proto` не видит сервисы. В проде её обычно гасят: она отдаёт полный список методов |
 | Случайный UUIDv7 на каждый вызов | `grpcurl` без сохранённого id недетерминирован; повтор с тем же Telegram user id возвращает тот же внутренний идентификатор |
-| Экспортировать конфигурацию bootstrap ради теста | расширяет API пакета ради теста; выдачу роли проверяет интеграционный тест через наблюдаемый `global_roles` |
+| Экспортировать поле `health` ради теста | расширяет API пакета ради теста; `GracefulStop` проверяет белый ящик через неэкспортируемое поле |
 | `error_category` = код gRPC | дублирует `result` слово в слово; категория нужна как грубый класс, по которому группируется алерт |
 | Только unary-интерцепторы | `Health/Watch` и `ServerReflectionInfo` остаются без recovery: паника в них уронит процесс |
 | Логировать username из запроса | нарушает [logging.md](../../standards/observability/logging.md): в лог идёт технический идентификатор, не атрибут профиля Telegram |
@@ -172,7 +171,7 @@ sequenceDiagram
 - `grpcurl -plaintext 127.0.0.1:50051 list` показывает `identity.v1.IdentityService` и `grpc.health.v1.Health`. Проверено на живом `just identity-run`.
 - `Health/Check` без `service` и с `identity.v1.IdentityService` → `SERVING`. С `no.such.Service` → `NotFound` / `unknown service`. Проверено.
 - `ResolveIdentity` с `telegram_user_id: 1` возвращает канонический UUIDv7; повтор с тем же id — то же значение. Нулевой id → `InvalidArgument`. Проверено `go test ./internal/server/`.
-- Тип `identityService` компилируется с полями `db` и `adminTelegramUserID` рядом с встроенным `UnimplementedIdentityServiceServer`. Встраивание закрывает интерфейс сервиса, а пул остаётся обычным полем. Проверено сборкой пакета `internal/server`.
+- Тип `identityService` компилируется с полем `db` рядом с встроенным `UnimplementedIdentityServiceServer`. Встраивание закрывает интерфейс сервиса, а пул остаётся обычным полем. Проверено сборкой пакета `internal/server`.
 - `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Проверено. `IDENTITY_LOG_LEVEL=debug` покрыт тестом, живым процессом не проверялся.
 - Одна паника даёт **одну** запись: `TestUnaryChainLogsPanicOnce` и `TestStreamChainLogsPanicOnce` собирают ту же пару интерцепторов, что и `New`, и требуют ровно одну запись через хелпер `sole`. Проверено мутацией: добавьте в панической ветке `logRPC` вторую строку `log.Log(ctx, slog.LevelError, "rpc failed", attrs...)` — оба теста падают с `records: got 2 [ERROR rpc panic ERROR rpc failed] want 1`. Граница проверки: `sole` считает записи, прошедшие через инжектированный логгер, поэтому запись мимо него — например через `slog.Default()` — тестом не ловится.
 - Клиент не видит стека: `status.FromError` в `grpc@v1.83.2/status/status.go:100` приводит ошибку к интерфейсу `GRPCStatus() *Status`, а сервер вызывает его на `server.go:1445` для unary и `:1739` для stream. Проверено чтением исходника библиотеки.

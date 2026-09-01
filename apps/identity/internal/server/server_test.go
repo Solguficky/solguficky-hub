@@ -37,17 +37,17 @@ func newIdentityClient(t *testing.T) identityv1.IdentityServiceClient {
 
 func newConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
-	return newConnWith(t, nil, 0)
+	return newConnWith(t, nil)
 }
 
-func newConnWith(t *testing.T, db *sql.DB, adminTelegramUserID int64) *grpc.ClientConn {
+func newConnWith(t *testing.T, db *sql.DB) *grpc.ClientConn {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = lis.Close() })
 
 	log := slog.New(slog.DiscardHandler)
-	srv := server.New(log, db, adminTelegramUserID)
+	srv := server.New(log, db)
 	t.Cleanup(srv.Stop)
 	go func() {
 		_ = srv.Serve(lis)

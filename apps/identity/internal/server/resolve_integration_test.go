@@ -20,7 +20,7 @@ func TestResolveIdentityCreatesProfileAndReusesID(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
-	client := resolveClient(t, db, 0)
+	client := resolveClient(t, db)
 	username := usernameAlice
 
 	first := resolve(t, client, 1001, &username)
@@ -28,6 +28,7 @@ func TestResolveIdentityCreatesProfileAndReusesID(t *testing.T) {
 	if len(first.GetGlobalRoles()) != 0 {
 		t.Fatalf("global_roles: got %v want empty", first.GetGlobalRoles())
 	}
+	assertAccessStatus(t, db, 1001, "pending")
 
 	second := resolve(t, client, 1001, &username)
 	if second.GetIdentityId() != first.GetIdentityId() {
@@ -35,13 +36,14 @@ func TestResolveIdentityCreatesProfileAndReusesID(t *testing.T) {
 	}
 
 	assertProfileCount(t, db, 1001, 1)
+	assertAccessStatus(t, db, 1001, "pending")
 }
 
 func TestResolveIdentityConcurrentSameTelegramUserID(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
-	client := resolveClient(t, db, 0)
+	client := resolveClient(t, db)
 	username := usernameAlice
 	const n = 16
 
@@ -84,7 +86,7 @@ func TestResolveIdentityUpdatesUsernameAndPreservesUpdatedAt(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
-	client := resolveClient(t, db, 0)
+	client := resolveClient(t, db)
 	alice := usernameAlice
 	bob := "bob"
 	const telegramUserID int64 = 3001
@@ -116,19 +118,24 @@ func TestResolveIdentityUpdatesUsernameAndPreservesUpdatedAt(t *testing.T) {
 	}
 }
 
-func TestResolveIdentityGrantsAdminOnce(t *testing.T) {
+func TestResolveIdentityReturnsExistingAdminRole(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
-	const adminTelegramID int64 = 4001
-	const otherTelegramID int64 = 4002
-	client := resolveClient(t, db, adminTelegramID)
+	client := resolveClient(t, db)
 	adminName := "owner"
 	otherName := "member"
+	const adminTelegramID int64 = 4001
+	const otherTelegramID int64 = 4002
 
 	first := resolve(t, client, adminTelegramID, &adminName)
 	assertUUIDv7(t, first.GetIdentityId())
-	assertRoles(t, first.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
+	if len(first.GetGlobalRoles()) != 0 {
+		t.Fatalf("global_roles before grant: got %v want empty", first.GetGlobalRoles())
+	}
+	assertAccessStatus(t, db, adminTelegramID, "pending")
+
+	insertAdminRole(t, db, first.GetIdentityId())
 
 	second := resolve(t, client, adminTelegramID, &adminName)
 	if second.GetIdentityId() != first.GetIdentityId() {
@@ -147,62 +154,34 @@ func TestResolveIdentityGrantsAdminOnce(t *testing.T) {
 	assertRoleCount(t, db, other.GetIdentityId(), 0)
 }
 
-func TestResolveIdentityConcurrentAdminGrant(t *testing.T) {
+func TestResolveIdentityDoesNotRestoreRevokedAdmin(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
-	const adminTelegramID int64 = 5001
-	client := resolveClient(t, db, adminTelegramID)
+	client := resolveClient(t, db)
 	username := "owner"
-	const n = 8
+	const telegramUserID int64 = 5001
 
-	type result struct {
-		id    string
-		roles []identityv1.GlobalRole
-		err   error
-	}
-	results := make([]result, n)
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for i := range n {
-		go func() {
-			defer wg.Done()
-			resp, err := client.ResolveIdentity(t.Context(), &identityv1.ResolveIdentityRequest{
-				TelegramUserId:   adminTelegramID,
-				TelegramUsername: &username,
-			})
-			if err != nil {
-				results[i] = result{err: err}
-				return
-			}
-			results[i] = result{id: resp.GetIdentityId(), roles: resp.GetGlobalRoles()}
-		}()
-	}
-	wg.Wait()
+	first := resolve(t, client, telegramUserID, &username)
+	insertAdminRole(t, db, first.GetIdentityId())
+	mustExec(t, db, `UPDATE identity_roles SET revoked_at = now() WHERE identity_id = $1 AND revoked_at IS NULL`, first.GetIdentityId())
 
-	var first string
-	for i, res := range results {
-		if res.err != nil {
-			t.Fatalf("call %d: %v", i, res.err)
-		}
-		assertRoles(t, res.roles, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
-		if first == "" {
-			first = res.id
-			continue
-		}
-		if res.id != first {
-			t.Fatalf("call %d identity_id: got %q want %q", i, res.id, first)
-		}
+	second := resolve(t, client, telegramUserID, &username)
+	if second.GetIdentityId() != first.GetIdentityId() {
+		t.Fatalf("identity_id: got %q want %q", second.GetIdentityId(), first.GetIdentityId())
 	}
-	assertProfileCount(t, db, adminTelegramID, 1)
-	assertRoleCount(t, db, first, 1)
+	if len(second.GetGlobalRoles()) != 0 {
+		t.Fatalf("global_roles after revoke: got %v want empty", second.GetGlobalRoles())
+	}
+	assertRoleCount(t, db, first.GetIdentityId(), 1)
+	assertActiveRoleCount(t, db, first.GetIdentityId(), 0)
 }
 
 func TestResolveIdentityOptionalUsernameOverGRPC(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
-	client := resolveClient(t, db, 0)
+	client := resolveClient(t, db)
 	username := usernameAlice
 
 	withName := resolve(t, client, 6001, &username)
@@ -237,9 +216,9 @@ func migratedDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func resolveClient(t *testing.T, db *sql.DB, adminTelegramUserID int64) identityv1.IdentityServiceClient {
+func resolveClient(t *testing.T, db *sql.DB) identityv1.IdentityServiceClient {
 	t.Helper()
-	return identityv1.NewIdentityServiceClient(newConnWith(t, db, adminTelegramUserID))
+	return identityv1.NewIdentityServiceClient(newConnWith(t, db))
 }
 
 func resolve(t *testing.T, client identityv1.IdentityServiceClient, telegramUserID int64, username *string) *identityv1.ResolveIdentityResponse {
@@ -300,6 +279,38 @@ func assertRoleCount(t *testing.T, db *sql.DB, identityID string, want int) {
 	if n != want {
 		t.Fatalf("identity_roles for %s: got %d want %d", identityID, n, want)
 	}
+}
+
+func assertActiveRoleCount(t *testing.T, db *sql.DB, identityID string, want int) {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM identity_roles WHERE identity_id = $1 AND revoked_at IS NULL`, identityID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != want {
+		t.Fatalf("active identity_roles for %s: got %d want %d", identityID, n, want)
+	}
+}
+
+func assertAccessStatus(t *testing.T, db *sql.DB, telegramUserID int64, want string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRowContext(t.Context(), `SELECT access_status FROM profiles WHERE telegram_user_id = $1`, telegramUserID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("access_status for %d: got %q want %q", telegramUserID, got, want)
+	}
+}
+
+func insertAdminRole(t *testing.T, db *sql.DB, identityID string) {
+	t.Helper()
+	grantID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		VALUES ($1, $2, 'admin', now(), $2)`, grantID.String(), identityID)
 }
 
 func profileUsername(t *testing.T, db *sql.DB, telegramUserID int64) string {

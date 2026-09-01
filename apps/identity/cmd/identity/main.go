@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -18,8 +17,7 @@ import (
 )
 
 var (
-	errDatabaseURLMissing         = errors.New("IDENTITY_DATABASE_URL is not set")
-	errAdminTelegramUserIDInvalid = errors.New("IDENTITY_ADMIN_TELEGRAM_USER_ID must be a positive integer")
+	errDatabaseURLMissing = errors.New("IDENTITY_DATABASE_URL is not set")
 )
 
 const shutdownTimeout = 15 * time.Second
@@ -45,16 +43,13 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	db, adminID, err := openStore(ctx)
+	db, err := openStore(ctx)
 	if err != nil {
 		log.Error("store setup failed", "service", server.ServiceName, "error", err)
 		return 1
 	}
 	defer func() { _ = db.Close() }()
 	log.Info("migrations applied", "service", server.ServiceName)
-	if adminID != 0 {
-		log.Info("admin bootstrap enabled", "service", server.ServiceName, "telegram_user_id", adminID)
-	}
 
 	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -62,7 +57,7 @@ func run() int {
 		return 1
 	}
 
-	srv := server.New(log, db, adminID)
+	srv := server.New(log, db)
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String())
@@ -109,25 +104,20 @@ func serveDone(err error) bool {
 	return err == nil || errors.Is(err, grpc.ErrServerStopped)
 }
 
-func openStore(ctx context.Context) (*sql.DB, int64, error) {
+func openStore(ctx context.Context) (*sql.DB, error) {
 	dsn, err := databaseURL()
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	db, err := migrations.Open(ctx, dsn)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if err := migrations.Apply(ctx, db); err != nil {
 		_ = db.Close()
-		return nil, 0, err
+		return nil, err
 	}
-	adminID, err := adminTelegramUserID()
-	if err != nil {
-		_ = db.Close()
-		return nil, 0, err
-	}
-	return db, adminID, nil
+	return db, nil
 }
 
 func databaseURL() (string, error) {
@@ -136,18 +126,6 @@ func databaseURL() (string, error) {
 		return "", errDatabaseURLMissing
 	}
 	return dsn, nil
-}
-
-func adminTelegramUserID() (int64, error) {
-	raw := os.Getenv("IDENTITY_ADMIN_TELEGRAM_USER_ID")
-	if raw == "" {
-		return 0, nil
-	}
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id <= 0 {
-		return 0, errAdminTelegramUserIDInvalid
-	}
-	return id, nil
 }
 
 func logLevel() (slog.Level, error) {

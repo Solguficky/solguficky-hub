@@ -14,7 +14,7 @@ import (
 func TestGracefulStopMarksHealthNotServing(t *testing.T) {
 	t.Parallel()
 
-	srv := New(slog.New(slog.DiscardHandler), nil, 0)
+	srv := New(slog.New(slog.DiscardHandler), nil)
 	names := []string{"", identityv1.IdentityService_ServiceDesc.ServiceName}
 
 	assertStatus := func(when string, want healthgrpc.HealthCheckResponse_ServingStatus) {
