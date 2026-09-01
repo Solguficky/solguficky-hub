@@ -19,10 +19,12 @@ gRPC — RPC поверх HTTP/2 с бинарной сериализацией 
 ```go
 type identityService struct {
 	identityv1.UnimplementedIdentityServiceServer
+	db                  *sql.DB
+	adminTelegramUserID int64
 }
 ```
 
-Встраивание (embedding) — композиция без наследования: методы вложенного типа становятся методами внешнего, но переопределяются объявлением своего метода с тем же именем. Практический смысл здесь такой: когда в `.proto` появится новый RPC, тип по-прежнему удовлетворит интерфейсу — недостающий метод придёт из заготовки и вернёт `Unimplemented`, — вместо ошибки компиляции в неожиданном месте.
+Встраивание (embedding) — композиция без наследования: методы вложенного типа становятся методами внешнего, но переопределяются объявлением своего метода с тем же именем. Практический смысл здесь такой: когда в `.proto` появится новый RPC, тип по-прежнему удовлетворит интерфейсу — недостающий метод придёт из заготовки и вернёт `Unimplemented`, — вместо ошибки компиляции в неожиданном месте. Встраивание даёт методы, а не запрещает другие поля: пул `*sql.DB` лежит в том же `struct`.
 
 Интерфейсы в Go удовлетворяются **неявно**: `identityService` нигде не объявляет, что реализует `IdentityServiceServer`. Компилятор проверяет соответствие в точке, где значение передаётся как интерфейс, — здесь в `RegisterIdentityServiceServer`.
 
@@ -170,6 +172,7 @@ sequenceDiagram
 - `grpcurl -plaintext 127.0.0.1:50051 list` показывает `identity.v1.IdentityService` и `grpc.health.v1.Health`. Проверено на живом `just identity-run`.
 - `Health/Check` без `service` и с `identity.v1.IdentityService` → `SERVING`. С `no.such.Service` → `NotFound` / `unknown service`. Проверено.
 - `ResolveIdentity` с `telegram_user_id: 1` возвращает канонический UUIDv7; повтор с тем же id — то же значение. Нулевой id → `InvalidArgument`. Проверено `go test ./internal/server/`.
+- Тип `identityService` компилируется с полями `db` и `adminTelegramUserID` рядом с встроенным `UnimplementedIdentityServiceServer`. Встраивание закрывает интерфейс сервиса, а пул остаётся обычным полем. Проверено сборкой пакета `internal/server`.
 - `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Проверено. `IDENTITY_LOG_LEVEL=debug` покрыт тестом, живым процессом не проверялся.
 - Одна паника даёт **одну** запись: `TestUnaryChainLogsPanicOnce` и `TestStreamChainLogsPanicOnce` собирают ту же пару интерцепторов, что и `New`, и требуют ровно одну запись через хелпер `sole`. Проверено мутацией: добавьте в панической ветке `logRPC` вторую строку `log.Log(ctx, slog.LevelError, "rpc failed", attrs...)` — оба теста падают с `records: got 2 [ERROR rpc panic ERROR rpc failed] want 1`. Граница проверки: `sole` считает записи, прошедшие через инжектированный логгер, поэтому запись мимо него — например через `slog.Default()` — тестом не ловится.
 - Клиент не видит стека: `status.FromError` в `grpc@v1.83.2/status/status.go:100` приводит ошибку к интерфейсу `GRPCStatus() *Status`, а сервер вызывает его на `server.go:1445` для unary и `:1739` для stream. Проверено чтением исходника библиотеки.
