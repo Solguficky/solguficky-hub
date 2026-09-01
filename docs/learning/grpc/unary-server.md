@@ -106,7 +106,7 @@ Reflection — ещё один библиотечный сервис: он от�
 
 **У записи об отказе должен быть ровно один владелец.** Ловушка middleware-цепочек в том, что каждый слой знает только про себя, поэтому «залогировать ошибку» выглядит локально правильным на каждом уровне, а на выходе получается кратный счёт в алертах. Лечится тем, что право писать error-запись явно закреплено за одним слоем, а остальные передают контекст вверх — здесь через тип ошибки. Тот же дефект в .NET выглядит как exception filter и logging middleware, пишущие один и тот же exception.
 
-**Тип ошибки — способ передать контекст, не жертвуя контрактом наружу.** `panicError` одновременно отдаёт клиенту скупой `Internal` и отдаёт своему логгеру стек. Приём переносится всюду, где внутренняя диагностика и внешний ответ должны расходиться.
+**Тип ошибки — способ передать контекст, не жертвуя контрактом наружу.** `panicError` и `internalError` одновременно отдают клиенту скупой `Internal` и отдают своему логгеру причину. Приём переносится всюду, где внутренняя диагностика и внешний ответ должны расходиться. Текст pgx в `status.Errorf` уехал бы на открытый reflection-порт вместе с DSN.
 
 **Инвариант проверяется счётчиком, а не поиском.** Тест, который ищет запись с нужным сообщением, проходит и когда записей две. Тест, который требует ровно одну запись, ловит регрессию двойного логирования. Формулировка утверждения важнее покрытия строк.
 
@@ -117,6 +117,7 @@ Reflection — ещё один библиотечный сервис: он от�
 | HTTP `/health` рядом с gRPC | второй порт и второй протокол на скелете, у которого единственный клиентский путь — gRPC. Для gRPC это [health checking protocol](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) |
 | Логировать панику в recovery | две записи ERROR на одну панику и двойной счёт в алерте; [logging.md](../../standards/observability/logging.md) требует одну запись на boundary |
 | Отдать панику наружу как есть | значение паники и стек уезжают клиенту; `GRPCStatus()` даёт скупой `Internal` и оставляет диагностику внутри |
+| Сырой `status.Errorf(Internal, "%v", err)` | текст pgx и DSN уезжают любому клиенту; `logRPC` уже пишет полный `error` |
 | Выключить reflection | `grpcurl list` без локальных `.proto` не видит сервисы. В проде её обычно гасят: она отдаёт полный список методов |
 | Случайный UUIDv7 на каждый вызов | `grpcurl` без сохранённого id недетерминирован; повтор с тем же Telegram user id возвращает тот же внутренний идентификатор |
 | Экспортировать поле `health` ради теста | расширяет API пакета ради теста; `GracefulStop` проверяет белый ящик через неэкспортируемое поле |
@@ -146,6 +147,10 @@ sequenceDiagram
         H-->>R: InvalidArgument
         R-->>L: InvalidArgument
         L-->>C: InvalidArgument; одна запись, Warn
+    else отказ хранения
+        H-->>R: internalError
+        R-->>L: Internal
+        L-->>C: Internal; одна запись, Error; причина только в логе
     else паника
         H-->>R: panic
         R-->>L: panicError со стеком
@@ -170,7 +175,7 @@ sequenceDiagram
 
 - `grpcurl -plaintext 127.0.0.1:50051 list` показывает `identity.v1.IdentityService` и `grpc.health.v1.Health`. Проверено на живом `just identity-run`.
 - `Health/Check` без `service` и с `identity.v1.IdentityService` → `SERVING`. С `no.such.Service` → `NotFound` / `unknown service`. Проверено.
-- `ResolveIdentity` с `telegram_user_id: 1` возвращает канонический UUIDv7; повтор с тем же id — то же значение. Нулевой id → `InvalidArgument`. Проверено `go test ./internal/server/`.
+- `ResolveIdentity` на закрытом `*sql.DB` отдаёт клиенту `Internal` с текстом `internal`, без DSN. Причина остаётся в логе. Проверено `TestResolveIdentityHidesStorageErrors` и `TestUnaryChainLogsInternalWithoutLeakingCause`.
 - Тип `identityService` компилируется с полем `db` рядом с встроенным `UnimplementedIdentityServiceServer`. Встраивание закрывает интерфейс сервиса, а пул остаётся обычным полем. Проверено сборкой пакета `internal/server`.
 - `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Проверено. `IDENTITY_LOG_LEVEL=debug` покрыт тестом, живым процессом не проверялся.
 - Одна паника даёт **одну** запись: `TestUnaryChainLogsPanicOnce` и `TestStreamChainLogsPanicOnce` собирают ту же пару интерцепторов, что и `New`, и требуют ровно одну запись через хелпер `sole`. Проверено мутацией: добавьте в панической ветке `logRPC` вторую строку `log.Log(ctx, slog.LevelError, "rpc failed", attrs...)` — оба теста падают с `records: got 2 [ERROR rpc panic ERROR rpc failed] want 1`. Граница проверки: `sole` считает записи, прошедшие через инжектированный логгер, поэтому запись мимо него — например через `slog.Default()` — тестом не ловится.

@@ -66,17 +66,15 @@ func TestResolveIdentityConcurrentSameTelegramUserID(t *testing.T) {
 	}
 	wg.Wait()
 
-	var first string
 	for i, err := range errs {
 		if err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
-		if first == "" {
-			first = ids[i]
-			continue
-		}
-		if ids[i] != first {
-			t.Fatalf("call %d identity_id: got %q want %q", i, ids[i], first)
+	}
+	assertUUIDv7(t, ids[0])
+	for i, id := range ids {
+		if id != ids[0] {
+			t.Fatalf("call %d identity_id: got %q want %q", i, id, ids[0])
 		}
 	}
 	assertProfileCount(t, db, 2001, 1)
@@ -204,6 +202,21 @@ func TestResolveIdentityInvalidArgumentOverGRPC(t *testing.T) {
 	_, err := client.ResolveIdentity(t.Context(), &identityv1.ResolveIdentityRequest{})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("got %v want %s", err, codes.InvalidArgument)
+	}
+}
+
+func TestResolveIdentityHidesStorageErrors(t *testing.T) {
+	t.Parallel()
+
+	client := newIdentityClient(t)
+	_, err := client.ResolveIdentity(t.Context(), &identityv1.ResolveIdentityRequest{
+		TelegramUserId: 1,
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("code: got %v want %s", err, codes.Internal)
+	}
+	if got := status.Convert(err).Message(); got != "internal" {
+		t.Fatalf("message: got %q want %q", got, "internal")
 	}
 }
 

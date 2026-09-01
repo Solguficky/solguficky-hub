@@ -37,7 +37,7 @@ func newIdentityClient(t *testing.T) identityv1.IdentityServiceClient {
 
 func newConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
-	return newConnWith(t, nil)
+	return newConnWith(t, new(sql.DB))
 }
 
 func newConnWith(t *testing.T, db *sql.DB) *grpc.ClientConn {

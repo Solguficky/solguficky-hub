@@ -117,15 +117,19 @@ _ "github.com/jackc/pgx/v5/stdlib"
 
 Имя `"pgx"` в `sql.Open("pgx", dsn)` — строка из этой регистрации, а не из пути импорта. Без строки `_` `Open` отвечает `sql: unknown driver "pgx" (forgotten import?)`. В .NET провайдер подтягивается пакетом и фабрикой; здесь его не видно в типах вызывающего кода, только в импорте с подчёркиванием.
 
+`sql.Open` без `SetMaxOpenConns` держит лимит 0 — без ограничения. gRPC unary тоже не режет concurrent streams. `ResolveIdentity` держит соединение на всю транзакцию, поэтому всплеск параллельных вызовов открыл бы по бэкенду на каждый RPC, пока PostgreSQL не ответит `too many clients already`. `Open` ставит `MaxOpenConns=16` и `ConnMaxLifetime=30m`: лишние вызовы ждут свободный слот в пуле, а соединение не живёт вечно за NAT и managed Postgres. 16 — не модель нагрузки, а потолок вместо безлимитного дефолта.
+
 Транзакция (`BeginTx`) занимает **одно** соединение из пула до `Commit` или `Rollback`. Идиома такая:
 
 ```go
-tx, err := s.db.BeginTx(ctx, nil)
+tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 if err != nil { ... }
 defer func() { _ = tx.Rollback() }()
 // ... запросы ...
 if err := tx.Commit(); err != nil { ... }
 ```
+
+Изоляцию нельзя оставлять на `default_transaction_isolation` сервера. Конкурентный upsert корректен при READ COMMITTED: `ON CONFLICT` ждёт лок вставившего, а следующий `SELECT` видит уже зафиксированную строку. Под REPEATABLE READ тот же сценарий даёт `40001`, и в обработчике нет ретрая. Пин в `TxOptions` фиксирует то, что проверяет конкурентный тест.
 
 `defer Rollback` срабатывает и на успехе. Это не ошибка: после `Commit` `Rollback` возвращает `sql.ErrTxDone` («transaction has already been committed or rolled back»), и её глотают. Аналог `await using` транзакции — только откат здесь безопасен на счастливой ветке, потому что повторный вызов после commit не ломает уже зафиксированное.
 
@@ -179,6 +183,8 @@ PostgreSQL `INSERT ... ON CONFLICT DO UPDATE WHERE ... RETURNING id` возвр�
 | `uuidv7()` в SQL | появляется в PostgreSQL 18; в срезе 16. Генерация остаётся в процессе |
 | `ApplyDSN` и слушать | `ApplyDSN` закрывает пул после миграций; RPC нечем писать. Нужны `Open` + `Apply` на том же `*sql.DB` |
 | Нативный `pgx.Pool` вместо `database/sql` | быстрее и с типизированными аргументами, но второй API рядом с goose, который уже говорит через `*sql.DB` |
+| Безлимитный пул (`MaxOpenConns=0`) | всплеск RPC открывает бэкенд на каждый вызов, пока PostgreSQL не откажет `too many clients already` |
+| Полагаться на `default_transaction_isolation` | оператор может поставить REPEATABLE READ; конкурентный первый `/start` тогда падает с `40001` |
 | `SELECT` + `INSERT` без `ON CONFLICT` | гонка двух одновременных вставок даёт unique_violation второму; upsert атомарно выбирает insert или update |
 
 ## Схема
@@ -210,7 +216,7 @@ sequenceDiagram
     participant Tx as sql.Tx
     participant PG as PostgreSQL
 
-    H->>Tx: BeginTx
+    H->>Tx: BeginTx READ COMMITTED
     H->>PG: INSERT ON CONFLICT DO UPDATE WHERE RETURNING id
     alt insert or username changed
         PG-->>H: id
@@ -236,7 +242,7 @@ sequenceDiagram
 - Скилл `.skillshare/skills/golang/golang-lint/SKILL.md` — из него взят состав линтеров в `.golangci.yml`; `golang-project-layout/SKILL.md` — раскладка `cmd`/`internal`; `golang-modernize/SKILL.md` — замена `tools.go` на директиву `tool`.
 - [`embed`](https://pkg.go.dev/embed) — как SQL попадает в бинарник.
 - [goose Provider](https://github.com/pressly/goose) — `NewProvider` + `Up(ctx)` вместо глобального `SetBaseFS`.
-- [`database/sql`](https://pkg.go.dev/database/sql) — `DB` как пул, `Open` без коннекта, `Tx` на одно соединение, `ErrNoRows` и `ErrTxDone`.
+- [`database/sql`](https://pkg.go.dev/database/sql) — `DB` как пул, `Open` без коннекта, `SetMaxOpenConns`, `Tx` на одно соединение, `LevelReadCommitted`, `ErrNoRows` и `ErrTxDone`.
 - [PostgreSQL 16: `INSERT ... ON CONFLICT`](https://www.postgresql.org/docs/16/sql-insert.html) — `excluded`, `WHERE` у `DO UPDATE`, пустой `RETURNING`, если строка не вставлена и не обновлена.
 - [`uuid.NewV7`](https://pkg.go.dev/github.com/google/uuid#NewV7) — RFC 9562 в процессе; каноническая форма — `String()`.
 
@@ -255,3 +261,5 @@ sequenceDiagram
 - Повторный `INSERT ... ON CONFLICT DO UPDATE WHERE username IS DISTINCT FROM excluded.username RETURNING id` с тем же ником: psql печатает 0 строк, `QueryRow.Scan` даёт `sql.ErrNoRows`. Смена ника возвращает тот же `id`. Проверено на PostgreSQL 16.
 - `BEGIN; SELECT now(); SELECT pg_sleep(0.05); SELECT now();` — оба `now()` равны; `clock_timestamp()` больше. Проверено.
 - `uuid.NewV7().String()` — lowercase, `Version() == 7`; `Parse` верхнего регистра снова печатает lowercase. Проверено `go run`.
+- `migrations.Open` ставит `MaxOpenConnections=16`. Проверено `TestOpenCapsPool`.
+- `BeginTx` передаёт `sql.LevelReadCommitted`. Проверено чтением `ResolveIdentity`.

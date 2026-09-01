@@ -27,10 +27,11 @@
 |---|---|---|
 | `resolve_test.go` | `server` | отказ `InvalidArgument` без базы |
 | `interceptor_test.go` | `server` | цепочку интерцепторов и поля записи |
-| `server_internal_test.go` | `server` | `GracefulStop` через неэкспортируемое поле `health` |
+| `server_internal_test.go` | `server` | `GracefulStop` через неэкспортируемое поле `health`, отказ `New` на `nil` db |
 | `server_test.go` | `server_test` | health-путь клиента через `bufconn` |
 | `resolve_integration_test.go` | `server_test` | `ResolveIdentity` через `bufconn` и живой PostgreSQL |
 | `apply_test.go` | `migrations_test` | ограничения схемы на живом PostgreSQL |
+| `open_test.go` | `migrations` | лимит пула после `Open` |
 | `testdb.go` | `testdb` | общий хелпер изолированной базы для обоих пакетов |
 
 `GracefulStop` попал в белый ящик вынужденно: после остановки сервер соединений не принимает, и увидеть `NOT_SERVING` снаружи по сети уже невозможно.
@@ -144,4 +145,4 @@ cgo: C compiler "gcc" not found
 - `go test -race ./...` локально не запускается: `-race requires cgo`, `gcc` не найден. Проверено; в CI шаг отдельный.
 - `go test -count=1 -v ./internal/migrations/` на доступном PostgreSQL: шесть тестов PASS, включая повторный `Apply`, параллельный `ApplyDSN` и отклонение второго профиля с тем же Telegram user id. Проверено.
 - `go test -count=1 -v ./internal/server/` на доступном PostgreSQL: повторный `ResolveIdentity` возвращает тот же `identity_id`, параллельные вызовы не создают второй профиль, неизменившийся ник оставляет `updated_at`, новый профиль пишется в `pending`, отозванная роль `admin` повторным вызовом не восстанавливается. Проверено.
-- Параллельный клиентский прогон вызывает `t.Fatalf` после `wg.Wait()`, не внутри `go func`. Проверено чтением `TestResolveIdentityConcurrentSameTelegramUserID`.
+- Параллельный клиентский прогон вызывает `t.Fatalf` после `wg.Wait()`, не внутри `go func`, и сравнивает id с первым каноническим UUIDv7, а не с сентинелом `""`. Проверено чтением `TestResolveIdentityConcurrentSameTelegramUserID`.

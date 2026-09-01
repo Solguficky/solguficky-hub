@@ -23,6 +23,9 @@ func New(log *slog.Logger, db *sql.DB) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
+	if db == nil {
+		panic("identity: nil database")
+	}
 
 	srv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(

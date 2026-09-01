@@ -44,24 +44,24 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 		return nil, status.Error(codes.InvalidArgument, "telegram_user_id must be positive")
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "begin transaction: %v", err)
+		return nil, internal(fmt.Errorf("begin transaction: %w", err))
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	identityID, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "upsert profile: %v", err)
+		return nil, internal(fmt.Errorf("upsert profile: %w", err))
 	}
 
 	roles, err := listRoles(ctx, tx, identityID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list roles: %v", err)
+		return nil, internal(fmt.Errorf("list roles: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+		return nil, internal(fmt.Errorf("commit: %w", err))
 	}
 
 	return &identityv1.ResolveIdentityResponse{
