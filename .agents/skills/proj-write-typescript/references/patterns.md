@@ -11,7 +11,7 @@ import { z } from "zod";
 
 const InviteSchema = z.object({
   code: z.string().min(1),
-  issuedAt: z.string().transform((s) => new Date(s)),
+  issuedAt: z.string().pipe(z.coerce.date()),
 });
 
 type Invite = z.infer<typeof InviteSchema>;
@@ -68,8 +68,11 @@ function version(segments: NonEmpty<string>): string {
   return segments[0];
 }
 
-// интервал не может быть отрицательным по построению
-type Slot = { start: Date; durationMinutes: number };
+const PositiveMinutesSchema = z.number().int().positive().brand<"PositiveMinutes">();
+type PositiveMinutes = z.infer<typeof PositiveMinutesSchema>;
+
+// длительность попадает сюда только после успешного разбора схемой
+type Slot = { start: Date; durationMinutes: PositiveMinutes };
 ```
 
 Альтернатива — `string[]` плюс `segments[0]!` плюс комментарий «пустым не бывает». Тип дешевле.

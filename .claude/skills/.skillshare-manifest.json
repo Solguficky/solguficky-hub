@@ -40,8 +40,8 @@
     "proj-review-change": "2fbcf3281e816ac82a6b3d84c66b406fc2921bf8a84cfa808edcd44becac792d",
     "proj-start-task": "12d22c9b8ac5156a5a5909590046b60f7ad325ec840346eb6474890ec9056214",
     "proj-write-commit": "67f5c84433ab70a4ca1d39b3c34322ae9efbc18f03a7a6b4a9ab9ac685ab5182",
-    "proj-write-grammy-bot": "e02293231269d05412b0eddbe745fada819edf8d760fadb15d77d56a0298fcfd",
-    "proj-write-typescript": "86ee12aedf57e5be1966f2f4d1587a6d7dd95940b4dd11f5fe98326145535234",
+    "proj-write-grammy-bot": "f628007685c8257d3d6bd3c6eb78bece61e4e99617658234f575712bfc797001",
+    "proj-write-typescript": "d3324171a9ea366c614739259c925cc89d203cc6e6b7a27601c9be94a554efca",
     "prototype": "0ab3bde2a6bd18e20e1bc6def960fa756b7257af9fd406478b15294166de825a",
     "research": "0931e8d767eda3793dfbc35c32b44e47824802ec9ebc7c716bd1dd901aa4c2f2",
     "resolving-merge-conflicts": "b5b3e7481946ed121383ffc6f89ad6c5ca3f9c177afdc976c5ab34c10762ea78",
@@ -99,8 +99,8 @@
     "proj-review-change": 1788050044643558400,
     "proj-start-task": 1788050044644570600,
     "proj-write-commit": 1788050044646070300,
-    "proj-write-grammy-bot": 1788188203223568000,
-    "proj-write-typescript": 1788188237005939400,
+    "proj-write-grammy-bot": 1788287863044080200,
+    "proj-write-typescript": 1788287860466844900,
     "prototype": 1787866344040024500,
     "research": 1787866344042693600,
     "resolving-merge-conflicts": 1787866344047084300,
@@ -117,5 +117,5 @@
     "writing-fragments": 1787866344107665000,
     "writing-shape": 1787866344110662500
   },
-  "updated_at": "2026-08-31T17:58:05.4152251+03:00"
+  "updated_at": "2026-09-01T21:37:47.1652621+03:00"
 }
