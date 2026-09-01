@@ -52,9 +52,21 @@ description: Сдать задачу внутри открытого конту�
 
 ## 6. Запушь и открой pull request
 
+Сначала проверь, не открыт ли на этой ветке PR с чекпоинта: `gh pr view --json isDraft,url`. Второй `gh pr create` на ту же ветку отказывает с `a pull request for branch ... already exists`, и сдача встаёт.
+
+PR ещё нет:
+
 ```
 git push -u origin feature/PER-N
 gh pr create --base develop --title "[PER-N] Название задачи из Linear" --body-file <файл>
+```
+
+Draft с чекпоинта уже открыт — не создавай второй, а допиши тело и переведи его в готовый:
+
+```
+git push
+gh pr edit --title "[PER-N] Название задачи из Linear" --body-file <файл>
+gh pr ready
 ```
 
 Заголовок и три части тела — по [branching.md](../../../docs/standards/git/branching.md): результат проверок, отклонения от утверждённого плана, находки ревью. Пересказ диффа в тело не входит.
