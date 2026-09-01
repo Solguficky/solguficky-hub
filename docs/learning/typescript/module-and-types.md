@@ -40,7 +40,7 @@ import { acknowledge } from "./acknowledge.js";
 telegramUsername?: string;
 ```
 
-принимает объект без поля и отвергает `{ telegramUsername: undefined }`. Поэтому `toRequest` в клиенте Identity собирает вход двумя ветками: если ника нет, в объект он не попадает. Сгенерированный Protobuf-тип пишет `telegramUsername?: string | undefined` — генератор допускает оба; наш доменный тип уже нет.
+принимает объект без поля и отвергает `{ telegramUsername: undefined }`. Поэтому `toResolveIdentityInput` собирает вход двумя ветками: если ника нет, в объект он не попадает. Parser и клиент Identity зовут одну функцию. Сгенерированный Protobuf-тип пишет `telegramUsername?: string | undefined` — генератор допускает оба; наш доменный тип уже нет.
 
 `useUnknownInCatchVariables` делает параметр `catch` типом `unknown`, а не `any`. В `main` это `cause instanceof Error ? cause.message : String(cause)`. Обращение `e.message` сразу — TS18046.
 
@@ -91,12 +91,12 @@ default: {
 
 ```ts
 const client = createClient(IdentityService, transport);
-await client.resolveIdentity(toRequest(input));
+await client.resolveIdentity(toRequest(input), { timeoutMs });
 ```
 
 `createGrpcTransport` из `@connectrpc/connect-node` говорит с Identity обычным gRPC по HTTP/2; протокол Connect сервер не принимает. Поле `int64 telegram_user_id` в TypeScript становится `bigint`: JS `number` — это float64 и не держит целый int64. Поэтому parser делает `BigInt(from.id)` на границе, где Telegram ещё отдаёт JSON-число.
 
-Отказ транспорта ловится `try/catch` и становится `{ kind: "unavailable"; cause }`. Исключение здесь — неожиданный отказ соседа, а не поток управления юзкейса. Доменный отказ — значение союза.
+`timeoutMs` (по умолчанию 3000) передаётся и в транспорт (`defaultTimeoutMs`), и в сам вызов. Поверх этого адаптер гоняет `Promise.race` со своим таймером: если сосед принял TCP, но не отвечает и не закрывает соединение, обработчик update всё равно завершается `{ kind: "unavailable" }`, а не висит. Отказ транспорта и истечение срока ловятся одним `try/catch` и становятся `{ kind: "unavailable"; cause }`. Исключение здесь — неожиданный отказ соседа, а не поток управления юзкейса. Доменный отказ — значение союза.
 
 ### Сборка и проверка
 

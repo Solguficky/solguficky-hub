@@ -4,17 +4,50 @@ import {
   GlobalRole,
   IdentityService,
 } from "../../gen/identity/v1/identity_service_pb.js";
-import type { IdentityResolver, ResolveIdentityInput } from "./port.js";
+import {
+  type IdentityResolver,
+  type ResolveIdentityInput,
+  toResolveIdentityInput,
+} from "./port.js";
 
-export function createIdentityClient(baseUrl: string): IdentityResolver {
+export const identityRpcTimeoutMs = 3_000;
+
+export type IdentityRpc = {
+  resolveIdentity(
+    request: {
+      telegramUserId: bigint;
+      telegramUsername?: string;
+    },
+    options?: { timeoutMs?: number },
+  ): Promise<{
+    identityId: string;
+    globalRoles: readonly GlobalRole[];
+  }>;
+};
+
+export function createIdentityClient(
+  baseUrl: string,
+  timeoutMs = identityRpcTimeoutMs,
+): IdentityResolver {
   const transport = createGrpcTransport({
     baseUrl,
+    defaultTimeoutMs: timeoutMs,
   });
   const client = createClient(IdentityService, transport);
+  return createIdentityResolver(client, timeoutMs);
+}
+
+export function createIdentityResolver(
+  rpc: IdentityRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): IdentityResolver {
   return {
     async resolve(input: ResolveIdentityInput) {
       try {
-        const response = await client.resolveIdentity(toRequest(input));
+        const response = await withDeadline(
+          rpc.resolveIdentity(toRequest(input), { timeoutMs }),
+          timeoutMs,
+        );
         return {
           kind: "resolved" as const,
           identityId: response.identityId,
@@ -31,13 +64,21 @@ function toRequest(input: ResolveIdentityInput): {
   telegramUserId: bigint;
   telegramUsername?: string;
 } {
-  if (input.telegramUsername === undefined) {
-    return { telegramUserId: input.telegramUserId };
-  }
-  return {
-    telegramUserId: input.telegramUserId,
-    telegramUsername: input.telegramUsername,
-  };
+  return toResolveIdentityInput(input.telegramUserId, input.telegramUsername);
+}
+
+function withDeadline<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("identity rpc deadline exceeded"));
+    }, timeoutMs);
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  });
 }
 
 function roleName(role: GlobalRole): string {

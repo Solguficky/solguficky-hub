@@ -1,9 +1,10 @@
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDispatcher } from "../application/dispatcher.js";
+import { createIdentityResolver } from "../identity/client.js";
 import type { IdentityResolver } from "../identity/port.js";
-import { createLogger } from "../logging.js";
+import type { LogFields, Logger } from "../logging.js";
 import { createBot } from "./bot.js";
 
 const botInfo: UserFromGetMe = {
@@ -22,6 +23,20 @@ const botInfo: UserFromGetMe = {
   supports_join_request_queries: false,
 };
 
+type ApiMethod = Parameters<Transformer>[1];
+type ApiPayload = Parameters<Transformer>[2];
+
+type RecordedCall = {
+  method: ApiMethod;
+  payload: ApiPayload;
+};
+
+type LogRecord = {
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  fields: LogFields;
+};
+
 function messageUpdate(): Update {
   return {
     update_id: 1,
@@ -35,49 +50,182 @@ function messageUpdate(): Update {
   };
 }
 
+function ignoredUpdate(): Update {
+  return {
+    update_id: 2,
+    message: {
+      message_id: 8,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 42, is_bot: true, first_name: "otherbot" },
+    },
+  };
+}
+
+function recordCall(method: ApiMethod, payload: ApiPayload): RecordedCall {
+  return { method, payload };
+}
+
+function createCapturingLogger(): { logger: Logger; records: LogRecord[] } {
+  const records: LogRecord[] = [];
+  const push =
+    (level: LogRecord["level"]): Logger[LogRecord["level"]] =>
+    (message, fields) => {
+      records.push({ level, message, fields: fields ?? {} });
+    };
+  return {
+    records,
+    logger: {
+      debug: push("debug"),
+      info: push("info"),
+      warn: push("warn"),
+      error: push("error"),
+    },
+  };
+}
+
+function resolvedIdentity(): IdentityResolver {
+  return {
+    resolve: async () => ({
+      kind: "resolved",
+      identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+      globalRoles: [],
+    }),
+  };
+}
+
 function createHarness(identity: IdentityResolver) {
+  const { logger, records } = createCapturingLogger();
   const bot = createBot({
     token: "111:test-token",
     dispatcher: createDispatcher(),
     identity,
-    logger: createLogger("error"),
+    logger,
   });
   bot.botInfo = botInfo;
-  const calls: Array<{ method: string; payload: unknown }> = [];
+  const calls: RecordedCall[] = [];
   const recorder: Transformer = (_prev, method, payload) => {
-    calls.push({ method, payload });
-    return Promise.resolve({ ok: true, result: true as never });
+    calls.push(recordCall(method, payload));
+    return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult depends on method; fixture never calls prev
   };
   bot.api.config.use(recorder);
-  return { bot, calls };
+  return { bot, calls, records };
 }
+
+function sendMessageText(call: RecordedCall | undefined): string | undefined {
+  if (call === undefined || call.method !== "sendMessage") {
+    return undefined;
+  }
+  if (!("text" in call.payload)) {
+    return undefined;
+  }
+  const text = call.payload.text;
+  return typeof text === "string" ? text : undefined;
+}
+
+function expectBoundary(
+  record: LogRecord | undefined,
+  expected: {
+    level: LogRecord["level"];
+    result: "ok" | "error";
+    error_category?: string;
+  },
+): void {
+  expect(record).toBeDefined();
+  if (record === undefined) {
+    return;
+  }
+  expect(record.level).toBe(expected.level);
+  expect(record.fields.operation).toBe("message");
+  expect(record.fields.result).toBe(expected.result);
+  expect(typeof record.fields.request_id).toBe("string");
+  expect(record.fields.request_id).not.toBe("");
+  expect(typeof record.fields.duration_us).toBe("number");
+  if (expected.result === "error") {
+    expect(record.fields.error_category).toBe(expected.error_category);
+    expect(typeof record.fields.error).toBe("string");
+    expect(record.fields.error).not.toBe("");
+  } else {
+    expect(record.fields.error_category).toBeUndefined();
+    expect(record.fields.error).toBeUndefined();
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("presentation adapter", () => {
   it("replies with the stub after identity resolution", async () => {
-    const identity: IdentityResolver = {
-      resolve: async () => ({
-        kind: "resolved",
-        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: [],
-      }),
-    };
-    const { bot, calls } = createHarness(identity);
+    const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(calls[0]?.method).toBe("sendMessage");
-    const payload = calls[0]?.payload as { text?: string } | undefined;
-    expect(payload?.text).toBe("заглушка");
+    expect(sendMessageText(calls[0])).toBe("заглушка");
+    expect(records.some((record) => record.level === "info")).toBe(false);
+    expectBoundary(records[0], { level: "debug", result: "ok" });
   });
 
   it("replies fail-closed when identity is unavailable", async () => {
     const identity: IdentityResolver = {
       resolve: async () => ({ kind: "unavailable", cause: new Error("down") }),
     };
-    const { bot, calls } = createHarness(identity);
+    const { bot, calls, records } = createHarness(identity);
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(calls[0]?.method).toBe("sendMessage");
-    const payload = calls[0]?.payload as { text?: string } | undefined;
-    expect(payload?.text).toBe("недоступно");
+    expect(sendMessageText(calls[0])).toBe("недоступно");
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "identity_unavailable",
+    });
+    expect(records[0]?.fields.error).toBe("down");
+  });
+
+  it("replies fail-closed when identity rpc exceeds the deadline", async () => {
+    vi.useFakeTimers();
+    const identity = createIdentityResolver(
+      { resolveIdentity: () => new Promise<never>(() => {}) },
+      40,
+    );
+    const { bot, calls, records } = createHarness(identity);
+    await bot.init();
+    const pending = bot.handleUpdate(messageUpdate());
+    await vi.advanceTimersByTimeAsync(40);
+    await pending;
+    expect(sendMessageText(calls[0])).toBe("недоступно");
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "identity_unavailable",
+    });
+    expect(records[0]?.fields.error).toBe("identity rpc deadline exceeded");
+  });
+
+  it("logs ignored updates with the boundary skeleton", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(ignoredUpdate());
+    expect(calls).toEqual([]);
+    expectBoundary(records[0], { level: "debug", result: "ok" });
+    expect(records[0]?.fields.use_case).toBeUndefined();
+  });
+
+  it("logs unexpected handler failures with stack and request context", async () => {
+    const identity: IdentityResolver = {
+      resolve: async () => {
+        throw new Error("boom");
+      },
+    };
+    const { bot, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
+    });
+    expect(records[0]?.fields.error).toBe("boom");
+    expect(typeof records[0]?.fields.stack).toBe("string");
+    expect(records[0]?.fields.stack).toContain("boom");
   });
 });

@@ -1,6 +1,20 @@
 export const serviceName = "telegram-bot";
 
-export type LogFields = Record<string, string | number | boolean>;
+export type LogFields = {
+  service?: string;
+  level?: string;
+  msg?: string;
+  use_case?: string;
+  operation?: string;
+  result?: string;
+  duration_us?: number;
+  request_id?: string;
+  error_category?: string;
+  error?: string;
+  stack?: string;
+  signal?: string;
+  timeout?: number;
+};
 
 export type Logger = {
   debug(message: string, fields?: LogFields): void;

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Bot, type Context } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
 import type { IdentityResolver } from "../identity/port.js";
-import type { Logger } from "../logging.js";
+import type { LogFields, Logger } from "../logging.js";
 import { parseUpdate } from "./parse-update.js";
 
 export type BotRuntime = {
@@ -13,104 +13,190 @@ export type BotRuntime = {
 };
 
 const unavailableText = "недоступно";
+const operation = "message";
 
-export function createBot(runtime: BotRuntime): Bot {
-  const bot = new Bot(runtime.token);
+type UpdateContext = Context & {
+  requestId: string;
+  startedAt: bigint;
+};
+
+type BoundaryOutcome =
+  | {
+      level: "debug";
+      message: string;
+      result: "ok";
+      use_case?: string;
+    }
+  | {
+      level: "warn" | "error";
+      message: string;
+      result: "error";
+      use_case?: string;
+      error_category: string;
+      error: string;
+      stack?: string;
+    };
+
+export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
+  const bot = new Bot<UpdateContext>(runtime.token);
+  bot.use((ctx, next) => {
+    ctx.requestId = randomUUID();
+    ctx.startedAt = process.hrtime.bigint();
+    return next();
+  });
   bot.on("message", (ctx) => handleMessage(ctx, runtime));
-  bot.catch((error) => {
-    runtime.logger.error("update handler failed", {
-      operation: "message",
-      result: "error",
-      error: error.message,
-    });
+  bot.catch((botError) => {
+    writeBoundary(
+      runtime.logger,
+      botError.ctx,
+      unexpectedOutcome(botError.error, botError),
+    );
   });
   return bot;
 }
 
-async function handleMessage(ctx: Context, runtime: BotRuntime): Promise<void> {
-  const started = process.hrtime.bigint();
-  const requestId = randomUUID();
-  const parsed = parseUpdate(ctx.update);
-  if (parsed.kind === "malformed") {
-    runtime.logger.warn("malformed telegram update", {
-      use_case: "acknowledge",
-      operation: "message",
-      result: "error",
-      request_id: requestId,
-      error_category: "malformed",
-      duration_us: elapsedUs(started),
-    });
-    return;
-  }
-  if (parsed.kind === "ignored") {
-    return;
-  }
-  const resolved = await runtime.identity.resolve(resolveInput(parsed));
-  if (resolved.kind === "unavailable") {
-    runtime.logger.error("identity unavailable", {
-      use_case: "acknowledge",
-      operation: "message",
-      result: "error",
-      request_id: requestId,
-      error_category: "identity_unavailable",
-      duration_us: elapsedUs(started),
-    });
-    await ctx.reply(unavailableText);
-    return;
-  }
-  const result = runtime.dispatcher.execute({
-    identity: {
-      identityId: resolved.identityId,
-      globalRoles: resolved.globalRoles,
-    },
-    intent: "acknowledge",
-  });
-  switch (result.kind) {
-    case "stub":
-      await ctx.reply(result.text);
-      runtime.logger.info("stub reply sent", {
+async function handleMessage(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+): Promise<void> {
+  let outcome: BoundaryOutcome | undefined;
+  try {
+    const parsed = parseUpdate(ctx.update);
+    if (parsed.kind === "malformed") {
+      outcome = {
+        level: "warn",
+        message: "malformed telegram update",
+        result: "error",
         use_case: "acknowledge",
-        operation: "message",
+        error_category: "malformed",
+        error: "telegram update failed validation",
+      };
+      return;
+    }
+    if (parsed.kind === "ignored") {
+      outcome = {
+        level: "debug",
+        message: "update ignored",
         result: "ok",
-        request_id: requestId,
-        duration_us: elapsedUs(started),
-      });
+      };
       return;
-    case "rejected":
-      runtime.logger.warn("dispatcher rejected request", {
-        use_case: "acknowledge",
-        operation: "message",
+    }
+    const resolved = await runtime.identity.resolve(parsed);
+    if (resolved.kind === "unavailable") {
+      await ctx.reply(unavailableText);
+      outcome = {
+        level: "error",
+        message: "identity unavailable",
         result: "error",
-        request_id: requestId,
-        error_category: result.reason,
-        duration_us: elapsedUs(started),
-      });
+        use_case: "acknowledge",
+        error_category: "identity_unavailable",
+        error: errorText(resolved.cause),
+      };
       return;
-    default: {
-      const _exhaustive: never = result;
-      runtime.logger.error("unhandled dispatcher result", {
-        use_case: "acknowledge",
-        operation: "message",
-        result: "error",
-        request_id: requestId,
-        duration_us: elapsedUs(started),
-        error: String(_exhaustive),
-      });
+    }
+    const result = runtime.dispatcher.execute({
+      identity: {
+        identityId: resolved.identityId,
+        globalRoles: resolved.globalRoles,
+      },
+      intent: "acknowledge",
+    });
+    switch (result.kind) {
+      case "stub":
+        await ctx.reply(result.text);
+        outcome = {
+          level: "debug",
+          message: "stub reply sent",
+          result: "ok",
+          use_case: "acknowledge",
+        };
+        return;
+      case "rejected":
+        outcome = {
+          level: "warn",
+          message: "dispatcher rejected request",
+          result: "error",
+          use_case: "acknowledge",
+          error_category: result.reason,
+          error: result.reason,
+        };
+        return;
+      default: {
+        const _exhaustive: never = result;
+        outcome = {
+          level: "error",
+          message: "unhandled dispatcher result",
+          result: "error",
+          use_case: "acknowledge",
+          error_category: "unhandled_result",
+          error: String(_exhaustive),
+        };
+      }
+    }
+  } catch (cause) {
+    outcome = unexpectedOutcome(cause);
+  } finally {
+    if (outcome !== undefined) {
+      writeBoundary(runtime.logger, ctx, outcome);
     }
   }
 }
 
-function resolveInput(parsed: {
-  telegramUserId: bigint;
-  telegramUsername?: string;
-}): { telegramUserId: bigint; telegramUsername?: string } {
-  if (parsed.telegramUsername === undefined) {
-    return { telegramUserId: parsed.telegramUserId };
-  }
-  return {
-    telegramUserId: parsed.telegramUserId,
-    telegramUsername: parsed.telegramUsername,
+function unexpectedOutcome(
+  cause: unknown,
+  fallback?: unknown,
+): BoundaryOutcome {
+  const outcome: BoundaryOutcome = {
+    level: "error",
+    message: "update handler failed",
+    result: "error",
+    error_category: "unexpected",
+    error: errorText(cause),
   };
+  const stack = errorStack(cause) ?? errorStack(fallback);
+  if (stack !== undefined) {
+    outcome.stack = stack;
+  }
+  return outcome;
+}
+
+function writeBoundary(
+  logger: Logger,
+  ctx: UpdateContext,
+  outcome: BoundaryOutcome,
+): void {
+  const fields: LogFields = {
+    operation,
+    result: outcome.result,
+    request_id: ctx.requestId,
+    duration_us: elapsedUs(ctx.startedAt),
+  };
+  if (outcome.use_case !== undefined) {
+    fields.use_case = outcome.use_case;
+  }
+  if (outcome.result === "error") {
+    fields.error_category = outcome.error_category;
+    fields.error = outcome.error;
+    if (outcome.stack !== undefined) {
+      fields.stack = outcome.stack;
+    }
+  }
+  logger[outcome.level](outcome.message, fields);
+}
+
+function errorText(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function errorStack(cause: unknown): string | undefined {
+  if (
+    cause instanceof Error &&
+    cause.stack !== undefined &&
+    cause.stack !== ""
+  ) {
+    return cause.stack;
+  }
+  return undefined;
 }
 
 function elapsedUs(started: bigint): number {
