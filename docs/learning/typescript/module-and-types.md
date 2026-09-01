@@ -121,9 +121,7 @@ await client.resolveIdentity(toRequest(input), { timeoutMs });
 | CommonJS / `"module": "CommonJS"` | `require` и default-import живут по другим правилам; Connect и grammY в срезе — ESM. NodeNext совпадает с тем, как Node 22 грузит `"type": "module"` |
 | `moduleResolution: "bundler"` | удобно Vite/Webpack, врёт Node: стартовый `node dist/src/main.js` не бандлится |
 | pnpm / yarn | стандарт Protobuf уже фиксирует `npm ci`; второй менеджер в CI — второй lockfile и расхождение с полем `packageManager` |
-| TypeScript 5.x / 6.x как `tsc` | `npm i typescript` ставит 7.x; 7.0 проверен с Zod 4.5 и grammY 1.46. Цена — нет compiler API, поэтому не ESLint+typescript-eslint |
-| ESLint + typescript-eslint | нужен JS API компилятора. В 7.0 его нет; dual-install `@typescript/typescript6` вернул бы API ценой двух `tsc` |
-| Prettier рядом с ESLint | два инструмента и два конфига. Biome делает lint и format одной неинтерактивной `biome check` |
+| TypeScript 5.x / 6.x как `tsc` | `npm i typescript` ставит 7.x; 7.0 проверен с Zod 4.5 и grammY 1.46. Цена — нет compiler API; линт из-за этого — [biome/check.md](../biome/check.md) |
 | `node:test` вместо Vitest | ноль лишних зависимостей, но нет нативного TS без `tsx` или предварительного emit. `vitest run` выключает watch и ест `.ts` |
 | Тип `Update` вместо Zod | компилятор принимает любой объект, который автор привёл через `as Update`. Клиент шлёт произвольный JSON |
 | `parse()` вместо `safeParse` | мусорный update становится исключением и роняет обработчик. На границе человека отказ — значение `malformed` |
@@ -161,7 +159,7 @@ flowchart LR
 - [protobuf-es / protoc-gen-es](https://github.com/bufbuild/protobuf-es) — один `target=ts` файл со схемой сервиса.
 - [Connect: createClient](https://connectrpc.com/docs/web/getting-started) — клиент из дескриптора; транспорт gRPC в Node — `@connectrpc/connect-node`.
 - [Vitest CLI](https://vitest.dev/guide/cli) — `vitest run` выключает watch (`--run`).
-- [Biome `check`](https://biomejs.dev/reference/cli/#biome-check) — lint, format и assist одной неинтерактивной командой.
+- Разбор линта: [biome/check.md](../biome/check.md) — почему `biome check`, а не ESLint.
 - Скилл `.skillshare/skills/proj/proj-write-typescript/SKILL.md` — `unknown` → Zod → `z.infer`, `safeParse` на человеческом вводе, `never` в default.
 - Скилл `.skillshare/skills/proj/proj-write-grammy-bot/SKILL.md` — юзкейс без `Context`, parser принимает `unknown`, а не grammY.
 
@@ -182,5 +180,5 @@ flowchart LR
 
 Открытые вопросы, из-за которых статус «вернуться»:
 
-- Когда появится compiler API у TypeScript 7.1, останется ли Biome единственным линтером или вернётся typescript-eslint?
 - `try/catch` вокруг `resolveIdentity` сейчас глотает любой отказ в `unavailable`. Как Connect кодирует gRPC `InvalidArgument` и надо ли его отличать от сетевого сбоя — проверь сам, когда будет живой Identity: вызови клиент с `telegramUserId: 0n` и посмотри `cause`.
+- Вопрос про compiler API 7.1 и возврат typescript-eslint перенесён в [biome/check.md](../biome/check.md).

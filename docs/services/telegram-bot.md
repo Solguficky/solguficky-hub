@@ -206,6 +206,7 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 
 ## Свидетельства и ссылки
 
+- Выбор линта: [biome/check.md](../learning/biome/check.md)
 - Разбор вариантов: [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md)
 - Решение: [ADR-030](../decisions/ADR-030-telegram-bot.md)
 - Разбор дефектов предыдущей реализации: [архив](../archive/services/auction-domain-and-lessons.md)
