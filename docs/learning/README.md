@@ -6,7 +6,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `typescript/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -23,6 +23,7 @@
 | [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal` как правило компилятора, горутины, каналы и `select`, ошибки, директива `tool`, `slog` JSON, `go:embed`, goose-миграции при старте, цепочка `just identity-*` | вернуться |
 | [go/testing.md](go/testing.md) | раскладка тестов, внутренний и внешний тестовый пакет, табличные тесты, подмена через интерфейс, `bufconn`, изолированные базы PostgreSQL, `-race` и cgo | вернуться |
 | [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание, статус-коды, интерцепторы как middleware, recovery и владелец записи, health и reflection | вернуться |
+| [typescript/module-and-types.md](typescript/module-and-types.md) | ESM и `NodeNext`, расширение `.js` в импорте, TypeScript 7 и `"types": ["node"]`, strictness-флаги, Zod на `unknown`, discriminated union и `never`, Connect-клиент Identity | вернуться |
 
 Статус ставится по факту, а не по ощущению:
 
