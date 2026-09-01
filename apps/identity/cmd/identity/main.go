@@ -16,9 +16,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var (
-	errDatabaseURLMissing = errors.New("IDENTITY_DATABASE_URL is not set")
-)
+var errDatabaseURLMissing = errors.New("IDENTITY_DATABASE_URL is not set")
 
 const shutdownTimeout = 15 * time.Second
 
