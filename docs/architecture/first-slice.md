@@ -2,7 +2,7 @@
 
 > **Статус:** Canonical. **Слой:** MVP. **Зрелость:** Accepted — состав среза утверждён владельцем.
 
-Документ фиксирует, из чего состоит первый вертикальный срез и что в него сознательно не входит. Он отвечает на вопрос «что мы делаем первым», а не «как это устроено внутри»: устройство Meetups решается в [RFC-004](../rfcs/RFC-004-meetups-domain-events-persistence.md), граница подписок — в [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md), transport и языки — отдельными ADR. Словарь домена Meetups утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md); контрактом при этом становится не этот документ, а результат контрактной задачи.
+Документ фиксирует, из чего состоит первый вертикальный срез и что в него сознательно не входит. Он отвечает на вопрос «что мы делаем первым», а не «как это устроено внутри»: хранение Meetups принято в [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md), внутренние application slices — в [ADR-033](../decisions/ADR-033-meetups-functional-vertical-slices.md), граница подписок — в [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md), transport и языки — отдельными ADR. Словарь домена Meetups утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md); контрактом при этом становится не этот документ, а результат контрактной задачи.
 
 ## Зачем нужен срез
 
