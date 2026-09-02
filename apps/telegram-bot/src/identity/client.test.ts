@@ -1,9 +1,11 @@
+import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../../gen/identity/v1/identity_service_pb.js";
-import { createIdentityResolver } from "./client.js";
+import { createIdentityClient, createIdentityResolver } from "./client.js";
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("identity client", () => {
@@ -44,5 +46,13 @@ describe("identity client", () => {
       globalRoles: ["admin"],
     });
     expect(seenTimeout).toBe(75);
+  });
+
+  it("closes the http2 session on shutdown", () => {
+    const abort = vi.spyOn(Http2SessionManager.prototype, "abort");
+    const identity = createIdentityClient("http://127.0.0.1:1");
+    identity.close();
+    expect(abort).toHaveBeenCalledOnce();
+    abort.mockRestore();
   });
 });

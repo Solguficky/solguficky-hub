@@ -53,4 +53,30 @@ describe("parseUpdate", () => {
       }).kind,
     ).toBe("ignored");
   });
+
+  it("ignores non-text user messages", () => {
+    const from = {
+      id: 42,
+      is_bot: false,
+      first_name: "tester",
+    };
+    const base = {
+      message_id: 7,
+      date: 0,
+      chat: { id: 42, type: "private" },
+      from,
+    };
+    const cases: unknown[] = [
+      { update_id: 1, message: { ...base, photo: [{}] } },
+      { update_id: 2, message: { ...base, sticker: { file_id: "sticker" } } },
+      {
+        update_id: 3,
+        message: { ...base, new_chat_members: [{ id: 9, is_bot: false }] },
+      },
+      { update_id: 4, message: { ...base, text: "" } },
+    ];
+    for (const raw of cases) {
+      expect(parseUpdate(raw).kind).toBe("ignored");
+    }
+  });
 });

@@ -22,9 +22,13 @@ export function parseUpdate(raw: unknown): ParsedUpdate {
   if (from === undefined || from.is_bot) {
     return { kind: "ignored" };
   }
+  const text = message.text;
+  if (text === undefined || text === "") {
+    return { kind: "ignored" };
+  }
   return {
     kind: "message",
-    text: message.text ?? "",
+    text,
     ...toResolveIdentityInput(BigInt(from.id), from.username),
   };
 }

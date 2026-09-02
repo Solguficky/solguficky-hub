@@ -1,4 +1,4 @@
-import type { Transformer } from "grammy";
+import { BotError, Context, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDispatcher } from "../application/dispatcher.js";
@@ -227,5 +227,75 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.error).toBe("boom");
     expect(typeof records[0]?.fields.stack).toBe("string");
     expect(records[0]?.fields.stack).toContain("boom");
+  });
+
+  it("keeps identity_unavailable when the fail-closed reply is rejected", async () => {
+    const identity: IdentityResolver = {
+      resolve: async () => ({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { logger, records } = createCapturingLogger();
+    const bot = createBot({
+      token: "111:test-token",
+      dispatcher: createDispatcher(),
+      identity,
+      logger,
+    });
+    bot.botInfo = botInfo;
+    const failing: Transformer = () =>
+      Promise.reject(new Error("Forbidden: bot was blocked by the user"));
+    bot.api.config.use(failing);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "identity_unavailable",
+    });
+    expect(records[0]?.fields.error).toBe("down");
+  });
+
+  it("does not resolve identity for a photo without text", async () => {
+    const resolve = vi.fn(async () => {
+      throw new Error("identity should not run");
+    });
+    const { bot, calls, records } = createHarness({
+      resolve,
+    });
+    await bot.init();
+    await bot.handleUpdate({
+      update_id: 3,
+      message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        photo: [
+          {
+            file_id: "file",
+            file_unique_id: "uniq",
+            width: 1,
+            height: 1,
+          },
+        ],
+      },
+    });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expectBoundary(records[0], { level: "debug", result: "ok" });
+  });
+
+  it("logs a caught error without request fields when middleware did not run", async () => {
+    const { bot, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    const ctx = new Context({ update_id: 9 }, bot.api, botInfo);
+    await bot.errorHandler(
+      new BotError(new Error("bare context"), ctx as never), // Context from grammY has no requestId until middleware
+    );
+    expect(records[0]?.level).toBe("error");
+    expect(records[0]?.fields.result).toBe("error");
+    expect(records[0]?.fields.error_category).toBe("unexpected");
+    expect(records[0]?.fields.error).toBe("bare context");
+    expect(records[0]?.fields.request_id).toBeUndefined();
+    expect(records[0]?.fields.duration_us).toBeUndefined();
   });
 });

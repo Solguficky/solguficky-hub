@@ -2,6 +2,7 @@ import { createDispatcher } from "./application/dispatcher.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
 import { createBot } from "./presentation/bot.js";
+import { createShutdown } from "./shutdown.js";
 
 const shutdownTimeoutMs = 15_000;
 
@@ -21,41 +22,47 @@ async function main(): Promise<number> {
   const dispatcher = createDispatcher();
   const identity = createIdentityClient(identityUrl);
   const bot = createBot({ token, dispatcher, identity, logger });
-
-  let stopping = false;
-  const stop = async (signal: string): Promise<void> => {
-    if (stopping) {
-      return;
-    }
-    stopping = true;
-    logger.info("shutdown signal received", {
-      signal,
-      timeout: shutdownTimeoutMs,
-    });
-    const force = setTimeout(() => {
-      logger.error("graceful shutdown timed out, exiting");
-      process.exit(1);
-    }, shutdownTimeoutMs);
-    force.unref();
-    await bot.stop();
-    clearTimeout(force);
-    logger.info("graceful shutdown complete");
-  };
-
-  process.once("SIGINT", () => {
-    void stop("SIGINT");
-  });
-  process.once("SIGTERM", () => {
-    void stop("SIGTERM");
-  });
-
-  logger.info("telegram-bot starting", { service: serviceName });
-  await bot.start({
-    onStart: () => {
-      logger.info("long polling started");
+  const shutdown = createShutdown({
+    bot,
+    resources: identity,
+    logger,
+    timeoutMs: shutdownTimeoutMs,
+    exit: (code) => {
+      process.exit(code);
     },
   });
-  return 0;
+
+  process.on("SIGINT", () => {
+    void shutdown.request("SIGINT");
+  });
+  process.on("SIGTERM", () => {
+    void shutdown.request("SIGTERM");
+  });
+
+  try {
+    if (shutdown.requested) {
+      return 0;
+    }
+    logger.info("telegram-bot starting", { service: serviceName });
+    try {
+      await bot.start({
+        onStart: () => {
+          if (shutdown.requested) {
+            void shutdown.request("startup-aborted");
+            return;
+          }
+          logger.info("long polling started");
+        },
+      });
+    } catch (cause) {
+      if (!shutdown.requested) {
+        throw cause;
+      }
+    }
+    return 0;
+  } finally {
+    await shutdown.complete();
+  }
 }
 
 main()
