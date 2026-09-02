@@ -37,7 +37,7 @@ description: Отревьюить изменение по трём незави�
 
 ## 2. Найди спецификацию
 
-Спецификация — задача Linear. Идентификатор бери из имени ветки: `feature/PER-N` даёт `PER-N`. В заголовках коммитов его нет и быть не должно ([commit-messages.md](../../../docs/standards/git/commit-messages.md)), так что искать там нечего.
+Спецификация — задача Linear. Идентификатор бери из имени ветки текущего дерева: `feature/PER-N` даёт `PER-N`. Это подсказка, где искать спецификацию, а не признак открытого контура ([agent-execution-loop.md](../../../docs/development/agent-execution-loop.md)). В заголовках коммитов его нет и быть не должно ([commit-messages.md](../../../docs/standards/git/commit-messages.md)), так что искать там нечего.
 
 Читай задачу через `get_issue` и `list_comments` ([issue-tracker.md](../../../docs/agents/issue-tracker.md)).
 

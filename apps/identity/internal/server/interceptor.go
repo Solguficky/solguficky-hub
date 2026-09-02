@@ -29,6 +29,21 @@ func (e *panicError) Error() string { return fmt.Sprintf("panic: %v", e.value) }
 
 func (e *panicError) GRPCStatus() *status.Status { return status.New(codes.Internal, "internal") }
 
+type internalError struct{ err error }
+
+func internal(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &internalError{err: err}
+}
+
+func (e *internalError) Error() string { return e.err.Error() }
+
+func (e *internalError) Unwrap() error { return e.err }
+
+func (e *internalError) GRPCStatus() *status.Status { return status.New(codes.Internal, "internal") }
+
 func unaryLogging(log *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		start := time.Now()

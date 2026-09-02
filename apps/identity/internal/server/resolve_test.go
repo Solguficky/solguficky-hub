@@ -8,25 +8,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestResolveIdentityReturnsStub(t *testing.T) {
-	t.Parallel()
-
-	username := "alice"
-	resp, err := identityService{}.ResolveIdentity(t.Context(), &identityv1.ResolveIdentityRequest{
-		TelegramUserId:   123456789,
-		TelegramUsername: &username,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.GetIdentityId() != stubIdentityID {
-		t.Fatalf("identity_id: got %q want %q", resp.GetIdentityId(), stubIdentityID)
-	}
-	if len(resp.GetGlobalRoles()) != 0 {
-		t.Fatalf("global_roles: got %v want empty", resp.GetGlobalRoles())
-	}
-}
-
 func TestResolveIdentityRejectsNonPositiveTelegramUserID(t *testing.T) {
 	t.Parallel()
 

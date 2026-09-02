@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -146,6 +147,31 @@ func TestStreamChainLogsPanicOnce(t *testing.T) {
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc panic")
 	attrValue(t, rec, "stack")
+}
+
+func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+	cause := errors.New("postgres://user:pass@127.0.0.1:5432/identity")
+
+	_, err := chainUnary(slog.New(logs), info,
+		func(context.Context, any) (any, error) {
+			return nil, internal(cause)
+		})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("code: got %v want %s", err, codes.Internal)
+	}
+	if got := status.Convert(err).Message(); got != "internal" {
+		t.Fatalf("message: got %q want %q", got, "internal")
+	}
+
+	rec := logs.sole(t)
+	assertRecord(t, rec, slog.LevelError, "rpc failed")
+	if got := attrValue(t, rec, "error").String(); !strings.Contains(got, cause.Error()) {
+		t.Fatalf("log error: got %q want to contain %q", got, cause.Error())
+	}
 }
 
 func TestUnaryChainLogsFailureOnce(t *testing.T) {

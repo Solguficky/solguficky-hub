@@ -9,7 +9,7 @@ Standards — канонические нормативы для реализа�
 | [contracts/protobuf.md](contracts/protobuf.md) | Protobuf, совместимость схем и изменение потребителей |
 | [testing/testing-strategy.md](testing/testing-strategy.md) | выбор уровня и обязательные свойства тестов |
 | [observability/logging.md](observability/logging.md) | каркас полей структурной записи, correlation и privacy |
-| [git/branching.md](git/branching.md) | база ветвления, имя ветки, заголовок и тело pull request |
+| [git/branching.md](git/branching.md) | база ветвления, имя ветки, параллельные рабочие деревья, заголовок и тело pull request |
 | [git/commit-messages.md](git/commit-messages.md) | формат сообщения коммита |
 | [backlog/linear.md](backlog/linear.md) | структура бэклога, метки, оценки и форма задачи |
 

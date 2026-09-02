@@ -70,7 +70,7 @@ telegram-bot-prepare profile:
 # --- Identity (Go) ---------------------------------------------------------
 #
 # Кодогенерация — часть сборки. Рецепты собирают gRPC-сервер,
-# применяют миграции PostgreSQL при запуске и проверяют схему.
+# применяют миграции PostgreSQL при запуске и проверяют разрешение личности.
 
 # Весь инструментарий Identity закреплённых версий в $(go env GOPATH)/bin
 identity-tools: identity-proto-tools identity-lint-tools
@@ -88,11 +88,11 @@ identity-lint-tools:
 identity-proto:
     buf generate --template apps/identity/buf.gen.yaml
 
-# Сборка скелета Identity
+# Сборка Identity
 identity-build: identity-proto
     cd apps/identity && go build ./...
 
-# Проверка контракта и заглушки Identity
+# Проверка контракта, схемы и разрешения Identity
 identity-test: identity-proto
     cd apps/identity && go test ./...
 

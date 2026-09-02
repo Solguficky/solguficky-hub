@@ -20,9 +20,9 @@
 
 | Тема | Что покрыто | Статус |
 |---|---|---|
-| [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal` как правило компилятора, горутины, каналы и `select`, ошибки, директива `tool`, выбор тулчейна через `GOTOOLCHAIN`, `slog` JSON, `go:embed`, goose-миграции при старте, цепочка `just identity-*` | вернуться |
-| [go/testing.md](go/testing.md) | раскладка тестов, внутренний и внешний тестовый пакет, табличные тесты, подмена через интерфейс, `bufconn`, изолированные базы PostgreSQL, `-race` и cgo | вернуться |
-| [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание, статус-коды, интерцепторы как middleware, recovery и владелец записи, health и reflection | вернуться |
+| [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal`, горутины и `select`, ошибки, `tool`, `slog`, `go:embed`, goose, пул `database/sql` и лимит соединений, транзакция READ COMMITTED и `ErrTxDone`, пустой `RETURNING` как `ErrNoRows`, `uuid.NewV7` | вернуться |
+| [go/testing.md](go/testing.md) | раскладка тестов, белый и чёрный ящик, табличные тесты, `bufconn`, изолированные базы, `testdb`, `t.Helper`, `Fatal` только из горутины теста, инвариант вне ответа RPC, `-race` | вернуться |
+| [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание и поля рядом, статус-коды, интерцепторы как middleware, recovery, скупой `Internal` и `internalError`, health и reflection | вернуться |
 | [typescript/module-and-types.md](typescript/module-and-types.md) | ESM и `NodeNext`, расширение `.js` в импорте, TypeScript 7 и `"types": ["node"]`, strictness-флаги, Zod на `unknown`, discriminated union и `never`, Connect-клиент Identity | вернуться |
 | [typescript/testing.md](typescript/testing.md) | раскладка тестов и `include`, отсутствие проверки типов в раннере, структурная подмена соседа без мок-фреймворка, фейковые таймеры и дедлайн, харнесс и ассерт по каркасу лога, `Parameters<F>`, покрытие v8 | вернуться |
 | [grammy/bot-adapter.md](grammy/bot-adapter.md) | middleware-цепочка и `next`, context flavor, filter queries, два входа для update и область действия `bot.catch`, transformer как шов Bot API, `init`/`start`/`stop`, откуда берутся поля записи границы | вернуться |

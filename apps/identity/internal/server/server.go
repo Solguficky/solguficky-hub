@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"log/slog"
 	"net"
 
@@ -18,9 +19,12 @@ type Server struct {
 	health *health.Server
 }
 
-func New(log *slog.Logger) *Server {
+func New(log *slog.Logger, db *sql.DB) *Server {
 	if log == nil {
 		log = slog.Default()
+	}
+	if db == nil {
+		panic("identity: nil database")
 	}
 
 	srv := grpc.NewServer(
@@ -33,7 +37,7 @@ func New(log *slog.Logger) *Server {
 			streamRecovery(),
 		),
 	)
-	identityv1.RegisterIdentityServiceServer(srv, identityService{})
+	identityv1.RegisterIdentityServiceServer(srv, identityService{db: db})
 
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
