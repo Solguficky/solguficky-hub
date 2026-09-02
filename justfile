@@ -115,7 +115,7 @@ telegram-bot-tools:
     cd apps/telegram-bot && npm ci
 
 telegram-bot-proto:
-    buf generate --template apps/telegram-bot/buf.gen.yaml
+    buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template apps/telegram-bot/buf.gen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
 
 telegram-bot-build: telegram-bot-proto
     cd apps/telegram-bot && npm run build

@@ -91,6 +91,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.telegram-bot == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
