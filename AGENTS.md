@@ -54,7 +54,7 @@ skillshare sync extras -p
 # Проверка закоммиченных skills, agents и commands после sync
 just check-agent-tools
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot и тесты
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -110,7 +110,7 @@ nats-tester --help
 - Открывай контур скиллом `proj-start-task`, только когда владелец назвал `PER-N` и явно попросил начать или взять задачу; команда `/proj-take-task PER-N` выражает это намерение и подкладывает состояние git. Простое упоминание задачи в запросе на чтение, обсуждение или ревью контуром не является и рабочее дерево не меняет.
 - В локальном контуре самостоятельно создавай ветку задачи `feature/PER-N` от `develop`; одна задача — один pull request, `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot, AppHost и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.

@@ -11,7 +11,6 @@ var nats = builder.AddNats("nats")
     .WithJetStream();
 
 var profile = Topology.ResolveProfile(builder.Configuration);
-var telegramBotToken = builder.AddParameter("telegram-bot-token", secret: true);
 
 var identityPath = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../../apps/identity"));
 var telegramBotPath = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../../apps/telegram-bot"));
@@ -20,7 +19,7 @@ IResourceBuilder<ExecutableResource>? identity = Topology.ResolveMode(builder.Co
 {
     ComponentMode.Local => builder.AddExecutable("identity", "go", identityPath)
         .WithArgs("run", "./cmd/identity")
-        .WaitFor(postgres)
+        .WaitFor(solgufickyDb)
         .WithEnvironment("IDENTITY_DATABASE_URL", solgufickyDb.Resource.UriExpression)
         .WithEnvironment("IDENTITY_GRPC_ADDR", ":50051")
         .WithHttpEndpoint(name: "grpc", port: 50051, isProxied: false),
@@ -33,6 +32,7 @@ IResourceBuilder<ExecutableResource>? identity = Topology.ResolveMode(builder.Co
 switch (Topology.ResolveMode(builder.Configuration, profile, "TelegramBot"))
 {
     case ComponentMode.Local:
+        var telegramBotToken = builder.AddParameter("telegram-bot-token", secret: true);
         var telegramBot = builder.AddJavaScriptApp("telegram-bot", telegramBotPath, "start")
             .WithEnvironment("TELEGRAM_BOT_TOKEN", telegramBotToken);
         if (identity is not null)
@@ -46,6 +46,8 @@ switch (Topology.ResolveMode(builder.Configuration, profile, "TelegramBot"))
         throw new InvalidOperationException("TelegramBot Container mode is not implemented.");
     case ComponentMode.Off:
         break;
+    default:
+        throw new InvalidOperationException("Unknown TelegramBot component mode.");
 }
 
 builder.Build().Run();

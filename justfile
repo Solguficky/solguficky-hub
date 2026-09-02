@@ -42,19 +42,30 @@ check-commit-message file:
 check-agent-tools:
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost
+verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build
 
 # --- Локальная оркестрация -------------------------------------------------
 
 # AppHost поднимает инфраструктуру и зарегистрированные компоненты профиля.
 # Профили: infra | core | full (см. infra/apphost/Topology.cs).
-# Перед запуском кодогенерация и сборка Telegram Bot уже должны быть сделаны:
-# Aspire сам proto не генерирует.
+# Identity proto генерируется всегда; Telegram Bot собирается только если он Local.
 aspire profile="core":
     just identity-proto
-    just telegram-bot-build
+    just telegram-bot-prepare {{profile}}
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
+
+# Сборка Aspire AppHost
+apphost-build:
+    cd infra/apphost && dotnet build --nologo
+
+[private]
+telegram-bot-prepare profile:
+    #!/usr/bin/env sh
+    set -eu
+    if [ "{{profile}}" != "infra" ]; then
+        just telegram-bot-build
+    fi
 
 # --- Identity (Go) ---------------------------------------------------------
 #

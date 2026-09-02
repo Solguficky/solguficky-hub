@@ -40,8 +40,8 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Current-ограничения
 
-- AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены;
-- Identity применяет свои миграции при старте процесса (`just identity-run`); AppHost передаёт ему `IDENTITY_DATABASE_URL` той же PostgreSQL;
+- AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
+- Identity ждёт базу `solguficky` и применяет свои миграции при старте процесса (`just identity-run`); AppHost передаёт ему `IDENTITY_DATABASE_URL` той же PostgreSQL;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - живой `aspire run` не подтверждён;
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
