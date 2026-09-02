@@ -1,0 +1,16 @@
+version: v2
+clean: true
+plugins:
+  # Плагин запускается через node, а не через шим из node_modules/.bin:
+  # шим без расширения на Windows не исполняется, а cmd.exe принимает путь
+  # с прямыми слэшами за ключи. Сам шим делает ровно этот же exec node.
+  - local:
+      - node
+      - apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es
+    out: apps/telegram-bot/gen
+    opt:
+      - target=ts
+inputs:
+  - directory: contracts/proto
+    paths:
+      - contracts/proto/identity

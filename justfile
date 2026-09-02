@@ -1,7 +1,7 @@
 # Единая точка входа для команд репозитория.
 #
 # Репозиторий полиязычный: каждый компонент собирается своим инструментом
-# (dotnet, cargo, pip, go, buf). Здесь они собраны в одном месте, чтобы не
+# (dotnet, cargo, pip, go, buf, npm). Здесь они собраны в одном месте, чтобы не
 # держать в голове, в какую папку зайти и чем собрать.
 #
 # Требуется just: https://github.com/casey/just
@@ -11,9 +11,9 @@
 
 # --- Версии инструментов ---------------------------------------------------
 #
-# Единственное место, где закреплены версии buf и golangci-lint. Джоба
-# identity в CI читает их отсюда, а `just identity-tools` ставит их
-# локально, чтобы локальная и CI-проверка шли одними бинарниками;
+# Единственное место, где закреплены версии buf и golangci-lint. Джобы
+# identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
+# ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
 # identity-lint отказывается работать на другой версии. Версии
 # protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
@@ -42,15 +42,30 @@ check-commit-message file:
 check-agent-tools:
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity и затронутые тесты
-verify: check-agent-tools identity-build identity-test identity-lint
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost
+verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build
 
 # --- Локальная оркестрация -------------------------------------------------
 
-# AppHost поднимает только инфраструктуру: исполняемых компонентов ещё нет.
+# AppHost поднимает инфраструктуру и зарегистрированные компоненты профиля.
 # Профили: infra | core | full (см. infra/apphost/Topology.cs).
+# Identity proto генерируется всегда; Telegram Bot собирается только если он Local.
 aspire profile="core":
+    just identity-proto
+    just telegram-bot-prepare {{profile}}
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
+
+# Сборка Aspire AppHost
+apphost-build:
+    cd infra/apphost && dotnet build --nologo
+
+[private]
+telegram-bot-prepare profile:
+    #!/usr/bin/env sh
+    set -eu
+    if [ "{{profile}}" != "infra" ]; then
+        just telegram-bot-build
+    fi
 
 # --- Identity (Go) ---------------------------------------------------------
 #
@@ -90,6 +105,32 @@ identity-lint: identity-proto
 # Локальный запуск; адрес — IDENTITY_GRPC_ADDR, база — IDENTITY_DATABASE_URL
 identity-run: identity-proto
     cd apps/identity && go run ./cmd/identity
+
+# --- Telegram Bot (TypeScript) --------------------------------------
+#
+# Кодогенерация — часть сборки. Рецепты собирают grammY-скелет,
+# клиент Identity и проверяют границу юзкейса без Telegram.
+
+telegram-bot-tools:
+    cd apps/telegram-bot && npm ci
+
+telegram-bot-proto:
+    buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template apps/telegram-bot/buf.gen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
+
+telegram-bot-build: telegram-bot-proto
+    cd apps/telegram-bot && npm run build
+
+telegram-bot-typecheck: telegram-bot-proto
+    cd apps/telegram-bot && npm run typecheck
+
+telegram-bot-test: telegram-bot-proto
+    cd apps/telegram-bot && npm test
+
+telegram-bot-lint: telegram-bot-proto
+    cd apps/telegram-bot && npm run lint
+
+telegram-bot-run: telegram-bot-build
+    cd apps/telegram-bot && npm start
 
 # --- Инструменты -----------------------------------------------------------
 
