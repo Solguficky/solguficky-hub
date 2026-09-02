@@ -1,10 +1,19 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. AppHost-код существует, но `aspire run` ещё не был успешно проверен в живой среде.
+> **Статус:** Current. Локальные профили `infra` и `full` подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop. Production-like публикация пока не проверена.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
 .NET Aspire — принятый и единственный инструмент локальной оркестрации ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md)). Рукописные `docker-compose.yml` жили внутри сервисов предыдущего поколения и удалены вместе с ними, поэтому fallback-пути больше нет: если `aspire run` не работает, инфраструктура поднимается вручную.
+
+## Требования
+
+- .NET SDK 10;
+- Aspire CLI 13.5.3;
+- запущенный Docker daemon;
+- Go и `buf` для профилей с Identity.
+
+AppHost остаётся на `net8.0`, а SDK и все `Aspire.Hosting.*` packages обновляются одной стабильной линией. Текущая линия — 13.5.3.
 
 ## AppHost
 
@@ -13,17 +22,19 @@ cd infra/apphost
 aspire run
 ```
 
-AppHost объявляет контейнеры PostgreSQL и NATS. Исполняемых компонентов платформы пока нет, поэтому больше он ничего не поднимает. Identity применяет миграции при `just identity-run`, если задан `IDENTITY_DATABASE_URL` на эту PostgreSQL.
+Для человека `aspire run` остаётся интерактивной командой с dashboard. Агент в worktree использует точный AppHost через `aspire start --non-interactive --isolated --apphost infra/apphost/AppHost.csproj`, ждёт ресурсы через `aspire wait` и штатно останавливает тот же AppHost.
+
+AppHost всегда объявляет PostgreSQL 16 и NATS 2.10 с JetStream. Профили `core` и `full` также запускают Identity из исходников через `go run`: вспомогательный ресурс сначала генерирует Go-код из Protobuf, затем Identity получает динамический gRPC-порт и PostgreSQL URI через существующие environment-контракты. Готовность проверяется стандартным `grpc.health.v1.Health/Check`, а не только состоянием процесса.
 
 ## Профили
 
 | Профиль | Компоненты |
 |---|---|
 | `infra` | PostgreSQL + NATS; компоненты платформы выключены |
-| `core` | infra + компоненты первого вертикального среза в режиме Local |
-| `full` | infra + все зарегистрированные компоненты в режиме Local |
+| `core` | infra + Identity в режиме `Local` |
+| `full` | infra + все зарегистрированные компоненты в режиме `Local`; сейчас это Identity |
 
-Пока ни один компонент не зарегистрирован, все три профиля дают одинаковый результат — только инфраструктуру. Неизвестное имя профиля отвергается на старте.
+Неизвестное имя профиля отвергается на старте с перечнем допустимых значений.
 
 ```powershell
 $env:TOPOLOGY__PROFILE='infra'
@@ -35,27 +46,36 @@ aspire run
 Допустимы `Local` (из исходников), `Container` (через Dockerfile) и `Off` (владелец запускает сам):
 
 ```powershell
-$env:TOPOLOGY__MEETUPS='Off'
+$env:TOPOLOGY__IDENTITY='Off'
 aspire run
 ```
 
-Имена компонентов появляются в `infra/apphost/Program.cs` вместе с их регистрацией; состав первого среза — в `Topology.CoreComponents`. Сейчас список пуст.
+`Identity=Local` запускает сервис из исходников. `Identity=Off` оставляет его владельцу. `Identity=Container` сейчас намеренно завершается понятной ошибкой: у сервиса ещё нет утверждённого Dockerfile. Неизвестное значение режима также отвергается на старте.
 
-## Неподтверждённые места
+Имена компонентов появляются в `infra/apphost/Program.cs` вместе с их регистрацией; состав первого среза — в `Topology.CoreComponents`.
 
-- `dotnet restore` и `dotnet build` самого AppHost после удаления ссылок на выведенные сервисы;
-- `aspire run` и здоровье контейнеров PostgreSQL и NATS в живой среде;
-- пригодность `aspire publish` для production-like k3s.
-
-Пока эти проверки не выполнены, не описывай Aspire как подтверждённую production-топологию.
-
-## Acceptance check
-
-Минимальная проверка, закрывающая gate:
+## Проверенный локальный gate
 
 1. `dotnet restore` и `dotnet build` для `infra/apphost` успешны.
-2. `aspire run` показывает здоровые PostgreSQL и NATS.
-3. Неизвестное значение `TOPOLOGY__PROFILE` завершает запуск с понятной ошибкой.
-4. Данные PostgreSQL переживают перезапуск AppHost (том `solguficky-postgres-data`).
+2. Профиль `infra` поднимает здоровые PostgreSQL и NATS без Identity.
+3. Профиль `full` завершает `identity-proto` с кодом 0 и поднимает здоровые PostgreSQL, NATS и Identity.
+4. Identity применяет миграции, слушает назначенный Aspire порт, отвечает `SERVING` на стандартный gRPC health RPC и успешно выполняет `IdentityService/ResolveIdentity` через proxy endpoint Aspire.
+5. Неизвестный профиль, неизвестный режим и неподдерживаемый `Identity=Container` завершают AppHost с понятной ошибкой.
+6. PostgreSQL использует именованный том `solguficky-postgres-data`, который повторно подключается после обычного перезапуска AppHost.
+7. После штатной остановки `aspire ps --format Json` не показывает оставшихся сессий.
+
+## Неподтверждённая граница
+
+Пригодность `aspire publish` для production-like k3s и сама production-топология не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+
+## Повторная проверка
+
+Механический гейт запускается из корня:
+
+```powershell
+just verify
+```
+
+Живой gate требует отдельного запуска профилей `infra` и `full`: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить логи Identity, затем вызвать `IdentityService/ResolveIdentity` через найденный в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
 
 Работа и её прогресс должны быть заведены в Linear; этот документ хранит только устойчивые правила и проверяемый gap.

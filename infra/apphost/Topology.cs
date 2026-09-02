@@ -24,7 +24,7 @@ public static class Topology
     /// из исходников, остальные — выключены. Пополняется вместе с регистрацией
     /// компонента в <c>Program.cs</c>.
     /// </summary>
-    private static readonly HashSet<string> CoreComponents = [];
+    private static readonly HashSet<string> CoreComponents = ["Identity"];
 
     public static string ResolveProfile(IConfiguration config)
     {
@@ -33,7 +33,7 @@ public static class Topology
         if (!KnownProfiles.Contains(profile))
         {
             throw new InvalidOperationException(
-                $"Неизвестный профиль топологии '{profile}'. Ожидались: {string.Join(", ", KnownProfiles)}.");
+                $"Unknown topology profile '{profile}'. Expected: {string.Join(", ", KnownProfiles)}.");
         }
 
         return profile;
@@ -44,7 +44,16 @@ public static class Topology
         var raw = config[$"Topology:{component}"];
         if (!string.IsNullOrWhiteSpace(raw))
         {
-            return Enum.Parse<ComponentMode>(raw, ignoreCase: true);
+            var knownMode = Enum.GetNames<ComponentMode>()
+                .FirstOrDefault(name => string.Equals(name, raw, StringComparison.OrdinalIgnoreCase));
+            if (knownMode is not null)
+            {
+                return Enum.Parse<ComponentMode>(knownMode);
+            }
+
+            throw new InvalidOperationException(
+                $"Unknown mode for component '{component}': '{raw}'. " +
+                $"Expected: {string.Join(", ", Enum.GetNames<ComponentMode>())}.");
         }
 
         return ProfileDefault(profile, component);
@@ -56,6 +65,6 @@ public static class Topology
         "core" => CoreComponents.Contains(component) ? ComponentMode.Local : ComponentMode.Off,
         "full" => ComponentMode.Local,
         _ => throw new InvalidOperationException(
-            $"Неизвестный профиль топологии '{profile}'. Ожидались: {string.Join(", ", KnownProfiles)}."),
+            $"Unknown topology profile '{profile}'. Expected: {string.Join(", ", KnownProfiles)}."),
     };
 }

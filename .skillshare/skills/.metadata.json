@@ -1,6 +1,42 @@
 {
   "version": 1,
   "entries": {
+    "aspire-monitoring": {
+      "source": "github.com/microsoft/aspire-skills/skills/aspire-monitoring",
+      "type": "github-subdir",
+      "installed_at": "2026-09-02T22:29:21.5133777+03:00",
+      "repo_url": "https://github.com/microsoft/aspire-skills.git",
+      "subdir": "skills/aspire-monitoring",
+      "version": "c9d042e",
+      "tree_hash": "8d99c214aafb6180cc1f284f25baa346d9cb4467",
+      "file_hashes": {
+        "SKILL.md": "sha256:506ae49ab0292e7e71a25a4596af2b0501d6299aa79a551d4d47a29fa6dd0d88",
+        "evals/eval.yaml": "sha256:4548571576f32360eeb753bba538cfb9982592776f043b7b46320ca03f527eaa",
+        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
+        "references/diagnostics-bridge.md": "sha256:2d3be1f910d36dd5cef41e232e37efc1dd75f40bfe35e89b4c514cdcf28ba97f",
+        "references/monitoring.md": "sha256:ab8d70d50914e7b9dd6e2747f40c6f91ac99cd4ff72b84752da1810c02c240f5",
+        "references/playwright-handoff.md": "sha256:171b137f5c9963f764f9a3e61413dcbcb3a7afb68e8dc76cfe2d92ebb4c6614c"
+      }
+    },
+    "aspire-orchestration": {
+      "source": "github.com/microsoft/aspire-skills/skills/aspire-orchestration",
+      "type": "github-subdir",
+      "installed_at": "2026-09-02T22:40:04.0420355+03:00",
+      "repo_url": "https://github.com/microsoft/aspire-skills.git",
+      "subdir": "skills/aspire-orchestration",
+      "version": "c9d042e",
+      "tree_hash": "1acf3680894cd7863ec4ad61dc840b26996c1d94",
+      "file_hashes": {
+        "SKILL.md": "sha256:622bd7059bca7cf15ff3c4ae83a167bc6531d71d657c5204256139b69f6a7da9",
+        "evals/eval.yaml": "sha256:2b74a4da0b446c183f223ba048d3572ae9c72e143cf84c3e2b1fdb5a26057711",
+        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
+        "references/agent-workflows.md": "sha256:ba0c2b83e371b710b1b3f4625e9c1b2509d6104b3abd83d1e5eff4a1622b85c4",
+        "references/app-commands.md": "sha256:fa21342df7065a09f5c2589ce27bdb72a33a8b3cad1f1a44006dad0ef663d19a",
+        "references/detection.md": "sha256:84c5a49633cdf803dfbfe1d62dcbef0218a5d4dd7ed26c644bdc931520e8b2ec",
+        "references/resource-management.md": "sha256:5058b4e2009f98a1f6e5a6c0d8b15aa17d33087e54502953d5428034557ed629",
+        "references/safety-guardrails.md": "sha256:92088f091bbb810fbe6e98f6dc61d19fd0edcf82689a3a2aa271a2cb4a42a98f"
+      }
+    },
     "cli-for-agents": {
       "source": "github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents",
       "type": "github-subdir",

@@ -42,12 +42,16 @@ check-commit-message file:
 check-agent-tools:
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity и затронутые тесты
-verify: check-agent-tools identity-build identity-test identity-lint
+# Механический гейт перед сдачей: agent tooling, AppHost, Identity и тесты
+verify: check-agent-tools apphost-build identity-build identity-test identity-lint
 
 # --- Локальная оркестрация -------------------------------------------------
 
-# AppHost поднимает только инфраструктуру: исполняемых компонентов ещё нет.
+# Собрать AppHost без запуска контейнеров
+apphost-build:
+    dotnet build infra/apphost/AppHost.csproj --nologo
+
+# AppHost поднимает инфраструктуру и компоненты выбранного профиля.
 # Профили: infra | core | full (см. infra/apphost/Topology.cs).
 aspire profile="core":
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
