@@ -13,6 +13,7 @@ jobs:
     outputs:
       identity: ${{ steps.filter.outputs.identity }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
+      apphost: ${{ steps.filter.outputs.apphost }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -27,6 +28,10 @@ jobs:
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            apphost:
+              - 'infra/apphost/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
 
@@ -110,6 +115,18 @@ jobs:
         working-directory: apps/telegram-bot
       - run: npm run build
         working-directory: apps/telegram-bot
+
+  apphost:
+    needs: changes
+    if: needs.changes.outputs.apphost == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: dotnet build --nologo
+        working-directory: infra/apphost
 
   repo-hygiene:
     runs-on: ubuntu-latest

@@ -1,5 +1,8 @@
 import { createClient } from "@connectrpc/connect";
-import { createGrpcTransport } from "@connectrpc/connect-node";
+import {
+  createGrpcTransport,
+  Http2SessionManager,
+} from "@connectrpc/connect-node";
 import {
   GlobalRole,
   IdentityService,
@@ -25,16 +28,28 @@ export type IdentityRpc = {
   }>;
 };
 
+export type IdentityClient = IdentityResolver & {
+  close(): void;
+};
+
 export function createIdentityClient(
   baseUrl: string,
   timeoutMs = identityRpcTimeoutMs,
-): IdentityResolver {
+): IdentityClient {
+  const sessionManager = new Http2SessionManager(baseUrl);
   const transport = createGrpcTransport({
     baseUrl,
     defaultTimeoutMs: timeoutMs,
+    sessionManager,
   });
   const client = createClient(IdentityService, transport);
-  return createIdentityResolver(client, timeoutMs);
+  const resolver = createIdentityResolver(client, timeoutMs);
+  return {
+    resolve: (input) => resolver.resolve(input),
+    close() {
+      sessionManager.abort();
+    },
+  };
 }
 
 export function createIdentityResolver(

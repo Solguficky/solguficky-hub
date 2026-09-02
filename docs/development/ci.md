@@ -4,11 +4,11 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
-Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow. Джоба `identity` передаёт `github.token` в `buf-setup-action`: без него установка `buf` бьёт в GitHub API без авторизации и на hosted runner падает по rate limit.
+Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow. Джоба `telegram-bot` делает typecheck, lint, test и build TypeScript-скелета. Джоба `apphost` собирает Aspire AppHost на изменение `infra/apphost/**`, `justfile` и workflow. Джоба `identity` передаёт `github.token` в `buf-setup-action`: без него установка `buf` бьёт в GitHub API без авторизации и на hosted runner падает по rate limit.
 
 Известные gaps:
 
-- Aspire AppHost требует отдельного restore/build/smoke-test gate;
+- живой smoke-test `aspire run` ещё не входит в CI;
 - `buf lint` и compatibility check Protobuf ещё не внедрены.
 
 ## Проверки репозитория

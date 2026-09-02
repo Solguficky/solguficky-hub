@@ -16,8 +16,8 @@ const unavailableText = "недоступно";
 const operation = "message";
 
 type UpdateContext = Context & {
-  requestId: string;
-  startedAt: bigint;
+  requestId?: string;
+  startedAt?: bigint;
 };
 
 type BoundaryOutcome =
@@ -83,7 +83,6 @@ async function handleMessage(
     }
     const resolved = await runtime.identity.resolve(parsed);
     if (resolved.kind === "unavailable") {
-      await ctx.reply(unavailableText);
       outcome = {
         level: "error",
         message: "identity unavailable",
@@ -92,6 +91,7 @@ async function handleMessage(
         error_category: "identity_unavailable",
         error: errorText(resolved.cause),
       };
+      await ctx.reply(unavailableText);
       return;
     }
     const result = runtime.dispatcher.execute({
@@ -134,7 +134,9 @@ async function handleMessage(
       }
     }
   } catch (cause) {
-    outcome = unexpectedOutcome(cause);
+    if (outcome === undefined) {
+      outcome = unexpectedOutcome(cause);
+    }
   } finally {
     if (outcome !== undefined) {
       writeBoundary(runtime.logger, ctx, outcome);
@@ -168,9 +170,13 @@ function writeBoundary(
   const fields: LogFields = {
     operation,
     result: outcome.result,
-    request_id: ctx.requestId,
-    duration_us: elapsedUs(ctx.startedAt),
   };
+  if (ctx.requestId !== undefined && ctx.requestId !== "") {
+    fields.request_id = ctx.requestId;
+  }
+  if (ctx.startedAt !== undefined) {
+    fields.duration_us = elapsedUs(ctx.startedAt);
+  }
   if (outcome.use_case !== undefined) {
     fields.use_case = outcome.use_case;
   }
