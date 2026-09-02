@@ -1,6 +1,6 @@
 # Модуль Go-сервиса
 
-Первый исполняемый процесс на Go в репозитории — скелет Identity. Файл объясняет, как устроен модуль Go, как язык собирает и запускает процесс и почему контур сборки выглядит именно так. Выбор языка здесь не разбирается — это [ADR-027](../../decisions/ADR-027-identity-go-stack.md); wire — [integration.md](../../architecture/integration.md); gRPC-сервер — [unary-server.md](../grpc/unary-server.md).
+Identity — первый исполняемый процесс на Go в репозитории: он слушает gRPC и пишет профиль в PostgreSQL. Файл объясняет, как устроен модуль Go, как язык собирает и запускает процесс и как процесс держит пул соединений на всё время жизни. Выбор языка здесь не разбирается — это [ADR-027](../../decisions/ADR-027-identity-go-stack.md); wire — [integration.md](../../architecture/integration.md); gRPC-сервер — [unary-server.md](../grpc/unary-server.md).
 
 ## Механика
 
@@ -16,7 +16,7 @@ import identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identi
 
 Здесь `identityv1` — явный псевдоним, потому что пакет внутри называется иначе, чем последний сегмент пути. Namespace как отдельной сущности в Go нет: путь импорта и есть адрес.
 
-Видимость решается регистром первой буквы имени, а не ключевым словом. `ServiceName` виден снаружи пакета, `stubIdentityID` — нет. Ни `public`, ни `private` в языке не существует, и переименование буквы меняет контракт пакета. Поэтому «сделать неэкспортируемым» в диффе выглядит как правка регистра.
+Видимость решается регистром первой буквы имени, а не ключевым словом. `ServiceName` виден снаружи пакета, поле `db` у `identityService` — нет. Ни `public`, ни `private` в языке не существует, и переименование буквы меняет контракт пакета. Поэтому «сделать неэкспортируемым» в диффе выглядит как правка регистра.
 
 Каталог `internal/` — правило компилятора, а не договорённость: пакет внутри `internal/` импортируется только из поддерева, где лежит родитель `internal/`. `apps/identity/internal/server` недоступен ни из другого приложения, ни из чужого модуля, и это проверяется на сборке. Ближайшего аналога в .NET нет: `internal` там про сборку, а здесь про положение в дереве каталогов.
 
@@ -103,9 +103,51 @@ SQL-миграции — обычные файлы рядом с пакетом 
 
 Провайдер goose создаётся на каждый вызов `Apply`, а не глобальной настройкой `SetBaseFS`. Глобальное состояние сломалось бы на параллельных тестах, которые поднимают разные базы. Session lock (`pg_advisory_lock`) сериализует два процесса, которые одновременно стартуют на пустой базе.
 
+Уже применённый файл миграции нельзя править: goose считает хеш SQL и откажется, если `00001` изменится после записи в `goose_db_version`. Новая колонка — новый файл `00002`, даже если в базе ещё нет живых строк.
+
+### Пул `database/sql` и транзакция
+
+`database/sql` — стандартная библиотека, не драйвер. `*sql.DB` — **пул** соединений, безопасный для горутин: его открывают один раз на процесс и передают туда, где нужны запросы. Это ближе к пулу ADO.NET / `NpgsqlDataSource`, чем к одному `SqlConnection` на вызов. `sql.Open` драйвер даже не обязан коннектиться: проверка — `Ping`. Без живого пула слушать gRPC бессмысленно, поэтому `openStore` зовёт `Open` и `Apply` до `Listen`, а `defer db.Close()` стоит в `run` и срабатывает после остановки сервера.
+
+Драйвер регистрируется **пустым импортом** — побочным эффектом `init()` пакета:
+
+```go
+_ "github.com/jackc/pgx/v5/stdlib"
+```
+
+Имя `"pgx"` в `sql.Open("pgx", dsn)` — строка из этой регистрации, а не из пути импорта. Без строки `_` `Open` отвечает `sql: unknown driver "pgx" (forgotten import?)`. В .NET провайдер подтягивается пакетом и фабрикой; здесь его не видно в типах вызывающего кода, только в импорте с подчёркиванием.
+
+`sql.Open` без `SetMaxOpenConns` держит лимит 0 — без ограничения. gRPC unary тоже не режет concurrent streams. `ResolveIdentity` держит соединение на всю транзакцию, поэтому всплеск параллельных вызовов открыл бы по бэкенду на каждый RPC, пока PostgreSQL не ответит `too many clients already`. `Open` ставит `MaxOpenConns=16` и `ConnMaxLifetime=30m`: лишние вызовы ждут свободный слот в пуле, а соединение не живёт вечно за NAT и managed Postgres. 16 — не модель нагрузки, а потолок вместо безлимитного дефолта.
+
+Транзакция (`BeginTx`) занимает **одно** соединение из пула до `Commit` или `Rollback`. Идиома такая:
+
+```go
+tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+if err != nil { ... }
+defer func() { _ = tx.Rollback() }()
+// ... запросы ...
+if err := tx.Commit(); err != nil { ... }
+```
+
+Изоляцию нельзя оставлять на `default_transaction_isolation` сервера. Конкурентный upsert корректен при READ COMMITTED: `ON CONFLICT` ждёт лок вставившего, а следующий `SELECT` видит уже зафиксированную строку. Под REPEATABLE READ тот же сценарий даёт `40001`, и в обработчике нет ретрая. Пин в `TxOptions` фиксирует то, что проверяет конкурентный тест.
+
+`defer Rollback` срабатывает и на успехе. Это не ошибка: после `Commit` `Rollback` возвращает `sql.ErrTxDone` («transaction has already been committed or rolled back»), и её глотают. Аналог `await using` транзакции — только откат здесь безопасен на счастливой ветке, потому что повторный вызов после commit не ломает уже зафиксированное.
+
+### `QueryRow` и пустой `RETURNING`
+
+`QueryRowContext` + `Scan` — запрос ровно одной строки. Если строк нет, `Scan` возвращает `sql.ErrNoRows`. Это значение, а не «сломалось»: его разбирают `errors.Is`, как `grpc.ErrServerStopped` выше.
+
+PostgreSQL `INSERT ... ON CONFLICT DO UPDATE WHERE ... RETURNING id` возвращает строку только если insert или update **реально произошёл**. Если конфликт есть, а `WHERE` ложно (ник тот же), команда успешна, затронуто 0 строк, `RETURNING` пуст. Документация PostgreSQL 16 говорит это прямо: «Only rows that were successfully inserted or updated will be returned». Для `database/sql` пустой `RETURNING` — тот же `ErrNoRows`, что и у `SELECT` без совпадения. Поэтому после upsert код сначала принимает id из `RETURNING`, а `ErrNoRows` означает «строка уже есть и её не трогали» — тогда id читается обычным `SELECT` в той же транзакции.
+
+`now()` внутри транзакции — время её **начала**, не стенные часы. Два вызова `now()` в одном `BEGIN` с паузой 50 мс вернули один и тот же timestamp; `clock_timestamp()` за это время сдвинулся. Отсюда `updated_at = now()` в `DO UPDATE` не поможет отличить «апдейт в этой же транзакции» от «не было апдейта»: метка меняется только в другой транзакции, то есть в другом RPC.
+
+`uuid.NewV7()` из `github.com/google/uuid` — генерация RFC 9562 в процессе, не в базе. В стандартной библиотеке Go типа UUID нет; `uuidv7()` появляется в PostgreSQL 18, а схема в срезе — 16. `id.String()` даёт каноническую lowercase-форму с дефисами, которую требует [ADR-020](../../decisions/ADR-020-uuidv7-identifiers.md); `Parse` принимает и верхний регистр, но `String()` снова приводит к нижнему. Nibble версии в сгенерированном значении — 7.
+
+`rows.Next()` / `Scan` / `rows.Err()` — курсор. `Next` возвращает false и на конце набора, и на ошибке чтения; отличить их можно только вызовом `Err()` после цикла. `Close` в `defer` обязателен, иначе соединение не вернётся в пул.
+
 ## Урок
 
-Четыре вещи переносятся дальше и не зависят от Go.
+Следующие механизмы переносятся дальше и не зависят от Go.
 
 **Границу видимости лучше проверять сборкой, чем договорённостью.** `internal/` даёт то, чего не даёт соглашение об именах: случайный импорт из соседнего приложения не проходит компиляцию. Когда в репозитории появится второй Go-сервис, эта граница уже стоит и ничего не стоит.
 
@@ -114,6 +156,10 @@ SQL-миграции — обычные файлы рядом с пакетом 
 **Схема применяется тем же процессом, который ей пользуется.** Отдельная CLI-команда миграций забывается в CI и в локальном запуске. Старт без базы — отказ с кодом 1, а не «поднимем сервер, схему потом».
 
 **Генерируемый код не хранится в Git, но обязан быть предусловием каждой команды.** Здесь это выражено зависимостями: `identity-build`, `identity-test` и `identity-lint` зависят от `identity-proto`. Иначе первая же чистая копия репозитория не собирается, и разница между «у меня работает» и CI объясняется состоянием рабочего дерева.
+
+**Пустой результат успешной команды — не ошибка хранения.** `RETURNING` без строк и `SELECT` без совпадения для `QueryRow` выглядят одинаково: `ErrNoRows`. Смысл различает вызывающий: здесь это «апдейт не понадобился», не «профиля нет». Сваливать оба случая в `Internal` — значит превратить идемпотентный повтор в отказ.
+
+**Пул открывают на процесс, транзакцию — на операцию.** `*sql.DB` живёт от старта до остановки; `*sql.Tx` — от `BeginTx` до `Commit`. Открыть пул на каждый RPC — потерять пул; держать транзакцию на весь процесс — держать одно соединение занятым.
 
 ## Почему так, а не иначе
 
@@ -132,7 +178,14 @@ SQL-миграции — обычные файлы рядом с пакетом 
 | Глобальные `goose.SetBaseFS` / `SetDialect` | гонка между параллельными тестами на разных базах |
 | goose Provider без session lock | два процесса на пустой базе: один `CREATE TABLE` проходит, второй падает с `already exists` |
 | Применять миграции отдельной CLI | `just identity-run` и интеграционные тесты расходятся; задача требовала оба пути |
-| Слушать порт, если базы нет | заглушка `ResolveIdentity` работала бы, а схема — нет; отказ конфигурации должен быть виден оркестратору |
+| Слушать порт, если базы нет | `ResolveIdentity` пишет в PostgreSQL; отказ конфигурации должен быть виден оркестратору |
+| Править уже применённый `00001` | goose хранит хеш файла; повторный старт падает на checksum mismatch. Новая колонка — `00002` |
+| `uuidv7()` в SQL | появляется в PostgreSQL 18; в срезе 16. Генерация остаётся в процессе |
+| `ApplyDSN` и слушать | `ApplyDSN` закрывает пул после миграций; RPC нечем писать. Нужны `Open` + `Apply` на том же `*sql.DB` |
+| Нативный `pgx.Pool` вместо `database/sql` | быстрее и с типизированными аргументами, но второй API рядом с goose, который уже говорит через `*sql.DB` |
+| Безлимитный пул (`MaxOpenConns=0`) | всплеск RPC открывает бэкенд на каждый вызов, пока PostgreSQL не откажет `too many clients already` |
+| Полагаться на `default_transaction_isolation` | оператор может поставить REPEATABLE READ; конкурентный первый `/start` тогда падает с `40001` |
+| `SELECT` + `INSERT` без `ON CONFLICT` | гонка двух одновременных вставок даёт unique_violation второму; upsert атомарно выбирает insert или update |
 
 ## Схема
 
@@ -142,15 +195,40 @@ flowchart LR
   buf --> gen["apps/identity/gen"]
   gen --> build["go build ./..."]
   src["cmd + internal"] --> build
-  sql["embedded SQL"] --> build
+  sqlFiles["embedded SQL"] --> build
   build --> test["go test ./..."]
   gen --> lint["golangci-lint run"]
   src --> lint
-  sql --> migrate["Apply at process start"]
+  dsn["IDENTITY_DATABASE_URL"] --> pool["sql.Open pool"]
+  sqlFiles --> migrate["Apply on pool"]
+  pool --> migrate
   migrate --> listen["gRPC Serve"]
+  pool --> listen
 ```
 
 `just identity-build`, `identity-test` и `identity-lint` все зависят от `identity-proto`. Без `gen/` пакет `internal/server` не компилируется.
+
+Путь одного `ResolveIdentity` внутри уже открытого пула:
+
+```mermaid
+sequenceDiagram
+    participant H as ResolveIdentity
+    participant Tx as sql.Tx
+    participant PG as PostgreSQL
+
+    H->>Tx: BeginTx READ COMMITTED
+    H->>PG: INSERT ON CONFLICT DO UPDATE WHERE RETURNING id
+    alt insert or username changed
+        PG-->>H: id
+    else same username
+        PG-->>H: 0 rows
+        Note over H: Scan даёт sql.ErrNoRows
+        H->>PG: SELECT id
+        PG-->>H: id
+    end
+    H->>Tx: Commit
+    Note over Tx: defer Rollback возвращает ErrTxDone
+```
 
 ## Первоисточники
 
@@ -164,6 +242,9 @@ flowchart LR
 - Скилл `.skillshare/skills/golang/golang-lint/SKILL.md` — из него взят состав линтеров в `.golangci.yml`; `golang-project-layout/SKILL.md` — раскладка `cmd`/`internal`; `golang-modernize/SKILL.md` — замена `tools.go` на директиву `tool`.
 - [`embed`](https://pkg.go.dev/embed) — как SQL попадает в бинарник.
 - [goose Provider](https://github.com/pressly/goose) — `NewProvider` + `Up(ctx)` вместо глобального `SetBaseFS`.
+- [`database/sql`](https://pkg.go.dev/database/sql) — `DB` как пул, `Open` без коннекта, `SetMaxOpenConns`, `Tx` на одно соединение, `LevelReadCommitted`, `ErrNoRows` и `ErrTxDone`.
+- [PostgreSQL 16: `INSERT ... ON CONFLICT`](https://www.postgresql.org/docs/16/sql-insert.html) — `excluded`, `WHERE` у `DO UPDATE`, пустой `RETURNING`, если строка не вставлена и не обновлена.
+- [`uuid.NewV7`](https://pkg.go.dev/github.com/google/uuid#NewV7) — RFC 9562 в процессе; каноническая форма — `String()`.
 
 ## Проверь себя
 
@@ -173,5 +254,12 @@ flowchart LR
 - `cd apps/identity && go run` маленькой программы с `JSONHandler` и `LevelInfo`: `Info` и `Warn` печатают JSON с ключами `time`, `level`, `msg`; `Debug` молчит. Проверено.
 - `golangci-lint version` на закреплённой 2.13.2, собранной `go1.27.0`, проходит `golangci-lint run ./...` в модуле. Проверено. 2.6.0 на том же `go.mod` падала с ошибкой версии export data.
 - `go test -race ./...` локально не запускается: `-race requires cgo`, а `gcc` в `PATH` нет. Проверено — поэтому детектор гонок стоит шагом в CI, а не в `just identity-test`.
-- `IDENTITY_DATABASE_URL` пустой → процесс пишет `database configuration failed` и выходит с кодом 1. Проверено `go run ./cmd/identity`.
-- Повторный `just identity-run` на той же базе пишет `migrations applied` и не падает на goose. Проверено: таблица `goose_db_version` после второго старта остаётся на version 1.
+- `IDENTITY_DATABASE_URL` пустой → процесс пишет `store setup failed` и выходит с кодом 1. Проверено `go run ./cmd/identity`.
+- Повторный `Apply` на той же базе не падает на goose. Проверено: после двух `Apply` `goose_db_version` остаётся на version 2 — файлы `00001` и `00002`.
+- `sql.Open("pgx", dsn)` без `_ "github.com/jackc/pgx/v5/stdlib"` → `sql: unknown driver "pgx" (forgotten import?)`. Проверено `go run`.
+- `tx.Commit()` затем `tx.Rollback()` → `sql.ErrTxDone`. Проверено.
+- Повторный `INSERT ... ON CONFLICT DO UPDATE WHERE username IS DISTINCT FROM excluded.username RETURNING id` с тем же ником: psql печатает 0 строк, `QueryRow.Scan` даёт `sql.ErrNoRows`. Смена ника возвращает тот же `id`. Проверено на PostgreSQL 16.
+- `BEGIN; SELECT now(); SELECT pg_sleep(0.05); SELECT now();` — оба `now()` равны; `clock_timestamp()` больше. Проверено.
+- `uuid.NewV7().String()` — lowercase, `Version() == 7`; `Parse` верхнего регистра снова печатает lowercase. Проверено `go run`.
+- `migrations.Open` ставит `MaxOpenConnections=16`. Проверено `TestOpenCapsPool`.
+- `BeginTx` передаёт `sql.LevelReadCommitted`. Проверено чтением `ResolveIdentity`.

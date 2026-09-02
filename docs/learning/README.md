@@ -20,9 +20,9 @@
 
 | Тема | Что покрыто | Статус |
 |---|---|---|
-| [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal` как правило компилятора, горутины, каналы и `select`, ошибки, директива `tool`, `slog` JSON, `go:embed`, goose-миграции при старте, цепочка `just identity-*` | вернуться |
-| [go/testing.md](go/testing.md) | раскладка тестов, внутренний и внешний тестовый пакет, табличные тесты, подмена через интерфейс, `bufconn`, изолированные базы PostgreSQL, `-race` и cgo | вернуться |
-| [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание, статус-коды, интерцепторы как middleware, recovery и владелец записи, health и reflection | вернуться |
+| [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal`, горутины и `select`, ошибки, `tool`, `slog`, `go:embed`, goose, пул `database/sql` и лимит соединений, транзакция READ COMMITTED и `ErrTxDone`, пустой `RETURNING` как `ErrNoRows`, `uuid.NewV7` | вернуться |
+| [go/testing.md](go/testing.md) | раскладка тестов, белый и чёрный ящик, табличные тесты, `bufconn`, изолированные базы, `testdb`, `t.Helper`, `Fatal` только из горутины теста, инвариант вне ответа RPC, `-race` | вернуться |
+| [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание и поля рядом, статус-коды, интерцепторы как middleware, recovery, скупой `Internal` и `internalError`, health и reflection | вернуться |
 
 Статус ставится по факту, а не по ощущению:
 
