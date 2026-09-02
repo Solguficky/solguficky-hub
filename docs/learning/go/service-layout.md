@@ -28,6 +28,17 @@ import identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identi
 
 Версии выбираются алгоритмом **minimal version selection**: если два модуля просят разные версии общей зависимости, берётся не последняя, а старшая из запрошенных. Обновление — всегда явное действие, не побочный эффект сборки.
 
+Та же строка `go 1.27.0` управляет и выбором самого компилятора. С Go 1.21 команда `go` умеет запустить вместо себя другую версию тулчейна: при значении по умолчанию `GOTOOLCHAIN=auto` она скачивает нужную версию как обычный модуль, если `go.mod` просит новее установленной. Значение `local` это запрещает, а конкретное значение вроде `go1.27.0` фиксирует версию жёстко — независимо от того, что стоит в системе. Проверено: `GOTOOLCHAIN=go1.99.0 go version` печатает `go: downloading go1.99.0` и затем `toolchain not available`, то есть значение читается как имя версии для скачивания, а не как подсказка.
+
+Отсюда две строки в `.cursor/install.sh`, который готовит облачное окружение:
+
+```sh
+GO_VERSION="$(awk '/^go [0-9]/ {print $2; exit}' "$REPO_ROOT/apps/identity/go.mod")"
+export GOTOOLCHAIN="go${GO_VERSION}"
+```
+
+Версия не записана константой, а вычитана из `go.mod`: источник правды остаётся один, и обновление строки `go` в модуле не оставляет образ на старом компиляторе. Ближайший аналог в .NET — `global.json` с `sdk.version`, но там несовпадение версии просто ошибка, а здесь `go` сам достаёт нужный тулчейн.
+
 Инструменты сборки объявляются директивой `tool` в `go.mod`:
 
 ```
@@ -126,6 +137,8 @@ SQL-миграции — обычные файлы рядом с пакетом 
 | Небуферизованный `errCh` | горутина `Serve` навсегда блокируется на отправке, если `run` вышел по сигналу и не дочитал канал |
 | Не читать `errCh` после `GracefulStop` | отказ листенера, совпавший с сигналом, теряется: при двух готовых case `select` выбирает ветку псевдослучайно |
 | `tools.go` с `//go:build tools` | приём до Go 1.24; директива `tool` в `go.mod` делает то же явно, а `go install tool` ставит всё одной командой |
+| Константа `GOTOOLCHAIN=go1.27.0` прямо в `.cursor/install.sh` | вторая копия версии рядом с `go.mod`; расходятся они молча, а замечает это первый упавший билд |
+| Не трогать `GOTOOLCHAIN` в облачном образе | `auto` дотягивает тулчейн, только если он старее строки `go`; предустановленный более новый остаётся, и сборка идёт не тем компилятором, который объявлен в `go.mod` |
 | Только `go vet` в CI | не ловит `slog`/`noctx`/`protogetter`; задача просила линт, не минимальный vet |
 | Коммитить `gen/` | ломает правило ADR-027 и [protobuf.md](../../standards/contracts/protobuf.md): generated — не источник правды |
 | `golang-migrate` вместо goose | `Up()` без контекста; линтер `noctx` отвергает. У goose есть `Provider.Up(ctx)` |
@@ -155,6 +168,7 @@ flowchart LR
 ## Первоисточники
 
 - [Go modules reference](https://go.dev/ref/mod) — `go.mod`, `go.sum`, minimal version selection и директива `tool`.
+- [Go toolchains](https://go.dev/doc/toolchain) — что делают `GOTOOLCHAIN=auto`, `local` и конкретная версия и как со строкой `go` в `go.mod` связан выбор компилятора.
 - [Effective Go: package names](https://go.dev/doc/effective_go#package-names) — почему имя пакета не обязано совпадать с каталогом.
 - [`internal` packages](https://go.dev/doc/go1.4#internalpackages) — правило видимости, которое проверяет компилятор.
 - [Go spec: select](https://go.dev/ref/spec#Select_statements) — «uniform pseudo-random selection», из-за которого нужен дочитанный `errCh`.
@@ -170,6 +184,8 @@ flowchart LR
 - `just identity-proto && ls apps/identity/gen/identity/v1/` даёт `identity_service.pb.go` и `identity_service_grpc.pb.go`. Проверено.
 - `go list -f '{{.Name}} {{.GoFiles}}' .` в корне модуля не показывает пакета без файлов. Проверено: раньше там жил `identity` с пустым `GoFiles` — пакет существовал только из-за внешнего тестового файла.
 - `go install tool` ставит оба плагина в `GOPATH/bin`. Проверено: появились `protoc-gen-go.exe` и `protoc-gen-go-grpc.exe`.
+- `GOTOOLCHAIN=go1.99.0 go version` печатает `go: downloading go1.99.0 (windows/amd64)` и `toolchain not available`; `GOTOOLCHAIN=local go version` и `GOTOOLCHAIN=go1.27.0 go version` дают локальный `go1.27.0`. Проверено. Поведение `auto` при более старом локальном тулчейне на этой машине не воспроизвести — локальная версия уже совпадает со строкой `go` в `go.mod`; проверь на образе со старым Go.
+- `awk '/^go [0-9]/ {print $2; exit}' apps/identity/go.mod` печатает `1.27.0` — ту же версию, что подставляет `.cursor/install.sh`. Проверено.
 - `cd apps/identity && go run` маленькой программы с `JSONHandler` и `LevelInfo`: `Info` и `Warn` печатают JSON с ключами `time`, `level`, `msg`; `Debug` молчит. Проверено.
 - `golangci-lint version` на закреплённой 2.13.2, собранной `go1.27.0`, проходит `golangci-lint run ./...` в модуле. Проверено. 2.6.0 на том же `go.mod` падала с ошибкой версии export data.
 - `go test -race ./...` локально не запускается: `-race requires cgo`, а `gcc` в `PATH` нет. Проверено — поэтому детектор гонок стоит шагом в CI, а не в `just identity-test`.

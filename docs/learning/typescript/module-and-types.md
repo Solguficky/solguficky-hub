@@ -1,6 +1,6 @@
 # Модуль TypeScript-сервиса
 
-Первый исполняемый процесс на TypeScript в репозитории — скелет Telegram Bot. Файл объясняет, как язык собирает ESM-модуль под Node, откуда берутся типы и почему недоверенный ввод разбирается не компилятором, а схемой. Выбор стека компонента — [ADR-030](../../decisions/ADR-030-telegram-bot.md) и [бриф](../../services/telegram-bot.md); wire Identity — [unary-server.md](../grpc/unary-server.md) и [protobuf.md](../../standards/contracts/protobuf.md).
+Первый исполняемый процесс на TypeScript в репозитории — скелет Telegram Bot. Файл объясняет, как язык собирает ESM-модуль под Node, откуда берутся типы и почему недоверенный ввод разбирается не компилятором, а схемой. Выбор стека компонента — [ADR-030](../../decisions/ADR-030-telegram-bot.md) и [бриф](../../services/telegram-bot.md); wire Identity — [unary-server.md](../grpc/unary-server.md) и [protobuf.md](../../standards/contracts/protobuf.md). Граница Telegram разобрана отдельно — [grammy/bot-adapter.md](../grammy/bot-adapter.md), инструмент тестов — [testing.md](testing.md).
 
 ## Механика
 
@@ -129,6 +129,7 @@ await client.resolveIdentity(toRequest(input), { timeoutMs });
 | Lint-rule «не импортировать grammY в application» | TypeScript не запретит протащить `Context`. Границу держит тест диспетчера без grammY; автоматическое правило откладывается |
 | Коммитить `gen/` | ломает [protobuf.md](../../standards/contracts/protobuf.md): generated — не источник правды |
 | `httpVersion: "2"` у `createGrpcTransport` | поля нет: этот транспорт всегда HTTP/2. Лишний ключ — TS2353 |
+| `local: apps/telegram-bot/node_modules/.bin/protoc-gen-es` в `buf.gen.yaml` | шим npm — это sh-скрипт без расширения. На Windows `buf` не может его исполнить, а `cmd.exe` читает путь с прямыми слэшами как набор ключей и падает на `"apps" не является внутренней или внешней командой`. Форма `local: [node, .../@bufbuild/protoc-gen-es/bin/protoc-gen-es]` делает ровно то же, что и сам шим внутри: `exec node <скрипт>` |
 
 ## Схема
 
@@ -174,7 +175,7 @@ flowchart LR
 - `calls[0].method` без `?.` — TS2532 `possibly 'undefined'`. Проверено.
 - `catch (e) { return e.message; }` — TS18046, `e` имеет тип `unknown`. Проверено.
 - `IncomingUpdateSchema.safeParse` на `null`, `""`, `1`, `{}`, `{ update_id: "x" }` — `success: false`; на `{ update_id: 1 }` — `success: true`; полный message — `success: true`. Проверено на emit в `dist/`.
-- `just telegram-bot-proto && ls apps/telegram-bot/gen/identity/v1/` даёт `identity_service_pb.ts` с `telegramUserId: bigint` и `export const IdentityService`. Проверено.
+- `just telegram-bot-proto && ls apps/telegram-bot/gen/identity/v1/` даёт `identity_service_pb.ts` с `telegramUserId: bigint` и `export const IdentityService`. Проверено, в том числе на Windows после перехода на вызов плагина через `node`: вывод обоих шаблонов совпал побайтно (`diff -r`).
 - После `tsc -p tsconfig.build.json` первая строка `dist/src/application/dispatcher.js` — `import { acknowledge } from "./acknowledge.js"`. Проверено.
 - `npx vitest run src/application/dispatcher.test.ts` завершается кодом 0, без watch. Проверено.
 
