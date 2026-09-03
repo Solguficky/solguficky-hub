@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Механика графа и профилей проверена прогоном на Aspire 13.5.3; живой gate готовности Identity и Telegram Bot после переработки графа не повторялся.
+> **Статус:** Current, частично подтверждено. Профили `infra` и `identity` подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop после перехода на граф узлов; профиль с Telegram Bot и production-like публикация не проверены.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -67,27 +67,24 @@ just aspire core -- --skip-services telegram-bot
 
 ## Проверенный локальный gate
 
-Механика графа подтверждена прогоном после переработки:
+Механика графа, без Docker — эти пункты отрабатывают до старта ресурсов:
 
 1. `dotnet restore` и `dotnet build` для `infra/apphost` успешны.
-2. Неизвестный профиль отвергается на старте и через `--profile`, и через `TOPOLOGY__PROFILE`, с перечнем допустимых значений.
+2. Неизвестный профиль отвергается и через `--profile`, и через `TOPOLOGY__PROFILE`, с перечнем допустимых значений.
 3. Профиль, перечисляющий незарегистрированный узел, падает до построения графа.
-4. Профиль `infra` материализует PostgreSQL и NATS и ни одного компонента.
-5. `--run-services telegram-bot` оставляет в запуске только бота, а баннер называет `identity` как объявленную, но не принадлежащую профилю зависимость.
+4. `--run-services telegram-bot` оставляет в запуске только бота, а баннер называет `identity` как объявленную, но не принадлежащую профилю зависимость.
 
-Все пять пунктов отрабатывают до старта ресурсов, поэтому проверены без Docker: они говорят про граф и баннер, а не про поднятые контейнеры.
+Живой прогон на Aspire 13.5.3 с Docker Desktop:
 
-Живой gate готовности на прежнем графе выполнялся и проходил, но описывал модель с `go run` и режимами компонентов, которой больше нет. После переработки его нужно повторить целиком:
-
-1. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и поднимает здоровые PostgreSQL и Identity.
-2. Identity применяет миграции, слушает назначенный Aspire порт, отвечает `SERVING` на стандартный gRPC health RPC и успешно выполняет `IdentityService/ResolveIdentity` через proxy endpoint Aspire.
-3. Профиль `full` с настоящим Telegram Bot token поднимает бота после здорового Identity.
-4. PostgreSQL использует именованный том `solguficky-postgres-data`, который повторно подключается после обычного перезапуска AppHost.
-5. После штатной остановки `aspire ps --format Json` не показывает оставшихся сессий, а процесса Identity не остаётся в системе.
+5. Профиль `infra` поднимает здоровые PostgreSQL, NATS и базу `solguficky` и ни одного компонента.
+6. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0, поднимает здоровый PostgreSQL и доводит Identity до `Healthy`; NATS в этом профиле не поднимается.
+7. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт.
+8. `IdentityService/ResolveIdentity` через proxy endpoint Aspire возвращает UUIDv7.
+9. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
 
 ## Неподтверждённая граница
 
-Полный профиль с Telegram Bot и настоящим токеном ни разу не прогонялся. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+Профиль с Telegram Bot и настоящим токеном ни разу не прогонялся, как и повторное подключение тома `solguficky-postgres-data` после перезапуска AppHost. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
 
 ## Повторная проверка
 
@@ -97,6 +94,6 @@ just aspire core -- --skip-services telegram-bot
 just verify
 ```
 
-Живой gate требует отдельных запусков профилей `infra`, `identity` и `full`: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи Identity, затем вызвать `IdentityService/ResolveIdentity` через найденный в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
+Живой gate требует отдельных запусков профилей `infra` и `identity`, а после появления токена — и `full`: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи Identity, затем вызвать `IdentityService/ResolveIdentity` через найденный в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
 
 Работа и её прогресс должны быть заведены в Linear; этот документ хранит только устойчивые правила и проверяемый gap.
