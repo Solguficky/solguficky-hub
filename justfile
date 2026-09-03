@@ -49,23 +49,13 @@ verify: check-agent-tools identity-build identity-test identity-lint telegram-bo
 
 # AppHost поднимает инфраструктуру и зарегистрированные компоненты профиля.
 # Профили: infra | core | full (см. infra/apphost/Topology.cs).
-# Identity proto генерируется всегда; Telegram Bot собирается только если он Local.
+# Подготовка компонентов описана в их условных AppHost-ресурсах.
 aspire profile="core":
-    just identity-proto
-    just telegram-bot-prepare {{profile}}
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
 
 # Сборка Aspire AppHost
 apphost-build:
     cd infra/apphost && dotnet build --nologo
-
-[private]
-telegram-bot-prepare profile:
-    #!/usr/bin/env sh
-    set -eu
-    if [ "{{profile}}" != "infra" ]; then
-        just telegram-bot-build
-    fi
 
 # --- Identity (Go) ---------------------------------------------------------
 #
