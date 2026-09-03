@@ -1,6 +1,6 @@
 ---
 name: proj-write-fsharp
-description: Писать и ревьюить F#: доменные типы, Option/Result, уровни ошибок и их отображение, чистые функции, .NET/Protobuf interop и порядок файлов .fsproj. Использовать при любой правке .fs, .fsi, .fsproj или F#-модуля — это базовый языковой skill. Раскладку приложения по срезам добавляет proj-write-fsharp-vsa, тесты — proj-test-fsharp.
+description: "Писать и ревьюить F#: доменные типы, Option/Result, уровни ошибок и их отображение, чистые функции, .NET/Protobuf interop и порядок файлов .fsproj. Использовать при любой правке .fs, .fsi, .fsproj или F#-модуля — это базовый языковой skill. Раскладку приложения по срезам добавляет proj-write-fsharp-vsa, тесты — proj-test-fsharp."
 ---
 
 # Писать F#-код
