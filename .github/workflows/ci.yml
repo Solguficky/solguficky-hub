@@ -12,6 +12,7 @@ jobs:
       pull-requests: read
     outputs:
       identity: ${{ steps.filter.outputs.identity }}
+      apphost: ${{ steps.filter.outputs.apphost }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -22,6 +23,9 @@ jobs:
               - 'contracts/proto/**'
               - 'apps/identity/**'
               - 'justfile'
+              - '.github/workflows/ci.yml'
+            apphost:
+              - 'infra/apphost/**'
               - '.github/workflows/ci.yml'
 
   identity:
@@ -75,6 +79,24 @@ jobs:
           working-directory: apps/identity
           install-mode: goinstall
           args: --timeout 5m
+
+  # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
+  # джобы правка Program.cs или Topology.cs, которая не собирается, проходит
+  # ревью зелёной.
+  apphost:
+    needs: changes
+    if: needs.changes.outputs.apphost == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # AppHost таргетит net8.0, а Aspire.AppHost.Sdk 13.5.3 требует SDK 10:
+          # ставим обе линии, сборка идёт новейшей.
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet build infra/apphost/AppHost.csproj --nologo
 
   repo-hygiene:
     runs-on: ubuntu-latest
