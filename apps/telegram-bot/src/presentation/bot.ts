@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Bot, type Context } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
-import type { IdentityResolver } from "../identity/port.js";
+import { startExecuteRequest } from "../application/types.js";
+import {
+  type IdentityResolver,
+  toResolveIdentityInput,
+} from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -63,13 +67,12 @@ async function handleMessage(
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   try {
-    const parsed = parseUpdate(ctx.update);
+    const parsed = parseUpdate(ctx.update, ctx.me.username);
     if (parsed.kind === "malformed") {
       outcome = {
         level: "warn",
         message: "malformed telegram update",
         result: "error",
-        use_case: "start",
         error_category: "malformed",
         error: "telegram update failed validation",
       };
@@ -83,7 +86,9 @@ async function handleMessage(
       };
       return;
     }
-    const resolved = await runtime.identity.resolve(parsed);
+    const resolved = await runtime.identity.resolve(
+      toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
+    );
     if (resolved.kind === "unavailable") {
       outcome = {
         level: "error",
@@ -96,16 +101,15 @@ async function handleMessage(
       await ctx.reply(unavailableText);
       return;
     }
-    const result = runtime.dispatcher.execute({
-      identity: {
-        identityId: resolved.identityId,
-        globalRoles: resolved.globalRoles,
-      },
-      intent: "start",
-      ...(parsed.deepLinkPayload === undefined
-        ? {}
-        : { deepLinkPayload: parsed.deepLinkPayload }),
-    });
+    const result = runtime.dispatcher.execute(
+      startExecuteRequest(
+        {
+          identityId: resolved.identityId,
+          globalRoles: resolved.globalRoles,
+        },
+        "deepLink" in parsed ? parsed.deepLink : undefined,
+      ),
+    );
     switch (result.kind) {
       case "message":
         await ctx.reply(result.text);
