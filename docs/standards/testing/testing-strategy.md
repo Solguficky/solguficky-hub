@@ -10,7 +10,7 @@
 
 | Уровень | Что проверяет | Текущие инструменты |
 |---|---|---|
-| Unit | чистая доменная логика, FSM, UI builders, mapping, error branches | Identity: Go tests; Telegram Bot: Vitest; C# xUnit 2 |
+| Unit | чистая доменная логика, FSM, UI builders, mapping, error branches | Identity: Go tests; Telegram Bot: Vitest; F# xUnit v3 + Unquote, FsCheck для properties |
 | Actor | command/event/state transitions, recovery и actor infrastructure | Akka.TestKit.Xunit2; сначала тестируй чистую логику, если она отделена |
 | Integration | реальный boundary одного сервиса: PostgreSQL, NATS, gRPC, SignalR | service-specific test host или локальная инфраструктура |
 | Contract | producer и consumer одинаково понимают Protobuf и subject | сборка всех потребителей, сериализационные тесты, `nats-tester` |
@@ -44,4 +44,4 @@ just telegram-bot-typecheck
 dotnet build && dotnet test
 ```
 
-Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Этот документ не назначает стек ещё не созданным F#, Kotlin или Scala-сервисам.
+Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Для F# действует [отдельный standard](fsharp.md). Kotlin- и Scala-сервисы получают стек после создания.
