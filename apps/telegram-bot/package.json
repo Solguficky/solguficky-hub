@@ -8,7 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "prestart": "npm run build",
+    "proto": "cd ../.. && buf generate --template apps/telegram-bot/buf.gen.yaml",
+    "prestart": "npm run proto && npm run build",
     "start": "node dist/src/main.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
