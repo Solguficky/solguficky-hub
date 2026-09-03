@@ -8,7 +8,7 @@ Workflow собирает, тестирует и линтит Identity на из
 
 Джоба `apphost` компилирует `infra/apphost/AppHost.csproj` на изменение `infra/apphost/**` и самого workflow. Она ставит линии .NET 8 и 10: AppHost таргетит `net8.0`, а `Aspire.AppHost.Sdk` требует SDK 10. Без этой джобы правка `Program.cs` или `Topology.cs`, которая не собирается, ловилась бы только локальным `just verify`.
 
-Кроме `push` в `main` и pull request workflow принимает `workflow_dispatch` — ручной запуск на случай, когда push не создал прогон сам, например когда ветку двигал GitHub App. У ручного запуска нет базы для сравнения путей, поэтому джоба `changes` на нём пропускается, а `identity` и `apphost` запускаются по `github.event_name` безусловно. Кнопка Run workflow доступна только для той версии `ci.yml`, что лежит в ветке по умолчанию: пока триггер не в `develop`, вручную не запустить и ветку.
+Кроме `push` в `main` и pull request workflow принимает `workflow_dispatch` — ручной запуск на случай, когда push не создал прогон сам, например когда ветку двигал GitHub App. У ручного запуска нет базы для сравнения путей, поэтому джоба `changes` на нём пропускается, а `identity` и `apphost` запускаются по `github.event_name` безусловно. Кнопка Run workflow в UI появляется только когда триггер есть в `ci.yml` ветки по умолчанию, но запуск через REST API (`POST /actions/workflows/ci.yml/dispatches` с нужным `ref`) работает и с ветки, где триггер уже добавлен, — так этот прогон и был получен.
 
 Известные gaps:
 
