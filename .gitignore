@@ -79,6 +79,8 @@ packages/
 *.test
 *.out
 vendor/
+# Собранный бинарник: `go build -o` кладёт его сюда из AppHost
+bin/
 
 # ===================================================================
 # Node.js — apps/telegram-bot

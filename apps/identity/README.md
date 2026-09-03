@@ -17,7 +17,7 @@ just identity-lint
 just identity-run
 ```
 
-В составе локальной топологии профиль `core` или `full` запускает Identity через AppHost, предварительно выполняет ту же Protobuf-кодогенерацию и передаёт динамический gRPC-порт и PostgreSQL URI:
+В составе локальной топологии профиль `core` или `full` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
 
 ```bash
 just aspire core

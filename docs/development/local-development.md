@@ -25,7 +25,7 @@ aspire run
 
 Для человека `aspire run` остаётся интерактивной командой с dashboard. Агент в worktree использует точный AppHost через `aspire start --non-interactive --isolated --apphost infra/apphost/AppHost.csproj`, ждёт ресурсы через `aspire wait` и штатно останавливает тот же AppHost.
 
-AppHost всегда объявляет PostgreSQL 16 и NATS 2.10 с JetStream. Профили `core` и `full` также запускают Identity и Telegram Bot из исходников. Вспомогательный ресурс сначала генерирует Go-код из Protobuf, затем Identity ждёт готовности базы, получает PostgreSQL URI и динамический gRPC-порт и проверяется стандартным `grpc.health.v1.Health/Check`. JavaScript integration устанавливает зависимости Telegram Bot, а его `prestart` генерирует TypeScript-контракт и собирает приложение перед запуском. Telegram Bot ждёт здоровый Identity, получает его proxy endpoint через `IDENTITY_GRPC_URL` и читает `TELEGRAM_BOT_TOKEN`. Секретный параметр `telegram-bot-token` объявляется только в режиме `TelegramBot=Local`, поэтому профиль `infra` не требует ни token, ни toolchain компонентов.
+AppHost всегда объявляет PostgreSQL 16 и NATS 2.10 с JetStream. Профили `core` и `full` также поднимают Identity и Telegram Bot из исходников. Identity разложен на три ресурса: `identity-proto` генерирует Go-код из Protobuf, `identity-build` собирает бинарник в `apps/identity/bin`, и уже готовый бинарник запускает ресурс `identity`, получая динамический gRPC-порт и PostgreSQL URI через существующие environment-контракты. Запуск через `go run` не годится: `go run` не пересылает дочернему процессу SIGTERM, которым DCP останавливает ресурс, поэтому graceful shutdown в `main.go` был бы недостижим, а скомпилированный процесс оставался бы жить с занятым портом и открытым пулом PostgreSQL. Готовность проверяется стандартным `grpc.health.v1.Health/Check`, а не только состоянием процесса; у пробы есть deadline вызова и timeout всей проверки, потому что прокси DCP принимает TCP раньше, чем сервер начинает слушать. JavaScript integration устанавливает зависимости Telegram Bot, а его `prestart` генерирует TypeScript-контракт и собирает приложение перед запуском. Telegram Bot ждёт здоровый Identity, получает его proxy endpoint через `IDENTITY_GRPC_URL` и читает `TELEGRAM_BOT_TOKEN`. Секретный параметр `telegram-bot-token` объявляется только в режиме `TelegramBot=Local`, поэтому профиль `infra` не требует ни token, ни toolchain компонентов.
 
 ## Профили
 
@@ -61,11 +61,13 @@ aspire run
 
 1. `dotnet restore` и `dotnet build` для `infra/apphost` успешны.
 2. Профиль `infra` поднимает здоровые PostgreSQL и NATS без Identity.
-3. Профиль `full` с `TOPOLOGY__TELEGRAMBOT=Off` завершает `identity-proto` с кодом 0 и поднимает здоровые PostgreSQL, NATS и Identity.
+3. Профиль `full` с `TOPOLOGY__TELEGRAMBOT=Off` завершает `identity-proto` и `identity-build` с кодом 0 и поднимает здоровые PostgreSQL, NATS и Identity.
 4. Identity применяет миграции, слушает назначенный Aspire порт, отвечает `SERVING` на стандартный gRPC health RPC и успешно выполняет `IdentityService/ResolveIdentity` через proxy endpoint Aspire.
 5. Неизвестный профиль, неизвестный режим и неподдерживаемый `Identity=Container` завершают AppHost с понятной ошибкой.
 6. PostgreSQL использует именованный том `solguficky-postgres-data`, который повторно подключается после обычного перезапуска AppHost.
-7. После штатной остановки `aspire ps --format Json` не показывает оставшихся сессий.
+7. После штатной остановки `aspire ps --format Json` не показывает оставшихся сессий, а процесса Identity не остаётся в системе.
+
+Прогон выполнялся на графе, где Identity запускался через `go run`. Пункты 3, 4 и 7 после перевода на собранный бинарник и на пробу с deadline нужно повторить: сам факт, что `go run` не доставляет дочернему процессу SIGTERM и оставляет его сиротой, проверен отдельно на минимальной программе, но не в графе Aspire.
 
 ## Неподтверждённая граница
 

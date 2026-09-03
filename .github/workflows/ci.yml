@@ -4,9 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ручной запуск для случая, когда push не создал прогон сам: например,
+  # ветку двигал GitHub App. Кнопка Run workflow появляется, только когда
+  # этот триггер есть в ci.yml на ветке по умолчанию (develop).
+  workflow_dispatch:
 
 jobs:
+  # Фильтр путей сравнивает ветку с базой, и у ручного запуска такой базы нет,
+  # поэтому на нём джоба пропускается целиком, а зависимые запускаются по
+  # github.event_name.
   changes:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -35,9 +43,14 @@ jobs:
               - 'justfile'
               - '.github/workflows/ci.yml'
 
+  # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
+  # уносить за собой зависимые, поэтому условие начинается с !cancelled().
   identity:
     needs: changes
-    if: needs.changes.outputs.identity == 'true'
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.identity == 'true'
+      || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -89,7 +102,10 @@ jobs:
 
   telegram-bot:
     needs: changes
-    if: needs.changes.outputs.telegram-bot == 'true'
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.telegram-bot == 'true'
+      || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,17 +134,26 @@ jobs:
       - run: npm run build
         working-directory: apps/telegram-bot
 
+  # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
+  # джобы правка Program.cs или Topology.cs, которая не собирается, проходит
+  # ревью зелёной.
   apphost:
     needs: changes
-    if: needs.changes.outputs.apphost == 'true'
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.apphost == 'true'
+      || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
-      - run: dotnet build --nologo
-        working-directory: infra/apphost
+          # AppHost таргетит net8.0, а Aspire.AppHost.Sdk 13.5.3 требует SDK 10:
+          # ставим обе линии, сборка идёт новейшей.
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet build infra/apphost/AppHost.csproj --nologo
 
   repo-hygiene:
     runs-on: ubuntu-latest
