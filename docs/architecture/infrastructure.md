@@ -12,7 +12,7 @@
 - логи, health и traces;
 - возможность отключить компонент и запустить его из IDE.
 
-Локальные профили `infra` и `full` подтверждены живым прогоном на Aspire 13.5.3: инфраструктурный профиль поднимает PostgreSQL и NATS, полный дополнительно запускает Identity из исходников и проверяет его стандартный gRPC health. Повторяемый gate описан в [руководстве по локальной разработке](../development/local-development.md). Следующие сервисы добавляют свои Aspire-ресурсы в собственных задачах. Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
+Профиль `infra` и срез PostgreSQL + NATS + Identity подтверждены живым прогоном на Aspire 13.5.3; для проверки Identity Telegram Bot был выключен явным режимом `Off`. Telegram Bot уже входит в `core` и `full`, но совместный живой прогон полного профиля требует токен и после объединения топологий ещё не повторён. Повторяемый gate описан в [руководстве по локальной разработке](../development/local-development.md). Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
 
 ## Production-like integration
 
@@ -40,10 +40,11 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Current-ограничения
 
-- AppHost поднимает PostgreSQL и NATS, а профили `core` и `full` также запускают Identity из исходников;
-- Identity применяет свои миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
+- AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
+- Identity ждёт базу `solguficky`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
+- Telegram Bot ждёт здоровый Identity и получает его proxy endpoint через `IDENTITY_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
-- локальные профили `infra` и `full` подтверждены, но `aspire publish` и production-топология не проверены;
+- живой прогон `infra` и Identity-среза подтверждён, но полный профиль с Telegram Bot, `aspire publish` и production-топология не проверены;
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения

@@ -24,7 +24,7 @@ public static class Topology
     /// из исходников, остальные — выключены. Пополняется вместе с регистрацией
     /// компонента в <c>Program.cs</c>.
     /// </summary>
-    private static readonly HashSet<string> CoreComponents = ["Identity"];
+    private static readonly HashSet<string> CoreComponents = ["Identity", "TelegramBot"];
 
     public static string ResolveProfile(IConfiguration config)
     {

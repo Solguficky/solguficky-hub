@@ -22,6 +22,11 @@ builder.AddNats("nats")
 
 var profile = Topology.ResolveProfile(builder.Configuration);
 var identityMode = Topology.ResolveMode(builder.Configuration, profile, "Identity");
+var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../.."));
+var identityPath = Path.Combine(repoRoot, "apps/identity");
+var telegramBotPath = Path.Combine(repoRoot, "apps/telegram-bot");
+
+IResourceBuilder<ExecutableResource>? identity = null;
 
 switch (identityMode)
 {
@@ -29,15 +34,15 @@ switch (identityMode)
         var identityProto = builder.AddExecutable(
             "identity-proto",
             "buf",
-            "../..",
+            repoRoot,
             "generate",
             "--template",
             "apps/identity/buf.gen.yaml");
 
-        var identity = builder.AddExecutable(
+        identity = builder.AddExecutable(
                 "identity",
                 "go",
-                "../../apps/identity",
+                identityPath,
                 "run",
                 "./cmd/identity")
             .WithEndpoint(
@@ -71,6 +76,27 @@ switch (identityMode)
 
     default:
         throw new InvalidOperationException($"Unsupported Identity mode: {identityMode}.");
+}
+
+switch (Topology.ResolveMode(builder.Configuration, profile, "TelegramBot"))
+{
+    case ComponentMode.Local:
+        var telegramBotToken = builder.AddParameter("telegram-bot-token", secret: true);
+        var telegramBot = builder.AddJavaScriptApp("telegram-bot", telegramBotPath, "start")
+            .WithEnvironment("TELEGRAM_BOT_TOKEN", telegramBotToken);
+        if (identity is not null)
+        {
+            telegramBot
+                .WaitFor(identity)
+                .WithEnvironment("IDENTITY_GRPC_URL", identity.GetEndpoint("grpc"));
+        }
+        break;
+    case ComponentMode.Container:
+        throw new InvalidOperationException("TelegramBot Container mode is not implemented.");
+    case ComponentMode.Off:
+        break;
+    default:
+        throw new InvalidOperationException("Unknown TelegramBot component mode.");
 }
 
 builder.Build().Run();
