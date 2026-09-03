@@ -65,7 +65,7 @@ Oxpecker следует из той же границы: HTTP-адаптер п�
 
 ## Связанные документы
 
-- Standards: [languages/fsharp.md](../standards/languages/fsharp.md), [testing/fsharp.md](../standards/testing/fsharp.md)
+- Standards: [architecture/functional-slices.md](../standards/architecture/functional-slices.md) — действующий норматив устройства, [languages/fsharp.md](../standards/languages/fsharp.md), [testing/fsharp.md](../standards/testing/fsharp.md)
 - Другие ADR: [ADR-024](ADR-024-meetups-state-storage-with-domain-event-log.md), [ADR-025](ADR-025-meetups-fsharp-stack.md), [ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md)
 - Сервис: [Meetups](../services/meetups.md)
 - Skills: [.skillshare/skills/proj/proj-write-fsharp-vsa/SKILL.md](../../.skillshare/skills/proj/proj-write-fsharp-vsa/SKILL.md) — порядок применения решения при изменении среза

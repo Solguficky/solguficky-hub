@@ -10,6 +10,7 @@ Standards — канонические нормативы для реализа�
 | [testing/testing-strategy.md](testing/testing-strategy.md) | выбор уровня и обязательные свойства тестов |
 | [testing/fsharp.md](testing/fsharp.md) | инструменты и проверяемые свойства F#-тестов |
 | [languages/fsharp.md](languages/fsharp.md) | типы, эффекты, ошибки, interop и порядок компиляции F# |
+| [architecture/functional-slices.md](architecture/functional-slices.md) | устройство F#-приложения из срезов: чистое ядро, зависимости, error flow, границы |
 | [observability/logging.md](observability/logging.md) | каркас полей структурной записи, correlation и privacy |
 | [git/branching.md](git/branching.md) | база ветвления, имя ветки, параллельные рабочие деревья, заголовок и тело pull request |
 | [git/commit-messages.md](git/commit-messages.md) | формат сообщения коммита |
