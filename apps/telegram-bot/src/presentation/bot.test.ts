@@ -183,7 +183,10 @@ describe("presentation adapter", () => {
         globalRoles: [],
       },
       intent: "start",
-      deepLinkPayload: "m_AZLzpLXGfY6fChssPU5fYA",
+      deepLink: {
+        kind: "meetup",
+        payload: "m_AZLzpLXGfY6fChssPU5fYA",
+      },
     });
   });
 
@@ -225,6 +228,22 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.use_case).toBe("start");
   });
 
+  it("resolves /start with a bot mention", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/START@stub_bot"));
+    expect(sendMessageText(calls[0])).toContain("Привет.");
+  });
+
+  it("does not resolve identity for /start mentioned for another bot", async () => {
+    const resolve = vi.fn(resolvedIdentity().resolve);
+    const { bot, calls } = createHarness({ resolve });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start@other_bot"));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
   it("replies fail-closed when identity rpc exceeds the deadline", async () => {
     vi.useFakeTimers();
     const identity = createIdentityResolver(
@@ -251,6 +270,28 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(ignoredUpdate());
     expect(calls).toEqual([]);
     expectBoundary(records[0], { level: "debug", result: "ok" });
+    expect(records[0]?.fields.use_case).toBeUndefined();
+  });
+
+  it("logs malformed updates without a use_case", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate({
+      update_id: 1,
+      message: {
+        message_id: 1.5,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "/start",
+      },
+    });
+    expect(calls).toEqual([]);
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "malformed",
+    });
     expect(records[0]?.fields.use_case).toBeUndefined();
   });
 
