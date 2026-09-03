@@ -1,56 +1,153 @@
 ---
 name: proj-write-aspire-apphost
-description: Писать и ревьюить Aspire AppHost этого репозитория: единый native resource graph, профили infra/core/full, Go-ресурсы, WithReference/WaitFor, health и живой gate. Использовать при правках infra/apphost, Topology.cs, Aspire hosting packages или локального запуска компонентов.
+description: Писать и ревьюить Aspire AppHost этого репозитория — граф узлов, профили как данные, полиглотные ресурсы Go и Node, bind без ветвлений, health и живой gate. Использовать при правках infra/apphost, добавлении компонента или инфраструктуры, смене профилей и Aspire hosting packages.
 ---
 
 # Писать Aspire AppHost
 
-Aspire — единственная локальная оркестрация проекта ([ADR-021](../../../docs/decisions/ADR-021-aspire-local-orchestration.md)). Профили и подтверждённые ограничения живут в [local-development.md](../../../docs/development/local-development.md), граница local и production — в [infrastructure.md](../../../docs/architecture/infrastructure.md). Здесь только форма AppHost-кода и его проверка.
+Aspire — единственная локальная оркестрация проекта ([ADR-021](../../../docs/decisions/ADR-021-aspire-local-orchestration.md)). Подтверждённые ограничения и живой gate — в [local-development.md](../../../docs/development/local-development.md), граница local и production — в [infrastructure.md](../../../docs/architecture/infrastructure.md). Здесь форма кода и порядок работы. Рецепты с кодом — в [reference.md](reference.md).
 
-## 1. Сверь версию и фактический API
+AppHost — не скрипт `AddExecutable`/`WithReference`, а граф имён с отложенной материализацией. Composition root объявляет узлы и связи, профиль решает, какими узлами AppHost владеет в этом запуске, `ServiceGraph.Build()` материализует только их.
 
-До правки прочитай ближайший `AGENTS.md`, `infra/apphost/*.csproj`, `Program.cs`, `Topology.cs` и документацию компонента. Все `Aspire.AppHost.Sdk` и `Aspire.Hosting.*` packages держи на одной stable-линии. При обновлении сначала проверь актуальную стабильную версию и migration notes в официальных источниках.
+## Инварианты
 
-Не переноси пример из skill или документации вслепую: сверь команду через `aspire --help`, integration через `aspire integration search`, незнакомый API через `aspire docs api search`. Версия CLI и версия AppHost могут различаться.
+1. `Program.cs` объявляет граф и ничего больше. Образы, порты, команды и ключи environment в нём не появляются.
+2. Профиль — данные в `Topology:Profiles`, а не код. Новый профиль не трогает C#.
+3. Setup не читает имя профиля и не ветвится по нему. Он спрашивает граф: ресурс есть — bind и `WaitFor`, нет — AppHost молчит, компонент читает свой конфиг.
+4. Одно логическое имя на узел: константа в `AppHostNames`, имя ресурса Aspire, ключ профиля, аргумент `aspire wait`, имя в документации.
+5. `depends` в `AddService` — единственный источник зависимостей. Что setup биндит, то объявлено в `depends`.
+6. Узлы сборки и кодогенерации принадлежат setup компонента, а не графу: в `depends` их нет, профиль их не перечисляет.
+7. Connection string и адрес отдаются под ключом, который компонент реально читает. Ключ диктует компонент, а не конвенция AppHost.
+8. Секрет — только `AddParameter(secret: true)` и только внутри setup того компонента, которому он нужен. В `appsettings*.json` секретов нет.
+9. Всё, что печатается или летит в исключение, — по-английски: stdout AppHost проходит через Aspire CLI и ломает не-ASCII. Комментарии в коде остаются русскими.
 
-Для lifecycle используй `aspire-orchestration`, для состояния, health и логов — `aspire-monitoring`. Они не заменяют контур задачи и `just verify`.
+Нарушил пункт — поправь модель, а не обходи его в setup.
 
-## 2. Держи один граф
+## Владение, а не режимы
 
-`Program.cs` остаётся читаемой картой ресурсов и связей. Настоящий граф — builders Aspire с `WithReference`, `WaitFor` и endpoint expressions.
+AppHost либо владеет узлом и поднимает его, либо не трогает его. Третьего состояния нет: `Off` из прежней модели — это просто отсутствие имени в профиле.
 
-- `Topology.cs` выбирает профиль и режим компонента, но не дублирует зависимости.
-- Не заводи второй `ServiceGraph`, строковые `depends` или untyped registry поверх Aspire.
-- Выноси setup в `Resources/*` только когда он скрывает детали адаптера: образ, команду запуска, environment mapping или health probe. Узел и его связи должны оставаться видимыми в composition root.
-- Одно логическое имя используется для resource, профиля, `aspire wait`, тестов и документации.
+| Род узла | Регистрация | Материализуется | Иначе |
+|---|---|---|---|
+| infrastructure | `AddInfrastructure` | имя в `Infrastructure` профиля | контейнер не стартует, bind — no-op |
+| service | `AddService` | имя в `Services` профиля | компонент не стартует, его запускает владелец |
 
-Профиль отвечает на вопрос, какие компоненты принадлежат запуску. `infra` не запускает приложения; `core` поднимает компоненты первого вертикального среза; `full` — все зарегистрированные компоненты. Явный `Local | Container | Off` переопределяет профиль. Неизвестный профиль, режим или неподдерживаемая реализация падают с понятной ошибкой.
+Инфраструктура материализуется потому, что её назвал профиль, а не потому, что от неё зависит запущенный сервис. Это отличие от исходного эталона, и оно намеренное: иначе профиль без сервисов (`infra`) не поднял бы ничего.
 
-## 3. Подключай компонент через его контракт запуска
+`--run-services` меняет срез, а не wiring. Соседний сервис из `depends`, которого нет в срезе, не подтягивается — он остаётся владельцу. Чтобы это не было тихим, баннер топологии на старте отдельно перечисляет объявленные зависимости, которых в запуске нет.
 
-Используй first-party hosting integration текущей Aspire-линии, если она поддерживает реальный runtime компонента; иначе `AddExecutable` или `AddContainer` остаются честными native resources.
+## Структура
 
-- Команда и working directory совпадают с ручным запуском компонента.
-- Aspire назначает host port; процесс получает свой listen address через существующий environment contract.
-- Connection string передаётся под ключом, который реально читает компонент. Не переименовывай его ради конвенции AppHost.
-- `WithReference` передаёт данные, `WaitFor` задаёт readiness ordering. Одно не подменяет другое.
-- Health проверяет штатный endpoint или протокол компонента. Состояние `Running` без readiness-проверки не считается `Healthy`.
-- Логи идут через stdout/stderr и видны как logs ресурса; отдельный логовый sidecar ради dashboard не добавляется.
+```
+infra/apphost/
+  Program.cs                                  composition root
+  appsettings.json                            Topology:Profile + Topology:Profiles
+  Configuration/
+    AppHostNames.cs                           имена узлов
+    RepositoryPaths.cs                        пути компонентов от корня репозитория
+    ProfileResolver.cs                        --profile | TOPOLOGY__PROFILE, --run-services
+    Models/ProfileConfig.cs                   списки владения
+    Topology/ServiceGraph.cs                  реестр, валидация, порядок, баннер
+    Topology/ServiceGraphContext.cs           builder, профиль, материализованные узлы
+    Extensions/ResourceBuilderExtensions.cs   ApplyIf
+    Extensions/ResourceBindExtensions.cs      BindEndpoint, BindConnection
+    Infrastructure/                           один файл на backing store
+    Services/                                 один файл на компонент
+```
 
-## 4. Проверяй два слоя
+Другой расклад без причины не выдумывай.
 
-Сначала механика:
+## Composition root
 
-1. restore/build AppHost и затронутого компонента;
-2. неизвестный профиль и неподдерживаемый mode дают ожидаемый отказ;
-3. `just verify` остаётся зелёным.
+```csharp
+var builder = DistributedApplication.CreateBuilder(args);
+var profile = ProfileResolver.Resolve(builder.Configuration);
+var topology = new ServiceGraph(builder, profile);
 
-Затем живой gate. В worktree запускай точный AppHost через agent-safe lifecycle из `aspire-orchestration`, дождись каждого ресурса через `aspire wait`, проверь graph/health через `aspire describe` и логи через `aspire-monitoring`. Endpoint бери из Aspire, затем выполни тот же протокольный вызов, что при ручном запуске. Профили `infra` и `full` проверяются отдельными запусками, после каждого AppHost штатно останавливается.
+topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure);
+topology.AddInfrastructure(R.Nats, NatsSetup.Configure);
 
-Документация меняет статус «не проверено» только после этого живого gate. Зелёная сборка без контейнеров его не заменяет.
+topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure);
+topology.AddService(R.TelegramBot, [R.Identity], TelegramBotSetup.Configure);
+
+topology.Build();
+builder.Build().Run();
+```
+
+Новый компонент = константа в `AppHostNames` + строка `AddService` + файл setup + имя в нужных профилях. Больше ничего.
+
+## Профиль
+
+```json
+"Topology": {
+  "Profile": "core",
+  "Profiles": {
+    "infra": { "Infrastructure": [ "postgres", "nats" ] },
+    "core":  { "Services": [ "identity", "telegram-bot" ], "Infrastructure": [ "postgres" ] }
+  }
+}
+```
+
+Имя активного профиля: `--profile <name>` перекрывает `Topology:Profile` (env `TOPOLOGY__PROFILE`). Неизвестный профиль, ссылка на незарегистрированный узел и цикл в `depends` падают до построения графа, с перечнем допустимых значений.
+
+## Полиглот
+
+В репозитории нет ни одного .NET-сервиса: Identity — Go через `AddExecutable`, Telegram Bot — Node через `AddJavaScriptApp`. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
+
+Появится F#-сервис (Meetups) или Orleans (Notifications) — он придёт обычным `AddProject` в тот же граф, без изменения модели.
+
+## Workflow
+
+### Добавить компонент
+
+1. Константа в `AppHostNames.Resources`.
+2. `Configuration/Services/<Name>Setup.cs` — рецепт в [reference.md](reference.md).
+3. Строка `AddService(name, depends, Setup.Configure)` в `Program.cs`.
+4. Имя в `Services` тех профилей, где AppHost должен его поднимать.
+5. Сборка и кодогенерация компонента — внутри его setup, через `WaitForCompletion` и `WithParentRelationship`.
+6. Health по штатному протоколу компонента. `Running` без readiness-проверки не считается `Healthy`.
+
+### Добавить инфраструктуру
+
+1. Константа и ключ профиля — одна строка.
+2. `Configuration/Infrastructure/<Name>Setup.cs`; setup всегда создаёт ресурс, проверок владения внутри нет.
+3. `AddInfrastructure` в composition root.
+4. Имя в `Infrastructure` профилей, где AppHost её поднимает; потребители перечисляют её в `depends` и биндят хелпером.
+5. Ресурс, принадлежащий другому ресурсу (база внутри сервера), публикуется через `context.Publish` и в профиле не упоминается.
+
+### Обновить Aspire
+
+Все `Aspire.AppHost.Sdk` и `Aspire.Hosting.*` держи на одной stable-линии. Перед правкой сверь фактический API: `aspire integration search`, `aspire docs api search`, `aspire --help`. Версия CLI и версия AppHost могут различаться, пример из документации вслепую не переноси.
+
+Lifecycle — через `aspire-orchestration`, состояние и логи — через `aspire-monitoring`. Они не заменяют контур задачи и `just verify`.
+
+## Проверка
+
+Механика:
+
+1. `dotnet build` для `infra/apphost`.
+2. Неизвестный профиль, незарегистрированный узел в профиле и битый `depends` дают понятный отказ до старта ресурсов.
+3. `just verify` зелёный.
+
+Живой gate: запусти точный AppHost через agent-safe lifecycle из `aspire-orchestration`, дождись ресурсов через `aspire wait`, сверь граф и health через `aspire describe`, проверь баннер топологии и логи через `aspire-monitoring`, возьми endpoint из Aspire и выполни тот же протокольный вызов, что при ручном запуске. Профили проверяются отдельными запусками, после каждого AppHost останавливается штатно.
+
+Статус «не проверено» в документации снимает только живой gate. Зелёная сборка его не заменяет.
+
+## Запреты
+
+- Простыня wiring или `switch` по компонентам в `Program.cs`.
+- Захардкоженный список профилей или их семантика в C#.
+- `if (profile.Name == ...)` внутри setup.
+- Ручной `if (resource is not null)` там, где есть bind-хелпер.
+- Bind зависимости, которой нет в `depends`.
+- Второй ключ для того же узла (`Postgres` против `postgres`).
+- Регистрация узла, который не назван ни одним профилем.
+- Секрет в `appsettings*.json`.
+- Русский текст в исключениях и в том, что печатается в лог.
+- Узел сборки в `depends` или в профиле.
 
 ## Границы
 
-Skill не проектирует сервисы, production deployment, MCP или межсервисные контракты. Новый ресурс добавляется только в срезе своей Linear-задачи. Compose удаляется лишь когда это прямо разрешено задачей и подтверждён заменяющий путь.
+Skill не проектирует сервисы, production deployment, MCP и межсервисные контракты. Новый ресурс добавляется только в срезе своей Linear-задачи. Mock-узлы для внешнего HTTP в графе пока не заведены: в репозитории нет исходящей HTTP-зависимости, которую надо стабить. Появится — заводится третьим родом узла, а не режимом инфраструктуры.
 
-Изменение готово, когда `Program.cs` читается как один native graph, профиль не хранит второй список зависимостей, каждый локальный ресурс достигает `Healthy`, а документированные команды повторяют фактически выполненный gate.
+Изменение готово, когда `Program.cs` читается как граф, профиль не хранит второй список зависимостей, setup не знает имени профиля, каждый материализованный ресурс достигает `Healthy`, а документированные команды повторяют фактически выполненный gate.

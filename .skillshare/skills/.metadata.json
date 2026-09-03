@@ -1,6 +1,22 @@
 {
   "version": 1,
   "entries": {
+    "aspire": {
+      "source": "github.com/microsoft/aspire-skills/skills/aspire",
+      "type": "github-subdir",
+      "installed_at": "2026-09-04T00:15:29.0468156+03:00",
+      "repo_url": "https://github.com/microsoft/aspire-skills.git",
+      "subdir": "skills/aspire",
+      "version": "c9d042e",
+      "tree_hash": "1e3094e0517f6f2019eca2e0caab7e5bb4a409f7",
+      "file_hashes": {
+        "SKILL.md": "sha256:c1e89c96e8575339212f8db5bdec5c7d641ae07d362fea553491930e69c5f7c6",
+        "evals/eval.yaml": "sha256:4c37d3a8892e02b6accd75e548e63e3b3a34f4bfe0ba32e1421f829680da726e",
+        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
+        "references/aspire-13-3-breaking-changes.md": "sha256:4da654f928a2808aa5c71e0381bc0edf21edc66bba72e0b7e0f9ef6a1ee81e18",
+        "references/aspire-13-5-breaking-changes.md": "sha256:d9e83ce2bc2fa262707b262852bc065bca92492d24b00e5a962aeb8743eaf186"
+      }
+    },
     "aspire-monitoring": {
       "source": "github.com/microsoft/aspire-skills/skills/aspire-monitoring",
       "type": "github-subdir",
@@ -21,7 +37,7 @@
     "aspire-orchestration": {
       "source": "github.com/microsoft/aspire-skills/skills/aspire-orchestration",
       "type": "github-subdir",
-      "installed_at": "2026-09-02T22:40:04.0420355+03:00",
+      "installed_at": "2026-09-04T00:15:25.4355095+03:00",
       "repo_url": "https://github.com/microsoft/aspire-skills.git",
       "subdir": "skills/aspire-orchestration",
       "version": "c9d042e",
