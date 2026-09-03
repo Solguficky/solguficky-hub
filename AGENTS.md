@@ -60,12 +60,12 @@ just verify
 # Локальная оркестрация — из infra/apphost/
 aspire run
 
-# Профили топологии
+# Профили топологии — данные в Topology:Profiles (infra/apphost/appsettings.json)
 TOPOLOGY__PROFILE=infra aspire run
-TOPOLOGY__PROFILE=full aspire run
+aspire run -- --profile full
 
-# Режим компонента: Local | Container | Off
-TOPOLOGY__IDENTITY=Off aspire run
+# Срез внутри профиля
+aspire run -- --profile core --run-services identity
 
 # Identity — инструменты, кодогенерация, сборка, тесты и линт
 just identity-tools

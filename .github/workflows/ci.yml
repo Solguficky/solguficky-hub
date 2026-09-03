@@ -135,7 +135,7 @@ jobs:
         working-directory: apps/telegram-bot
 
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
-  # джобы правка Program.cs или Topology.cs, которая не собирается, проходит
+  # джобы правка графа или setup-а ресурса, которая не собирается, проходит
   # ревью зелёной.
   apphost:
     needs: changes

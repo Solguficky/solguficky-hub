@@ -47,11 +47,11 @@ verify: check-agent-tools identity-build identity-test identity-lint telegram-bo
 
 # --- Локальная оркестрация -------------------------------------------------
 
-# AppHost поднимает инфраструктуру и зарегистрированные компоненты профиля.
-# Профили: infra | core | full (см. infra/apphost/Topology.cs).
-# Подготовка компонентов описана в их условных AppHost-ресурсах.
-aspire profile="core":
-    cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
+# AppHost поднимает узлы, которыми владеет профиль. Профили — данные:
+# секция Topology:Profiles в infra/apphost/appsettings.json, там же их список.
+# Срез внутри профиля: `just aspire core -- --run-services identity`.
+aspire profile="core" *args="":
+    cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run {{args}}
 
 # Сборка Aspire AppHost
 apphost-build:
