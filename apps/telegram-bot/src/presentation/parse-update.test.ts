@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseUpdate } from "./parse-update.js";
 
 describe("parseUpdate", () => {
-  it("reads a private message as unknown", () => {
+  it("reads /start without a deep link payload", () => {
     const parsed = parseUpdate({
       update_id: 1,
       message: {
@@ -15,15 +15,53 @@ describe("parseUpdate", () => {
           first_name: "tester",
           username: "alice",
         },
-        text: "hello",
+        text: "/start",
       },
     });
     expect(parsed).toEqual({
-      kind: "message",
+      kind: "start",
       telegramUserId: 42n,
       telegramUsername: "alice",
-      text: "hello",
     });
+  });
+
+  it("parses and preserves a valid deep link payload", () => {
+    const parsed = parseUpdate({
+      update_id: 1,
+      message: {
+        message_id: 7,
+        date: 0,
+        chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "/start m_AZLzpLXGfY6fChssPU5fYA",
+      },
+    });
+    expect(parsed).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+      deepLinkPayload: "m_AZLzpLXGfY6fChssPU5fYA",
+    });
+  });
+
+  it("ignores other text and malformed start payloads", () => {
+    expect(messageText("hello").kind).toBe("ignored");
+    expect(messageText("/start payload with spaces").kind).toBe("ignored");
+    expect(messageText(`/start ${"a".repeat(65)}`).kind).toBe("ignored");
+  });
+
+  it("ignores /start outside a private chat", () => {
+    expect(
+      parseUpdate({
+        update_id: 1,
+        message: {
+          message_id: 7,
+          date: 0,
+          chat: { id: -42, type: "group" },
+          from: { id: 42, is_bot: false, first_name: "tester" },
+          text: "/start",
+        },
+      }).kind,
+    ).toBe("ignored");
   });
 
   it("treats garbage as malformed", () => {
@@ -80,3 +118,16 @@ describe("parseUpdate", () => {
     }
   });
 });
+
+function messageText(text: string): ReturnType<typeof parseUpdate> {
+  return parseUpdate({
+    update_id: 1,
+    message: {
+      message_id: 7,
+      date: 0,
+      chat: { id: 42, type: "private" },
+      from: { id: 42, is_bot: false, first_name: "tester" },
+      text,
+    },
+  });
+}

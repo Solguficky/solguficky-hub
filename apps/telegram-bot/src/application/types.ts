@@ -3,13 +3,14 @@ export type Person = {
   globalRoles: readonly string[];
 };
 
-export type Intent = "acknowledge";
+export type Intent = "start";
 
 export type ExecuteRequest = {
   identity: Person;
   intent: Intent;
+  deepLinkPayload?: string;
 };
 
 export type ExecuteResult =
-  | { kind: "stub"; text: string }
+  | { kind: "message"; text: string }
   | { kind: "rejected"; reason: "unknown-intent" };

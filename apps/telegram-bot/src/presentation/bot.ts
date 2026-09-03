@@ -12,7 +12,9 @@ export type BotRuntime = {
   logger: Logger;
 };
 
-const unavailableText = "недоступно";
+const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
+
+Попробуй ещё раз через минуту.`;
 const operation = "message";
 
 type UpdateContext = Context & {
@@ -67,7 +69,7 @@ async function handleMessage(
         level: "warn",
         message: "malformed telegram update",
         result: "error",
-        use_case: "acknowledge",
+        use_case: "start",
         error_category: "malformed",
         error: "telegram update failed validation",
       };
@@ -87,7 +89,7 @@ async function handleMessage(
         level: "error",
         message: "identity unavailable",
         result: "error",
-        use_case: "acknowledge",
+        use_case: "start",
         error_category: "identity_unavailable",
         error: errorText(resolved.cause),
       };
@@ -99,16 +101,19 @@ async function handleMessage(
         identityId: resolved.identityId,
         globalRoles: resolved.globalRoles,
       },
-      intent: "acknowledge",
+      intent: "start",
+      ...(parsed.deepLinkPayload === undefined
+        ? {}
+        : { deepLinkPayload: parsed.deepLinkPayload }),
     });
     switch (result.kind) {
-      case "stub":
+      case "message":
         await ctx.reply(result.text);
         outcome = {
           level: "debug",
-          message: "stub reply sent",
+          message: "start reply sent",
           result: "ok",
-          use_case: "acknowledge",
+          use_case: "start",
         };
         return;
       case "rejected":
@@ -116,7 +121,7 @@ async function handleMessage(
           level: "warn",
           message: "dispatcher rejected request",
           result: "error",
-          use_case: "acknowledge",
+          use_case: "start",
           error_category: result.reason,
           error: result.reason,
         };
@@ -127,7 +132,7 @@ async function handleMessage(
           level: "error",
           message: "unhandled dispatcher result",
           result: "error",
-          use_case: "acknowledge",
+          use_case: "start",
           error_category: "unhandled_result",
           error: String(_exhaustive),
         };
