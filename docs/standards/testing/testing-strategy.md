@@ -10,7 +10,7 @@
 
 | Уровень | Что проверяет | Текущие инструменты |
 |---|---|---|
-| Unit | чистая доменная логика, FSM, UI builders, mapping, error branches | C# xUnit 2; F# xUnit v3 + Unquote, FsCheck для properties |
+| Unit | чистая доменная логика, FSM, UI builders, mapping, error branches | Go built-in tests; F# xUnit v3 + Unquote, FsCheck для properties |
 | Actor | command/event/state transitions, recovery и actor infrastructure | Akka.TestKit.Xunit2; сначала тестируй чистую логику, если она отделена |
 | Integration | реальный boundary одного сервиса: PostgreSQL, NATS, gRPC, SignalR | service-specific test host или локальная инфраструктура |
 | Contract | producer и consumer одинаково понимают Protobuf и subject | сборка всех потребителей, сериализационные тесты, `nats-tester` |

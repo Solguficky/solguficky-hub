@@ -1,6 +1,6 @@
 # Meetups Service
 
-> **Слой:** MVP. **Граница и техническая модель:** Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md). **Стек:** Accepted, [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). **Словарь домена:** Accepted для среза, [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md). **Контракты:** Open.
+> **Слой:** MVP. **Граница и техническая модель:** Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md). **Стек:** Accepted, [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). **Словарь домена:** Accepted для среза, [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md). **Устройство приложения:** Accepted, [ADR-033](../decisions/ADR-033-meetups-functional-vertical-slices.md). **Контракты:** Open.
 
 ## Ответственность
 
@@ -95,7 +95,7 @@ Identity сообщает факты о человеке и общие сист�
 
 ## Стек и как он выбирался
 
-Принят F# на .NET с Dapper; Protobuf-контракты генерируются в отдельном C#-проекте — [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). Приложение организуется функциональными вертикальными срезами, HTTP-граница пишется на Oxpecker — [ADR-033](../decisions/ADR-033-meetups-functional-vertical-slices.md). Кто запускает плагины, команда генерации и место закрепления версий — раздел «Кодогенерация .NET» в [стандарте Protobuf](../standards/contracts/protobuf.md#кодогенерация-net). Критерии и сравнение ниже сохранены как образец метода: тем же способом был выбран Go для Identity — [ADR-027](../decisions/ADR-027-identity-go-stack.md).
+Принят F# на .NET с Dapper; Protobuf-контракты генерируются в отдельном C#-проекте — [ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md). Приложение организуется функциональными вертикальными срезами; если приложению потребуется HTTP-граница, она пишется на Oxpecker — [ADR-033](../decisions/ADR-033-meetups-functional-vertical-slices.md). Кто запускает плагины, команда генерации и место закрепления версий — раздел «Кодогенерация .NET» в [стандарте Protobuf](../standards/contracts/protobuf.md#кодогенерация-net). Критерии и сравнение ниже сохранены как образец метода: тем же способом был выбран Go для Identity — [ADR-027](../decisions/ADR-027-identity-go-stack.md).
 
 Критерии сравнения:
 
@@ -123,7 +123,7 @@ Identity сообщает факты о человеке и общие сист�
 
 Фиксированного шаблона из одинакового числа файлов нет. Mapping, нужный одному срезу, остаётся рядом с ним; общий доменный тип или adapter выносится после появления второго потребителя. Порядок файлов в `.fsproj` отражает направление зависимостей и меняется вместе со срезом.
 
-Oxpecker заканчивается на HTTP adapter и composition root. Protobuf/C# messages, Dapper rows и framework context не проходят в domain/workflow. Выбор Oxpecker не закрывает transport межсервисных операций, который остаётся частью contract design.
+Появившаяся HTTP-граница заканчивается на Oxpecker-адаптере и composition root. Protobuf/C# messages, Dapper rows и framework context не проходят в domain/workflow. Выбор Oxpecker не закрывает transport межсервисных операций, который остаётся частью contract design.
 
 Для F#-тестов приняты xUnit v3, Unquote и FsCheck; Testcontainers используется на границе с реальной инфраструктурой. Test double выбирается по порядку: функция, record of functions, handwritten fake, затем Moq для неудобного .NET-интерфейса. Норматив и границы инструментов — в [F# testing standard](../standards/testing/fsharp.md).
 
