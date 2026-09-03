@@ -39,10 +39,10 @@
     "proj-record-observation": "969ff057c049bfc9c49a9d09a5b2c26d9e34121d5653537e3d367ccf4af6323a",
     "proj-review-change": "1715ccaede7e1a0e0043ea7f511026f4234c2fcc2f0bc9c347ce9796b8be824b",
     "proj-start-task": "e1b1fd9e4cece8e7ab28acaf7a6b33f3cee64eda03d541f14c38627a38bae230",
-    "proj-test-fsharp": "5180e4ba2fbfb47548511d4cd4a1517df7ba52c00804485c6f893c553f7b1084",
+    "proj-test-fsharp": "2286eb2d9d202e489cd26fa6e5bd259e7e5f0acd44b75d4cdc2434db2128f4e3",
     "proj-write-commit": "29cb34ddb844f8ae326a613fc21453ee2d8f635e6a3e4aafb49ea2af392a3d52",
-    "proj-write-fsharp": "381e5f249d18b4825ad821fe441576f4d3f540dfc9868c377081578530089764",
-    "proj-write-fsharp-vsa": "9dc1eba016b73640fe6224f62c8e3e0ef3b401691983564890a6990d593f6d65",
+    "proj-write-fsharp": "01f84309529d8e3148a4273ca2c94e0fa7f7ee87c0455ffcfcfb692f3bb96a10",
+    "proj-write-fsharp-vsa": "97f8f0bdf58751c8b33e95153376e7c61b29a19f0620d0add906f28101244f92",
     "proj-write-grammy-bot": "8e12707bf8b2471355077b54bc57f70a93b42fd9cc5740efae4abeca088e57be",
     "proj-write-typescript": "eb4a9991c95601ce592ba331c1c700dc4231139238e7fb5315944ba2818a7c4f",
     "prototype": "0ab3bde2a6bd18e20e1bc6def960fa756b7257af9fd406478b15294166de825a",
@@ -101,10 +101,10 @@
     "proj-record-observation": 1788362732885659100,
     "proj-review-change": 1788362976461411800,
     "proj-start-task": 1788362976464536900,
-    "proj-test-fsharp": 1788380613298263500,
+    "proj-test-fsharp": 1788420571265330300,
     "proj-write-commit": 1788362976465990000,
-    "proj-write-fsharp": 1788380609611455500,
-    "proj-write-fsharp-vsa": 1788380616551240500,
+    "proj-write-fsharp": 1788420565094255100,
+    "proj-write-fsharp-vsa": 1788420578512360000,
     "proj-write-grammy-bot": 1788362976471264300,
     "proj-write-typescript": 1788362976475374300,
     "prototype": 1788379407657522900,
@@ -123,5 +123,5 @@
     "writing-fragments": 1788379407723934000,
     "writing-shape": 1788379407727192800
   },
-  "updated_at": "2026-09-02T23:23:42.1595763+03:00"
+  "updated_at": "2026-09-03T10:30:09.5870659+03:00"
 }

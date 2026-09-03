@@ -6,7 +6,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `typescript/`, `biome/`, `grammy/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -23,6 +23,10 @@
 | [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal`, горутины и `select`, ошибки, `tool`, `slog`, `go:embed`, goose, пул `database/sql` и лимит соединений, транзакция READ COMMITTED и `ErrTxDone`, пустой `RETURNING` как `ErrNoRows`, `uuid.NewV7` | вернуться |
 | [go/testing.md](go/testing.md) | раскладка тестов, белый и чёрный ящик, табличные тесты, `bufconn`, изолированные базы, `testdb`, `t.Helper`, `Fatal` только из горутины теста, инвариант вне ответа RPC, `-race` | вернуться |
 | [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание и поля рядом, статус-коды, интерцепторы как middleware, recovery, скупой `Internal` и `internalError`, health и reflection | вернуться |
+| [typescript/module-and-types.md](typescript/module-and-types.md) | ESM и `NodeNext`, расширение `.js` в импорте, TypeScript 7 и `"types": ["node"]`, strictness-флаги, Zod на `unknown`, discriminated union и `never`, Connect-клиент Identity | вернуться |
+| [typescript/testing.md](typescript/testing.md) | раскладка тестов и `include`, отсутствие проверки типов в раннере, структурная подмена соседа без мок-фреймворка, фейковые таймеры и дедлайн, харнесс и ассерт по каркасу лога, `Parameters<F>`, покрытие v8 | вернуться |
+| [grammy/bot-adapter.md](grammy/bot-adapter.md) | middleware-цепочка и `next`, context flavor, filter queries, два входа для update и область действия `bot.catch`, transformer как шов Bot API, `init`/`start`/`stop`, откуда берутся поля записи границы | вернуться |
+| [biome/check.md](biome/check.md) | `biome check` как lint+format+assist, отсутствие compiler API у TypeScript 7, почему не ESLint/Prettier/oxlint, спор `useLiteralKeys` с индексом, LF как часть формата и `eol=lf` в `.gitattributes` | вернуться |
 
 Статус ставится по факту, а не по ощущению:
 

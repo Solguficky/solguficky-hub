@@ -3,7 +3,7 @@ name: proj-write-fsharp-vsa
 description: Писать и ревьюить F#-приложение функциональными vertical slices: workflow команды/запроса, Functional Core/Imperative Shell, локальные mappings, composition root и Oxpecker boundary. Использовать для apps/meetups и F#-компонентов, где VSA явно выбрана; само наличие F# не делает VSA обязательной.
 ---
 
-# Писать функциональный вертикальный срез на F#
+# Писать функциональный вертикальный F#-срез
 
 Для Meetups устройство принято в [ADR-033](../../../docs/decisions/ADR-033-meetups-functional-vertical-slices.md) и раскрыто в [брифе](../../../docs/services/meetups.md). Языковые правила даёт `proj-write-fsharp`, тестовые — `proj-test-fsharp`. Для другого F#-компонента сначала найди явное решение о VSA; без него этот skill не назначает архитектуру.
 

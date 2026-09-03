@@ -3,7 +3,7 @@ name: proj-write-fsharp
 description: Писать и ревьюить F#: доменные типы, Option/Result, error flow, чистые функции, .NET/Protobuf interop и порядок файлов .fsproj. Использовать при правках .fs, .fsi, .fsproj или F#-модулей; тесты дополняет proj-test-fsharp, вертикальные срезы — proj-write-fsharp-vsa.
 ---
 
-# Писать F#
+# Писать F#-код
 
 Языковой норматив — [languages/fsharp.md](../../../docs/standards/languages/fsharp.md). Этот skill задаёт порядок применения, но не заменяет standard.
 

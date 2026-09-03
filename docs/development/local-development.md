@@ -13,7 +13,7 @@ cd infra/apphost
 aspire run
 ```
 
-AppHost объявляет контейнеры PostgreSQL и NATS. Исполняемых компонентов платформы пока нет, поэтому больше он ничего не поднимает. Identity применяет миграции при `just identity-run`, если задан `IDENTITY_DATABASE_URL` на эту PostgreSQL.
+AppHost объявляет контейнеры PostgreSQL и NATS и в профиле `core` поднимает Identity и Telegram Bot из исходников. Identity ждёт готовности базы `solguficky` (не только контейнера PostgreSQL) и применяет миграции при старте, если задан `IDENTITY_DATABASE_URL`. Telegram Bot читает `TELEGRAM_BOT_TOKEN` и `IDENTITY_GRPC_URL`. Параметр Aspire `telegram-bot-token` объявляется только когда Telegram Bot в режиме Local: профиль `infra` его не спрашивает.
 
 ## Профили
 
@@ -23,7 +23,7 @@ AppHost объявляет контейнеры PostgreSQL и NATS. Исполн
 | `core` | infra + компоненты первого вертикального среза в режиме Local |
 | `full` | infra + все зарегистрированные компоненты в режиме Local |
 
-Пока ни один компонент не зарегистрирован, все три профиля дают одинаковый результат — только инфраструктуру. Неизвестное имя профиля отвергается на старте.
+Профиль `infra` по-прежнему поднимает только PostgreSQL и NATS. `just aspire infra` не собирает Telegram Bot. `core` и `full` добавляют Identity и Telegram Bot в режиме Local. Неизвестное имя профиля отвергается на старте.
 
 ```powershell
 $env:TOPOLOGY__PROFILE='infra'
@@ -39,15 +39,14 @@ $env:TOPOLOGY__MEETUPS='Off'
 aspire run
 ```
 
-Имена компонентов появляются в `infra/apphost/Program.cs` вместе с их регистрацией; состав первого среза — в `Topology.CoreComponents`. Сейчас список пуст.
+Имена компонентов появляются в `infra/apphost/Program.cs` вместе с их регистрацией; состав первого среза — в `Topology.CoreComponents`. Сейчас туда входят `Identity` и `TelegramBot`. Режим `Container` у обоих ещё не реализован.
 
 ## Неподтверждённые места
 
-- `dotnet restore` и `dotnet build` самого AppHost после удаления ссылок на выведенные сервисы;
 - `aspire run` и здоровье контейнеров PostgreSQL и NATS в живой среде;
 - пригодность `aspire publish` для production-like k3s.
 
-Пока эти проверки не выполнены, не описывай Aspire как подтверждённую production-топологию.
+`dotnet build` AppHost входит в `just verify` и в CI-джобу `apphost`. Пока живой `aspire run` не выполнен, не описывай Aspire как подтверждённую production-топологию.
 
 ## Acceptance check
 
