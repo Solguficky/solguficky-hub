@@ -14,3 +14,5 @@ just meetups-test
 ```
 
 Команда генерации — `dotnet build` контрактного проекта `apps/meetups/Meetups.Contracts`.
+
+Тесты идут на xUnit v3 с Unquote и запускаются через Microsoft.Testing.Platform: runner выбран ключом `test` в корневом `global.json`, решение передаётся флагом `--solution`. Подробности и грабли — в [руководстве по локальной разработке](../../docs/development/local-development.md).

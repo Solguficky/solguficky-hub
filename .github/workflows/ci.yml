@@ -47,7 +47,9 @@ jobs:
               - '.github/workflows/ci.yml'
             apphost:
               - 'infra/apphost/**'
+              - 'shared/dotnet/**'
               - 'justfile'
+              - 'global.json'
               - '.github/workflows/ci.yml'
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
@@ -121,7 +123,10 @@ jobs:
           global-json-file: global.json
       - run: dotnet build Meetups.sln --nologo
         working-directory: apps/meetups
-      - run: dotnet test Meetups.sln --nologo --no-build
+      # Runner — Microsoft.Testing.Platform (ключ `test` в global.json). Решение он
+      # принимает только через --solution, а --nologo не понимает: с ним прогон
+      # находит ноль тестов и падает кодом 1.
+      - run: dotnet test --solution Meetups.sln --no-build
         working-directory: apps/meetups
 
   telegram-bot:

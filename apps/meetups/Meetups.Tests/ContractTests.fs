@@ -2,69 +2,111 @@ module Meetups.ContractTests
 
 open Google.Protobuf.Reflection
 open Meetups.V1
+open Swensen.Unquote
 open Xunit
 
-let private methodNames =
+let private schema = MeetupsServiceReflection.Descriptor
+
+let private requestTypes =
     MeetupsService.Descriptor.Methods
-    |> Seq.map (fun (m: MethodDescriptor) -> m.Name)
-    |> Set.ofSeq
+    |> Seq.map (fun m -> m.InputType)
+    |> List.ofSeq
+
+/// Nested messages count: a failure type hidden inside another message must not escape the checks below.
+let rec private withNested (message: MessageDescriptor) =
+    seq {
+        yield message
+        yield! message.NestedTypes |> Seq.collect withNested
+    }
+
+let private messages = schema.MessageTypes |> Seq.collect withNested |> List.ofSeq
+
+let private enums =
+    Seq.append schema.EnumTypes (messages |> Seq.collect (fun m -> m.EnumTypes))
+    |> List.ofSeq
 
 let private fieldNames (message: MessageDescriptor) =
     message.Fields.InDeclarationOrder()
     |> Seq.map (fun f -> f.Name)
     |> Set.ofSeq
 
-let private assertSetEquals expected actual =
-    Assert.True((expected = actual), sprintf "expected %A, got %A" expected actual)
+/// Field 1 rendered as "<name>: <type>", so a failing list names the offending request.
+let private firstField (message: MessageDescriptor) =
+    match message.FindFieldByNumber 1 with
+    | null -> message.Name, "<no field 1>"
+    | field when field.FieldType = FieldType.Message -> message.Name, $"{field.Name}: {field.MessageType.FullName}"
+    | field -> message.Name, $"{field.Name}: {field.FieldType}"
+
+[<Fact>]
+let ``the F# library sees the generated service under the meetups v1 package`` () =
+    test <@ ContractSurface.serviceFullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
 let ``service exposes exactly the six slice operations`` () =
-    assertSetEquals
-        (set
+    let actual =
+        MeetupsService.Descriptor.Methods
+        |> Seq.map (fun m -> m.Name)
+        |> Set.ofSeq
+
+    let expected =
+        set
             [ "CreateMeetupDraft"
               "ChangeMeetupAttributes"
               "SetMeetupSchedule"
               "PublishMeetup"
               "ListVisibleMeetups"
-              "GetMeetup" ])
-        methodNames
+              "GetMeetup" ]
+
+    test <@ actual = expected @>
 
 [<Fact>]
-let ``every operation carries a viewer`` () =
-    let requests =
-        MeetupsService.Descriptor.Methods
-        |> Seq.map (fun m -> m.InputType)
-    Assert.All(
-        requests,
-        fun message ->
-            let viewer = message.FindFieldByNumber(1)
-            Assert.NotNull(viewer)
-            Assert.Equal("viewer", viewer.Name)
-            Assert.Equal(Viewer.Descriptor, viewer.MessageType))
+let ``every operation carries the viewer as field one`` () =
+    let actual = requestTypes |> List.map firstField
+    let expected = requestTypes |> List.map (fun m -> m.Name, $"viewer: {Viewer.Descriptor.FullName}")
+
+    test <@ actual = expected @>
 
 [<Fact>]
-let ``create draft takes caller-generated id as the idempotency key`` () =
-    assertSetEquals (set [ "viewer"; "id" ]) (fieldNames CreateMeetupDraftRequest.Descriptor)
-    Assert.Null(CreateMeetupDraftRequest.Descriptor.FindFieldByName("idempotency_key"))
+let ``create draft takes the caller-generated id as its idempotency key`` () =
+    let actual = fieldNames CreateMeetupDraftRequest.Descriptor
+
+    test <@ actual = set [ "viewer"; "id" ] @>
 
 [<Fact>]
-let ``change attributes sends the five informational fields as target state`` () =
-    assertSetEquals
-        (set
-            [ "viewer"
-              "id"
-              "title"
-              "description"
-              "venue"
-              "kind"
-              "calendar_link" ])
-        (fieldNames ChangeMeetupAttributesRequest.Descriptor)
-    Assert.Empty(ChangeMeetupAttributesRequest.Descriptor.NestedTypes)
+let ``change attributes sends every informational field as target state`` () =
+    let actual =
+        ChangeMeetupAttributesRequest.Descriptor.Fields.InDeclarationOrder()
+        |> Seq.filter (fun f -> f.Name <> "viewer" && f.Name <> "id")
+        |> Seq.map (fun f -> f.Name, string f.FieldType, f.HasPresence)
+        |> List.ofSeq
+
+    // No presence: an omitted attribute is not a distinct "leave unchanged" state.
+    let expected =
+        [ "title"; "description"; "venue"; "kind"; "calendar_link" ]
+        |> List.map (fun name -> name, "String", false)
+
+    test <@ actual = expected @>
 
 [<Fact>]
-let ``file has no distinct visibility-denied failure`` () =
-    let enumNames =
-        MeetupsServiceReflection.Descriptor.EnumTypes
-        |> Seq.map (fun e -> e.Name)
-        |> Set.ofSeq
-    assertSetEquals (set [ "MeetupLifecycle"; "MeetupVisibility" ]) enumNames
+let ``schema declares only the lifecycle and visibility enums`` () =
+    let actual = enums |> List.map (fun e -> e.Name) |> Set.ofList
+
+    test <@ actual = set [ "MeetupLifecycle"; "MeetupVisibility" ] @>
+
+[<Fact>]
+let ``schema names no failure anywhere, so a hidden meetup reads as not found`` () =
+    let markers = [ "error"; "denied"; "forbidden"; "failure"; "reason"; "not_found"; "invisible" ]
+    let names (text: string) = markers |> List.exists (text.ToLowerInvariant().Contains)
+
+    let actual =
+        [ for e in enums do
+            if names e.Name then $"enum {e.FullName}"
+
+            for value in e.Values do
+                if names value.Name then $"enum value {e.FullName}.{value.Name}"
+
+          for m in messages do
+              for f in m.Fields.InDeclarationOrder() do
+                  if names f.Name then $"field {m.FullName}.{f.Name}" ]
+
+    test <@ actual = [] @>

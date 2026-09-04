@@ -132,9 +132,10 @@ telegram-bot-run: telegram-bot-build
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Проверка, что в схеме ровно шесть операций среза
+# Проверка, что в схеме ровно шесть операций среза.
+# Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
-    dotnet test apps/meetups/Meetups.sln --nologo
+    dotnet test --solution apps/meetups/Meetups.sln
 
 # --- Инструменты -----------------------------------------------------------
 
