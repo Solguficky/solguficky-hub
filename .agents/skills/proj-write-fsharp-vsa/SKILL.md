@@ -1,6 +1,6 @@
 ---
 name: proj-write-fsharp-vsa
-description: Раскладывать F#-приложение по функциональным vertical slices: границы среза команды или запроса, Functional Core/Imperative Shell, локальные mappings, composition root и Oxpecker boundary. Использовать для apps/meetups и F#-компонентов, где такое устройство явно выбрано; само наличие F# его не назначает. Типы ошибок, Result и границу «домен — use case — transport» задаёт proj-write-fsharp, тесты — proj-test-fsharp.
+description: "Раскладывать F#-приложение по функциональным vertical slices: границы среза команды или запроса, Functional Core/Imperative Shell, локальные mappings, composition root и Oxpecker boundary. Использовать для apps/meetups и F#-компонентов, где такое устройство явно выбрано; само наличие F# его не назначает. Типы ошибок, Result и границу «домен — use case — transport» задаёт proj-write-fsharp, тесты — proj-test-fsharp."
 ---
 
 # Писать функциональный вертикальный F#-срез
