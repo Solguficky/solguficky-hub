@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Bot, type Context } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
-import type { IdentityResolver } from "../identity/port.js";
+import { startExecuteRequest } from "../application/types.js";
+import {
+  type IdentityResolver,
+  toResolveIdentityInput,
+} from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -12,7 +16,9 @@ export type BotRuntime = {
   logger: Logger;
 };
 
-const unavailableText = "недоступно";
+const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
+
+Попробуй ещё раз через минуту.`;
 const operation = "message";
 
 type UpdateContext = Context & {
@@ -61,13 +67,12 @@ async function handleMessage(
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   try {
-    const parsed = parseUpdate(ctx.update);
+    const parsed = parseUpdate(ctx.update, ctx.me.username);
     if (parsed.kind === "malformed") {
       outcome = {
         level: "warn",
         message: "malformed telegram update",
         result: "error",
-        use_case: "acknowledge",
         error_category: "malformed",
         error: "telegram update failed validation",
       };
@@ -81,34 +86,38 @@ async function handleMessage(
       };
       return;
     }
-    const resolved = await runtime.identity.resolve(parsed);
+    const resolved = await runtime.identity.resolve(
+      toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
+    );
     if (resolved.kind === "unavailable") {
       outcome = {
         level: "error",
         message: "identity unavailable",
         result: "error",
-        use_case: "acknowledge",
+        use_case: "start",
         error_category: "identity_unavailable",
         error: errorText(resolved.cause),
       };
       await ctx.reply(unavailableText);
       return;
     }
-    const result = runtime.dispatcher.execute({
-      identity: {
-        identityId: resolved.identityId,
-        globalRoles: resolved.globalRoles,
-      },
-      intent: "acknowledge",
-    });
+    const result = runtime.dispatcher.execute(
+      startExecuteRequest(
+        {
+          identityId: resolved.identityId,
+          globalRoles: resolved.globalRoles,
+        },
+        "deepLink" in parsed ? parsed.deepLink : undefined,
+      ),
+    );
     switch (result.kind) {
-      case "stub":
+      case "message":
         await ctx.reply(result.text);
         outcome = {
           level: "debug",
-          message: "stub reply sent",
+          message: "start reply sent",
           result: "ok",
-          use_case: "acknowledge",
+          use_case: "start",
         };
         return;
       case "rejected":
@@ -116,7 +125,7 @@ async function handleMessage(
           level: "warn",
           message: "dispatcher rejected request",
           result: "error",
-          use_case: "acknowledge",
+          use_case: "start",
           error_category: result.reason,
           error: result.reason,
         };
@@ -127,7 +136,7 @@ async function handleMessage(
           level: "error",
           message: "unhandled dispatcher result",
           result: "error",
-          use_case: "acknowledge",
+          use_case: "start",
           error_category: "unhandled_result",
           error: String(_exhaustive),
         };
