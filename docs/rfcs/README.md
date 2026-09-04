@@ -40,7 +40,8 @@ RFC не нужен для локального bugfix или очевидной
 | [RFC-004](RFC-004-meetups-domain-events-persistence.md) | Дизайн Meetups: домен, события и persistence | Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md); открыт словарь домена |
 | [RFC-005](RFC-005-notifications-subscription-scheduling-delivery.md) | Notifications: две плоскости, триггеры и граница доставки | Accepted, [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) и [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md) |
 | [RFC-006](RFC-006-telegram-bot-edge-design.md) | Telegram-бот: граница представления, состояние экрана и идемпотентность | Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md) |
+| [RFC-007](RFC-007-auction-scope-and-format-options.md) | Аукцион: формат события, объём первого запуска и реестр обещаний | Draft, ожидает ответа админа |
 
-Документы разделены по границе, которую каждый блокирует: RFC-001 — контракт расширения, RFC-002 — продуктовую модель сходки, RFC-003 — форму сообщений бота и ревизию макета, RFC-004 — схему и язык Meetups, RFC-005 — устройство Notifications и границу доставки, RFC-006 — устройство Telegram-края и его состояние.
+Документы разделены по границе, которую каждый блокирует: RFC-001 — контракт расширения, RFC-002 — продуктовую модель сходки, RFC-003 — форму сообщений бота и ревизию макета, RFC-004 — схему и язык Meetups, RFC-005 — устройство Notifications и границу доставки, RFC-006 — устройство Telegram-края и его состояние, RFC-007 — формат и объём аукциона как события.
 
 Порядок рассмотрения: RFC-004 решён первым, за ним RFC-005, потому что устройство подписок зависит от того, как устроен домен сходки. RFC-001 отложен до появления первого реального модуля.
