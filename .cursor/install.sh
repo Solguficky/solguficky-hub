@@ -11,6 +11,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log() { printf '\n=== %s ===\n' "$1"; }
 
+GO_VERSION="$(awk '/^go [0-9]/ {print $2; exit}' "$REPO_ROOT/apps/identity/go.mod")"
+export GOTOOLCHAIN="go${GO_VERSION}"
+
 log "System build dependencies"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
@@ -63,5 +66,11 @@ pip install --break-system-packages -e "$REPO_ROOT/tools/nats-tester"
 if [ -x "$HOME/.local/bin/nats-tester" ]; then
   sudo ln -sf "$HOME/.local/bin/nats-tester" /usr/local/bin/nats-tester
 fi
+
+log "Installing Identity toolchain (buf, codegen plugins, golangci-lint)"
+(cd "$REPO_ROOT" && just identity-tools)
+
+log "Installing Telegram Bot dependencies"
+(cd "$REPO_ROOT" && just telegram-bot-tools)
 
 log "Environment setup complete"

@@ -1,0 +1,36 @@
+{
+  "name": "telegram-bot",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "npm@10.9.7",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "proto": "cd ../.. && buf generate --template apps/telegram-bot/buf.gen.yaml",
+    "prestart": "npm run proto && npm run build",
+    "start": "node dist/src/main.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.14.1",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
+    "grammy": "^1.46.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.11",
+    "@bufbuild/protoc-gen-es": "^2.14.1",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

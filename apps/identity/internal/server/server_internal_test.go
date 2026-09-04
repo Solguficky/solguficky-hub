@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"log/slog"
 	"testing"
 
@@ -8,13 +9,21 @@ import (
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-// Белый ящик: после GracefulStop сервер соединений не принимает, поэтому
-// увидеть NOT_SERVING снаружи по сети уже нельзя, и health опрашивается
-// напрямую.
+func TestNewPanicsOnNilDB(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New(nil db): got no panic")
+		}
+	}()
+	New(slog.New(slog.DiscardHandler), nil)
+}
+
 func TestGracefulStopMarksHealthNotServing(t *testing.T) {
 	t.Parallel()
 
-	srv := New(slog.New(slog.DiscardHandler))
+	srv := New(slog.New(slog.DiscardHandler), new(sql.DB))
 	names := []string{"", identityv1.IdentityService_ServiceDesc.ServiceName}
 
 	assertStatus := func(when string, want healthgrpc.HealthCheckResponse_ServingStatus) {

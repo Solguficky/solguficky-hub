@@ -10,9 +10,9 @@
 - service discovery и конфигурация;
 - единый dashboard;
 - логи, health и traces;
-- возможность отключить компонент и запустить его из IDE.
+- возможность не включать компонент в профиль и запустить его из IDE.
 
-AppHost существует, но полный живой запуск ещё не подтверждён. Поэтому следующий инфраструктурный gate — выполнить smoke test, описанный в [руководстве по локальной разработке](../development/local-development.md), и только затем адаптировать topology под Telegram Bot и MVP-сервисы. Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
+Профили `infra` и `identity` подтверждены живым прогоном на Aspire 13.5.3: первый поднимает PostgreSQL и NATS без компонентов, второй доводит Identity до `Healthy` и отвечает на `ResolveIdentity` через proxy endpoint Aspire. Telegram Bot входит в `core` и `full`, но живой прогон профиля с ботом требует токен и ещё не выполнялся. Повторяемый gate описан в [руководстве по локальной разработке](../development/local-development.md). Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
 
 ## Production-like integration
 
@@ -40,9 +40,11 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Current-ограничения
 
-- AppHost поднимает только PostgreSQL и NATS: исполняемых компонентов платформы ещё нет;
+- AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
+- Identity ждёт базу `solguficky`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
+- Telegram Bot ждёт здоровый Identity и получает его proxy endpoint через `IDENTITY_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
-- живой `aspire run` не подтверждён;
+- живой прогон профилей `infra` и `identity` подтверждён, но профиль с Telegram Bot, `aspire publish` и production-топология не проверены;
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения

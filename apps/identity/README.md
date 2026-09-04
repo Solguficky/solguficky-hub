@@ -1,6 +1,6 @@
 # Identity
 
-gRPC-сервис разрешения Telegram-личности во внутренний идентификатор. Сейчас это скелет: `ResolveIdentity` отвечает фиксированной заглушкой, схемы и логики допуска ещё нет.
+gRPC-сервис разрешения Telegram-личности во внутренний идентификатор. Схема профилей и глобальных ролей применяется миграциями PostgreSQL при старте. `ResolveIdentity` создаёт профиль при первом обращении и возвращает внутренний идентификатор с активными общими ролями.
 
 Сгенерированный контракт лежит в `gen/` и в Git не хранится. Команда сборки сначала вызывает `buf generate`.
 
@@ -17,7 +17,17 @@ just identity-lint
 just identity-run
 ```
 
-По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). Успешный RPC пишется на `Debug`, поэтому журнал доступа включает `IDENTITY_LOG_LEVEL=debug`.
+В составе локальной топологии профиль `core` или `full` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
+
+```bash
+just aspire core
+```
+
+Фактический endpoint при таком запуске смотри в Aspire dashboard или `aspire describe`; фиксированный `localhost:50051` относится только к ручному `just identity-run` без переопределения адреса.
+
+По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, строка подключения к PostgreSQL — `IDENTITY_DATABASE_URL` (обязательна), уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При старте процесс применяет миграции из `internal/migrations/` и только потом начинает слушать. Пул `database/sql` ограничен 16 открытыми соединениями, время жизни соединения — 30 минут. Успешный RPC пишется на `Debug`, поэтому журнал доступа включает `IDENTITY_LOG_LEVEL=debug`.
+
+Интеграционные тесты схемы и разрешения поднимают изолированную базу на том же PostgreSQL. Если `IDENTITY_DATABASE_URL` не задан, они пробуют `postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable`; без доступной базы локальный прогон пропускает их, а в CI отсутствие базы — ошибка.
 
 `just identity-tools` ставит buf, плагины кодогенерации и golangci-lint закреплённых в `justfile` версий; без него `just verify` падает на линте.
 
@@ -29,4 +39,4 @@ grpcurl -plaintext -d '{"telegram_user_id": 1}' \
   localhost:50051 identity.v1.IdentityService/ResolveIdentity
 ```
 
-Заглушка возвращает `identity_id` `0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd` и пустой набор ролей. Reflection включена, чтобы `grpcurl` работал без локальных `.proto`.
+Повторный вызов с тем же `telegram_user_id` возвращает тот же `identity_id`. Reflection включена, чтобы `grpcurl` работал без локальных `.proto`.

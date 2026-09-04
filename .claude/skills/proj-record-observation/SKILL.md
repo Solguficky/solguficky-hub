@@ -1,6 +1,6 @@
 ---
 name: proj-record-observation
-description: Провести ретро сессии и оставить наблюдения в docs/development/observations.md
+description: "Провести ретро сессии и оставить наблюдения в docs/development/observations.md"
 disable-model-invocation: true
 ---
 

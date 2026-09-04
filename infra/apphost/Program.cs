@@ -1,35 +1,19 @@
+using AppHost.Configuration;
+using AppHost.Configuration.Infrastructure;
+using AppHost.Configuration.Services;
+using AppHost.Configuration.Topology;
+
+using R = AppHost.Configuration.AppHostNames.Resources;
+
 var builder = DistributedApplication.CreateBuilder(args);
+var profile = ProfileResolver.Resolve(builder.Configuration);
+var topology = new ServiceGraph(builder, profile);
 
-// Инфраструктура (NATS, PostgreSQL) — всегда контейнеры, вне режимов топологии.
-var postgres = builder.AddPostgres("postgres")
-    .WithImageTag("16-alpine")
-    .WithDataVolume("solguficky-postgres-data");
+topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure);
+topology.AddInfrastructure(R.Nats, NatsSetup.Configure);
 
-var solgufickyDb = postgres.AddDatabase("solguficky");
+topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure);
+topology.AddService(R.TelegramBot, [R.Identity], TelegramBotSetup.Configure);
 
-var nats = builder.AddNats("nats")
-    .WithImageTag("2.10-alpine")
-    .WithJetStream();
-
-// Профиль резолвится и проверяется на старте, даже пока компонентов нет:
-// опечатка в TOPOLOGY__PROFILE должна падать сразу, а не молча поднимать infra.
-Topology.ResolveProfile(builder.Configuration);
-
-// --- Компоненты платформы --------------------------------------------------
-//
-// Исполняемых компонентов пока нет: Meetups, Identity, Telegram Bot и
-// Notifications ещё не реализованы. Первый появившийся компонент регистрируется
-// здесь блоком вида:
-//
-//     var mode = Topology.ResolveMode(builder.Configuration, profile, "Meetups");
-//     switch (mode)
-//     {
-//         case ComponentMode.Local:     builder.AddProject<Projects.Meetups>("meetups")...
-//         case ComponentMode.Container: builder.AddDockerfile("meetups", ...)...
-//         case ComponentMode.Off:       break;
-//     }
-//
-// и одновременно вносится в Topology.CoreComponents, если входит в первый
-// вертикальный срез.
-
+topology.Build();
 builder.Build().Run();

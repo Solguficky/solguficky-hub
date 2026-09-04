@@ -34,31 +34,31 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Продуктовое ядро сходок не реализовано: исполняемых Meetups, Telegram Bot и Notifications нет. Identity есть как скелет gRPC-сервера с заглушкой. У Meetups принят gRPC-контракт среза и проекты кодогенерации. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
+Продуктовое ядро сходок не реализовано: исполняемых Meetups и Notifications нет, у Meetups приняты gRPC-контракт среза и проекты кодогенерации. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
-| Telegram Bot | Устройство и стек приняты; кода нет | Единственный вход пользователя |
+| Telegram Bot | Long polling, `/start` с разбором deep link payload, клиент Identity и приветствие; остальные команды и экраны отсутствуют | Единственный вход пользователя |
 | Meetups | Контракт среза: gRPC-схема, C#-кодогенерация и F#-ссылка; исполняемого сервиса нет | Владелец данных о сходках |
-| Identity | Скелет gRPC-сервера: заглушка `ResolveIdentity`, health и структурные логи; схемы и логики разрешения нет | Telegram identity, допуск к продукту и системные роли |
+| Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, допуск к продукту и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Identity `ResolveIdentity` и шесть gRPC-операций Meetups среза | Current |
+| `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и шесть gRPC-операций среза Meetups | Current |
 | `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
-| Aspire AppHost | Поднимает только инфраструктуру; живой запуск не подтверждён | Current, verification pending |
+| Aspire AppHost | Граф узлов и профили-данные; профили `infra` и `identity` подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
-Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни `aspire run`, ни end-to-end через живого Telegram-бота, ни production deployment.
+Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
 
 ## MVP
 
 | Область | Зрелость | Направление |
 |---|---|---|
 | Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
-| Meetups | Граница, техническая модель, стек, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, [integration.md](integration.md) | Владелец продуктовых данных сходок |
+| Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
-| Local orchestration | Accepted, verification pending | Aspire как inner loop |
+| Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
 | Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks ещё нет |
 

@@ -4,15 +4,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ручной запуск для случая, когда push не создал прогон сам: например,
+  # ветку двигал GitHub App. Кнопка Run workflow появляется, только когда
+  # этот триггер есть в ci.yml на ветке по умолчанию (develop).
+  workflow_dispatch:
 
 jobs:
+  # Фильтр путей сравнивает ветку с базой, и у ручного запуска такой базы нет,
+  # поэтому на нём джоба пропускается целиком, а зависимые запускаются по
+  # github.event_name.
   changes:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
       identity: ${{ steps.filter.outputs.identity }}
       meetups: ${{ steps.filter.outputs.meetups }}
+      telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
+      apphost: ${{ steps.filter.outputs.apphost }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -30,11 +40,41 @@ jobs:
               - 'justfile'
               - 'global.json'
               - '.github/workflows/ci.yml'
+            telegram-bot:
+              - 'contracts/proto/**'
+              - 'apps/telegram-bot/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            apphost:
+              - 'infra/apphost/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
 
+  # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
+  # уносить за собой зависимые, поэтому условие начинается с !cancelled().
   identity:
     needs: changes
-    if: needs.changes.outputs.identity == 'true'
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.identity == 'true'
+      || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: identity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      IDENTITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/identity?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -69,7 +109,10 @@ jobs:
 
   meetups:
     needs: changes
-    if: needs.changes.outputs.meetups == 'true'
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.meetups == 'true'
+      || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,9 +124,62 @@ jobs:
       - run: dotnet test Meetups.sln --nologo --no-build
         working-directory: apps/meetups
 
+  telegram-bot:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.telegram-bot == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/telegram-bot/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: npm ci
+        working-directory: apps/telegram-bot
+      - run: buf generate --template apps/telegram-bot/buf.gen.yaml
+      - run: npm run typecheck
+        working-directory: apps/telegram-bot
+      - run: npm run lint
+        working-directory: apps/telegram-bot
+      - run: npm test
+        working-directory: apps/telegram-bot
+      - run: npm run build
+        working-directory: apps/telegram-bot
+
+  # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
+  # джобы правка графа или setup-а ресурса, которая не собирается, проходит
+  # ревью зелёной.
+  apphost:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.apphost == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build infra/apphost/AppHost.csproj --nologo
+
   repo-hygiene:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Skill frontmatter parses as a YAML mapping
+        run: sh tools/skillshare/check-frontmatter.sh
       - name: Agent tooling is generated from Skillshare sources
         run: sh tools/skillshare/check-generated.sh

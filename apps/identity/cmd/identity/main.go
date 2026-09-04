@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net"
@@ -10,9 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
 	"google.golang.org/grpc"
 )
+
+var errDatabaseURLMissing = errors.New("IDENTITY_DATABASE_URL is not set")
 
 const shutdownTimeout = 15 * time.Second
 
@@ -37,13 +41,21 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	db, err := openStore(ctx)
+	if err != nil {
+		log.Error("store setup failed", "service", server.ServiceName, "error", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+	log.Info("migrations applied", "service", server.ServiceName)
+
 	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		log.Error("listen failed", "service", server.ServiceName, "addr", addr, "error", err)
 		return 1
 	}
 
-	srv := server.New(log)
+	srv := server.New(log, db)
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String())
@@ -88,6 +100,30 @@ func run() int {
 // serveDone отличает штатное завершение Serve от собственного отказа сервера.
 func serveDone(err error) bool {
 	return err == nil || errors.Is(err, grpc.ErrServerStopped)
+}
+
+func openStore(ctx context.Context) (*sql.DB, error) {
+	dsn, err := databaseURL()
+	if err != nil {
+		return nil, err
+	}
+	db, err := migrations.Open(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := migrations.Apply(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func databaseURL() (string, error) {
+	dsn := os.Getenv("IDENTITY_DATABASE_URL")
+	if dsn == "" {
+		return "", errDatabaseURLMissing
+	}
+	return dsn, nil
 }
 
 func logLevel() (slog.Level, error) {

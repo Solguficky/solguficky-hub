@@ -19,13 +19,16 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 
 ## Карта репозитория
 
-- `apps/` — деплоимые компоненты платформы. Сейчас здесь скелет Identity на Go и контрактная граница Meetups (C#-кодогенерация и F#-ссылка); исполняемых Meetups, Mini App и Telegram Bot ещё нет. Что сюда попадает — в [apps/README.md](apps/README.md).
+- `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
+- `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
+- `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
+- `apps/meetups/` — контрактная граница Meetups: C#-проект кодогенерации и F#-библиотека со ссылкой на него; исполняемого сервиса ещё нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
-- `tools/skillshare/` — проверка закоммиченных Skillshare-таргетов; её вызывают `just check-agent-tools` и CI.
+- `tools/skillshare/` — две проверки скиллов: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные таргеты с источниками. Их вызывают `just check-agent-tools` и CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
@@ -37,7 +40,10 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 # Git-хуки — один раз после клонирования, из корня
 lefthook install
 
-# Скиллы, которых нет в Git — один раз после клонирования
+# Скиллы, которых нет в Git — один раз после клонирования или создания worktree.
+# Источники внешних скиллов лежат вне Git, их ставит install по config.yaml;
+# sync без них считает закоммиченные таргеты осиротевшими и удаляет.
+skillshare install -p
 skillshare sync -p
 
 # Проверка из хука (можно запускать вручную); в CI не дублируется
@@ -49,21 +55,21 @@ skillshare sync -p
 # Команды: отдельная раскладка, обычный sync их не трогает
 skillshare sync extras -p
 
-# Проверка закоммиченных skills, agents и commands после sync
+# Frontmatter скиллов и закоммиченные skills, agents и commands после sync
 just check-agent-tools
 
-# Механический гейт перед сдачей: agent tooling, Identity, Meetups и тесты
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
 aspire run
 
-# Профили топологии
+# Профили топологии — данные в Topology:Profiles (infra/apphost/appsettings.json)
 TOPOLOGY__PROFILE=infra aspire run
-TOPOLOGY__PROFILE=full aspire run
+aspire run -- --profile full
 
-# Режим компонента: Local | Container | Off
-TOPOLOGY__AUCTIONSERVICE=Container aspire run
+# Срез внутри профиля
+aspire run -- --profile core --run-services identity
 
 # Identity — инструменты, кодогенерация, сборка, тесты и линт
 just identity-tools
@@ -72,6 +78,16 @@ just identity-build
 just identity-test
 just identity-lint
 just identity-run
+# IDENTITY_DATABASE_URL обязателен для identity-run; интеграционные тесты схемы требуют PostgreSQL
+
+# Telegram Bot — зависимости, кодогенерация, сборка, тесты, линт и запуск
+just telegram-bot-tools
+just telegram-bot-proto
+just telegram-bot-build
+just telegram-bot-typecheck
+just telegram-bot-test
+just telegram-bot-lint
+just telegram-bot-run
 
 # Meetups — кодогенерация C#, F#-ссылка и проверка схемы
 just meetups-build
@@ -87,9 +103,11 @@ pip install -e .
 nats-tester --help
 ```
 
-Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
+Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
-`aspire run` ещё не подтверждён живым прогоном. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Не объявляй Aspire проверенным, пока не выполнен gate из [руководства](docs/development/local-development.md).
+Профиль `infra` и Identity-срез подтверждены живым прогоном на Aspire 13.5.3; полный профиль с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
+
+CodeRabbit не ревьюит pull request автоматически; запуск — комментарием `@coderabbitai review`. Активную конфигурацию показывает `@coderabbitai configuration`. Его находки помогают владельцу при ревью, но не становятся гейтом мержа.
 
 ## Критические правила
 
@@ -97,12 +115,14 @@ nats-tester --help
 - Не создавай новый сервис, ADR или межсервисный контракт без явного запроса.
 - Для нетривиального принятого решения используй skill `proj-record-decision`; ADR хранится отдельным файлом в `docs/decisions/`.
 - Любое изменение `contracts/proto/` требует skill `proj-change-contract`, обновления всех потребителей и каталога [integration.md](docs/architecture/integration.md).
-- Внутри контура задачи, открытого владельцем на конкретную задачу Linear, доводи работу до pull request сам. Вне контура закончил правки — покажи `git status --short` и остановись. Границы контура, чекпоинты и стоп-триггеры — [agent-execution-loop.md](docs/development/agent-execution-loop.md).
-- Текущая ветка `feature/PER-N` означает открытый контур на задачу `PER-N`. Признак читается из репозитория, поэтому переживает `/compact` и рестарт сессии; проверяй его по `git branch --show-current`, а не по памяти о разговоре. Открывает контур команда `/proj-take-task PER-N` (skill `proj-start-task`), закрывает — skill `proj-deliver-task` открытым pull request.
-- Открывай контур скиллом `proj-start-task`, только когда владелец назвал `PER-N` и явно попросил начать или взять задачу; команда `/proj-take-task PER-N` выражает это намерение и подкладывает состояние git. Простое упоминание задачи в запросе на чтение, обсуждение или ревью контуром не является и рабочее дерево не меняет.
-- В локальном контуре самостоятельно создавай ветку задачи `feature/PER-N` от `develop`; одна задача — один pull request, `main` не трогай. Норматив — [branching.md](docs/standards/git/branching.md).
+- Внутри контура задачи доводи работу до pull request сам. Вне контура закончил правки — покажи `git status --short` и остановись. Шаги контура, чекпоинты, стоп-триггеры и таблица сред — [agent-execution-loop.md](docs/development/agent-execution-loop.md); они читаются оттуда целиком, без скиллов.
+- Контур открывают два равноправных входа: владелец назвал `PER-N` и попросил начать, либо задача делегирована в Linear. Простое упоминание задачи в запросе на чтение, обсуждение или ревью контуром не является и рабочее дерево не меняет. В Claude Code вход выражает команда `/proj-take-task PER-N` (skill `proj-start-task`), закрывает контур skill `proj-deliver-task` открытым pull request.
+- До создания ветки проверь, не занята ли задача: `delegate`, статус и открытый PR. Занята — не начинай и скажи, какой сигнал сработал.
+- Занята ли задача — глобальное состояние, оно живёт в Linear. Ветка `feature/PER-N` отвечает только на локальный вопрос «над чем работает это дерево»; проверяй её по `git branch --show-current`, а не по памяти о разговоре. Ветки чужих инструментов (`cursor/`, `claude/`) признаком не являются.
+- Ветку задачи создавай сам от `origin/develop`; одна задача — один pull request, `main` не трогай. Параллельная задача берёт отдельное рабочее дерево — норматив и предел параллелизма в [branching.md](docs/standards/git/branching.md).
+- Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot, AppHost, Meetups и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
@@ -119,13 +139,15 @@ nats-tester --help
 
 Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p` и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/` и `mattpocock/_skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) и [mattpocock/skills](https://github.com/mattpocock/skills) (обновляются `skillshare update golang/_golang -p` и `skillshare update mattpocock/_skills -p` — путь с группой обязателен, по одному имени `_golang` skillshare 0.20.25 клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
 
-Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. Клон в Git не лежит, и таргеты пака тоже: `.claude/skills/.gitignore` и `.agents/skills/.gitignore` гасят `golang-*/`, поэтому после клонирования их раскладывает `skillshare sync -p`. Свои `proj-`скиллы и внешние скиллы в таргетах закоммичены намеренно — по ним джоба `repo-hygiene` сверяет таргет с источником и ловит правку скилла без `sync`; погасив таргеты целиком, эту проверку в CI потеряли бы. Закоммиченные таргеты помечены в `.gitattributes` атрибутами `-diff` и `linguist-generated=true`: первый убирает их из локального `git diff`, второй прячет содержимое в review на GitHub. Счётчик строк в шапке pull request не убирает ни один — GitHub считает строки независимо от атрибутов, поэтому объём режется тем, чего в коммите нет. Посмотреть правку скилла в таргете можно флагом `git diff --text`.
+Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. В Git лежат только таргеты своих `proj-`скиллов: `.claude/skills/.gitignore` и `.agents/skills/.gitignore` гасят всё, кроме `proj-*/`. Граница проходит по источнику, а не по происхождению скилла. Источник `proj-`скиллов тоже в Git, поэтому джоба `repo-hygiene` сверяет копию с источником и ловит правку скилла без `sync`. Источники внешних скиллов — зависимости: они объявлены в `.skillshare/config.yaml` и погашены в `.skillshare/.gitignore` самим skillshare, в CI их нет и сверять копию не с чем. При этом закоммиченная копия без источника выглядит для `skillshare sync` осиротевшей, и он её удаляет — так одна команда в свежем рабочем дереве вычистила 46 записей манифеста на таргет. Цена решения: закоммиченная копия была единственной записью о том, что агент реально исполнял, и воспроизводимость теперь держится на поле `version` в `.skillshare/skills/.metadata.json`, которого у tracked-клонов нет — у них только `branch: main`. После клонирования внешние скиллы ставит `skillshare install -p` и раскладывает `skillshare sync -p`. Вместе с таргетами закоммичен и их `.skillshare-manifest.json`, поэтому та же джоба проверяет, что у каждого закоммиченного каталога есть в нём запись: запись о скилле, чей frontmatter не разобрался, skillshare теряет молча, и без этой проверки потеря не видна ни в одном гейте. Закоммиченные таргеты помечены в `.gitattributes` атрибутом `linguist-generated=true`: GitHub сворачивает их содержимое в review. Соседний `diff` оставлен намеренно и на `-diff` не меняется — Git трактует его как бинарный diff, и клиенты, собирающие pull request из патча, могут такое изменение не принять. Счётчик строк в шапке pull request атрибуты не убирают: GitHub считает строки независимо от них, поэтому объём режется тем, чего в коммите нет.
 
 Скиллы ставятся командой `skillshare install <url>`. `npx skills find` служит поиском по каталогу и ничего не устанавливает: установка мимо skillshare кладёт скилл в обход источника правды, и следующий `sync` его снесёт.
 
 Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. По этой причине выключен `retro`: он несёт свои категории улучшений, опирается на `CODING_STANDARDS.md`, которого в репозитории нет, и не знает про журнал наблюдений; нужная функция вынесена в свой `proj-record-observation`. Вторая причина выключить внешний скилл — занятое имя: скиллы, команды и встроенные команды Claude Code делят одно пространство `/`, и вендоренный скилл перекрывает одноимённую встроенную команду молча. Так выключен `code-review`: имя вернулось встроенной команде, а нужная функция вынесена в свой `proj-review-change`. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `proj-`скилл поверх норматива, чем чинить чужой.
 
-Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-record-observation`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`; команды `proj-draft-commit-message`, `proj-take-task`.
+Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-record-observation`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`, `proj-write-typescript`, `proj-write-grammy-bot`, `proj-write-aspire-apphost`, `proj-write-fsharp`, `proj-test-fsharp`, `proj-write-fsharp-vsa`; команды `proj-draft-commit-message`, `proj-take-task`.
+
+F#-инструментарий намеренно разделён по контекстам: `proj-write-fsharp` отвечает за язык и interop, `proj-test-fsharp` — за xUnit v3, Unquote, FsCheck, Moq и Testcontainers, `proj-write-fsharp-vsa` — за выбранные в ADR-033 функциональные vertical slices и Oxpecker boundary. Основа синтезирована из общего `managedcode/dotnet-skills:fsharp` и проверенных практик `pampadu.kasko`, а не установлена пакетом: исходные skills не знают локальных ADR и несут либо слишком общий scaffolding, либо чужие архитектурные допущения. `ECC:fsharp-testing` не установлен отдельно, потому что его полезный стек закреплён проектным standard, а FsUnit и NSubstitute не вводятся вторым способом утверждений и mocking. Пакеты `majiayu` исключены из-за Giraffe/Fable/SQLite и заранее заданной структуры приложения; Akka-specific skill из `pampadu.kasko` к Meetups не применяется, потому что ADR-024 прямо оставляет actor runtime за границей сервиса.
 
 Плагины включаются полем `enabledPlugins` в `.claude/settings.json` и действуют на весь проект. Сейчас включён `codex@openai-codex`: он приносит скиллы с префиксом `codex:` и агента `codex-rescue`, которые делегируют работу локальному Codex CLI. Плагин приходит мимо `.skillshare/` — `skillshare sync` его не раскладывает, `just check-agent-tools` его не проверяет, а без установленного Codex CLI его скиллы бесполезны.
 
