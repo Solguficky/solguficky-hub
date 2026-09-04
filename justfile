@@ -38,8 +38,9 @@ setup:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
-# Сгенерированные skills, agents и commands совпадают с источниками Skillshare
+# Frontmatter скиллов разбирается, а skills, agents и commands совпадают с источниками
 check-agent-tools:
+    sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
 # Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost

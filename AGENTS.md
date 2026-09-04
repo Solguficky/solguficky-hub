@@ -27,7 +27,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
-- `tools/skillshare/` — проверка закоммиченных Skillshare-таргетов; её вызывают `just check-agent-tools` и CI.
+- `tools/skillshare/` — две проверки скиллов: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные таргеты с источниками. Их вызывают `just check-agent-tools` и CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
@@ -51,7 +51,7 @@ skillshare sync -p
 # Команды: отдельная раскладка, обычный sync их не трогает
 skillshare sync extras -p
 
-# Проверка закоммиченных skills, agents и commands после sync
+# Frontmatter скиллов и закоммиченные skills, agents и commands после sync
 just check-agent-tools
 
 # Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost и тесты
