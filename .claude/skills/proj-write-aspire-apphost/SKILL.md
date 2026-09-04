@@ -1,6 +1,6 @@
 ---
 name: proj-write-aspire-apphost
-description: Писать и ревьюить Aspire AppHost этого репозитория — граф узлов, профили как данные, полиглотные ресурсы Go и Node, bind без ветвлений, health и живой gate. Использовать при правках infra/apphost, добавлении компонента или инфраструктуры, смене профилей и Aspire hosting packages.
+description: "Писать и ревьюить Aspire AppHost этого репозитория — граф узлов, профили как данные, полиглотные ресурсы Go и Node, bind без ветвлений, health и живой gate. Использовать при правках infra/apphost, добавлении компонента или инфраструктуры, смене профилей и Aspire hosting packages."
 ---
 
 # Писать Aspire AppHost
