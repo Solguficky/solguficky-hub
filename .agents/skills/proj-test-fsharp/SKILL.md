@@ -1,6 +1,6 @@
 ---
 name: proj-test-fsharp
-description: Писать и ревьюить F#-тесты: xUnit v3, Unquote, FsCheck, Moq на .NET-границах, Testcontainers и выбор минимального уровня. Использовать при правках F# test projects, тестов домена/workflow/mapping или интеграционных тестов F#-компонента.
+description: "Писать и ревьюить F#-тесты: xUnit v3, Unquote, FsCheck, Moq на .NET-границах, Testcontainers и выбор минимального уровня. Использовать при правках F# test projects, тестов домена/workflow/mapping или интеграционных тестов F#-компонента."
 ---
 
 # Тестировать F#-код

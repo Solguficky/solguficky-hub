@@ -1,6 +1,6 @@
 ---
 name: proj-write-grammy-bot
-description: Писать и ревьюить grammY/Telegram Bot boundary: недоверенные updates и callback_data, изоляция use cases, вызовы Identity, отказы Bot API и polling lifecycle. Использовать при правках grammY handlers, middleware, клавиатур, deep links или Telegram API adapters.
+description: "Писать и ревьюить grammY/Telegram Bot boundary: недоверенные updates и callback_data, изоляция use cases, вызовы Identity, отказы Bot API и polling lifecycle. Использовать при правках grammY handlers, middleware, клавиатур, deep links или Telegram API adapters."
 ---
 
 # Писать Telegram Bot на grammY
