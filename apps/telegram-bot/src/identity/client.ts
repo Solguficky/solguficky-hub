@@ -3,10 +3,8 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import {
-  GlobalRole,
-  IdentityService,
-} from "../../gen/identity/v1/identity_service_pb.js";
+import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   type IdentityResolver,
   type ResolveIdentityInput,
