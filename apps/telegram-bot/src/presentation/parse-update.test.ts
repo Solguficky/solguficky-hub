@@ -1,29 +1,114 @@
 import { describe, expect, it } from "vitest";
 import { parseUpdate } from "./parse-update.js";
 
+const botUsername = "stub_bot";
+
 describe("parseUpdate", () => {
-  it("reads a private message as unknown", () => {
-    const parsed = parseUpdate({
-      update_id: 1,
-      message: {
-        message_id: 7,
-        date: 0,
-        chat: { id: 42, type: "private" },
-        from: {
-          id: 42,
-          is_bot: false,
-          first_name: "tester",
-          username: "alice",
+  it("reads /start without a deep link payload", () => {
+    const parsed = parseUpdate(
+      {
+        update_id: 1,
+        message: {
+          message_id: 7,
+          date: 0,
+          chat: { id: 42, type: "private" },
+          from: {
+            id: 42,
+            is_bot: false,
+            first_name: "tester",
+            username: "alice",
+          },
+          text: "/start",
         },
-        text: "hello",
       },
-    });
+      botUsername,
+    );
     expect(parsed).toEqual({
-      kind: "message",
+      kind: "start",
       telegramUserId: 42n,
       telegramUsername: "alice",
-      text: "hello",
     });
+  });
+
+  it("classifies a meetup deep link payload", () => {
+    const parsed = parseUpdate(
+      {
+        update_id: 1,
+        message: {
+          message_id: 7,
+          date: 0,
+          chat: { id: 42, type: "private" },
+          from: { id: 42, is_bot: false, first_name: "tester" },
+          text: "/start m_AZLzpLXGfY6fChssPU5fYA",
+        },
+      },
+      botUsername,
+    );
+    expect(parsed).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+      deepLink: {
+        kind: "meetup",
+        payload: "m_AZLzpLXGfY6fChssPU5fYA",
+      },
+    });
+  });
+
+  it("keeps a valid non-meetup payload unclassified", () => {
+    expect(messageText("/start invite_token_1")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+      deepLink: { kind: "unclassified", payload: "invite_token_1" },
+    });
+  });
+
+  it("accepts /start with a bot mention and ignores case", () => {
+    expect(messageText("/START@Stub_Bot").kind).toBe("start");
+    expect(messageText("/start@stub_bot m_AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+      deepLink: {
+        kind: "meetup",
+        payload: "m_AZLzpLXGfY6fChssPU5fYA",
+      },
+    });
+  });
+
+  it("ignores /start mentioned for another bot", () => {
+    expect(messageText("/start@other_bot").kind).toBe("ignored");
+  });
+
+  it("treats invalid payload as a bare start", () => {
+    expect(messageText("/start payload with spaces")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+    });
+    expect(messageText(`/start ${"a".repeat(65)}`)).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+    });
+  });
+
+  it("ignores other text", () => {
+    expect(messageText("hello").kind).toBe("ignored");
+  });
+
+  it("ignores /start outside a private chat", () => {
+    expect(
+      parseUpdate(
+        {
+          update_id: 1,
+          message: {
+            message_id: 7,
+            date: 0,
+            chat: { id: -42, type: "group" },
+            from: { id: 42, is_bot: false, first_name: "tester" },
+            text: "/start",
+          },
+        },
+        botUsername,
+      ).kind,
+    ).toBe("ignored");
   });
 
   it("treats garbage as malformed", () => {
@@ -36,21 +121,24 @@ describe("parseUpdate", () => {
       { update_id: 1, message: null },
     ];
     for (const raw of cases) {
-      expect(parseUpdate(raw).kind).toBe("malformed");
+      expect(parseUpdate(raw, botUsername).kind).toBe("malformed");
     }
   });
 
   it("ignores updates without a user message", () => {
-    expect(parseUpdate({ update_id: 1 }).kind).toBe("ignored");
+    expect(parseUpdate({ update_id: 1 }, botUsername).kind).toBe("ignored");
     expect(
-      parseUpdate({
-        update_id: 1,
-        message: {
-          message_id: 7,
-          date: 0,
-          chat: { id: 42, type: "private" },
+      parseUpdate(
+        {
+          update_id: 1,
+          message: {
+            message_id: 7,
+            date: 0,
+            chat: { id: 42, type: "private" },
+          },
         },
-      }).kind,
+        botUsername,
+      ).kind,
     ).toBe("ignored");
   });
 
@@ -76,7 +164,23 @@ describe("parseUpdate", () => {
       { update_id: 4, message: { ...base, text: "" } },
     ];
     for (const raw of cases) {
-      expect(parseUpdate(raw).kind).toBe("ignored");
+      expect(parseUpdate(raw, botUsername).kind).toBe("ignored");
     }
   });
 });
+
+function messageText(text: string): ReturnType<typeof parseUpdate> {
+  return parseUpdate(
+    {
+      update_id: 1,
+      message: {
+        message_id: 7,
+        date: 0,
+        chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text,
+      },
+    },
+    botUsername,
+  );
+}

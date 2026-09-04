@@ -133,7 +133,7 @@ Identity реализуется на Go. Сложного домена здес�
 - согласованность общих ролей и доменных полномочий;
 - наблюдаемость authentication/authorization пути.
 
-Контракт разрешения личности принят и описан в [integration.md](../architecture/integration.md). Схема профиля и глобальных ролей лежит в `apps/identity/internal/migrations/` и применяется при старте процесса. Регистрация Identity в Aspire ещё не сделана.
+Контракт разрешения личности принят и описан в [integration.md](../architecture/integration.md). Схема профиля и глобальных ролей лежит в `apps/identity/internal/migrations/` и применяется при старте процесса. Identity зарегистрирован в Aspire как узел графа: `identity-proto` генерирует Go-код, `identity-build` собирает бинарник, `identity` запускает его и проверяется gRPC health.
 
 ## Открытые вопросы реализации
 
