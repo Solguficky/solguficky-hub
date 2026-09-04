@@ -60,12 +60,12 @@ just verify
 # Локальная оркестрация — из infra/apphost/
 aspire run
 
-# Профили топологии
+# Профили топологии — данные в Topology:Profiles (infra/apphost/appsettings.json)
 TOPOLOGY__PROFILE=infra aspire run
-TOPOLOGY__PROFILE=full aspire run
+aspire run -- --profile full
 
-# Режим компонента: Local | Container | Off
-TOPOLOGY__AUCTIONSERVICE=Container aspire run
+# Срез внутри профиля
+aspire run -- --profile core --run-services identity
 
 # Identity — инструменты, кодогенерация, сборка, тесты и линт
 just identity-tools
@@ -97,7 +97,7 @@ nats-tester --help
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
-`aspire run` ещё не подтверждён живым прогоном. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Не объявляй Aspire проверенным, пока не выполнен gate из [руководства](docs/development/local-development.md).
+Профиль `infra` и Identity-срез подтверждены живым прогоном на Aspire 13.5.3; полный профиль с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
 
 CodeRabbit не ревьюит pull request автоматически; запуск — комментарием `@coderabbitai review`. Активную конфигурацию показывает `@coderabbitai configuration`. Его находки помогают владельцу при ревью, но не становятся гейтом мержа.
 
@@ -137,7 +137,7 @@ Tracked-клон приносит репозиторий целиком, поэ�
 
 Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. По этой причине выключен `retro`: он несёт свои категории улучшений, опирается на `CODING_STANDARDS.md`, которого в репозитории нет, и не знает про журнал наблюдений; нужная функция вынесена в свой `proj-record-observation`. Вторая причина выключить внешний скилл — занятое имя: скиллы, команды и встроенные команды Claude Code делят одно пространство `/`, и вендоренный скилл перекрывает одноимённую встроенную команду молча. Так выключен `code-review`: имя вернулось встроенной команде, а нужная функция вынесена в свой `proj-review-change`. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `proj-`скилл поверх норматива, чем чинить чужой.
 
-Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-record-observation`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`, `proj-write-typescript`, `proj-write-grammy-bot`, `proj-write-fsharp`, `proj-test-fsharp`, `proj-write-fsharp-vsa`; команды `proj-draft-commit-message`, `proj-take-task`.
+Команды лежат в `.claude/commands/`; их источник `.skillshare/extras/commands/`, раскладывает их `skillshare sync extras -p`. Свои скиллы и команды носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-record-learning`, `proj-record-observation`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`, `proj-write-typescript`, `proj-write-grammy-bot`, `proj-write-aspire-apphost`, `proj-write-fsharp`, `proj-test-fsharp`, `proj-write-fsharp-vsa`; команды `proj-draft-commit-message`, `proj-take-task`.
 
 F#-инструментарий намеренно разделён по контекстам: `proj-write-fsharp` отвечает за язык и interop, `proj-test-fsharp` — за xUnit v3, Unquote, FsCheck, Moq и Testcontainers, `proj-write-fsharp-vsa` — за выбранные в ADR-033 функциональные vertical slices и Oxpecker boundary. Основа синтезирована из общего `managedcode/dotnet-skills:fsharp` и проверенных практик `pampadu.kasko`, а не установлена пакетом: исходные skills не знают локальных ADR и несут либо слишком общий scaffolding, либо чужие архитектурные допущения. `ECC:fsharp-testing` не установлен отдельно, потому что его полезный стек закреплён проектным standard, а FsUnit и NSubstitute не вводятся вторым способом утверждений и mocking. Пакеты `majiayu` исключены из-за Giraffe/Fable/SQLite и заранее заданной структуры приложения; Akka-specific skill из `pampadu.kasko` к Meetups не применяется, потому что ADR-024 прямо оставляет actor runtime за границей сервиса.
 

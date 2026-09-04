@@ -1,5 +1,8 @@
 {
   "managed": {
+    "aspire": "61d2030e9f378586d113e8e624045aa0fd0f8374e772a1bf49110866f8f2e179",
+    "aspire-monitoring": "18cc6a63e3cf6ba3c183f159b3bca240fc5b4d24cde95abfafe22b62bc1d71b9",
+    "aspire-orchestration": "f8e3d0c23d06bea9b32307ae0c3ef8f6edb296d6f940c3dd755a9387a509b318",
     "cli-for-agents": "7a5fd065e0273d698f279a5c3e2b4493092237004f5c2e4758db4ab77bd6a0c4",
     "codebase-design": "37c6f20dc93849c64550049a38f0c0670b03599999eb3a7bfbc7b26696bceb9b",
     "diagnosing-bugs": "193848c1b6f5b83127f72e7f7b3aba137594fe304b090efd40e3f79b3f003396",
@@ -39,10 +42,8 @@
     "proj-record-observation": "969ff057c049bfc9c49a9d09a5b2c26d9e34121d5653537e3d367ccf4af6323a",
     "proj-review-change": "1715ccaede7e1a0e0043ea7f511026f4234c2fcc2f0bc9c347ce9796b8be824b",
     "proj-start-task": "e1b1fd9e4cece8e7ab28acaf7a6b33f3cee64eda03d541f14c38627a38bae230",
-    "proj-test-fsharp": "ce887716066c6bd7db54fe63d343f17f9270555224f3d5d8e073e2ec28bad3fb",
+    "proj-write-aspire-apphost": "da3dcaa975e6175eb61b4eed4c892bd3ea79c324aa09032b318722d5e798de04",
     "proj-write-commit": "29cb34ddb844f8ae326a613fc21453ee2d8f635e6a3e4aafb49ea2af392a3d52",
-    "proj-write-fsharp": "73a8f68de1607d1e4555042699d797a2fee0768a6aec21dffdc36865aee1b8b1",
-    "proj-write-fsharp-vsa": "cd39444aca3213c97f7ee03c1fed10fd4de83e78e09c5520f737becd0a65f4b1",
     "proj-write-grammy-bot": "8e12707bf8b2471355077b54bc57f70a93b42fd9cc5740efae4abeca088e57be",
     "proj-write-typescript": "eb4a9991c95601ce592ba331c1c700dc4231139238e7fb5315944ba2818a7c4f",
     "prototype": "0ab3bde2a6bd18e20e1bc6def960fa756b7257af9fd406478b15294166de825a",
@@ -62,6 +63,9 @@
     "writing-shape": "2da9809fd3b9d5fe0839b3298530822b59957aede3414ea7d4ee09d4700a0c05"
   },
   "mtimes": {
+    "aspire": 1788470128951006600,
+    "aspire-monitoring": 1788470094166783800,
+    "aspire-orchestration": 1788470125303997200,
     "cli-for-agents": 1787943843538156200,
     "codebase-design": 1787866344014130500,
     "diagnosing-bugs": 1787866344019080000,
@@ -101,10 +105,8 @@
     "proj-record-observation": 1788050044642041400,
     "proj-review-change": 1788382793558608400,
     "proj-start-task": 1788382793559645400,
-    "proj-test-fsharp": 1788466368482717000,
+    "proj-write-aspire-apphost": 1788470053110061500,
     "proj-write-commit": 1788382793561349300,
-    "proj-write-fsharp": 1788466804531800700,
-    "proj-write-fsharp-vsa": 1788466915287715100,
     "proj-write-grammy-bot": 1788289116990645800,
     "proj-write-typescript": 1788289116997055900,
     "prototype": 1787866344040024500,
@@ -123,5 +125,5 @@
     "writing-fragments": 1787866344107665000,
     "writing-shape": 1787866344110662500
   },
-  "updated_at": "2026-09-03T23:24:03.4089408+03:00"
+  "updated_at": "2026-09-04T00:36:13.9425942+03:00"
 }
