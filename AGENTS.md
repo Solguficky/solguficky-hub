@@ -22,6 +22,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
+- `apps/meetups/` — контрактная граница Meetups: C#-проект кодогенерации и F#-библиотека со ссылкой на него; исполняемого сервиса ещё нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
@@ -57,7 +58,7 @@ skillshare sync extras -p
 # Frontmatter скиллов и закоммиченные skills, agents и commands после sync
 just check-agent-tools
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost и тесты
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -88,6 +89,10 @@ just telegram-bot-test
 just telegram-bot-lint
 just telegram-bot-run
 
+# Meetups — кодогенерация C#, F#-ссылка и проверка схемы
+just meetups-build
+just meetups-test
+
 # .NET — из папки проекта
 dotnet build
 dotnet test
@@ -117,7 +122,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Ветку задачи создавай сам от `origin/develop`; одна задача — один pull request, `main` не трогай. Параллельная задача берёт отдельное рабочее дерево — норматив и предел параллелизма в [branching.md](docs/standards/git/branching.md).
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot, AppHost и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot, AppHost, Meetups и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.

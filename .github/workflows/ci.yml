@@ -20,6 +20,7 @@ jobs:
       pull-requests: read
     outputs:
       identity: ${{ steps.filter.outputs.identity }}
+      meetups: ${{ steps.filter.outputs.meetups }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
     steps:
@@ -32,6 +33,12 @@ jobs:
               - 'contracts/proto/**'
               - 'apps/identity/**'
               - 'justfile'
+              - '.github/workflows/ci.yml'
+            meetups:
+              - 'contracts/proto/**'
+              - 'apps/meetups/**'
+              - 'justfile'
+              - 'global.json'
               - '.github/workflows/ci.yml'
             telegram-bot:
               - 'contracts/proto/**'
@@ -100,6 +107,23 @@ jobs:
           install-mode: goinstall
           args: --timeout 5m
 
+  meetups:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.meetups == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build Meetups.sln --nologo
+        working-directory: apps/meetups
+      - run: dotnet test Meetups.sln --nologo --no-build
+        working-directory: apps/meetups
+
   telegram-bot:
     needs: changes
     if: >-
@@ -148,11 +172,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          # AppHost таргетит net8.0, а Aspire.AppHost.Sdk 13.5.3 требует SDK 10:
-          # ставим обе линии, сборка идёт новейшей.
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          global-json-file: global.json
       - run: dotnet build infra/apphost/AppHost.csproj --nologo
 
   repo-hygiene:

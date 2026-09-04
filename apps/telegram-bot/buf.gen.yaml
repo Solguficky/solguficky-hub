@@ -10,6 +10,7 @@ plugins:
     out: apps/telegram-bot/gen
     opt:
       - target=ts
+      - import_extension=.js
 inputs:
   - directory: contracts/proto
     paths:

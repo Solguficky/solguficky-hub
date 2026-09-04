@@ -1,6 +1,6 @@
 import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GlobalRole } from "../../gen/identity/v1/identity_service_pb.js";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { createIdentityClient, createIdentityResolver } from "./client.js";
 
 afterEach(() => {

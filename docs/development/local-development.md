@@ -14,7 +14,7 @@
 - Go и `buf` для профилей с Identity;
 - Node.js, npm и Telegram Bot token для профилей с Telegram Bot.
 
-AppHost остаётся на `net8.0`, а SDK и все `Aspire.Hosting.*` packages обновляются одной стабильной линией. Текущая линия — 13.5.3.
+SDK закреплён в корневом `global.json`: .NET 10, `rollForward: latestFeature` разрешает более новый патч той же линейки 10.0. AppHost таргетит `net10.0`, а все `Aspire.Hosting.*` packages обновляются одной стабильной линией. Текущая линия — 13.5.3.
 
 ## AppHost
 

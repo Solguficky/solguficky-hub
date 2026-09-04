@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package meetups.v1;
+
+import "identity/v1/roles.proto";
+
+service MeetupsService {
+  rpc CreateMeetupDraft(CreateMeetupDraftRequest) returns (MeetupSnapshot);
+  rpc ChangeMeetupAttributes(ChangeMeetupAttributesRequest) returns (MeetupSnapshot);
+  rpc SetMeetupSchedule(SetMeetupScheduleRequest) returns (MeetupSnapshot);
+  rpc PublishMeetup(PublishMeetupRequest) returns (MeetupSnapshot);
+  rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
+  rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
+}
+
+message Viewer {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Platform-wide roles from Identity. Domain permissions are not precomputed
+  // here; Meetups applies them. An empty set means an ordinary user.
+  repeated identity.v1.GlobalRole global_roles = 2;
+}
+
+message CreateMeetupDraftRequest {
+  Viewer viewer = 1;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. This is both the
+  // meetup id and the idempotency key. There is no separate idempotency field.
+  string id = 2;
+}
+
+message ChangeMeetupAttributesRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Empty string is the total value "unspecified". Omitted fields are not a
+  // distinct state: every attribute is sent.
+  string title = 3;
+  string description = 4;
+  string venue = 5;
+  string kind = 6;
+  string calendar_link = 7;
+}
+
+message SetMeetupScheduleRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Target schedule as a single value. Unset is not a fourth form; send no_date.
+  Schedule schedule = 3;
+}
+
+message PublishMeetupRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+}
+
+message ListVisibleMeetupsRequest {
+  Viewer viewer = 1;
+}
+
+message GetMeetupRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+}
+
+message ListVisibleMeetupsResponse {
+  repeated MeetupSummary meetups = 1;
+}
+
+message MeetupSnapshot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Immutable after create.
+  string author = 2;
+
+  // Empty string is the total value "unspecified".
+  string title = 3;
+  string description = 4;
+  string venue = 5;
+  string kind = 6;
+  string calendar_link = 7;
+
+  Schedule schedule = 8;
+  MeetupLifecycle lifecycle = 9;
+  MeetupVisibility visibility = 10;
+
+  // RFC 3339 UTC instant. Absent when the meetup has never been published.
+  optional string first_published_at = 11;
+
+  // Aggregate version. 1 after create. 0 means the field was omitted.
+  int64 version = 12;
+}
+
+message MeetupSummary {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Empty string is the total value "unspecified".
+  string title = 2;
+  string venue = 3;
+
+  Schedule schedule = 4;
+  MeetupLifecycle lifecycle = 5;
+  MeetupVisibility visibility = 6;
+}
+
+message Schedule {
+  oneof form {
+    NoDate no_date = 1;
+    DateValue tentative = 2;
+    DateValue fixed = 3;
+  }
+}
+
+message NoDate {}
+
+message DateValue {
+  oneof precision {
+    CalendarDate day = 1;
+    LocalDateTime day_start = 2;
+    LocalInterval interval = 3;
+  }
+}
+
+message CalendarDate {
+  // Local community calendar date, not a UTC instant. No timezone in this message.
+  int32 year = 1;
+  int32 month = 2;
+  int32 day = 3;
+}
+
+message LocalTime {
+  // Minute precision. Hours 0-23, minutes 0-59. Seconds are not represented.
+  int32 hours = 1;
+  int32 minutes = 2;
+}
+
+message LocalDateTime {
+  CalendarDate date = 1;
+  LocalTime time = 2;
+}
+
+message LocalInterval {
+  LocalDateTime start = 1;
+  LocalDateTime end = 2;
+}
+
+enum MeetupLifecycle {
+  MEETUP_LIFECYCLE_UNSPECIFIED = 0;
+  MEETUP_LIFECYCLE_PLANNED = 1;
+  MEETUP_LIFECYCLE_HELD = 2;
+  MEETUP_LIFECYCLE_CANCELLED = 3;
+}
+
+enum MeetupVisibility {
+  MEETUP_VISIBILITY_UNSPECIFIED = 0;
+  MEETUP_VISIBILITY_HIDDEN = 1;
+  MEETUP_VISIBILITY_VISIBLE = 2;
+}

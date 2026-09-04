@@ -22,21 +22,20 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from identity.v1 import roles_pb2 as identity_dot_v1_dot_roles__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\"identity/v1/identity_service.proto\x12\x0bidentity.v1\"h\n\x16ResolveIdentityRequest\x12\x18\n\x10telegram_user_id\x18\x01 \x01(\x03\x12\x1e\n\x11telegram_username\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x14\n\x12_telegram_username\"]\n\x17ResolveIdentityResponse\x12\x13\n\x0bidentity_id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole*@\n\nGlobalRole\x12\x1b\n\x17GLOBAL_ROLE_UNSPECIFIED\x10\x00\x12\x15\n\x11GLOBAL_ROLE_ADMIN\x10\x01\x32o\n\x0fIdentityService\x12\\\n\x0fResolveIdentity\x12#.identity.v1.ResolveIdentityRequest\x1a$.identity.v1.ResolveIdentityResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\"identity/v1/identity_service.proto\x12\x0bidentity.v1\x1a\x17identity/v1/roles.proto\"h\n\x16ResolveIdentityRequest\x12\x18\n\x10telegram_user_id\x18\x01 \x01(\x03\x12\x1e\n\x11telegram_username\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x14\n\x12_telegram_username\"]\n\x17ResolveIdentityResponse\x12\x13\n\x0bidentity_id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole2o\n\x0fIdentityService\x12\\\n\x0fResolveIdentity\x12#.identity.v1.ResolveIdentityRequest\x1a$.identity.v1.ResolveIdentityResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'identity.v1.identity_service_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_GLOBALROLE']._serialized_start=252
-  _globals['_GLOBALROLE']._serialized_end=316
-  _globals['_RESOLVEIDENTITYREQUEST']._serialized_start=51
-  _globals['_RESOLVEIDENTITYREQUEST']._serialized_end=155
-  _globals['_RESOLVEIDENTITYRESPONSE']._serialized_start=157
-  _globals['_RESOLVEIDENTITYRESPONSE']._serialized_end=250
-  _globals['_IDENTITYSERVICE']._serialized_start=318
-  _globals['_IDENTITYSERVICE']._serialized_end=429
+  _globals['_RESOLVEIDENTITYREQUEST']._serialized_start=76
+  _globals['_RESOLVEIDENTITYREQUEST']._serialized_end=180
+  _globals['_RESOLVEIDENTITYRESPONSE']._serialized_start=182
+  _globals['_RESOLVEIDENTITYRESPONSE']._serialized_end=275
+  _globals['_IDENTITYSERVICE']._serialized_start=277
+  _globals['_IDENTITYSERVICE']._serialized_end=388
 # @@protoc_insertion_point(module_scope)
