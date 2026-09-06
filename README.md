@@ -6,10 +6,13 @@
 
 ## Текущее состояние
 
-Исполняемых компонентов платформы в репозитории нет: продуктовое ядро MVP спроектировано, но не написано. Сейчас здесь находятся:
+Продуктовое ядро MVP спроектировано, но доменной логики пока нет ни у одного компонента. Сейчас здесь находятся:
 
 - Protobuf-контракты и контур Go-кодогенерации Identity;
-- AppHost на .NET Aspire, поднимающий NATS и PostgreSQL;
+- Identity: gRPC-сервер разрешения личности поверх PostgreSQL;
+- Meetups: скелет gRPC-сервиса на F#, отвечающий на операции контракта заглушкой;
+- скелет Telegram Bot на TypeScript;
+- AppHost на .NET Aspire, поднимающий эти компоненты, NATS и PostgreSQL;
 - конфигурация локального стека логов и инструменты разработки;
 - проектные решения по Meetups, Identity, Telegram Bot и Notifications — в ADR и service briefs.
 
@@ -18,7 +21,7 @@
 ## Структура
 
 ```text
-apps/                         компоненты платформы; пока только контур Identity
+apps/                         компоненты платформы: Identity, Meetups, Telegram Bot
 contracts/proto/              Protobuf-контракты NATS и gRPC
 docs/                         продукт, архитектура, решения и руководства
 infra/apphost/                локальная оркестрация .NET Aspire
