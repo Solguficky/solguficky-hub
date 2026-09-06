@@ -20,6 +20,7 @@ jobs:
       pull-requests: read
     outputs:
       identity: ${{ steps.filter.outputs.identity }}
+      meetups: ${{ steps.filter.outputs.meetups }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
     steps:
@@ -33,6 +34,14 @@ jobs:
               - 'apps/identity/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
+            meetups:
+              - 'contracts/proto/**'
+              - 'apps/meetups/**'
+              - 'justfile'
+              - 'global.json'
+              - '.editorconfig'
+              - '.config/dotnet-tools.json'
+              - '.github/workflows/ci.yml'
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
@@ -40,7 +49,10 @@ jobs:
               - '.github/workflows/ci.yml'
             apphost:
               - 'infra/apphost/**'
+              - 'shared/dotnet/**'
               - 'justfile'
+              - 'global.json'
+              - '.editorconfig'
               - '.github/workflows/ci.yml'
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
@@ -100,6 +112,31 @@ jobs:
           install-mode: goinstall
           args: --timeout 5m
 
+  meetups:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.meetups == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      # Форматирование F# — тот же гейт, что `just meetups-format-check`.
+      # Fantomas берётся из .config/dotnet-tools.json в корне, поэтому обе
+      # команды идут без working-directory.
+      - run: dotnet tool restore
+      - run: dotnet fantomas --check apps/meetups
+      - run: dotnet build Meetups.sln --nologo
+        working-directory: apps/meetups
+      # Runner — Microsoft.Testing.Platform (ключ `test` в global.json). Решение он
+      # принимает только через --solution, а --nologo не понимает: с ним прогон
+      # находит ноль тестов и падает кодом 1.
+      - run: dotnet test --solution Meetups.sln --no-build
+        working-directory: apps/meetups
+
   telegram-bot:
     needs: changes
     if: >-
@@ -148,11 +185,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          # AppHost таргетит net8.0, а Aspire.AppHost.Sdk 13.5.3 требует SDK 10:
-          # ставим обе линии, сборка идёт новейшей.
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          global-json-file: global.json
       - run: dotnet build infra/apphost/AppHost.csproj --nologo
 
   repo-hygiene:

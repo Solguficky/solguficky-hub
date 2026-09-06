@@ -43,8 +43,8 @@ check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -123,7 +123,33 @@ telegram-bot-lint: telegram-bot-proto
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
 
+# --- Meetups (F# / .NET) ---------------------------------------------------
+#
+# Кодогенерация C# — часть `dotnet build` контрактного проекта.
+# Исполняемого сервиса ещё нет: собираются контракты и F#-ссылка на них.
+
+# Сборка контрактного C#-проекта и F#-библиотеки
+meetups-build:
+    dotnet build apps/meetups/Meetups.sln --nologo
+
+# Проверка, что в схеме ровно шесть операций среза.
+# Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
+meetups-test:
+    dotnet test --solution apps/meetups/Meetups.sln
+
+# Форматирование F# по корневому .editorconfig (секция Fantomas)
+meetups-format: dotnet-tools
+    dotnet fantomas apps/meetups
+
+# Гейт форматирования F#: печатает файлы, которые Fantomas переписал бы
+meetups-format-check: dotnet-tools
+    dotnet fantomas --check apps/meetups
+
 # --- Инструменты -----------------------------------------------------------
+
+# Локальные .NET-инструменты закреплённых версий из .config/dotnet-tools.json
+dotnet-tools:
+    dotnet tool restore
 
 # Установка nats-tester в текущее окружение
 nats-tester-install:

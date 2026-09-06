@@ -4,11 +4,11 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
-Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow. Джоба `telegram-bot` делает typecheck, lint, test и build TypeScript-скелета. Джоба `identity` передаёт `github.token` в `buf-setup-action`: без него установка `buf` бьёт в GitHub API без авторизации и на hosted runner падает по rate limit.
+Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow. Джоба `telegram-bot` делает typecheck, lint, test и build TypeScript-скелета. Джоба `meetups` собирает контрактный C#-проект и F#-библиотеку и проверяет схему среза на изменение контракта, `apps/meetups/**`, `justfile`, `global.json` и самого workflow. Джоба `identity` передаёт `github.token` в `buf-setup-action`: без него установка `buf` бьёт в GitHub API без авторизации и на hosted runner падает по rate limit.
 
-Джоба `apphost` компилирует `infra/apphost/AppHost.csproj` на изменение `infra/apphost/**`, `justfile` и самого workflow. Она ставит линии .NET 8 и 10: AppHost таргетит `net8.0`, а `Aspire.AppHost.Sdk` требует SDK 10. Без этой джобы правка графа или setup-а ресурса, которая не собирается, ловилась бы только локальным `just verify`.
+Джоба `apphost` компилирует `infra/apphost/AppHost.csproj` на изменение `infra/apphost/**`, `justfile` и самого workflow. SDK она берёт из корневого `global.json`: AppHost таргетит `net10.0`, и `Aspire.AppHost.Sdk` работает на той же линии. Без этой джобы правка графа или setup-а ресурса, которая не собирается, ловилась бы только локальным `just verify`.
 
-Кроме `push` в `main` и pull request workflow принимает `workflow_dispatch` — ручной запуск на случай, когда push не создал прогон сам, например когда ветку двигал GitHub App. У ручного запуска нет базы для сравнения путей, поэтому джоба `changes` на нём пропускается, а `identity`, `telegram-bot` и `apphost` запускаются по `github.event_name` безусловно. Кнопка Run workflow в UI появляется только когда триггер есть в `ci.yml` ветки по умолчанию, но запуск через REST API (`POST /actions/workflows/ci.yml/dispatches` с нужным `ref`) работает и с ветки, где триггер уже добавлен, — так этот прогон и был получен.
+Кроме `push` в `main` и pull request workflow принимает `workflow_dispatch` — ручной запуск на случай, когда push не создал прогон сам, например когда ветку двигал GitHub App. У ручного запуска нет базы для сравнения путей, поэтому джоба `changes` на нём пропускается, а `identity`, `meetups`, `telegram-bot` и `apphost` запускаются по `github.event_name` безусловно. Кнопка Run workflow в UI появляется только когда триггер есть в `ci.yml` ветки по умолчанию, но запуск через REST API (`POST /actions/workflows/ci.yml/dispatches` с нужным `ref`) работает и с ветки, где триггер уже добавлен, — так этот прогон и был получен.
 
 Известные gaps:
 
