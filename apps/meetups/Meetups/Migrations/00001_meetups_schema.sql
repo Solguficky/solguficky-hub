@@ -68,7 +68,9 @@ CREATE TABLE meetups (
             )
         ),
     CONSTRAINT meetups_scheduled_publish_only_when_hidden
-        CHECK (scheduled_publish_at IS NULL OR visibility = 'hidden')
+        CHECK (scheduled_publish_at IS NULL OR visibility = 'hidden'),
+    CONSTRAINT meetups_visible_has_first_publication
+        CHECK (visibility = 'hidden' OR first_published_at IS NOT NULL)
 );
 
 CREATE INDEX meetups_visible_schedule

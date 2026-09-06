@@ -32,3 +32,10 @@ let ``A postgres URI becomes a keyword connection string`` () =
             && cs.Contains("Database=meetups")
             && cs.Contains("Password=secret")
         @>
+
+[<Fact>]
+let ``A postgres URI keeps a password that contains a colon`` () =
+    let cs =
+        Meetups.Migrations.connectionString "postgres://user:sec:ret@127.0.0.1:5432/meetups?sslmode=disable"
+
+    test <@ cs.Contains("Password=sec:ret") @>

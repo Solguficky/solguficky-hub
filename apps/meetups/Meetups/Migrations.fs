@@ -79,18 +79,20 @@ let connectionString (dsn: string) =
         dsn
     else
         let uri = Uri(dsn)
-        let userInfo = uri.UserInfo.Split(':')
+        let userInfo = uri.UserInfo
+        let colon = userInfo.IndexOf(':')
         let builder = NpgsqlConnectionStringBuilder()
         builder.Host <- uri.Host
 
         if uri.Port > 0 then
             builder.Port <- uri.Port
 
-        if userInfo.Length > 0 && userInfo[0] <> "" then
-            builder.Username <- Uri.UnescapeDataString(userInfo[0])
-
-        if userInfo.Length > 1 then
-            builder.Password <- Uri.UnescapeDataString(userInfo[1])
+        if colon < 0 then
+            if userInfo <> "" then
+                builder.Username <- Uri.UnescapeDataString(userInfo)
+        else
+            builder.Username <- Uri.UnescapeDataString(userInfo.Substring(0, colon))
+            builder.Password <- Uri.UnescapeDataString(userInfo.Substring(colon + 1))
 
         let database = uri.AbsolutePath.Trim('/')
 

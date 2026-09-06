@@ -342,6 +342,25 @@ type SchemaTests() =
         test <@ unpublishedRows = [ unpublished ] @>
 
     [<Fact>]
+    member _.``A visible meetup cannot omit the first publication mark``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            try
+                SchemaSql.insertNoDate
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000024"))
+                    "visible"
+                    SchemaSql.absent
+                    SchemaSql.absent
+
+                None
+            with ex ->
+                Some ex
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    [<Fact>]
     member _.``A visible meetup cannot keep a scheduled publication moment``() =
         use db = SchemaSql.applyIsolated ()
 
