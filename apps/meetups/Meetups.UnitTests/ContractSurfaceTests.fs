@@ -7,7 +7,10 @@ open Xunit
 
 let private schema = MeetupsServiceReflection.Descriptor
 
-let private requestTypes = MeetupsService.Descriptor.Methods |> Seq.map (fun m -> m.InputType) |> List.ofSeq
+let private requestTypes =
+    MeetupsService.Descriptor.Methods
+    |> Seq.map (fun m -> m.InputType)
+    |> List.ofSeq
 
 /// Nested messages count: a failure type hidden inside another message must not escape the checks below.
 let rec private withNested (message: MessageDescriptor) =
@@ -16,12 +19,19 @@ let rec private withNested (message: MessageDescriptor) =
         yield! message.NestedTypes |> Seq.collect withNested
     }
 
-let private messages = schema.MessageTypes |> Seq.collect withNested |> List.ofSeq
+let private messages =
+    schema.MessageTypes
+    |> Seq.collect withNested
+    |> List.ofSeq
 
-let private enums = Seq.append schema.EnumTypes (messages |> Seq.collect (fun m -> m.EnumTypes)) |> List.ofSeq
+let private enums =
+    Seq.append schema.EnumTypes (messages |> Seq.collect (fun m -> m.EnumTypes))
+    |> List.ofSeq
 
 let private fieldNames (message: MessageDescriptor) =
-    message.Fields.InDeclarationOrder() |> Seq.map (fun f -> f.Name) |> Set.ofSeq
+    message.Fields.InDeclarationOrder()
+    |> Seq.map (fun f -> f.Name)
+    |> Set.ofSeq
 
 /// Field 1 rendered as "<name>: <type>", so a failing list names the offending request.
 let private firstField (message: MessageDescriptor) =
@@ -36,25 +46,31 @@ let ``The F# library sees the generated service under the meetups v1 package`` (
 
 [<Fact>]
 let ``Service exposes exactly the six slice operations`` () =
-    let actual = MeetupsService.Descriptor.Methods |> Seq.map (fun m -> m.Name) |> Set.ofSeq
+    let actual =
+        MeetupsService.Descriptor.Methods
+        |> Seq.map (fun m -> m.Name)
+        |> Set.ofSeq
 
     let expected =
-        set
-            [
-                "CreateMeetupDraft"
-                "ChangeMeetupAttributes"
-                "SetMeetupSchedule"
-                "PublishMeetup"
-                "ListVisibleMeetups"
-                "GetMeetup"
-            ]
+        [
+            "CreateMeetupDraft"
+            "ChangeMeetupAttributes"
+            "SetMeetupSchedule"
+            "PublishMeetup"
+            "ListVisibleMeetups"
+            "GetMeetup"
+        ]
+        |> set
 
     test <@ actual = expected @>
 
 [<Fact>]
 let ``Every operation carries the viewer as field one`` () =
     let actual = requestTypes |> List.map firstField
-    let expected = requestTypes |> List.map (fun m -> m.Name, $"viewer: {Viewer.Descriptor.FullName}")
+
+    let expected =
+        requestTypes
+        |> List.map (fun m -> m.Name, $"viewer: {Viewer.Descriptor.FullName}")
 
     test <@ actual = expected @>
 
@@ -74,7 +90,14 @@ let ``Change attributes sends every informational field as target state`` () =
 
     // No presence: an omitted attribute is not a distinct "leave unchanged" state.
     let expected =
-        [ "title"; "description"; "venue"; "kind"; "calendar_link" ] |> List.map (fun name -> name, "String", false)
+        [
+            "title"
+            "description"
+            "venue"
+            "kind"
+            "calendar_link"
+        ]
+        |> List.map (fun name -> name, "String", false)
 
     test <@ actual = expected @>
 
@@ -82,12 +105,31 @@ let ``Change attributes sends every informational field as target state`` () =
 let ``Schema declares only the lifecycle and visibility enums`` () =
     let actual = enums |> List.map (fun e -> e.Name) |> Set.ofList
 
-    test <@ actual = set [ "MeetupLifecycle"; "MeetupVisibility" ] @>
+    let expected =
+        [
+            "MeetupLifecycle"
+            "MeetupVisibility"
+        ]
+        |> set
+
+    test <@ actual = expected @>
 
 [<Fact>]
 let ``Schema names no failure, so a hidden meetup is indistinguishable from a missing one`` () =
-    let markers = [ "error"; "denied"; "forbidden"; "failure"; "reason"; "not_found"; "invisible" ]
-    let names (text: string) = markers |> List.exists (text.ToLowerInvariant().Contains)
+    let markers =
+        [
+            "error"
+            "denied"
+            "forbidden"
+            "failure"
+            "reason"
+            "not_found"
+            "invisible"
+        ]
+
+    let names (text: string) =
+        markers
+        |> List.exists (text.ToLowerInvariant().Contains)
 
     let actual =
         [
@@ -125,21 +167,36 @@ let ``Schedule spells no date as a form rather than an absent field`` () =
     let actual =
         Schedule.Descriptor.Oneofs
         |> Seq.filter (fun o -> not o.IsSynthetic)
-        |> Seq.collect (fun o -> o.Fields |> Seq.map (fun f -> $"{o.Name}.{f.Name}"))
+        |> Seq.collect (fun o ->
+            o.Fields
+            |> Seq.map (fun f -> $"{o.Name}.{f.Name}")
+        )
         |> List.ofSeq
 
-    test <@ actual = [ "form.no_date"; "form.tentative"; "form.fixed" ] @>
+    test
+        <@
+            actual = [
+                "form.no_date"
+                "form.tentative"
+                "form.fixed"
+            ]
+        @>
 
 [<Fact>]
 let ``Every attribute the change command sets is readable back from the snapshot`` () =
     let shape (message: MessageDescriptor) =
-        message.Fields.InDeclarationOrder() |> Seq.map (fun f -> f.Name, string f.FieldType) |> List.ofSeq
+        message.Fields.InDeclarationOrder()
+        |> Seq.map (fun f -> f.Name, string f.FieldType)
+        |> List.ofSeq
 
     let sent =
         shape ChangeMeetupAttributesRequest.Descriptor
         |> List.filter (fun (name, _) -> name <> "viewer" && name <> "id")
 
     let snapshot = shape MeetupSnapshot.Descriptor
-    let missing = sent |> List.filter (fun attribute -> not (List.contains attribute snapshot))
+
+    let missing =
+        sent
+        |> List.filter (fun attribute -> not (List.contains attribute snapshot))
 
     test <@ missing = [] @>
