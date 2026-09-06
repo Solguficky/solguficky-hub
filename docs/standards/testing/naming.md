@@ -21,8 +21,8 @@
 - Имя функции: `Test<SUT><Поведение>` в CamelCase без подчёркиваний. Первым идёт тестируемая функция, метод или RPC, дальше наблюдаемый исход: `TestOpenCapsPool`, `TestApplyIsIdempotent`, `TestResolveIdentityDoesNotRestoreRevokedAdmin`, `TestUnaryChainLogsInternalWithoutLeakingCause`.
 - Глагол в третьем лице настоящего времени. Отрицательный случай формулируется как наблюдаемое поведение (`DoesNotRestoreRevokedAdmin`, `HidesStorageErrors`), а не как `Fails` или `Error`.
 - Поле `name` табличного подтеста — короткая фраза в нижнем регистре, называющая случай: `invalid argument`, `request id wins`, `empty value falls through`, `header case is normalised`. Ожидание в имя подтеста не дублируется, если оно уже выражено полями таблицы.
-- Файл `<unit>_test.go` лежит рядом с исходником. Тест, требующий PostgreSQL, выносится в `<unit>_integration_test.go`.
-- Суффикс `_internal_test.go` разводит внутренний и внешний тест одного unit, когда существуют оба: `server_test.go` в пакете `server_test` и `server_internal_test.go` в пакете `server`.
+- Файл лежит рядом с исходником, и его имя называет пакет теста: внешний тест (`package <pkg>_test`) — `<unit>_test.go`, тест внутреннего API (`package <pkg>`) — `<unit>_internal_test.go`. Тест по умолчанию внешний; внутренний заводится только ради поведения, недоступного снаружи, и суффикс делает такой тест видимым в дереве файлов.
+- Тест, которому нужна PostgreSQL, выносится в `<unit>_integration_test.go` и пишется внешним пакетом: инфраструктурный тест проверяет сервис через его публичную границу.
 
 ## TypeScript
 
@@ -33,10 +33,17 @@
 
 ## F#
 
-- Имя — предложение в обратных кавычках, описывающее проверяемое свойство, со строчной буквы: ``service exposes exactly the six slice operations``.
-- Форма по умолчанию — декларативный инвариант. Форма ``When … expect …`` допустима там, где есть явный стимул и исход: команда домена, обработка события, workflow. Одна форма на файл.
-- Property-тест называет само свойство без церемоний: ``proto round trip preserves the input``, ``applying a decided event bumps version exactly once``.
-- Файл `<Модуль>Tests.fs` лежит в тестовом проекте `<Компонент>.Tests`. Файл без тестов — фикстура, генератор, хелпер — суффикс `Tests` не носит.
+- Имя — предложение в обратных кавычках с заглавной буквы, описывающее проверяемое свойство: ``Service exposes exactly the six slice operations``.
+- Допустимы три формы; выбирай ту, при которой имя читается обычной фразой без лишних слов.
+
+| Форма | Когда | Пример |
+|---|---|---|
+| ``When … expect …`` | есть явный стимул и исход: команда домена, обработка события, workflow | ``When draft is complete expect validation succeeds`` |
+| ``<subject> should …`` | свойство чистой функции, где `When` звучит натянуто: маппер, fold, конфигурация, сериализация | ``Fold should ignore a duplicate MeetupCreated`` |
+| декларативное утверждение | property-тест и формальный инвариант | ``Decode inverts encode``, ``Every operation carries the viewer as field one`` |
+
+- Одна форма на файл. Внутри одного имени шаблоны не смешиваются: `When … should …` в F# не пишется — это форма C#-теста, где она задана дословно.
+- Файл `<Модуль>Tests.fs` лежит в тестовом проекте `<Компонент>.Tests`. Файл без тестов — фикстура, генератор, хелпер — суффикс `Tests` не носит. Раскладку папок задаёт [testing-strategy.md](testing-strategy.md).
 
 ## C#
 
@@ -44,7 +51,7 @@ C#-тестов в репозитории пока нет; раздел реко
 
 - `<Метод>_<Сценарий>_<ОжидаемоеПоведение>` — форма по умолчанию для unit-теста, где виден конкретный метод SUT: `Map_RequestHasNoDrivers_MapsToUnlimitedDrivers`. Имя метода первым даёт группировку и поиск по SUT.
 - `When_<условие>_Should_<ожидание>` — форма для поведенческого и E2E-теста, где метод SUT не выделяется: `When_MeetupPublished_Should_NotifySubscribers`.
-- Одна форма на класс. Файл `<SUT>Tests.cs`, класс `<SUT>Tests`.
+- Одна форма на класс. Файл `<SUT>Tests.cs`, класс `<SUT>Tests`. Раскладку папок задаёт [testing-strategy.md](testing-strategy.md).
 
 ## Пример
 
@@ -53,7 +60,7 @@ C#-тестов в репозитории пока нет; раздел реко
 | Go | `TestDuplicateTelegramUserIDIsRejected` | `TestInsert2`, `TestDuplicateWorks` |
 | Go, подтест | `{name: "empty value falls through"}` | `{name: "case3"}` |
 | TypeScript | `describe("parseUpdate")` + `it("treats garbage as malformed")` | `describe("tests")` + `it("should work")` |
-| F# | ``every operation carries the viewer as field one`` | ``test mapping``, ``Mapping works`` |
+| F# | ``Every operation carries the viewer as field one`` | ``test mapping``, ``Mapping works`` |
 | C# | `Map_RequestHasNoDrivers_MapsToUnlimitedDrivers` | `MapTest`, `TestMapping2` |
 
 ## Проверка
