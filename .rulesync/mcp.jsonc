@@ -1,20 +1,6 @@
 {
-  // Источник правды по MCP-серверам проекта. Таргеты .mcp.json,
-  // .cursor/mcp.json и .codex/config.toml генерируются отсюда командой
-  // `just sync-mcp` и руками не правятся: rulesync переводит один и тот же
-  // сервер в три несовместимых формата, а не копирует файл.
-  //
-  // Здесь только серверы, от которых зависит контур исполнения. Кандидаты,
-  // отклонённые варианты и цена каждого — docs/development/mcp-servers.md;
-  // выбор нового сервера остаётся за владельцем.
-  //
-  // Секретов в файле нет и быть не должно: OAuth-токены клиенты хранят у себя
-  // (keychain или credentials store), в таргеты попадает только адрес.
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/mcp-schema.json",
   "mcpServers": {
-    // Задачи проекта живут в Linear, и proj-start-task, proj-create-task и
-    // proj-deliver-task ходят в него через MCP. Сами скиллы разложены во все
-    // таргеты, поэтому объявление сервера тоже должно быть общим, а не
-    // приезжать плагином одному Claude Code.
     "linear": {
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
