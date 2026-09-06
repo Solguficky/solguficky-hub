@@ -4,9 +4,15 @@ const token = process.env["TELEGRAM_BOT_TOKEN"];
 const privateChatId = process.env["PRIVATE_CHAT_ID"];
 const groupChatId = process.env["GROUP_CHAT_ID"];
 const receiverUserId = process.env["RECEIVER_USER_ID"];
+const presentation = process.env["TELEGRAM_BOT_PRESENTATION"] ?? "rich";
 
 if (token === undefined || token === "" || privateChatId === undefined || privateChatId === "") {
   process.stderr.write("TELEGRAM_BOT_TOKEN and PRIVATE_CHAT_ID are required\n");
+  process.exit(2);
+}
+
+if (presentation !== "rich" && presentation !== "plain") {
+  process.stderr.write("TELEGRAM_BOT_PRESENTATION must be rich or plain\n");
   process.exit(2);
 }
 
@@ -45,41 +51,103 @@ async function call(method, body) {
   return result;
 }
 
-const inlineKeyboard = {
-  inline_keyboard: [[{ text: "PER-20 ping", callback_data: "per20:ping" }]],
+const meetupCard = {
+  title: "Сходка PER-20",
+  lead: "Карточка для проверки представления.",
+  when: "6 сентября, 19:00",
+  where: "Тестовая точка",
+  materials: "Ссылка на сообщение живёт здесь как текст.",
+  documentAction: { text: "Открыть", callback_data: "per20:open" },
+  hubAction: { text: "PER-20 ping", callback_data: "per20:ping" },
 };
 
-const meetupCard = {
-  blocks: [
-    { type: "heading", text: "Сходка PER-20", size: 2 },
-    { type: "paragraph", text: "Карточка для проверки блоков Rich Messages." },
-    {
-      type: "table",
-      is_bordered: true,
-      cells: [
-        [
-          { text: "Когда", align: "left", valign: "middle", is_header: true },
-          { text: "6 сентября, 19:00", align: "left", valign: "middle" },
-        ],
-        [
-          { text: "Где", align: "left", valign: "middle", is_header: true },
-          { text: "Тестовая точка", align: "left", valign: "middle" },
-        ],
+function renderRich(card) {
+  return {
+    rich_message: {
+      blocks: [
+        { type: "heading", text: card.title, size: 2 },
+        { type: "paragraph", text: card.lead },
+        {
+          type: "table",
+          is_bordered: true,
+          cells: [
+            [
+              { text: "Когда", align: "left", valign: "middle", is_header: true },
+              { text: card.when, align: "left", valign: "middle" },
+            ],
+            [
+              { text: "Где", align: "left", valign: "middle", is_header: true },
+              { text: card.where, align: "left", valign: "middle" },
+            ],
+          ],
+        },
+        {
+          type: "details",
+          summary: "Материалы",
+          blocks: [{ type: "paragraph", text: card.materials }],
+        },
+        {
+          type: "buttons",
+          buttons: [{ text: card.documentAction.text, callback_data: card.documentAction.callback_data }],
+        },
       ],
     },
-    {
-      type: "details",
-      summary: "Материалы",
-      blocks: [{ type: "paragraph", text: "Ссылка на сообщение живёт здесь как текст." }],
+    reply_markup: {
+      inline_keyboard: [[{ text: card.hubAction.text, callback_data: card.hubAction.callback_data }]],
     },
-    {
-      type: "buttons",
-      buttons: [{ text: "Открыть", callback_data: "per20:open" }],
+  };
+}
+
+function renderPlain(card) {
+  return {
+    text: [
+      card.title,
+      "",
+      card.lead,
+      "",
+      `Когда: ${card.when}`,
+      `Где: ${card.where}`,
+      "",
+      "Материалы",
+      card.materials,
+    ].join("\n"),
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: card.documentAction.text, callback_data: card.documentAction.callback_data }],
+        [{ text: card.hubAction.text, callback_data: card.hubAction.callback_data }],
+      ],
     },
-  ],
-};
+  };
+}
+
+function sendCard(chatId, card, extra) {
+  if (presentation === "plain") {
+    return call("sendMessage", { chat_id: chatId, ...renderPlain(card), ...extra });
+  }
+  return call("sendRichMessage", { chat_id: chatId, ...renderRich(card), ...extra });
+}
+
+function editCard(chatId, messageId, card) {
+  if (presentation === "plain") {
+    const rendered = renderPlain(card);
+    return call("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `${rendered.text}\n\nДокумент отредактирован целиком.`,
+      reply_markup: rendered.reply_markup,
+    });
+  }
+  const rendered = renderRich(card);
+  return call("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    rich_message: { markdown: "## PER-20\nДокумент отредактирован целиком." },
+    reply_markup: rendered.reply_markup,
+  });
+}
 
 const report = {
+  presentation,
   skipped: [],
   steps: [],
 };
@@ -91,43 +159,25 @@ if (me.ok !== true) {
   process.exit(1);
 }
 
-const withKeyboard = await call("sendRichMessage", {
-  chat_id: privateChatId,
-  rich_message: { markdown: "## PER-20\nПроверка `reply_markup` на rich-сообщении." },
-  reply_markup: inlineKeyboard,
-});
-report.steps.push({ name: "sendRichMessage_reply_markup", ...withKeyboard });
+const productCard = await sendCard(privateChatId, meetupCard);
+report.steps.push({ name: "product_card", ...productCard });
 
-const withBlocks = await call("sendRichMessage", {
-  chat_id: privateChatId,
-  rich_message: meetupCard,
-});
-report.steps.push({ name: "sendRichMessage_blocks", ...withBlocks });
-
-if (withKeyboard.ok === true && withKeyboard.message_id !== undefined) {
-  const edited = await call("editMessageText", {
-    chat_id: privateChatId,
-    message_id: withKeyboard.message_id,
-    rich_message: { markdown: "## PER-20\nДокумент отредактирован целиком." },
-    reply_markup: inlineKeyboard,
-  });
-  report.steps.push({ name: "editMessageText_rich_message", ...edited });
+if (productCard.ok === true && productCard.message_id !== undefined) {
+  const edited = await editCard(privateChatId, productCard.message_id, meetupCard);
+  report.steps.push({ name: "edit_product_card", ...edited });
 } else {
-  report.skipped.push("editMessageText_rich_message");
+  report.skipped.push("edit_product_card");
 }
 
 if (groupChatId !== undefined && groupChatId !== "" && receiverUserId !== undefined && receiverUserId !== "") {
-  const ephemeral = await call("sendRichMessage", {
-    chat_id: groupChatId,
-    rich_message: { markdown: "Эфемерный ответ PER-20." },
+  const ephemeral = await sendCard(groupChatId, meetupCard, {
     ephemeral_message_parameters: {
       receiver_user_id: Number(receiverUserId),
     },
-    reply_markup: inlineKeyboard,
   });
-  report.steps.push({ name: "sendRichMessage_ephemeral", ...ephemeral });
+  report.steps.push({ name: "ephemeral_card", ...ephemeral });
 } else {
-  report.skipped.push("sendRichMessage_ephemeral");
+  report.skipped.push("ephemeral_card");
 }
 
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

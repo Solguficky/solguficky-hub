@@ -166,5 +166,6 @@ nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
 
 # Живой зонд Rich Messages / ephemeral; нужен TELEGRAM_BOT_TOKEN и PRIVATE_CHAT_ID
+# TELEGRAM_BOT_PRESENTATION=rich|plain, дефолт rich — та же экранная модель, другой метод
 telegram-rich-probe:
     node tools/telegram-rich-probe/probe.mjs
