@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Meetups.Contracts", "Meetup
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Meetups", "Meetups\Meetups.fsproj", "{03411240-6DFC-46D0-9655-AA3ACF92ABB9}"
 EndProject
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Meetups.Tests", "Meetups.Tests\Meetups.Tests.fsproj", "{3EF32B25-083B-45BF-8546-69E102AFFE1E}"
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Meetups.UnitTests", "Meetups.UnitTests\Meetups.UnitTests.fsproj", "{3EF32B25-083B-45BF-8546-69E102AFFE1E}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
