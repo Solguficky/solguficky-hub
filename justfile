@@ -164,3 +164,7 @@ dotnet-tools:
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
+
+# Живой зонд Rich Messages / ephemeral; нужен TELEGRAM_BOT_TOKEN и PRIVATE_CHAT_ID
+telegram-rich-probe:
+    node tools/telegram-rich-probe/probe.mjs
