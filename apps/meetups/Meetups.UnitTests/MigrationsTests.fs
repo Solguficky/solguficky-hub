@@ -20,3 +20,15 @@ let ``The first migration creates both meetup tables`` () =
             sql.Contains("CREATE TABLE meetups")
             && sql.Contains("CREATE TABLE meetup_events")
         @>
+
+[<Fact>]
+let ``A postgres URI becomes a keyword connection string`` () =
+    let cs =
+        Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"
+
+    test
+        <@
+            cs.Contains("Host=127.0.0.1")
+            && cs.Contains("Database=meetups")
+            && cs.Contains("Password=secret")
+        @>

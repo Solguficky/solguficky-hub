@@ -74,6 +74,49 @@ let private execute (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (sql: strin
 
     command.ExecuteNonQuery() |> ignore
 
+let connectionString (dsn: string) =
+    if not (dsn.Contains("://", StringComparison.Ordinal)) then
+        dsn
+    else
+        let uri = Uri(dsn)
+        let userInfo = uri.UserInfo.Split(':')
+        let builder = NpgsqlConnectionStringBuilder()
+        builder.Host <- uri.Host
+
+        if uri.Port > 0 then
+            builder.Port <- uri.Port
+
+        if userInfo.Length > 0 && userInfo[0] <> "" then
+            builder.Username <- Uri.UnescapeDataString(userInfo[0])
+
+        if userInfo.Length > 1 then
+            builder.Password <- Uri.UnescapeDataString(userInfo[1])
+
+        let database = uri.AbsolutePath.Trim('/')
+
+        if database <> "" then
+            builder.Database <- database
+
+        let query = uri.Query.TrimStart('?')
+
+        for pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries) do
+            let parts = pair.Split('=', 2)
+
+            match parts[0].ToLowerInvariant() with
+            | "sslmode" when
+                parts.Length = 2
+                && parts[1].Equals("disable", StringComparison.OrdinalIgnoreCase)
+                ->
+                builder.SslMode <- SslMode.Disable
+            | "sslmode" when
+                parts.Length = 2
+                && parts[1].Equals("require", StringComparison.OrdinalIgnoreCase)
+                ->
+                builder.SslMode <- SslMode.Require
+            | _ -> ()
+
+        builder.ConnectionString
+
 let private scalar (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (sql: string) (parameters: (string * obj) list) =
     use command = new NpgsqlCommand(sql, conn, tx)
 
@@ -83,8 +126,8 @@ let private scalar (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (sql: string
 
     command.ExecuteScalar()
 
-let apply (connectionString: string) =
-    use conn = new NpgsqlConnection(connectionString)
+let apply (dsn: string) =
+    use conn = new NpgsqlConnection(connectionString dsn)
     conn.Open()
 
     use lockCommand = new NpgsqlCommand("SELECT pg_advisory_lock(@key)", conn)

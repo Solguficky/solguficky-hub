@@ -14,6 +14,8 @@ type IsolatedDatabase() =
         | "" -> "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable"
         | url -> url
 
+    let adminCs = Meetups.Migrations.connectionString adminUrl
+
     let name =
         let bytes = SHA256.HashData(Encoding.UTF8.GetBytes(Guid.NewGuid().ToString("N")))
         let hex = Convert.ToHexString(bytes[0..9]).ToLowerInvariant()
@@ -24,15 +26,14 @@ type IsolatedDatabase() =
 
         generated
 
-    let rewriteDatabase (dsn: string) =
-        let uri = Uri(dsn)
-        let builder = UriBuilder(uri)
-        builder.Path <- "/" + name
-        builder.Uri.AbsoluteUri
+    let isolatedCs =
+        let builder = NpgsqlConnectionStringBuilder(adminCs)
+        builder.Database <- name
+        builder.ConnectionString
 
     do
         try
-            use conn = new NpgsqlConnection(adminUrl)
+            use conn = new NpgsqlConnection(adminCs)
             conn.Open()
             use create = new NpgsqlCommand("CREATE DATABASE " + name, conn)
             create.ExecuteNonQuery() |> ignore
@@ -43,12 +44,12 @@ type IsolatedDatabase() =
 
             if forced then failwith $"postgres: {ex.Message}" else Assert.Skip $"postgres not available: {ex.Message}"
 
-    member _.ConnectionString = rewriteDatabase adminUrl
+    member _.ConnectionString = isolatedCs
 
     interface IDisposable with
         member _.Dispose() =
             try
-                use conn = new NpgsqlConnection(adminUrl)
+                use conn = new NpgsqlConnection(adminCs)
                 conn.Open()
 
                 use drop =
