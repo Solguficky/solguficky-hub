@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="ContractTests.fs" />
+    <Compile Include="ContractSurfaceTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,4 +1,4 @@
-module Meetups.ContractTests
+module Meetups.ContractSurfaceTests
 
 open Google.Protobuf.Reflection
 open Meetups.V1
