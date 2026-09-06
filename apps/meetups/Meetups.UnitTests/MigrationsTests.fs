@@ -17,8 +17,8 @@ let ``The first migration creates both meetup tables`` () =
 
     test
         <@
-            sql.Contains("CREATE TABLE meetups")
-            && sql.Contains("CREATE TABLE meetup_events")
+            sql.Contains("CREATE TABLE IF NOT EXISTS meetups")
+            && sql.Contains("CREATE TABLE IF NOT EXISTS meetup_events")
         @>
 
 [<Fact>]

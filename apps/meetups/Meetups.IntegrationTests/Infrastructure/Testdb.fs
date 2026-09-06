@@ -1,20 +1,49 @@
 namespace Meetups.IntegrationTests.Infrastructure
 
 open System
+open System.IO
 open System.Security.Cryptography
 open System.Text
 open System.Text.RegularExpressions
 open Npgsql
+open Testcontainers.PostgreSql
 open Xunit
 
-type IsolatedDatabase() =
-    let adminUrl =
-        match Environment.GetEnvironmentVariable("MEETUPS_DATABASE_URL") with
-        | null
-        | "" -> "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable"
-        | url -> url
+module PostgresAdmin =
+    let private dockerLooksAvailable () =
+        let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
 
-    let adminCs = Meetups.Migrations.connectionString adminUrl
+        File.Exists("/var/run/docker.sock")
+        || File.Exists(Path.Combine(home, ".docker/run/docker.sock"))
+        || not (isNull (Environment.GetEnvironmentVariable("DOCKER_HOST")))
+
+    let private container =
+        lazy
+            (try
+                if not (dockerLooksAvailable ()) then
+                    None
+                else
+                    let postgres = PostgreSqlBuilder("postgres:16-alpine").Build()
+                    postgres.StartAsync().GetAwaiter().GetResult()
+                    Some postgres
+             with _ ->
+                 None)
+
+    let connectionString () =
+        match container.Value with
+        | Some postgres -> postgres.GetConnectionString()
+        | None when not (isNull (Environment.GetEnvironmentVariable("GITHUB_ACTIONS"))) ->
+            failwith "testcontainers postgres is required in CI"
+        | None ->
+            match Environment.GetEnvironmentVariable("MEETUPS_DATABASE_URL") with
+            | null
+            | "" ->
+                Meetups.Migrations.connectionString
+                    "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable"
+            | url -> Meetups.Migrations.connectionString url
+
+type IsolatedDatabase() =
+    let adminCs = PostgresAdmin.connectionString ()
 
     let name =
         let bytes = SHA256.HashData(Encoding.UTF8.GetBytes(Guid.NewGuid().ToString("N")))

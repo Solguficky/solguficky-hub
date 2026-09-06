@@ -1,4 +1,4 @@
-CREATE TABLE meetups (
+CREATE TABLE IF NOT EXISTS meetups (
     id UUID PRIMARY KEY,
     author UUID NOT NULL,
     title TEXT NOT NULL DEFAULT '',
@@ -73,15 +73,15 @@ CREATE TABLE meetups (
         CHECK (visibility = 'hidden' OR first_published_at IS NOT NULL)
 );
 
-CREATE INDEX meetups_visible_schedule
+CREATE INDEX IF NOT EXISTS meetups_visible_schedule
     ON meetups (schedule_start_date ASC NULLS LAST, schedule_start_time ASC NULLS LAST)
     WHERE visibility = 'visible';
 
-CREATE INDEX meetups_due_publication
+CREATE INDEX IF NOT EXISTS meetups_due_publication
     ON meetups (scheduled_publish_at)
     WHERE scheduled_publish_at IS NOT NULL AND visibility = 'hidden';
 
-CREATE TABLE meetup_events (
+CREATE TABLE IF NOT EXISTS meetup_events (
     event_id UUID PRIMARY KEY,
     meetup_id UUID NOT NULL REFERENCES meetups (id),
     version INTEGER NOT NULL,

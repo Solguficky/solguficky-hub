@@ -4,10 +4,15 @@ open System
 open System.IO
 open System.Reflection
 open System.Text.RegularExpressions
+open DbUp
+open DbUp.Postgresql
 open Npgsql
 
 [<Literal>]
 let DatabaseUrlVariable = "MEETUPS_DATABASE_URL"
+
+[<Literal>]
+let JournalTable = "meetups_schema_versions"
 
 [<Literal>]
 let private lockKey = 872514053L
@@ -65,15 +70,6 @@ let list () : Migration list =
 
     Array.toList migrations
 
-let private execute (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (sql: string) (parameters: (string * obj) list) =
-    use command = new NpgsqlCommand(sql, conn, tx)
-
-    for name, value in parameters do
-        command.Parameters.AddWithValue(name, value)
-        |> ignore
-
-    command.ExecuteNonQuery() |> ignore
-
 let connectionString (dsn: string) =
     if not (dsn.Contains("://", StringComparison.Ordinal)) then
         dsn
@@ -119,17 +115,9 @@ let connectionString (dsn: string) =
 
         builder.ConnectionString
 
-let private scalar (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (sql: string) (parameters: (string * obj) list) =
-    use command = new NpgsqlCommand(sql, conn, tx)
-
-    for name, value in parameters do
-        command.Parameters.AddWithValue(name, value)
-        |> ignore
-
-    command.ExecuteScalar()
-
 let apply (dsn: string) =
-    use conn = new NpgsqlConnection(connectionString dsn)
+    let cs = connectionString dsn
+    use conn = new NpgsqlConnection(cs)
     conn.Open()
 
     use lockCommand = new NpgsqlCommand("SELECT pg_advisory_lock(@key)", conn)
@@ -140,41 +128,25 @@ let apply (dsn: string) =
     lockCommand.ExecuteScalar() |> ignore
 
     try
-        use tx = conn.BeginTransaction()
+        let result =
+            DeployChanges.To
+                .PostgresqlDatabase(cs)
+                .WithScriptsEmbeddedInAssembly(
+                    Assembly.GetExecutingAssembly(),
+                    fun name ->
+                        name.Contains(resourceMarker, StringComparison.Ordinal)
+                        && name.EndsWith(".sql", StringComparison.Ordinal)
+                )
+                .JournalToPostgresqlTable("public", JournalTable)
+                .WithTransaction()
+                .LogToConsole()
+                .Build()
+                .PerformUpgrade()
 
-        execute
-            conn
-            tx
-            """
-            CREATE TABLE IF NOT EXISTS meetups_schema_versions (
-                version INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-            []
-
-        for migration in list () do
-            let already =
-                scalar
-                    conn
-                    tx
-                    "SELECT 1 FROM meetups_schema_versions WHERE version = @version"
-                    [ "version", box migration.Version ]
-
-            if isNull already then
-                execute conn tx migration.Sql []
-
-                execute
-                    conn
-                    tx
-                    "INSERT INTO meetups_schema_versions (version, name) VALUES (@version, @name)"
-                    [
-                        "version", box migration.Version
-                        "name", box migration.Name
-                    ]
-
-        tx.Commit()
+        if not result.Successful then
+            match result.Error with
+            | null -> failwith "meetups schema upgrade failed"
+            | error -> raise error
     finally
         use unlockCommand = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", conn)
 

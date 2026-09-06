@@ -8,8 +8,8 @@
 
 ```text
 Meetups/
-  Migrations/00001_meetups_schema.sql схема состояния и журнала
-  Migrations.fs                       прогон встроенных SQL-миграций
+  Migrations/001_meetups_schema.sql   схема состояния и журнала
+  Migrations.fs                       прогон встроенных SQL-миграций через DbUp
   Observability/BoundaryLog.fs        интерцептор каркаса лога
   Transport/Placeholder.fs            заглушечные ответы, живут до PER-54
   Transport/MeetupsGrpcService.fs     диспетчер шести операций
@@ -43,7 +43,7 @@ just meetups-contracts-check
 just meetups-run
 ```
 
-`MEETUPS_DATABASE_URL` обязателен для `meetups-run`: процесс применяет миграции до прослушивания. Интеграционные тесты схемы требуют PostgreSQL; без `MEETUPS_DATABASE_URL` и без доступного `127.0.0.1:5432` они пропускаются, в CI — нет.
+`MEETUPS_DATABASE_URL` обязателен для `meetups-run`: процесс применяет миграции DbUp до прослушивания. Интеграционные тесты схемы поднимают PostgreSQL через Testcontainers; если демона нет, берут `MEETUPS_DATABASE_URL` или `127.0.0.1:5432`, а без доступной базы пропускаются. В CI контейнер обязателен.
 
 Команда генерации — `dotnet build` контрактного проекта `apps/meetups/Meetups.Contracts`.
 

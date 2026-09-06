@@ -145,6 +145,27 @@ type SchemaTests() =
         test <@ count = 1L @>
 
     [<Fact>]
+    member _.``Schema SQL is idempotent without the journal``() =
+        use db = SchemaSql.applyIsolated ()
+        SchemaSql.exec db.ConnectionString "DELETE FROM meetups_schema_versions" []
+        Meetups.Migrations.apply db.ConnectionString
+
+        let tables =
+            SchemaSql.scalar<int64>
+                db.ConnectionString
+                """
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN ('meetups', 'meetup_events')
+                """
+                []
+
+        let journal =
+            SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
+
+        test <@ tables = 2L && journal = 1L @>
+
+    [<Fact>]
     member _.``Concurrent apply finishes without error``() =
         use db = new IsolatedDatabase()
 
