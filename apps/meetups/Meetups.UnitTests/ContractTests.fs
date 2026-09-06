@@ -38,11 +38,11 @@ let private firstField (message: MessageDescriptor) =
     | field -> message.Name, $"{field.Name}: {field.FieldType}"
 
 [<Fact>]
-let ``the F# library sees the generated service under the meetups v1 package`` () =
+let ``The F# library sees the generated service under the meetups v1 package`` () =
     test <@ ContractSurface.serviceFullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
-let ``service exposes exactly the six slice operations`` () =
+let ``Service exposes exactly the six slice operations`` () =
     let actual =
         MeetupsService.Descriptor.Methods
         |> Seq.map (fun m -> m.Name)
@@ -60,20 +60,20 @@ let ``service exposes exactly the six slice operations`` () =
     test <@ actual = expected @>
 
 [<Fact>]
-let ``every operation carries the viewer as field one`` () =
+let ``Every operation carries the viewer as field one`` () =
     let actual = requestTypes |> List.map firstField
     let expected = requestTypes |> List.map (fun m -> m.Name, $"viewer: {Viewer.Descriptor.FullName}")
 
     test <@ actual = expected @>
 
 [<Fact>]
-let ``create draft takes the caller-generated id as its idempotency key`` () =
+let ``Create draft takes the caller-generated id as its idempotency key`` () =
     let actual = fieldNames CreateMeetupDraftRequest.Descriptor
 
     test <@ actual = set [ "viewer"; "id" ] @>
 
 [<Fact>]
-let ``change attributes sends every informational field as target state`` () =
+let ``Change attributes sends every informational field as target state`` () =
     let actual =
         ChangeMeetupAttributesRequest.Descriptor.Fields.InDeclarationOrder()
         |> Seq.filter (fun f -> f.Name <> "viewer" && f.Name <> "id")
@@ -88,13 +88,13 @@ let ``change attributes sends every informational field as target state`` () =
     test <@ actual = expected @>
 
 [<Fact>]
-let ``schema declares only the lifecycle and visibility enums`` () =
+let ``Schema declares only the lifecycle and visibility enums`` () =
     let actual = enums |> List.map (fun e -> e.Name) |> Set.ofList
 
     test <@ actual = set [ "MeetupLifecycle"; "MeetupVisibility" ] @>
 
 [<Fact>]
-let ``schema names no failure anywhere, so a hidden meetup reads as not found`` () =
+let ``Schema names no failure, so a hidden meetup is indistinguishable from a missing one`` () =
     let markers = [ "error"; "denied"; "forbidden"; "failure"; "reason"; "not_found"; "invisible" ]
     let names (text: string) = markers |> List.exists (text.ToLowerInvariant().Contains)
 
