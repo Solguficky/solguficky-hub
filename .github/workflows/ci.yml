@@ -39,6 +39,8 @@ jobs:
               - 'apps/meetups/**'
               - 'justfile'
               - 'global.json'
+              - '.editorconfig'
+              - '.config/dotnet-tools.json'
               - '.github/workflows/ci.yml'
             telegram-bot:
               - 'contracts/proto/**'
@@ -50,6 +52,7 @@ jobs:
               - 'shared/dotnet/**'
               - 'justfile'
               - 'global.json'
+              - '.editorconfig'
               - '.github/workflows/ci.yml'
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
@@ -121,6 +124,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # Форматирование F# — тот же гейт, что `just meetups-format-check`.
+      # Fantomas берётся из .config/dotnet-tools.json в корне, поэтому обе
+      # команды идут без working-directory.
+      - run: dotnet tool restore
+      - run: dotnet fantomas --check apps/meetups
       - run: dotnet build Meetups.sln --nologo
         working-directory: apps/meetups
       # Runner — Microsoft.Testing.Platform (ключ `test` в global.json). Решение он
