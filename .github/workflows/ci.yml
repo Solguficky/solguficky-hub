@@ -195,15 +195,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # just не закрепляется версией, в отличие от buf и golangci-lint: он
+      # только запускает команды и на их результат не влияет. Так же он
+      # ставится в .cursor/install.sh для облачного агента.
+      - uses: extractions/setup-just@v4
+      # Скиллы проверяются двумя шагами, а не одним `just check-agent-tools`:
+      # имя упавшего шага сразу говорит, frontmatter это или раскладка.
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
       - name: Agent tooling is generated from Skillshare sources
         run: sh tools/skillshare/check-generated.sh
-      - id: tools
-        run: echo "rulesync=$(grep '^RULESYNC_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
-      # Тот же вызов, что и `just check-mcp`: на раннере нет just, а ставить его
-      # ради одной строки дороже, чем повторить её вместе с версией из justfile.
       - name: MCP configuration is generated from the rulesync source
-        run: >-
-          npx --yes rulesync@${{ steps.tools.outputs.rulesync }}
-          generate --targets "claudecode,cursor,codexcli" --features "mcp" --check
+        run: just check-mcp
