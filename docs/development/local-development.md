@@ -27,7 +27,7 @@ aspire run
 
 Для человека `aspire run` остаётся интерактивной командой с dashboard. Агент в worktree использует точный AppHost через `aspire start --non-interactive --isolated --apphost infra/apphost/AppHost.csproj`, ждёт ресурсы через `aspire wait` и штатно останавливает тот же AppHost.
 
-AppHost объявляет граф узлов и их связи, а профиль решает, какими узлами AppHost владеет в этом запуске. Identity разложен на три ресурса: `identity-proto` генерирует Go-код из Protobuf, `identity-build` собирает бинарник в `apps/identity/bin`, и уже готовый бинарник запускает ресурс `identity`, получая динамический gRPC-порт и PostgreSQL URI через существующие environment-контракты. Запуск через `go run` не годится: `go run` не пересылает дочернему процессу SIGTERM, которым DCP останавливает ресурс, поэтому graceful shutdown в `main.go` был бы недостижим, а скомпилированный процесс оставался бы жить с занятым портом и открытым пулом PostgreSQL. Готовность проверяется стандартным `grpc.health.v1.Health/Check`, а не только состоянием процесса; у пробы есть deadline вызова и timeout всей проверки, потому что прокси DCP принимает TCP раньше, чем сервер начинает слушать. Meetups устроен проще: это .NET-проект, поэтому отдельных узлов кодогенерации и сборки у него нет — `Grpc.Tools` генерирует C# внутри `dotnet build`, а сборку делает сам Aspire. Сервис слушает h2c и отдаёт готовность той же пробой `grpc.health.v1.Health/Check`, что и Identity: она вынесена в общий хелпер AppHost. Зависимостей в графе у него нет — смотрящий приходит в запросе, а база появится вместе со схемой. JavaScript integration устанавливает зависимости Telegram Bot, а его `prestart` генерирует TypeScript-контракт и собирает приложение перед запуском. Telegram Bot ждёт здоровый Identity, получает его proxy endpoint через `IDENTITY_GRPC_URL` и читает `TELEGRAM_BOT_TOKEN` из секретного параметра, который объявляется только когда профиль владеет ботом.
+AppHost объявляет граф узлов и их связи, а профиль решает, какими узлами AppHost владеет в этом запуске. Identity разложен на три ресурса: `identity-proto` генерирует Go-код из Protobuf, `identity-build` собирает бинарник в `apps/identity/bin`, и уже готовый бинарник запускает ресурс `identity`, получая динамический gRPC-порт и PostgreSQL URI через существующие environment-контракты. Запуск через `go run` не годится: `go run` не пересылает дочернему процессу SIGTERM, которым DCP останавливает ресурс, поэтому graceful shutdown в `main.go` был бы недостижим, а скомпилированный процесс оставался бы жить с занятым портом и открытым пулом PostgreSQL. Готовность проверяется стандартным `grpc.health.v1.Health/Check`, а не только состоянием процесса; у пробы есть deadline вызова и timeout всей проверки, потому что прокси DCP принимает TCP раньше, чем сервер начинает слушать. Meetups устроен проще: это .NET-проект, поэтому отдельных узлов кодогенерации и сборки у него нет — `Grpc.Tools` генерирует C# внутри `dotnet build`, а сборку делает сам Aspire. Сервис слушает h2c и отдаёт готовность той же пробой `grpc.health.v1.Health/Check`, что и Identity: она вынесена в общий хелпер AppHost. В графе он зависит от PostgreSQL: получает `MEETUPS_DATABASE_URL` той же базой `solguficky` и применяет свои миграции при старте процесса. Смотрящий по-прежнему приходит в запросе. JavaScript integration устанавливает зависимости Telegram Bot, а его `prestart` генерирует TypeScript-контракт и собирает приложение перед запуском. Telegram Bot ждёт здоровый Identity, получает его proxy endpoint через `IDENTITY_GRPC_URL` и читает `TELEGRAM_BOT_TOKEN` из секретного параметра, который объявляется только когда профиль владеет ботом.
 
 ## Профили
 
@@ -37,11 +37,11 @@ AppHost объявляет граф узлов и их связи, а профи
 |---|---|---|
 | `infra` | PostgreSQL, NATS | нет |
 | `identity` | PostgreSQL | Identity |
-| `meetups` | нет | Meetups |
+| `meetups` | PostgreSQL | Meetups |
 | `core` | PostgreSQL | Identity, Meetups, Telegram Bot |
 | `full` | PostgreSQL, NATS | Identity, Meetups, Telegram Bot |
 
-Профиль `meetups` не перечисляет инфраструктуру намеренно: у сервиса пока нет ни базы, ни шины, а смотрящий приходит в самом запросе. Он поднимает один процесс и не требует Docker.
+Профиль `meetups` поднимает PostgreSQL: сервис применяет миграции при старте и без строки подключения не слушает. Смотрящий по-прежнему приходит в запросе, шины в профиле нет.
 
 Активный профиль задаёт `--profile <name>` или `TOPOLOGY__PROFILE`; первый перекрывает второй. Неизвестное имя профиля, ссылка на незарегистрированный узел и цикл зависимостей отвергаются до построения графа, с перечнем допустимых значений.
 
@@ -86,7 +86,7 @@ just aspire core -- --skip-services telegram-bot
 7. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт.
 8. `IdentityService/ResolveIdentity` через proxy endpoint Aspire возвращает UUIDv7.
 9. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
-10. Профиль `meetups` доводит Meetups до `Healthy` без Docker; `grpcurl` через reflection перечисляет `meetups.v1.MeetupsService`, шесть операций отвечают заглушкой, `grpc.health.v1.Health/Check` возвращает `SERVING`.
+10. Профиль `meetups` раньше доводил Meetups до `Healthy` без Docker. После появления схемы он зависит от PostgreSQL; живой прогон с базой не подтверждён. `grpcurl` через reflection перечисляет `meetups.v1.MeetupsService`, шесть операций отвечают заглушкой, `grpc.health.v1.Health/Check` возвращает `SERVING` — это проверено на скелете до подключения базы.
 11. Срез `core` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держит Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечают на вызовы через свои proxy endpoint.
 
 ## Неподтверждённая граница

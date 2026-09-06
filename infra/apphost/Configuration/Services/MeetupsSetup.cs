@@ -17,6 +17,11 @@ internal static class MeetupsSetup
         return context.Builder
             .AddProject<Projects.Meetups>(AppHostNames.Resources.Meetups)
             .WithHttpEndpoint(name: AppHostNames.Endpoints.Grpc)
-            .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc);
+            .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc)
+            .BindConnection<ProjectResource, PostgresDatabaseResource>(
+                context,
+                AppHostNames.Resources.SolgufickyDb,
+                "MEETUPS_DATABASE_URL",
+                database => ReferenceExpression.Create($"{database.Resource.UriExpression}?sslmode=disable"));
     }
 }

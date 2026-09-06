@@ -13,11 +13,14 @@
     <PackageReference Include="Unquote" Version="7.0.1" />
     <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
     <PackageReference Include="Grpc.HealthCheck" Version="2.67.0" />
+    <PackageReference Include="Npgsql" Version="9.0.3" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="Infrastructure/MeetupsHostFixture.fs" />
+    <Compile Include="Infrastructure/Testdb.fs" />
     <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
+    <Compile Include="Scenarios/SchemaTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

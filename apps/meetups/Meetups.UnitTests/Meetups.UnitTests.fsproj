@@ -18,6 +18,7 @@
     <Compile Include="ContractSurfaceTests.fs" />
     <Compile Include="PlaceholderTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />
+    <Compile Include="MigrationsTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
