@@ -37,6 +37,8 @@ jobs:
             meetups:
               - 'contracts/proto/**'
               - 'apps/meetups/**'
+              - 'shared/dotnet/**'
+              - 'tools/meetups/**'
               - 'justfile'
               - 'global.json'
               - '.editorconfig'
@@ -50,6 +52,8 @@ jobs:
             apphost:
               - 'infra/apphost/**'
               - 'shared/dotnet/**'
+              - 'apps/meetups/**'
+              - 'contracts/proto/**'
               - 'justfile'
               - 'global.json'
               - '.editorconfig'
@@ -124,6 +128,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # Условие обратимости из ADR-025: в контрактном проекте нет рукописного кода.
+      # Гейт читает Git, поэтому идёт до сборки и не зависит от неё.
+      - run: sh tools/meetups/check-contracts-generated.sh
       # Форматирование F# — тот же гейт, что `just meetups-format-check`.
       # Fantomas берётся из .config/dotnet-tools.json в корне, поэтому обе
       # команды идут без working-directory.
