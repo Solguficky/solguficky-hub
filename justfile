@@ -11,14 +11,24 @@
 
 # --- Версии инструментов ---------------------------------------------------
 #
-# Единственное место, где закреплены версии buf и golangci-lint. Джобы
-# identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
-# ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
-# identity-lint отказывается работать на другой версии. Версии
-# protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
+# Единственное место, где закреплены версии buf, golangci-lint и rulesync.
+# Джобы identity, telegram-bot и repo-hygiene в CI читают версии отсюда, а
+# `just identity-tools` ставит buf локально, чтобы локальная и CI-проверка шли
+# одними бинарниками; identity-lint отказывается работать на другой версии.
+# Версии protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
+#
+# rulesync запускается через npx и потому закрепляется точной версией, а не
+# `@latest`: генератор пишет закоммиченные файлы, и смена версии на стороне
+# npm иначе разошлась бы с тем, что проверяет CI.
 
 BUF_VERSION := "1.54.0"
 GOLANGCI_LINT_VERSION := "2.13.2"
+RULESYNC_VERSION := "16.24.1"
+
+# Таргеты MCP: три агента, у каждого свой формат одного и того же объявления.
+# Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
+# и затёр бы редакторские настройки репозитория.
+RULESYNC_MCP_TARGETS := "claudecode,cursor,codexcli"
 
 # Список рецептов
 default:
@@ -29,6 +39,17 @@ default:
 # Git-хуки, один раз после клонирования
 setup:
     lefthook install
+
+# --- Раскладка agent tooling -----------------------------------------------
+#
+# Скиллы, агентов и команды раскладывает сам skillshare (`skillshare sync -p`
+# и `skillshare sync extras -p`, см. AGENTS.md). Здесь только MCP: у rulesync
+# длинная командная строка с закреплённой версией и списком таргетов, и её
+# незачем держать в голове.
+
+# MCP-конфигурация всех агентов из .rulesync/mcp.jsonc
+sync-mcp:
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
 
 # --- Проверки --------------------------------------------------------------
 #
@@ -43,8 +64,12 @@ check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test meetups-format-check
+# Конфигурация MCP каждого агента совпадает с .rulesync/mcp.jsonc
+check-mcp:
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
+
+# Механический гейт перед сдачей: agent tooling, MCP, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-mcp identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 

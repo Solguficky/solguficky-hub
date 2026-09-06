@@ -30,6 +30,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
 - `tools/skillshare/` — две проверки скиллов: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные таргеты с источниками. Их вызывают `just check-agent-tools` и CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
+- `.rulesync/` — источник правды по MCP-серверам; `.mcp.json`, `.cursor/mcp.json` и `.codex/config.toml` генерируются из него.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
 ## Команды
@@ -58,7 +59,13 @@ skillshare sync extras -p
 # Frontmatter скиллов и закоммиченные skills, agents и commands после sync
 just check-agent-tools
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+# MCP: раскладка по агентам после правок в .rulesync/mcp.jsonc
+just sync-mcp
+
+# Конфигурация MCP каждого агента совпадает с источником
+just check-mcp
+
+# Механический гейт перед сдачей: agent tooling, MCP, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -106,7 +113,7 @@ pip install -e .
 nats-tester --help
 ```
 
-Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
+Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
 Профиль `infra` и Identity-срез подтверждены живым прогоном на Aspire 13.5.3; полный профиль с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
 
@@ -125,7 +132,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Ветку задачи создавай сам от `origin/develop`; одна задача — один pull request, `main` не трогай. Параллельная задача берёт отдельное рабочее дерево — норматив и предел параллелизма в [branching.md](docs/standards/git/branching.md).
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, Identity, Telegram Bot, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, MCP, Identity, Telegram Bot, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
@@ -152,7 +159,11 @@ Tracked-клон приносит репозиторий целиком, поэ�
 
 F#-инструментарий намеренно разделён по контекстам: `proj-write-fsharp` отвечает за язык и interop, `proj-test-fsharp` — за xUnit v3, Unquote, FsCheck, Moq и Testcontainers, `proj-write-fsharp-vsa` — за выбранные в ADR-033 функциональные vertical slices и Oxpecker boundary. Основа синтезирована из общего `managedcode/dotnet-skills:fsharp` и проверенных практик `pampadu.kasko`, а не установлена пакетом: исходные skills не знают локальных ADR и несут либо слишком общий scaffolding, либо чужие архитектурные допущения. `ECC:fsharp-testing` не установлен отдельно, потому что его полезный стек закреплён проектным standard, а FsUnit и NSubstitute не вводятся вторым способом утверждений и mocking. Пакеты `majiayu` исключены из-за Giraffe/Fable/SQLite и заранее заданной структуры приложения; Akka-specific skill из `pampadu.kasko` к Meetups не применяется, потому что ADR-024 прямо оставляет actor runtime за границей сервиса.
 
-Плагины включаются полем `enabledPlugins` в `.claude/settings.json` и действуют на весь проект. Сейчас включён `codex@openai-codex`: он приносит скиллы с префиксом `codex:` и агента `codex-rescue`, которые делегируют работу локальному Codex CLI. Плагин приходит мимо `.skillshare/` — `skillshare sync` его не раскладывает, `just check-agent-tools` его не проверяет, а без установленного Codex CLI его скиллы бесполезны.
+Источник правды по MCP-серверам — `.rulesync/mcp.jsonc`; `.mcp.json`, `.cursor/mcp.json` и `.codex/config.toml` генерируются из него командой `just sync-mcp` и руками не правятся. Здесь не копирование, а перевод: Claude Code и Cursor читают JSON с ключом `mcpServers`, Codex — TOML с таблицами `mcp_servers`, поэтому зеркалированием файла, как у скиллов, эта задача не решается. Причина завести источник — скиллы `proj-start-task`, `proj-create-task` и `proj-deliver-task` ходят в Linear через MCP и разложены во все таргеты, а объявление самого сервера приезжало плагином и существовало только у Claude Code: инструкция уезжала ко всем агентам, её зависимость — ни к кому. Секретов в источнике нет и быть не должно: Linear авторизуется OAuth 2.1 на стороне клиента, в файлах лежит только адрес. Версия rulesync закреплена в `justfile` переменной `RULESYNC_VERSION`, оттуда же её читает джоба `repo-hygiene`; `just check-mcp` возвращает 1 при расхождении таргета с источником и входит в `verify`.
+
+Граница с skillshare проведена по фичам, а не по вежливости: rulesync умеет ещё skills, commands, subagents и hooks, то есть почти всё, чем владеет skillshare. Поэтому `--features "mcp"` закреплён в рецептах `sync-mcp` и `check-mcp`, а не набирается руками — расширение зоны rulesync это отдельное решение владельца, иначе два генератора начнут спорить за одни файлы. По той же причине в `RULESYNC_MCP_TARGETS` нет Zed: rulesync писал бы `.zed/settings.json` целиком и затёр бы редакторские настройки репозитория. Обратная сторона — `.codex/config.toml` принадлежит rulesync полностью, и другие проектные настройки Codex в него класть нельзя: следующий `sync-mcp` их снесёт. В источник попадают только серверы, от которых зависит контур исполнения; какие подключать сверх Linear — решение владельца, а кандидаты, отклонённые варианты и цена каждого разобраны в [mcp-servers.md](docs/development/mcp-servers.md). Сам `.rulesync/mcp.jsonc` несёт только данные и `$schema` для валидации в редакторе: границы и обоснования живут в этом разделе, а не в комментариях конфигурации, которую читает генератор.
+
+Плагины включаются полем `enabledPlugins` в `.claude/settings.json` и действуют на весь проект. Сейчас включён `codex@openai-codex`: он приносит скиллы с префиксом `codex:` и агента `codex-rescue`, которые делегируют работу локальному Codex CLI. Плагин приходит мимо обоих источников правды: `skillshare sync` его не раскладывает, `just check-agent-tools` его не проверяет, `.rulesync/` о нём не знает — `enabledPlugins` понимает только Claude Code, — а без установленного Codex CLI его скиллы бесполезны.
 
 Скилл, который агент не должен запускать сам, помечается `disable-model-invocation: true` — сейчас это только `proj-record-observation`: журнал наблюдений ведёт владелец, и агент не решает за него, что стоит записи. У `proj-record-learning` пометка снята: понять, что срез задел незнакомую технологию, агент может по самому диффу, а границы применимости заданы в описании скилла и в критических правилах выше.
 
