@@ -14,7 +14,7 @@ service MeetupsService {
 }
 
 message Viewer {
-  // Canonical lowercase UUIDv7 string with hyphens.
+  // Canonical lowercase UUIDv7 with hyphens.
   string identity_id = 1;
 
   // Platform-wide roles from Identity. Domain permissions are not precomputed
@@ -51,7 +51,8 @@ message SetMeetupScheduleRequest {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 2;
 
-  // Target schedule as a single value. Unset is not a fourth form; send no_date.
+  // Target schedule as a single value. Absence is not a value: "no date" is the
+  // no_date form, not an omitted field.
   Schedule schedule = 3;
 }
 
@@ -77,11 +78,13 @@ message ListVisibleMeetupsResponse {
   repeated MeetupSummary meetups = 1;
 }
 
+// Server-produced state. Every field is set; first_published_at carries the only
+// absent state in this message.
 message MeetupSnapshot {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens. Immutable after create.
+  // Canonical lowercase UUIDv7 with hyphens.
   string author = 2;
 
   // Empty string is the total value "unspecified".
@@ -95,13 +98,14 @@ message MeetupSnapshot {
   MeetupLifecycle lifecycle = 9;
   MeetupVisibility visibility = 10;
 
-  // RFC 3339 UTC instant. Absent when the meetup has never been published.
+  // RFC 3339 UTC instant. Unset when the meetup has never been published.
   optional string first_published_at = 11;
 
-  // Aggregate version. 1 after create. 0 means the field was omitted.
+  // Aggregate version. 0 is not a valid value; there is no absent state here.
   int64 version = 12;
 }
 
+// Server-produced state. Every field is set; there is no absent state here.
 message MeetupSummary {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
@@ -116,6 +120,8 @@ message MeetupSummary {
 }
 
 message Schedule {
+  // Exactly one form is set. An empty oneof is not a second spelling of "no
+  // date": that is the no_date form.
   oneof form {
     NoDate no_date = 1;
     DateValue tentative = 2;

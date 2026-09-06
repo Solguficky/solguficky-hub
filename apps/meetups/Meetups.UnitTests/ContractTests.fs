@@ -110,3 +110,40 @@ let ``Schema names no failure, so a hidden meetup is indistinguishable from a mi
                   if names f.Name then $"field {m.FullName}.{f.Name}" ]
 
     test <@ actual = [] @>
+
+[<Fact>]
+let ``The schema has exactly one absent state and it is first_published_at`` () =
+    let actual =
+        [ for message in messages do
+            for f in message.Fields.InDeclarationOrder() do
+                // Message fields and oneofs always carry presence; the contract gives it no meaning.
+                if f.FieldType <> FieldType.Message && f.HasPresence then
+                    $"{message.Name}.{f.Name}" ]
+
+    test <@ actual = [ "MeetupSnapshot.first_published_at" ] @>
+
+[<Fact>]
+let ``Schedule spells no date as a form rather than an absent field`` () =
+    let actual =
+        Schedule.Descriptor.Oneofs
+        |> Seq.filter (fun o -> not o.IsSynthetic)
+        |> Seq.collect (fun o -> o.Fields |> Seq.map (fun f -> $"{o.Name}.{f.Name}"))
+        |> List.ofSeq
+
+    test <@ actual = [ "form.no_date"; "form.tentative"; "form.fixed" ] @>
+
+[<Fact>]
+let ``Every attribute the change command sets is readable back from the snapshot`` () =
+    let shape (message: MessageDescriptor) =
+        message.Fields.InDeclarationOrder()
+        |> Seq.map (fun f -> f.Name, string f.FieldType)
+        |> List.ofSeq
+
+    let sent =
+        shape ChangeMeetupAttributesRequest.Descriptor
+        |> List.filter (fun (name, _) -> name <> "viewer" && name <> "id")
+
+    let snapshot = shape MeetupSnapshot.Descriptor
+    let missing = sent |> List.filter (fun attribute -> not (List.contains attribute snapshot))
+
+    test <@ missing = [] @>
