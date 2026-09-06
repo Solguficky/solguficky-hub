@@ -36,7 +36,7 @@ RFC не нужен для локального bugfix или очевидной
 |---|---|---|
 | [RFC-001](RFC-001-meetup-modules-topology.md) | Модули сходки: модель композиции, размещение и транспорт | Draft, рассмотрение отложено |
 | [RFC-002](RFC-002-meetup-publication-visibility-materials.md) | Модель сходки: публикация, видимость и материалы | Accepted |
-| [RFC-003](RFC-003-bot-presentation-rich-blocks.md) | Представление бота: плоский текст или блоки Rich Messages | Draft, живой прогон личка+группа+desktop 2026-09-06; mobile/Premium/шёпот открыты |
+| [RFC-003](RFC-003-bot-presentation-rich-blocks.md) | Представление бота: плоский текст или блоки Rich Messages | Draft, живой прогон 2026-09-06 включая чтение без Premium; mobile и чужой шёпот открыты |
 | [RFC-004](RFC-004-meetups-domain-events-persistence.md) | Дизайн Meetups: домен, события и persistence | Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md); открыт словарь домена |
 | [RFC-005](RFC-005-notifications-subscription-scheduling-delivery.md) | Notifications: две плоскости, триггеры и граница доставки | Accepted, [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) и [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md) |
 | [RFC-006](RFC-006-telegram-bot-edge-design.md) | Telegram-бот: граница представления, состояние экрана и идемпотентность | Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md) |
