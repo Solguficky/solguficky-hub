@@ -22,7 +22,7 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from identity.v1 import roles_pb2 as identity_dot_v1_dot_roles__pb2
+from nats_tester.generated.identity.v1 import roles_pb2 as identity_dot_v1_dot_roles__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\"identity/v1/identity_service.proto\x12\x0bidentity.v1\x1a\x17identity/v1/roles.proto\"h\n\x16ResolveIdentityRequest\x12\x18\n\x10telegram_user_id\x18\x01 \x01(\x03\x12\x1e\n\x11telegram_username\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x14\n\x12_telegram_username\"]\n\x17ResolveIdentityResponse\x12\x13\n\x0bidentity_id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole2o\n\x0fIdentityService\x12\\\n\x0fResolveIdentity\x12#.identity.v1.ResolveIdentityRequest\x1a$.identity.v1.ResolveIdentityResponseb\x06proto3')
