@@ -1,6 +1,6 @@
 # Инфраструктурные контуры и hosting
 
-> **Статус:** Canonical для границы local / production-like / production hosting. Выбор production-площадки остаётся Open.
+> **Статус:** Canonical для границы local / production-like / production hosting. Начальная production-площадка выбрана в ADR-034, реализация не завершена.
 
 ## Daily local development
 
@@ -20,23 +20,15 @@ k3s предназначен для практики контейнерной о
 
 ## Production hosting
 
-Приоритетом является собственно управляемая инфраструктура, но площадка остаётся открытым решением:
+Начальная площадка — один netcup VPS Lite 3 G12s с 16 GB RAM для dev, agents, test и production. Среды получают разные Unix accounts, rootless container storage, networks, данные, tokens и backup credentials, но общий kernel и operator plane остаются осознанным риском первого этапа. Отдельный production VPS не является обязательным следующим шагом: он вводится при resource contention, росте чувствительности данных, расширении прав агента или необходимости независимого availability/maintenance.
 
-- домашний мини-ПК;
-- VPS;
-- Railway как fallback или быстрый временный deployment.
+Railway остаётся fallback, если self-hosting окажется непригоден. Домашний мини-ПК не входит в начальный срез.
 
 Выбор площадки и deployability — разные решения. Даже без мини-ПК сервис должен иметь воспроизводимый build, configuration model, migrations, secrets boundary, health checks, backup/restore и deployment artifact.
 
 Production deployment не обязан быть первым milestone; порядок хранится в Linear. Эксплуатационные требования при этом формулируются вместе с сервисами, а не в последнюю неделю перед сходкой.
 
-ADR-006 с безусловным Railway больше не выражает целевую позицию. Заменяющее решение должно отдельно описать:
-
-- требования к hosting;
-- критерии выбора площадки;
-- deployment model;
-- learning goals;
-- fallback strategy.
+[ADR-034](../decisions/ADR-034-single-netcup-vps-for-initial-self-hosting.md) заменяет безусловный выбор Railway из ADR-006 и фиксирует цену общего хоста, сигналы пересмотра и переносимость. Требования к deployment, backup и восстановлению уточняет [RFC-007](../rfcs/RFC-007-remote-development-and-self-hosting-platform.md) до реализации PER-80.
 
 ## Current-ограничения
 
@@ -49,6 +41,7 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Связанные решения
 
-- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Needs review
+- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Superseded by ADR-034
+- [ADR-034: один netcup VPS для начального self-hosting](../decisions/ADR-034-single-netcup-vps-for-initial-self-hosting.md)
 - [ADR-021: Aspire local orchestration](../decisions/ADR-021-aspire-local-orchestration.md)
 - [Aspire 13: JavaScript hosting](https://aspire.dev/whats-new/aspire-13/)

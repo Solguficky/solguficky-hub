@@ -28,7 +28,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-003](ADR-003-nats-jetstream-message-bus.md) | NATS JetStream | Needs review | Current consumers не являются durable только из-за конфигурации JetStream |
 | [ADR-004](ADR-004-postgresql-primary-database.md) | PostgreSQL | Active | Current primary storage |
 | [ADR-005](ADR-005-grpc-synchronous-communication.md) | gRPC | Active, limited scope | Конкретный transport определяется failure semantics сценария |
-| [ADR-006](ADR-006-railway-hosting.md) | Railway hosting | Needs review | Railway — вариант наряду с собственным железом и VPS |
+| [ADR-006](ADR-006-railway-hosting.md) | Railway hosting | Superseded | Заменён [ADR-034](ADR-034-single-netcup-vps-for-initial-self-hosting.md); Railway остаётся возможным fallback |
 | [ADR-007](ADR-007-polyglot-service-stacks.md) | Полиглотная модель выбора стека | Active | Язык выбирается под задачу сервиса; назначения языков из исходной редакции удалены |
 | [ADR-008](ADR-008-apicurio-schema-registry.md) | Apicurio Registry | Superseded | Заменён ADR-014; возврат Registry требует нового решения |
 | [ADR-009](ADR-009-auction-actor-hierarchy.md) | Иерархия акторов аукциона | Historical | Код удалён; извлечённое знание — в [архиве](../archive/services/auction-domain-and-lessons.md) |
@@ -56,6 +56,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md) | Словарь домена Meetups для среза и форма доменного события | Active | Четыре команды и два запроса, три типа событий со снимком в теле и в ответе команды. Автор — администратор, заведший запись; организаторов нет. PublishMeetup — целевое состояние. Поправляет утверждение ADR-024 про diff |
 | [ADR-032](ADR-032-drop-meetup-public-number.md) | Публичный номер сходки не заводится | Active | Заменяет ADR-023 в части номера: у сходки один идентификатор, человеку она предъявляется заголовком. Сигнал возврата — повторяющиеся заголовки |
 | [ADR-033](ADR-033-meetups-functional-vertical-slices.md) | Функциональные вертикальные срезы в Meetups | Active, limited scope | VSA выбран для Meetups, но не назначается всем F#-сервисам; Oxpecker ограничен HTTP-границей |
+| [ADR-034](ADR-034-single-netcup-vps-for-initial-self-hosting.md) | Один netcup VPS для начального self-hosting | Active | VPS Lite 3 G12s размещает dev, agents, test и production; отдельный production VPS вводится только по сигналу пересмотра |
 
 ## Когда решение заслуживает ADR
 

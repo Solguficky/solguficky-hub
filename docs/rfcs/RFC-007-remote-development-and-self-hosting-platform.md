@@ -1,6 +1,6 @@
 # RFC-007: Удалённая среда разработки и self-hosting Solguficky
 
-> **Статус:** Draft<br>
+> **Статус:** In Review; hosting model принят в ADR-034<br>
 > **Автор:** Dmitriy Panfilyonok<br>
 > **Дата:** 2026-09-06
 
@@ -8,16 +8,15 @@
 
 PER-80 должен дать две постоянно работающие возможности: удалённую среду разработки с coding agents и воспроизводимый запуск Solguficky в test и production без зависимости от ноутбука. Эти нагрузки имеют противоположный профиль доверия. Среда разработки исполняет изменяемый код, package scripts, плагины и агентские команды; production хранит токен бота и пользовательские данные. Rootless-контейнеры разделяют пользователей и процессы, но используют ядро одного хоста, поэтому не образуют жёсткую границу между недоверенной разработкой и production ([Podman rootless](https://docs.podman.io/en/stable/markdown/podman.1.html), [границы namespaces](https://docs.kernel.org/admin-guide/namespaces/resource-control.html)).
 
-Предложение состоит из двух VPS:
+Начальный этап принят в [ADR-034](../decisions/ADR-034-single-netcup-vps-for-initial-self-hosting.md):
 
-- выбранный предварительно netcup 4 vCPU / 8 GB становится **dev/test host**: remote development, project-scoped coding agents и disposable test;
-- отдельный минимальный **production host** исполняет только подписанные OCI-образы Solguficky, PostgreSQL и backup jobs; размер тарифа подтверждается нагрузочным прогоном;
-- test и production получают разные Unix-аккаунты, сети, базы, bot tokens, age recipients, backup repositories и deploy credentials;
+- один **netcup VPS Lite 3 G12s** с 8 shared vCore, 16 GB RAM и 320 GB SSD размещает remote development, project-scoped coding agents, test и production;
+- dev/agents, test и production получают разные Unix-аккаунты, rootless container storage, сети, базы, bot tokens, age recipients, backup credentials и resource limits;
 - хосты восстанавливаются Ansible-сценарием, приложения запускаются rootless Podman Quadlet, версии приложений поставляются из CI по digest;
 - PostgreSQL получает off-host pgBackRest repository с continuous WAL archiving и проверяемым PITR, остальные незаменимые файлы — отдельный restic repository;
 - штатный и ручной redeploy используют один узкий deploy-контракт: `environment + OCI digest`, обязательную проверку подписи и один и тот же health gate.
 
-Один VPS допустим только как временный пилот с явным принятием риска. В таком режиме отдельные Unix-пользователи и rootless Podman ограничивают обычные ошибки, но компрометация ядра, `ops` или конфигурации хоста открывает и dev, и production. Этот режим не удовлетворяет требованию жёсткой изоляции.
+Один VPS сознательно принят для старта. Отдельные Unix-пользователи и rootless Podman ограничивают обычные ошибки, но компрометация ядра, `ops` или конфигурации хоста открывает и dev, и production. Это остаточный риск, а не обещание жёсткой изоляции. Переезд production на отдельный хост выполняется только по сигналам ADR-034, а не как обязательный пятый этап.
 
 ## Проблема и границы
 
@@ -34,7 +33,7 @@ PER-80 должен дать две постоянно работающие во
 
 Сейчас репозиторий этого не обеспечивает. [Aspire-граф](../development/local-development.md) предназначен для local orchestration, утверждённых Dockerfile/Containerfile нет, production deployment не проверен. Текущий успешный local run не доказывает deployability; это уже отмечено в [infrastructure.md](../architecture/infrastructure.md).
 
-Выбор площадки нельзя смешивать с устройством deployment. netcup 4 vCPU / 8 GB — предварительный кандидат для первого хоста, а не принятое навсегда решение. Документация netcup сообщает, что сервер по умолчанию приходит с Debian Minimal, небольшой partition и оставшимся неразмеченным местом; это требует отдельной проверки диска при bootstrap ([First Use of Your Server](https://www.netcup.com/en/helpcenter/documentation/server/accessing-server)).
+Выбор площадки нельзя смешивать с устройством deployment. Для старта выбран netcup VPS Lite 3 G12s, но deployment остаётся переносимым и не зависит от API провайдера. Тариф предоставляет 8 shared vCore, 16 GB RAM, 320 GB SSD, 1 GBit/s interface и автоматически выбранный европейский location; CPU не dedicated, а Lite использует SSD вместо NVMe ([VPS Lite 3 G12s](https://www.netcup.com/en/server/vps/vps-lite-3-g12s-iv-2m), [VPS Lite differences](https://www.netcup.com/en/server/vps-lite)). Документация netcup сообщает, что сервер по умолчанию приходит с Debian Minimal, небольшой partition и оставшимся неразмеченным местом; это требует отдельной проверки диска при bootstrap ([First Use of Your Server](https://www.netcup.com/en/helpcenter/documentation/server/accessing-server)).
 
 ### В границах
 
@@ -93,7 +92,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 | Критерий | Минимум для PER-80 |
 |---|---|
-| CPU/RAM | 4 vCPU / 8 GB для dev/test; production sizing после замера |
+| CPU/RAM | VPS Lite 3 G12s: 8 shared vCore / 16 GB; допустимая конкурентность подтверждается замером |
 | Disk | SSD/NVMe, достаточно для двух рабочих копий, image cache и backup staging; alert до 80% |
 | Virtualization | разрешены user namespaces, cgroup v2 и rootless Podman |
 | Console | независимая от SSH console/rescue; netcup rescue стартует отдельную минимальную ОС и требует остановки сервера ([Rescue System](https://www.netcup.com/en/helpcenter/documentation/server/rescue-system)) |
@@ -106,9 +105,9 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 | Актив или граница | Угроза | Контроль | Остаточный риск |
 |---|---|---|---|
-| Production data и bot token | агент, dependency script или украденный dev token читает production | отдельный production VPS, credentials и age identity; production не монтирует source tree | компрометация production host или оператора |
+| Production data и bot token | агент, dependency script или украденный dev token читает production | отдельные Unix accounts, rootless storage, credentials и age identity; production не монтирует source tree; agent не получает deploy access | общий kernel и `ops` сохраняют путь к production при host compromise |
 | Host | подбор SSH, украденный пароль, открытый сервис | key-only SSH, `PermitRootLogin no`, provider + nftables firewall, только SSH ingress | кража разрешённого private key, уязвимость OpenSSH |
-| Проекты на dev host | package script читает соседние проекты | отдельный Unix user на проект/доверительную группу, rootless Podman storage, отдельные tokens | общий kernel и operator account |
+| Проекты на общем host | package script читает соседние проекты | отдельный Unix user на проект/доверительную группу, rootless Podman storage, отдельные tokens | общий kernel и operator account |
 | Container boundary | container escape или доступ к container socket | rootless mode, no socket mount, drop capabilities, no-new-privileges, read-only rootfs где возможно | kernel/user-namespace vulnerability |
 | CI | вредоносный action/PR крадёт deploy secret | GitHub-hosted runners, full-SHA actions, least-privilege token, no secrets for fork PR, protected environments | компрометация GitHub account/action SHA owner |
 | Artifact | подмена tag/image в registry | deploy only by digest, verify Cosign identity and provenance, retain SBOM | подписанный, но уязвимый код всё ещё возможен |
@@ -121,17 +120,17 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ## Варианты
 
-### Вариант A: один VPS для dev, agents, test и production
+### Вариант A: один VPS Lite 3 G12s для dev, agents, test и production
 
-Плюсы: минимальная цена, один host baseline, простое начало. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом за 8 GB; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
+Плюсы: минимальная цена, один host baseline, простое начало и 16 GB общей capacity без преждевременного разделения. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
 
-**Вывод:** годится для ограниченного пилота без ценных production-данных. Не является целевой схемой.
+**Вывод:** выбран для начального self-hosting в ADR-034 с явным остаточным риском и измеримыми сигналами выноса production.
 
-### Вариант B: dev/test на 8 GB VPS, production на отдельном VPS
+### Вариант B: dev/test и production на отдельных VPS
 
 Плюсы: production не делит kernel, filesystem, Podman daemon и operator tokens с недоверенными build/agent workloads; test остаётся дешёвым и близким к dev; отказ dev host не останавливает бота. Минусы: второй тариф, два host lifecycle, раздельное наблюдение и backup.
 
-**Вывод:** рекомендуемый минимальный вариант.
+**Вывод:** следующий вариант при срабатывании сигнала ADR-034, но не обязательный календарный этап.
 
 ### Вариант C: отдельные dev, test и production hosts
 
@@ -141,7 +140,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ### Вариант D: managed PaaS для приложения, VPS только для agents
 
-Плюсы: меньше host operations для production. Минусы: иные secret/deploy/backup contracts, возможный vendor lock-in и необходимость отдельно проверить PostgreSQL PITR и ручной redeploy. Старый [ADR-006](../decisions/ADR-006-railway-hosting.md) имеет статус Needs review и не подтверждает этот вариант.
+Плюсы: меньше host operations для production. Минусы: иные secret/deploy/backup contracts, возможный vendor lock-in и необходимость отдельно проверить PostgreSQL PITR и ручной redeploy. [ADR-006](../decisions/ADR-006-railway-hosting.md) заменён ADR-034 и больше не подтверждает этот вариант.
 
 **Вывод:** сохраняется как альтернатива при пересмотре hosting ADR.
 
@@ -155,15 +154,16 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ```mermaid
 flowchart LR
-    Laptop[Ноутбук владельца] -->|SSH key only| Dev[Dev/test VPS<br/>netcup 4 vCPU / 8 GB]
-    Dev --> Projects[Rootless project containers]
-    Dev --> Agents[Project-scoped agents<br/>systemd user services]
-    Dev --> Test[Test stack<br/>own data and bot token]
+    Laptop[Ноутбук владельца] -->|SSH key only| Host[netcup VPS Lite 3 G12s<br/>16 GB]
+    Host --> Dev[Dev projects<br/>rootless containers]
+    Host --> Agents[Project-scoped agents<br/>systemd user services]
+    Host --> Test[Test account<br/>own data and bot token]
+    Host --> Prod[Production account<br/>runtime only]
 
     CI[GitHub-hosted Actions] -->|OCI by digest<br/>SBOM + provenance + signature| Registry[GHCR]
     Registry -->|verified pull| Test
-    Registry -->|verified pull| Prod[Production VPS<br/>runtime only]
-    CI -->|restricted deploy command| Dev
+    Registry -->|verified pull| Prod
+    CI -->|restricted deploy command| Test
     CI -->|protected environment<br/>restricted deploy command| Prod
     Laptop -->|same deploy contract| Prod
 
@@ -178,12 +178,12 @@ flowchart LR
 
 | Account/zone | Где | Имеет | Не имеет |
 |---|---|---|---|
-| `ops` | оба хоста | SSH, ограниченный sudo, host maintenance | agent/provider tokens, ежедневная разработка |
-| `dev-<project>` | dev/test host | свой home, rootless Podman, repo-scoped source/token | соседние homes, sudo, production secrets |
-| `agent-<project>` или user service того же project account | dev/test host | только нужный workspace, harness и provider token | SSH login, production/test deploy credential, host Podman socket |
-| `solguficky-test` | dev/test host | test images, network, volumes, test bot token | production database/token/repository |
-| `solguficky-prod` | production host | только runtime images, production network/volumes/secrets | compilers, source tree, dev tokens, interactive SSH |
-| `deploy-test` / `deploy-prod` | соответствующий хост | forced command с environment и digest | shell, arbitrary image/tag, чтение secrets |
+| `ops` | общий хост | SSH, ограниченный sudo, host maintenance | agent/provider tokens, ежедневная разработка |
+| `dev-<project>` | общий хост | свой home, rootless Podman, repo-scoped source/token | соседние homes, sudo, production secrets |
+| `agent-<project>` или user service того же project account | общий хост | только нужный workspace, harness и provider token | SSH login, production/test deploy credential, host Podman socket |
+| `solguficky-test` | общий хост | test images, network, volumes, test bot token | production database/token/repository |
+| `solguficky-prod` | общий хост | только runtime images, production network/volumes/secrets | compilers, source tree, dev tokens, interactive SSH |
+| `deploy-test` / `deploy-prod` | общий хост | forced command с environment и digest | shell, arbitrary image/tag, чтение secrets |
 
 Rootless Podman хранит containers и images раздельно для каждого пользователя и использует user namespace; контейнеры одного непривилегированного пользователя не видны другому через его Podman ([Podman](https://docs.podman.io/en/stable/markdown/podman.1.html)). Socket не монтируется в agent containers: доступ к нему равен управлению всеми контейнерами и mounts данного project account.
 
@@ -194,7 +194,7 @@ Host source of truth — отдельный private operations repository или
 Первичный bootstrap выполняется в таком порядке:
 
 1. Защитить аккаунты netcup/SCP и GitHub отдельными passphrase и MFA, сохранить rescue procedure вне VPS.
-2. Установить минимальный Debian stable, проверить `lsblk`, filesystem и использование всего оплаченного диска. Debian 13 — текущая stable ветка; security advisories и repository публикуются проектом Debian ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)).
+2. Установить минимальный Debian stable, проверить `lsblk`, filesystem и использование всего оплаченного диска. Разметка оставляет headroom системному разделу, выделяет production state в отдельный bounded filesystem/volume и включает block/inode quotas для dev/agent/test homes и rootless container storage. Ни один непривилегированный project account не может исчерпать место для PostgreSQL WAL или системных операций. Debian 13 — текущая stable ветка; security advisories и repository публикуются проектом Debian ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)).
 3. Создать `ops`, установить его public key, открыть вторую SSH-сессию и только после успешного входа отключить root/password login.
 4. Проверить конфигурацию `sshd -t`, reload без обрыва текущей сессии. Базовый policy:
 
@@ -210,7 +210,7 @@ Host source of truth — отдельный private operations repository или
 5. В nftables разрешить established/related, loopback, ICMP/ICMPv6 и SSH; остальной ingress удалить. В provider firewall отдельно разрешить SSH, ICMP/ICMPv6 и ответы от настроенных DNS/NTP endpoints: netcup отслеживает состояние TCP, но не UDP. До применения provider rule сохранить console/rescue access и проверить IPv4/IPv6 отдельно. Порты PostgreSQL, gRPC, NATS и dashboard не публикуются.
 6. Включить автоматическую установку security updates и явное окно reboot. `unattended-upgrade` устанавливает пакеты из разрешённых APT sources и пишет отдельные logs ([Debian manpage](https://manpages.debian.org/stable/unattended-upgrades/unattended-upgrade.8.en.html)). Reboot не выполняется вслепую: production health и свежий backup проверяются до окна.
 7. Установить rootless Podman, `uidmap`, subuid/subgid ranges, systemd user services и cgroup v2. Для long-running rootless services включить linger только service users; `loginctl enable-linger` запускает их user manager на boot и сохраняет после logout ([loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)).
-8. Настроить journald retention, time synchronization, disk/inode/backup-age alerts и отправку уведомлений вне самого VPS.
+8. Настроить journald retention, time synchronization, disk/inode/quota/backup-age alerts и отправку уведомлений вне самого VPS. Проверить исчерпание block и inode quota одним disposable project user: production WAL и root operations продолжают работать.
 9. Включить 2 GB zram или encrypted swap как страховку от краткого пика, но не считать её дополнительной capacity. Обычный disk swap запрещён: страницы tmpfs с материализованными секретами могут попасть на диск. Все agent/build processes входят в общий ограниченный cgroup slice и получают дополнительные дочерние лимиты.
 
 Перед закрытием bootstrap задача обязана доказать: новый SSH login, reboot, отсутствие лишних listening ports, rootless container после reboot, provider console/rescue procedure и повторный Ansible run без неожиданных изменений.
@@ -225,26 +225,27 @@ Host source of truth — отдельный private operations repository или
 - compilers, package managers, harnesses и agent CLIs находятся внутри project image, не устанавливаются глобально на host;
 - package install выполняется при сборке dev image, а не при каждом входе; floating `latest`, `curl | sh` и непроверенные Dev Container Features запрещены;
 - source mount ограничен одним project workspace; соседние homes, `/etc`, runtime sockets и backup paths не монтируются;
-- credentials отдельны по проекту и назначению, имеют минимальный scope и срок; production token/key в dev host отсутствует;
+- credentials отдельны по проекту и назначению, имеют минимальный scope и срок; production token/key недоступен dev/agent accounts;
 - агент запускается как непривилегированный user, не получает `--privileged`, host network, device mounts или Podman socket;
 - долгие процессы оформляются как versioned systemd user units с `Restart=on-failure`, `MemoryMax`, `CPUQuota`, `TasksMax` и timeout, а не как бесконтрольные `tmux`-сессии. Все project users входят в один host-level `dev-agents.slice` с aggregate limits: независимые user units иначе могут вместе исчерпать хост. Quadlet преобразует declarative container units в systemd services и поддерживает rootless search paths ([Podman Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html));
 - незакоммиченная работа агента попадает в hourly restic backup, но нормальный переносимый checkpoint — commit/push в отдельную ветку или worktree;
 - sessions, prompts и tool configs сохраняются только если не содержат credentials; OAuth/token caches исключаются из backup и восстанавливаются повторной авторизацией.
 
-Начальный бюджет dev/test host, который нужно подтвердить метриками:
+Начальный бюджет общего 16 GB host, который нужно подтвердить метриками:
 
 | Slice | Memory ceiling | CPU ceiling | Примечание |
 |---|---:|---:|---|
-| Host + filesystem cache | резерв 1.5 GB | — | не отдавать workload slices |
-| Dev + agents вместе | 4.5 GB | 250% | тяжёлые build/test jobs последовательно |
-| Test stack | 1.5 GB | 100% | disposable data, scale-to-zero допустим |
-| Запас | 0.5 GB RAM + 2 GB swap | — | swap не заменяет RAM |
+| Host + filesystem cache | резерв 2 GB | — | не отдавать workload slices |
+| Dev + agents вместе | 8 GB | 500% | один тяжёлый build/test job; конкурентность повышается только после замера |
+| Test stack | 2 GB | 100% | disposable data, scale-to-zero допустим |
+| Production | 2 GB | 100% | приоритет над agent jobs; отдельный account и volumes |
+| Операционный запас | 2 GB RAM + 2 GB zram | — | zram страхует краткий пик и не заменяет RAM |
 
-Сумма показывает ограничение тарифа: несколько параллельных agent harnesses, .NET build и test PostgreSQL могут упереться в 8 GB. PER-80 не должен обещать количество одновременных агентов до недельного замера peak RSS, CPU steal, disk latency и OOM events. Следующий шаг масштабирования — увеличить dev host или вынести test, а не ослаблять production boundary.
+Лимиты — максимумы, а не гарантированные резервации; их сумма оставляет headroom, но shared vCore не обещают постоянной CPU performance. PER-80 не должен обещать количество одновременных агентов до недельного замера peak RSS, memory pressure, swap activity, CPU steal, disk latency и OOM events. При конкуренции сначала ограничиваются agent/build workloads; перенос production выполняется по сигналам ADR-034.
 
 ### Runtime test/production
 
-Каждая среда запускает отдельные pinned OCI images через versioned rootless Quadlet units. Production host не содержит checkout, build toolchain или general-purpose CI runner. Unit включает:
+Каждая среда запускает отдельные pinned OCI images через versioned rootless Quadlet units. Production account не содержит checkout, build toolchain или general-purpose CI runner. Unit включает:
 
 - image reference только `registry/repository@sha256:...`;
 - отдельную internal network на environment;
@@ -280,7 +281,7 @@ Deploy account принимает только строгий формат, на
 deploy-solguficky --environment prod --digest sha256:<64 hex>
 ```
 
-Root-owned script имеет allowlist repository и environment, берёт image только по digest, проверяет Cosign policy, атомарно меняет desired digest и запускает `systemctl --user daemon-reload`/restart от service user. Автоматический rollback на предыдущий digest разрешён только до изменения схемы либо при доказанной backward compatibility через expand/contract migration. После необратимой миграции failed health gate останавливает deploy: восстановление БД или forward fix выполняется по отдельному runbook. Произвольный shell, tag, path, compose arguments и environment variables через SSH не принимаются.
+Forced command вызывает через `sudo -n` единственный root-owned helper; sudoers не разрешает deploy account другие команды или сохранение environment. Helper валидирует repository, environment и digest, отображает environment в фиксированный service account, проверяет Cosign policy, атомарно меняет desired digest и обращается к его user manager через `systemctl --machine=<service-user>@.host --user`. Произвольные user, unit, path и environment variables из SSH-команды не принимаются; этот переход проверяется реальным test deploy после reboot. Автоматический rollback на предыдущий digest разрешён только до изменения схемы либо при доказанной backward compatibility через expand/contract migration. После необратимой миграции failed health gate останавливает deploy: восстановление БД или forward fix выполняется по отдельному runbook. Произвольный shell, tag, path и compose arguments через SSH не принимаются.
 
 Ручной emergency redeploy с ноутбука вызывает этот же script и разворачивает уже существующий подписанный digest. Он не собирает source на production и не обходит verification. Отдельный offline сценарий на случай недоступности GHCR может переносить `podman save` archive вместе с digest и Cosign bundle; его необходимость — открытое решение, потому что повышает объём PER-80.
 
@@ -290,9 +291,9 @@ Root-owned script имеет allowlist repository и environment, берёт ima
 
 Правила:
 
-- test и production имеют разные age identities; production identity существует только на production host и в off-host recovery escrow;
+- test и production имеют разные age identities; production identity доступна только root-owned materialization unit общего хоста и находится в off-host recovery escrow;
 - private age key принадлежит root и имеет mode `0600`; приложение и agent не читают его;
-- root-owned materialization unit расшифровывает secret в runtime tmpfs/Podman secret перед запуском и удаляет plaintext при остановке; значение не передаётся в command line или journal, а tmpfs получает `noswap`, где это поддерживает kernel;
+- root-owned materialization unit расшифровывает secret в отдельный runtime tmpfs перед запуском, назначает файл service user с минимальным mode и bind-mounts его в container read-only. Default Podman `file` secret driver запрещён: plaintext не попадает в persistent container storage. Tmpfs получает `noswap`, где это поддерживает kernel; boot cleanup и `ExecStopPost` удаляют runtime path, а zram/encrypted swap не оставляет его страницы на обычном диске ([Podman secret drivers](https://docs.podman.io/en/latest/markdown/podman-secret-create.1.html));
 - SOPS ciphertext можно хранить в private Git, но ciphertext не заменяет backup recovery key;
 - bot tokens, AI provider tokens, GitHub deploy keys и backup credentials различны по environment и роли;
 - backup writer не имеет prune/delete права; maintenance credential используется только из operator context;
@@ -313,7 +314,8 @@ Backup отделяется от переносимой конфигурации
 | Незаменимые application files | named volumes | restic hourly/daily по RPO |
 | Dev/agent workspaces | Git branches/worktrees | hourly restic, исключая caches/build outputs/token caches |
 | SOPS ciphertext | private Git | repository mirror |
-| age recovery identities | production host | password manager/offline encrypted escrow, отдельно от ciphertext |
+| age recovery identities | root-owned storage общего хоста | password manager/offline encrypted escrow, отдельно от ciphertext |
+| Recovery manifest | signed metadata рядом с off-provider backup | Ansible commit, OS, PostgreSQL major, pgBackRest version/config, application digest, schema version и связанные restic snapshots |
 | Metrics/logs | local bounded retention | не блокируют restore; нужная incident retention решается отдельно |
 
 PostgreSQL continuous archiving вместе с base backup позволяет PITR до выбранной точки; `archive_command` должен вернуть успех только после надёжной записи WAL и PostgreSQL повторяет неуспешную архивацию ([PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html)). pgBackRest предоставляет full/differential/incremental backups, repository encryption, restore/PITR и S3-compatible repositories ([pgBackRest User Guide](https://pgbackrest.org/user-guide.html)). Для начального режима:
@@ -336,24 +338,24 @@ restic шифрует repository, поддерживает S3-compatible backend
 Ежемесячный drill выполняется без production credentials и без доступа к Telegram:
 
 1. Создать disposable VM или изолированный namespace с достаточным диском.
-2. Применить Ansible на чистую ОС и зафиксировать длительность.
-3. Получить одноразовые read-only backup credentials и recovery identity.
+2. Получить одноразовые read-only backup credentials и recovery identity, проверить подпись recovery manifest и выбрать совместимые Ansible commit, PostgreSQL major, pgBackRest config/version и application digest.
+3. Применить выбранный Ansible commit на чистую ОС и зафиксировать длительность.
 4. Выполнить pgBackRest `info`/`check`, восстановить последнюю consistency point или заданное время в новый volume.
-5. Восстановить restic snapshot в пустой path, не поверх существующих файлов; для связанных с БД файлов выбрать согласованную recovery point и проверить application invariant.
-6. Запустить database integrity/application smoke checks; внешние side effects и bot polling отключить.
+5. Восстановить указанный manifest restic snapshot в пустой path, не поверх существующих файлов; для связанных с БД файлов выбрать согласованную recovery point и проверить application invariant.
+6. Запустить database integrity/application smoke checks на закреплённом digest; внешние side effects и bot polling отключить.
 7. Сверить ожидаемые backup timestamps, schema/migration version, row-count invariants и выбранные контрольные данные.
 8. Удалить disposable credentials/VM и записать фактические RPO, RTO, объём и найденные gaps.
 
 Аварийное восстановление production:
 
-1. Изолировать старый хост, запретить его deploy/backup access и считать host credentials скомпрометированными.
-2. Создать чистый host у текущего или другого provider, применить зафиксированный Ansible commit.
-3. Восстановить age identity из escrow и выдать новые deploy/backup credentials.
-4. Восстановить PostgreSQL pgBackRest до последней безопасной точки; не запускать приложение до окончания recovery и проверки timeline.
-5. Восстановить незаменимые volumes из restic. Source, images и caches получить из Git/GHCR.
-6. Проверить подписи OCI, migrations, database invariants и внутренние health endpoints.
-7. Убедиться, что старый bot остановлен или старый token отозван; запустить ровно один production poller.
-8. Выполнить Telegram smoke test, включить backup jobs/alerts и ротировать все credentials старого хоста.
+1. Изолировать старый хост, отозвать его deploy/backup writer access и считать все доступные ему credentials скомпрометированными. Остановить старый poller либо отозвать bot token до нового запуска.
+2. Одноразовым read-only recovery credential проверить signed recovery manifest и до provisioning выбрать совместимые Ansible commit, PostgreSQL major, pgBackRest config/version, application digest и snapshots.
+3. Создать чистый host у текущего или другого provider, применить выбранный Ansible commit и создать новую production age identity, новые deploy/backup credentials и новый bot token.
+4. Старую recovery identity использовать только в изолированном operator context для чтения существующего ciphertext. Каждый credential или secret, материализованный на старом хосте, перевыпустить; прежнее значение нельзя просто зашифровать новому recipient. Неротируемый ключ старого backup repository использовать только read-only для recovery, после чего новые backups писать в repository с новым encryption material. Старую age identity и неротируемые recovery keys не устанавливать на новый работающий хост.
+5. Восстановить PostgreSQL pgBackRest до последней безопасной точки совместимым runtime; не запускать приложение до окончания recovery и проверки timeline.
+6. Восстановить согласованные незаменимые volumes из restic. Source, images и caches получить из Git/GHCR.
+7. Материализовать только перевыпущенные runtime secrets, проверить подписи OCI, migrations, database invariants и внутренние health endpoints.
+8. Запустить ровно один production poller с новым token, выполнить Telegram smoke test и включить backup jobs/alerts с новыми credentials. Остаточные credentials старого хоста отозвать до завершения инцидента.
 
 ### Плановая миграция с минимальным простоем
 
@@ -376,25 +378,29 @@ PER-80 нельзя закрыть по наличию файлов. Нужен 
 - после reboot доступны только ожидаемые SSH и user services;
 - scan извне не видит PostgreSQL/gRPC/NATS/dashboard ports;
 - два проекта не читают homes/Podman storage друг друга;
+- исчерпание block/inode quota disposable agent account не лишает PostgreSQL места для WAL и не блокирует root operations;
 - agent не получает production secrets и не может вызвать production deploy;
+- plaintext production secret существует только в runtime tmpfs, отсутствует в persistent Podman storage и очищается после reboot/stop;
 - CI строит, подписывает и публикует image; test deploy принимает digest, tag отклоняет;
 - подменённая/неподписанная image отклоняется до остановки текущей версии;
+- forced deploy command после reboot управляет только сопоставленным service account и не принимает произвольный user/unit/path;
 - production promotion использует test-tested digest и approval;
 - manual command с ноутбука повторно разворачивает известный digest;
 - test и production используют разные bot tokens, DB, secrets и repositories;
-- restore drill восстанавливает базу и файлы на чистом host в пределах измеренных RPO/RTO;
+- restore drill выбирает совместимый runtime из signed recovery manifest и восстанавливает базу и файлы на чистом host в пределах измеренных RPO/RTO;
 - planned migration drill доказывает единственный poller и отсутствие потерянных подтверждённых записей;
-- удаление dev host не лишает возможности восстановить production, а потеря production host не уничтожает backup/recovery keys.
+- потеря общего хоста не уничтожает off-provider backup, recovery keys и возможность восстановить production на новом VPS.
 
 ### Learning goals и fallback
 
 PER-80 должен дать владельцу практику безопасного Linux-hosting, воспроизводимого bootstrap, rootless OCI runtime под systemd, проверки software supply chain и восстановления PostgreSQL на чистом хосте. k3s, multi-region failover и построение собственного PaaS в учебные цели этого среза не входят.
 
-Основной fallback при непригодности или недоступности netcup — новый стандартный Linux VPS, восстановленный тем же Ansible-сценарием из off-provider backup. Если второй production VPS пока не оплачивается, допустим ограниченный all-in-one пилот без ценных пользовательских данных; managed PaaS остаётся временным fallback для приложения. При недоступном CI владелец повторяет известный подписанный digest с локальной машины, а необходимость offline OCI archive при недоступном GHCR решается отдельно.
+Основной fallback при непригодности или недоступности netcup — новый стандартный Linux VPS, восстановленный тем же Ansible-сценарием из off-provider backup. Managed PaaS остаётся временным fallback для приложения. При недоступном CI владелец повторяет известный подписанный digest с локальной машины, а необходимость offline OCI archive при недоступном GHCR решается отдельно.
 
 ## Что станет сложнее
 
-- Второй VPS увеличивает прямую стоимость и количество patch/reboot/monitoring работ.
+- Один хост оставляет общий kernel и failure domain, поэтому логическая изоляция не может обещать защиту от host compromise.
+- Resource limits уменьшают capacity, доступную dev/agents, потому что production и операционный запас защищаются первыми.
 - Rootless networking, Quadlet и secret materialization сложнее одного rootful compose-файла; это цена уменьшения blast radius и systemd-managed lifecycle.
 - Deployment по digest требует явного promotion record; нельзя «быстро поправить файл на сервере».
 - Separate test/prod tokens означают отдельную регистрацию/настройку бота и запрет запуска production token в локальном Aspire.
@@ -405,35 +411,39 @@ PER-80 должен дать владельцу практику безопас�
 
 ## Открытые вопросы
 
+### Принято владельцем
+
+- стартовый тариф — netcup VPS Lite 3 G12s с 16 GB RAM;
+- dev, agents, test и production на первом этапе размещаются на одном хосте с зафиксированным остаточным риском;
+- отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-034;
+- production backup остаётся у другого provider/account, чтобы отказ или блокировка netcup не уничтожили обе копии.
+
 ### Решения владельца до реализации
 
-1. Принимается ли второй production VPS как обязательная граница, или первый этап сознательно идёт на одном хосте с зафиксированным риском?
-2. netcup 4 vCPU / 8 GB утверждается только для dev/test или также рассматривается как временный all-in-one? Каковы disk size/type, traffic, location, contract и renewal price конкретного SKU?
-3. Какой второй provider/account используется для production и какой — для backup, чтобы исключить общую блокировку аккаунта?
-4. Какие AI providers, repositories и классы данных разрешено отправлять удалённым моделям? Разрешены ли закрытые product docs и user-derived fixtures?
-5. Какой редактор/клиент обязан пройти devcontainer-over-SSH acceptance: Zed, VS Code, CLI или несколько?
-6. Агент одного проекта живёт под тем же Unix user, что интерактивный developer, или нужен отдельный user и односторонний workspace handoff?
-7. Какой object storage выбран для pgBackRest/restic и поддерживает ли он отдельные append/delete credentials, versioning и object lock?
-8. Достаточны ли RPO 5 минут, file RPO 1 час, disaster RTO 2 часа и planned downtime 15 минут?
-9. Нужен ли offline OCI export для redeploy при недоступности GHCR, или достаточно предыдущих images в local storage и registry availability?
-10. Какой срок хранения dev/agent histories допустим с точки зрения приватности и стоимости?
-11. Где хранится recovery escrow для age/restic и кто проверяет его доступность?
+1. Какие AI providers, repositories и классы данных разрешено отправлять удалённым моделям? Разрешены ли закрытые product docs и user-derived fixtures?
+2. Какой редактор/клиент обязан пройти devcontainer-over-SSH acceptance: Zed, VS Code, CLI или несколько?
+3. Агент одного проекта живёт под тем же Unix user, что интерактивный developer, или нужен отдельный user и односторонний workspace handoff?
+4. Какой object storage выбран для pgBackRest/restic и поддерживает ли он отдельные append/delete credentials, versioning и object lock?
+5. Достаточны ли RPO 5 минут, file RPO 1 час, disaster RTO 2 часа и planned downtime 15 минут?
+6. Нужен ли offline OCI export для redeploy при недоступности GHCR, или достаточно предыдущих images в local storage и registry availability?
+7. Какой срок хранения dev/agent histories допустим с точки зрения приватности и стоимости?
+8. Где хранится recovery escrow для age/restic и кто проверяет его доступность?
 
 ### Вопросы, которые закрываются spike/измерением
 
-- хватает ли 8 GB для выбранного числа одновременных agents, .NET/Go/Node builds и test stack без thrashing;
+- хватает ли 16 GB для выбранного числа одновременных agents, .NET/Go/Node builds, test stack и production без thrashing;
 - работает ли выбранная IDE/Dev Container CLI с rootless Podman без privileged workaround;
 - какие writable paths реально нужны каждому production image;
 - сколько места и bandwidth занимают WAL и restic при реальной частоте изменений;
 - достигаются ли заявленные RPO/RTO и 15 минут planned downtime;
 - можно ли ограничить deploy SSH source addresses, не ломая GitHub-hosted Actions и доступ владельца;
-- какое минимальное production VPS sizing подтверждают soak/load tests.
+- срабатывает ли хотя бы один сигнал ADR-034 для переноса production на отдельный VPS.
 
 ## Результирующие артефакты
 
 После принятия и реализации решения должны появиться:
 
-- ADR, который заменяет или supersedes [ADR-006](../decisions/ADR-006-railway-hosting.md);
+- принятый [ADR-034](../decisions/ADR-034-single-netcup-vps-for-initial-self-hosting.md), который заменяет ADR-006;
 - versioned Ansible inventory schema/roles и bootstrap runbook;
 - `.devcontainer/` declarations и documented project credential boundary;
 - systemd/Quadlet units для agents, test и production;
