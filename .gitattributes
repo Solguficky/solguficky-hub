@@ -38,3 +38,11 @@
 # `git diff --no-index --ignore-cr-at-eol --exit-code`.
 .claude/skills/** diff linguist-generated=true
 .agents/skills/** diff linguist-generated=true
+
+# Конфигурация MCP каждого агента — тот же случай: три файла генерируются из
+# .rulesync/mcp.jsonc, их сверяет `just check-mcp`, и читать в review нужно
+# источник, а не три его перевода. `.codex/config.toml` попадает сюда целиком:
+# rulesync владеет всем файлом, а не отдельной секцией в нём.
+.mcp.json diff linguist-generated=true
+.cursor/mcp.json diff linguist-generated=true
+.codex/config.toml diff linguist-generated=true
