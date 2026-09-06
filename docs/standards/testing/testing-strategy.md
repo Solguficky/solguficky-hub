@@ -26,6 +26,25 @@
 - Изменение Protobuf требует contract-level проверки всех consumers.
 - Новый стек тестирования не вводится только ради единообразия с другим языком.
 
+## Стек C#
+
+C#-тестов в репозитории пока нет: на C# написаны AppHost, ServiceDefaults и проект кодогенерации Meetups. Стек ниже рекомендован заранее, чтобы первый тест не выбирал его заново, и перенесён из проверенной практики `pampadu.kasko`. Форму имени задаёт [naming.md](naming.md).
+
+| Назначение | Пакет |
+|---|---|
+| Test framework и runner | xUnit v3 на Microsoft.Testing.Platform; тест-проект собирается как executable |
+| Утверждения | Shouldly по умолчанию; AwesomeAssertions допустим |
+| Моки | Moq |
+| Тестовые данные | AutoFixture (+ AutoMoq), Bogus с фиксированным seed |
+| EF queryables | MockQueryable.Moq |
+| `ILogger` в вывод теста | MartinCostello.Logging.XUnit.v3 |
+
+- Раннер Microsoft.Testing.Platform уже включён репозиторием в корневом `global.json`; тест-проект добавляет `OutputType=Exe` и `UseMicrosoftTestingPlatformRunner=true` и не тянет `Microsoft.NET.Test.Sdk`.
+- NUnit не вводится: test framework в репозитории один.
+- FluentAssertions не вводится: у пакета коммерческая лицензия начиная с v8. AwesomeAssertions — другой пакет и допустим как альтернатива Shouldly.
+- Порядок выбора test double тот же, что в [F#](fsharp.md): чистая функция, запись функций, маленький handwritten fake, и только затем Moq. AutoFixture и Bogus дают данные, а не заменяют этот порядок.
+- Список фиксирует выбор, а не версии: они закрепляются существующим способом репозитория при создании первого тест-проекта.
+
 ## Текущие команды
 
 ```bash
@@ -44,4 +63,4 @@ just telegram-bot-typecheck
 dotnet build && dotnet test
 ```
 
-Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Для F# действует [отдельный standard](fsharp.md). Kotlin- и Scala-сервисы получают стек после создания.
+Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Для F# действует [отдельный standard](fsharp.md), именование тестов во всех стеках задаёт [naming.md](naming.md). Kotlin- и Scala-сервисы получают стек после создания.

@@ -5,7 +5,7 @@ description: "Писать и ревьюить F#-тесты: xUnit v3, Unquote,
 
 # Тестировать F#-код
 
-Порядок работы ниже, форма теста и примеры на каждое правило — в нормативе [testing/fsharp.md](../../../docs/standards/testing/fsharp.md). Открой его вместе с этим skill: примеры живут там и здесь не повторяются. Выбор уровня задаёт [testing-strategy.md](../../../docs/standards/testing/testing-strategy.md), языковые правила дополняет `proj-write-fsharp`.
+Порядок работы ниже, форма теста и примеры на каждое правило — в нормативе [testing/fsharp.md](../../../docs/standards/testing/fsharp.md). Открой его вместе с этим skill: примеры живут там и здесь не повторяются. Выбор уровня задаёт [testing-strategy.md](../../../docs/standards/testing/testing-strategy.md), форму имени — [naming.md](../../../docs/standards/testing/naming.md), языковые правила дополняет `proj-write-fsharp`.
 
 ## 1. Выбери минимальный честный уровень
 
@@ -29,7 +29,7 @@ description: "Писать и ревьюить F#-тесты: xUnit v3, Unquote,
 
 Покрой happy path, каждый затронутый case error DU, пограничное значение и безопасный повтор изменяющей команды. Private-функцию напрямую не проверяй, если то же свойство видно через публичную сигнатуру.
 
-Имя теста — обратные кавычки с предложением, описывающим проверяемое свойство. Одна форма имени на файл.
+Форму имени теста, файла и тестового проекта задаёт [naming.md](../../../docs/standards/testing/naming.md).
 
 ## 3. Используй подходящий double
 
