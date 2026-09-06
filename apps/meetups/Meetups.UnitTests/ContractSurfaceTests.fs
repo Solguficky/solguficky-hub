@@ -7,10 +7,7 @@ open Xunit
 
 let private schema = MeetupsServiceReflection.Descriptor
 
-let private requestTypes =
-    MeetupsService.Descriptor.Methods
-    |> Seq.map (fun m -> m.InputType)
-    |> List.ofSeq
+let private requestTypes = MeetupsService.Descriptor.Methods |> Seq.map (fun m -> m.InputType) |> List.ofSeq
 
 /// Nested messages count: a failure type hidden inside another message must not escape the checks below.
 let rec private withNested (message: MessageDescriptor) =
@@ -21,14 +18,10 @@ let rec private withNested (message: MessageDescriptor) =
 
 let private messages = schema.MessageTypes |> Seq.collect withNested |> List.ofSeq
 
-let private enums =
-    Seq.append schema.EnumTypes (messages |> Seq.collect (fun m -> m.EnumTypes))
-    |> List.ofSeq
+let private enums = Seq.append schema.EnumTypes (messages |> Seq.collect (fun m -> m.EnumTypes)) |> List.ofSeq
 
 let private fieldNames (message: MessageDescriptor) =
-    message.Fields.InDeclarationOrder()
-    |> Seq.map (fun f -> f.Name)
-    |> Set.ofSeq
+    message.Fields.InDeclarationOrder() |> Seq.map (fun f -> f.Name) |> Set.ofSeq
 
 /// Field 1 rendered as "<name>: <type>", so a failing list names the offending request.
 let private firstField (message: MessageDescriptor) =
@@ -43,19 +36,18 @@ let ``The F# library sees the generated service under the meetups v1 package`` (
 
 [<Fact>]
 let ``Service exposes exactly the six slice operations`` () =
-    let actual =
-        MeetupsService.Descriptor.Methods
-        |> Seq.map (fun m -> m.Name)
-        |> Set.ofSeq
+    let actual = MeetupsService.Descriptor.Methods |> Seq.map (fun m -> m.Name) |> Set.ofSeq
 
     let expected =
         set
-            [ "CreateMeetupDraft"
-              "ChangeMeetupAttributes"
-              "SetMeetupSchedule"
-              "PublishMeetup"
-              "ListVisibleMeetups"
-              "GetMeetup" ]
+            [
+                "CreateMeetupDraft"
+                "ChangeMeetupAttributes"
+                "SetMeetupSchedule"
+                "PublishMeetup"
+                "ListVisibleMeetups"
+                "GetMeetup"
+            ]
 
     test <@ actual = expected @>
 
@@ -82,8 +74,7 @@ let ``Change attributes sends every informational field as target state`` () =
 
     // No presence: an omitted attribute is not a distinct "leave unchanged" state.
     let expected =
-        [ "title"; "description"; "venue"; "kind"; "calendar_link" ]
-        |> List.map (fun name -> name, "String", false)
+        [ "title"; "description"; "venue"; "kind"; "calendar_link" ] |> List.map (fun name -> name, "String", false)
 
     test <@ actual = expected @>
 
@@ -99,26 +90,33 @@ let ``Schema names no failure, so a hidden meetup is indistinguishable from a mi
     let names (text: string) = markers |> List.exists (text.ToLowerInvariant().Contains)
 
     let actual =
-        [ for e in enums do
-            if names e.Name then $"enum {e.FullName}"
+        [
+            for e in enums do
+                if names e.Name then
+                    $"enum {e.FullName}"
 
-            for value in e.Values do
-                if names value.Name then $"enum value {e.FullName}.{value.Name}"
+                for value in e.Values do
+                    if names value.Name then
+                        $"enum value {e.FullName}.{value.Name}"
 
-          for m in messages do
-              for f in m.Fields.InDeclarationOrder() do
-                  if names f.Name then $"field {m.FullName}.{f.Name}" ]
+            for m in messages do
+                for f in m.Fields.InDeclarationOrder() do
+                    if names f.Name then
+                        $"field {m.FullName}.{f.Name}"
+        ]
 
     test <@ actual = [] @>
 
 [<Fact>]
 let ``The schema has exactly one absent state and it is first_published_at`` () =
     let actual =
-        [ for message in messages do
-            for f in message.Fields.InDeclarationOrder() do
-                // Message fields and oneofs always carry presence; the contract gives it no meaning.
-                if f.FieldType <> FieldType.Message && f.HasPresence then
-                    $"{message.Name}.{f.Name}" ]
+        [
+            for message in messages do
+                for f in message.Fields.InDeclarationOrder() do
+                    // Message fields and oneofs always carry presence; the contract gives it no meaning.
+                    if f.FieldType <> FieldType.Message && f.HasPresence then
+                        $"{message.Name}.{f.Name}"
+        ]
 
     test <@ actual = [ "MeetupSnapshot.first_published_at" ] @>
 
@@ -135,9 +133,7 @@ let ``Schedule spells no date as a form rather than an absent field`` () =
 [<Fact>]
 let ``Every attribute the change command sets is readable back from the snapshot`` () =
     let shape (message: MessageDescriptor) =
-        message.Fields.InDeclarationOrder()
-        |> Seq.map (fun f -> f.Name, string f.FieldType)
-        |> List.ofSeq
+        message.Fields.InDeclarationOrder() |> Seq.map (fun f -> f.Name, string f.FieldType) |> List.ofSeq
 
     let sent =
         shape ChangeMeetupAttributesRequest.Descriptor

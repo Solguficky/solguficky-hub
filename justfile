@@ -43,8 +43,8 @@ check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups и тесты
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -137,7 +137,19 @@ meetups-build:
 meetups-test:
     dotnet test --solution apps/meetups/Meetups.sln
 
+# Форматирование F# по корневому .editorconfig (секция Fantomas)
+meetups-format: dotnet-tools
+    dotnet fantomas apps/meetups
+
+# Гейт форматирования F#: печатает файлы, которые Fantomas переписал бы
+meetups-format-check: dotnet-tools
+    dotnet fantomas --check apps/meetups
+
 # --- Инструменты -----------------------------------------------------------
+
+# Локальные .NET-инструменты закреплённых версий из .config/dotnet-tools.json
+dotnet-tools:
+    dotnet tool restore
 
 # Установка nats-tester в текущее окружение
 nats-tester-install:
