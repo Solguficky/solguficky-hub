@@ -39,7 +39,7 @@ Linear является источником правды для порядка 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
 | Telegram Bot | Long polling, `/start` с разбором deep link payload, клиент Identity и приветствие; остальные команды и экраны отсутствуют | Единственный вход пользователя |
-| Meetups | Скелет gRPC-сервиса на F#: контракт среза, C#-кодогенерация, заглушечные ответы, health и каркас лога границы; домена, схемы и базы нет | Владелец данных о сходках |
+| Meetups | Скелет gRPC-сервиса на F#: контракт среза, C#-кодогенерация, заглушечные ответы, health, каркас лога границы и миграции состояния с журналом событий; домена нет | Владелец данных о сходках |
 | Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, допуск к продукту и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
@@ -53,13 +53,13 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса |
 | Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
-| Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-034 |
+| Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-035 |
 | Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks ещё нет |
 
 Основной архитектурный поток строится вокруг сходок.

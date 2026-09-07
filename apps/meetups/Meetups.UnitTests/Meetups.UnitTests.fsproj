@@ -15,9 +15,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="TestUtilities/TestData/Sample.fs" />
+    <Compile Include="DomainTests/ScheduleTests.fs" />
+    <Compile Include="DomainTests/CreateMeetupDraftTests.fs" />
+    <Compile Include="DomainTests/ChangeMeetupAttributesTests.fs" />
+    <Compile Include="DomainTests/SetMeetupScheduleTests.fs" />
+    <Compile Include="DomainTests/PublishMeetupTests.fs" />
+    <Compile Include="DomainTests/MeetupApplyTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />
     <Compile Include="PlaceholderTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />
+    <Compile Include="MigrationsTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

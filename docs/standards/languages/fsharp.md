@@ -2,7 +2,7 @@
 
 > **Статус:** Active  
 > **Применимость:** F#-код и `.fsproj` во всех компонентах  
-> **Связанные документы:** [architecture/functional-slices.md](../architecture/functional-slices.md), [testing/fsharp.md](../testing/fsharp.md), [contracts/protobuf.md](../contracts/protobuf.md), service-local README и nested `AGENTS.md`
+> **Связанные документы:** [architecture/functional-slices.md](../architecture/functional-slices.md), [testing/fsharp.md](../testing/fsharp.md), [data/postgresql.md](../data/postgresql.md), [contracts/protobuf.md](../contracts/protobuf.md), service-local README и nested `AGENTS.md`
 
 Норматив задаёт общую форму F#-кода: типы, чистоту доменных функций, явные зависимости, ошибки и interop. Устройство приложения — раскладку по срезам, состав composition root и границы транзакции — задаёт [architecture/functional-slices.md](../architecture/functional-slices.md) там, где это устройство выбрано отдельным решением; для Meetups это [ADR-033](../../decisions/ADR-033-meetups-functional-vertical-slices.md).
 
@@ -174,6 +174,10 @@ let fromProto (message: PlaceOrderRequest) : Result<PlaceOrderInput, MappingErro
 - Новый файл ставится в минимально необходимое место, а не автоматически в конец. Цикл зависимостей исправляется изменением границ модулей, не копированием типов.
 - Namespace обозначает устойчивую область владения; modules используются для функций и деталей конкретного сценария. Имена `Utils`, `Helpers`, `Common` без названной ответственности запрещены.
 - Тип и его модуль-компаньон лежат в одном файле. Одинаковое имя типа и модуля в разных файлах одного namespace — ошибка компиляции FS0250, поэтому «типы отдельно, функции отдельно» здесь не работает.
+
+## PostgreSQL
+
+Миграции и доступ к данным для F#-сервисов рекомендует [стандарт PostgreSQL](../data/postgresql.md): DbUp и Dapper поверх Npgsql, по базе на сервис. Набор рекомендованный, отход от него называется в pull request.
 
 ## Проверка
 

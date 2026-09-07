@@ -17,6 +17,16 @@ internal static class MeetupsSetup
         return context.Builder
             .AddProject<Projects.Meetups>(AppHostNames.Resources.Meetups)
             .WithHttpEndpoint(name: AppHostNames.Endpoints.Grpc)
-            .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc);
+            .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc)
+            // Meetups — .NET, поэтому берёт готовую строку Npgsql из Aspire, а не
+            // URI: `UriExpression` существует для клиентов вроде pgx, которые
+            // формат ключей не понимают, и Identity на Go пользуется именно им.
+            // Здесь URI пришлось бы разбирать обратно в ключи руками.
+            .BindConnection<ProjectResource, PostgresDatabaseResource>(
+                context,
+                AppHostNames.Resources.MeetupsDb,
+                "MEETUPS_DATABASE_URL",
+                database => ReferenceExpression.Create(
+                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"));
     }
 }

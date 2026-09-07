@@ -1,6 +1,6 @@
 # Инфраструктурные контуры и hosting
 
-> **Статус:** Canonical для границы local / production-like / production hosting. Начальная production-площадка выбрана в ADR-034, реализация не завершена.
+> **Статус:** Canonical для границы local / production-like / production hosting. Начальная production-площадка выбрана в ADR-035, реализация не завершена.
 
 ## Daily local development
 
@@ -28,12 +28,12 @@ Railway остаётся fallback, если self-hosting окажется неп
 
 Production deployment не обязан быть первым milestone; порядок хранится в Linear. Эксплуатационные требования при этом формулируются вместе с сервисами, а не в последнюю неделю перед сходкой.
 
-[ADR-034](../decisions/ADR-034-single-vps-for-initial-self-hosting.md) заменяет безусловный выбор Railway из ADR-006 и фиксирует цену общего хоста, сигналы пересмотра и переносимость. Требования к deployment, backup и восстановлению уточняет [RFC-007](../rfcs/RFC-007-remote-development-and-self-hosting-platform.md) до реализации PER-80.
+[ADR-035](../decisions/ADR-035-single-vps-for-initial-self-hosting.md) заменяет безусловный выбор Railway из ADR-006 и фиксирует цену общего хоста, сигналы пересмотра и переносимость. Требования к deployment, backup и восстановлению уточняет [RFC-008](../rfcs/RFC-008-remote-development-and-self-hosting-platform.md) до реализации PER-80.
 
 ## Current-ограничения
 
 - AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
-- Identity ждёт базу `solguficky`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
+- Identity ждёт свою базу `identity`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
 - Telegram Bot ждёт здоровый Identity и получает его proxy endpoint через `IDENTITY_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - живой прогон профилей `infra` и `identity` подтверждён, но профиль с Telegram Bot, `aspire publish` и production-топология не проверены;
@@ -41,7 +41,7 @@ Production deployment не обязан быть первым milestone; пор�
 
 ## Связанные решения
 
-- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Superseded by ADR-034
-- [ADR-034: один Linux VPS для начального self-hosting](../decisions/ADR-034-single-vps-for-initial-self-hosting.md)
+- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Superseded by ADR-035
+- [ADR-035: один Linux VPS для начального self-hosting](../decisions/ADR-035-single-vps-for-initial-self-hosting.md)
 - [ADR-021: Aspire local orchestration](../decisions/ADR-021-aspire-local-orchestration.md)
 - [Aspire 13: JavaScript hosting](https://aspire.dev/whats-new/aspire-13/)

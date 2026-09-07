@@ -38,7 +38,7 @@ internal static class IdentitySetup
             .WaitForCompletion(build)
             .BindConnection<ExecutableResource, PostgresDatabaseResource>(
                 context,
-                AppHostNames.Resources.SolgufickyDb,
+                AppHostNames.Resources.IdentityDb,
                 "IDENTITY_DATABASE_URL",
                 database => ReferenceExpression.Create($"{database.Resource.UriExpression}?sslmode=disable"));
 

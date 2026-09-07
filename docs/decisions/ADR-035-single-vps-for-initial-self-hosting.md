@@ -1,4 +1,4 @@
-# ADR-034: Один Linux VPS для начального self-hosting
+# ADR-035: Один Linux VPS для начального self-hosting
 
 > **Дата:** 2026-09-06<br>
 > **Статус:** Accepted
@@ -11,7 +11,7 @@ PER-80 должен перенести удалённую разработку, 
 
 Предыдущее решение [ADR-006](ADR-006-railway-hosting.md) безусловно выбирало Railway. Оно больше не соответствует цели владельца получить переносимый self-hosting и практику эксплуатации Linux-хоста.
 
-Конкретный регистратор, тариф и способ оплаты не являются частью платформы: хост должен удовлетворять техническим требованиям RFC-007 и заменяться без смены deploy/backup contract.
+Конкретный регистратор, тариф и способ оплаты не являются частью платформы: хост должен удовлетворять техническим требованиям RFC-008 и заменяться без смены deploy/backup contract.
 
 ## Варианты
 
@@ -79,7 +79,7 @@ Production переносится на отдельный VPS, если выпо
 
 ## Связанные документы
 
-- RFC: [RFC-007](../rfcs/RFC-007-remote-development-and-self-hosting-platform.md)
+- RFC: [RFC-008](../rfcs/RFC-008-remote-development-and-self-hosting-platform.md)
 - Architecture: [infrastructure.md](../architecture/infrastructure.md)
 - Standards: новые нормативы этим ADR не создаются
 - Другие ADR: [ADR-006](ADR-006-railway-hosting.md) — заменён этим решением; [ADR-021](ADR-021-aspire-local-orchestration.md) — Aspire остаётся local inner loop

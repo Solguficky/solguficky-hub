@@ -133,8 +133,9 @@ telegram-bot-run: telegram-bot-build
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Форма схемы и заглушки плюс интеграционный прогон: он поднимает настоящий
-# Kestrel на свободном порту и ходит в него настоящим gRPC-каналом.
+# Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
+# Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
+# схемы применяют миграции к PostgreSQL. Без доступной базы они пропускаются.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
     dotnet test --solution apps/meetups/Meetups.sln
@@ -143,7 +144,7 @@ meetups-test:
 meetups-contracts-check:
     sh tools/meetups/check-contracts-generated.sh
 
-# Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS
+# Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS, база — MEETUPS_DATABASE_URL
 meetups-run:
     dotnet run --project apps/meetups/Meetups
 
@@ -164,3 +165,7 @@ dotnet-tools:
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
+
+# Исследовательский зонд Rich Messages; не входит в verify
+telegram-rich-probe:
+    node tools/telegram-rich-probe/probe.mjs
