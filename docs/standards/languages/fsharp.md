@@ -177,7 +177,7 @@ let fromProto (message: PlaceOrderRequest) : Result<PlaceOrderInput, MappingErro
 
 ## PostgreSQL
 
-Миграции и доступ к данным для F#-сервисов задаёт [стандарт PostgreSQL](../data/postgresql.md): DbUp и Dapper поверх Npgsql. EF Core в F# не используется.
+Миграции и доступ к данным для F#-сервисов рекомендует [стандарт PostgreSQL](../data/postgresql.md): DbUp и Dapper поверх Npgsql, по базе на сервис. Набор рекомендованный, отход от него называется в pull request.
 
 ## Проверка
 

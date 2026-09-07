@@ -10,6 +10,12 @@ public static class AppHostNames
     {
         public const string Postgres = "postgres";
         public const string SolgufickyDb = "solguficky";
+
+        // Ресурс и база названы по-разному вынужденно: имя `meetups` в
+        // пространстве ресурсов Aspire уже занято самим сервисом, а база
+        // должна называться по сервису, которому принадлежит.
+        public const string MeetupsDb = "meetups-db";
+        public const string MeetupsDbName = "meetups";
         public const string Nats = "nats";
 
         public const string Identity = "identity";

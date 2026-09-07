@@ -20,7 +20,7 @@ internal static class MeetupsSetup
             .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc)
             .BindConnection<ProjectResource, PostgresDatabaseResource>(
                 context,
-                AppHostNames.Resources.SolgufickyDb,
+                AppHostNames.Resources.MeetupsDb,
                 "MEETUPS_DATABASE_URL",
                 database => ReferenceExpression.Create($"{database.Resource.UriExpression}?sslmode=disable"));
     }
