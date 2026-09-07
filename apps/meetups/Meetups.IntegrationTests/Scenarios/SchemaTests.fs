@@ -213,14 +213,14 @@ type SchemaTests() =
                 """
                 SELECT COUNT(*) FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN ('meetups', 'meetup_events', 'meetup_outbox')
+                  AND table_name IN ('meetups', 'meetup_events')
                 """
                 []
 
         let journal =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ tables = 3L && journal = 2L @>
+        test <@ tables = 2L && journal = 2L @>
 
     [<Fact>]
     member _.``Concurrent apply finishes without error``() =
@@ -585,7 +585,7 @@ type SchemaTests() =
             @>
 
     [<Fact>]
-    member _.``Pending outbox scan survives reversed commit order``() =
+    member _.``Pending dispatch survives reversed commit order``() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
         let firstMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000081")
@@ -593,18 +593,18 @@ type SchemaTests() =
         let firstEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000091")
         let secondEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000092")
 
-        use firstTransaction = new OutboxTransaction(dsn)
+        use firstTransaction = new CommandTransaction(dsn)
         let firstPosition = firstTransaction.Insert(firstMeetup, firstEvent)
 
-        use secondTransaction = new OutboxTransaction(dsn)
+        use secondTransaction = new CommandTransaction(dsn)
         let secondPosition = secondTransaction.Insert(secondMeetup, secondEvent)
         secondTransaction.Commit()
 
-        let dispatched = OutboxScenario.dispatchVisiblePending dsn
+        let dispatched = DispatchScenario.markPendingDispatched dsn
         firstTransaction.Commit()
 
-        let missedByHighWater = OutboxScenario.eventsAfter dsn secondPosition
-        let pending = OutboxScenario.pendingEvents dsn
+        let missedByHighWater = DispatchScenario.eventsAfter dsn secondPosition
+        let pending = DispatchScenario.pendingEvents dsn
 
         test
             <@
@@ -615,43 +615,64 @@ type SchemaTests() =
             @>
 
     [<Fact>]
-    member _.``Outbox record is copied from its journal event``() =
+    member _.``The dispatch mark moves while the event record stays put``() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
-        let journalMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000083")
-        let attemptedMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000084")
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000083")
         let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000093")
 
-        SchemaSql.insertNoDate dsn journalMeetup "hidden" SchemaSql.absent SchemaSql.absent
-        SchemaSql.insertNoDate dsn attemptedMeetup "hidden" SchemaSql.absent SchemaSql.absent
-        SchemaSql.insertEvent dsn eventId journalMeetup 1 "meetup_created"
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn eventId meetupId 1 "meetup_created"
 
-        let actual = OutboxScenario.insertMismatchedRecord dsn eventId attemptedMeetup
-        let journalIsImmutable = OutboxScenario.journalRecordIsImmutable dsn eventId
+        let before = DispatchScenario.readRecord dsn eventId
+        let markBefore = DispatchScenario.readDispatchMark dsn eventId
+        let dispatched = DispatchScenario.markPendingDispatched dsn
+        let after = DispatchScenario.readRecord dsn eventId
+        let markAfter = DispatchScenario.readDispatchMark dsn eventId
 
-        let expected =
-            (journalMeetup,
-             1,
-             "meetup_created",
-             "{}",
-             Guid.Parse("0199c0de-0000-7000-8000-00000000000a"),
-             DateTimeOffset.Parse("2026-09-06T12:00:00Z"))
-
-        test <@ actual = expected && journalIsImmutable @>
+        test
+            <@
+                dispatched = [ eventId ]
+                && after = before
+                && markBefore = None
+                && markAfter = Some DispatchScenario.dispatchedAt
+            @>
 
     [<Fact>]
-    member _.``Rolling back an outbox transaction removes all three records``() =
+    member _.``The event record can be neither rewritten nor deleted``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000084")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000094")
+        let rejectedEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000096")
+
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn eventId meetupId 1 "meetup_created"
+
+        let rewrite = DispatchScenario.recordUpdateCode dsn eventId
+        let delete = DispatchScenario.rowDeleteCode dsn eventId
+        let ordinaryCheck = DispatchScenario.checkViolationCode dsn meetupId rejectedEvent
+
+        test
+            <@
+                rewrite = Some "MT001"
+                && delete = Some "MT002"
+                && ordinaryCheck = Some "23514"
+            @>
+
+    [<Fact>]
+    member _.``Rolling back a command transaction removes state and event``() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
         let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000085")
         let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000095")
 
         do
-            use transaction = new OutboxTransaction(dsn)
+            use transaction = new CommandTransaction(dsn)
             transaction.Insert(meetupId, eventId) |> ignore
 
-        let counts = OutboxScenario.recordCounts dsn meetupId eventId
-        test <@ counts = (0L, 0L, 0L) @>
+        let counts = DispatchScenario.recordCounts dsn meetupId eventId
+        test <@ counts = (0L, 0L) @>
 
     [<Fact>]
     member _.``A meetup cannot carry a lifecycle outside the contract``() =

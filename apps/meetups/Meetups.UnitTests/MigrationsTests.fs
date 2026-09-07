@@ -22,18 +22,18 @@ let ``The first migration creates both meetup tables`` () =
         @>
 
 [<Fact>]
-let ``The second migration creates a complete pending outbox`` () =
+let ``The second migration turns the journal into a dispatchable queue`` () =
     let sql = (Meetups.Migrations.list () |> List.item 1).Sql
 
     test
         <@
-            sql.Contains("CREATE TABLE IF NOT EXISTS meetup_outbox")
-            && sql.Contains("event_id UUID PRIMARY KEY REFERENCES meetup_events (event_id)")
-            && sql.Contains("payload JSONB NOT NULL")
-            && sql.Contains("CREATE TRIGGER meetup_outbox_copy_record")
-            && sql.Contains("NEW.payload")
-            && sql.Contains("CREATE TRIGGER meetup_events_record_immutable")
+            sql.Contains("ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ")
+            && sql.Contains("CREATE INDEX IF NOT EXISTS meetup_events_pending_dispatch")
             && sql.Contains("WHERE dispatched_at IS NULL")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_record_immutable")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_row_undeletable")
+            && sql.Contains("ERRCODE = 'MT001'")
+            && sql.Contains("ERRCODE = 'MT002'")
         @>
 
 [<Fact>]
