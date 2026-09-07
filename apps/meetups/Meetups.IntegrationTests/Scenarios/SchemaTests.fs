@@ -199,7 +199,7 @@ type SchemaTests() =
         let count =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ count = 2L @>
+        test <@ count = int64 (Meetups.Migrations.list ()).Length @>
 
     [<Fact>]
     member _.``Schema SQL is idempotent without the journal``() =
@@ -220,7 +220,11 @@ type SchemaTests() =
         let journal =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ tables = 2L && journal = 2L @>
+        test
+            <@
+                tables = 2L
+                && journal = int64 (Meetups.Migrations.list ()).Length
+            @>
 
     [<Fact>]
     member _.``Concurrent apply finishes without error``() =
@@ -237,7 +241,7 @@ type SchemaTests() =
         let count =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ count = 2L @>
+        test <@ count = int64 (Meetups.Migrations.list ()).Length @>
 
     [<Fact>]
     member _.``A day schedule cannot carry a start time``() =
