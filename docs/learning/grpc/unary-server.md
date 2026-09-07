@@ -121,7 +121,10 @@ Reflection — ещё один библиотечный сервис: он от�
 | Выключить reflection | `grpcurl list` без локальных `.proto` не видит сервисы. В проде её обычно гасят: она отдаёт полный список методов |
 | Случайный UUIDv7 на каждый вызов | `grpcurl` без сохранённого id недетерминирован; повтор с тем же Telegram user id возвращает тот же внутренний идентификатор |
 | Экспортировать поле `health` ради теста | расширяет API пакета ради теста; `GracefulStop` проверяет белый ящик через неэкспортируемое поле |
-| `error_category` = код gRPC | дублирует `result` слово в слово; категория нужна как грубый класс, по которому группируется алерт |
+| `result` = код gRPC | запрос «все отказы среза» собирает три несовпадающих словаря; код транспорта живёт в `grpc_code` |
+| `error_category` = код gRPC | дублирует `grpc_code` слово в слово; категория нужна как грубый класс, по которому группируется алерт |
+| Вывести `use_case` из имени метода | Identity обслуживает все сценарии сразу и о сценарии ничего не знает; значение приходит с края |
+| Писать пустой `use_case` | пустое значение неотличимо от заполненного при запросе на существование поля |
 | Только unary-интерцепторы | `Health/Watch` и `ServerReflectionInfo` остаются без recovery: паника в них уронит процесс |
 | Логировать username из запроса | нарушает [logging.md](../../standards/observability/logging.md): в лог идёт технический идентификатор, не атрибут профиля Telegram |
 | Тест через реальный порт | гонки за `:50051`, зависимость от файрвола; `bufconn` проверяет тот же `New` |
@@ -178,6 +181,9 @@ sequenceDiagram
 - `ResolveIdentity` на закрытом `*sql.DB` отдаёт клиенту `Internal` с текстом `internal`, без DSN. Причина остаётся в логе. Проверено `TestResolveIdentityHidesStorageErrors` и `TestUnaryChainLogsInternalWithoutLeakingCause`.
 - Тип `identityService` компилируется с полем `db` рядом с встроенным `UnimplementedIdentityServiceServer`. Встраивание закрывает интерфейс сервиса, а пул остаётся обычным полем. Проверено сборкой пакета `internal/server`.
 - `-H 'x-request-id: learn-1'` на отказе даёт в stdout поле `request_id":"learn-1"`. Проверено. `IDENTITY_LOG_LEVEL=debug` покрыт тестом, живым процессом не проверялся.
+- `result` принимает только `ok` и `error`, код транспорта живёт в `grpc_code`: `TestUnaryLoggingLevelByCode` и `TestUnaryLoggingRecordsSuccess`. Проверено `go test`.
+- `-H 'x-use-case: start'` даёт в записи `use_case":"start"`; без заголовка и с пустым значением поле отсутствует, а не пишется пустым. Проверено `TestUnaryLoggingRecordsUseCaseWhenPresent` и `TestUnaryLoggingOmitsEmptyUseCase`.
+- Запись без поля каркаса валит тест: `assertFrame` требует `service`, `operation`, `result`, `duration_us`, `grpc_code` и при отказе ещё `error_category` и `error`. Проверено мутацией: уберите `grpc_code` из `logRPC` — краснеют все тесты, которые зовут `assertFrame`.
 - Одна паника даёт **одну** запись: `TestUnaryChainLogsPanicOnce` и `TestStreamChainLogsPanicOnce` собирают ту же пару интерцепторов, что и `New`, и требуют ровно одну запись через хелпер `sole`. Проверено мутацией: добавьте в панической ветке `logRPC` вторую строку `log.Log(ctx, slog.LevelError, "rpc failed", attrs...)` — оба теста падают с `records: got 2 [ERROR rpc panic ERROR rpc failed] want 1`. Граница проверки: `sole` считает записи, прошедшие через инжектированный логгер, поэтому запись мимо него — например через `slog.Default()` — тестом не ловится.
 - Клиент не видит стека: `status.FromError` в `grpc@v1.83.2/status/status.go:100` приводит ошибку к интерфейсу `GRPCStatus() *Status`, а сервер вызывает его на `server.go:1445` для unary и `:1739` для stream. Проверено чтением исходника библиотеки.
 - `NotFound` от Health пишется на `Warn`, `Internal` — на `Error`: `TestUnaryLoggingLevelByCode`. Проверено `go test`.
