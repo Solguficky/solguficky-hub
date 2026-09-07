@@ -13,8 +13,7 @@ topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure);
 topology.AddInfrastructure(R.Nats, NatsSetup.Configure);
 
 topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure);
-// Зависимостей нет: смотрящий приходит в запросе, а схема и PostgreSQL — PER-53.
-topology.AddService(R.Meetups, [], MeetupsSetup.Configure);
+topology.AddService(R.Meetups, [R.Postgres], MeetupsSetup.Configure);
 topology.AddService(R.TelegramBot, [R.Identity], TelegramBotSetup.Configure);
 
 topology.Build();
