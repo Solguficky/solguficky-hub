@@ -173,6 +173,8 @@ func assertRecord(t *testing.T, rec slog.Record, level slog.Level, message strin
 
 const resolveMethod = "/identity.v1.IdentityService/ResolveIdentity"
 
+const resolvedIdentityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd"
+
 type panicStream struct{ grpc.ServerStream }
 
 func (panicStream) Context() context.Context { return context.Background() }
@@ -387,7 +389,7 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 	_, err := unaryLogging(slog.New(logs))(ctx, &identityv1.ResolveIdentityRequest{TelegramUserId: 7}, info,
 		func(context.Context, any) (any, error) {
 			time.Sleep(2 * time.Millisecond)
-			return &identityv1.ResolveIdentityResponse{}, nil
+			return &identityv1.ResolveIdentityResponse{IdentityId: resolvedIdentityID}, nil
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -404,9 +406,60 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 	if got := attrValue(t, rec, "duration_us").Int64(); got < 1000 {
 		t.Fatalf("duration_us: got %d want >= 1000", got)
 	}
-	if got := attrValue(t, rec, "telegram_user_id").Int64(); got != 7 {
-		t.Fatalf("telegram_user_id: got %d want 7", got)
+	if got := attrValue(t, rec, "identity_id").String(); got != resolvedIdentityID {
+		t.Fatalf("identity_id: got %q want %q", got, resolvedIdentityID)
 	}
+}
+
+func TestUnaryLoggingKeepsTelegramFieldsOutOfTheRecord(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+	username := "solgufik_nickname"
+
+	_, err := unaryLogging(slog.New(logs))(t.Context(),
+		&identityv1.ResolveIdentityRequest{TelegramUserId: 515151, TelegramUsername: &username}, info,
+		func(context.Context, any) (any, error) {
+			return &identityv1.ResolveIdentityResponse{IdentityId: resolvedIdentityID}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := logs.sole(t)
+	assertNoAttr(t, rec, "telegram_user_id")
+	assertNoAttr(t, rec, "telegram_username")
+	if got := attrValue(t, rec, "identity_id").String(); got != resolvedIdentityID {
+		t.Fatalf("identity_id: got %q want %q", got, resolvedIdentityID)
+	}
+
+	rec.Attrs(func(a slog.Attr) bool {
+		if strings.Contains(a.Value.String(), username) {
+			t.Fatalf("attribute %q carries the telegram username: %q", a.Key, a.Value.String())
+		}
+		return true
+	})
+}
+
+func TestUnaryLoggingOmitsIdentityIDWhenResolveFails(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+
+	_, err := unaryLogging(slog.New(logs))(t.Context(),
+		&identityv1.ResolveIdentityRequest{TelegramUserId: 515151}, info,
+		func(context.Context, any) (any, error) {
+			return nil, status.Error(codes.InvalidArgument, "telegram_user_id must be positive")
+		})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code: got %v want %s", err, codes.InvalidArgument)
+	}
+
+	rec := logs.sole(t)
+	assertNoAttr(t, rec, "identity_id")
+	assertNoAttr(t, rec, "telegram_user_id")
 }
 
 func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {

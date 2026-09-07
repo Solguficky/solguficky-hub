@@ -48,7 +48,7 @@ func unaryLogging(log *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		start := time.Now()
 		resp, err := handler(ctx, req)
-		logRPC(ctx, log, info.FullMethod, start, req, err)
+		logRPC(ctx, log, info.FullMethod, start, resp, err)
 		return resp, err
 	}
 }
@@ -89,7 +89,7 @@ const (
 	resultError = "error"
 )
 
-func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req any, err error) {
+func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, resp any, err error) {
 	result := resultOK
 	if err != nil {
 		result = resultError
@@ -107,8 +107,13 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	if useCase := incomingMetadata(ctx, "x-use-case"); useCase != "" {
 		attrs = append(attrs, slog.String("use_case", useCase))
 	}
-	if resolve, ok := req.(*identityv1.ResolveIdentityRequest); ok {
-		attrs = append(attrs, slog.Int64("telegram_user_id", resolve.GetTelegramUserId()))
+	// Запись границы берёт идентификатор из ответа, а не из запроса: Telegram
+	// user id и ник — персональные данные, а не ключ поиска, и внутри продукта
+	// человека называет только внутренний идентификатор (logging.md, раздел
+	// «Персональные данные»). У отказа ответа нет, поэтому там остаётся каркас
+	// с `request_id` — по нему запись и связывается с вызовом бота.
+	if resolved, ok := resp.(*identityv1.ResolveIdentityResponse); ok && resolved.GetIdentityId() != "" {
+		attrs = append(attrs, slog.String("identity_id", resolved.GetIdentityId()))
 	}
 	if err == nil {
 		log.DebugContext(ctx, "rpc completed", attrs...)
