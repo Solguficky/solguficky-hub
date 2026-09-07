@@ -8,9 +8,10 @@
 
 PER-80 должен дать две постоянно работающие возможности: удалённую среду разработки с coding agents и воспроизводимый запуск Solguficky в test и production без зависимости от ноутбука. Эти нагрузки имеют противоположный профиль доверия. Среда разработки исполняет изменяемый код, package scripts, плагины и агентские команды; production хранит токен бота и пользовательские данные. Rootless-контейнеры разделяют пользователей и процессы, но используют ядро одного хоста, поэтому не образуют жёсткую границу между недоверенной разработкой и production ([Podman rootless](https://docs.podman.io/en/stable/markdown/podman.1.html), [границы namespaces](https://docs.kernel.org/admin-guide/namespaces/resource-control.html)).
 
-Начальный этап принят в [ADR-034](../decisions/ADR-034-single-netcup-vps-for-initial-self-hosting.md):
+Начальный этап принят в [ADR-034](../decisions/ADR-034-single-vps-for-initial-self-hosting.md):
 
-- один **netcup VPS Lite 3 G12s** с 8 shared vCore, 16 GB RAM и 320 GB SSD размещает remote development, project-scoped coding agents, test и production;
+- один Linux VPS размещает remote development, project-scoped coding agents, test и production;
+- хост — x86-64 KVM с Debian stable, user namespaces, cgroup v2 и rootless Podman; полный одновременный срез рассчитан на 16 GB RAM, 8 GB — нижняя рабочая граница с ужатыми agent/build limits;
 - dev/agents, test и production получают разные Unix-аккаунты, rootless container storage, сети, базы, bot tokens, age recipients, backup credentials и resource limits;
 - хосты восстанавливаются Ansible-сценарием, приложения запускаются rootless Podman Quadlet, версии приложений поставляются из CI по digest;
 - PostgreSQL получает off-host pgBackRest repository с continuous WAL archiving и проверяемым PITR, остальные незаменимые файлы — отдельный restic repository;
@@ -33,11 +34,11 @@ PER-80 должен дать две постоянно работающие во
 
 Сейчас репозиторий этого не обеспечивает. [Aspire-граф](../development/local-development.md) предназначен для local orchestration, утверждённых Dockerfile/Containerfile нет, production deployment не проверен. Текущий успешный local run не доказывает deployability; это уже отмечено в [infrastructure.md](../architecture/infrastructure.md).
 
-Выбор площадки нельзя смешивать с устройством deployment. Для старта выбран netcup VPS Lite 3 G12s, но deployment остаётся переносимым и не зависит от API провайдера. Тариф предоставляет 8 shared vCore, 16 GB RAM, 320 GB SSD, 1 GBit/s interface и автоматически выбранный европейский location; CPU не dedicated, а Lite использует SSD вместо NVMe ([VPS Lite 3 G12s](https://www.netcup.com/en/server/vps/vps-lite-3-g12s-iv-2m), [VPS Lite differences](https://www.netcup.com/en/server/vps-lite)). Документация netcup сообщает, что сервер по умолчанию приходит с Debian Minimal, небольшой partition и оставшимся неразмеченным местом; это требует отдельной проверки диска при bootstrap ([First Use of Your Server](https://www.netcup.com/en/helpcenter/documentation/server/accessing-server)).
+Выбор регистратора и тарифа нельзя смешивать с устройством deployment. Хост должен удовлетворять техническим требованиям ниже; Ansible, Quadlet и backup не зависят от API провайдера. Конкретный биллинг, KYC и ассортимент тарифов в этот RFC не входят.
 
 ### В границах
 
-- критерии выбора VPS и проверка предварительно выбранного тарифа netcup;
+- технические требования к хосту: CPU, RAM, диск, виртуализация, console/rescue, сеть и переносимость;
 - воспроизводимый host baseline: ОС, SSH, firewall, обновления, пользователи, аудит и resource limits;
 - удалённая разработка и фоновые агенты без локальных моделей;
 - изоляция зависимостей и credentials разных проектов;
@@ -86,20 +87,20 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 `archive_timeout` заставляет PostgreSQL переключить неполный WAL segment, но не гарантирует его успешную запись вне хоста; слишком малое значение также раздувает архив. PostgreSQL рекомендует выбирать его осознанно ([Continuous Archiving](https://www.postgresql.org/docs/current/continuous-archiving.html)). RPO 5 минут требует непрерывной метрики времени последнего успешно принятого repository WAL и alert до исчерпания этого окна.
 
-### Критерии площадки
+### Критерии хоста
 
-До окончательного выбора тарифа нужно записать и проверить:
+Хост проверяется по этим требованиям, а не по имени провайдера:
 
 | Критерий | Минимум для PER-80 |
 |---|---|
-| CPU/RAM | VPS Lite 3 G12s: 8 shared vCore / 16 GB; допустимая конкурентность подтверждается замером |
-| Disk | SSD/NVMe, достаточно для двух рабочих копий, image cache и backup staging; alert до 80% |
+| CPU/RAM | x86-64; полный срез рассчитан на 16 GB RAM; 8 GB допустимы только с ужатыми agent/build ceilings, чтобы reservation production и хоста сохранилась; конкурентность подтверждается замером steal, latency и OOM |
+| Disk | SSD или NVMe; места хватает на две рабочие копии, image cache и backup staging; alert до 80% |
 | Virtualization | разрешены user namespaces, cgroup v2 и rootless Podman |
-| Console | независимая от SSH console/rescue; netcup rescue стартует отдельную минимальную ОС и требует остановки сервера ([Rescue System](https://www.netcup.com/en/helpcenter/documentation/server/rescue-system)) |
-| Network | стабильный public IP, provider firewall, исходящий доступ к GitHub/GHCR, AI APIs и backup storage |
-| Portability | стандартный Debian, экспорт/импорт диска как аварийный дополнительный путь; netcup migration работает через offline snapshot и может потребовать сетевой перенастройки ([Migrating Server](https://www.netcup.com/en/helpcenter/documentation/server/server-migration)) |
-| Backup | S3-compatible repository вне VPS и с отдельными credentials; provider snapshot не считается единственной копией |
-| Operations | прозрачные renewal price, срок отмены, регион данных, SLA и процедура удаления дисков |
+| Console | независимая от SSH console или rescue, достаточная чтобы восстановить доступ при сломанном `sshd` |
+| Network | стабильный public IPv4, исходящий доступ к GitHub, GHCR, AI APIs и backup storage; входящий контур кроме SSH закрыт |
+| Portability | стандартный Debian stable; source of truth — Ansible/Quadlet в Git, а не панель или API провайдера |
+| Backup | S3-compatible repository вне этого хоста и с отдельными credentials; snapshot провайдера не считается единственной копией |
+| Disk layout | весь оплаченный диск используется; production state — отдельный bounded filesystem/volume; для dev/agent/test включены block и inode quotas |
 
 ## Модель угроз
 
@@ -120,9 +121,9 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ## Варианты
 
-### Вариант A: один VPS Lite 3 G12s для dev, agents, test и production
+### Вариант A: один Linux VPS для dev, agents, test и production
 
-Плюсы: минимальная цена, один host baseline, простое начало и 16 GB общей capacity без преждевременного разделения. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
+Плюсы: минимальная цена, один host baseline, простое начало и общая ёмкость без преждевременного разделения. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
 
 **Вывод:** выбран для начального self-hosting в ADR-034 с явным остаточным риском и измеримыми сигналами выноса production.
 
@@ -154,7 +155,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ```mermaid
 flowchart LR
-    Laptop[Ноутбук владельца] -->|SSH key only| Host[netcup VPS Lite 3 G12s<br/>16 GB]
+    Laptop[Ноутбук владельца] -->|SSH key only| Host[Linux VPS<br/>x86-64, 8–16 GB]
     Host --> Dev[Dev projects<br/>rootless containers]
     Host --> Agents[Project-scoped agents<br/>systemd user services]
     Host --> Test[Test account<br/>own data and bot token]
@@ -172,7 +173,7 @@ flowchart LR
     Prod -->|long polling, outbound only| Telegram[Telegram Bot API]
 ```
 
-Публичный ingress приложения отсутствует. PostgreSQL, Identity gRPC, NATS при его появлении и любые dashboard ports слушают только loopback или внутреннюю container network. Для временного доступа используется SSH port forwarding. Из входящих сервисов снаружи открыт только SSH; provider firewall netcup начинает с разрешающего поведения, поэтому правила нужно применять и проверять явно. Его stateful tracking действует только для TCP, поэтому ответы на необходимые UDP-запросы, например DNS и NTP, получают отдельные узкие правила и проверяются с IPv4 и IPv6 ([netcup Firewall](https://www.netcup.com/en/helpcenter/documentation/server/firewall)).
+Публичный ingress приложения отсутствует. PostgreSQL, Identity gRPC, NATS при его появлении и любые dashboard ports слушают только loopback или внутреннюю container network. Для временного доступа используется SSH port forwarding. Из входящих сервисов снаружи открыт только SSH. Host firewall — default deny. Если у провайдера есть отдельный firewall, он закрывает всё, кроме SSH, ICMP/ICMPv6 и ответов необходимых UDP-endpoint (DNS, NTP): stateful tracking часто покрывает только TCP. До применения внешнего правила сохраняется console/rescue access; IPv4 и IPv6 проверяются отдельно.
 
 ### Доверительные зоны и аккаунты
 
@@ -189,11 +190,11 @@ Rootless Podman хранит containers и images раздельно для ка
 
 ### Host baseline
 
-Host source of truth — отдельный private operations repository или каталог, который содержит Ansible roles/inventory schema, Quadlet units, deploy/backup scripts и SOPS policy. Inventory не хранит plaintext secrets. Ansible использует идемпотентные modules и check mode, поэтому тот же сценарий применим к netcup, другому VPS и локальной Linux-машине ([Ansible playbooks](https://docs.ansible.com/projects/ansible-core/devel/playbook_guide/playbooks_intro.html)). Изменение host state вручную допустимо только для восстановления доступа и затем переносится в декларацию.
+Host source of truth — отдельный private operations repository или каталог, который содержит Ansible roles/inventory schema, Quadlet units, deploy/backup scripts и SOPS policy. Inventory не хранит plaintext secrets. Ansible использует идемпотентные modules и check mode, поэтому тот же сценарий применим к любому Linux VPS и локальной Linux-машине ([Ansible playbooks](https://docs.ansible.com/projects/ansible-core/devel/playbook_guide/playbooks_intro.html)). Изменение host state вручную допустимо только для восстановления доступа и затем переносится в декларацию.
 
 Первичный bootstrap выполняется в таком порядке:
 
-1. Защитить аккаунты netcup/SCP и GitHub отдельными passphrase и MFA, сохранить rescue procedure вне VPS.
+1. Защитить аккаунт провайдера и GitHub отдельными passphrase и MFA, сохранить rescue procedure вне VPS.
 2. Установить минимальный Debian stable, проверить `lsblk`, filesystem и использование всего оплаченного диска. Разметка оставляет headroom системному разделу, выделяет production state в отдельный bounded filesystem/volume и включает block/inode quotas для dev/agent/test homes и rootless container storage. Ни один непривилегированный project account не может исчерпать место для PostgreSQL WAL или системных операций. Debian 13 — текущая stable ветка; security advisories и repository публикуются проектом Debian ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)).
 3. Создать `ops`, установить его public key, открыть вторую SSH-сессию и только после успешного входа отключить root/password login.
 4. Проверить конфигурацию `sshd -t`, reload без обрыва текущей сессии. Базовый policy:
@@ -207,11 +208,11 @@ Host source of truth — отдельный private operations repository или
    ```
 
    Доступные директивы и их точная семантика определены в [sshd_config](https://man.openbsd.org/sshd_config). Deploy keys дополнительно получают `restrict` и root-owned forced command в `authorized_keys`. Высокоценный локальный SSH agent не пересылается на VPS: forwarded socket доступен root на удалённом хосте ([ForwardAgent](https://man.openbsd.org/ssh_config#ForwardAgent)).
-5. В nftables разрешить established/related, loopback, ICMP/ICMPv6 и SSH; остальной ingress удалить. В provider firewall отдельно разрешить SSH, ICMP/ICMPv6 и ответы от настроенных DNS/NTP endpoints: netcup отслеживает состояние TCP, но не UDP. До применения provider rule сохранить console/rescue access и проверить IPv4/IPv6 отдельно. Порты PostgreSQL, gRPC, NATS и dashboard не публикуются.
+5. В nftables разрешить established/related, loopback, ICMP/ICMPv6 и SSH; остальной ingress удалить. Если провайдер даёт отдельный firewall, повторить ту же политику там, включая ответы DNS/NTP при отсутствии UDP state tracking. До применения внешнего правила сохранить console/rescue access и проверить IPv4/IPv6 отдельно. Порты PostgreSQL, gRPC, NATS и dashboard не публикуются.
 6. Включить автоматическую установку security updates и явное окно reboot. `unattended-upgrade` устанавливает пакеты из разрешённых APT sources и пишет отдельные logs ([Debian manpage](https://manpages.debian.org/stable/unattended-upgrades/unattended-upgrade.8.en.html)). Reboot не выполняется вслепую: production health и свежий backup проверяются до окна.
 7. Установить rootless Podman, `uidmap`, subuid/subgid ranges, systemd user services и cgroup v2. Для long-running rootless services включить linger только service users; `loginctl enable-linger` запускает их user manager на boot и сохраняет после logout ([loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)).
 8. Настроить journald retention, time synchronization, disk/inode/quota/backup-age alerts и отправку уведомлений вне самого VPS. Проверить исчерпание block и inode quota одним disposable project user: production WAL и root operations продолжают работать.
-9. Включить 2 GB zram или encrypted swap как страховку от краткого пика, но не считать её дополнительной capacity. Обычный disk swap запрещён: страницы tmpfs с материализованными секретами могут попасть на диск. Все agent/build processes входят в общий ограниченный cgroup slice и получают дополнительные дочерние лимиты.
+9. Включить zram или encrypted swap как страховку от краткого пика (2 GB на 16 GB host, 1 GB на 8 GB host), но не считать её дополнительной capacity. Обычный disk swap запрещён: страницы tmpfs с материализованными секретами могут попасть на диск. Все agent/build processes входят в общий ограниченный cgroup slice и получают дополнительные дочерние лимиты.
 
 Перед закрытием bootstrap задача обязана доказать: новый SSH login, reboot, отсутствие лишних listening ports, rootless container после reboot, provider console/rescue procedure и повторный Ansible run без неожиданных изменений.
 
@@ -231,15 +232,15 @@ Host source of truth — отдельный private operations repository или
 - незакоммиченная работа агента попадает в hourly restic backup, но нормальный переносимый checkpoint — commit/push в отдельную ветку или worktree;
 - sessions, prompts и tool configs сохраняются только если не содержат credentials; OAuth/token caches исключаются из backup и восстанавливаются повторной авторизацией.
 
-Начальный бюджет общего 16 GB host, который нужно подтвердить метриками:
+Начальный бюджет памяти подтверждается метриками. На 8 GB потолки Dev + agents и Test сжимаются; Production и операционный запас не отдаются агентам:
 
-| Slice | Memory ceiling | CPU ceiling | Примечание |
-|---|---:|---:|---|
-| Host + filesystem cache | резерв 2 GB | — | не отдавать workload slices |
-| Dev + agents вместе | 8 GB | 500% | один тяжёлый build/test job; конкурентность повышается только после замера |
-| Test stack | 2 GB | 100% | disposable data, scale-to-zero допустим |
-| Production | 2 GB | 100% | приоритет над agent jobs; отдельный account и volumes |
-| Операционный запас | 2 GB RAM + 2 GB zram | — | zram страхует краткий пик и не заменяет RAM |
+| Slice | 16 GB host | 8 GB host | CPU ceiling | Примечание |
+|---|---:|---:|---:|---|
+| Host + filesystem cache | 2 GB | 1 GB | — | не отдавать workload slices |
+| Dev + agents вместе | 8 GB | 3 GB | 500% / 200% | один тяжёлый build/test job; конкурентность повышается только после замера |
+| Test stack | 2 GB | 1 GB | 100% | disposable data, scale-to-zero допустим |
+| Production | 2 GB | 2 GB | 100% | приоритет над agent jobs; отдельный account и volumes |
+| Операционный запас | 2 GB RAM + 2 GB zram | 1 GB RAM + 1 GB zram | — | zram страхует краткий пик и не заменяет RAM |
 
 Лимиты — максимумы, а не гарантированные резервации; их сумма оставляет headroom, но shared vCore не обещают постоянной CPU performance. PER-80 не должен обещать количество одновременных агентов до недельного замера peak RSS, memory pressure, swap activity, CPU steal, disk latency и OOM events. При конкуренции сначала ограничиваются agent/build workloads; перенос production выполняется по сигналам ADR-034.
 
@@ -395,7 +396,7 @@ PER-80 нельзя закрыть по наличию файлов. Нужен 
 
 PER-80 должен дать владельцу практику безопасного Linux-hosting, воспроизводимого bootstrap, rootless OCI runtime под systemd, проверки software supply chain и восстановления PostgreSQL на чистом хосте. k3s, multi-region failover и построение собственного PaaS в учебные цели этого среза не входят.
 
-Основной fallback при непригодности или недоступности netcup — новый стандартный Linux VPS, восстановленный тем же Ansible-сценарием из off-provider backup. Managed PaaS остаётся временным fallback для приложения. При недоступном CI владелец повторяет известный подписанный digest с локальной машины, а необходимость offline OCI archive при недоступном GHCR решается отдельно.
+Основной fallback при непригодности текущего хоста — новый Linux VPS, удовлетворяющий тем же техническим требованиям и восстановленный тем же Ansible-сценарием из off-provider backup. Managed PaaS остаётся временным fallback для приложения. При недоступном CI владелец повторяет известный подписанный digest с локальной машины, а необходимость offline OCI archive при недоступном GHCR решается отдельно.
 
 ## Что станет сложнее
 
@@ -413,10 +414,11 @@ PER-80 должен дать владельцу практику безопас�
 
 ### Принято владельцем
 
-- стартовый тариф — netcup VPS Lite 3 G12s с 16 GB RAM;
+- стартовый хост — один Linux VPS; регистратор и тариф выбираются операционно и в платформу не входят;
+- полный одновременный срез рассчитан на 16 GB RAM, 8 GB — нижняя рабочая граница с ужатыми agent/build limits;
 - dev, agents, test и production на первом этапе размещаются на одном хосте с зафиксированным остаточным риском;
 - отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-034;
-- production backup остаётся у другого provider/account, чтобы отказ или блокировка netcup не уничтожили обе копии.
+- production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии.
 
 ### Решения владельца до реализации
 
@@ -431,7 +433,7 @@ PER-80 должен дать владельцу практику безопас�
 
 ### Вопросы, которые закрываются spike/измерением
 
-- хватает ли 16 GB для выбранного числа одновременных agents, .NET/Go/Node builds, test stack и production без thrashing;
+- хватает ли выбранной ёмкости хоста для одновременных agents, .NET/Go/Node builds, test stack и production без thrashing;
 - работает ли выбранная IDE/Dev Container CLI с rootless Podman без privileged workaround;
 - какие writable paths реально нужны каждому production image;
 - сколько места и bandwidth занимают WAL и restic при реальной частоте изменений;
@@ -443,7 +445,7 @@ PER-80 должен дать владельцу практику безопас�
 
 После принятия и реализации решения должны появиться:
 
-- принятый [ADR-034](../decisions/ADR-034-single-netcup-vps-for-initial-self-hosting.md), который заменяет ADR-006;
+- принятый [ADR-034](../decisions/ADR-034-single-vps-for-initial-self-hosting.md), который заменяет ADR-006;
 - versioned Ansible inventory schema/roles и bootstrap runbook;
 - `.devcontainer/` declarations и documented project credential boundary;
 - systemd/Quadlet units для agents, test и production;

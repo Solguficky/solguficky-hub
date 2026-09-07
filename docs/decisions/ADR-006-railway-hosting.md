@@ -1,6 +1,6 @@
 # ADR-006: Выбор Railway в качестве хостинг-платформы
 
-> **Статус:** Superseded by [ADR-034](ADR-034-single-netcup-vps-for-initial-self-hosting.md)
+> **Статус:** Superseded by [ADR-034](ADR-034-single-vps-for-initial-self-hosting.md)
 
 *   **Дата:** 20.10.2025
 *   **Решение:** Проект будет развертываться на **Railway (PaaS)**.
