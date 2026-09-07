@@ -48,21 +48,50 @@ func (e *internalError) Unwrap() error { return e.err }
 
 func (e *internalError) GRPCStatus() *status.Status { return status.New(codes.Internal, "internal") }
 
-// logText отдаёт границе текст без значений строки. PostgreSQL печатает в
-// message и detail то, на чём отказ произошёл, — для профиля это ник Telegram,
-// а logging.md запрещает пускать пользовательский ввод в лог, включая поле
-// error. Операция, SQLSTATE и имя ограничения отвечают, что именно случилось,
-// и пользовательских данных не несут.
+// logText отдаёт границе операцию и распознанную причину, но не текст самой
+// ошибки. Драйвер печатает в нём то, на чём отказ произошёл: PostgreSQL — значения
+// строки (для профиля это ник Telegram), уровень соединения — адрес и строку
+// подключения с паролем. logging.md запрещает и пользовательский ввод, и
+// connection strings с секретами, а перечислить заранее всё, что окажется в
+// произвольной внутренней ошибке, нельзя. Поэтому текст не пересказывается:
+// граница печатает то, что распознала.
 func (e *internalError) logText() string {
+	return e.op + ": " + causeText(e.err)
+}
+
+// causeText называет причину отказа хранилища значениями, которые сервис задал
+// сам. У PostgreSQL это SQLSTATE и имя ограничения: они отвечают, что именно
+// случилось, и пользовательских данных не несут. Отмена и дедлайн распознаются
+// отдельно, потому что отличают чужой отказ от своего. Остальное сводится к типу
+// корневой ошибки — он называет слой, на котором отказ родился, и состоит из
+// имён пакета и типа, а не из данных.
+func causeText(err error) string {
 	var pgErr *pgconn.PgError
-	if !errors.As(e.err, &pgErr) {
-		return e.Error()
+	if errors.As(err, &pgErr) {
+		text := "postgres sqlstate " + pgErr.Code
+		if pgErr.ConstraintName != "" {
+			text += ", constraint " + pgErr.ConstraintName
+		}
+		return text
 	}
-	text := e.op + ": postgres sqlstate " + pgErr.Code
-	if pgErr.ConstraintName != "" {
-		text += ", constraint " + pgErr.ConstraintName
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return fmt.Sprintf("%T", rootCause(err))
 	}
-	return text
+}
+
+func rootCause(err error) error {
+	for {
+		next := errors.Unwrap(err)
+		if next == nil {
+			return err
+		}
+		err = next
+	}
 }
 
 // errorText выбирает текст отказа для записи границы: собственные статусы

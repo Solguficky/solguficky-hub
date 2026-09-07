@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -261,8 +262,48 @@ func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc failed")
 	assertFrame(t, rec, frameWant{result: resultError, code: codes.Internal, operation: info.FullMethod})
-	if got := attrValue(t, rec, "error").String(); !strings.Contains(got, cause.Error()) {
-		t.Fatalf("log error: got %q want to contain %q", got, cause.Error())
+	logged := attrValue(t, rec, "error").String()
+	for _, secret := range []string{"postgres://", "user:pass", "127.0.0.1:5432"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("error carries the connection string into the log: %q", logged)
+		}
+	}
+	if !strings.Contains(logged, "open store") {
+		t.Fatalf("error drops the operation, leaving the failure unreadable: %q", logged)
+	}
+}
+
+// Отмена и дедлайн отличают чужой отказ от своего, поэтому граница называет их,
+// а не сводит к типу корневой ошибки вместе с остальным.
+func TestUnaryLoggingNamesRecognizedCauses(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{name: "deadline", cause: context.DeadlineExceeded, want: "list roles: deadline exceeded"},
+		{name: "canceled", cause: context.Canceled, want: "list roles: canceled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			logs := &capture{}
+			info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+			_, err := unaryLogging(slog.New(logs))(t.Context(), nil, info,
+				func(context.Context, any) (any, error) {
+					return nil, internal("list roles", fmt.Errorf("query: %w", tc.cause))
+				})
+			if status.Code(err) != codes.Internal {
+				t.Fatalf("code: got %v want %s", err, codes.Internal)
+			}
+
+			if got := attrValue(t, logs.sole(t), "error").String(); got != tc.want {
+				t.Fatalf("error: got %q want %q", got, tc.want)
+			}
+		})
 	}
 }
 
