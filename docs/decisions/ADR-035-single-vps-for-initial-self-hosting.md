@@ -7,7 +7,7 @@
 
 PER-80 должен перенести удалённую разработку, фоновых coding agents, test и production Solguficky с ноутбука на постоянно работающую площадку. Локальные модели не запускаются, но на хосте одновременно живут удалённая IDE, language servers, контейнеры, сборки Go, TypeScript и .NET/F#, test stack и runtime приложения. Для такого состава 8 GB остаются нижней рабочей границей: один тяжёлый build или второй агент способен вытеснить production в swap или OOM.
 
-Среда разработки исполняет изменяемый код и сторонние package scripts, а production хранит bot token и пользовательские данные. Разные rootless users и контейнеры уменьшают вероятность случайного доступа, но сохраняют общий kernel, operator plane, диск и пределы ресурсов. Отдельный production VPS дал бы более сильную границу, однако увеличил бы стоимость и объём эксплуатации до появления измеренной необходимости.
+Среда разработки исполняет изменяемый код и сторонние package scripts, а production хранит bot token и пользовательские данные. Разные rootless users и контейнеры уменьшают вероятность случайного доступа, но сохраняют общий kernel, operator plane, диск и пределы ресурсов. Отдельный production VPS дал бы более сильную границу, однако удвоил бы host lifecycle до появления измеренной необходимости.
 
 Предыдущее решение [ADR-006](ADR-006-railway-hosting.md) безусловно выбирало Railway. Оно больше не соответствует цели владельца получить переносимый self-hosting и практику эксплуатации Linux-хоста.
 
@@ -19,7 +19,7 @@ PER-80 должен перенести удалённую разработку, 
 
 **Отдельные VPS для dev/test и production с первого дня.** Снижает blast radius и конкуренцию за ресурсы, но сразу удваивает host lifecycle до появления нагрузки, подтверждающей необходимость.
 
-**Dedicated CPU с первого дня.** Даёт более стабильную скорость продолжительных сборок, но при сопоставимой памяти стоит дороже; один такой хост всё равно сохраняет общий kernel и failure domain.
+**Гарантированная CPU performance с первого дня.** Даёт более стабильную скорость продолжительных сборок, но один такой хост всё равно сохраняет общий kernel и failure domain; выбор конкретного класса CPU у регистратора в решение не входит.
 
 **Railway для production, VPS для разработки.** Уменьшает host operations приложения, но вводит второй deployment и backup contract и возвращает зависимость от PaaS.
 
@@ -29,7 +29,7 @@ PER-80 должен перенести удалённую разработку, 
 
 Начальный self-hosting размещается на одном Linux VPS. Хост — x86-64 KVM с Debian stable, user namespaces, cgroup v2 и rootless Podman. Полный одновременный срез (dev/agents, test, production и операционный запас) рассчитан на 16 GB RAM; 8 GB — нижняя рабочая граница, при которой потолки agent/build сжимаются так, чтобы reservation production и хоста сохранилась. Диск — SSD или NVMe с запасом на две рабочие копии, image cache и backup staging.
 
-Dev, agents, test и production используют один хост, но получают разные Unix accounts, rootless Podman storage, container networks, volumes, bot tokens, databases, age identities и backup credentials. Agent accounts не получают `sudo`, production secrets, deploy credential, host network или container socket. Общие cgroup limits оставляют отдельный запас памяти и CPU production и хосту. Block и inode quotas ограничивают dev/agent/test homes и container storage, а production state получает отдельный bounded filesystem/volume, который эти accounts не могут заполнить.
+Dev, agents, test и production используют один хост, но получают разные Unix accounts, rootless Podman storage, container networks, volumes, bot tokens, databases, age identities и backup credentials. Coding agent либо живёт под отдельным `agent-<project>` без SSH, либо как user service того же `dev-<project>` — выбор ещё открыт в RFC-008. В обоих случаях агент не получает `sudo`, production secrets, deploy credential, host network или container socket. Общие cgroup limits оставляют отдельный запас памяти и CPU production и хосту. Block и inode quotas ограничивают dev/agent/test homes и container storage, а production state получает отдельный bounded filesystem/volume, который эти accounts не могут заполнить.
 
 Общий kernel, operator account, диск и сетевой контур принимаются как остаточный риск начального этапа. Off-provider backup и проверяемое восстановление обязательны с первого production-запуска: snapshot этого VPS не считается независимой копией.
 
@@ -52,7 +52,7 @@ Fallback при непригодности текущего хоста — но�
 - один host bootstrap, firewall, monitoring и patch/reboot lifecycle;
 - ёмкость хоста доступна там, где она нужна в конкретный момент, без раннего разделения на две машины;
 - dev, test и production поднимаются одним переносимым набором деклараций;
-- второй VPS вводится после измеримого сигнала, а не из-за смены биллинга.
+- второй VPS вводится после измеримого сигнала, а не из-за смены регистратора.
 
 ### Что становится сложнее
 
@@ -73,7 +73,7 @@ Production переносится на отдельный VPS, если выпо
 - объём или чувствительность production-данных делает общий kernel неприемлемым риском для владельца;
 - инцидент, уязвимость runtime/kernel или необходимый инструмент требует расширить права агента;
 - production требует независимого maintenance window, availability target или capacity;
-- стоимость увеличения ёмкости одного хоста становится невыгоднее отдельного production VPS.
+- ёмкость одного хоста больше не удерживает одновременные agent/build и production без нарушения health.
 
 До такого сигнала решение пересматривается после первого restore drill и после двух недель наблюдаемой одновременной нагрузки. Отсутствие сигнала означает, что production остаётся на том же VPS.
 

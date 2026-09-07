@@ -58,7 +58,7 @@ PER-80 должен дать две постоянно работающие во
 - выбор конкретного AI-провайдера, агента, harness или IDE;
 - полноценная observability-платформа и disaster recovery между регионами.
 
-PER-99 уже исследует площадку для long-lived agent process, PER-133 — декларацию agent environment, PER-138 — Codex Cloud. Перед созданием новых задач их нужно сверить с этим RFC: PER-80 владеет host/security/deploy/backup-контуром, а существующие задачи должны поставлять ему требования или реализацию своей узкой части.
+PER-99 уже исследует площадку для long-lived agent process, PER-133 — декларацию agent environment, PER-138 — Codex Cloud. PER-97 задаёт полномочия оркестратора и не блокирует инфраструктурную границу. Перед созданием новых задач их нужно сверить с этим RFC: PER-80 владеет host/security/deploy/backup-контуром, а существующие задачи должны поставлять ему требования или реализацию своей узкой части.
 
 ## Сценарии и требования
 
@@ -123,19 +123,19 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ### Вариант A: один Linux VPS для dev, agents, test и production
 
-Плюсы: минимальная цена, один host baseline, простое начало и общая ёмкость без преждевременного разделения. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
+Плюсы: один host lifecycle, общая ёмкость без преждевременного разделения, простое начало. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
 
 **Вывод:** выбран для начального self-hosting в ADR-035 с явным остаточным риском и измеримыми сигналами выноса production.
 
 ### Вариант B: dev/test и production на отдельных VPS
 
-Плюсы: production не делит kernel, filesystem, Podman daemon и operator tokens с недоверенными build/agent workloads; test остаётся дешёвым и близким к dev; отказ dev host не останавливает бота. Минусы: второй тариф, два host lifecycle, раздельное наблюдение и backup.
+Плюсы: production не делит kernel, filesystem, Podman daemon и operator tokens с недоверенными build/agent workloads; test остаётся близким к dev; отказ dev host не останавливает бота. Минусы: второй хост, два host lifecycle, раздельное наблюдение и backup.
 
 **Вывод:** следующий вариант при срабатывании сигнала ADR-035, но не обязательный календарный этап.
 
 ### Вариант C: отдельные dev, test и production hosts
 
-Плюсы: test лучше моделирует production и не зависит от agent load; самая ясная сеть и capacity. Минусы: стоимость и операционная нагрузка преждевременны для текущего состояния продукта.
+Плюсы: test лучше моделирует production и не зависит от agent load; самая ясная сеть и capacity. Минусы: три host lifecycle и операционная нагрузка преждевременны для текущего состояния продукта.
 
 **Вывод:** путь масштабирования после измерений, а не старт PER-80.
 
@@ -279,10 +279,10 @@ Release pipeline:
 Deploy account принимает только строгий формат, например:
 
 ```text
-deploy-solguficky --environment prod --digest sha256:<64 hex>
+deploy-solguficky --digest sha256:<64 hex>
 ```
 
-Forced command вызывает через `sudo -n` единственный root-owned helper; sudoers не разрешает deploy account другие команды или сохранение environment. Helper валидирует repository, environment и digest, отображает environment в фиксированный service account, проверяет Cosign policy, атомарно меняет desired digest и обращается к его user manager через `systemctl --machine=<service-user>@.host --user`. Произвольные user, unit, path и environment variables из SSH-команды не принимаются; этот переход проверяется реальным test deploy после reboot. Автоматический rollback на предыдущий digest разрешён только до изменения схемы либо при доказанной backward compatibility через expand/contract migration. После необратимой миграции failed health gate останавливает deploy: восстановление БД или forward fix выполняется по отдельному runbook. Произвольный shell, tag, path и compose arguments через SSH не принимаются.
+Forced command вызывает через `sudo -n` единственный root-owned helper; sudoers не разрешает deploy account другие команды или сохранение environment. Helper игнорирует `--environment` с клиентской командной строки и берёт среду только из SSH-identity: `deploy-test` не может развернуть production. Он валидирует repository и digest, отображает identity в фиксированный service account, проверяет Cosign policy, атомарно меняет desired digest и обращается к его user manager через `systemctl --machine=<service-user>@.host --user`. Произвольные user, unit, path и environment variables из SSH-команды не принимаются; этот переход проверяется реальным test deploy после reboot. Автоматический rollback на предыдущий digest разрешён только до изменения схемы либо при доказанной backward compatibility через expand/contract migration. После необратимой миграции failed health gate останавливает deploy: восстановление БД или forward fix выполняется по отдельному runbook. Произвольный shell, tag, path и compose arguments через SSH не принимаются.
 
 Ручной emergency redeploy с ноутбука вызывает этот же script и разворачивает уже существующий подписанный digest. Он не собирает source на production и не обходит verification. Отдельный offline сценарий на случай недоступности GHCR может переносить `podman save` archive вместе с digest и Cosign bundle; его необходимость — открытое решение, потому что повышает объём PER-80.
 
@@ -319,14 +319,14 @@ Backup отделяется от переносимой конфигурации
 | Recovery manifest | signed metadata рядом с off-provider backup | Ansible commit, OS, PostgreSQL major, pgBackRest version/config, application digest, schema version и связанные restic snapshots |
 | Metrics/logs | local bounded retention | не блокируют restore; нужная incident retention решается отдельно |
 
-PostgreSQL continuous archiving вместе с base backup позволяет PITR до выбранной точки; `archive_command` должен вернуть успех только после надёжной записи WAL и PostgreSQL повторяет неуспешную архивацию ([PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html)). pgBackRest предоставляет full/differential/incremental backups, repository encryption, restore/PITR и S3-compatible repositories ([pgBackRest User Guide](https://pgbackrest.org/user-guide.html)). Для начального режима:
+PostgreSQL continuous archiving вместе с base backup позволяет PITR до выбранной точки; без `archive-async` `archive_command` должен вернуть успех только после надёжной записи WAL, и PostgreSQL повторяет неуспешную архивацию ([PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html)). С `archive-async` этот успех относится к локальному spool: надёжная копия — только подтверждение repository. pgBackRest предоставляет full/differential/incremental backups, repository encryption, restore/PITR и S3-compatible repositories ([pgBackRest User Guide](https://pgbackrest.org/user-guide.html)). Для начального режима:
 
-- `archive-async=y`, spool на локальном диске с alert по возрасту/размеру;
+- `archive-async=y` допустим только как ускорение: `archive_command` тогда подтверждает запись в локальный spool, а не в repository, и PostgreSQL сегмент больше не повторяет. RPO-метрика, alert и ожидание перед promote считаются по подтверждению pgBackRest repository (успешный archive-push в object storage), а не по `pg_stat_archiver` или коду возврата `archive_command`. Spool живёт на durable local disk с alert по возрасту/размеру; при недоступном repository запись на хосте останавливается до исчерпания RPO, а не после потери spool;
 - weekly full, daily differential;
 - минимум четыре успешных full chains; retention проверяется расчётом реального объёма и WAL, а не только количеством;
 - `archive_timeout=1min` как начальный интервал переключения неполного WAL segment: окно RPO 5 минут должно включать доставку в repository, а не только switch на хосте; фактический RPO считается от последней успешной записи в repository;
 - encrypted repository в другом provider/account/credential domain;
-- непрерывная метрика последнего успешно архивированного WAL с alert до 5 минут, ежедневная проверка backup chain и ежемесячный restore в изолированную базу.
+- непрерывная метрика последнего WAL, принятого off-host repository, с alert до 5 минут, ежедневная проверка backup chain и ежемесячный restore в изолированную базу.
 
 restic шифрует repository, поддерживает S3-compatible backends и требует сохранить пароль: без него данные не восстановить ([Preparing a repository](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html)). `restic check` проверяет структуру, а `--read-data` читает pack data; prune переписывает и удаляет данные, поэтому для backup jobs используется append-only credential, а забывание/prune — отдельный изолированный maintenance context. Maintenance не доверяет только свежим snapshot: retention использует `--keep-within`, проверяет ожидаемые historical snapshots и не запускается автоматически после подозрительного backup burst ([Checking integrity](https://restic.readthedocs.io/en/stable/045_working_with_repos.html), [append-only pattern](https://restic.readthedocs.io/en/stable/060_forget.html)).
 
@@ -349,15 +349,15 @@ restic шифрует repository, поддерживает S3-compatible backend
 
 Аварийное восстановление production:
 
-1. Изолировать старый хост, отозвать его deploy/backup writer access и считать все доступные ему credentials скомпрометированными. Остановить старый poller либо отозвать bot token до нового запуска.
+1. Изолировать старый хост, отозвать его deploy/backup writer access и считать все доступные ему credentials скомпрометированными. Production bot token отозвать сразу: остановка poller на скомпрометированном хосте не гарантирует, что процесс не будет перезапущен. Новый poller стартует только с новым token.
 2. Одноразовым read-only recovery credential проверить signed recovery manifest и до provisioning выбрать совместимые Ansible commit, PostgreSQL major, pgBackRest config/version, application digest и snapshots.
 3. Создать чистый host у текущего или другого provider, применить выбранный Ansible commit и создать новую production age identity, новые deploy/backup credentials и новый bot token.
-4. Старую recovery identity использовать только в изолированном operator context для чтения существующего ciphertext. Каждый credential или secret, материализованный на старом хосте, перевыпустить; прежнее значение нельзя просто зашифровать новому recipient. Неротируемый ключ старого backup repository использовать только read-only для recovery. Старую age identity и неротируемые recovery keys не устанавливать на новый работающий хост. Новые backups пишутся в repository с новым encryption material только после успешного full из шага 8.
-5. Восстановить PostgreSQL pgBackRest до последней безопасной точки совместимым runtime; не запускать приложение до окончания recovery и проверки timeline.
+4. Старую recovery identity использовать только в изолированном operator context для чтения существующего ciphertext. Каждый credential или secret, материализованный на старом хосте, перевыпустить; прежнее значение нельзя просто зашифровать новому recipient. Неротируемый ключ старого backup repository использовать только read-only для recovery. Старую age identity и неротируемые recovery keys не устанавливать на новый работающий хост. Новые backups пишутся в repository с новым encryption material только после успешного full из шага 7.
+5. Восстановить PostgreSQL pgBackRest до последней безопасной точки совместимым runtime; не запускать приложение и не применять его миграции до окончания recovery, сверки timeline и шага 7.
 6. Восстановить согласованные незаменимые volumes из restic. Source, images и caches получить из Git/GHCR.
-7. Материализовать только перевыпущенные runtime secrets, проверить подписи OCI, migrations, database invariants и внутренние health endpoints.
-8. До открытия записи выполнить успешный full backup в новый encrypted repository и убедиться, что WAL archive туда принимается. Пока full не подтверждён, второй отказ хоста оставляет восстановленные данные без независимой копии.
-9. Запустить ровно один production poller с новым token, выполнить Telegram smoke test и включить backup jobs/alerts с новыми credentials. Остаточные credentials старого хоста отозвать до завершения инцидента.
+7. Восстановленный кластер ещё без приложения: выполнить успешный full backup в новый encrypted repository и убедиться, что WAL archive туда принимается. Для этого full используются recovery-credentials восстановленного кластера, не новые runtime secrets. Пока full не подтверждён, второй отказ хоста оставляет восстановленные данные без независимой копии.
+8. Внутри восстановленного кластера сменить пароли/роли так, чтобы они совпали с перевыпущенными runtime secrets, затем материализовать только эти secrets в tmpfs. Миграции схемы — запись поверх уже защищённого full и выполняются только после него.
+9. Проверить подписи OCI, внутренние health endpoints без внешних side effects, запустить ровно один production poller с новым token, выполнить Telegram smoke test и включить backup jobs/alerts с новыми credentials. Остаточные credentials старого хоста отозвать до завершения инцидента.
 
 ### Плановая миграция с минимальным простоем
 
@@ -365,7 +365,7 @@ restic шифрует repository, поддерживает S3-compatible backend
 2. Перенести полный backup chain и непрерывно доставлять WAL в repository, доступный цели.
 3. Восстановить staging copy на цели, проверить версии PostgreSQL/pgBackRest, images и capacity.
 4. Назначить окно, остановить старый bot и другие writers.
-5. Выполнить `pg_switch_wal()`, дождаться успешной архивации последнего segment и записать target LSN/timestamp. Принудительное переключение WAL предусмотрено PostgreSQL для архивации текущего неполного segment ([PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html)).
+5. Выполнить `pg_switch_wal()` и дождаться, пока последний segment появится в off-host pgBackRest repository; записать target LSN/timestamp. Успех `archive_command` при `archive-async` для этого недостаточен. Принудительное переключение WAL предусмотрено PostgreSQL для архивации текущего неполного segment ([PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html)).
 6. Довести recovery цели до зафиксированной точки, проверить отсутствие ошибок и promote.
 7. Восстановить финальные file snapshots, запустить приложения по прежнему подписанному digest и выполнить smoke gate.
 8. Оставить старый host остановленным и без poller на согласованное rollback window. Rollback после новых записей требует отдельного reverse migration; простое включение старой базы запрещено.
