@@ -3,8 +3,6 @@ export type Person = {
   globalRoles: readonly string[];
 };
 
-export type Intent = "start";
-
 export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "unclassified"; payload: string };
