@@ -53,7 +53,7 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса |
 | Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |

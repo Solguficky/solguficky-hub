@@ -169,18 +169,18 @@ sequenceDiagram
 - **Шина не проверяется.** Без уведомлений наружу событий не публикуется, поэтому срез может вообще не задействовать NATS. Сценарий S5 и работа outbox остаются непроверенными до блока [PER-70](https://linear.app/anticnvm/issue/per-70).
 - **Отложенная публикация не проверяется** (S6).
 - **Продуктовое обещание не выполняется целиком.** Солегуфик узнаёт о новой сходке, только открыв бота сам. Категория «новая опубликованная сходка» включена по умолчанию именно потому, что иначе сходку легко пропустить; в срезе этого механизма нет.
-- **Срез опирается на кадры со статусом «гипотеза» и «открытый вопрос»** (P-01, P-04, A-01, A-04, A-05, A-07). Их перевод в «решено» не входит в PER-2 и происходит вместе с решением по RFC-003 и декомпозицией.
+- **Срез опирается на кадры со статусом «гипотеза» и «открытый вопрос»** (P-01, P-04, A-01, A-04, A-05, A-07). Механика карточки принята ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)): дефолт — `sendRichMessage`, плоский текст за тоглом. Перевод кадров макета в «решено» в PER-2 не входит и ждёт отдельного решения владельца о ревизии storyboard.
 
 ## Что срез не решает
 
 Конверт публикации доменных событий, subject'ы и wire-формат журнала остаются открытыми: без уведомлений событий в шину не уходит.
 
-Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)); шесть операций бот → Meetups — синхронный gRPC ([integration.md](integration.md)).
+Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)); продуктовая карточка по умолчанию рисуется `sendRichMessage`, плоский текст остаётся за тоглом процесса ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)); шесть операций бот → Meetups — синхронный gRPC ([integration.md](integration.md)).
 
 ## Связанные документы
 
 - [Архитектурный обзор](overview.md)
 - [Meetups](../services/meetups.md), [Identity](../services/identity.md), [Telegram Bot](../services/telegram-bot.md)
 - [Продукт и границы MVP](../product/overview.md)
-- [ADR-022](../decisions/ADR-022-meetup-state-axes-and-visibility.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), [ADR-032](../decisions/ADR-032-drop-meetup-public-number.md)
+- [ADR-022](../decisions/ADR-022-meetup-state-axes-and-visibility.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), [ADR-032](../decisions/ADR-032-drop-meetup-public-number.md), [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)
 - [Макет Bot UI](../design/bot/README.md)

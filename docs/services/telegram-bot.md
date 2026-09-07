@@ -1,6 +1,6 @@
 # Telegram Bot
 
-> **Слой:** MVP. **Устройство и стек:** Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md), разбор вариантов — [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). **Не спроектированы:** transport к Meetups и второй вход для уведомлений.
+> **Слой:** MVP. **Устройство и стек:** Accepted, [ADR-030](../decisions/ADR-030-telegram-bot.md), разбор вариантов — [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). **Форма сообщений:** Accepted, [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md). **Не спроектированы:** transport к Meetups, второй вход для уведомлений, контракт вклада модуля в карточку и экран настроек.
 
 Компонент **владеет Telegram-представлением продукта**. Он не «делает работу бота»: работу выполняют Meetups, Identity и Notifications. Идентификатор в репозитории и конфигурации — `telegram-bot`, код — `apps/telegram-bot`.
 
@@ -66,7 +66,7 @@ TypeScript, Node.js LTS, grammY. Плагин Conversations для продук�
 
 ### Внутренняя граница
 
-- **Представление** знает Telegram и grammY: разбор апдейта и deep link, `callback_data`, сборка текста и клавиатуры, вызовы Bot API, отказы и лимиты платформы.
+- **Представление** знает Telegram и grammY: разбор апдейта и deep link, `callback_data`, сборка экранной модели, вызов рендерера `rich` или `plain`, вызовы Bot API, отказы и лимиты платформы. Режим задаёт `TELEGRAM_BOT_PRESENTATION`, дефолт `rich` ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)). Юзкейсы по-прежнему не принимают и не возвращают типы Telegram.
 - **Юзкейсы** не принимают и не возвращают типы Telegram, `Context` или `Bot`. Вход — установленная личность, намерение, параметры, ключ команды при необходимости. Выход — результат или отказ, пригодный для любого представления.
 - **Диспетчер приложения** — единственная внутрипроцессная точка входа в юзкейс. Его зовут адаптер апдейтов, компонентный тест и, когда появится, адаптер потребителя шины.
 
@@ -185,7 +185,7 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 
 ## Что решено и что осталось
 
-Принято в [ADR-030](../decisions/ADR-030-telegram-bot.md): имя и граница компонента, стек, long polling, диспетчер приложения, отсутствие собственного хранилища, состояние в сообщении, ключ создания внутри кнопки как требование к контракту Meetups. Кодогенерация Protobuf — `protoc-gen-es` и Connect с транспортом gRPC, команда и место версий — раздел «Кодогенерация TypeScript» в [стандарте Protobuf](../standards/contracts/protobuf.md#кодогенерация-typescript).
+Принято в [ADR-030](../decisions/ADR-030-telegram-bot.md): имя и граница компонента, стек, long polling, диспетчер приложения, отсутствие собственного хранилища, состояние в сообщении, ключ создания внутри кнопки как требование к контракту Meetups. Принято в [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md): продуктовая карточка по умолчанию — `sendRichMessage`; та же экранная модель собирает `sendMessage` при `TELEGRAM_BOT_PRESENTATION=plain`. Кодогенерация Protobuf — `protoc-gen-es` и Connect с транспортом gRPC, команда и место версий — раздел «Кодогенерация TypeScript» в [стандарте Protobuf](../standards/contracts/protobuf.md#кодогенерация-typescript).
 
 Скелет в `apps/telegram-bot` фиксирует toolchain первого TypeScript-компонента:
 
@@ -208,7 +208,8 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 - transport операций к Meetups и его wire-контракт — [PER-51](https://linear.app/anticnvm/issue/PER-51);
 - устройство второго входа и политика доставки уведомлений — [PER-72](https://linear.app/anticnvm/issue/PER-72)…[PER-74](https://linear.app/anticnvm/issue/PER-74);
 - норматив логирования персональных данных — [PER-63](https://linear.app/anticnvm/issue/PER-63);
-- исчезающие сообщения и Rich Messages — [PER-20](https://linear.app/anticnvm/issue/PER-20).
+- что модуль отдаёт в карточку и форма экрана настроек — решения 3 и 4 [RFC-003](../rfcs/RFC-003-bot-presentation-rich-blocks.md);
+- ревизия макета после выбора 1d — отдельное решение владельца.
 
 Решается при реализации следующих задач, ADR не требуется: конкретные тексты и локализация, числа таймаутов и повторов Telegram. RPC к Identity в скелете ограничен 3 с.
 
@@ -216,7 +217,7 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 
 - Выбор линта: [biome/check.md](../learning/biome/check.md)
 - Разбор вариантов: [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md)
-- Решение: [ADR-030](../decisions/ADR-030-telegram-bot.md)
+- Решение: [ADR-030](../decisions/ADR-030-telegram-bot.md), [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)
 - Разбор дефектов предыдущей реализации: [архив](../archive/services/auction-domain-and-lessons.md)
 - [grammY Getting Started](https://grammy.dev/guide/getting-started)
 - [grammY Runner](https://grammy.dev/plugins/runner)
