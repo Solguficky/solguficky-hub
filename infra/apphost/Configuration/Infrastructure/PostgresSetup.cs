@@ -11,14 +11,14 @@ internal static class PostgresSetup
             .WithImageTag("16-alpine")
             .WithDataVolume("solguficky-postgres-data");
 
-        // База принадлежит серверу, а не профилю: её жизненный цикл задаёт этот
-        // setup, поэтому в графе она появляется через Publish, а не через AddInfrastructure.
+        // Базы принадлежат серверу, а не профилю: их жизненный цикл задаёт этот
+        // setup, поэтому в графе они появляются через Publish, а не через AddInfrastructure.
+        // Одна база на сервис: владелец схемы один, и чужой сервис не может ни
+        // прочитать её таблицы, ни столкнуться с ними именами.
         context.Publish(
-            AppHostNames.Resources.SolgufickyDb,
-            postgres.AddDatabase(AppHostNames.Resources.SolgufickyDb));
+            AppHostNames.Resources.IdentityDb,
+            postgres.AddDatabase(AppHostNames.Resources.IdentityDb, AppHostNames.Resources.IdentityDbName));
 
-        // Одна база на сервис: владелец схемы один, и чужой сервис не может
-        // ни прочитать её таблицы, ни столкнуться с ними именами.
         context.Publish(
             AppHostNames.Resources.MeetupsDb,
             postgres.AddDatabase(AppHostNames.Resources.MeetupsDb, AppHostNames.Resources.MeetupsDbName));

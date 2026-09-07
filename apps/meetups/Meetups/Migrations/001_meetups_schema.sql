@@ -103,12 +103,12 @@ CREATE TABLE IF NOT EXISTS meetup_events (
     payload JSONB NOT NULL,
     performed_by UUID NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
-    -- Порядок внутри журнала, но не курсор outbox: identity выдаёт номер до
-    -- коммита, поэтому строка с меньшим position может закоммититься позже
-    -- прочитанной. Читатель отмечает отправленное в dispatched_at и не держит
-    -- high-water mark, иначе такая строка не была бы прочитана никогда.
+    -- Порядок обхода журнала. Курсором outbox эта колонка служить не может:
+    -- identity выдаёт номер до коммита, поэтому строка с меньшим position
+    -- может закоммититься позже уже прочитанной, и high-water mark потерял бы
+    -- её навсегда. Чем публикация наружу отмечает отправленное — открытый
+    -- вопрос, он решается вместе с транспортом публикации, а не здесь.
     position BIGINT GENERATED ALWAYS AS IDENTITY,
-    dispatched_at TIMESTAMPTZ,
     CONSTRAINT meetup_events_version_positive
         CHECK (version >= 1),
     CONSTRAINT meetup_events_type_check
@@ -120,7 +120,3 @@ CREATE TABLE IF NOT EXISTS meetup_events (
     CONSTRAINT meetup_events_position_key
         UNIQUE (position)
 );
-
-CREATE INDEX IF NOT EXISTS meetup_events_pending_dispatch
-    ON meetup_events (position)
-    WHERE dispatched_at IS NULL;

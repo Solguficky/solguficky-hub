@@ -41,7 +41,7 @@ ADR-006 с безусловным Railway больше не выражает ц�
 ## Current-ограничения
 
 - AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
-- Identity ждёт базу `solguficky`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
+- Identity ждёт свою базу `identity`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
 - Telegram Bot ждёт здоровый Identity и получает его proxy endpoint через `IDENTITY_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - живой прогон профилей `infra` и `identity` подтверждён, но профиль с Telegram Bot, `aspire publish` и production-топология не проверены;
