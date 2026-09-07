@@ -1,6 +1,6 @@
 # ADR-035: Один Linux VPS для начального self-hosting
 
-> **Дата:** 2026-09-06<br>
+> **Дата:** 2026-09-06  
 > **Статус:** Accepted
 
 ## Контекст
@@ -37,7 +37,7 @@ Dev, agents, test и production используют один хост, но п�
 
 Learning goal начального этапа — получить практику безопасного Linux-hosting, воспроизводимого Ansible bootstrap, rootless OCI runtime под systemd, supply-chain verification и восстановления PostgreSQL на чистом хосте. Kubernetes, multi-region failover и собственный PaaS в этот этап не входят.
 
-Fallback при непригодности текущего хоста — новый Linux VPS, удовлетворяющий тем же техническим требованиям и восстановленный теми же Ansible, OCI и backup artifacts. Если непригоден сам self-hosting, приложение временно переносится на Railway с сохранением immutable image, secret inventory и проверяемого backup/restore contract; удалённая agent-среда остаётся на VPS либо выключается.
+Fallback при непригодности текущего хоста — новый Linux VPS, удовлетворяющий тем же техническим требованиям и восстановленный теми же Ansible, OCI и backup artifacts. Если непригоден сам self-hosting, приложение временно переносится на Railway: immutable image и secret inventory сохраняются, а backup/PITR идёт по контракту PaaS и проверяется отдельно — это не pgBackRest/restic-контракт VPS. Удалённая agent-среда остаётся на VPS либо выключается.
 
 ## Обоснование
 

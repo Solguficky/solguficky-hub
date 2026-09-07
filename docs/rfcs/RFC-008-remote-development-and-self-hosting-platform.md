@@ -1,7 +1,7 @@
 # RFC-008: Удалённая среда разработки и self-hosting Solguficky
 
-> **Статус:** In Review; hosting model принят в ADR-035<br>
-> **Автор:** Dmitriy Panfilyonok<br>
+> **Статус:** In Review; hosting model принят в ADR-035  
+> **Автор:** Dmitriy Panfilyonok  
 > **Дата:** 2026-09-06
 
 ## Кратко
@@ -85,7 +85,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 | Dev/agent workspace | не более 1 часа для незакоммиченного | не более 4 часов | Git checkpoints + restic; caches восстанавливаются сборкой |
 | Host и deploy-конфигурация | 0 для закоммиченного | входит в RTO хоста | Ansible, Quadlet и SOPS ciphertext в Git |
 
-`archive_timeout` заставляет PostgreSQL переключить неполный WAL segment, но не гарантирует его успешную запись вне хоста; слишком малое значение также раздувает архив. PostgreSQL рекомендует выбирать его осознанно ([Continuous Archiving](https://www.postgresql.org/docs/current/continuous-archiving.html)). RPO 5 минут требует непрерывной метрики времени последнего успешно принятого repository WAL и alert до исчерпания этого окна.
+`archive_timeout` заставляет PostgreSQL переключить неполный WAL segment, но не гарантирует его успешную запись вне хоста; слишком малое значение также раздувает архив. PostgreSQL рекомендует выбирать его осознанно ([Continuous Archiving](https://www.postgresql.org/docs/current/continuous-archiving.html)). RPO 5 минут считается от последнего успешно принятого repository WAL: `archive_timeout` оставляется меньше этого окна, чтобы оставался бюджет на `archive-async` и сеть, а alert срабатывает до исчерпания пяти минут.
 
 ### Критерии хоста
 
@@ -100,7 +100,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 | Network | стабильный public IPv4, исходящий доступ к GitHub, GHCR, AI APIs и backup storage; входящий контур кроме SSH закрыт |
 | Portability | стандартный Debian stable; source of truth — Ansible/Quadlet в Git, а не панель или API провайдера |
 | Backup | S3-compatible repository вне этого хоста и с отдельными credentials; snapshot провайдера не считается единственной копией |
-| Disk layout | весь оплаченный диск используется; production state — отдельный bounded filesystem/volume; для dev/agent/test включены block и inode quotas |
+| Disk layout | весь выделенный диск используется; production state — отдельный bounded filesystem/volume; для dev/agent/test включены block и inode quotas |
 
 ## Модель угроз
 
@@ -181,7 +181,7 @@ flowchart LR
 |---|---|---|---|
 | `ops` | общий хост | SSH, ограниченный sudo, host maintenance | agent/provider tokens, ежедневная разработка |
 | `dev-<project>` | общий хост | свой home, rootless Podman, repo-scoped source/token | соседние homes, sudo, production secrets |
-| `agent-<project>` или user service того же project account | общий хост | только нужный workspace, harness и provider token | SSH login, production/test deploy credential, host Podman socket |
+| `agent-<project>` | общий хост | только нужный workspace, harness и provider token | SSH login, production/test deploy credential, host Podman socket |
 | `solguficky-test` | общий хост | test images, network, volumes, test bot token | production database/token/repository |
 | `solguficky-prod` | общий хост | только runtime images, production network/volumes/secrets | compilers, source tree, dev tokens, interactive SSH |
 | `deploy-test` / `deploy-prod` | общий хост | forced command с environment и digest | shell, arbitrary image/tag, чтение secrets |
@@ -195,7 +195,7 @@ Host source of truth — отдельный private operations repository или
 Первичный bootstrap выполняется в таком порядке:
 
 1. Защитить аккаунт провайдера и GitHub отдельными passphrase и MFA, сохранить rescue procedure вне VPS.
-2. Установить минимальный Debian stable, проверить `lsblk`, filesystem и использование всего оплаченного диска. Разметка оставляет headroom системному разделу, выделяет production state в отдельный bounded filesystem/volume и включает block/inode quotas для dev/agent/test homes и rootless container storage. Ни один непривилегированный project account не может исчерпать место для PostgreSQL WAL или системных операций. Debian 13 — текущая stable ветка; security advisories и repository публикуются проектом Debian ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)).
+2. Установить минимальный Debian stable, проверить `lsblk`, filesystem и использование всего выделенного диска. Разметка оставляет headroom системному разделу, выделяет production state в отдельный bounded filesystem/volume и включает block/inode quotas для dev/agent/test homes и rootless container storage. Ни один непривилегированный project account не может исчерпать место для PostgreSQL WAL или системных операций. Debian 13 — текущая stable ветка; security advisories и repository публикуются проектом Debian ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)).
 3. Создать `ops`, установить его public key, открыть вторую SSH-сессию и только после успешного входа отключить root/password login.
 4. Проверить конфигурацию `sshd -t`, reload без обрыва текущей сессии. Базовый policy:
 
@@ -207,7 +207,7 @@ Host source of truth — отдельный private operations repository или
    AllowUsers ops dev-solguficky deploy-test deploy-prod
    ```
 
-   Доступные директивы и их точная семантика определены в [sshd_config](https://man.openbsd.org/sshd_config). Deploy keys дополнительно получают `restrict` и root-owned forced command в `authorized_keys`. Высокоценный локальный SSH agent не пересылается на VPS: forwarded socket доступен root на удалённом хосте ([ForwardAgent](https://man.openbsd.org/ssh_config#ForwardAgent)).
+   Dedicated `agent-*` accounts в `AllowUsers` не входят: у них нет SSH login. Если агент живёт user service того же `dev-<project>`, SSH принадлежит интерактивному developer-аккаунту, а не отдельной identity агента; какой из двух вариантов выбран — открытый вопрос 3. Доступные директивы и их точная семантика определены в [sshd_config](https://man.openbsd.org/sshd_config). Deploy keys дополнительно получают `restrict` и root-owned forced command в `authorized_keys`. Высокоценный локальный SSH agent не пересылается на VPS: forwarded socket доступен root на удалённом хосте ([ForwardAgent](https://man.openbsd.org/ssh_config#ForwardAgent)).
 5. В nftables разрешить established/related, loopback, ICMP/ICMPv6 и SSH; остальной ingress удалить. Если провайдер даёт отдельный firewall, повторить ту же политику там, включая ответы DNS/NTP при отсутствии UDP state tracking. До применения внешнего правила сохранить console/rescue access и проверить IPv4/IPv6 отдельно. Порты PostgreSQL, gRPC, NATS и dashboard не публикуются.
 6. Включить автоматическую установку security updates и явное окно reboot. `unattended-upgrade` устанавливает пакеты из разрешённых APT sources и пишет отдельные logs ([Debian manpage](https://manpages.debian.org/stable/unattended-upgrades/unattended-upgrade.8.en.html)). Reboot не выполняется вслепую: production health и свежий backup проверяются до окна.
 7. Установить rootless Podman, `uidmap`, subuid/subgid ranges, systemd user services и cgroup v2. Для long-running rootless services включить linger только service users; `loginctl enable-linger` запускает их user manager на boot и сохраняет после logout ([loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)).
@@ -232,15 +232,15 @@ Host source of truth — отдельный private operations repository или
 - незакоммиченная работа агента попадает в hourly restic backup, но нормальный переносимый checkpoint — commit/push в отдельную ветку или worktree;
 - sessions, prompts и tool configs сохраняются только если не содержат credentials; OAuth/token caches исключаются из backup и восстанавливаются повторной авторизацией.
 
-Начальный бюджет памяти подтверждается метриками. На 8 GB потолки Dev + agents и Test сжимаются; Production и операционный запас не отдаются агентам:
+Начальный бюджет памяти подтверждается метриками. На 8 GB потолки Dev + agents и Test сжимаются; reservation production и хоста сохраняется, а операционный запас RAM снимается:
 
 | Slice | 16 GB host | 8 GB host | CPU ceiling | Примечание |
 |---|---:|---:|---:|---|
-| Host + filesystem cache | 2 GB | 1 GB | — | не отдавать workload slices |
+| Host + filesystem cache | 2 GB | 2 GB | — | reservation хоста не сжимается |
 | Dev + agents вместе | 8 GB | 3 GB | 500% / 200% | один тяжёлый build/test job; конкурентность повышается только после замера |
 | Test stack | 2 GB | 1 GB | 100% | disposable data, scale-to-zero допустим |
 | Production | 2 GB | 2 GB | 100% | приоритет над agent jobs; отдельный account и volumes |
-| Операционный запас | 2 GB RAM + 2 GB zram | 1 GB RAM + 1 GB zram | — | zram страхует краткий пик и не заменяет RAM |
+| Операционный запас | 2 GB RAM + 2 GB zram | 0 GB RAM + 1 GB zram | — | на 8 GB запас RAM отсутствует; zram страхует краткий пик и не заменяет RAM |
 
 Лимиты — максимумы, а не гарантированные резервации; их сумма оставляет headroom, но shared vCore не обещают постоянной CPU performance. PER-80 не должен обещать количество одновременных агентов до недельного замера peak RSS, memory pressure, swap activity, CPU steal, disk latency и OOM events. При конкуренции сначала ограничиваются agent/build workloads; перенос production выполняется по сигналам ADR-035.
 
@@ -324,7 +324,7 @@ PostgreSQL continuous archiving вместе с base backup позволяет P
 - `archive-async=y`, spool на локальном диске с alert по возрасту/размеру;
 - weekly full, daily differential;
 - минимум четыре успешных full chains; retention проверяется расчётом реального объёма и WAL, а не только количеством;
-- `archive_timeout=5min` как начальный интервал переключения неполного WAL segment; фактический RPO считается от последней успешной записи в repository;
+- `archive_timeout=1min` как начальный интервал переключения неполного WAL segment: окно RPO 5 минут должно включать доставку в repository, а не только switch на хосте; фактический RPO считается от последней успешной записи в repository;
 - encrypted repository в другом provider/account/credential domain;
 - непрерывная метрика последнего успешно архивированного WAL с alert до 5 минут, ежедневная проверка backup chain и ежемесячный restore в изолированную базу.
 
@@ -352,11 +352,12 @@ restic шифрует repository, поддерживает S3-compatible backend
 1. Изолировать старый хост, отозвать его deploy/backup writer access и считать все доступные ему credentials скомпрометированными. Остановить старый poller либо отозвать bot token до нового запуска.
 2. Одноразовым read-only recovery credential проверить signed recovery manifest и до provisioning выбрать совместимые Ansible commit, PostgreSQL major, pgBackRest config/version, application digest и snapshots.
 3. Создать чистый host у текущего или другого provider, применить выбранный Ansible commit и создать новую production age identity, новые deploy/backup credentials и новый bot token.
-4. Старую recovery identity использовать только в изолированном operator context для чтения существующего ciphertext. Каждый credential или secret, материализованный на старом хосте, перевыпустить; прежнее значение нельзя просто зашифровать новому recipient. Неротируемый ключ старого backup repository использовать только read-only для recovery, после чего новые backups писать в repository с новым encryption material. Старую age identity и неротируемые recovery keys не устанавливать на новый работающий хост.
+4. Старую recovery identity использовать только в изолированном operator context для чтения существующего ciphertext. Каждый credential или secret, материализованный на старом хосте, перевыпустить; прежнее значение нельзя просто зашифровать новому recipient. Неротируемый ключ старого backup repository использовать только read-only для recovery. Старую age identity и неротируемые recovery keys не устанавливать на новый работающий хост. Новые backups пишутся в repository с новым encryption material только после успешного full из шага 8.
 5. Восстановить PostgreSQL pgBackRest до последней безопасной точки совместимым runtime; не запускать приложение до окончания recovery и проверки timeline.
 6. Восстановить согласованные незаменимые volumes из restic. Source, images и caches получить из Git/GHCR.
 7. Материализовать только перевыпущенные runtime secrets, проверить подписи OCI, migrations, database invariants и внутренние health endpoints.
-8. Запустить ровно один production poller с новым token, выполнить Telegram smoke test и включить backup jobs/alerts с новыми credentials. Остаточные credentials старого хоста отозвать до завершения инцидента.
+8. До открытия записи выполнить успешный full backup в новый encrypted repository и убедиться, что WAL archive туда принимается. Пока full не подтверждён, второй отказ хоста оставляет восстановленные данные без независимой копии.
+9. Запустить ровно один production poller с новым token, выполнить Telegram smoke test и включить backup jobs/alerts с новыми credentials. Остаточные credentials старого хоста отозвать до завершения инцидента.
 
 ### Плановая миграция с минимальным простоем
 
@@ -389,6 +390,7 @@ PER-80 нельзя закрыть по наличию файлов. Нужен 
 - manual command с ноутбука повторно разворачивает известный digest;
 - test и production используют разные bot tokens, DB, secrets и repositories;
 - restore drill выбирает совместимый runtime из signed recovery manifest и восстанавливает базу и файлы на чистом host в пределах измеренных RPO/RTO;
+- disaster restore не открывает запись, пока новый encrypted repository не принял успешный full backup;
 - planned migration drill доказывает единственный poller и отсутствие потерянных подтверждённых записей;
 - потеря общего хоста не уничтожает off-provider backup, recovery keys и возможность восстановить production на новом VPS.
 
