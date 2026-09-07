@@ -7,7 +7,9 @@ open Xunit
 
 [<Fact>]
 let ``When the title is empty expect the publication is refused`` () =
-    test <@ Meetup.decidePublish Sample.fixedNow Sample.draft = Error TitleRequiredForPublication @>
+    let decision = Meetup.decidePublish Sample.fixedNow (Existing Sample.draft)
+
+    test <@ decision = Error TitleRequiredForPublication @>
 
 [<Fact>]
 let ``When the title is only blanks expect the publication is refused`` () =
@@ -16,13 +18,18 @@ let ``When the title is only blanks expect the publication is refused`` () =
             Title = "   "
         }
 
-    let blank = Meetup.applyChanged Sample.draft (AttributesChanged blankTitle)
+    let blank =
+        Meetup.apply (Existing Sample.draft) (MeetupChanged(AttributesChanged blankTitle))
 
-    test <@ Meetup.decidePublish Sample.fixedNow blank = Error TitleRequiredForPublication @>
+    test <@ Meetup.decidePublish Sample.fixedNow (Existing blank) = Error TitleRequiredForPublication @>
+
+[<Fact>]
+let ``When the meetup does not exist expect the publication is refused`` () =
+    test <@ Meetup.decidePublish Sample.fixedNow Initial = Error MeetupNotFound @>
 
 [<Fact>]
 let ``When the title is set expect a MeetupPublished event carrying the supplied instant`` () =
-    let decision = Meetup.decidePublish Sample.fixedNow Sample.titled
+    let decision = Meetup.decidePublish Sample.fixedNow (Existing Sample.titled)
 
     test <@ decision = Ok(Some(MeetupPublished Sample.fixedNow)) @>
 
@@ -35,12 +42,12 @@ let ``When the publication is applied expect the meetup becomes visible and stam
 [<Fact>]
 let ``When an already visible meetup is published again expect no event`` () =
     // Команда сформулирована как целевое состояние: повтор успешен и события не даёт.
-    test <@ Meetup.decidePublish Sample.later Sample.published = Ok None @>
+    test <@ Meetup.decidePublish Sample.later (Existing Sample.published) = Ok None @>
 
 [<Fact>]
 let ``When the publication is applied twice expect the first publication mark to survive`` () =
     let republished =
-        Meetup.applyPublished Sample.published Sample.later
+        Meetup.apply (Existing Sample.published) (MeetupPublished Sample.later)
         |> Meetup.toSnapshot
 
     test <@ republished.FirstPublishedAt = Some Sample.fixedNow @>

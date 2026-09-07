@@ -1,8 +1,9 @@
 /// Один валидный образец на доменный тип: вариации тесты получают переопределением,
 /// потому что отличие от нормы и есть суть теста.
 ///
-/// Состояния строятся публичным путём — применением событий. Другого способа
-/// получить Meetup у теста нет, и это то же свойство ядра, которое проверяет срез.
+/// Состояния строятся публичным путём — применением событий из состояния «до».
+/// Другого способа получить сходку у теста нет, и это то же свойство ядра, которое
+/// проверяет срез.
 module Meetups.TestData.Sample
 
 open System
@@ -29,10 +30,11 @@ let attributes =
 let day = Day(DateOnly(2026, 10, 3))
 
 /// Свежесозданный черновик: пустые тексты, NoDate, Planned, Hidden, версия 1.
-let draft = Meetup.applyCreated meetupId authorId
+let draft = Meetup.apply Initial (MeetupCreated(meetupId, authorId))
 
 /// Черновик с заголовком: состояние, из которого публикация разрешена.
-let titled = Meetup.applyChanged draft (AttributesChanged attributes)
+let titled =
+    Meetup.apply (Existing draft) (MeetupChanged(AttributesChanged attributes))
 
 /// Опубликованная сходка: видна, отметка первой публикации заполнена fixedNow.
-let published = Meetup.applyPublished titled fixedNow
+let published = Meetup.apply (Existing titled) (MeetupPublished fixedNow)

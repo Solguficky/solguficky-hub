@@ -7,7 +7,7 @@ open Xunit
 
 [<Fact>]
 let ``When no meetup exists expect a MeetupCreated event naming the caller as author`` () =
-    let decision = Meetup.decideCreateDraft Sample.authorId Sample.meetupId None
+    let decision = Meetup.decideCreateDraft Sample.authorId Sample.meetupId Initial
 
     test <@ decision = Ok(Some(MeetupCreated(Sample.meetupId, Sample.authorId))) @>
 
@@ -34,13 +34,13 @@ let ``When the draft is created expect an empty hidden meetup at version one`` (
 [<Fact>]
 let ``When the same author repeats creation expect no event`` () =
     let decision =
-        Meetup.decideCreateDraft Sample.authorId Sample.meetupId (Some Sample.draft)
+        Meetup.decideCreateDraft Sample.authorId Sample.meetupId (Existing Sample.draft)
 
     test <@ decision = Ok None @>
 
 [<Fact>]
 let ``When another author reuses the identifier expect the draft is refused`` () =
     let decision =
-        Meetup.decideCreateDraft Sample.otherAuthorId Sample.meetupId (Some Sample.draft)
+        Meetup.decideCreateDraft Sample.otherAuthorId Sample.meetupId (Existing Sample.draft)
 
     test <@ decision = Error DraftBelongsToAnotherAuthor @>

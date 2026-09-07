@@ -33,11 +33,12 @@ type MeetupEvent =
 /// Отклонённый переход состояния. Отказа по правам здесь нет и не будет: право
 /// действовать — политика границы, а не бизнес-инвариант.
 type DomainError =
-    | TitleRequiredForPublication
+    | MeetupNotFound
     | DraftBelongsToAnotherAuthor
+    | TitleRequiredForPublication
 
-/// Состояние агрегата (ADR-031). Представление приватно, поэтому запись копией вне
-/// этого файла не собирается: единственный путь изменения поля — применение
+/// Сходка (ADR-031). Представление приватно, поэтому запись копией вне этого файла
+/// не собирается: единственный путь появления и изменения полей — применение
 /// события (ADR-024). Читается состояние снимком.
 type Meetup =
     private
@@ -56,15 +57,19 @@ type Meetup =
             Version: int64
         }
 
-module Meetup =
+/// Состояние, из которого принимается решение и в котором применяется событие.
+/// Состояние «до» есть у каждого события, включая создание: у него это Initial,
+/// «сходки ещё нет». Пустой сходки с идентификатором и нулевой версией при этом не
+/// существует — поля живут только в Existing.
+type MeetupState =
+    | Initial
+    | Existing of Meetup
 
-    // Применение события — единственный путь изменения полей. У создания нет
-    // состояния «до», поэтому у него своя функция: пара «состояния нет и событие
-    // изменения» остаётся невыразимой, а мёртвая ветка в match не заводится.
+module Meetup =
 
     /// Черновик заводится пустым: пустые тексты, NoDate, Planned, Hidden, без
     /// отметки первой публикации. Версия агрегата начинается с единицы.
-    let applyCreated (id: MeetupId) (author: PersonId) : Meetup =
+    let private create (id: MeetupId) (author: PersonId) : Meetup =
         {
             Id = id
             Author = author
@@ -80,7 +85,7 @@ module Meetup =
             Version = 1L
         }
 
-    let applyChanged (meetup: Meetup) (change: MeetupChange) : Meetup =
+    let private change (meetup: Meetup) (change: MeetupChange) : Meetup =
         let changed =
             match change with
             | AttributesChanged attributes ->
@@ -101,12 +106,27 @@ module Meetup =
         }
 
     /// I6: отметка первой публикации ставится один раз и после этого не меняется.
-    let applyPublished (meetup: Meetup) (at: DateTimeOffset) : Meetup =
+    let private publish (meetup: Meetup) (at: DateTimeOffset) : Meetup =
         { meetup with
             Visibility = Visible
             FirstPublishedAt = meetup.FirstPublishedAt |> Option.orElse (Some at)
             Version = meetup.Version + 1L
         }
+
+    /// Применение события — единственный путь появления и изменения полей.
+    /// Результат всегда существующая сходка: каждый повод оставляет её на месте.
+    let apply (state: MeetupState) (event: MeetupEvent) : Meetup =
+        match state, event with
+        | Initial, MeetupCreated(id, author) -> create id author
+        | Existing meetup, MeetupChanged changed -> change meetup changed
+        | Existing meetup, MeetupPublished at -> publish meetup at
+        | Initial, MeetupChanged _
+        | Initial, MeetupPublished _
+        | Existing _, MeetupCreated _ ->
+            // Событие решено не из этого состояния. Ни одно решение такой пары не
+            // возвращает, поэтому это нарушение внутреннего контракта оболочки, а не
+            // отклонённый переход домена: исключение, а не вариант DomainError.
+            invalidOp "the event was decided from another state"
 
     /// Единственный путь чтения состояния наружу.
     let toSnapshot (meetup: Meetup) : MeetupSnapshot =
@@ -134,30 +154,34 @@ module Meetup =
     let decideCreateDraft
         (author: PersonId)
         (id: MeetupId)
-        (existing: Meetup option)
+        (state: MeetupState)
         : Result<MeetupEvent option, DomainError> =
-        match existing with
-        | None -> Ok(Some(MeetupCreated(id, author)))
-        | Some meetup when meetup.Author = author -> Ok None
-        | Some _ -> Error DraftBelongsToAnotherAuthor
+        match state with
+        | Initial -> Ok(Some(MeetupCreated(id, author)))
+        | Existing meetup when meetup.Author = author -> Ok None
+        | Existing _ -> Error DraftBelongsToAnotherAuthor
 
-    // Двум командам ниже отказать нечем: атрибуты и расписание тотальны, а стоячего
-    // инварианта «видимая сходка имеет заголовок» в срезе нет. Result у них поэтому
-    // не заводится — вариант отказа без единой ветки нечем проверить, а граница
-    // получила бы невозможный случай в исчерпывающем match. Состояние параметром
-    // остаётся: форма решения общая для четырёх команд, и редактирование после
-    // публикации вернёт ему смысл, не меняя сигнатуру.
+    /// Атрибуты и расписание тотальны, а стоячего инварианта «видимая сходка имеет
+    /// заголовок» в срезе нет: единственный отказ этих двух команд — несуществующая
+    /// сходка.
+    let decideChangeAttributes (attributes: MeetupAttributes) (state: MeetupState) : Result<MeetupEvent, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing _ -> Ok(MeetupChanged(AttributesChanged attributes))
 
-    let decideChangeAttributes (attributes: MeetupAttributes) (_meetup: Meetup) : MeetupEvent =
-        MeetupChanged(AttributesChanged attributes)
-
-    let decideSetSchedule (schedule: Schedule) (_meetup: Meetup) : MeetupEvent = MeetupChanged(ScheduleChanged schedule)
+    let decideSetSchedule (schedule: Schedule) (state: MeetupState) : Result<MeetupEvent, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing _ -> Ok(MeetupChanged(ScheduleChanged schedule))
 
     /// I5 проверяется раньше I4: уже видимая сходка успешна независимо от остального,
     /// потому что команда сформулирована как целевое состояние и повтор не ошибка.
     /// I4: заголовок из одних пробелов заголовком не считается.
-    let decidePublish (now: DateTimeOffset) (meetup: Meetup) : Result<MeetupEvent option, DomainError> =
-        match meetup.Visibility with
-        | Visible -> Ok None
-        | Hidden when String.IsNullOrWhiteSpace meetup.Title -> Error TitleRequiredForPublication
-        | Hidden -> Ok(Some(MeetupPublished now))
+    let decidePublish (now: DateTimeOffset) (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match meetup.Visibility with
+            | Visible -> Ok None
+            | Hidden when String.IsNullOrWhiteSpace meetup.Title -> Error TitleRequiredForPublication
+            | Hidden -> Ok(Some(MeetupPublished now))
