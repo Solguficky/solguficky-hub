@@ -84,15 +84,28 @@ func streamRecovery() grpc.StreamServerInterceptor {
 	}
 }
 
+const (
+	resultOK    = "ok"
+	resultError = "error"
+)
+
 func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req any, err error) {
+	result := resultOK
+	if err != nil {
+		result = resultError
+	}
 	attrs := []any{
 		slog.String("service", ServiceName),
 		slog.String("operation", method),
-		slog.String("result", status.Code(err).String()),
+		slog.String("result", result),
 		slog.Int64("duration_us", time.Since(start).Microseconds()),
+		slog.String("grpc_code", status.Code(err).String()),
 	}
 	if id := requestID(ctx); id != "" {
 		attrs = append(attrs, slog.String("request_id", id))
+	}
+	if useCase := incomingMetadata(ctx, "x-use-case"); useCase != "" {
+		attrs = append(attrs, slog.String("use_case", useCase))
 	}
 	if resolve, ok := req.(*identityv1.ResolveIdentityRequest); ok {
 		attrs = append(attrs, slog.Int64("telegram_user_id", resolve.GetTelegramUserId()))
@@ -132,11 +145,15 @@ func serverFault(code codes.Code) bool {
 }
 
 func requestID(ctx context.Context) string {
+	return incomingMetadata(ctx, "x-request-id", "x-correlation-id")
+}
+
+func incomingMetadata(ctx context.Context, keys ...string) string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return ""
 	}
-	for _, key := range []string{"x-request-id", "x-correlation-id"} {
+	for _, key := range keys {
 		values := md.Get(key)
 		if len(values) > 0 && values[0] != "" {
 			return values[0]
