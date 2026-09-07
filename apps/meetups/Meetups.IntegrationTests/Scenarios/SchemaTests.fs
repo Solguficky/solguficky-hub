@@ -67,10 +67,26 @@ module SchemaSql =
         | :? PostgresException as pg -> pg.SqlState = "23505"
         | _ -> false
 
-    let insertMeetup
+    let attempt (action: unit -> unit) =
+        try
+            action ()
+            None
+        with ex ->
+            Some ex
+
+    let isForeignKeyViolation (ex: exn) =
+        match ex with
+        | :? PostgresException as pg -> pg.SqlState = "23503"
+        | _ -> false
+
+    /// Каждая колонка — параметр, включая lifecycle и version: пока они стояли
+    /// литералами в SQL, свои CHECK нельзя было проверить ни одним тестом.
+    let insertMeetupRow
         (dsn: string)
         (id: Guid)
+        (lifecycle: string)
         (visibility: string)
+        (version: int)
         (firstPublishedAt: obj)
         (scheduledPublishAt: obj)
         (form: string)
@@ -90,7 +106,7 @@ module SchemaSql =
                 schedule_start_date, schedule_start_time,
                 schedule_end_date, schedule_end_time
             ) VALUES (
-                @id, @author, 'planned', @visibility, 1,
+                @id, @author, @lifecycle, @visibility, @version,
                 @first_published_at, @scheduled_publish_at,
                 @form, @precision,
                 @start_date, @start_time,
@@ -100,7 +116,9 @@ module SchemaSql =
             [
                 "id", box id
                 "author", box (Guid.Parse("0199c0de-0000-7000-8000-00000000000a"))
+                "lifecycle", box lifecycle
                 "visibility", box visibility
+                "version", box version
                 "first_published_at", firstPublishedAt
                 "scheduled_publish_at", scheduledPublishAt
                 "form", box form
@@ -111,17 +129,52 @@ module SchemaSql =
                 "end_time", endTime
             ]
 
+    let insertMeetup
+        (dsn: string)
+        (id: Guid)
+        (visibility: string)
+        (firstPublishedAt: obj)
+        (scheduledPublishAt: obj)
+        (form: string)
+        (precision: obj)
+        (startDate: obj)
+        (startTime: obj)
+        (endDate: obj)
+        (endTime: obj)
+        =
+        insertMeetupRow
+            dsn
+            id
+            "planned"
+            visibility
+            1
+            firstPublishedAt
+            scheduledPublishAt
+            form
+            precision
+            startDate
+            startTime
+            endDate
+            endTime
+
     let insertNoDate (dsn: string) (id: Guid) (visibility: string) (firstPublishedAt: obj) (scheduledPublishAt: obj) =
         insertMeetup dsn id visibility firstPublishedAt scheduledPublishAt "no_date" absent absent absent absent absent
 
-    let insertEvent (dsn: string) (eventId: Guid) (meetupId: Guid) (version: int) (eventType: string) =
+    let insertEventRow
+        (dsn: string)
+        (eventId: Guid)
+        (meetupId: Guid)
+        (version: int)
+        (eventType: string)
+        (payload: string)
+        =
         exec
             dsn
             """
             INSERT INTO meetup_events (
                 event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
             ) VALUES (
-                @event_id, @meetup_id, @version, @event_type, '{}'::jsonb, @performed_by, @occurred_at
+                @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at
             )
             """
             [
@@ -129,9 +182,13 @@ module SchemaSql =
                 "meetup_id", box meetupId
                 "version", box version
                 "event_type", box eventType
+                "payload", box payload
                 "performed_by", box (Guid.Parse("0199c0de-0000-7000-8000-00000000000a"))
                 "occurred_at", box (DateTimeOffset.Parse("2026-09-06T12:00:00Z"))
             ]
+
+    let insertEvent (dsn: string) (eventId: Guid) (meetupId: Guid) (version: int) (eventType: string) =
+        insertEventRow dsn eventId meetupId version eventType "{}"
 
 type SchemaTests() =
     [<Fact>]
@@ -525,4 +582,159 @@ type SchemaTests() =
             <@
                 duplicateVersion
                 |> Option.exists SchemaSql.isUniqueViolation
+            @>
+
+    [<Fact>]
+    member _.``A meetup cannot carry a lifecycle outside the contract``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertMeetupRow
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000071"))
+                    "archived"
+                    "hidden"
+                    1
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    "no_date"
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    [<Fact>]
+    member _.``A meetup cannot carry a visibility outside the contract``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertMeetupRow
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000072"))
+                    "planned"
+                    "secret"
+                    1
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    "no_date"
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    [<Fact>]
+    member _.``A meetup version cannot start below one``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertMeetupRow
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000073"))
+                    "planned"
+                    "hidden"
+                    0
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    "no_date"
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    /// LocalTime контракта не представляет секунды, поэтому 18:00:30 — состояние,
+    /// которого в снимке быть не может, и схема обязана его отвергнуть сама.
+    [<Fact>]
+    member _.``A schedule time cannot carry seconds``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertMeetup
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000074"))
+                    "hidden"
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    "fixed"
+                    "day_start"
+                    (DateOnly.Parse("2026-09-06"))
+                    (TimeOnly.Parse("18:00:30"))
+                    SchemaSql.absent
+                    SchemaSql.absent
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    [<Fact>]
+    member _.``A journal event cannot carry a type outside the contract``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000075")
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertEvent
+                    dsn
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000076"))
+                    meetupId
+                    1
+                    "meetup_deleted"
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    [<Fact>]
+    member _.``A journal payload cannot be anything but an object``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000077")
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertEventRow
+                    dsn
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000078"))
+                    meetupId
+                    1
+                    "meetup_created"
+                    "[]"
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    [<Fact>]
+    member _.``A journal event cannot reference a missing meetup``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.insertEvent
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000079"))
+                    (Guid.Parse("0199c0de-0000-7000-8000-00000000007a"))
+                    1
+                    "meetup_created"
+            )
+
+        test
+            <@
+                thrown
+                |> Option.exists SchemaSql.isForeignKeyViolation
             @>

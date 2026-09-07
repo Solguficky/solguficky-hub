@@ -10,7 +10,18 @@ let main args =
         eprintfn "%s is not set" Meetups.Migrations.DatabaseUrlVariable
         1
     | url ->
-        Meetups.Migrations.apply url
-        let app = Meetups.Host.build args
-        app.Run()
-        0
+        // Отказ схемы — рабочий исход старта, а не баг рантайма: оператор должен
+        // прочитать одну строку про базу, а не stack trace из недр DbUp.
+        match
+            (try
+                Ok(Meetups.Migrations.apply url)
+             with ex ->
+                 Error ex)
+        with
+        | Error ex ->
+            eprintfn "%s: schema migration failed: %s" Meetups.Migrations.DatabaseUrlVariable ex.Message
+            1
+        | Ok() ->
+            let app = Meetups.Host.build args
+            app.Run()
+            0

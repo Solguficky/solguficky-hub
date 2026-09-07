@@ -1,59 +1,52 @@
 namespace Meetups.IntegrationTests.Infrastructure
 
 open System
-open System.IO
-open System.Security.Cryptography
-open System.Text
-open System.Text.RegularExpressions
 open Npgsql
 open Testcontainers.PostgreSql
 open Xunit
 
 module PostgresAdmin =
-    let private dockerLooksAvailable () =
-        let home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+    /// Пустая переменная — это незаданная переменная. Оба места, где решается
+    /// «есть база или нет», обязаны отвечать одинаково.
+    let variable (name: string) =
+        match Environment.GetEnvironmentVariable(name) with
+        | null
+        | "" -> None
+        | value -> Some value
 
-        File.Exists("/var/run/docker.sock")
-        || File.Exists(Path.Combine(home, ".docker/run/docker.sock"))
-        || not (isNull (Environment.GetEnvironmentVariable("DOCKER_HOST")))
-
+    /// Своей проверки демона здесь нет: Testcontainers сам знает и unix-socket,
+    /// и named pipe Docker Desktop на Windows, а рукописная проверка сокета
+    /// молча пропускала бы все тесты схемы на Windows при живом Docker.
     let private container =
         lazy
             (try
-                if not (dockerLooksAvailable ()) then
-                    None
-                else
-                    let postgres = PostgreSqlBuilder("postgres:16-alpine").Build()
-                    postgres.StartAsync().GetAwaiter().GetResult()
-                    Some postgres
+                let postgres = PostgreSqlBuilder("postgres:16-alpine").Build()
+                postgres.StartAsync().GetAwaiter().GetResult()
+                Some postgres
              with _ ->
                  None)
+
+    let started () = container.Value |> Option.isSome
 
     let connectionString () =
         match container.Value with
         | Some postgres -> postgres.GetConnectionString()
-        | None when not (isNull (Environment.GetEnvironmentVariable("GITHUB_ACTIONS"))) ->
-            failwith "testcontainers postgres is required in CI"
+        | None when (variable "GITHUB_ACTIONS").IsSome -> failwith "testcontainers postgres is required in CI"
         | None ->
-            match Environment.GetEnvironmentVariable("MEETUPS_DATABASE_URL") with
-            | null
-            | "" ->
+            match variable "MEETUPS_DATABASE_URL" with
+            | None ->
                 Meetups.Migrations.connectionString
                     "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable"
-            | url -> Meetups.Migrations.connectionString url
+            | Some url -> Meetups.Migrations.connectionString url
 
 type IsolatedDatabase() =
     let adminCs = PostgresAdmin.connectionString ()
 
+    // Guid уже 32 шестнадцатеричных символа в нижнем регистре: имя безопасно по
+    // построению, хэшировать и перепроверять регуляркой нечего.
     let name =
-        let bytes = SHA256.HashData(Encoding.UTF8.GetBytes(Guid.NewGuid().ToString("N")))
-        let hex = Convert.ToHexString(bytes[0..9]).ToLowerInvariant()
-        let generated = "mtest_" + hex
-
-        if not (Regex.IsMatch(generated, @"^[a-z][a-z0-9_]*$")) then
-            failwith $"generated database name {generated} is not safe"
-
-        generated
+        "mtest_"
+        + Guid.NewGuid().ToString("N").Substring(0, 20)
 
     let isolatedCs =
         let builder = NpgsqlConnectionStringBuilder(adminCs)
@@ -67,9 +60,13 @@ type IsolatedDatabase() =
             use create = new NpgsqlCommand("CREATE DATABASE " + name, conn)
             create.ExecuteNonQuery() |> ignore
         with ex ->
+            // Контейнер поднялся — значит база есть, и отказ CREATE DATABASE это
+            // настоящая поломка, а не «постгреса рядом нет». Пропуск здесь
+            // прятал бы её за зелёным прогоном.
             let forced =
-                not (isNull (Environment.GetEnvironmentVariable("MEETUPS_DATABASE_URL")))
-                || not (isNull (Environment.GetEnvironmentVariable("GITHUB_ACTIONS")))
+                PostgresAdmin.started ()
+                || (PostgresAdmin.variable "MEETUPS_DATABASE_URL").IsSome
+                || (PostgresAdmin.variable "GITHUB_ACTIONS").IsSome
 
             if forced then failwith $"postgres: {ex.Message}" else Assert.Skip $"postgres not available: {ex.Message}"
 
@@ -90,5 +87,8 @@ type IsolatedDatabase() =
                     )
 
                 drop.ExecuteNonQuery() |> ignore
-            with _ ->
-                ()
+            with ex ->
+                // Уронить прогон на уборке нельзя, но и молчать нельзя: тихий
+                // отказ копит осиротевшие mtest_* на общей базе до упора в
+                // лимит соединений, и узнают об этом не из прогона.
+                eprintfn "cleanup drop %s: %s" name ex.Message

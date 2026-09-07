@@ -1,10 +1,13 @@
 module Meetups.Migrations
 
 open System
+open System.Diagnostics
 open System.IO
 open System.Reflection
 open System.Text.RegularExpressions
+open System.Threading
 open DbUp
+open DbUp.Engine
 open DbUp.Postgresql
 open Npgsql
 
@@ -17,58 +20,88 @@ let JournalTable = "meetups_schema_versions"
 [<Literal>]
 let private lockKey = 872514053L
 
+[<Literal>]
+let private lockWaitSeconds = 60.0
+
 type Migration =
     {
         Version: int
         Name: string
+        Resource: string
         Sql: string
     }
 
 let private resourceMarker = ".Migrations."
 
 let private fileNamePattern =
-    Regex(@"^(\d+)_(.+)\.sql$", RegexOptions.CultureInvariant)
+    Regex(@"^(\d{3})_(.+)\.sql$", RegexOptions.CultureInvariant)
 
-let private parseResourceName (resource: string) =
-    let index = resource.IndexOf(resourceMarker, StringComparison.Ordinal)
-
-    if index < 0 then
-        None
-    else
-        let file = resource.Substring(index + resourceMarker.Length)
-        let matched = fileNamePattern.Match(file)
-
-        if matched.Success then Some(int matched.Groups[1].Value, matched.Groups[2].Value, resource) else None
-
+/// Единственное место, где решается, что такое миграция. `apply` гонит DbUp
+/// ровно этим списком, поэтому проверки ниже — не документация, а гейт: любой
+/// `.sql` рядом со схемой либо назван по нормативу, либо роняет старт.
 let list () : Migration list =
     let assembly = Assembly.GetExecutingAssembly()
 
     let migrations =
         assembly.GetManifestResourceNames()
-        |> Array.choose parseResourceName
-        |> Array.map (fun (version, name, resource) ->
+        |> Array.filter (fun resource ->
+            resource.Contains(resourceMarker, StringComparison.Ordinal)
+            && resource.EndsWith(".sql", StringComparison.Ordinal)
+        )
+        // Порядок задаёт имя, а не содержимое: тот же порядок применит DbUp.
+        |> Array.sortWith (fun left right -> String.CompareOrdinal(left, right))
+        |> Array.map (fun resource ->
+            let index = resource.IndexOf(resourceMarker, StringComparison.Ordinal)
+            let file = resource.Substring(index + resourceMarker.Length)
+            let matched = fileNamePattern.Match(file)
+
+            if not matched.Success then
+                failwith $"embedded meetups migration {file} is not named NNN_description.sql"
+
             use stream = assembly.GetManifestResourceStream(resource)
             use reader = new StreamReader(stream)
 
             {
-                Version = version
-                Name = name
+                Version = int matched.Groups[1].Value
+                Name = matched.Groups[2].Value
+                Resource = resource
                 Sql = reader.ReadToEnd()
             }
         )
-        |> Array.sortBy (fun migration -> migration.Version)
 
-    let versions =
-        migrations
-        |> Array.map (fun migration -> migration.Version)
-
-    if
-        versions.Length
-        <> (versions |> Array.distinct).Length
-    then
-        failwith "embedded meetups migrations contain duplicate versions"
+    // Строго возрастающие версии в порядке имён: так проверяется и уникальность
+    // номера, и что имя не потеряло ведущие нули, иначе `010` шло бы перед `9`.
+    migrations
+    |> Array.pairwise
+    |> Array.iter (fun (previous, next) ->
+        if next.Version <= previous.Version then
+            failwith $"embedded meetups migrations are out of order: {previous.Resource} then {next.Resource}"
+    )
 
     Array.toList migrations
+
+let private sslMode (value: string) =
+    let normalized = value.Replace("-", "").Replace("_", "")
+
+    match Enum.TryParse<SslMode>(normalized, true) with
+    | true, mode -> mode
+    | _ -> failwith $"unsupported sslmode {value} in {DatabaseUrlVariable}"
+
+/// Имена libpq не совпадают с ключами Npgsql, поэтому перевод явный. Ключа нет
+/// в таблице — `connectionString` падает, а не роняет параметр молча: тихо
+/// потерянный `sslmode=verify-full` понижает TLS до неверифицируемого.
+let private keywordFor (key: string) =
+    match key with
+    | "host" -> "Host"
+    | "port" -> "Port"
+    | "dbname" -> "Database"
+    | "user" -> "Username"
+    | "password" -> "Password"
+    | "application_name" -> "Application Name"
+    | "connect_timeout" -> "Timeout"
+    | "options" -> "Options"
+    | "sslrootcert" -> "Root Certificate"
+    | _ -> failwith $"unsupported parameter {key} in {DatabaseUrlVariable}"
 
 let connectionString (dsn: string) =
     if not (dsn.Contains("://", StringComparison.Ordinal)) then
@@ -90,7 +123,7 @@ let connectionString (dsn: string) =
             builder.Username <- Uri.UnescapeDataString(userInfo.Substring(0, colon))
             builder.Password <- Uri.UnescapeDataString(userInfo.Substring(colon + 1))
 
-        let database = uri.AbsolutePath.Trim('/')
+        let database = Uri.UnescapeDataString(uri.AbsolutePath).Trim('/')
 
         if database <> "" then
             builder.Database <- database
@@ -99,44 +132,52 @@ let connectionString (dsn: string) =
 
         for pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries) do
             let parts = pair.Split('=', 2)
+            let key = Uri.UnescapeDataString(parts[0]).ToLowerInvariant()
 
-            match parts[0].ToLowerInvariant() with
-            | "sslmode" when
-                parts.Length = 2
-                && parts[1].Equals("disable", StringComparison.OrdinalIgnoreCase)
-                ->
-                builder.SslMode <- SslMode.Disable
-            | "sslmode" when
-                parts.Length = 2
-                && parts[1].Equals("require", StringComparison.OrdinalIgnoreCase)
-                ->
-                builder.SslMode <- SslMode.Require
-            | _ -> ()
+            let value = if parts.Length = 2 then Uri.UnescapeDataString(parts[1]) else ""
+
+            if key = "sslmode" then builder.SslMode <- sslMode value else builder[keywordFor key] <- value
 
         builder.ConnectionString
 
-let apply (dsn: string) =
-    let cs = connectionString dsn
-    use conn = new NpgsqlConnection(cs)
-    conn.Open()
+/// Сериализует старт нескольких экземпляров. Ожидание ограничено: без предела
+/// зависший держатель блокировки останавливал бы каждый следующий процесс
+/// навсегда, до того как Kestrel вообще откроет порт.
+let private acquireLock (conn: NpgsqlConnection) =
+    use command = new NpgsqlCommand("SELECT pg_try_advisory_lock(@key)", conn)
 
-    use lockCommand = new NpgsqlCommand("SELECT pg_advisory_lock(@key)", conn)
-
-    lockCommand.Parameters.AddWithValue("key", lockKey)
+    command.Parameters.AddWithValue("key", lockKey)
     |> ignore
 
-    lockCommand.ExecuteScalar() |> ignore
+    let deadline = Stopwatch.StartNew()
+    let mutable acquired = false
+
+    while not acquired
+          && deadline.Elapsed.TotalSeconds < lockWaitSeconds do
+        acquired <- command.ExecuteScalar() :?> bool
+
+        if not acquired then
+            Thread.Sleep(TimeSpan.FromMilliseconds(200.0))
+
+    if not acquired then
+        failwith $"meetups schema lock is held by another process after {lockWaitSeconds} s"
+
+let apply (dsn: string) =
+    let cs = connectionString dsn
+
+    let scripts =
+        list ()
+        |> List.map (fun migration -> SqlScript(migration.Resource, migration.Sql))
+
+    use conn = new NpgsqlConnection(cs)
+    conn.Open()
+    acquireLock conn
 
     try
         let result =
             DeployChanges.To
                 .PostgresqlDatabase(cs)
-                .WithScriptsEmbeddedInAssembly(
-                    Assembly.GetExecutingAssembly(),
-                    fun name ->
-                        name.Contains(resourceMarker, StringComparison.Ordinal)
-                        && name.EndsWith(".sql", StringComparison.Ordinal)
-                )
+                .WithScripts(scripts)
                 .JournalToPostgresqlTable("public", JournalTable)
                 .WithTransaction()
                 .LogToConsole()

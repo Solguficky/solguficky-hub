@@ -39,3 +39,30 @@ let ``A postgres URI keeps a password that contains a colon`` () =
         Meetups.Migrations.connectionString "postgres://user:sec:ret@127.0.0.1:5432/meetups?sslmode=disable"
 
     test <@ cs.Contains("Password=sec:ret") @>
+
+[<Fact>]
+let ``A stricter sslmode survives the translation`` () =
+    let cs =
+        Meetups.Migrations.connectionString "postgres://user:secret@db:5432/meetups?sslmode=verify-full"
+
+    test <@ cs.Contains("VerifyFull") @>
+
+[<Fact>]
+let ``A libpq parameter reaches its Npgsql keyword`` () =
+    let cs =
+        Meetups.Migrations.connectionString
+            "postgres://user:secret@db:5432/meetups?sslmode=require&application_name=meetups"
+
+    test
+        <@
+            cs.Contains("Application Name=meetups")
+            && cs.Contains("Require")
+        @>
+
+[<Fact>]
+let ``An unsupported parameter is refused instead of dropped`` () =
+    raises<exn> <@ Meetups.Migrations.connectionString "postgres://user:secret@db:5432/meetups?fsync=off" @>
+
+[<Fact>]
+let ``An unsupported sslmode value is refused instead of downgraded`` () =
+    raises<exn> <@ Meetups.Migrations.connectionString "postgres://user:secret@db:5432/meetups?sslmode=verify-most" @>

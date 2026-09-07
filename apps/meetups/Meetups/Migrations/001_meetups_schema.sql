@@ -67,6 +67,20 @@ CREATE TABLE IF NOT EXISTS meetups (
                     >= (schedule_start_date, schedule_start_time)
             )
         ),
+    -- LocalTime контракта — минутная точность, секунд в нём нет. Без этой
+    -- проверки TIME принял бы 18:00:30, и снимок пришлось бы либо молча
+    -- обрезать, либо ронять на отображении данных, которые схема одобрила.
+    CONSTRAINT meetups_schedule_minute_precision
+        CHECK (
+            (
+                schedule_start_time IS NULL
+                OR EXTRACT(SECOND FROM schedule_start_time) = 0
+            )
+            AND (
+                schedule_end_time IS NULL
+                OR EXTRACT(SECOND FROM schedule_end_time) = 0
+            )
+        ),
     CONSTRAINT meetups_scheduled_publish_only_when_hidden
         CHECK (scheduled_publish_at IS NULL OR visibility = 'hidden'),
     CONSTRAINT meetups_visible_has_first_publication
@@ -89,7 +103,12 @@ CREATE TABLE IF NOT EXISTS meetup_events (
     payload JSONB NOT NULL,
     performed_by UUID NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
+    -- Порядок внутри журнала, но не курсор outbox: identity выдаёт номер до
+    -- коммита, поэтому строка с меньшим position может закоммититься позже
+    -- прочитанной. Читатель отмечает отправленное в dispatched_at и не держит
+    -- high-water mark, иначе такая строка не была бы прочитана никогда.
     position BIGINT GENERATED ALWAYS AS IDENTITY,
+    dispatched_at TIMESTAMPTZ,
     CONSTRAINT meetup_events_version_positive
         CHECK (version >= 1),
     CONSTRAINT meetup_events_type_check
@@ -101,3 +120,7 @@ CREATE TABLE IF NOT EXISTS meetup_events (
     CONSTRAINT meetup_events_position_key
         UNIQUE (position)
 );
+
+CREATE INDEX IF NOT EXISTS meetup_events_pending_dispatch
+    ON meetup_events (position)
+    WHERE dispatched_at IS NULL;
