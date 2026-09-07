@@ -11,13 +11,13 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.0" />
     <PackageReference Include="Unquote" Version="7.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
+    <PackageReference Include="Grpc.HealthCheck" Version="2.67.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="ContractSurfaceTests.fs" />
-    <Compile Include="PlaceholderTests.fs" />
-    <Compile Include="BoundaryLogTests.fs" />
+    <Compile Include="Infrastructure/MeetupsHostFixture.fs" />
+    <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

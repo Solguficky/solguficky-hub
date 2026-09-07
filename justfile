@@ -44,7 +44,7 @@ check-agent-tools:
     sh tools/skillshare/check-generated.sh
 
 # Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test meetups-format-check
+verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -126,16 +126,26 @@ telegram-bot-run: telegram-bot-build
 # --- Meetups (F# / .NET) ---------------------------------------------------
 #
 # Кодогенерация C# — часть `dotnet build` контрактного проекта.
-# Исполняемого сервиса ещё нет: собираются контракты и F#-ссылка на них.
+# Сервис — gRPC-сервер на Kestrel в h2c; готовность отдаётся по grpc.health.v1,
+# HTTP-эндпоинтов health у него нет.
 
-# Сборка контрактного C#-проекта и F#-библиотеки
+# Сборка контрактов, сервиса и обоих тестовых проектов
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Проверка, что в схеме ровно шесть операций среза.
+# Форма схемы и заглушки плюс интеграционный прогон: он поднимает настоящий
+# Kestrel на свободном порту и ходит в него настоящим gRPC-каналом.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
     dotnet test --solution apps/meetups/Meetups.sln
+
+# Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
+meetups-contracts-check:
+    sh tools/meetups/check-contracts-generated.sh
+
+# Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS
+meetups-run:
+    dotnet run --project apps/meetups/Meetups
 
 # Форматирование F# по корневому .editorconfig (секция Fantomas)
 meetups-format: dotnet-tools
@@ -154,3 +164,7 @@ dotnet-tools:
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
+
+# Исследовательский зонд Rich Messages; не входит в verify
+telegram-rich-probe:
+    node tools/telegram-rich-probe/probe.mjs

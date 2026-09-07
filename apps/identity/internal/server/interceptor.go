@@ -114,16 +114,28 @@ func streamRecovery() grpc.StreamServerInterceptor {
 	}
 }
 
+const (
+	resultOK    = "ok"
+	resultError = "error"
+)
+
 func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req any, err error) {
+	result := resultOK
+	if err != nil {
+		result = resultError
+	}
 	attrs := []any{
 		slog.String("service", ServiceName),
 		slog.String("operation", method),
-		slog.String("result", rpcResult(err)),
-		slog.String("grpc_code", status.Code(err).String()),
+		slog.String("result", result),
 		slog.Int64("duration_us", time.Since(start).Microseconds()),
+		slog.String("grpc_code", status.Code(err).String()),
 	}
 	if id := requestID(ctx); id != "" {
 		attrs = append(attrs, slog.String("request_id", id))
+	}
+	if useCase := incomingMetadata(ctx, "x-use-case"); useCase != "" {
+		attrs = append(attrs, slog.String("use_case", useCase))
 	}
 	if resolve, ok := req.(*identityv1.ResolveIdentityRequest); ok {
 		attrs = append(attrs, slog.Int64("telegram_user_id", resolve.GetTelegramUserId()))
@@ -153,17 +165,6 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	log.Log(ctx, level, "rpc failed", attrs...)
 }
 
-// rpcResult держит `result` двузначным: logging.md требует в нём только `ok`
-// либо `error`, а код транспорта — в собственном поле `grpc_code`. Иначе запрос
-// «все отказы среза» собирается перечислением словаря кодов, разного у каждого
-// транспорта.
-func rpcResult(err error) string {
-	if err == nil {
-		return "ok"
-	}
-	return "error"
-}
-
 func serverFault(code codes.Code) bool {
 	switch code {
 	case codes.Internal, codes.Unknown, codes.Unavailable, codes.DataLoss:
@@ -174,11 +175,15 @@ func serverFault(code codes.Code) bool {
 }
 
 func requestID(ctx context.Context) string {
+	return incomingMetadata(ctx, "x-request-id", "x-correlation-id")
+}
+
+func incomingMetadata(ctx context.Context, keys ...string) string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return ""
 	}
-	for _, key := range []string{"x-request-id", "x-correlation-id"} {
+	for _, key := range keys {
 		values := md.Get(key)
 		if len(values) > 0 && values[0] != "" {
 			return values[0]
