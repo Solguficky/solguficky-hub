@@ -3,13 +3,14 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -249,7 +250,7 @@ func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
 
 	_, err := chainUnary(slog.New(logs), info,
 		func(context.Context, any) (any, error) {
-			return nil, internal(cause)
+			return nil, internal("open store", cause)
 		})
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("code: got %v want %s", err, codes.Internal)
@@ -261,8 +262,80 @@ func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc failed")
 	assertFrame(t, rec, frameWant{result: resultError, code: codes.Internal, operation: info.FullMethod})
-	if got := attrValue(t, rec, "error").String(); !strings.Contains(got, cause.Error()) {
-		t.Fatalf("log error: got %q want to contain %q", got, cause.Error())
+	logged := attrValue(t, rec, "error").String()
+	for _, secret := range []string{"postgres://", "user:pass", "127.0.0.1:5432"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("error carries the connection string into the log: %q", logged)
+		}
+	}
+	if !strings.Contains(logged, "open store") {
+		t.Fatalf("error drops the operation, leaving the failure unreadable: %q", logged)
+	}
+}
+
+// Отмена и дедлайн отличают чужой отказ от своего, поэтому граница называет их,
+// а не сводит к типу корневой ошибки вместе с остальным.
+func TestUnaryLoggingNamesRecognizedCauses(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{name: "deadline", cause: context.DeadlineExceeded, want: "list roles: deadline exceeded"},
+		{name: "canceled", cause: context.Canceled, want: "list roles: canceled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			logs := &capture{}
+			info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+			_, err := unaryLogging(slog.New(logs))(t.Context(), nil, info,
+				func(context.Context, any) (any, error) {
+					return nil, internal("list roles", fmt.Errorf("query: %w", tc.cause))
+				})
+			if status.Code(err) != codes.Internal {
+				t.Fatalf("code: got %v want %s", err, codes.Internal)
+			}
+
+			if got := attrValue(t, logs.sole(t), "error").String(); got != tc.want {
+				t.Fatalf("error: got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnaryLoggingRedactsPostgresRowValues(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+	pgErr := &pgconn.PgError{
+		Code:           "23514",
+		Message:        `new row for relation "profiles" violates check constraint`,
+		Detail:         `Failing row contains (0198f2a4, 515151, solgufik_nickname, pending).`,
+		ConstraintName: "profiles_access_status_check",
+	}
+
+	_, err := unaryLogging(slog.New(logs))(t.Context(), nil, info,
+		func(context.Context, any) (any, error) {
+			return nil, internal("upsert profile", pgErr)
+		})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("code: got %v want %s", err, codes.Internal)
+	}
+
+	rec := logs.sole(t)
+	logged := attrValue(t, rec, "error").String()
+	if strings.Contains(logged, "solgufik_nickname") {
+		t.Fatalf("error carries the failing row into the log: %q", logged)
+	}
+	for _, want := range []string{"upsert profile", "23514", "profiles_access_status_check"} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("error drops %q, leaving the failure unreadable: %q", want, logged)
+		}
 	}
 }
 
@@ -386,7 +459,6 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 
 	_, err := unaryLogging(slog.New(logs))(ctx, &identityv1.ResolveIdentityRequest{TelegramUserId: 7}, info,
 		func(context.Context, any) (any, error) {
-			time.Sleep(2 * time.Millisecond)
 			return &identityv1.ResolveIdentityResponse{}, nil
 		})
 	if err != nil {
@@ -401,8 +473,10 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 		operation: info.FullMethod,
 		requestID: "req-42",
 	})
-	if got := attrValue(t, rec, "duration_us").Int64(); got < 1000 {
-		t.Fatalf("duration_us: got %d want >= 1000", got)
+	// Наблюдаемое свойство здесь — что граница записала длительность, а не то,
+	// сколько она заняла: порог по часам машины запрещён testing-strategy.md.
+	if got := attrValue(t, rec, "duration_us").Int64(); got < 0 {
+		t.Fatalf("duration_us: got %d want >= 0", got)
 	}
 	if got := attrValue(t, rec, "telegram_user_id").Int64(); got != 7 {
 		t.Fatalf("telegram_user_id: got %d want 7", got)

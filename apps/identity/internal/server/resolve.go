@@ -46,22 +46,22 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return nil, internal(fmt.Errorf("begin transaction: %w", err))
+		return nil, internal("begin transaction", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	identityID, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
 	if err != nil {
-		return nil, internal(fmt.Errorf("upsert profile: %w", err))
+		return nil, internal("upsert profile", err)
 	}
 
 	roles, err := listRoles(ctx, tx, identityID)
 	if err != nil {
-		return nil, internal(fmt.Errorf("list roles: %w", err))
+		return nil, internal("list roles", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, internal(fmt.Errorf("commit: %w", err))
+		return nil, internal("commit", err)
 	}
 
 	return &identityv1.ResolveIdentityResponse{

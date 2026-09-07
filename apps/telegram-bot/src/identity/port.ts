@@ -13,10 +13,17 @@ export function toResolveIdentityInput(
   return { telegramUserId, telegramUsername };
 }
 
+// Три исхода, а не два: недоступность зависимости и нарушение контракта
+// различаются наблюдаемо. Повтор лечит первое и никогда не лечит второе,
+// поэтому first-slice.md требует различать их в логах и метриках.
 export type ResolveIdentityResult =
   | { kind: "resolved"; identityId: string; globalRoles: readonly string[] }
-  | { kind: "unavailable"; cause: unknown };
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; code: string; cause: unknown };
 
 export type IdentityResolver = {
-  resolve(input: ResolveIdentityInput): Promise<ResolveIdentityResult>;
+  resolve(
+    input: ResolveIdentityInput,
+    requestId?: string,
+  ): Promise<ResolveIdentityResult>;
 };
