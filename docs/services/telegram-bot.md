@@ -149,7 +149,7 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 
 ### Наблюдаемость и privacy
 
-Логи структурные, без bot token, `initData` и полного JSON апдейта. Telegram user id считается персональными данными и не является ключом поиска: после разрешения личности в лог пишутся внутренний идентификатор и correlation id. Норматив — [standards/observability/logging.md](../standards/observability/logging.md) и [PER-63](https://linear.app/anticnvm/issue/PER-63).
+Логи структурные, без bot token, `initData` и полного JSON апдейта. Telegram user id — персональные данные и не ключ поиска: после разрешения личности в лог пишутся `identity_id` и `request_id`. Норматив — [logging.md](../standards/observability/logging.md).
 
 ### Общий код с мини-приложением
 
@@ -207,7 +207,6 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 
 - transport операций к Meetups и его wire-контракт — [PER-51](https://linear.app/anticnvm/issue/PER-51);
 - устройство второго входа и политика доставки уведомлений — [PER-72](https://linear.app/anticnvm/issue/PER-72)…[PER-74](https://linear.app/anticnvm/issue/PER-74);
-- норматив логирования персональных данных — [PER-63](https://linear.app/anticnvm/issue/PER-63);
 - что модуль отдаёт в карточку и форма экрана настроек — решения 3 и 4 [RFC-003](../rfcs/RFC-003-bot-presentation-rich-blocks.md);
 - ревизия макета после выбора 1d — отдельное решение владельца.
 
