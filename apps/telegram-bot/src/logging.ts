@@ -12,6 +12,8 @@ export type LogFields = {
   error_category?: string;
   error?: string;
   stack?: string;
+  grpc_code?: string;
+  reply_error?: string;
   signal?: string;
   timeout?: number;
 };

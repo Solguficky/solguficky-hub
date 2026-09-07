@@ -165,3 +165,7 @@ dotnet-tools:
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
+
+# Исследовательский зонд Rich Messages; не входит в verify
+telegram-rich-probe:
+    node tools/telegram-rich-probe/probe.mjs

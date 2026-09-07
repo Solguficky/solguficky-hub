@@ -132,6 +132,36 @@ describe("createShutdown", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("closes resources when stopping the bot fails", async () => {
+    const { logger, records } = createCapturingLogger();
+    const close = vi.fn();
+    const shutdown = createShutdown({
+      bot: {
+        isRunning: () => true,
+        stop: async () => {
+          throw new Error("last getUpdates failed");
+        },
+      },
+      resources: { close },
+      logger,
+      timeoutMs: 40,
+      exit: () => {
+        throw new Error("exit should not run");
+      },
+    });
+    await shutdown.request("SIGTERM");
+    expect(close).toHaveBeenCalledOnce();
+    expect(
+      records.some(
+        (record) =>
+          record.level === "error" && record.message === "bot stop failed",
+      ),
+    ).toBe(true);
+    expect(
+      records.some((record) => record.message === "graceful shutdown complete"),
+    ).toBe(true);
+  });
+
   it("exits when stop hangs past the timeout", async () => {
     vi.useFakeTimers();
     const { logger, records } = createCapturingLogger();

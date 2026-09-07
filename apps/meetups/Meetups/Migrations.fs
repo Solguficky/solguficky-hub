@@ -6,6 +6,7 @@ open System.IO
 open System.Reflection
 open System.Text.RegularExpressions
 open System.Threading
+open Dapper
 open DbUp
 open DbUp.Engine
 open DbUp.Postgresql
@@ -22,6 +23,12 @@ let private lockKey = 872514053L
 
 [<Literal>]
 let private lockWaitSeconds = 60.0
+
+[<Literal>]
+let private TryLockSql = "SELECT pg_try_advisory_lock(@key)"
+
+[<Literal>]
+let private UnlockSql = "SELECT pg_advisory_unlock(@key)"
 
 type Migration =
     {
@@ -144,17 +151,18 @@ let connectionString (dsn: string) =
 /// зависший держатель блокировки останавливал бы каждый следующий процесс
 /// навсегда, до того как Kestrel вообще откроет порт.
 let private acquireLock (conn: NpgsqlConnection) =
-    use command = new NpgsqlCommand("SELECT pg_try_advisory_lock(@key)", conn)
-
-    command.Parameters.AddWithValue("key", lockKey)
-    |> ignore
-
     let deadline = Stopwatch.StartNew()
     let mutable acquired = false
 
     while not acquired
           && deadline.Elapsed.TotalSeconds < lockWaitSeconds do
-        acquired <- command.ExecuteScalar() :?> bool
+        acquired <-
+            conn.ExecuteScalar<bool>(
+                TryLockSql,
+                {|
+                    key = lockKey
+                |}
+            )
 
         if not acquired then
             Thread.Sleep(TimeSpan.FromMilliseconds(200.0))
@@ -189,9 +197,10 @@ let apply (dsn: string) =
             | null -> failwith "meetups schema upgrade failed"
             | error -> raise error
     finally
-        use unlockCommand = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", conn)
-
-        unlockCommand.Parameters.AddWithValue("key", lockKey)
+        conn.ExecuteScalar<bool>(
+            UnlockSql,
+            {|
+                key = lockKey
+            |}
+        )
         |> ignore
-
-        unlockCommand.ExecuteScalar() |> ignore

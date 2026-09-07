@@ -1,30 +1,28 @@
-import { createClient } from "@connectrpc/connect";
+import type { Client } from "@connectrpc/connect";
+import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
-import {
-  type IdentityResolver,
-  type ResolveIdentityInput,
-  toResolveIdentityInput,
+import type {
+  IdentityResolver,
+  ResolveIdentityInput,
+  ResolveIdentityResult,
 } from "./port.js";
 
 export const identityRpcTimeoutMs = 3_000;
 
-export type IdentityRpc = {
-  resolveIdentity(
-    request: {
-      telegramUserId: bigint;
-      telegramUsername?: string;
-    },
-    options?: { timeoutMs?: number },
-  ): Promise<{
-    identityId: string;
-    globalRoles: readonly GlobalRole[];
-  }>;
-};
+export const requestIdHeader = "x-request-id";
+
+// Тип клиента берётся из схемы, а не переписывается рядом с ней: рукописная
+// копия форм запроса, ответа и CallOptions расходится с contracts/proto молча,
+// а Pick по сгенерированному Client роняет typecheck на первом же расхождении.
+export type IdentityRpc = Pick<
+  Client<typeof IdentityService>,
+  "resolveIdentity"
+>;
 
 export type IdentityClient = IdentityResolver & {
   close(): void;
@@ -43,7 +41,7 @@ export function createIdentityClient(
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
   return {
-    resolve: (input) => resolver.resolve(input),
+    resolve: (input, requestId) => resolver.resolve(input, requestId),
     close() {
       sessionManager.abort();
     },
@@ -55,43 +53,55 @@ export function createIdentityResolver(
   timeoutMs = identityRpcTimeoutMs,
 ): IdentityResolver {
   return {
-    async resolve(input: ResolveIdentityInput) {
+    async resolve(input: ResolveIdentityInput, requestId?: string) {
       try {
-        const response = await withDeadline(
-          rpc.resolveIdentity(toRequest(input), { timeoutMs }),
+        // Дедлайн один и принадлежит транспорту: он же отменяет вызов и даёт
+        // ConnectError с кодом. Рукописная гонка таймеров рядом отдавала голую
+        // ошибку без кода и поток не отменяла.
+        const response = await rpc.resolveIdentity(input, {
           timeoutMs,
-        );
+          ...callHeaders(requestId),
+        });
         return {
           kind: "resolved" as const,
           identityId: response.identityId,
           globalRoles: response.globalRoles.map(roleName),
         };
       } catch (cause) {
-        return { kind: "unavailable" as const, cause };
+        return classifyFailure(cause);
       }
     },
   };
 }
 
-function toRequest(input: ResolveIdentityInput): {
-  telegramUserId: bigint;
-  telegramUsername?: string;
+function callHeaders(requestId: string | undefined): {
+  headers?: Record<string, string>;
 } {
-  return toResolveIdentityInput(input.telegramUserId, input.telegramUsername);
+  if (requestId === undefined || requestId === "") {
+    return {};
+  }
+  return { headers: { [requestIdHeader]: requestId } };
 }
 
-function withDeadline<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error("identity rpc deadline exceeded"));
-    }, timeoutMs);
-  });
-  return Promise.race([work, timeout]).finally(() => {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  });
+// Отказ, который не пройдёт и со второй попытки: нарушение контракта, рассинхрон
+// схемы, отсутствующий метод. Всё остальное — недоступность зависимости, где
+// повтор осмыслен.
+const permanentCodes: ReadonlySet<Code> = new Set([
+  Code.InvalidArgument,
+  Code.NotFound,
+  Code.AlreadyExists,
+  Code.PermissionDenied,
+  Code.Unauthenticated,
+  Code.FailedPrecondition,
+  Code.OutOfRange,
+  Code.Unimplemented,
+]);
+
+function classifyFailure(cause: unknown): ResolveIdentityResult {
+  if (cause instanceof ConnectError && permanentCodes.has(cause.code)) {
+    return { kind: "rejected", code: Code[cause.code], cause };
+  }
+  return { kind: "unavailable", cause };
 }
 
 function roleName(role: GlobalRole): string {
