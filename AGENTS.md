@@ -22,7 +22,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
-- `apps/meetups/` — скелет Meetups на F#: gRPC-сервер с заглушечными ответами, C#-проект кодогенерации и два тестовых проекта; домена и базы ещё нет.
+- `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, gRPC-сервер с заглушечными ответами, C#-проект кодогенерации и два тестовых проекта; базы и связи транспорта с доменом ещё нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляет Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
