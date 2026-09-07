@@ -86,8 +86,8 @@ just aspire core -- --skip-services telegram-bot
 7. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт.
 8. `IdentityService/ResolveIdentity` через proxy endpoint Aspire возвращает UUIDv7.
 9. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
-10. Профиль `meetups` раньше доводил Meetups до `Healthy` без Docker. После появления схемы он зависит от PostgreSQL; живой прогон с базой не подтверждён. `grpcurl` через reflection перечисляет `meetups.v1.MeetupsService`, шесть операций отвечают заглушкой, `grpc.health.v1.Health/Check` возвращает `SERVING` — это проверено на скелете до подключения базы.
-11. Срез `core` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держит Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечают на вызовы через свои proxy endpoint.
+10. Профиль `meetups` поднимает PostgreSQL и доводит Meetups до `Healthy` за ~9 с: сервис применяет миграции DbUp до того, как начинает слушать. `grpcurl` через reflection перечисляет `meetups.v1.MeetupsService`, шесть операций отвечают заглушкой, `grpc.health.v1.Health/Check` возвращает `SERVING`. В базе `solguficky` появляются `meetups`, `meetup_events` и журнал `meetups_schema_versions` с единственной записью `Meetups.Migrations.001_meetups_schema.sql`.
+11. Срез `core` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держит Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечают на вызовы через свои proxy endpoint: `ResolveIdentity` возвращает UUIDv7, `ListVisibleMeetups` — заглушку. Обе схемы живут в одной базе `solguficky`: goose ведёт таблицы Identity, DbUp — таблицы Meetups.
 
 ## Неподтверждённая граница
 
