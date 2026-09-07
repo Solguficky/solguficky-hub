@@ -4,6 +4,7 @@
 /// эта форма объявлена явно, а не выведена из реализации.
 module Meetups.InfrastructureTests.MeetupEventPayloadTests
 
+open System
 open System.Text.Json.Nodes
 open Swensen.Unquote
 open Xunit
@@ -59,7 +60,27 @@ let ``A meetup that was never published omits the first publication field`` () =
 let ``A published meetup carries the first publication moment in UTC`` () =
     let payload = parse (Meetup.toSnapshot Sample.published)
 
-    test <@ payload["first_published_at"].GetValue<string>() = "2026-09-07T18:30:00Z" @>
+    test <@ payload["first_published_at"].GetValue<string>() = "2026-09-07T18:30:00.000000Z" @>
+
+/// Payload и колонка состояния описывают один момент. Точность у них общая —
+/// микросекунда, которую держит TIMESTAMPTZ, — и запись журнала не может оказаться
+/// грубее состояния, из которого сделана: восстанавливать отброшенный хвост релею
+/// будет неоткуда.
+[<Fact>]
+let ``The first publication moment is written at the precision the state keeps`` () =
+    let snapshot =
+        { Meetup.toSnapshot Sample.published with
+            FirstPublishedAt = Some(Sample.fixedNow.AddTicks 12345L)
+        }
+
+    let payload = parse snapshot
+    let row = MeetupRow.ofSnapshot snapshot
+
+    test
+        <@
+            payload["first_published_at"].GetValue<string>() = "2026-09-07T18:30:00.001234Z"
+            && row.FirstPublishedAt = Nullable(Sample.fixedNow.AddTicks 12340L)
+        @>
 
 [<Fact>]
 let ``A meetup without a date carries the form and no boundaries`` () =

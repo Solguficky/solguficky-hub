@@ -189,6 +189,17 @@ let scheduleColumns (schedule: Schedule) : ScheduleColumns =
             Form = "fixed"
         }
 
+/// Момент приводится к точности хранения до записи. `TIMESTAMPTZ` держит
+/// микросекунды, а `DateTimeOffset` — сотни наносекунд, и хвост отбрасывается уже
+/// внутри драйвера. Отбросить его здесь — значит сделать усечение одним и тем же
+/// для обоих потребителей строки: колонка и payload события пишут один и тот же
+/// момент, а не два снимка, разошедшихся на невидимый остаток. Смещение
+/// приводится к нулю тем же шагом: `TIMESTAMPTZ` другого не принимает.
+let private storedMoment (moment: DateTimeOffset) : DateTimeOffset =
+    let utc = moment.ToUniversalTime()
+    let tail = utc.Ticks % TimeSpan.TicksPerMicrosecond
+    DateTimeOffset(utc.Ticks - tail, TimeSpan.Zero)
+
 /// Обратное отображение целиком: снимок в строку. Возвращает ту же запись, что
 /// читается из базы, поэтому round trip проверяется одним тестом на форму.
 let ofSnapshot (snapshot: MeetupSnapshot) : MeetupRow =
@@ -208,7 +219,7 @@ let ofSnapshot (snapshot: MeetupSnapshot) : MeetupRow =
         Visibility = visibilityText snapshot.Visibility
         FirstPublishedAt =
             match snapshot.FirstPublishedAt with
-            | Some at -> Nullable at
+            | Some at -> Nullable(storedMoment at)
             | None -> Nullable()
         Version = snapshot.Version
         ScheduleForm = schedule.Form

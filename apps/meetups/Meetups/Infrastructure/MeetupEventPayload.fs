@@ -71,9 +71,15 @@ let ofSnapshot (snapshot: MeetupSnapshot) : string =
     // Отсутствие первой публикации выражается отсутствием поля, а не пустой
     // строкой: у `first_published_at` presence настоящая, и unset означает
     // «никогда не публиковалась».
+    //
+    // Момент берётся из строки, уже приведённой к точности хранения, и пишется
+    // микросекундами целиком — той же точностью, что уходит в колонку. Секунды
+    // отбросили бы хвост только в payload, и неизменяемая запись журнала стала бы
+    // грубее состояния, из которого сделана: релею было бы неоткуда восстановить
+    // отброшенное.
     if row.FirstPublishedAt.HasValue then
         node["first_published_at"] <-
-            JsonValue.Create(row.FirstPublishedAt.Value.ToUniversalTime().ToString "yyyy-MM-ddTHH\:mm\:ssZ")
+            JsonValue.Create(row.FirstPublishedAt.Value.ToString "yyyy-MM-ddTHH\:mm\:ss.ffffffZ")
 
     node["version"] <- JsonValue.Create row.Version
 

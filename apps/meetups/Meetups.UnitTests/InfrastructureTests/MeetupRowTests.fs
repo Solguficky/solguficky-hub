@@ -117,6 +117,20 @@ let ``Axes of state are written as the lowercase words the schema checks`` () =
 
     test <@ actual = expected @>
 
+/// Хвост точнее микросекунды до колонки всё равно не доходит: TIMESTAMPTZ его не
+/// хранит. Строка отбрасывает его сама, потому что от неё живут два потребителя —
+/// колонки состояния и payload события, — и усечение обязано быть у них общим.
+[<Fact>]
+let ``A moment finer than the state column is cut to its precision`` () =
+    let snapshot =
+        { Meetup.toSnapshot Sample.published with
+            FirstPublishedAt = Some(Sample.fixedNow.AddTicks 17L)
+        }
+
+    let row = MeetupRow.ofSnapshot snapshot
+
+    test <@ row.FirstPublishedAt = Nullable(Sample.fixedNow.AddTicks 10L) @>
+
 /// Строку, которую схема одобрила, а домен прочитать не может, адаптер обязан
 /// ронять: подстановка значения по умолчанию превратила бы порчу в правдоподобную
 /// сходку и увела бы её дальше по системе.
