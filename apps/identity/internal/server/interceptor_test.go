@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -121,8 +121,11 @@ func TestUnaryChainLogsPanicOnce(t *testing.T) {
 	if got := attrValue(t, rec, "error_category").String(); got != "panic" {
 		t.Fatalf("error_category: got %q want %q", got, "panic")
 	}
-	if got := attrValue(t, rec, "result").String(); got != codes.Internal.String() {
-		t.Fatalf("result: got %q want %q", got, codes.Internal)
+	if got := attrValue(t, rec, "result").String(); got != "error" {
+		t.Fatalf("result: got %q want %q", got, "error")
+	}
+	if got := attrValue(t, rec, "grpc_code").String(); got != codes.Internal.String() {
+		t.Fatalf("grpc_code: got %q want %q", got, codes.Internal)
 	}
 	if got := attrValue(t, rec, "operation").String(); got != info.FullMethod {
 		t.Fatalf("operation: got %q want %q", got, info.FullMethod)
@@ -158,7 +161,7 @@ func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
 
 	_, err := chainUnary(slog.New(logs), info,
 		func(context.Context, any) (any, error) {
-			return nil, internal(cause)
+			return nil, internal("open store", cause)
 		})
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("code: got %v want %s", err, codes.Internal)
@@ -171,6 +174,38 @@ func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
 	assertRecord(t, rec, slog.LevelError, "rpc failed")
 	if got := attrValue(t, rec, "error").String(); !strings.Contains(got, cause.Error()) {
 		t.Fatalf("log error: got %q want to contain %q", got, cause.Error())
+	}
+}
+
+func TestUnaryLoggingRedactsPostgresRowValues(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+	pgErr := &pgconn.PgError{
+		Code:           "23514",
+		Message:        `new row for relation "profiles" violates check constraint`,
+		Detail:         `Failing row contains (0198f2a4, 515151, solgufik_nickname, pending).`,
+		ConstraintName: "profiles_access_status_check",
+	}
+
+	_, err := unaryLogging(slog.New(logs))(t.Context(), nil, info,
+		func(context.Context, any) (any, error) {
+			return nil, internal("upsert profile", pgErr)
+		})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("code: got %v want %s", err, codes.Internal)
+	}
+
+	rec := logs.sole(t)
+	logged := attrValue(t, rec, "error").String()
+	if strings.Contains(logged, "solgufik_nickname") {
+		t.Fatalf("error carries the failing row into the log: %q", logged)
+	}
+	for _, want := range []string{"upsert profile", "23514", "profiles_access_status_check"} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("error drops %q, leaving the failure unreadable: %q", want, logged)
+		}
 	}
 }
 
@@ -276,8 +311,11 @@ func TestUnaryLoggingLevelByCode(t *testing.T) {
 			if got := attrValue(t, rec, "error_category").String(); got != tc.category {
 				t.Fatalf("error_category: got %q want %q", got, tc.category)
 			}
-			if got := attrValue(t, rec, "result").String(); got != tc.code.String() {
-				t.Fatalf("result: got %q want %q", got, tc.code)
+			if got := attrValue(t, rec, "result").String(); got != "error" {
+				t.Fatalf("result: got %q want %q", got, "error")
+			}
+			if got := attrValue(t, rec, "grpc_code").String(); got != tc.code.String() {
+				t.Fatalf("grpc_code: got %q want %q", got, tc.code)
 			}
 		})
 	}
@@ -292,7 +330,6 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 
 	_, err := unaryLogging(slog.New(logs))(ctx, &identityv1.ResolveIdentityRequest{TelegramUserId: 7}, info,
 		func(context.Context, any) (any, error) {
-			time.Sleep(2 * time.Millisecond)
 			return &identityv1.ResolveIdentityResponse{}, nil
 		})
 	if err != nil {
@@ -301,8 +338,16 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
-	if got := attrValue(t, rec, "duration_us").Int64(); got < 1000 {
-		t.Fatalf("duration_us: got %d want >= 1000", got)
+	// Наблюдаемое свойство здесь — что граница записала длительность, а не то,
+	// сколько она заняла: порог по часам машины запрещён testing-strategy.md.
+	if got := attrValue(t, rec, "duration_us").Int64(); got < 0 {
+		t.Fatalf("duration_us: got %d want >= 0", got)
+	}
+	if got := attrValue(t, rec, "result").String(); got != "ok" {
+		t.Fatalf("result: got %q want %q", got, "ok")
+	}
+	if got := attrValue(t, rec, "grpc_code").String(); got != codes.OK.String() {
+		t.Fatalf("grpc_code: got %q want %q", got, codes.OK)
 	}
 	if got := attrValue(t, rec, "request_id").String(); got != "req-42" {
 		t.Fatalf("request_id: got %q want %q", got, "req-42")
