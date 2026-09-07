@@ -37,6 +37,12 @@ skills:
     source: github.com/microsoft/aspire-skills/skills/aspire-orchestration
   - name: aspire
     source: github.com/microsoft/aspire-skills/skills/aspire
+  - name: frontend-design-deslop
+    source: github.com/samber/cc-skills/skills/frontend-design-deslop
+  - name: presentation-design
+    source: github.com/jwynia/agent-skills/skills/general/communication/presentation-design
+  - name: unslop-ui
+    source: github.com/jcarterjohnson/vibecoded-design-tells/skill
 extras:
   - name: commands
     targets:

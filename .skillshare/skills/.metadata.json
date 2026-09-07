@@ -77,6 +77,39 @@
         "SKILL.md": "sha256:c1d9628984991d7ed59ab3a7bf6a4dad3d731ef68c71f409f64a0ca258e8028e"
       }
     },
+    "frontend-design-deslop": {
+      "source": "github.com/samber/cc-skills/skills/frontend-design-deslop",
+      "type": "github-subdir",
+      "installed_at": "2026-09-08T02:01:59.7886877+03:00",
+      "repo_url": "https://github.com/samber/cc-skills.git",
+      "subdir": "skills/frontend-design-deslop",
+      "version": "f6dad7c",
+      "tree_hash": "b58e00aadbd480faf40307e7c5502d70e7b2e36a",
+      "file_hashes": {
+        "SKILL.md": "sha256:d5023c2b0152ea3a245a34ea0f564f1c061e9daf96281132e91fd7308663536b",
+        "evals/evals.json": "sha256:97fc08e850f0ababca40f7ebe9394c584ba207407fdfac0f578862b8cd433399",
+        "references/accessibility.md": "sha256:6d9842a1df7c642d2a3d758020e32963881e225d664f1495f09ca0eeeeb512b3",
+        "references/adapters.md": "sha256:f788df9f1d7ffe9e7b8182f94eefadafbfbef366ce0e5b844804864abf965f2d",
+        "references/aesthetics-library.md": "sha256:96275043a099972099b607910305b99c16bd1e51fd0943da9603c0e3e4849af2",
+        "references/artifact-types.md": "sha256:6dd202ca1973cf2660db279843683f7149872880fb65adc52dccf4755881ed81",
+        "references/catalogs.md": "sha256:218af0a635ba78fb6fb728de992b0adddc80e472776116e7b46e832418901bc7",
+        "references/color-oklch.md": "sha256:6529aa73733b248aa3ec248c38a0c4e3b99f73cb7b5720c90c4cf027c35dadff",
+        "references/components.md": "sha256:061446bdf7a867255f15a64b1ab8c4ed2201146a5e7cfdf27288c58abf87c588",
+        "references/dark-mode.md": "sha256:d156bb78850c30716436a7634b04ddf0326d14f096b8792bc28c3badcf304fa7",
+        "references/design-md.md": "sha256:732ef3edbb41c93d2acce01154952a9fe9b9a101379ac2ab2ffa5ee3ceb65aee",
+        "references/design-theory.md": "sha256:76ccd7777676cc645969f5152845310cee9c701cee0b4a69cd826e6485a1156a",
+        "references/discovery.md": "sha256:754f6899d66f9f403a45b6f2ca16dd7600d5d0b1b0c11f1d5bcda548b1495943",
+        "references/divergence.md": "sha256:f0e699be9945a4d8c851d00acb0b84dae7a8431e9a25cdd6a0f9aa8c12289d1b",
+        "references/iconography.md": "sha256:1a0f3ed4b2f0b929021b36394ecf37179cd2b35b5c0d59c24c317a7b31aaef85",
+        "references/imagery.md": "sha256:1e4a3891e80327041e569cd8c353e3a9506ecfa061feb65468018327aeff842d",
+        "references/layout.md": "sha256:063713c85f80a435a0e231148da40c1434fab721f3f458dc2a48a58b7fef9d7c",
+        "references/motion.md": "sha256:879fa944ed5eb5376a73c3ffef527d2044433ce64f90d32acbd019e5650ac029",
+        "references/slop-checklist.md": "sha256:13193c25af62edc2e6fe0f94a41fafc4716a583a06303b0664b319e7ad823ccc",
+        "references/token-core.css": "sha256:630a7a63d5edc392d5af750e656e1f752b410b0c29421c7ada23cc8d31a0f426",
+        "references/token-sets.md": "sha256:e555192f28bb5cab792abd4a5017bdd20b983d1f83ce3c11751aeabfd0796b08",
+        "references/typography.md": "sha256:8bd1324b5293d8d7f39cce04c02227289221d11b814856e8255427eb1ccaf778"
+      }
+    },
     "golang/_golang": {
       "source": "https://github.com/samber/cc-skills-golang.git",
       "tracked": true,
@@ -88,6 +121,18 @@
       "tracked": true,
       "group": "mattpocock",
       "branch": "main"
+    },
+    "presentation-design": {
+      "source": "github.com/jwynia/agent-skills/skills/general/communication/presentation-design",
+      "type": "github-subdir",
+      "installed_at": "2026-09-08T02:02:32.4312219+03:00",
+      "repo_url": "https://github.com/jwynia/agent-skills.git",
+      "subdir": "skills/general/communication/presentation-design",
+      "version": "e02ec7e",
+      "tree_hash": "aedcd4f65747154d4efe3e1c8577fb453828831f",
+      "file_hashes": {
+        "SKILL.md": "sha256:9eea0a7887839db724264da64484f78bc9fafee12fdb888312d20f7e1d4d9b9a"
+      }
     },
     "show-me": {
       "source": "https://github.com/humanlayer/skills/plugins/show-me/skills/show-me",
@@ -123,6 +168,23 @@
         "references/targets.md": "sha256:e918e52b19baf4c93e4e9920070dc9f67173213a5d4e94cca920afc8cb5d077e",
         "references/trash.md": "sha256:e4d00cab0541297d2773aac41660ecc95416721bfc3c7fac4e7677f000cafccf",
         "scripts/run.sh": "sha256:ce5532a4ab4fc64f3fcc24a6af1775508020bcd0c5c1c3c20e023b65f5ce3131"
+      }
+    },
+    "unslop-ui": {
+      "source": "github.com/jcarterjohnson/vibecoded-design-tells/skill",
+      "type": "github-subdir",
+      "installed_at": "2026-09-08T02:03:03.0056279+03:00",
+      "repo_url": "https://github.com/jcarterjohnson/vibecoded-design-tells.git",
+      "subdir": "skill",
+      "version": "f7c4aef",
+      "tree_hash": "9bdb5422b1081707a62144bdcce3bbb7b3ce42c4",
+      "file_hashes": {
+        "README.md": "sha256:61e632b3c5c210557a0bfe7f3dd09674af58bf63af8d5fe42a57b9a720c23f50",
+        "SKILL.md": "sha256:cdcc3861449ebda5199919646b31d98862ec0e8e6272fb3a926af4d8e6e3241b",
+        "references/choosing-a-look.md": "sha256:b1c6439603ab720107c53ff8ac005107e0ffc2d07b665b170f5211cf9316a2de",
+        "references/tells.md": "sha256:835d36a1b0c8f1ce7ecce3b59fe4d8935a40cc80de23749e369c79aed3bf541c",
+        "scripts/devibe_scan.py": "sha256:601508223a87f2e891128dbe098e0aa75013e3a8fade327793f9323676fe1533",
+        "unslop-ui.skill": "sha256:5e06b32541c7e3ec8a96d0b9cc8602f00e6115d3c9c45517a78e578954ba7512"
       }
     },
     "verify-this": {
