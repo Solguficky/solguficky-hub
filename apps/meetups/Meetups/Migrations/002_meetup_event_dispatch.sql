@@ -29,6 +29,11 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
+    IF TG_OP = 'TRUNCATE' THEN
+        RAISE EXCEPTION 'meetup_events cannot be truncated'
+            USING ERRCODE = 'MT002';
+    END IF;
+
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'meetup_events row cannot be deleted'
             USING ERRCODE = 'MT002';
@@ -59,4 +64,13 @@ CREATE OR REPLACE TRIGGER meetup_events_row_undeletable
 BEFORE DELETE
 ON meetup_events
 FOR EACH ROW
+EXECUTE FUNCTION reject_meetup_event_record_change();
+
+-- TRUNCATE не проходит через строчный триггер: он не удаляет строки по одной,
+-- и `FOR EACH ROW` на нём объявить нельзя вовсе. Без этого триггера защита выше
+-- закрывала бы DELETE и пропускала способ стереть весь журнал одной командой.
+CREATE OR REPLACE TRIGGER meetup_events_untruncatable
+BEFORE TRUNCATE
+ON meetup_events
+FOR EACH STATEMENT
 EXECUTE FUNCTION reject_meetup_event_record_change();

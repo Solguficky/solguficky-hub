@@ -651,12 +651,14 @@ type SchemaTests() =
 
         let rewrite = DispatchScenario.recordUpdateCode dsn eventId
         let delete = DispatchScenario.rowDeleteCode dsn eventId
+        let truncate = DispatchScenario.tableTruncateCode dsn
         let ordinaryCheck = DispatchScenario.checkViolationCode dsn meetupId rejectedEvent
 
         test
             <@
                 rewrite = Some "MT001"
                 && delete = Some "MT002"
+                && truncate = Some "MT002"
                 && ordinaryCheck = Some "23514"
             @>
 

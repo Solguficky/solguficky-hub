@@ -144,6 +144,10 @@ module DispatchScenario =
     let rowDeleteCode (dsn: string) (eventId: Guid) =
         DispatchSql.failureCode dsn "DELETE FROM meetup_events WHERE event_id = @event_id" [ "event_id", box eventId ]
 
+    /// TRUNCATE не проходит через строчный триггер, поэтому запрет на него
+    /// держит отдельный statement-триггер, и проверять его надо отдельно.
+    let tableTruncateCode (dsn: string) = DispatchSql.failureCode dsn "TRUNCATE meetup_events" []
+
     /// Настоящее нарушение CHECK рядом с отказами триггера: без него «историю
     /// переписать нельзя» и «строка не прошла ограничение» выглядели бы для
     /// адаптера команд одним и тем же кодом.

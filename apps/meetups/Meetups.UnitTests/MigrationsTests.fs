@@ -32,6 +32,7 @@ let ``The second migration turns the journal into a dispatchable queue`` () =
             && sql.Contains("WHERE dispatched_at IS NULL")
             && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_record_immutable")
             && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_row_undeletable")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_untruncatable")
             && sql.Contains("ERRCODE = 'MT001'")
             && sql.Contains("ERRCODE = 'MT002'")
         @>
