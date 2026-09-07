@@ -85,7 +85,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 | Dev/agent workspace | не более 1 часа для незакоммиченного | не более 4 часов | Git checkpoints + restic; caches восстанавливаются сборкой |
 | Host и deploy-конфигурация | 0 для закоммиченного | входит в RTO хоста | Ansible, Quadlet и SOPS ciphertext в Git |
 
-`archive_timeout` заставляет PostgreSQL переключить неполный WAL segment, но не гарантирует его успешную запись вне хоста; слишком малое значение также раздувает архив. PostgreSQL рекомендует выбирать его осознанно ([Continuous Archiving](https://www.postgresql.org/docs/current/continuous-archiving.html)). RPO 5 минут считается от последнего успешно принятого repository WAL: `archive_timeout` оставляется меньше этого окна, чтобы оставался бюджет на `archive-async` и сеть, а alert срабатывает до исчерпания пяти минут.
+`archive_timeout` заставляет PostgreSQL переключить неполный WAL segment, но не гарантирует его успешную запись вне хоста; слишком малое значение также раздувает архив. PostgreSQL рекомендует выбирать его осознанно ([Continuous Archiving](https://www.postgresql.org/docs/current/continuous-archiving.html)). RPO 5 минут считается от последнего успешно принятого repository WAL. `archive_timeout` оставляется меньше этого окна, чтобы оставался бюджет на доставку в repository. `archive-async` не включается, пока нет alert по этой метрике.
 
 ### Критерии хоста
 
@@ -190,31 +190,33 @@ Rootless Podman хранит containers и images раздельно для ка
 
 ### Host baseline
 
-Host source of truth — отдельный private operations repository или каталог, который содержит Ansible roles/inventory schema, Quadlet units, deploy/backup scripts и SOPS policy. Inventory не хранит plaintext secrets. Ansible использует идемпотентные modules и check mode, поэтому тот же сценарий применим к любому Linux VPS и локальной Linux-машине ([Ansible playbooks](https://docs.ansible.com/projects/ansible-core/devel/playbook_guide/playbooks_intro.html)). Изменение host state вручную допустимо только для восстановления доступа и затем переносится в декларацию.
+Host source of truth — отдельный private operations repository: Ansible roles/inventory schema, Quadlet units, deploy/backup scripts и SOPS policy. В публичный репозиторий приложения это не кладётся. Inventory не хранит plaintext secrets. Ansible использует идемпотентные modules и check mode, поэтому тот же сценарий применим к любому Linux VPS и локальной Linux-машине ([Ansible playbooks](https://docs.ansible.com/projects/ansible-core/devel/playbook_guide/playbooks_intro.html)). Изменение host state вручную допустимо только для восстановления доступа и в том же срезе переносится в декларацию.
 
-Первичный bootstrap выполняется в таком порядке:
+Порядок важнее набора пакетов. Следующий этап не начинается, пока не зелёный gate текущего. Первая реализация сознательно проще целевой схемы: цель — не потерять доступ и не положить незаменимые данные на хост, который ещё нельзя восстановить.
 
-1. Защитить аккаунт провайдера и GitHub отдельными passphrase и MFA, сохранить rescue procedure вне VPS.
-2. Установить минимальный Debian stable, проверить `lsblk`, filesystem и использование всего выделенного диска. Разметка оставляет headroom системному разделу, выделяет production state в отдельный bounded filesystem/volume и включает block/inode quotas для dev/agent/test homes и rootless container storage. Ни один непривилегированный project account не может исчерпать место для PostgreSQL WAL или системных операций. Debian 13 — текущая stable ветка; security advisories и repository публикуются проектом Debian ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)).
-3. Создать `ops`, установить его public key, открыть вторую SSH-сессию и только после успешного входа отключить root/password login.
-4. Проверить конфигурацию `sshd -t`, reload без обрыва текущей сессии. Базовый policy:
+**До создания сервера.** Защитить аккаунт провайдера и GitHub отдельными passphrase и MFA. Сгенерировать SSH-ключ только для этого хоста: не ключ GitHub и не forwarded agent. Записать console/rescue procedure вне VPS. Выбрать object storage в другом provider/account, чем VPS: объектное хранилище того же регистратора не разделяет failure domain и не считается off-provider копией. Выбрать место escrow для age/restic до появления первого секрета.
 
-   ```text
-   PermitRootLogin no
-   PasswordAuthentication no
-   KbdInteractiveAuthentication no
-   PubkeyAuthentication yes
-   AllowUsers ops dev-solguficky deploy-test deploy-prod
-   ```
+**Не потерять доступ.** Установить минимальный Debian stable. Debian 13 — текущая stable ветка ([stable release](https://www.debian.org/releases/stable/), [security information](https://www.debian.org/security/)). Создать `ops`, поставить его public key, открыть вторую SSH-сессию и войти в provider console/rescue на этом же хосте — не по документации, а фактом входа. Только после обоих входов отключить root и password login. Проверить `sshd -t` и reload без обрыва текущей сессии. Базовый policy на этом шаге пускает только `ops`:
 
-   Dedicated `agent-*` accounts в `AllowUsers` не входят: у них нет SSH login. Если агент живёт user service того же `dev-<project>`, SSH принадлежит интерактивному developer-аккаунту, а не отдельной identity агента; какой из двух вариантов выбран — открытый вопрос 3. Доступные директивы и их точная семантика определены в [sshd_config](https://man.openbsd.org/sshd_config). Deploy keys дополнительно получают `restrict` и root-owned forced command в `authorized_keys`. Высокоценный локальный SSH agent не пересылается на VPS: forwarded socket доступен root на удалённом хосте ([ForwardAgent](https://man.openbsd.org/ssh_config#ForwardAgent)).
-5. В nftables разрешить established/related, loopback, ICMP/ICMPv6 и SSH; остальной ingress удалить. Если провайдер даёт отдельный firewall, повторить ту же политику там, включая ответы DNS/NTP при отсутствии UDP state tracking. До применения внешнего правила сохранить console/rescue access и проверить IPv4/IPv6 отдельно. Порты PostgreSQL, gRPC, NATS и dashboard не публикуются.
-6. Включить автоматическую установку security updates и явное окно reboot. `unattended-upgrade` устанавливает пакеты из разрешённых APT sources и пишет отдельные logs ([Debian manpage](https://manpages.debian.org/stable/unattended-upgrades/unattended-upgrade.8.en.html)). Reboot не выполняется вслепую: production health и свежий backup проверяются до окна.
-7. Установить rootless Podman, `uidmap`, subuid/subgid ranges, systemd user services и cgroup v2. Для long-running rootless services включить linger только service users; `loginctl enable-linger` запускает их user manager на boot и сохраняет после logout ([loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)).
-8. Настроить journald retention, time synchronization, disk/inode/quota/backup-age alerts и отправку уведомлений вне самого VPS. Проверить исчерпание block и inode quota одним disposable project user: production WAL и root operations продолжают работать.
-9. Включить zram или encrypted swap как страховку от краткого пика (2 GB на 16 GB host, 1 GB на 8 GB host), но не считать её дополнительной capacity. Обычный disk swap запрещён: страницы tmpfs с материализованными секретами могут попасть на диск. Все agent/build processes входят в общий ограниченный cgroup slice и получают дополнительные дочерние лимиты.
+```text
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowUsers ops
+```
 
-Перед закрытием bootstrap задача обязана доказать: новый SSH login, reboot, отсутствие лишних listening ports, rootless container после reboot, provider console/rescue procedure и повторный Ansible run без неожиданных изменений.
+`dev-*` и `deploy-*` добавляются в `AllowUsers`, когда эти пользователи уже созданы и их ключ проверен второй сессией. Dedicated `agent-*` в список не входят. Если агент живёт user service того же `dev-<project>`, SSH принадлежит developer-аккаунту; какой вариант выбран — открытый вопрос 3. Семантика директив — [sshd_config](https://man.openbsd.org/sshd_config). Deploy keys позже получают `restrict` и root-owned forced command. Высокоценный локальный SSH agent на VPS не пересылается ([ForwardAgent](https://man.openbsd.org/ssh_config#ForwardAgent)).
+
+Провайдерский firewall, который режет всё кроме SSH, применяется только при уже проверенном console/rescue. В nftables — established/related, loopback, ICMP/ICMPv6 и SSH; остальной ingress удалить, IPv4 и IPv6 проверить отдельно, включая ответы DNS/NTP если у панели нет UDP state tracking. Порты PostgreSQL, gRPC, NATS и dashboard не публикуются.
+
+**Сделать хост воспроизводимым.** Ручные шаги доступа переносятся в Ansible до разметки диска и до production-данных. Разметка, production volume и quotas выполняются playbook, не интерактивным `fdisk` в первой сессии: ошибка оставляет хост без boot. Разметка оставляет headroom системному разделу, выделяет production state в отдельный bounded filesystem/volume и включает block/inode quotas для dev/agent/test homes и rootless container storage. Ни один непривилегированный project account не может исчерпать место для PostgreSQL WAL. Второй Ansible apply не меняет хост. Пока нет успешного backup, `unattended-upgrade` ставит security updates, но не выполняет автоматический reboot ([Debian manpage](https://manpages.debian.org/stable/unattended-upgrades/unattended-upgrade.8.en.html)).
+
+**Не класть незаменимые данные.** Rootless Podman, `uidmap`, subuid/subgid, systemd user services, cgroup v2. Linger только у service users ([loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)). Первая реализация включает zram (2 GB на 16 GB host, 1 GB на 8 GB host) и не включает disk swap: страницы tmpfs с секретами не должны попасть на диск. Encrypted swap — отдельное решение после работающего backup, не старт. Agent/build processes входят в `dev-agents.slice`. Journald retention, синхронизация времени и отправка disk/inode/quota alerts вне VPS. Исчерпание quota disposable project user не трогает production WAL и root.
+
+**Секреты и backup до production poller.** age identities появляются в escrow и проверяются расшифровкой тестового файла, до первого bot token. Test PostgreSQL получает off-provider pgBackRest. WAL сначала архивируется синхронно (`archive-async=n`); `archive-async` включается только после alert по возрасту WAL в repository. Production bot token и poller запускаются после успешного restore drill тестового контура, не после первого `podman run`.
+
+Перед закрытием bootstrap задача обязана доказать: новый SSH login под `ops`, вход в console/rescue, reboot, отсутствие лишних listening ports, rootless container после reboot и повторный Ansible run без неожиданных изменений.
 
 ### Dev environments и coding agents
 
@@ -321,7 +323,7 @@ Backup отделяется от переносимой конфигурации
 
 PostgreSQL continuous archiving вместе с base backup позволяет PITR до выбранной точки; без `archive-async` `archive_command` должен вернуть успех только после надёжной записи WAL, и PostgreSQL повторяет неуспешную архивацию ([PostgreSQL PITR](https://www.postgresql.org/docs/current/continuous-archiving.html)). С `archive-async` этот успех относится к локальному spool: надёжная копия — только подтверждение repository. pgBackRest предоставляет full/differential/incremental backups, repository encryption, restore/PITR и S3-compatible repositories ([pgBackRest User Guide](https://pgbackrest.org/user-guide.html)). Для начального режима:
 
-- `archive-async=y` допустим только как ускорение: `archive_command` тогда подтверждает запись в локальный spool, а не в repository, и PostgreSQL сегмент больше не повторяет. RPO-метрика, alert и ожидание перед promote считаются по подтверждению pgBackRest repository (успешный archive-push в object storage), а не по `pg_stat_archiver` или коду возврата `archive_command`. Spool живёт на durable local disk с alert по возрасту/размеру; при недоступном repository запись на хосте останавливается до исчерпания RPO, а не после потери spool;
+- первая реализация использует `archive-async=n`, чтобы `archive_command` подтверждал запись в repository. `archive-async=y` — ускорение после работающего alert по возрасту WAL в repository: тогда `archive_command` подтверждает только локальный spool, PostgreSQL сегмент больше не повторяет, а RPO/promote считаются по archive-push в object storage, не по `pg_stat_archiver`. Spool живёт на durable local disk; при недоступном repository запись на хосте останавливается до исчерпания RPO, а не после потери spool;
 - weekly full, daily differential;
 - минимум четыре успешных full chains; retention проверяется расчётом реального объёма и WAL, а не только количеством;
 - `archive_timeout=1min` как начальный интервал переключения неполного WAL segment: окно RPO 5 минут должно включать доставку в repository, а не только switch на хосте; фактический RPO считается от последней успешной записи в repository;
@@ -420,7 +422,7 @@ PER-80 должен дать владельцу практику безопас�
 - полный одновременный срез рассчитан на 16 GB RAM, 8 GB — нижняя рабочая граница с ужатыми agent/build limits;
 - dev, agents, test и production на первом этапе размещаются на одном хосте с зафиксированным остаточным риском;
 - отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-035;
-- production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии.
+- production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии; объектное хранилище того же регистратора, что VPS, этим условием не является.
 
 ### Решения владельца до реализации
 
