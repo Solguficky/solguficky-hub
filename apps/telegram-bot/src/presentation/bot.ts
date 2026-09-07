@@ -41,6 +41,8 @@ type BoundaryOutcome =
       error_category: string;
       error: string;
       stack?: string;
+      grpc_code?: string;
+      reply_error?: string;
     };
 
 export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
@@ -88,17 +90,10 @@ async function handleMessage(
     }
     const resolved = await runtime.identity.resolve(
       toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
+      ctx.requestId,
     );
-    if (resolved.kind === "unavailable") {
-      outcome = {
-        level: "error",
-        message: "identity unavailable",
-        result: "error",
-        use_case: "start",
-        error_category: "identity_unavailable",
-        error: errorText(resolved.cause),
-      };
-      await ctx.reply(unavailableText);
+    if (resolved.kind !== "resolved") {
+      outcome = await replyFailClosed(ctx, identityFailureOutcome(resolved));
       return;
     }
     const result = runtime.dispatcher.execute(
@@ -153,6 +148,53 @@ async function handleMessage(
   }
 }
 
+// Недоступность зависимости и отвергнутый ею вызов — разные отказы: первый
+// проходит по повтору, второй никогда. Человеку в обоих случаях уходит один и
+// тот же fail-closed ответ, различие живёт в записи границы.
+function identityFailureOutcome(
+  resolved:
+    | { kind: "unavailable"; cause: unknown }
+    | { kind: "rejected"; code: string; cause: unknown },
+): BoundaryOutcome {
+  if (resolved.kind === "rejected") {
+    return {
+      level: "error",
+      message: "identity rejected the request",
+      result: "error",
+      use_case: "start",
+      error_category: "identity_rejected",
+      grpc_code: resolved.code,
+      error: errorText(resolved.cause),
+    };
+  }
+  return {
+    level: "error",
+    message: "identity unavailable",
+    result: "error",
+    use_case: "start",
+    error_category: "identity_unavailable",
+    error: errorText(resolved.cause),
+  };
+}
+
+// Отказ самого ответа человеку нельзя терять: раньше outcome присваивался до
+// await, поэтому catch видел его непустым и 403 от Bot API не попадал ни в
+// запись границы, ни в bot.catch.
+async function replyFailClosed(
+  ctx: UpdateContext,
+  outcome: BoundaryOutcome,
+): Promise<BoundaryOutcome> {
+  try {
+    await ctx.reply(unavailableText);
+    return outcome;
+  } catch (cause) {
+    if (outcome.result === "error") {
+      return { ...outcome, reply_error: errorText(cause) };
+    }
+    return outcome;
+  }
+}
+
 function unexpectedOutcome(
   cause: unknown,
   fallback?: unknown,
@@ -194,6 +236,12 @@ function writeBoundary(
     fields.error = outcome.error;
     if (outcome.stack !== undefined) {
       fields.stack = outcome.stack;
+    }
+    if (outcome.grpc_code !== undefined) {
+      fields.grpc_code = outcome.grpc_code;
+    }
+    if (outcome.reply_error !== undefined) {
+      fields.reply_error = outcome.reply_error;
     }
   }
   logger[outcome.level](outcome.message, fields);

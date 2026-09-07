@@ -1,3 +1,4 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import { BotError, Context, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -245,23 +246,61 @@ describe("presentation adapter", () => {
   });
 
   it("replies fail-closed when identity rpc exceeds the deadline", async () => {
-    vi.useFakeTimers();
-    const identity = createIdentityResolver(
-      { resolveIdentity: () => new Promise<never>(() => {}) },
-      40,
-    );
+    const identity = createIdentityResolver({
+      resolveIdentity: () =>
+        Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    });
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
-    const pending = bot.handleUpdate(messageUpdate());
-    await vi.advanceTimersByTimeAsync(40);
-    await pending;
+    await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Это на моей стороне.");
     expectBoundary(records[0], {
       level: "error",
       result: "error",
       error_category: "identity_unavailable",
     });
-    expect(records[0]?.fields.error).toBe("identity rpc deadline exceeded");
+  });
+
+  it("separates a refused request from an unavailable identity", async () => {
+    const identity = createIdentityResolver({
+      resolveIdentity: () =>
+        Promise.reject(
+          new ConnectError(
+            "telegram_user_id must be positive",
+            Code.InvalidArgument,
+          ),
+        ),
+    });
+    const { bot, calls, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне.");
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "identity_rejected",
+    });
+    expect(records[0]?.fields.grpc_code).toBe("InvalidArgument");
+    expect(records[0]?.fields.use_case).toBe("start");
+  });
+
+  it("carries the boundary request id into the identity call", async () => {
+    let seenRequestId: string | undefined;
+    const identity: IdentityResolver = {
+      resolve: async (_input, requestId) => {
+        seenRequestId = requestId;
+        return {
+          kind: "resolved",
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          globalRoles: [],
+        };
+      },
+    };
+    const { bot, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(seenRequestId).toBe(records[0]?.fields.request_id);
+    expect(seenRequestId).not.toBe("");
   });
 
   it("logs ignored updates with the boundary skeleton", async () => {
@@ -337,6 +376,7 @@ describe("presentation adapter", () => {
       error_category: "identity_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
+    expect(records[0]?.fields.reply_error).toContain("Forbidden");
   });
 
   it("does not resolve identity for a photo without text", async () => {
