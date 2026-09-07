@@ -20,6 +20,7 @@
   <ItemGroup>
     <Compile Include="Infrastructure/MeetupsHostFixture.fs" />
     <Compile Include="Infrastructure/Testdb.fs" />
+    <Compile Include="Infrastructure/DispatchScenario.fs" />
     <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
     <Compile Include="Scenarios/SchemaTests.fs" />
   </ItemGroup>

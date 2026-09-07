@@ -199,7 +199,7 @@ type SchemaTests() =
         let count =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ count = 1L @>
+        test <@ count = 2L @>
 
     [<Fact>]
     member _.``Schema SQL is idempotent without the journal``() =
@@ -220,7 +220,7 @@ type SchemaTests() =
         let journal =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ tables = 2L && journal = 1L @>
+        test <@ tables = 2L && journal = 2L @>
 
     [<Fact>]
     member _.``Concurrent apply finishes without error``() =
@@ -237,7 +237,7 @@ type SchemaTests() =
         let count =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ count = 1L @>
+        test <@ count = 2L @>
 
     [<Fact>]
     member _.``A day schedule cannot carry a start time``() =
@@ -583,6 +583,98 @@ type SchemaTests() =
                 duplicateVersion
                 |> Option.exists SchemaSql.isUniqueViolation
             @>
+
+    [<Fact>]
+    member _.``Pending dispatch survives reversed commit order``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let firstMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000081")
+        let secondMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000082")
+        let firstEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000091")
+        let secondEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000092")
+
+        use firstTransaction = new CommandTransaction(dsn)
+        let firstPosition = firstTransaction.Insert(firstMeetup, firstEvent)
+
+        use secondTransaction = new CommandTransaction(dsn)
+        let secondPosition = secondTransaction.Insert(secondMeetup, secondEvent)
+        secondTransaction.Commit()
+
+        let dispatched = DispatchScenario.markPendingDispatched dsn
+        firstTransaction.Commit()
+
+        let missedByHighWater = DispatchScenario.eventsAfter dsn secondPosition
+        let pending = DispatchScenario.pendingEvents dsn
+
+        test
+            <@
+                firstPosition < secondPosition
+                && dispatched = [ secondEvent ]
+                && missedByHighWater = []
+                && pending = [ firstEvent ]
+            @>
+
+    [<Fact>]
+    member _.``The dispatch mark moves while the event record stays put``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000083")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000093")
+
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn eventId meetupId 1 "meetup_created"
+
+        let before = DispatchScenario.readRecord dsn eventId
+        let markBefore = DispatchScenario.readDispatchMark dsn eventId
+        let dispatched = DispatchScenario.markPendingDispatched dsn
+        let after = DispatchScenario.readRecord dsn eventId
+        let markAfter = DispatchScenario.readDispatchMark dsn eventId
+
+        test
+            <@
+                dispatched = [ eventId ]
+                && after = before
+                && markBefore = None
+                && markAfter = Some DispatchScenario.dispatchedAt
+            @>
+
+    [<Fact>]
+    member _.``The event record can be neither rewritten nor deleted``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000084")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000094")
+        let rejectedEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000096")
+
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn eventId meetupId 1 "meetup_created"
+
+        let rewrite = DispatchScenario.recordUpdateCode dsn eventId
+        let delete = DispatchScenario.rowDeleteCode dsn eventId
+        let truncate = DispatchScenario.tableTruncateCode dsn
+        let ordinaryCheck = DispatchScenario.checkViolationCode dsn meetupId rejectedEvent
+
+        test
+            <@
+                rewrite = Some "MT001"
+                && delete = Some "MT002"
+                && truncate = Some "MT002"
+                && ordinaryCheck = Some "23514"
+            @>
+
+    [<Fact>]
+    member _.``Rolling back a command transaction removes state and event``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000085")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000095")
+
+        do
+            use transaction = new CommandTransaction(dsn)
+            transaction.Insert(meetupId, eventId) |> ignore
+
+        let counts = DispatchScenario.recordCounts dsn meetupId eventId
+        test <@ counts = (0L, 0L) @>
 
     [<Fact>]
     member _.``A meetup cannot carry a lifecycle outside the contract``() =
