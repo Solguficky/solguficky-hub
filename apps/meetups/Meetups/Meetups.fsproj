@@ -5,8 +5,13 @@
   </PropertyGroup>
 
   <!-- Порядок Compile — направление зависимостей: файл видит только объявленное
-       выше. Domain/, Slices/ и Infrastructure/ появятся вместе с первым срезом. -->
+       выше. Domain/ стоит первым и потому не способен увидеть транспорт.
+       Slices/ и Infrastructure/ появятся вместе с записью и gRPC-слоем. -->
   <ItemGroup>
+    <Compile Include="Domain/Ids.fs" />
+    <Compile Include="Domain/Schedule.fs" />
+    <Compile Include="Domain/MeetupSnapshot.fs" />
+    <Compile Include="Domain/Meetup.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/Placeholder.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
