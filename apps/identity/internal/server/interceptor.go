@@ -66,8 +66,7 @@ func (e *internalError) logText() string {
 // корневой ошибки — он называет слой, на котором отказ родился, и состоит из
 // имён пакета и типа, а не из данных.
 func causeText(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		text := "postgres sqlstate " + pgErr.Code
 		if pgErr.ConstraintName != "" {
 			text += ", constraint " + pgErr.ConstraintName
