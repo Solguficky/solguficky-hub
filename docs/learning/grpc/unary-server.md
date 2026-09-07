@@ -145,19 +145,19 @@ sequenceDiagram
     alt id > 0
         H-->>R: identity_id, роли
         R-->>L: ok
-        L-->>C: OK; одна запись, Debug
+        L-->>C: OK — одна запись, Debug
     else id <= 0
         H-->>R: InvalidArgument
         R-->>L: InvalidArgument
-        L-->>C: InvalidArgument; одна запись, Warn
+        L-->>C: InvalidArgument — одна запись, Warn
     else отказ хранения
         H-->>R: internalError
         R-->>L: Internal
-        L-->>C: Internal; одна запись, Error; причина только в логе
+        L-->>C: Internal — одна запись, Error, причина только в логе
     else паника
         H-->>R: panic
         R-->>L: panicError со стеком
-        L-->>C: Internal; одна запись, Error + stack
+        L-->>C: Internal — одна запись, Error + stack
     end
 ```
 
