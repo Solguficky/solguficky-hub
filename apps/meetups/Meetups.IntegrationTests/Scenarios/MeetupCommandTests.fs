@@ -331,7 +331,9 @@ type MeetupCommandTests() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
 
-        let app =
+        // use, а не let: приложение держит singleton NpgsqlDataSource, и его пул
+        // соединений обязан закрыться раньше, чем изолированная база будет удалена.
+        use app =
             Meetups.Host.build
                 [|
                     "--urls=http://127.0.0.1:0"
