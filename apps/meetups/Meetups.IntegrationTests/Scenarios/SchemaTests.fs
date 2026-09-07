@@ -199,7 +199,7 @@ type SchemaTests() =
         let count =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ count = 1L @>
+        test <@ count = 2L @>
 
     [<Fact>]
     member _.``Schema SQL is idempotent without the journal``() =
@@ -213,14 +213,14 @@ type SchemaTests() =
                 """
                 SELECT COUNT(*) FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN ('meetups', 'meetup_events')
+                  AND table_name IN ('meetups', 'meetup_events', 'meetup_outbox')
                 """
                 []
 
         let journal =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ tables = 2L && journal = 1L @>
+        test <@ tables = 3L && journal = 2L @>
 
     [<Fact>]
     member _.``Concurrent apply finishes without error``() =
@@ -237,7 +237,7 @@ type SchemaTests() =
         let count =
             SchemaSql.scalar<int64> db.ConnectionString "SELECT COUNT(*) FROM meetups_schema_versions" []
 
-        test <@ count = 1L @>
+        test <@ count = 2L @>
 
     [<Fact>]
     member _.``A day schedule cannot carry a start time``() =
@@ -583,6 +583,75 @@ type SchemaTests() =
                 duplicateVersion
                 |> Option.exists SchemaSql.isUniqueViolation
             @>
+
+    [<Fact>]
+    member _.``Pending outbox scan survives reversed commit order``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let firstMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000081")
+        let secondMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000082")
+        let firstEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000091")
+        let secondEvent = Guid.Parse("0199c0de-0000-7000-8000-000000000092")
+
+        use firstTransaction = new OutboxTransaction(dsn)
+        let firstPosition = firstTransaction.Insert(firstMeetup, firstEvent)
+
+        use secondTransaction = new OutboxTransaction(dsn)
+        let secondPosition = secondTransaction.Insert(secondMeetup, secondEvent)
+        secondTransaction.Commit()
+
+        let dispatched = OutboxScenario.dispatchVisiblePending dsn
+        firstTransaction.Commit()
+
+        let missedByHighWater = OutboxScenario.eventsAfter dsn secondPosition
+        let pending = OutboxScenario.pendingEvents dsn
+
+        test
+            <@
+                firstPosition < secondPosition
+                && dispatched = [ secondEvent ]
+                && missedByHighWater = []
+                && pending = [ firstEvent ]
+            @>
+
+    [<Fact>]
+    member _.``Outbox record is copied from its journal event``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let journalMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000083")
+        let attemptedMeetup = Guid.Parse("0199c0de-0000-7000-8000-000000000084")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000093")
+
+        SchemaSql.insertNoDate dsn journalMeetup "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertNoDate dsn attemptedMeetup "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn eventId journalMeetup 1 "meetup_created"
+
+        let actual = OutboxScenario.insertMismatchedRecord dsn eventId attemptedMeetup
+        let journalIsImmutable = OutboxScenario.journalRecordIsImmutable dsn eventId
+
+        let expected =
+            (journalMeetup,
+             1,
+             "meetup_created",
+             "{}",
+             Guid.Parse("0199c0de-0000-7000-8000-00000000000a"),
+             DateTimeOffset.Parse("2026-09-06T12:00:00Z"))
+
+        test <@ actual = expected && journalIsImmutable @>
+
+    [<Fact>]
+    member _.``Rolling back an outbox transaction removes all three records``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000085")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000095")
+
+        do
+            use transaction = new OutboxTransaction(dsn)
+            transaction.Insert(meetupId, eventId) |> ignore
+
+        let counts = OutboxScenario.recordCounts dsn meetupId eventId
+        test <@ counts = (0L, 0L, 0L) @>
 
     [<Fact>]
     member _.``A meetup cannot carry a lifecycle outside the contract``() =

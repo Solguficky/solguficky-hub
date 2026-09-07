@@ -22,6 +22,21 @@ let ``The first migration creates both meetup tables`` () =
         @>
 
 [<Fact>]
+let ``The second migration creates a complete pending outbox`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 1).Sql
+
+    test
+        <@
+            sql.Contains("CREATE TABLE IF NOT EXISTS meetup_outbox")
+            && sql.Contains("event_id UUID PRIMARY KEY REFERENCES meetup_events (event_id)")
+            && sql.Contains("payload JSONB NOT NULL")
+            && sql.Contains("CREATE TRIGGER meetup_outbox_copy_record")
+            && sql.Contains("NEW.payload")
+            && sql.Contains("CREATE TRIGGER meetup_events_record_immutable")
+            && sql.Contains("WHERE dispatched_at IS NULL")
+        @>
+
+[<Fact>]
 let ``A postgres URI becomes a keyword connection string`` () =
     let cs =
         Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"

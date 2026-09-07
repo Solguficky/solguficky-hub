@@ -103,11 +103,10 @@ CREATE TABLE IF NOT EXISTS meetup_events (
     payload JSONB NOT NULL,
     performed_by UUID NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
-    -- Порядок обхода журнала. Курсором outbox эта колонка служить не может:
+    -- Порядок обхода журнала. Курсором эта колонка служить не может:
     -- identity выдаёт номер до коммита, поэтому строка с меньшим position
     -- может закоммититься позже уже прочитанной, и high-water mark потерял бы
-    -- её навсегда. Чем публикация наружу отмечает отправленное — открытый
-    -- вопрос, он решается вместе с транспортом публикации, а не здесь.
+    -- её навсегда. Публикация наружу читает отдельный meetup_outbox.
     position BIGINT GENERATED ALWAYS AS IDENTITY,
     CONSTRAINT meetup_events_version_positive
         CHECK (version >= 1),
