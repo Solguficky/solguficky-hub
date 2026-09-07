@@ -1,6 +1,8 @@
+import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ResolveIdentityResponseSchema } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   createIdentityClient,
@@ -71,7 +73,10 @@ describe("identity client", () => {
       {
         resolveIdentity: async (_request, options) => {
           seenTimeout = options?.timeoutMs;
-          return { identityId: "id-1", globalRoles: [GlobalRole.ADMIN] };
+          return create(ResolveIdentityResponseSchema, {
+            identityId: "id-1",
+            globalRoles: [GlobalRole.ADMIN],
+          });
         },
       },
       75,
@@ -91,7 +96,9 @@ describe("identity client", () => {
     const identity = createIdentityResolver({
       resolveIdentity: async (_request, options) => {
         seenHeaders = options?.headers;
-        return { identityId: "id-1", globalRoles: [] };
+        return create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+        });
       },
     });
     await identity.resolve({ telegramUserId: 1n }, "req-42");
@@ -103,7 +110,9 @@ describe("identity client", () => {
     const identity = createIdentityResolver({
       resolveIdentity: async (_request, options) => {
         seenHeaders = options?.headers;
-        return { identityId: "id-1", globalRoles: [] };
+        return create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+        });
       },
     });
     await identity.resolve({ telegramUserId: 1n });

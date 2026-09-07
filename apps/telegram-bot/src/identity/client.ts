@@ -1,3 +1,4 @@
+import type { Client } from "@connectrpc/connect";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
@@ -15,18 +16,13 @@ export const identityRpcTimeoutMs = 3_000;
 
 export const requestIdHeader = "x-request-id";
 
-export type IdentityRpc = {
-  resolveIdentity(
-    request: {
-      telegramUserId: bigint;
-      telegramUsername?: string;
-    },
-    options?: { timeoutMs?: number; headers?: Record<string, string> },
-  ): Promise<{
-    identityId: string;
-    globalRoles: readonly GlobalRole[];
-  }>;
-};
+// Тип клиента берётся из схемы, а не переписывается рядом с ней: рукописная
+// копия форм запроса, ответа и CallOptions расходится с contracts/proto молча,
+// а Pick по сгенерированному Client роняет typecheck на первом же расхождении.
+export type IdentityRpc = Pick<
+  Client<typeof IdentityService>,
+  "resolveIdentity"
+>;
 
 export type IdentityClient = IdentityResolver & {
   close(): void;
