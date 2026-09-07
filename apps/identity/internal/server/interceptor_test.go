@@ -103,9 +103,17 @@ type frameWant struct {
 
 func assertFrame(t *testing.T, rec slog.Record, want frameWant) {
 	t.Helper()
+	assertRequiredAttrs(t, rec, want)
+	assertCoreAttrs(t, rec, want)
+	assertOptionalAttr(t, rec, "request_id", want.requestID)
+	assertOptionalAttr(t, rec, "use_case", want.useCase)
+	assertOutcomeAttrs(t, rec, want.result)
+}
 
+func assertRequiredAttrs(t *testing.T, rec slog.Record, want frameWant) {
+	t.Helper()
 	required := []string{"service", "operation", "result", "duration_us", "grpc_code"}
-	if want.result == "error" {
+	if want.result == resultError {
 		required = append(required, "error_category", "error")
 	}
 	for _, key := range required {
@@ -113,6 +121,10 @@ func assertFrame(t *testing.T, rec slog.Record, want frameWant) {
 			t.Fatalf("attribute %q missing from record %q", key, rec.Message)
 		}
 	}
+}
+
+func assertCoreAttrs(t *testing.T, rec slog.Record, want frameWant) {
+	t.Helper()
 	if got := attrValue(t, rec, "service").String(); got != ServiceName {
 		t.Fatalf("service: got %q want %q", got, ServiceName)
 	}
@@ -125,21 +137,28 @@ func assertFrame(t *testing.T, rec slog.Record, want frameWant) {
 	if got := attrValue(t, rec, "grpc_code").String(); got != want.code.String() {
 		t.Fatalf("grpc_code: got %q want %q", got, want.code)
 	}
-	if want.requestID == "" {
-		assertNoAttr(t, rec, "request_id")
-	} else if got := attrValue(t, rec, "request_id").String(); got != want.requestID {
-		t.Fatalf("request_id: got %q want %q", got, want.requestID)
+}
+
+func assertOptionalAttr(t *testing.T, rec slog.Record, key, want string) {
+	t.Helper()
+	if want == "" {
+		assertNoAttr(t, rec, key)
+		return
 	}
-	if want.useCase == "" {
-		assertNoAttr(t, rec, "use_case")
-	} else if got := attrValue(t, rec, "use_case").String(); got != want.useCase {
-		t.Fatalf("use_case: got %q want %q", got, want.useCase)
+	if got := attrValue(t, rec, key).String(); got != want {
+		t.Fatalf("%s: got %q want %q", key, got, want)
 	}
-	if want.result == "ok" {
+}
+
+func assertOutcomeAttrs(t *testing.T, rec slog.Record, result string) {
+	t.Helper()
+	if result == resultOK {
 		assertNoAttr(t, rec, "error_category")
 		assertNoAttr(t, rec, "error")
 		assertNoAttr(t, rec, "stack")
-	} else if rec.Message != "rpc panic" {
+		return
+	}
+	if rec.Message != "rpc panic" {
 		assertNoAttr(t, rec, "stack")
 	}
 }
@@ -192,7 +211,7 @@ func TestUnaryChainLogsPanicOnce(t *testing.T) {
 
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc panic")
-	assertFrame(t, rec, frameWant{result: "error", code: codes.Internal, operation: info.FullMethod})
+	assertFrame(t, rec, frameWant{result: resultError, code: codes.Internal, operation: info.FullMethod})
 	if got := attrValue(t, rec, "error_category").String(); got != "panic" {
 		t.Fatalf("error_category: got %q want %q", got, "panic")
 	}
@@ -215,7 +234,7 @@ func TestStreamChainLogsPanicOnce(t *testing.T) {
 
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc panic")
-	assertFrame(t, rec, frameWant{result: "error", code: codes.Internal, operation: info.FullMethod})
+	assertFrame(t, rec, frameWant{result: resultError, code: codes.Internal, operation: info.FullMethod})
 	if stack := attrValue(t, rec, "stack").String(); !strings.Contains(stack, "TestStreamChainLogsPanicOnce") {
 		t.Fatalf("stack does not reach the panicking frame: %q", stack)
 	}
@@ -241,7 +260,7 @@ func TestUnaryChainLogsInternalWithoutLeakingCause(t *testing.T) {
 
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc failed")
-	assertFrame(t, rec, frameWant{result: "error", code: codes.Internal, operation: info.FullMethod})
+	assertFrame(t, rec, frameWant{result: resultError, code: codes.Internal, operation: info.FullMethod})
 	if got := attrValue(t, rec, "error").String(); !strings.Contains(got, cause.Error()) {
 		t.Fatalf("log error: got %q want to contain %q", got, cause.Error())
 	}
@@ -262,7 +281,7 @@ func TestUnaryChainLogsFailureOnce(t *testing.T) {
 	}
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelWarn, "rpc failed")
-	assertFrame(t, rec, frameWant{result: "error", code: codes.InvalidArgument, operation: info.FullMethod})
+	assertFrame(t, rec, frameWant{result: resultError, code: codes.InvalidArgument, operation: info.FullMethod})
 }
 
 func TestUnaryChainLogsSuccessOnce(t *testing.T) {
@@ -278,7 +297,7 @@ func TestUnaryChainLogsSuccessOnce(t *testing.T) {
 	}
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
-	assertFrame(t, rec, frameWant{result: "ok", code: codes.OK, operation: info.FullMethod})
+	assertFrame(t, rec, frameWant{result: resultOK, code: codes.OK, operation: info.FullMethod})
 }
 
 func TestStreamLoggingRecordsOutcome(t *testing.T) {
@@ -292,13 +311,13 @@ func TestStreamLoggingRecordsOutcome(t *testing.T) {
 		result  string
 		code    codes.Code
 	}{
-		{name: "success", err: nil, level: slog.LevelDebug, message: "rpc completed", result: "ok", code: codes.OK},
+		{name: "success", err: nil, level: slog.LevelDebug, message: "rpc completed", result: resultOK, code: codes.OK},
 		{
 			name:    "unknown service",
 			err:     status.Error(codes.NotFound, "unknown service"),
 			level:   slog.LevelWarn,
 			message: "rpc failed",
-			result:  "error",
+			result:  resultError,
 			code:    codes.NotFound,
 		},
 	}
@@ -350,7 +369,7 @@ func TestUnaryLoggingLevelByCode(t *testing.T) {
 
 			rec := logs.sole(t)
 			assertRecord(t, rec, tc.level, "rpc failed")
-			assertFrame(t, rec, frameWant{result: "error", code: tc.code, operation: info.FullMethod})
+			assertFrame(t, rec, frameWant{result: resultError, code: tc.code, operation: info.FullMethod})
 			if got := attrValue(t, rec, "error_category").String(); got != tc.category {
 				t.Fatalf("error_category: got %q want %q", got, tc.category)
 			}
@@ -377,7 +396,7 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
 	assertFrame(t, rec, frameWant{
-		result:    "ok",
+		result:    resultOK,
 		code:      codes.OK,
 		operation: info.FullMethod,
 		requestID: "req-42",
@@ -411,7 +430,7 @@ func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
 	assertFrame(t, rec, frameWant{
-		result:    "ok",
+		result:    resultOK,
 		code:      codes.OK,
 		operation: info.FullMethod,
 		requestID: "req-42",
@@ -449,7 +468,7 @@ func TestUnaryLoggingOmitsEmptyUseCase(t *testing.T) {
 			}
 
 			rec := logs.sole(t)
-			assertFrame(t, rec, frameWant{result: "ok", code: codes.OK, operation: info.FullMethod})
+			assertFrame(t, rec, frameWant{result: resultOK, code: codes.OK, operation: info.FullMethod})
 		})
 	}
 }

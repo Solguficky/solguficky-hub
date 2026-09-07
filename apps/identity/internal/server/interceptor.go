@@ -84,10 +84,15 @@ func streamRecovery() grpc.StreamServerInterceptor {
 	}
 }
 
+const (
+	resultOK    = "ok"
+	resultError = "error"
+)
+
 func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req any, err error) {
-	result := "ok"
+	result := resultOK
 	if err != nil {
-		result = "error"
+		result = resultError
 	}
 	attrs := []any{
 		slog.String("service", ServiceName),
