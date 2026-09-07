@@ -1,10 +1,12 @@
 ---
 name: proj-record-observation
-description: "Провести ретро сессии и оставить наблюдения в docs/development/observations.md"
+description: "Записать выбранные владельцем наблюдения о среде и порядке работы в docs/development/observations.md после предложения proj-reflect-work."
 disable-model-invocation: true
 ---
 
 # Записать наблюдение
+
+Запускай скилл после того, как владелец выбрал кандидата, предложенного `proj-reflect-work`, либо явно попросил провести ретро и записать подтверждённые наблюдения.
 
 Форма записи, адресаты и критерий перевода в правило — [docs/development/observations.md](../../../docs/development/observations.md). Не воспроизводи их по памяти: журнал меняется, а расхождение формы обнаружится только при чтении подряд. Стиль — [docs/STYLE.md](../../../docs/STYLE.md).
 
