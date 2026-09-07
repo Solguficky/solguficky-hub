@@ -35,6 +35,7 @@
 | Информация | Источник |
 |---|---|
 | Цель, принципы и scope | [product/overview.md](product/overview.md) |
+| Стабильные имена продуктовых сценариев | [product/use-cases.md](product/use-cases.md) |
 | Current / MVP / Future | [architecture/overview.md](architecture/overview.md) и service briefs |
 | Принятые технические решения | [decisions/](decisions/) |
 | Нормы реализации и review | [standards/](standards/) |
