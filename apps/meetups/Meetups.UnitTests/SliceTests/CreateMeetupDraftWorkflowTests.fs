@@ -117,7 +117,7 @@ let ``The event identifier is generated once per written event`` () =
         { loaded with
             NewEventId =
                 fun () ->
-                    incr generated
+                    generated.Value <- generated.Value + 1
                     eventId
             Commit =
                 fun _ state event ->
@@ -143,7 +143,7 @@ let ``A repeat generates no event identifier at all`` () =
         { loaded with
             NewEventId =
                 fun () ->
-                    incr generated
+                    generated.Value <- generated.Value + 1
                     eventId
         }
 
