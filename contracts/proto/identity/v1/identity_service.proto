@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package identity.v1;
 
+import "identity/v1/roles.proto";
+
 // Resolves a Telegram identity into the platform's internal identity.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
@@ -23,11 +25,4 @@ message ResolveIdentityResponse {
   // Platform-wide roles. Domain permissions are not returned here; the owning
   // domain applies them. An empty set means an ordinary user.
   repeated GlobalRole global_roles = 2;
-}
-
-enum GlobalRole {
-  // No value: the field is unset or the role is unknown to the consumer.
-  GLOBAL_ROLE_UNSPECIFIED = 0;
-
-  GLOBAL_ROLE_ADMIN = 1;
 }

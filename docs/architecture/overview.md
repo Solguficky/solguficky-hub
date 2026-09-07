@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а transport к Meetups остаётся Open. Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
 
 ## Источники правды
 
@@ -34,31 +34,31 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Продуктовое ядро сходок не реализовано: Meetups и Notifications существуют как принятые решения и контракты, но не как код. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot есть как скелет grammY-процесса с заглушкой ответа. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
+Продуктовое ядро сходок не реализовано: доменной логики нет ни у Meetups, ни у Notifications. Meetups поднят скелетом — gRPC-сервер отвечает на шесть операций контракта заглушкой. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
-| Telegram Bot | Скелет: long polling, диспетчер, заглушка ответа, клиент Identity; команд и экранов нет | Единственный вход пользователя |
-| Meetups | Отсутствует | Владелец данных о сходках |
+| Telegram Bot | Long polling, `/start` с разбором deep link payload, клиент Identity и приветствие; остальные команды и экраны отсутствуют | Единственный вход пользователя |
+| Meetups | Скелет gRPC-сервиса на F#: контракт среза, C#-кодогенерация, заглушечные ответы, health, каркас лога границы и миграции состояния с журналом событий; домена нет | Владелец данных о сходках |
 | Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, допуск к продукту и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Раскладка; Go- и TypeScript-кодогенерация Identity | Current, единственный принятый контракт |
+| `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и шесть gRPC-операций среза Meetups | Current |
 | `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
-| Aspire AppHost | Поднимает PostgreSQL, NATS, Identity и Telegram Bot в профиле `core`; живой запуск не подтверждён | Current, verification pending |
+| Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `core` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
-Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни `aspire run`, ни end-to-end через живого Telegram-бота, ни production deployment.
+Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
 
 ## MVP
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
-| Meetups | Граница, техническая модель, стек и словарь домена среза Accepted: ADR-024, ADR-025, ADR-031; контракты Open | Владелец продуктовых данных сходок |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса |
+| Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
-| Local orchestration | Accepted, verification pending | Aspire как inner loop |
+| Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
 | Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
 | Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks ещё нет |
 
@@ -85,7 +85,7 @@ Telegram user
 → наблюдаемый ответ пользователю
 ```
 
-Это не roadmap и не зафиксированный transport. Срез проверяет реальные границы сервисов, authentication/authorization, persistence, failure semantics и локальную оркестрацию. Порядок исполнения ведётся в Linear.
+Это не roadmap. Transport шести операций бот → Meetups зафиксирован как gRPC ([integration.md](integration.md)). Срез проверяет реальные границы сервисов, authentication/authorization, persistence, failure semantics и локальную оркестрацию. Порядок исполнения ведётся в Linear.
 
 ## Сквозные ограничения
 

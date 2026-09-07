@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- xUnit v3 test project is an executable: the entry point comes from the runner. -->
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="Unquote" Version="7.0.1" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
+    <PackageReference Include="Grpc.HealthCheck" Version="2.67.0" />
+    <PackageReference Include="Npgsql" Version="10.0.1" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Infrastructure/MeetupsHostFixture.fs" />
+    <Compile Include="Infrastructure/Testdb.fs" />
+    <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
+    <Compile Include="Scenarios/SchemaTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Meetups.Contracts\Meetups.Contracts.csproj" />
+    <ProjectReference Include="..\Meetups.TestKit\Meetups.TestKit.fsproj" />
+    <ProjectReference Include="..\Meetups\Meetups.fsproj" />
+  </ItemGroup>
+
+</Project>

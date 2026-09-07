@@ -4,11 +4,15 @@
 
 Current workflow: `.github/workflows/ci.yml`.
 
-Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow. Джоба `telegram-bot` делает typecheck, lint, test и build TypeScript-скелета. Джоба `apphost` собирает Aspire AppHost на изменение `infra/apphost/**`, `justfile` и workflow. Джоба `identity` передаёт `github.token` в `buf-setup-action`: без него установка `buf` бьёт в GitHub API без авторизации и на hosted runner падает по rate limit.
+Workflow собирает, тестирует и линтит Identity на изменение `apps/identity/**`, контракта, `justfile` и самого workflow. Джоба `telegram-bot` делает typecheck, lint, test и build TypeScript-скелета. Джоба `meetups` проверяет, что контрактный проект остаётся generated-only, прогоняет Fantomas, собирает решение и запускает оба тестовых проекта на изменение контракта, `apps/meetups/**`, `shared/dotnet/**`, `tools/meetups/**`, `justfile`, `global.json` и самого workflow. Тесты схемы поднимают PostgreSQL через Testcontainers, отдельного sidecar в джобе нет. `shared/dotnet/**` в её фильтре появился вместе с первым потребителем ServiceDefaults: без него правка обвязки могла бы уронить сборку сервиса мимо проверки. Джоба `identity` передаёт `github.token` в `buf-setup-action`: без него установка `buf` бьёт в GitHub API без авторизации и на hosted runner падает по rate limit.
+
+Джоба `apphost` компилирует `infra/apphost/AppHost.csproj` на изменение `infra/apphost/**`, `shared/dotnet/**`, `apps/meetups/**`, `contracts/proto/**`, `justfile` и самого workflow. Два последних пути в фильтре потому, что AppHost ссылается на `Meetups.fsproj` ради типизованного `Projects.Meetups`: его сборка теперь тянет за собой сервис и его кодогенерацию. SDK она берёт из корневого `global.json`: AppHost таргетит `net10.0`, и `Aspire.AppHost.Sdk` работает на той же линии. Без этой джобы правка графа или setup-а ресурса, которая не собирается, ловилась бы только локальным `just verify`.
+
+Кроме `push` в `main` и pull request workflow принимает `workflow_dispatch` — ручной запуск на случай, когда push не создал прогон сам, например когда ветку двигал GitHub App. У ручного запуска нет базы для сравнения путей, поэтому джоба `changes` на нём пропускается, а `identity`, `meetups`, `telegram-bot` и `apphost` запускаются по `github.event_name` безусловно. Кнопка Run workflow в UI появляется только когда триггер есть в `ci.yml` ветки по умолчанию, но запуск через REST API (`POST /actions/workflows/ci.yml/dispatches` с нужным `ref`) работает и с ветки, где триггер уже добавлен, — так этот прогон и был получен.
 
 Известные gaps:
 
-- живой smoke-test `aspire run` ещё не входит в CI;
+- живой прогон Aspire (smoke-test поднятой топологии) в CI отсутствует: джоба `apphost` подтверждает только компиляцию;
 - `buf lint` и compatibility check Protobuf ещё не внедрены.
 
 ## Проверки репозитория

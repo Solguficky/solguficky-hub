@@ -38,34 +38,25 @@ setup:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
-# Сгенерированные skills, agents и commands совпадают с источниками Skillshare
+# Frontmatter скиллов разбирается, а skills, agents и commands совпадают с источниками
 check-agent-tools:
+    sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build
+# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 
-# AppHost поднимает инфраструктуру и зарегистрированные компоненты профиля.
-# Профили: infra | core | full (см. infra/apphost/Topology.cs).
-# Identity proto генерируется всегда; Telegram Bot собирается только если он Local.
-aspire profile="core":
-    just identity-proto
-    just telegram-bot-prepare {{profile}}
-    cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run
+# AppHost поднимает узлы, которыми владеет профиль. Профили — данные:
+# секция Topology:Profiles в infra/apphost/appsettings.json, там же их список.
+# Срез внутри профиля: `just aspire core -- --run-services identity`.
+aspire profile="core" *args="":
+    cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run {{args}}
 
 # Сборка Aspire AppHost
 apphost-build:
     cd infra/apphost && dotnet build --nologo
-
-[private]
-telegram-bot-prepare profile:
-    #!/usr/bin/env sh
-    set -eu
-    if [ "{{profile}}" != "infra" ]; then
-        just telegram-bot-build
-    fi
 
 # --- Identity (Go) ---------------------------------------------------------
 #
@@ -132,8 +123,49 @@ telegram-bot-lint: telegram-bot-proto
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
 
+# --- Meetups (F# / .NET) ---------------------------------------------------
+#
+# Кодогенерация C# — часть `dotnet build` контрактного проекта.
+# Сервис — gRPC-сервер на Kestrel в h2c; готовность отдаётся по grpc.health.v1,
+# HTTP-эндпоинтов health у него нет.
+
+# Сборка контрактов, сервиса и обоих тестовых проектов
+meetups-build:
+    dotnet build apps/meetups/Meetups.sln --nologo
+
+# Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
+# Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
+# схемы применяют миграции к PostgreSQL. Без доступной базы они пропускаются.
+# Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
+meetups-test:
+    dotnet test --solution apps/meetups/Meetups.sln
+
+# Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
+meetups-contracts-check:
+    sh tools/meetups/check-contracts-generated.sh
+
+# Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS, база — MEETUPS_DATABASE_URL
+meetups-run:
+    dotnet run --project apps/meetups/Meetups
+
+# Форматирование F# по корневому .editorconfig (секция Fantomas)
+meetups-format: dotnet-tools
+    dotnet fantomas apps/meetups
+
+# Гейт форматирования F#: печатает файлы, которые Fantomas переписал бы
+meetups-format-check: dotnet-tools
+    dotnet fantomas --check apps/meetups
+
 # --- Инструменты -----------------------------------------------------------
+
+# Локальные .NET-инструменты закреплённых версий из .config/dotnet-tools.json
+dotnet-tools:
+    dotnet tool restore
 
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
+
+# Исследовательский зонд Rich Messages; не входит в verify
+telegram-rich-probe:
+    node tools/telegram-rich-probe/probe.mjs

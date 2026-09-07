@@ -1,6 +1,6 @@
 ---
 name: proj-write-typescript
-description: Писать и ревьюить TypeScript: строгие типы, runtime-валидация на границах, сгенерированный код и существующий tooling. Использовать при правках .ts, tsconfig или TypeScript-модулей Node.js; grammY-границу дополняет proj-write-grammy-bot.
+description: "Писать и ревьюить TypeScript: строгие типы, runtime-валидация на границах, сгенерированный код и существующий tooling. Использовать при правках .ts, tsconfig или TypeScript-модулей Node.js; grammY-границу дополняет proj-write-grammy-bot."
 ---
 
 # Писать TypeScript

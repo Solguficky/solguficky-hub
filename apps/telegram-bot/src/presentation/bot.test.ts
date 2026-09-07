@@ -1,6 +1,8 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import { BotError, Context, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type { IdentityResolver } from "../identity/port.js";
@@ -37,7 +39,7 @@ type LogRecord = {
   fields: LogFields;
 };
 
-function messageUpdate(): Update {
+function messageUpdate(text = "/start"): Update {
   return {
     update_id: 1,
     message: {
@@ -45,7 +47,7 @@ function messageUpdate(): Update {
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: 42, is_bot: false, first_name: "tester" },
-      text: "ping",
+      text,
     },
   };
 }
@@ -94,11 +96,14 @@ function resolvedIdentity(): IdentityResolver {
   };
 }
 
-function createHarness(identity: IdentityResolver) {
+function createHarness(
+  identity: IdentityResolver,
+  dispatcher: Dispatcher = createDispatcher(),
+) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
     token: "111:test-token",
-    dispatcher: createDispatcher(),
+    dispatcher,
     identity,
     logger,
   });
@@ -156,13 +161,55 @@ afterEach(() => {
 });
 
 describe("presentation adapter", () => {
-  it("replies with the stub after identity resolution", async () => {
+  it("resolves identity and replies to /start", async () => {
     const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe("заглушка");
+    expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(records.some((record) => record.level === "info")).toBe(false);
     expectBoundary(records[0], { level: "debug", result: "ok" });
+  });
+
+  it("passes the parsed deep link payload to the dispatcher", async () => {
+    const execute = vi.fn(() => ({
+      kind: "message" as const,
+      text: "ok",
+    }));
+    const { bot } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(execute).toHaveBeenCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: [],
+      },
+      intent: "start",
+      deepLink: {
+        kind: "meetup",
+        payload: "m_AZLzpLXGfY6fChssPU5fYA",
+      },
+    });
+  });
+
+  it("resolves repeated /start updates independently", async () => {
+    const resolve = vi.fn(resolvedIdentity().resolve);
+    const { bot, calls } = createHarness({ resolve });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    await bot.handleUpdate({ ...messageUpdate(), update_id: 2 });
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      2,
+    );
+  });
+
+  it("does not resolve identity for unrelated text", async () => {
+    const resolve = vi.fn(resolvedIdentity().resolve);
+    const { bot, calls } = createHarness({ resolve });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("hello"));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
   });
 
   it("replies fail-closed when identity is unavailable", async () => {
@@ -172,33 +219,88 @@ describe("presentation adapter", () => {
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe("недоступно");
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне.");
     expectBoundary(records[0], {
       level: "error",
       result: "error",
       error_category: "identity_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
+    expect(records[0]?.fields.use_case).toBe("start");
+  });
+
+  it("resolves /start with a bot mention", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/START@stub_bot"));
+    expect(sendMessageText(calls[0])).toContain("Привет.");
+  });
+
+  it("does not resolve identity for /start mentioned for another bot", async () => {
+    const resolve = vi.fn(resolvedIdentity().resolve);
+    const { bot, calls } = createHarness({ resolve });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start@other_bot"));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
   });
 
   it("replies fail-closed when identity rpc exceeds the deadline", async () => {
-    vi.useFakeTimers();
-    const identity = createIdentityResolver(
-      { resolveIdentity: () => new Promise<never>(() => {}) },
-      40,
-    );
+    const identity = createIdentityResolver({
+      resolveIdentity: () =>
+        Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    });
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
-    const pending = bot.handleUpdate(messageUpdate());
-    await vi.advanceTimersByTimeAsync(40);
-    await pending;
-    expect(sendMessageText(calls[0])).toBe("недоступно");
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне.");
     expectBoundary(records[0], {
       level: "error",
       result: "error",
       error_category: "identity_unavailable",
     });
-    expect(records[0]?.fields.error).toBe("identity rpc deadline exceeded");
+  });
+
+  it("separates a refused request from an unavailable identity", async () => {
+    const identity = createIdentityResolver({
+      resolveIdentity: () =>
+        Promise.reject(
+          new ConnectError(
+            "telegram_user_id must be positive",
+            Code.InvalidArgument,
+          ),
+        ),
+    });
+    const { bot, calls, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне.");
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "identity_rejected",
+    });
+    expect(records[0]?.fields.grpc_code).toBe("InvalidArgument");
+    expect(records[0]?.fields.use_case).toBe("start");
+  });
+
+  it("carries the boundary request id into the identity call", async () => {
+    let seenRequestId: string | undefined;
+    const identity: IdentityResolver = {
+      resolve: async (_input, requestId) => {
+        seenRequestId = requestId;
+        return {
+          kind: "resolved",
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          globalRoles: [],
+        };
+      },
+    };
+    const { bot, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(seenRequestId).toBe(records[0]?.fields.request_id);
+    expect(seenRequestId).not.toBe("");
   });
 
   it("logs ignored updates with the boundary skeleton", async () => {
@@ -207,6 +309,28 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(ignoredUpdate());
     expect(calls).toEqual([]);
     expectBoundary(records[0], { level: "debug", result: "ok" });
+    expect(records[0]?.fields.use_case).toBeUndefined();
+  });
+
+  it("logs malformed updates without a use_case", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate({
+      update_id: 1,
+      message: {
+        message_id: 1.5,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "/start",
+      },
+    });
+    expect(calls).toEqual([]);
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "malformed",
+    });
     expect(records[0]?.fields.use_case).toBeUndefined();
   });
 
@@ -252,6 +376,7 @@ describe("presentation adapter", () => {
       error_category: "identity_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
+    expect(records[0]?.fields.reply_error).toContain("Forbidden");
   });
 
   it("does not resolve identity for a photo without text", async () => {

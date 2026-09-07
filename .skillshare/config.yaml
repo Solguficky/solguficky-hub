@@ -31,6 +31,12 @@ skills:
     tracked: true
     group: golang
     branch: main
+  - name: aspire-monitoring
+    source: github.com/microsoft/aspire-skills/skills/aspire-monitoring
+  - name: aspire-orchestration
+    source: github.com/microsoft/aspire-skills/skills/aspire-orchestration
+  - name: aspire
+    source: github.com/microsoft/aspire-skills/skills/aspire
 extras:
   - name: commands
     targets:

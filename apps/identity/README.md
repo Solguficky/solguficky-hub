@@ -17,6 +17,14 @@ just identity-lint
 just identity-run
 ```
 
+В составе локальной топологии профиль `core` или `full` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
+
+```bash
+just aspire core
+```
+
+Фактический endpoint при таком запуске смотри в Aspire dashboard или `aspire describe`; фиксированный `localhost:50051` относится только к ручному `just identity-run` без переопределения адреса.
+
 По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, строка подключения к PostgreSQL — `IDENTITY_DATABASE_URL` (обязательна), уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При старте процесс применяет миграции из `internal/migrations/` и только потом начинает слушать. Пул `database/sql` ограничен 16 открытыми соединениями, время жизни соединения — 30 минут. Успешный RPC пишется на `Debug`, поэтому журнал доступа включает `IDENTITY_LOG_LEVEL=debug`.
 
 Интеграционные тесты схемы и разрешения поднимают изолированную базу на том же PostgreSQL. Если `IDENTITY_DATABASE_URL` не задан, они пробуют `postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable`; без доступной базы локальный прогон пропускает их, а в CI отсутствие базы — ошибка.

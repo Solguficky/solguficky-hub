@@ -2,7 +2,7 @@
 
 > **Статус:** Canonical. **Слой:** MVP. **Зрелость:** Accepted — состав среза утверждён владельцем.
 
-Документ фиксирует, из чего состоит первый вертикальный срез и что в него сознательно не входит. Он отвечает на вопрос «что мы делаем первым», а не «как это устроено внутри»: устройство Meetups решается в [RFC-004](../rfcs/RFC-004-meetups-domain-events-persistence.md), граница подписок — в [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md), transport и языки — отдельными ADR. Словарь домена Meetups утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md); контрактом при этом становится не этот документ, а результат контрактной задачи.
+Документ фиксирует, из чего состоит первый вертикальный срез и что в него сознательно не входит. Он отвечает на вопрос «что мы делаем первым», а не «как это устроено внутри»: хранение Meetups принято в [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md), внутренние application slices — в [ADR-033](../decisions/ADR-033-meetups-functional-vertical-slices.md), граница подписок — в [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md), transport и языки — отдельными ADR. Словарь домена Meetups утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md); контрактом при этом становится не этот документ, а результат контрактной задачи.
 
 ## Зачем нужен срез
 
@@ -75,7 +75,7 @@ sequenceDiagram
 
 ## Границы: минимальные данные и действия
 
-Ниже перечислено то, что пересекает границу в срезе. Transport не выбран. Словарь домена утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), поэтому имена операций здесь уже не условны и читаются вместе с ним; условным остаётся только состав полей на границе, который закрывает контрактная задача.
+Ниже перечислено то, что пересекает границу в срезе. Шесть операций бот → Meetups идут синхронным gRPC; состав полей и коды отказов — в [integration.md](integration.md). Словарь домена утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md).
 
 ### Telegram → бот
 
@@ -143,7 +143,7 @@ sequenceDiagram
 - сквозной идентификатор запроса от Telegram update до ответа человеку, общий для всех трёх сервисов;
 - отказ по видимости пишет в лог настоящую причину, а человеку уходит «не найдено»;
 - различимы в логах и метриках: отказ по правам, отказ по инварианту, недоступность зависимости, таймаут;
-- правило логирования персональных данных зафиксировано до первого деплоя среза, а не после.
+- правило логирования персональных данных зафиксировано в [logging.md](../standards/observability/logging.md) до первого деплоя среза, а не после.
 
 ## Что не входит в срез
 
@@ -169,21 +169,18 @@ sequenceDiagram
 - **Шина не проверяется.** Без уведомлений наружу событий не публикуется, поэтому срез может вообще не задействовать NATS. Сценарий S5 и работа outbox остаются непроверенными до блока [PER-70](https://linear.app/anticnvm/issue/per-70).
 - **Отложенная публикация не проверяется** (S6).
 - **Продуктовое обещание не выполняется целиком.** Солегуфик узнаёт о новой сходке, только открыв бота сам. Категория «новая опубликованная сходка» включена по умолчанию именно потому, что иначе сходку легко пропустить; в срезе этого механизма нет.
-- **Срез опирается на кадры со статусом «гипотеза» и «открытый вопрос»** (P-01, P-04, A-01, A-04, A-05, A-07). Их перевод в «решено» не входит в PER-2 и происходит вместе с решением по RFC-003 и декомпозицией.
+- **Срез опирается на кадры со статусом «гипотеза» и «открытый вопрос»** (P-01, P-04, A-01, A-04, A-05, A-07). Механика карточки принята ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)): дефолт — `sendRichMessage`, плоский текст за тоглом. Перевод кадров макета в «решено» в PER-2 не входит и ждёт отдельного решения владельца о ревизии storyboard.
 
 ## Что срез не решает
 
-Передаётся в архитектурный дизайн, а не в задачи реализации:
+Конверт публикации доменных событий, subject'ы и wire-формат журнала остаются открытыми: без уведомлений событий в шину не уходит.
 
-- transport каждой операции: gRPC, NATS или прямой вызов;
-- необходимость межсервисных Protobuf-контрактов на этом объёме.
-
-Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
+Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)); продуктовая карточка по умолчанию рисуется `sendRichMessage`, плоский текст остаётся за тоглом процесса ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)); шесть операций бот → Meetups — синхронный gRPC ([integration.md](integration.md)).
 
 ## Связанные документы
 
 - [Архитектурный обзор](overview.md)
 - [Meetups](../services/meetups.md), [Identity](../services/identity.md), [Telegram Bot](../services/telegram-bot.md)
 - [Продукт и границы MVP](../product/overview.md)
-- [ADR-022](../decisions/ADR-022-meetup-state-axes-and-visibility.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), [ADR-032](../decisions/ADR-032-drop-meetup-public-number.md)
+- [ADR-022](../decisions/ADR-022-meetup-state-axes-and-visibility.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), [ADR-032](../decisions/ADR-032-drop-meetup-public-number.md), [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)
 - [Макет Bot UI](../design/bot/README.md)

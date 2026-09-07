@@ -66,6 +66,36 @@ is_ignored() {
     [ -f "$SKILLIGNORE" ] && grep -Fxq "$1" "$SKILLIGNORE"
 }
 
+# Copy mode records every skill it owns in the target manifest, and that manifest
+# is committed like the copies themselves. A skill whose frontmatter does not
+# parse is dropped from it silently: that is how proj-test-fsharp,
+# proj-write-fsharp and proj-write-fsharp-vsa disappeared from both manifests
+# while their sources and targets stayed in place. Nothing above reads the
+# manifest, so the loss survived every gate.
+#
+# Only one direction is checked. An entry without a directory is normal: the Go
+# pack is managed but deliberately absent from Git. The check is also coarse by
+# design - it asks whether the manifest mentions the skill at all, not in which
+# section, because a plain grep keeps the script free of a JSON parser.
+check_manifest_entries() {
+    manifest_target=$1
+    manifest="$manifest_target/.skillshare-manifest.json"
+
+    if [ ! -f "$manifest" ]; then
+        fail "manifest: missing ${manifest}"
+        return
+    fi
+
+    for manifest_skill in "$manifest_target"/*; do
+        [ -d "$manifest_skill" ] || continue
+        manifest_name=$(basename "$manifest_skill")
+
+        if ! grep -Fq "\"${manifest_name}\":" "$manifest"; then
+            fail "manifest ${manifest}: ${manifest_name} has no entry"
+        fi
+    done
+}
+
 for skill_dir in "$PROJECT_SKILLS"/*; do
     [ -d "$skill_dir" ] || continue
     name=$(basename "$skill_dir")
@@ -134,6 +164,9 @@ for universal_skill in "$UNIVERSAL_SKILLS"/*; do
         fail "shared skill ${name}: missing Claude target"
     fi
 done
+
+check_manifest_entries "$CLAUDE_SKILLS"
+check_manifest_entries "$UNIVERSAL_SKILLS"
 
 for agent_source in "$SOURCE_AGENTS"/*.md; do
     [ -f "$agent_source" ] || continue

@@ -1,6 +1,7 @@
 """Main CLI interface for NATS testing tool."""
 
 import asyncio
+import importlib
 import json
 import subprocess
 import sys
@@ -293,14 +294,24 @@ def check():
         click.echo("   Install: go install github.com/nats-io/natscli/nats@latest")
         all_ok = False
 
-    # Check generated protobuf files
+    # Check generated protobuf files. Importing them, not just finding the directory:
+    # a cross-schema import that protoc wrote against the module root leaves the files
+    # in place and raises only when something actually loads them.
     generated_dir = Path(__file__).parent / 'generated'
-    if generated_dir.exists():
-        click.secho(f"✅ protobuf: generated classes found", fg='green')
-    else:
+    if not generated_dir.exists():
         click.secho("❌ protobuf: generated classes not found", fg='red')
         click.echo("   Run: python generate_proto.py")
         all_ok = False
+    else:
+        broken = _import_generated_modules(generated_dir)
+        if broken:
+            click.secho("❌ protobuf: generated classes do not import", fg='red')
+            for module, error in broken:
+                click.echo(f"   {module}: {error}")
+            click.echo("   Run: python generate_proto.py")
+            all_ok = False
+        else:
+            click.secho("✅ protobuf: generated classes import", fg='green')
 
     click.echo()
     if all_ok:
@@ -395,6 +406,20 @@ def list_types():
     click.echo(f"Total: {total} message type(s)")
     click.echo()
     click.echo("To add new types, edit EVENT_TYPES or COMMAND_TYPES in cli.py")
+
+
+def _import_generated_modules(generated_dir: Path) -> list[tuple[str, str]]:
+    """Import every generated module; return (module, error) for the ones that fail."""
+    package = f"{__package__}.generated"
+    broken = []
+    for module_file in sorted(generated_dir.rglob('*_pb2.py')):
+        relative = module_file.relative_to(generated_dir).with_suffix('')
+        module = f"{package}.{'.'.join(relative.parts)}"
+        try:
+            importlib.import_module(module)
+        except Exception as error:
+            broken.append((module, f"{type(error).__name__}: {error}"))
+    return broken
 
 
 def _check_tool(tool_name: str) -> bool:

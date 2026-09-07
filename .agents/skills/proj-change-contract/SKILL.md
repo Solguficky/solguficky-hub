@@ -1,6 +1,6 @@
 ---
 name: proj-change-contract
-description: Провести изменение Protobuf-контракта через всех producers, consumers, тесты и документацию. Использовать при любом изменении contracts/proto/ или связанного NATS/gRPC сообщения.
+description: "Провести изменение Protobuf-контракта через всех producers, consumers, тесты и документацию. Использовать при любом изменении contracts/proto/ или связанного NATS/gRPC сообщения."
 ---
 
 # Изменить Protobuf-контракт

@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Bot, type Context } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
-import type { IdentityResolver } from "../identity/port.js";
+import { startExecuteRequest } from "../application/types.js";
+import {
+  type IdentityResolver,
+  toResolveIdentityInput,
+} from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -12,7 +16,9 @@ export type BotRuntime = {
   logger: Logger;
 };
 
-const unavailableText = "недоступно";
+const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
+
+Попробуй ещё раз через минуту.`;
 const operation = "message";
 
 type UpdateContext = Context & {
@@ -35,6 +41,8 @@ type BoundaryOutcome =
       error_category: string;
       error: string;
       stack?: string;
+      grpc_code?: string;
+      reply_error?: string;
     };
 
 export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
@@ -61,13 +69,12 @@ async function handleMessage(
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   try {
-    const parsed = parseUpdate(ctx.update);
+    const parsed = parseUpdate(ctx.update, ctx.me.username);
     if (parsed.kind === "malformed") {
       outcome = {
         level: "warn",
         message: "malformed telegram update",
         result: "error",
-        use_case: "acknowledge",
         error_category: "malformed",
         error: "telegram update failed validation",
       };
@@ -81,34 +88,31 @@ async function handleMessage(
       };
       return;
     }
-    const resolved = await runtime.identity.resolve(parsed);
-    if (resolved.kind === "unavailable") {
-      outcome = {
-        level: "error",
-        message: "identity unavailable",
-        result: "error",
-        use_case: "acknowledge",
-        error_category: "identity_unavailable",
-        error: errorText(resolved.cause),
-      };
-      await ctx.reply(unavailableText);
+    const resolved = await runtime.identity.resolve(
+      toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
+      ctx.requestId,
+    );
+    if (resolved.kind !== "resolved") {
+      outcome = await replyFailClosed(ctx, identityFailureOutcome(resolved));
       return;
     }
-    const result = runtime.dispatcher.execute({
-      identity: {
-        identityId: resolved.identityId,
-        globalRoles: resolved.globalRoles,
-      },
-      intent: "acknowledge",
-    });
+    const result = runtime.dispatcher.execute(
+      startExecuteRequest(
+        {
+          identityId: resolved.identityId,
+          globalRoles: resolved.globalRoles,
+        },
+        "deepLink" in parsed ? parsed.deepLink : undefined,
+      ),
+    );
     switch (result.kind) {
-      case "stub":
+      case "message":
         await ctx.reply(result.text);
         outcome = {
           level: "debug",
-          message: "stub reply sent",
+          message: "start reply sent",
           result: "ok",
-          use_case: "acknowledge",
+          use_case: "start",
         };
         return;
       case "rejected":
@@ -116,7 +120,7 @@ async function handleMessage(
           level: "warn",
           message: "dispatcher rejected request",
           result: "error",
-          use_case: "acknowledge",
+          use_case: "start",
           error_category: result.reason,
           error: result.reason,
         };
@@ -127,7 +131,7 @@ async function handleMessage(
           level: "error",
           message: "unhandled dispatcher result",
           result: "error",
-          use_case: "acknowledge",
+          use_case: "start",
           error_category: "unhandled_result",
           error: String(_exhaustive),
         };
@@ -141,6 +145,53 @@ async function handleMessage(
     if (outcome !== undefined) {
       writeBoundary(runtime.logger, ctx, outcome);
     }
+  }
+}
+
+// Недоступность зависимости и отвергнутый ею вызов — разные отказы: первый
+// проходит по повтору, второй никогда. Человеку в обоих случаях уходит один и
+// тот же fail-closed ответ, различие живёт в записи границы.
+function identityFailureOutcome(
+  resolved:
+    | { kind: "unavailable"; cause: unknown }
+    | { kind: "rejected"; code: string; cause: unknown },
+): BoundaryOutcome {
+  if (resolved.kind === "rejected") {
+    return {
+      level: "error",
+      message: "identity rejected the request",
+      result: "error",
+      use_case: "start",
+      error_category: "identity_rejected",
+      grpc_code: resolved.code,
+      error: errorText(resolved.cause),
+    };
+  }
+  return {
+    level: "error",
+    message: "identity unavailable",
+    result: "error",
+    use_case: "start",
+    error_category: "identity_unavailable",
+    error: errorText(resolved.cause),
+  };
+}
+
+// Отказ самого ответа человеку нельзя терять: раньше outcome присваивался до
+// await, поэтому catch видел его непустым и 403 от Bot API не попадал ни в
+// запись границы, ни в bot.catch.
+async function replyFailClosed(
+  ctx: UpdateContext,
+  outcome: BoundaryOutcome,
+): Promise<BoundaryOutcome> {
+  try {
+    await ctx.reply(unavailableText);
+    return outcome;
+  } catch (cause) {
+    if (outcome.result === "error") {
+      return { ...outcome, reply_error: errorText(cause) };
+    }
+    return outcome;
   }
 }
 
@@ -185,6 +236,12 @@ function writeBoundary(
     fields.error = outcome.error;
     if (outcome.stack !== undefined) {
       fields.stack = outcome.stack;
+    }
+    if (outcome.grpc_code !== undefined) {
+      fields.grpc_code = outcome.grpc_code;
+    }
+    if (outcome.reply_error !== undefined) {
+      fields.reply_error = outcome.reply_error;
     }
   }
   logger[outcome.level](outcome.message, fields);

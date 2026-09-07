@@ -18,7 +18,7 @@ reviews:
         утечек чувствительных данных и соответствие существующим Go-тестам и
         стандартам репозитория.
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
     base_branches:
       - develop
