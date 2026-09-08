@@ -8,8 +8,10 @@ open Meetups.Transport
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Server.Kestrel.Core
+open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
+open Npgsql
 
 let build (args: string array) : WebApplication =
     let builder = WebApplication.CreateBuilder(args)
@@ -27,6 +29,20 @@ let build (args: string array) : WebApplication =
     builder.Services.AddGrpc(fun options ->
         options.Interceptors.Add<BoundaryLogInterceptor>()
         |> ignore
+    )
+    |> ignore
+
+    // Источник соединений собирается лениво, при первом обращении потребителя.
+    // Это несущее свойство, а не деталь: хост обязан подниматься без базы, иначе
+    // gRPC-тесты каркаса начнут требовать PostgreSQL ради проверки, которая его не
+    // касается, а проба готовности перестанет отвечать раньше, чем скажет причину.
+    builder.Services.AddSingleton<NpgsqlDataSource>(fun services ->
+        let configuration = services.GetRequiredService<IConfiguration>()
+
+        match configuration[Meetups.Migrations.DatabaseUrlVariable] with
+        | null
+        | "" -> failwith $"{Meetups.Migrations.DatabaseUrlVariable} is not set"
+        | url -> Meetups.Infrastructure.Db.source url
     )
     |> ignore
 
