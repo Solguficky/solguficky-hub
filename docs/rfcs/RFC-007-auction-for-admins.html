@@ -294,8 +294,8 @@
   .note li:last-child { margin-bottom: 0; }
   .note[data-kind="q"] { box-shadow: inset 3px 0 0 var(--cold); }
   .note[data-kind="q"] .note-kind { color: var(--cold); }
-  .note[data-kind="risk"], .note[data-kind="check"] { box-shadow: inset 3px 0 0 var(--accent); }
-  .note[data-kind="risk"] .note-kind, .note[data-kind="check"] .note-kind { color: var(--accent); }
+  .note[data-kind="risk"] { box-shadow: inset 3px 0 0 var(--accent); }
+  .note[data-kind="risk"] .note-kind { color: var(--accent); }
   .feature .note, .format-panel .note { background: var(--fill-2); }
 
   .answer { margin-top: 11px; }
@@ -399,7 +399,7 @@
     <span class="eyebrow">Solguficky · событие сообщества</span>
     <h1>Аукцион 2026</h1>
     <p class="lede">Обсуждаем формат события и фичи бота</p>
-    <p class="disclaimer">Страницу собрал ИИ по материалам прошлых аукционов, презентации и наших
+    <p class="disclaimer">Страницу собрал ИИ по материалам прошлых аукционов, презентации и
       обсуждений. Часть формулировок он додумал: если что-то звучит не так, это повод поправить,
       а не готовое решение. Ошибки в фактах тоже возможны — отмечайте.</p>
   </header>
@@ -432,12 +432,11 @@
         <!-- P-05. История события уточнена владельцем при обсуждении страницы. -->
         <figure>
           <ol class="flow past-flow">
-            <li class="bidding"><b>01 → Онлайн-этап</b><span>Каталог открывается, и ставить можно сразу: все лоты торгуются параллельно в боте.</span></li>
+            <li class="bidding"><b>01 → Онлайн-этап, две недели</b><span>Каталог открывается, и ставить можно сразу: все лоты торгуются параллельно в боте.</span></li>
             <li class="final"><b>02 → Финал в зале</b><span>Ведущий разыгрывает лоты по очереди. Для онлайна есть трансляция.</span></li>
           </ol>
           <figcaption>Так выглядела основа прошлого формата.</figcaption>
         </figure>
-        <aside class="note" data-kind="check" data-note="n-past-length"><span class="note-kind">Уточнить</span><p>Онлайн-этап шёл около недели или двух — точную длительность нужно поднять по прошлым анонсам. От неё зависит, с чем сравнивать варианты в разделе 04.</p></aside>
         <h3>Что бот уже умел</h3>
         <p>Эти четыре вещи работали на прошлых аукционах и остаются в основе.</p>
         <ul class="past-basics" aria-label="Возможности прошлого аукциона">
@@ -449,11 +448,11 @@
       <section class="chapter" id="event" aria-labelledby="event-title">
         <span class="section-number">02</span>
         <h2 id="event-title">Что хотим в 2026 году</h2>
-        <p>Раньше аукцион шёл внутри чата Солгуфиков. В 2026-м он выходит за рамки чата: зовём соседнее
-          сообщество, оно кратно больше, и людей со стороны.</p>
+        <p>Раньше аукцион жил внутри нашего локального чата. В 2026-м выносим его на уровень общего
+          чата сообщества: людей там кратно больше, и для большинства это будет первый наш аукцион.</p>
         <div class="audience">
           <div><span class="eyebrow">В зале</span><strong>Около 10</strong><p>Привычная небольшая компания и живой ведущий.</p></div>
-          <div class="remote"><span class="eyebrow">Онлайн</span><strong>Гораздо больше</strong><p>Ожидаем много новых участников. Им должно быть интересно и удобно на протяжении всего события.</p></div>
+          <div class="remote"><span class="eyebrow">Онлайн</span><strong>Гораздо больше</strong><p>Ожидаем много людей, для которых это первый аукцион. Им должно быть интересно и удобно на протяжении всего события.</p></div>
         </div>
         <!-- P-48, P-51, P-52: цели, без обещания гарантированного результата. -->
         <h3>Приоритеты</h3>
@@ -552,7 +551,7 @@
         </div>
         <article class="format-panel" id="format-past" aria-labelledby="format-past-title">
           <span class="badge past">Прошлый формат</span><h4 id="format-past-title"><a href="#format-past">Как было</a></h4>
-          <ol class="flow"><li class="catalog"><b>Каталог</b><span>Открывался вместе со ставками: увидел лот — сразу можешь ставить.</span></li><li class="bidding"><b>Ставки → неделя или две</b><span>Все лоты торгуются параллельно. Точную длительность нужно уточнить.</span></li><li class="final"><b>Финал → в зале</b><span>Лоты идут по очереди, есть трансляция.</span></li></ol>
+          <ol class="flow"><li class="catalog"><b>Каталог</b><span>Открывался вместе со ставками: увидел лот — сразу можешь ставить.</span></li><li class="bidding"><b>Ставки → две недели</b><span>Все лоты торгуются параллельно.</span></li><li class="final"><b>Финал → в зале</b><span>Лоты идут по очереди, есть трансляция.</span></li></ol>
           <dl class="attributes"><dt>Участнику</dt><dd>Есть время изучить лоты и сделать ставки. Онлайн-участие в финале осталось неудобным.</dd><dt>Организаторам</dt><dd>Подготовить каталог и провести последовательные торги с ведущим.</dd><dt>Боту</dt><dd>Показывать лоты, принимать ставки, сообщать о смене лидера.</dd></dl>
           <aside class="note" data-kind="q" data-note="n-b048e35b"><span class="note-kind">Вопрос</span><p>Что ещё из двух прошлых аукционов стоит сохранить? Что раздражало участников?</p></aside>
         </article>
@@ -646,7 +645,7 @@
               <details open><summary aria-label="Подробнее: Первый вход без знакомства с чатом">Подробности</summary>
                 <p>Короткое знакомство с событием: что продаём, куда идут средства, как сделать ставку и получить лот, в чём вообще прикол. Правила доступны рядом с торгами.</p>
                 <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
-                <aside class="note" data-kind="q" data-note="n-ab7b0bc7"><span class="note-kind">Вопрос</span><p>Как человек извне присоединяется к аукциону? Какие сведения нужны до первой ставки?</p></aside>
+                <aside class="note" data-kind="q" data-note="n-0e8d171c"><span class="note-kind">Вопрос</span><p>Что нужно человеку, который пришёл на аукцион впервые? Какие сведения нужны до первой ставки?</p></aside>
               </details>
             </article>
             <!-- Новая идея: знакомство до открытия ставок -->
@@ -1207,7 +1206,6 @@
           <li><h3>Следующие две недели · тестируем и дорабатываем</h3><p>Пробуем участие с телефона и из зала, исправляем неудобства, допиливаем фичи.</p></li>
           <li><h3>Дальше · готовимся к финалу</h3><p>Доводим выбранные фичи и репетируем событие с ведущим и участниками онлайн.</p></li>
         </ol>
-        <aside class="note" data-kind="q" data-note="n-905ebf99"><span class="note-kind">Вопрос</span><p>Какие сценарии хотим попробовать первыми? Кто сможет участвовать в тесте онлайн и из зала?</p></aside>
       </section>
       <footer><a href="#top">↑ Аукцион 2026</a></footer>
     </main>
