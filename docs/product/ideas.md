@@ -126,7 +126,7 @@
 
 - [спецификации будущего аукциона](future/auction.md);
 - [историческом исходнике презентации](../archive/services/auction-module-slides.md);
-- [автономной презентации для администраторов](../archive/services/auction-module-presentation.html).
+- [автономной презентации для администраторов](../published/archive/auction-module/index.html).
 
 Аукцион, achievements и другие независимые модули не входят в MVP сходок.
 
