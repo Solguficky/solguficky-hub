@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createDispatcher } from "./dispatcher.js";
 
 describe("dispatcher", () => {
-  it("renders the start response without telegram types", () => {
+  it("renders the start response without telegram types", async () => {
     const dispatcher = createDispatcher();
-    const result = dispatcher.execute({
+    const result = await dispatcher.execute({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: [],
@@ -17,9 +17,9 @@ describe("dispatcher", () => {
     });
   });
 
-  it("renders the same start response when a deep link is present", () => {
+  it("renders the same start response when a deep link is present", async () => {
     const dispatcher = createDispatcher();
-    const result = dispatcher.execute({
+    const result = await dispatcher.execute({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: [],

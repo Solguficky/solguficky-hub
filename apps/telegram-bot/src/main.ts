@@ -1,6 +1,7 @@
 import { createDispatcher } from "./application/dispatcher.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
+import { createMeetupsClient } from "./meetups/client.js";
 import { createBot } from "./presentation/bot.js";
 import { createShutdown } from "./shutdown.js";
 
@@ -19,12 +20,19 @@ async function main(): Promise<number> {
     return 1;
   }
   const identityUrl = readEnv("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051";
-  const dispatcher = createDispatcher();
+  const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
+  const meetups = createMeetupsClient(meetupsUrl);
+  const dispatcher = createDispatcher(meetups);
   const identity = createIdentityClient(identityUrl);
   const bot = createBot({ token, dispatcher, identity, logger });
   const shutdown = createShutdown({
     bot,
-    resources: identity,
+    resources: {
+      close() {
+        identity.close();
+        meetups.close();
+      },
+    },
     logger,
     timeoutMs: shutdownTimeoutMs,
     exit: (code) => {
