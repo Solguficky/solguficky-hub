@@ -186,3 +186,54 @@ let ``Fixed interval should keep both bounds with minute precision`` () =
             && contract.Fixed.Interval.End.Time.Hours = 21
             && contract.Fixed.Interval.End.Time.Minutes = 0
         @>
+
+/// DayStart — единственная форма, где отрисовка собирает и дату, и время в одном
+/// значении, поэтому проверяется отдельно от Day и Interval.
+[<Fact>]
+let ``Tentative day start should keep both the date and the minute`` () =
+    let moment =
+        {
+            Date = DateOnly(2026, 10, 3)
+            Time = TimeOnly(18, 5)
+        }
+
+    let contract = Contract.Outbound.schedule (Tentative(DayStart moment))
+
+    test
+        <@
+            contract.Tentative.PrecisionCase = Meetups.V1.DateValue.PrecisionOneofCase.DayStart
+            && contract.Tentative.DayStart.Date.Day = 3
+            && contract.Tentative.DayStart.Time.Hours = 18
+            && contract.Tentative.DayStart.Time.Minutes = 5
+        @>
+
+[<Fact>]
+let ``Fixed day and tentative interval should keep their own forms`` () =
+    let interval =
+        LocalInterval.create
+            {
+                Date = DateOnly(2026, 10, 3)
+                Time = TimeOnly(18, 0)
+            }
+            {
+                Date = DateOnly(2026, 10, 3)
+                Time = TimeOnly(21, 0)
+            }
+        |> Result.defaultWith (fun _ -> failwith "the sample interval must be valid")
+
+    let fixedDay = Contract.Outbound.schedule (Fixed Sample.day)
+    let tentativeInterval = Contract.Outbound.schedule (Tentative(Interval interval))
+
+    test
+        <@
+            fixedDay.FormCase = Meetups.V1.Schedule.FormOneofCase.Fixed
+            && fixedDay.Fixed.PrecisionCase = Meetups.V1.DateValue.PrecisionOneofCase.Day
+            && tentativeInterval.FormCase = Meetups.V1.Schedule.FormOneofCase.Tentative
+            && tentativeInterval.Tentative.PrecisionCase = Meetups.V1.DateValue.PrecisionOneofCase.Interval
+        @>
+
+/// Вариант RFC 9562 у UUIDv7 обязателен наравне с версией: строка с верной версией
+/// и нулевым вариантом каноническим UUIDv7 не является.
+[<Fact>]
+let ``Meetup id should be refused when the UUID variant is not RFC 9562`` () =
+    test <@ problem (Contract.Inbound.meetupId "0199c0de-0000-7000-0000-0000000000f1") = Some "id" @>

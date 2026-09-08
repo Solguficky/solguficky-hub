@@ -41,7 +41,7 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Change
         // Право спрашивается до загрузки: состояние в этом решении не участвует, а
         // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
         // того, существует ли сходка.
-        match Access.toCommand command.Viewer with
+        match Access.forCommand command.Viewer with
         | Error denied -> return Error(ChangeMeetupAttributesError.Forbidden denied)
         | Ok() ->
             let! existing = deps.Load command.Id

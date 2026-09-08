@@ -18,5 +18,5 @@ module Access =
     /// Состояние сходки в решении не участвует, поэтому проверка стоит до загрузки:
     /// иначе ответ обычному смотрящему зависел бы от того, существует ли сходка, и
     /// отказ по праву стал бы способом узнать про чужой черновик.
-    let toCommand (viewer: Viewer) : Result<unit, AccessDenied> =
+    let forCommand (viewer: Viewer) : Result<unit, AccessDenied> =
         if Viewer.isAdministrator viewer then Ok() else Error NotAnAdministrator

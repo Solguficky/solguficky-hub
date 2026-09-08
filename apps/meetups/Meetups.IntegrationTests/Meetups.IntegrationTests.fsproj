@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Infrastructure/Rpc.fs" />
     <Compile Include="Infrastructure/MeetupsHostFixture.fs" />
     <Compile Include="Infrastructure/Testdb.fs" />
     <Compile Include="Infrastructure/LiveMeetupsHost.fs" />

@@ -47,7 +47,16 @@ module Inbound =
     let private uuidV7 (field: string) (value: string) : Result<Guid, InvalidRequest> =
         match Guid.TryParseExact(value, "D") with
         | true, parsed when value = parsed.ToString "D" ->
-            if parsed.Version = 7 then Ok parsed else Error(invalid field "must be a UUIDv7")
+            // Версия и вариант проверяются вместе: строка с верной версией и чужим
+            // вариантом каноническим UUIDv7 по RFC 9562 не является, а Guid её
+            // разбирает — формат "D" о смысле битов ничего не знает.
+            //
+            // Guid.Variant отдаёт сам ниббл, а не номер варианта, поэтому сравнение
+            // идёт по двум старшим битам: RFC 9562 — это 10xx, то есть 8..B.
+            if parsed.Version = 7 && parsed.Variant >>> 2 = 0b10 then
+                Ok parsed
+            else
+                Error(invalid field "must be a UUIDv7")
         | _ -> Error(invalid field "must be a canonical lowercase UUID with hyphens")
 
     let meetupId (value: string) : Result<MeetupId, InvalidRequest> = uuidV7 "id" value |> Result.map MeetupId

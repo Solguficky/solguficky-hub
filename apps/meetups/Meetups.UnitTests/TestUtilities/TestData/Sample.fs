@@ -20,12 +20,6 @@ let administrator =
         Roles = Set.singleton Administrator
     }
 
-let otherAdministrator =
-    {
-        IdentityId = otherAuthorId
-        Roles = Set.singleton Administrator
-    }
-
 /// Тот же человек, но без роли: автор отдельным правом не является, и на этом
 /// образце это видно без комментария.
 let ordinary =

@@ -10,10 +10,16 @@ open Xunit
 /// Один хост на класс: старт Kestrel дороже самих вызовов. Очередь записей у
 /// него общая, поэтому каждый тест утверждает про свою операцию.
 ///
-/// Базы у этого хоста нет. Отсюда следует, что здесь проверяются только каркас
-/// границы и те отказы, которые принимаются до обращения к хранилищу: отказ по
-/// праву и отказ разбора запроса. Зелёный тест поэтому доказывает не только код
-/// ответа, но и то, что до базы вызов не дошёл — иначе пришёл бы Unavailable.
+/// Живой базы у этого хоста нет: DSN валиден по форме и заведомо недостижим.
+/// Отсюда следует, что здесь проверяются каркас границы и те отказы, которые
+/// принимаются до открытия соединения, — по праву и по разбору запроса. Зелёный
+/// тест поэтому доказывает не только код ответа, но и то, что соединения не было:
+/// попытка сходить в базу дала бы необъявленный NpgsqlException, который интерцептор
+/// пишет как Unknown, а клиент увидел бы вместо ожидаемого кода.
+///
+/// «До обращения к хранилищу» относится к соединению, а не к контейнеру: сборку
+/// зависимостей диспетчер делает раньше разбора запроса, и NpgsqlDataSource
+/// резолвится всегда. Именно поэтому фикстуре и понадобился DSN.
 type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
     let client = MeetupsService.MeetupsServiceClient(host.Channel)
@@ -27,13 +33,6 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         host.Records
         |> List.tryFind (fun entry -> entry.Fields.TryFind "operation" = Some operation)
 
-    let codeOf (call: unit -> unit) =
-        try
-            call ()
-            None
-        with :? RpcException as declined ->
-            Some declined.StatusCode
-
     interface IClassFixture<MeetupsHostFixture>
 
     /// Заголовочный критерий задачи: отказ по праву приходит от Meetups, а не от
@@ -42,21 +41,21 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
     member _.``Every command refuses an ordinary viewer with PERMISSION_DENIED``() =
         let actual =
             [
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
                     |> ignore
                 )
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = viewer, Id = id))
                     |> ignore
                 )
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.SetMeetupSchedule(
                         SetMeetupScheduleRequest(Viewer = viewer, Id = id, Schedule = Schedule(NoDate = NoDate()))
                     )
                     |> ignore
                 )
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id))
                     |> ignore
                 )
@@ -72,18 +71,18 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         let actual =
             [
                 // Смотрящего нет вовсе.
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.PublishMeetup(PublishMeetupRequest(Id = id))
                     |> ignore
                 )
                 // Идентификатор не в каноническом виде.
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id.ToUpperInvariant()))
                     |> ignore
                 )
                 // Пустой oneof расписания: «даты нет» — это форма no_date, а не
                 // отсутствие формы.
-                codeOf (fun () ->
+                Rpc.codeOf (fun () ->
                     client.SetMeetupSchedule(SetMeetupScheduleRequest(Viewer = viewer, Id = id, Schedule = Schedule()))
                     |> ignore
                 )
@@ -123,7 +122,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
     /// сервиса не существовало, и правило проверялось только in-process.
     [<Fact>]
     member _.``A declared refusal is recorded as a warning with its transport code``() =
-        codeOf (fun () ->
+        Rpc.codeOf (fun () ->
             client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = viewer, Id = id))
             |> ignore
         )
@@ -140,7 +139,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
     [<Fact>]
     member _.``The boundary omits fields it has nothing to fill``() =
-        codeOf (fun () ->
+        Rpc.codeOf (fun () ->
             client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id))
             |> ignore
         )
@@ -166,7 +165,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         // Положительный контроль: продуктовый вызов рядом доказывает, что записи
         // вообще снимаются, и отсутствие пробы значит фильтр, а не мёртвый сток.
         // Вызов отказывается по праву, но запись границы от этого не исчезает.
-        codeOf (fun () ->
+        Rpc.codeOf (fun () ->
             client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
             |> ignore
         )

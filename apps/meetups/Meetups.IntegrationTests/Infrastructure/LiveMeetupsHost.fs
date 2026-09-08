@@ -45,6 +45,10 @@ type LiveMeetupsHost() =
             |> GrpcChannel.ForAddress
         with _ ->
             app.StopAsync().GetAwaiter().GetResult()
+            // DisposeAsync, а не только StopAsync: остановка хоста не разбирает
+            // контейнер, и NpgsqlDataSource с его пулом пережил бы исключение,
+            // удерживая соединения к базе, которую следующей строкой дропает Dispose.
+            (app :> IAsyncDisposable).DisposeAsync().AsTask().GetAwaiter().GetResult()
             (db :> IDisposable).Dispose()
             reraise ()
 

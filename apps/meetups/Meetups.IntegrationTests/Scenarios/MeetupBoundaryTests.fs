@@ -30,13 +30,6 @@ type MeetupBoundaryTests() =
 
     let newId () = Guid.CreateVersion7()
 
-    let codeOf (call: unit -> unit) =
-        try
-            call ()
-            None
-        with :? RpcException as declined ->
-            Some declined.StatusCode
-
     [<Fact>]
     member _.``An administrator drives a meetup from draft to visible over gRPC``() =
         use live = new LiveMeetupsHost()
@@ -119,9 +112,10 @@ type MeetupBoundaryTests() =
         test <@ MeetupCommands.countMeetups live.ConnectionString id = 1L @>
         test <@ MeetupCommands.countEvents live.ConnectionString id = 1L @>
 
-    /// Скрытая от смотрящего сходка и несуществующая отвечают одинаково: единый
-    /// ответ «не найдено» (ADR-022). Оба вызова в одном тесте, чтобы совпадение
-    /// читалось, а не собиралось из двух файлов.
+    /// Чужой черновик и несуществующая сходка отвечают одним кодом «не найдено»
+    /// (ADR-022). Вызовы разные — CreateMeetupDraft на свободном id по построению
+    /// успешен, поэтому одной операцией эти два случая не столкнуть, — но именно
+    /// совпадение кодов через границу здесь и проверяется.
     [<Fact>]
     member _.``A foreign draft and a missing meetup answer with the same code``() =
         use live = new LiveMeetupsHost()
@@ -132,13 +126,13 @@ type MeetupBoundaryTests() =
         |> ignore
 
         let foreign =
-            codeOf (fun () ->
+            Rpc.codeOf (fun () ->
                 client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = otherAdministrator (), Id = key))
                 |> ignore
             )
 
         let missing =
-            codeOf (fun () ->
+            Rpc.codeOf (fun () ->
                 client.PublishMeetup(PublishMeetupRequest(Viewer = administrator (), Id = (newId ()).ToString "D"))
                 |> ignore
             )
@@ -160,7 +154,7 @@ type MeetupBoundaryTests() =
         |> ignore
 
         let actual =
-            codeOf (fun () ->
+            Rpc.codeOf (fun () ->
                 client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
                 |> ignore
             )
@@ -176,7 +170,7 @@ type MeetupBoundaryTests() =
         let id = newId ()
 
         let actual =
-            codeOf (fun () ->
+            Rpc.codeOf (fun () ->
                 client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = ordinary (), Id = id.ToString "D"))
                 |> ignore
             )
