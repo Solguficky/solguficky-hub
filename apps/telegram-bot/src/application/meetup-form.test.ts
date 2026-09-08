@@ -129,4 +129,46 @@ describe("meetup creation form", () => {
     ).resolves.toEqual({ kind: "dependency-rejected", reason: "forbidden" });
     expect(meetups.createDraft).toHaveBeenCalledOnce();
   });
+
+  it("preserves an invalid argument message for the presentation", async () => {
+    const meetups = harness().meetups;
+    meetups.publish = vi.fn(async () => ({
+      kind: "invalid" as const,
+      message: "description is required",
+    }));
+    const dispatcher = createDispatcher(meetups);
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "dependency-rejected",
+      reason: "invalid",
+      message: "description is required",
+    });
+  });
+
+  it("repeats a field when Meetups rejects its value", async () => {
+    const meetups = harness().meetups;
+    meetups.changeAttributes = vi.fn(async () => ({
+      kind: "invalid" as const,
+      message: "title is too long",
+    }));
+    const dispatcher = createDispatcher(meetups);
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "set-meetup-field",
+        field: "title",
+        value: "Слишком длинное название",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "ask",
+      field: "title",
+      error: "Не получилось сохранить значение: title is too long",
+    });
+  });
 });

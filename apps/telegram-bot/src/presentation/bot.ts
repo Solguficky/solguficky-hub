@@ -23,6 +23,15 @@ const unavailableText = `Не получилось загрузить данны
 
 Попробуй ещё раз через минуту.`;
 const operation = "message";
+const questionTtlMs = 60 * 60 * 1_000;
+const questionLimit = 1_000;
+
+type PendingQuestion = {
+  field: FormField;
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 
 type UpdateContext = Context & {
   requestId?: string;
@@ -50,7 +59,7 @@ type BoundaryOutcome =
 
 export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
   const bot = new Bot<UpdateContext>(runtime.token);
-  const questions = new Map<string, { field: FormField; meetupId: string }>();
+  const questions = new Map<string, PendingQuestion>();
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();
     ctx.startedAt = process.hrtime.bigint();
@@ -73,11 +82,12 @@ export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
 async function handleMessage(
   ctx: UpdateContext,
   runtime: BotRuntime,
-  questions: Map<string, { field: FormField; meetupId: string }>,
+  questions: Map<string, PendingQuestion>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   try {
     const replyId = ctx.message?.reply_to_message?.message_id;
+    removeExpiredQuestions(questions, Date.now());
     const pending =
       replyId === undefined
         ? undefined
@@ -87,6 +97,9 @@ async function handleMessage(
       pending !== undefined &&
       ctx.message?.text !== undefined
     ) {
+      if (ctx.from?.id !== pending.telegramUserId) {
+        return;
+      }
       const person = await resolvePerson(ctx, runtime);
       if (person === undefined) return;
       const result = await runtime.dispatcher.execute({
@@ -107,7 +120,10 @@ async function handleMessage(
       };
       return;
     }
-    if (replyId !== undefined) {
+    if (
+      replyId !== undefined &&
+      ctx.message?.reply_to_message?.from?.id === ctx.me.id
+    ) {
       await ctx.reply(
         "Этот вопрос уже устарел. Открой управление сходками и продолжи с актуального экрана.",
       );
@@ -219,7 +235,7 @@ async function handleMessage(
 async function handleCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
-  questions: Map<string, { field: FormField; meetupId: string }>,
+  questions: Map<string, PendingQuestion>,
 ): Promise<void> {
   await ctx.answerCallbackQuery();
   const action = parseCallback(ctx.callbackQuery?.data);
@@ -281,7 +297,7 @@ async function resolvePerson(
 async function renderFormResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
-  questions: Map<string, { field: FormField; meetupId: string }>,
+  questions: Map<string, PendingQuestion>,
 ): Promise<void> {
   if (result.kind === "ask") {
     const prompts: Record<FormField, string> = {
@@ -296,7 +312,10 @@ async function renderFormResult(
     questions.set(questionKey(ctx.chat?.id, message.message_id), {
       field: result.field,
       meetupId: result.meetup.id,
+      telegramUserId: ctx.from?.id ?? 0,
+      expiresAt: Date.now() + questionTtlMs,
     });
+    evictOldestQuestions(questions);
     return;
   }
   if (result.kind === "preview") {
@@ -317,11 +336,32 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "dependency-rejected") {
+    if (result.reason === "invalid") {
+      await ctx.reply(`Не получилось сохранить значение: ${result.message}`);
+      return;
+    }
     await ctx.reply(
       result.reason === "forbidden"
         ? "Meetups не разрешил это действие."
         : unavailableText,
     );
+  }
+}
+
+function removeExpiredQuestions(
+  questions: Map<string, PendingQuestion>,
+  now: number,
+): void {
+  for (const [key, question] of questions) {
+    if (question.expiresAt <= now) questions.delete(key);
+  }
+}
+
+function evictOldestQuestions(questions: Map<string, PendingQuestion>): void {
+  while (questions.size > questionLimit) {
+    const oldest = questions.keys().next().value;
+    if (oldest === undefined) return;
+    questions.delete(oldest);
   }
 }
 

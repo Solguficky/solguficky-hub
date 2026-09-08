@@ -25,7 +25,7 @@ export function createMeetupForm(meetups: Meetups) {
           request.meetupId,
           request.requestId,
         );
-        if (current.kind !== "ok") return failure(current.kind);
+        if (current.kind !== "ok") return failure(current);
         if (request.field === "schedule") {
           const schedule = parseSchedule(request.value);
           if (schedule === undefined) {
@@ -37,15 +37,20 @@ export function createMeetupForm(meetups: Meetups) {
                 "Не получилось разобрать дату. Напиши, например: 21.09.2026 19:30",
             };
           }
-          return map(
-            await meetups.setSchedule(
-              request.identity,
-              request.meetupId,
-              schedule,
-              request.requestId,
-            ),
-            "venue",
+          const scheduled = await meetups.setSchedule(
+            request.identity,
+            request.meetupId,
+            schedule,
+            request.requestId,
           );
+          if (scheduled.kind === "invalid") {
+            return invalidField(
+              request.field,
+              current.meetup,
+              scheduled.message,
+            );
+          }
+          return map(scheduled, "venue");
         }
         const changed = { ...current.meetup, [request.field]: request.value };
         const next =
@@ -54,14 +59,15 @@ export function createMeetupForm(meetups: Meetups) {
             : request.field === "venue"
               ? "description"
               : "preview";
-        return map(
-          await meetups.changeAttributes(
-            request.identity,
-            changed,
-            request.requestId,
-          ),
-          next,
+        const updated = await meetups.changeAttributes(
+          request.identity,
+          changed,
+          request.requestId,
         );
+        if (updated.kind === "invalid") {
+          return invalidField(request.field, current.meetup, updated.message);
+        }
+        return map(updated, next);
       }
       case "publish-meetup":
         return mapPublished(
@@ -116,7 +122,7 @@ function map(
   result: Awaited<ReturnType<Meetups["createDraft"]>>,
   next: "title" | "schedule" | "venue" | "description" | "preview",
 ): ExecuteResult {
-  if (result.kind !== "ok") return failure(result.kind);
+  if (result.kind !== "ok") return failure(result);
   if (next === "preview") return { kind: "preview", meetup: result.meetup };
   return { kind: "ask", field: next, meetup: result.meetup };
 }
@@ -124,12 +130,37 @@ function map(
 function mapPublished(
   result: Awaited<ReturnType<Meetups["publish"]>>,
 ): ExecuteResult {
-  if (result.kind !== "ok") return failure(result.kind);
+  if (result.kind !== "ok") return failure(result);
   return { kind: "published", meetup: result.meetup };
 }
 
-function failure(kind: "forbidden" | "invalid" | "unavailable"): ExecuteResult {
-  return { kind: "dependency-rejected", reason: kind };
+function failure(
+  result: Exclude<Awaited<ReturnType<Meetups["createDraft"]>>, { kind: "ok" }>,
+): ExecuteResult {
+  if (result.kind === "invalid") {
+    return {
+      kind: "dependency-rejected",
+      reason: "invalid",
+      message: result.message,
+    };
+  }
+  return { kind: "dependency-rejected", reason: result.kind };
+}
+
+function invalidField(
+  field: Exclude<
+    ExecuteRequest,
+    { intent: "start" | "create-meetup" | "publish-meetup" }
+  >["field"],
+  meetup: MeetupSnapshot,
+  message: string,
+): ExecuteResult {
+  return {
+    kind: "ask",
+    field,
+    meetup,
+    error: `Не получилось сохранить значение: ${message}`,
+  };
 }
 
 export function formatSchedule(meetup: MeetupSnapshot): string {
