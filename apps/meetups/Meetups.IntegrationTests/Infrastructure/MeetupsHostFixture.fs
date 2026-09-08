@@ -46,7 +46,14 @@ type MeetupsHostFixture() =
             |> Seq.head
             |> GrpcChannel.ForAddress
         with _ ->
-            app.StopAsync().GetAwaiter().GetResult()
+            // DisposeAsync, а не только StopAsync: остановка хоста не разбирает его
+            // контейнер, и созданные там ресурсы пережили бы исключение. finally,
+            // потому что StopAsync у хоста, упавшего на старте, и сам может бросить.
+            try
+                app.StopAsync().GetAwaiter().GetResult()
+            finally
+                (app :> IAsyncDisposable).DisposeAsync().AsTask().GetAwaiter().GetResult()
+
             reraise ()
 
     member _.Channel = channel
