@@ -30,7 +30,7 @@ let private run (deps: Deps) =
         deps
         {
             Id = Sample.meetupId
-            PerformedBy = Sample.authorId
+            Viewer = Sample.administrator
         }
     |> Async.AwaitTask
     |> Async.RunSynchronously

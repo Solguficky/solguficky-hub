@@ -27,7 +27,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         let stateTransaction = MeetupCommands.transactionOf dsn "meetups" "id" meetupId
@@ -46,7 +46,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         // Идентификатор второго события занимает чужая строка того же журнала.
@@ -76,7 +76,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         let stale =
@@ -91,7 +91,7 @@ type MeetupCommandTests() =
         let command: Meetups.Slices.ChangeMeetupAttributes.Command =
             {
                 Id = MeetupId meetupId
-                PerformedBy = MeetupCommands.author
+                Viewer = MeetupCommands.administrator
                 Attributes = MeetupCommands.attributes
             }
 
@@ -116,10 +116,10 @@ type MeetupCommandTests() =
         use source = MeetupCommands.source dsn
 
         let first =
-            MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+            MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
 
         let repeat =
-            MeetupCommands.create source secondEvent (MeetupId meetupId) MeetupCommands.author
+            MeetupCommands.create source secondEvent (MeetupId meetupId) MeetupCommands.administrator
 
         test <@ first = repeat @>
         test <@ MeetupCommands.countMeetups dsn meetupId = 1L @>
@@ -135,11 +135,11 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         let rejected =
-            MeetupCommands.create source secondEvent (MeetupId meetupId) MeetupCommands.otherAuthor
+            MeetupCommands.create source secondEvent (MeetupId meetupId) MeetupCommands.otherAdministrator
 
         test
             <@
@@ -156,7 +156,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         MeetupCommands.change source secondEvent (MeetupId meetupId)
@@ -181,7 +181,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         MeetupCommands.change source secondEvent (MeetupId meetupId)
@@ -223,7 +223,7 @@ type MeetupCommandTests() =
 
         let schedule = Fixed(Interval interval)
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         let result =
@@ -262,7 +262,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         MeetupCommands.setSchedule source secondEvent (MeetupId meetupId) (Tentative(Day(DateOnly(2026, 10, 3))))
@@ -294,7 +294,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         MeetupCommands.change source secondEvent (MeetupId meetupId)
@@ -314,7 +314,7 @@ type MeetupCommandTests() =
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
 
-        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.author
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
         MeetupCommands.change source secondEvent (MeetupId meetupId)
@@ -347,7 +347,7 @@ type MeetupCommandTests() =
                 deps
                 {
                     Id = MeetupId meetupId
-                    PerformedBy = MeetupCommands.author
+                    Viewer = MeetupCommands.administrator
                 }
             |> MeetupCommands.run
 

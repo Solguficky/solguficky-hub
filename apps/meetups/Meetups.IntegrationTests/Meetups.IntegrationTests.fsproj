@@ -18,13 +18,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Infrastructure/Rpc.fs" />
     <Compile Include="Infrastructure/MeetupsHostFixture.fs" />
     <Compile Include="Infrastructure/Testdb.fs" />
+    <Compile Include="Infrastructure/LiveMeetupsHost.fs" />
     <Compile Include="Infrastructure/DispatchScenario.fs" />
     <Compile Include="Infrastructure/MeetupCommands.fs" />
     <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
     <Compile Include="Scenarios/SchemaTests.fs" />
     <Compile Include="Scenarios/MeetupCommandTests.fs" />
+    <Compile Include="Scenarios/MeetupBoundaryTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

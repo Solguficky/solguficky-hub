@@ -21,13 +21,16 @@
     <Compile Include="DomainTests/ChangeMeetupAttributesTests.fs" />
     <Compile Include="DomainTests/SetMeetupScheduleTests.fs" />
     <Compile Include="DomainTests/PublishMeetupTests.fs" />
+    <Compile Include="DomainTests/AccessTests.fs" />
     <Compile Include="DomainTests/MeetupApplyTests.fs" />
     <Compile Include="DomainTests/MeetupRehydrateTests.fs" />
     <Compile Include="InfrastructureTests/MeetupRowTests.fs" />
     <Compile Include="InfrastructureTests/MeetupEventPayloadTests.fs" />
+    <Compile Include="SliceTests/ContractTests.fs" />
     <Compile Include="SliceTests/CreateMeetupDraftWorkflowTests.fs" />
     <Compile Include="SliceTests/SetMeetupScheduleWorkflowTests.fs" />
     <Compile Include="SliceTests/PublishMeetupWorkflowTests.fs" />
+    <Compile Include="SliceTests/CommandApiTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />
     <Compile Include="PlaceholderTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />
