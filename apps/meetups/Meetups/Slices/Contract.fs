@@ -29,6 +29,14 @@ type InvalidRequest =
         Problem: string
     }
 
+/// Конструктор отказа. Метки полей записи видны только внутри этого модуля, а
+/// собирать отказ приходится и в срезах, которые разбирают своё поле сами.
+let invalid (field: string) (problem: string) : InvalidRequest =
+    {
+        Field = field
+        Problem = problem
+    }
+
 module Inbound =
 
     /// Канонический вид строки и версию UUID проверяет граница сервиса, а не домен —
@@ -39,20 +47,8 @@ module Inbound =
     let private uuidV7 (field: string) (value: string) : Result<Guid, InvalidRequest> =
         match Guid.TryParseExact(value, "D") with
         | true, parsed when value = parsed.ToString "D" ->
-            if parsed.Version = 7 then
-                Ok parsed
-            else
-                Error
-                    {
-                        Field = field
-                        Problem = "must be a UUIDv7"
-                    }
-        | _ ->
-            Error
-                {
-                    Field = field
-                    Problem = "must be a canonical lowercase UUID with hyphens"
-                }
+            if parsed.Version = 7 then Ok parsed else Error(invalid field "must be a UUIDv7")
+        | _ -> Error(invalid field "must be a canonical lowercase UUID with hyphens")
 
     let meetupId (value: string) : Result<MeetupId, InvalidRequest> = uuidV7 "id" value |> Result.map MeetupId
 
@@ -68,11 +64,7 @@ module Inbound =
 
     let viewer (value: Meetups.V1.Viewer) : Result<Viewer, InvalidRequest> =
         if isNull (box value) then
-            Error
-                {
-                    Field = "viewer"
-                    Problem = "is required"
-                }
+            Error(invalid "viewer" "is required")
         else
             uuidV7 "viewer.identity_id" value.IdentityId
             |> Result.map (fun identity ->

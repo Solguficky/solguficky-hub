@@ -26,7 +26,7 @@ let private run (deps: Deps) (schedule: Schedule) =
         deps
         {
             Id = Sample.meetupId
-            PerformedBy = Sample.authorId
+            Viewer = Sample.administrator
             Schedule = schedule
         }
     |> Async.AwaitTask

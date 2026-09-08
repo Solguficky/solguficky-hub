@@ -30,6 +30,7 @@
     <Compile Include="SliceTests/CreateMeetupDraftWorkflowTests.fs" />
     <Compile Include="SliceTests/SetMeetupScheduleWorkflowTests.fs" />
     <Compile Include="SliceTests/PublishMeetupWorkflowTests.fs" />
+    <Compile Include="SliceTests/CommandApiTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />
     <Compile Include="PlaceholderTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />

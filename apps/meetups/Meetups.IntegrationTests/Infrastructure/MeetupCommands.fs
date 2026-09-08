@@ -13,6 +13,21 @@ let author = PersonId(Guid.Parse "0199c0de-0000-7000-8000-00000000000a")
 let otherAuthor = PersonId(Guid.Parse "0199c0de-0000-7000-8000-00000000000b")
 let now = DateTimeOffset(2026, 9, 7, 12, 0, 0, TimeSpan.Zero)
 
+/// Пишущие команды доступны администратору (ADR-031), поэтому вызов идёт от
+/// смотрящего с ролью, а не от голой личности: без роли срез откажет раньше, чем
+/// дойдёт до базы, и сценарий записи проверять станет нечего.
+let administrator =
+    {
+        IdentityId = author
+        Roles = Set.singleton Administrator
+    }
+
+let otherAdministrator =
+    {
+        IdentityId = otherAuthor
+        Roles = Set.singleton Administrator
+    }
+
 let attributes =
     {
         Title = "F# after hours"
@@ -74,12 +89,12 @@ let publishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Publ
         NewEventId = fun () -> eventId
     }
 
-let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: PersonId) =
+let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: Viewer) =
     Meetups.Slices.CreateMeetupDraft.execute
         (createDeps source eventId)
         {
             Id = id
-            PerformedBy = performedBy
+            Viewer = performedBy
         }
     |> run
 
@@ -88,7 +103,7 @@ let change (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         (changeDeps source eventId)
         {
             Id = id
-            PerformedBy = author
+            Viewer = administrator
             Attributes = attributes
         }
     |> run
@@ -98,7 +113,7 @@ let setSchedule (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (sched
         (scheduleDeps source eventId)
         {
             Id = id
-            PerformedBy = author
+            Viewer = administrator
             Schedule = schedule
         }
     |> run
@@ -108,7 +123,7 @@ let publish (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         (publishDeps source eventId)
         {
             Id = id
-            PerformedBy = author
+            Viewer = administrator
         }
     |> run
 
