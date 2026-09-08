@@ -64,6 +64,51 @@ function ignoredUpdate(): Update {
   };
 }
 
+function callbackUpdate(data: string, fromId = 42): Update {
+  return {
+    update_id: 3,
+    callback_query: {
+      id: "callback-1",
+      chat_instance: "chat-1",
+      from: { id: fromId, is_bot: false, first_name: "tester" },
+      data,
+      message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+      },
+    },
+  };
+}
+
+function replyUpdate(options: {
+  text: string;
+  fromId: number;
+  replyMessageId: number;
+  replyFromId: number;
+}): Update {
+  return {
+    update_id: 4,
+    message: {
+      message_id: 10,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: options.fromId, is_bot: false, first_name: "tester" },
+      text: options.text,
+      reply_to_message: {
+        message_id: options.replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: {
+          id: options.replyFromId,
+          is_bot: options.replyFromId === 1,
+          first_name: "sender",
+        },
+      } as never,
+    },
+  };
+}
+
 function recordCall(method: ApiMethod, payload: ApiPayload): RecordedCall {
   return { method, payload };
 }
@@ -111,6 +156,16 @@ function createHarness(
   const calls: RecordedCall[] = [];
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push(recordCall(method, payload));
+    if (method === "sendMessage") {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          message_id: 100 + calls.length,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+        } as never,
+      });
+    }
     return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult depends on method; fixture never calls prev
   };
   bot.api.config.use(recorder);
@@ -161,6 +216,48 @@ afterEach(() => {
 });
 
 describe("presentation adapter", () => {
+  it("does not treat a command replying to a user as a stale form answer", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "/start",
+        fromId: 42,
+        replyMessageId: 8,
+        replyFromId: 42,
+      }),
+    );
+    expect(
+      sendMessageText(calls.find((call) => call.method === "sendMessage")),
+    ).toContain("Привет.");
+  });
+
+  it("does not dispatch another user's answer to a pending question", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
+      kind: "ask",
+      field: "title",
+      meetup: {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+        title: "",
+        description: "",
+        venue: "",
+      },
+    });
+    const { bot } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Чужое название",
+        fromId: 43,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
   it("resolves identity and replies to /start", async () => {
     const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();

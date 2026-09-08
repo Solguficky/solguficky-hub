@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { Bot, type Context } from "grammy";
+import { Bot, type Context, InlineKeyboard } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
+import { formatSchedule } from "../application/meetup-form.js";
+import type { FormField, Person } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import {
   type IdentityResolver,
   toResolveIdentityInput,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
+import { parseCallback } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
 export type BotRuntime = {
@@ -20,6 +23,15 @@ const unavailableText = `Не получилось загрузить данны
 
 Попробуй ещё раз через минуту.`;
 const operation = "message";
+const questionTtlMs = 60 * 60 * 1_000;
+const questionLimit = 1_000;
+
+type PendingQuestion = {
+  field: FormField;
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 
 type UpdateContext = Context & {
   requestId?: string;
@@ -47,12 +59,16 @@ type BoundaryOutcome =
 
 export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
   const bot = new Bot<UpdateContext>(runtime.token);
+  const questions = new Map<string, PendingQuestion>();
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();
     ctx.startedAt = process.hrtime.bigint();
     return next();
   });
-  bot.on("message", (ctx) => handleMessage(ctx, runtime));
+  bot.on("callback_query:data", (ctx) =>
+    handleCallback(ctx, runtime, questions),
+  );
+  bot.on("message", (ctx) => handleMessage(ctx, runtime, questions));
   bot.catch((botError) => {
     writeBoundary(
       runtime.logger,
@@ -66,9 +82,59 @@ export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
 async function handleMessage(
   ctx: UpdateContext,
   runtime: BotRuntime,
+  questions: Map<string, PendingQuestion>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   try {
+    const replyId = ctx.message?.reply_to_message?.message_id;
+    removeExpiredQuestions(questions, Date.now());
+    const pending =
+      replyId === undefined
+        ? undefined
+        : questions.get(questionKey(ctx.chat?.id, replyId));
+    if (
+      replyId !== undefined &&
+      pending !== undefined &&
+      ctx.message?.text !== undefined
+    ) {
+      if (ctx.from?.id !== pending.telegramUserId) {
+        return;
+      }
+      const person = await resolvePerson(ctx, runtime);
+      if (person === undefined) return;
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "set-meetup-field",
+        field: pending.field,
+        value: ctx.message.text,
+        meetupId: pending.meetupId,
+        ...requestId(ctx),
+      });
+      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await renderFormResult(ctx, result, questions);
+      outcome = {
+        level: "debug",
+        message: "meetup form answer handled",
+        result: "ok",
+        use_case: "create_meetup",
+      };
+      return;
+    }
+    if (
+      replyId !== undefined &&
+      ctx.message?.reply_to_message?.from?.id === ctx.me.id
+    ) {
+      await ctx.reply(
+        "Этот вопрос уже устарел. Открой управление сходками и продолжи с актуального экрана.",
+      );
+      outcome = {
+        level: "debug",
+        message: "stale form answer handled",
+        result: "ok",
+        use_case: "create_meetup",
+      };
+      return;
+    }
     const parsed = parseUpdate(ctx.update, ctx.me.username);
     if (parsed.kind === "malformed") {
       outcome = {
@@ -96,7 +162,7 @@ async function handleMessage(
       outcome = await replyFailClosed(ctx, identityFailureOutcome(resolved));
       return;
     }
-    const result = runtime.dispatcher.execute(
+    const result = await runtime.dispatcher.execute(
       startExecuteRequest(
         {
           identityId: resolved.identityId,
@@ -107,7 +173,12 @@ async function handleMessage(
     );
     switch (result.kind) {
       case "message":
-        await ctx.reply(result.text);
+        await ctx.reply(result.text, {
+          reply_markup: new InlineKeyboard().text(
+            "Управление сходками",
+            "v1:manage:menu",
+          ),
+        });
         outcome = {
           level: "debug",
           message: "start reply sent",
@@ -123,6 +194,19 @@ async function handleMessage(
           use_case: "start",
           error_category: result.reason,
           error: result.reason,
+        };
+        return;
+      case "ask":
+      case "preview":
+      case "published":
+      case "dependency-rejected":
+        outcome = {
+          level: "error",
+          message: "unexpected form result",
+          result: "error",
+          use_case: "start",
+          error_category: "unhandled_result",
+          error: result.kind,
         };
         return;
       default: {
@@ -146,6 +230,165 @@ async function handleMessage(
       writeBoundary(runtime.logger, ctx, outcome);
     }
   }
+}
+
+async function handleCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingQuestion>,
+): Promise<void> {
+  await ctx.answerCallbackQuery();
+  const action = parseCallback(ctx.callbackQuery?.data);
+  if (action.kind === "outdated" || action.kind === "malformed") {
+    await ctx.reply("Этот экран устарел. Открой актуальное меню через /start.");
+    return;
+  }
+  const person = await resolvePerson(ctx, runtime);
+  if (person === undefined) return;
+  if (action.kind === "manage-menu") {
+    const id = createUuidV7();
+    await ctx.reply("Управление сходками", {
+      reply_markup: new InlineKeyboard().text(
+        "Создать сходку",
+        `v1:manage:new:${uuidToToken(id)}`,
+      ),
+    });
+    return;
+  }
+  if (action.kind === "create-meetup") {
+    const result = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "create-meetup",
+      meetupId: tokenToUuid(action.token),
+      ...requestId(ctx),
+    });
+    await renderFormResult(ctx, result, questions);
+    return;
+  }
+  if (action.kind === "publish-meetup") {
+    const result = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "publish-meetup",
+      meetupId: tokenToUuid(action.token),
+      ...requestId(ctx),
+    });
+    await renderFormResult(ctx, result, questions);
+    return;
+  }
+}
+
+async function resolvePerson(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+): Promise<Person | undefined> {
+  const from = ctx.from;
+  if (from === undefined) return undefined;
+  const resolved = await runtime.identity.resolve(
+    toResolveIdentityInput(BigInt(from.id), from.username),
+    ctx.requestId,
+  );
+  if (resolved.kind !== "resolved") {
+    await ctx.reply(unavailableText);
+    return undefined;
+  }
+  return { identityId: resolved.identityId, globalRoles: resolved.globalRoles };
+}
+
+async function renderFormResult(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  questions: Map<string, PendingQuestion>,
+): Promise<void> {
+  if (result.kind === "ask") {
+    const prompts: Record<FormField, string> = {
+      title: "Как называется сходка?",
+      schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
+      venue: "Где встречаемся?",
+      description: "Добавь короткое описание сходки.",
+    };
+    const message = await ctx.reply(result.error ?? prompts[result.field], {
+      reply_markup: { force_reply: true, selective: true },
+    });
+    questions.set(questionKey(ctx.chat?.id, message.message_id), {
+      field: result.field,
+      meetupId: result.meetup.id,
+      telegramUserId: ctx.from?.id ?? 0,
+      expiresAt: Date.now() + questionTtlMs,
+    });
+    evictOldestQuestions(questions);
+    return;
+  }
+  if (result.kind === "preview") {
+    const meetup = result.meetup;
+    await ctx.reply(
+      `Проверь сходку\n\n${meetup.title}\n${formatSchedule(meetup)}\n${meetup.venue}\n\n${meetup.description}`,
+      {
+        reply_markup: new InlineKeyboard().text(
+          "Опубликовать",
+          `v1:manage:publish:${uuidToToken(meetup.id)}`,
+        ),
+      },
+    );
+    return;
+  }
+  if (result.kind === "published") {
+    await ctx.reply(`Сходка опубликована: ${result.meetup.title}`);
+    return;
+  }
+  if (result.kind === "dependency-rejected") {
+    if (result.reason === "invalid") {
+      await ctx.reply(`Не получилось сохранить значение: ${result.message}`);
+      return;
+    }
+    await ctx.reply(
+      result.reason === "forbidden"
+        ? "Meetups не разрешил это действие."
+        : unavailableText,
+    );
+  }
+}
+
+function removeExpiredQuestions(
+  questions: Map<string, PendingQuestion>,
+  now: number,
+): void {
+  for (const [key, question] of questions) {
+    if (question.expiresAt <= now) questions.delete(key);
+  }
+}
+
+function evictOldestQuestions(questions: Map<string, PendingQuestion>): void {
+  while (questions.size > questionLimit) {
+    const oldest = questions.keys().next().value;
+    if (oldest === undefined) return;
+    questions.delete(oldest);
+  }
+}
+
+function createUuidV7(): string {
+  const bytes = Buffer.from(randomUUID().replaceAll("-", ""), "hex");
+  let time = BigInt(Date.now());
+  for (let index = 5; index >= 0; index -= 1) {
+    bytes[index] = Number(time & 0xffn);
+    time >>= 8n;
+  }
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function uuidToToken(id: string): string {
+  return Buffer.from(id.replaceAll("-", ""), "hex").toString("base64url");
+}
+function requestId(ctx: UpdateContext): { requestId?: string } {
+  return ctx.requestId === undefined ? {} : { requestId: ctx.requestId };
+}
+function questionKey(chatId: number | undefined, messageId: number): string {
+  return `${chatId ?? "unknown"}:${messageId}`;
+}
+function tokenToUuid(token: string): string {
+  const hex = Buffer.from(token, "base64url").toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 // Недоступность зависимости и отвергнутый ею вызов — разные отказы: первый

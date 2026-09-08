@@ -17,6 +17,7 @@ internal static class TelegramBotSetup
                 RepositoryPaths.App(context.Builder, "telegram-bot"),
                 "start")
             .WithEnvironment("TELEGRAM_BOT_TOKEN", token)
-            .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL");
+            .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL")
+            .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL");
     }
 }

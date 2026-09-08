@@ -1,25 +1,26 @@
+import type { Meetups } from "../meetups/port.js";
+import { createMeetupForm } from "./meetup-form.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult } from "./types.js";
 
 export type Dispatcher = {
-  execute(request: ExecuteRequest): ExecuteResult;
+  execute(request: ExecuteRequest): ExecuteResult | Promise<ExecuteResult>;
 };
 
-export function createDispatcher(): Dispatcher {
+export function createDispatcher(meetups?: Meetups): Dispatcher {
+  const form = meetups === undefined ? undefined : createMeetupForm(meetups);
   return {
-    execute(request) {
+    async execute(request) {
       switch (request.intent) {
         case "start":
           return start(request);
-        default: {
-          const _exhaustive: never = request.intent;
-          return unknownIntent(_exhaustive);
-        }
+        case "create-meetup":
+        case "set-meetup-field":
+        case "publish-meetup":
+          return form === undefined
+            ? { kind: "rejected", reason: "meetups-not-configured" }
+            : form(request);
       }
     },
   };
-}
-
-function unknownIntent(_intent: never): ExecuteResult {
-  return { kind: "rejected", reason: "unknown-intent" };
 }
