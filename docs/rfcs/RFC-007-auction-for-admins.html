@@ -57,8 +57,9 @@
   }
   strong { font-weight: 600; }
 
-  .eyebrow, .badge, .slots dt, .feature summary, .toc a, .attributes dt,
-  .lane h4, .tool-label, .section-number, .toc h2, .feature-nav a {
+  .eyebrow, .badge, .feature summary, .toc a, .attributes dt, .note-kind,
+  .lane h4, .tool-label, .section-number, .toc h2, .sub-number, .answer summary,
+  .slot > span:first-child {
     font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
     font-size: 12px; letter-spacing: .03em; text-transform: uppercase;
   }
@@ -108,9 +109,7 @@
   figure { margin: 20px 0; }
   figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; }
 
-  .callout { background: var(--fill); padding: 18px 20px; margin: 18px 0; }
   .muted { color: var(--muted); }
-  .question { color: var(--cold); }
 
   /* ------------------------------------------------------- этапы и сценарии */
   .flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
@@ -130,9 +129,6 @@
   .audience .eyebrow { display: block; color: var(--muted); margin-bottom: 6px; }
   .audience strong { display: block; font-size: 20px; font-weight: 600; margin-bottom: 4px; }
   .audience p { color: var(--muted); font-size: 15px; margin: 0; }
-
-  .scene { background: var(--ink); color: var(--paper); padding: 22px 24px; margin: 18px 0; }
-  .scene p { font-size: clamp(16px, 2vw, 19px); line-height: 1.45; max-width: 58ch; margin: 0; }
 
   .parallel { display: grid; gap: 2px; }
   .lane { background: var(--fill); padding: 18px 20px; }
@@ -165,17 +161,17 @@
   /* ------------------------------------------------------------ приоритеты */
   .priorities { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 2px; }
   .priorities li { display: flex; gap: 12px; align-items: baseline; background: var(--fill);
-                   padding: 11px 14px; cursor: grab; }
+                   padding: 9px 10px 9px 14px; }
   .priorities li:nth-child(even) { background: var(--fill-2); }
   .priorities li.dragging { opacity: .35; }
   .priorities .n { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
                    font-size: 12px; color: var(--accent); min-width: 22px; }
-  .priorities .t { flex: 1; }
-  .priorities li[draggable="true"]::after {
-    content: ""; width: 12px; height: 8px; align-self: center; flex: none;
-    background: repeating-linear-gradient(to bottom, currentColor 0 2px, transparent 2px 4px);
-    color: var(--muted); opacity: .4;
-  }
+  /* Пункт редактируется читателем, и туда может попасть слово без пробелов.
+     min-width: 0 снимает автоминимум с элемента сетки и флекса, а anywhere
+     (в отличие от break-word) уменьшает и min-content: без него длинное
+     слово растягивает строку, а за ней и всю страницу. */
+  .priorities li { min-width: 0; }
+  .priorities .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .rank-hint, .rank-saved { font-size: 14px; color: var(--muted); }
   .rank-saved { color: var(--cold); margin-top: 8px; }
 
@@ -194,13 +190,13 @@
   .attributes dd { margin: 2px 0 0; font-size: 15px; }
 
   /* ----------------------------------------------------------------- фичи */
-  .feature-nav { display: flex; flex-wrap: wrap; gap: 2px; margin: 16px 0; }
-  .feature-nav a { background: var(--fill); color: var(--muted); text-decoration: none;
-                   padding: 8px 11px; line-height: 1; }
-  .feature-nav a:hover { color: var(--ink); }
-
-  /* Управление списком собрано в одну панель: показать, вид, подробности. */
-  .toolbar { display: flex; flex-wrap: wrap; gap: 18px 26px; margin: 18px 0 26px; }
+  /* Управление списком собрано в одну панель и прилипает к верху: список
+     длинный, и возвращаться к фильтру наверх было неудобно. */
+  .toolbar { position: sticky; top: 0; z-index: 2; background: var(--paper);
+             display: flex; flex-wrap: wrap; gap: 14px 26px; margin: 16px 0 22px;
+             padding: 12px 0 13px; box-shadow: inset 0 -1px 0 var(--line); }
+  .tool.wide { flex: 1 1 100%; }
+  .filter-total { align-self: flex-end; color: var(--muted); font-size: 14px; }
   .tool { display: flex; flex-direction: column; gap: 7px; }
   .tool-label { color: var(--muted); }
 
@@ -222,13 +218,9 @@
                      padding: 7px 10px; line-height: 1; box-shadow: inset 0 0 0 1px var(--line); }
   .feature summary:hover { color: var(--ink); }
   .feature summary::-webkit-details-marker { display: none; }
-  .feature summary::after { content: " +"; }
-  .feature details[open] summary::after { content: " −"; }
+  .feature > details > summary::after { content: " +"; }
+  .feature > details[open] > summary::after { content: " −"; }
   .feature details > p { margin: 10px 0 0; font-size: 15px; }
-  .slots { display: flex; flex-wrap: wrap; gap: 2px; margin: 10px 0 0; }
-  .slots > div { background: var(--fill-2); padding: 7px 10px; display: flex; gap: 7px; align-items: baseline; }
-  .slots dt { color: var(--muted); }
-  .slots dd { margin: 0; font-size: 14px; font-weight: 600; }
 
   /* Сетка: то же содержимое в несколько колонок. */
   .cards[data-view="grid"] { grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); }
@@ -238,7 +230,8 @@
     padding: 10px 14px; display: grid; grid-template-columns: 150px 1fr; gap: 2px 16px; align-items: baseline;
   }
   .cards[data-view="list"] .feature:nth-child(even) { background: var(--fill-2); }
-  .cards[data-view="list"] .feature:nth-child(even) .slots > div,
+  .cards[data-view="list"] .feature:nth-child(even) .slot,
+  .cards[data-view="list"] .feature:nth-child(even) .note,
   .cards[data-view="list"] .feature:nth-child(even) summary { background: var(--fill); }
   .cards[data-view="list"] .feature .badge { margin: 0; grid-column: 1; grid-row: 1; }
   .cards[data-view="list"] .feature h4 { grid-column: 2; font-size: 16px; margin: 0; }
@@ -259,6 +252,11 @@
     main { max-width: 760px; }
   }
   @media (max-width: 899px) {
+    /* Липкая панель на телефоне съедала бы пол-экрана. */
+    .toolbar { position: static; }
+    /* Колонки встали друг под друга: колоночный зазор превращается в дыру
+       перед первым разделом, у которого свой отступ сверху. */
+    .layout { gap: 0; }
     /* Узкий экран: содержание уезжает наверх и занимает всю ширину. */
     .sidebar { position: static; display: flex; flex-wrap: wrap; gap: 22px 30px; align-items: flex-end;
                padding-bottom: 8px; }
@@ -280,6 +278,91 @@
     .cards[data-view="list"] .feature details { grid-column: 1; }
   }
 
+
+  /* -------------------------------------------------- вставки внутри текста */
+  /* У вопроса, риска и предложения разная судьба: на вопрос отвечают, риск
+     держат в голове, предложение принимают или отклоняют. Раньше всё это было
+     одинаковым синим текстом без подписи, и читатель не понимал, что с этим
+     делать. Теперь у вставки есть подпись, а у вопроса — поле для ответа. */
+  .note { background: var(--fill); margin: 16px 0; padding: 13px 16px 14px 17px;
+          box-shadow: inset 3px 0 0 var(--muted); }
+  .note-kind { display: block; color: var(--muted); margin-bottom: 6px; }
+  .note p { font-size: 15px; margin: 0 0 8px; }
+  .note p:last-of-type { margin-bottom: 0; }
+  .note ul { margin: 0 0 9px; padding-left: 19px; font-size: 15px; }
+  .note li { margin-bottom: 4px; }
+  .note li:last-child { margin-bottom: 0; }
+  .note[data-kind="q"] { box-shadow: inset 3px 0 0 var(--cold); }
+  .note[data-kind="q"] .note-kind { color: var(--cold); }
+  .note[data-kind="risk"], .note[data-kind="check"] { box-shadow: inset 3px 0 0 var(--accent); }
+  .note[data-kind="risk"] .note-kind, .note[data-kind="check"] .note-kind { color: var(--accent); }
+  .feature .note, .format-panel .note { background: var(--fill-2); }
+
+  .answer { margin-top: 11px; }
+  .answer summary { display: inline-block; color: var(--muted); cursor: pointer; list-style: none;
+                    padding: 6px 9px; line-height: 1; box-shadow: inset 0 0 0 1px var(--line); }
+  .answer summary::-webkit-details-marker { display: none; }
+  .answer summary:hover { color: var(--ink); }
+  .note[data-answered="yes"] .answer summary { color: var(--ink); }
+  .answer textarea { display: block; width: 100%; margin-top: 9px; padding: 9px 11px; resize: vertical;
+                     font-family: inherit; font-size: 15px; line-height: 1.45;
+                     background: var(--paper); color: var(--ink); border: 0;
+                     box-shadow: inset 0 0 0 1px var(--line); }
+  .answer-print { display: none; }
+
+  /* ------------------------------------------------ подразделы главы «формат» */
+  /* Финал, разогрев и длительность — три разных разговора. Без своей нумерации
+     они читались одним полотном текста. */
+  .sub { padding-top: 38px; }
+  .sub-number { display: block; color: var(--muted); margin-bottom: 6px; }
+  .sub > h3 { margin-top: 0; }
+
+  .variants { list-style: none; margin: 14px 0; padding: 0; display: grid; gap: 2px; }
+  .variants li { background: var(--fill); padding: 12px 16px; font-size: 15px; }
+
+  .disclaimer { max-width: 62ch; margin: 18px 0 0; padding: 12px 15px; font-size: 14px;
+                color: var(--muted); background: var(--fill); box-shadow: inset 3px 0 0 var(--line); }
+
+  /* -------------------------------------------------- редактируемый список */
+  .priorities .grip { width: 12px; height: 8px; flex: none; align-self: center; cursor: grab;
+                      color: var(--muted); opacity: .5;
+                      background: repeating-linear-gradient(to bottom, currentColor 0 2px, transparent 2px 4px); }
+  .priorities .t:focus-visible { outline: 2px solid var(--cold); outline-offset: 3px; }
+  .row-drop { visibility: hidden; flex: none; font-size: 11px; padding: 5px 8px; }
+  .priorities li:hover .row-drop, .priorities li:focus-within .row-drop { visibility: visible; }
+  @media (hover: none) { .row-drop { visibility: visible; } }
+  .rank-edit { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+  .rank-edit input { flex: 1 1 240px; min-width: 200px; padding: 8px 11px;
+                     font-family: inherit; font-size: 14px;
+                     background: var(--paper); color: var(--ink); border: 0;
+                     box-shadow: inset 0 0 0 1px var(--line); }
+  .rank-edit input::placeholder { color: var(--muted); }
+
+  /* ------------------------------------------------ важность и сложность фичи */
+  /* Сетка, а не flex: у «важности» и «сложности» метки разной длины, и на
+     флексе селекты вставали лесенкой. Общая колонка под метку выравнивает их
+     и в столбик внутри карточки, и в строку в широком списке. */
+  .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+           gap: 2px; margin: 11px 0 0; }
+  .slot { position: relative; display: grid; grid-template-columns: 76px 1fr; gap: 9px;
+          align-items: center; background: var(--fill-2); padding: 5px 7px 5px 10px; }
+  .slot > span:first-child { color: var(--muted); }
+  .slot select { width: 100%; }
+  .slot select { appearance: none; -webkit-appearance: none; cursor: pointer;
+                 font-family: inherit; font-size: 13px; line-height: 1;
+                 padding: 7px 24px 7px 9px; border: 0;
+                 background: var(--paper); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+  .slot::after { content: "▾"; position: absolute; right: 16px; font-size: 11px;
+                 color: var(--muted); pointer-events: none; }
+  .slot[data-filled="yes"] select { background: var(--ink); color: var(--paper); box-shadow: none; }
+  .slot[data-filled="yes"]::after { color: var(--paper); }
+  .slot-print { display: none; }
+
+  /* Панель фильтров липкая, поэтому прыжок по ссылке-якорю внутри главы «фичи»
+     должен приземляться под ней, а не под её нижним краем. Высоту панели
+     считает скрипт: она зависит от того, на сколько строк перенеслись кнопки. */
+  #features .feature, #features .feature-group { scroll-margin-top: calc(var(--jump, 0px) + 16px); }
+
   @media print {
     /* Печать всегда светлая: тёмная тема заливает страницу краской. */
     :root, :root[data-theme="dark"] {
@@ -289,12 +372,22 @@
     }
     body { font-size: 10.5pt; }
     .shell { width: auto; }
-    .sidebar, .toolbar, .format-tabs, .skip, .feature-nav { display: none !important; }
+    .sidebar, .toolbar, .format-tabs, .skip { display: none !important; }
+    /* Печать — способ вынести заполненное наружу: поля управления исчезают,
+       а их значения остаются текстом. */
+    .rank-edit, .row-drop, .grip, .filter-total, .answer summary, .answer textarea,
+    .slot select, .slot::after, .feature > details > summary { display: none !important; }
+    .slot .slot-print { display: inline; font-size: 13px; font-weight: 600; }
+    .feature > details > p:first-of-type { margin-top: 0; }
+    .note[data-answered="yes"] .answer-print { display: block; margin: 9px 0 0; font-size: 14px;
+                                               white-space: pre-wrap; }
+    .note[data-answered="yes"] .answer-print::before { content: "Ответ: "; color: var(--muted); }
+    .note:not([data-kind="q"])[data-answered="yes"] .answer-print::before { content: "Заметка: "; }
     .layout { display: block; }
     main { max-width: none; }
     .format-panel[hidden] { display: block !important; }
     .chapter { padding-top: 24px; }
-    .feature, .format-panel, .journey li, .schedule li, .scene, .lane, .flow li { break-inside: avoid; }
+    .feature, .format-panel, .journey li, .schedule li, .note, .lane, .flow li { break-inside: avoid; }
     a { text-decoration: none; }
   }
 </style>
@@ -306,6 +399,9 @@
     <span class="eyebrow">Solguficky · событие сообщества</span>
     <h1>Аукцион 2026</h1>
     <p class="lede">Обсуждаем формат события и фичи бота</p>
+    <p class="disclaimer">Страницу собрал ИИ по материалам прошлых аукционов, презентации и наших
+      обсуждений. Часть формулировок он додумал: если что-то звучит не так, это повод поправить,
+      а не готовое решение. Ошибки в фактах тоже возможны — отмечайте.</p>
   </header>
   <div class="layout">
     <aside class="sidebar">
@@ -336,82 +432,117 @@
         <!-- P-05. История события уточнена владельцем при обсуждении страницы. -->
         <figure>
           <ol class="flow past-flow">
-            <li class="bidding"><b>01 → Неделя онлайн</b><span>Все лоты доступны одновременно. Участники смотрят каталог и делают ставки в боте.</span></li>
+            <li class="bidding"><b>01 → Онлайн-этап</b><span>Каталог открывается, и ставить можно сразу: все лоты торгуются параллельно в боте.</span></li>
             <li class="final"><b>02 → Финал в зале</b><span>Ведущий разыгрывает лоты по очереди. Для онлайна есть трансляция.</span></li>
           </ol>
           <figcaption>Так выглядела основа прошлого формата.</figcaption>
         </figure>
+        <aside class="note" data-kind="check" data-note="n-past-length"><span class="note-kind">Уточнить</span><p>Онлайн-этап шёл около недели или двух — точную длительность нужно поднять по прошлым анонсам. От неё зависит, с чем сравнивать варианты в разделе 04.</p></aside>
+        <h3>Что бот уже умел</h3>
+        <p>Эти четыре вещи работали на прошлых аукционах и остаются в основе.</p>
         <ul class="past-basics" aria-label="Возможности прошлого аукциона">
-          <li>Каталог с фотографиями</li><li>Ставки в боте</li><li>Текущий лидер</li><li>Уведомления о перебитии</li>
+          <li>Карточка лота: фото, описание, цена</li><li>Ставки в боте</li><li>Текущий лидер</li><li>Уведомления о перебитии</li>
         </ul>
-        <p>Это ядро нового аукциона. Что к нему добавить — обсуждаем ниже.</p>
-        <div class="callout"><p>На двух прошлых аукционах в финале фактически участвовали только те, кто пришёл в зал. Трансляцию делали, но удобное участие онлайн так и не получилось.</p></div>
+        <p>Это база аукциона. Что к ней добавить — обсуждаем в разделе 05.</p>
+        <aside class="note" data-kind="fact" data-note="n-9950bae3"><span class="note-kind">Из прошлого опыта</span><p>На двух прошлых аукционах в финале фактически участвовали только те, кто пришёл в зал. Трансляцию делали, но удобство участия онлайн так и не удалось проверить.</p></aside>
       </section>
       <section class="chapter" id="event" aria-labelledby="event-title">
         <span class="section-number">02</span>
         <h2 id="event-title">Что хотим в 2026 году</h2>
-        <p>Раньше аукцион шёл внутри одного чата. Теперь зовём соседний чат, он кратно больше, и людей со стороны.</p>
+        <p>Раньше аукцион шёл внутри чата Солгуфиков. В 2026-м он выходит за рамки чата: зовём соседнее
+          сообщество, оно кратно больше, и людей со стороны.</p>
         <div class="audience">
           <div><span class="eyebrow">В зале</span><strong>Около 10</strong><p>Привычная небольшая компания и живой ведущий.</p></div>
           <div class="remote"><span class="eyebrow">Онлайн</span><strong>Гораздо больше</strong><p>Ожидаем много новых участников. Им должно быть интересно и удобно на протяжении всего события.</p></div>
         </div>
         <!-- P-48, P-51, P-52: цели, без обещания гарантированного результата. -->
         <h3>Приоритеты</h3>
-        <p class="rank-hint">Порядок можно менять: перетащи строку мышкой или подвинь стрелками с клавиатуры. Твой порядок сохраняется в этом браузере.</p>
+        <p class="rank-hint">Это заготовка, а не решение. Список можно править прямо здесь: менять порядок,
+          переписывать формулировки, убирать лишнее и дописывать своё. Всё сохраняется в твоём браузере —
+          принеси свой вариант на обсуждение, сравним, чем они отличаются.</p>
         <ol class="priorities" id="priorities">
-          <li draggable="true" tabindex="0"><span class="n">01</span><span class="t">Полноценное участие онлайн</span></li>
-          <li draggable="true" tabindex="0"><span class="n">02</span><span class="t">Интерес на протяжении всего события</span></li>
-          <li draggable="true" tabindex="0"><span class="n">03</span><span class="t">Сбор средств</span></li>
-          <li draggable="true" tabindex="0"><span class="n">04</span><span class="t">Атмосфера живого финала</span></li>
-          <li draggable="true" tabindex="0"><span class="n">05</span><span class="t">Удобство участников и организаторов</span></li>
+          <li tabindex="0"><span class="n">01</span><span class="t">Полноценное участие онлайн</span></li>
+          <li tabindex="0"><span class="n">02</span><span class="t">Интерес на протяжении всего события</span></li>
+          <li tabindex="0"><span class="n">03</span><span class="t">Сбор средств</span></li>
+          <li tabindex="0"><span class="n">04</span><span class="t">Атмосфера живого финала</span></li>
+          <li tabindex="0"><span class="n">05</span><span class="t">Удобство участников и организаторов</span></li>
         </ol>
-        <p class="rank-saved" id="rank-saved" hidden>Порядок сохранён</p>
+        <div class="rank-edit" hidden>
+          <input id="rank-new" type="text" placeholder="Дописать свой приоритет" aria-label="Новый приоритет">
+          <button type="button" id="rank-add">Добавить</button>
+          <button type="button" id="rank-reset">Вернуть исходный список</button>
+        </div>
+        <p class="rank-saved" id="rank-saved" hidden>Сохранено в этом браузере</p>
       </section>
       <section class="chapter" id="journey" aria-labelledby="journey-title">
         <span class="section-number">03</span>
         <h2 id="journey-title">Путь участника</h2>
-        <p>Реклама приводит человека в бот. Дальше он должен разобраться, найти свой лот и захотеть вернуться.</p>
+        <p>В бот человек приходит после анонса и ссылки — иногда после мини-презентации лотов. Дальше его
+          держат сами лоты, движение ставок и поводы вернуться. Наша задача — не потерять его ни на одном шаге.</p>
         <ol class="journey">
-          <li><h3>Узнал об аукционе</h3><p>«Я никого здесь не знаю. Что происходит и как участвовать?»</p><a href="#welcome">Короткое знакомство и правила</a></li>
+          <li><h3>Узнал об аукционе</h3><p>«Что тут вообще происходит, какие правила и в чём прикол?»</p><a href="#welcome">Короткое знакомство и правила</a></li>
           <li><h3>Нашёл интересный лот</h3><p>«Что продаётся, кто это сделал и как я это получу?»</p><a href="#catalog">Каталог</a> · <a href="#authors">Истории авторов</a></li>
           <li><h3>Включился</h3><p>«Сделаю ставку. Или попробую угадать, чем закончатся торги».</p><a href="#bids">Ставки</a> · <a href="#predictions">Предсказания</a></li>
-          <li><h3>Возвращается</h3><p>«Что нового? Мой лот ещё впереди?»</p><a href="#favorites">Избранное</a> · <a href="#program">Программа</a></li>
+          <li><h3>Возвращается</h3><p>«Что нового?» Своей ставки для возвращения мало: нужны поводы — новая история лота, мини-ивент, итог дня, приближение финала.</p><a href="#favorites">Избранное</a> · <a href="#program">Программа</a> · <a href="#mini-events">Мини-ивенты</a></li>
           <li><h3>Участвует в финале</h3><p>«Вижу цену, успеваю поставить, понимаю, приняли ли ставку».</p><a href="#live-bids">Торги онлайн</a> · <a href="#queue">Очередь лотов</a></li>
           <li><h3>Получает выигранное</h3><p>«Я победил. Кому платить и как забрать лот?»</p><a href="#invoice">Оплата и получение</a></li>
         </ol>
-        <p class="question">Что удержит человека, который пока не готов тратить деньги или ждёт только один лот?</p>
+        <aside class="note" data-kind="q" data-note="n-9a893851"><span class="note-kind">Вопрос</span><p>Что удержит человека, который пока не готов тратить деньги или ждёт только один лот?</p></aside>
       </section>
       <section class="chapter" id="formats" aria-labelledby="formats-title">
         <span class="section-number">04</span>
         <h2 id="formats-title">Как устроить событие</h2>
-        <p>Основа — онлайн-торги заранее и финал с ведущим. Сначала про финал, потом про то, что к нему ведёт.</p>
-        <h3 id="finale">Финал, в котором онлайн участвует</h3>
-        <div class="scene"><p>Ты дома с телефоном. Начался твой лот. Видно, что продаётся и сколько стоит следующая ставка. Ты ставишь, получаешь подтверждение и понимаешь, продолжаются торги или лот уже продан.</p></div>
+        <p>Основа — онлайн-торги заранее и финал с ведущим. Дальше три отдельных разговора: сам финал,
+          зачем нужен предварительный этап и сколько он длится.</p>
+        <div class="sub">
+        <span class="sub-number">04.1 · Финал</span>
+        <h3 id="finale">Финал, в котором участвуют все</h3>
+        <p>«Онлайн» — это не один человек с одним сценарием. Как минимум четыре разных:</p>
+        <ul class="variants">
+          <li>смотрю трансляцию с компьютера и участвую весь финал;</li>
+          <li>подключаюсь с телефона только на свой лот;</li>
+          <li>трансляцию не смотрю вообще, но хочу, чтобы моя ставка играла;</li>
+          <li>сижу в зале, но ставлю с телефона, потому что так быстрее.</li>
+        </ul>
+        <p>Формат должен работать во всех четырёх случаях.</p>
         <figure>
           <div class="parallel">
             <div class="lane"><h4>В зале</h4><ol>
-              <li><b>Узнать о лоте</b>Ведущий объявляет лот, участник видит его в зале или на экране.</li>
-              <li><b>Увидеть цену</b>Слышит текущую цену и предложение следующей ставки.</li>
-              <li><b>Сделать ставку</b>Поднимает руку; ведущий или помощник фиксирует ставку.</li>
-              <li><b>Получить ответ</b>Ведущий подтверждает, кто лидирует.</li>
-              <li><b>Узнать результат</b>Слышит «продано» и имя победителя.</li>
+              <li><b>Узнать о лоте</b>Ведущий объявляет лот; он же выведен на общий экран.</li>
+              <li><b>Увидеть цену</b>Слышит ведущего и видит текущую цену и следующий шаг на экране.</li>
+              <li><b>Сделать ставку</b>Как именно — открытый вопрос: рука, кнопка в телефоне, карточка.</li>
+              <li><b>Получить ответ</b>Ведущий называет лидера, экран показывает то же самое.</li>
+              <li><b>Узнать результат</b>Слышит «продано» и видит победителя на экране.</li>
             </ol></div>
             <div class="lane remote"><h4>Онлайн — как хотим</h4><ol>
-              <li><b>Узнать о лоте</b>Получает напоминание и открывает текущий лот.</li>
-              <li><b>Увидеть цену</b>Видит актуальную цену и доступную следующую ставку.</li>
+              <li><b>Узнать о лоте</b>Получает уведомление, которое сам себе настроил, и открывает текущий лот.</li>
+              <li><b>Увидеть цену</b>Видит ту же цену и тот же шаг, что и общий экран в зале.</li>
               <li><b>Сделать ставку</b>Нажимает кнопку или заранее задаёт боту свой максимум.</li>
               <li><b>Получить ответ</b>Видит: ставка принята, перебита или торги уже закрыты.</li>
               <li><b>Узнать результат</b>Видит итоговую цену и победителя в том же окне.</li>
             </ol></div>
           </div>
-          <figcaption>Сценарий для обсуждения. На каждом шаге проверяем: хватает ли онлайн-участнику информации и времени.</figcaption>
+          <figcaption>Шаги перечислены, чтобы было что править. Ни один из них ещё не выбран.</figcaption>
         </figure>
-        <p class="question">Как ведущий замечает онлайн-ставку и даёт время ответить? Что видит участник, если видео отстаёт или связь прервалась?</p>
-        <p>Трансляция передаёт атмосферу. <a href="#live-bids">Живые ставки</a> и <a href="#proxy">автоставки до заданного максимума</a> — отдельные возможности, которые нужно обсудить.</p>
+        <aside class="note" data-kind="draft" data-note="n-5f6c69ee"><span class="note-kind">Каркас</span><p>Это не сценарий финала, а рыба: как именно всё выглядит — самый неопределённый кусок обсуждения. Любой шаг можно выбросить или заменить целиком.</p></aside>
+        <aside class="note" data-kind="risk" data-note="n-bcdf55b9"><span class="note-kind">Риск</span><p>Поднятая рука — медленный триггер: её обслуживает человек. Онлайн-ставка приходит мгновенно. На одном лоте это гонка, в которой кто-то систематически проигрывает — и это не зависит от того, кто быстрее решил. Способ фиксации ставки из зала нужно выбрать до финала.</p></aside>
+        <aside class="note" data-kind="q" data-note="n-hall-bid"><span class="note-kind">Вопрос</span><p>Чем зал делает ставку? Варианты, от простого к дорогому:</p><ul><li>рука и помощник, который вносит ставку в бот;</li><li>тот же бот с телефона — зал и онлайн в одном интерфейсе;</li><li>номерные карточки, которые считывает помощник;</li><li>физические кнопки со своим звуком или цветом;</li><li>распознавание поднятых рук с камеры.</li></ul><p>Что берём и на что хватает сил к финалу?</p></aside>
+        <aside class="note" data-kind="q" data-note="n-host-sees-online"><span class="note-kind">Вопрос</span><p>Как ведущий замечает онлайн-ставку и даёт время ответить? Что видит участник, если видео отстаёт или связь прервалась?</p></aside>
+        <p><a href="#big-screen">Общий экран</a> — единый интерфейс состояния торгов: одно и то же видят зал и
+          онлайн. Трансляция передаёт атмосферу. <a href="#live-bids">Живые ставки</a> и
+          <a href="#proxy">автоставки до заданного максимума</a> — отдельные возможности, которые нужно обсудить.</p>
+        <aside class="note" data-kind="q" data-note="n-finale-notifications"><span class="note-kind">Вопрос</span><p>Какие уведомления получает онлайн-участник в финале и что из этого он настраивает сам? «Скоро твой лот», старт лота, перебитие, последняя минута — что включено по умолчанию, чтобы не превратиться в спам? См. <a href="#favorites">избранное и подписки</a>.</p></aside>
+        </div>
+        <div class="sub">
+        <span class="sub-number">04.2 · Разогрев</span>
         <h3 id="warmup">Зачем нужен предварительный этап</h3>
         <p><strong>Исходная гипотеза: разогнать хайп перед финалом.</strong> Дать время посмотреть лоты, сделать первые ставки и найти повод вернуться.</p>
         <p>В прошлой презентации отмечали спад активности посреди недели. Если оставляем длинный этап, нужно понять, что будет происходить между открытием и финалом.</p>
-        <div class="callout"><p><strong>Предложение:</strong> разделить знакомство с каталогом и открытие ставок. Показывать лоты и авторов можно заранее, даже если сами предварительные торги идут один день.</p></div>
+        <aside class="note" data-kind="idea" data-note="n-d31cf599"><span class="note-kind">Предложение</span><p>Разделить знакомство с каталогом и открытие ставок. Показывать лоты и авторов можно заранее, даже если сами предварительные торги идут один день.</p></aside>
+        </div>
+        <div class="sub">
+        <span class="sub-number">04.3 · Длительность</span>
+        <h3 id="scenarios">Сколько длится предварительный этап</h3>
         <p class="muted">Ни один сценарий ещё не выбран. Можно предложить другую длительность.</p>
         <div class="format-tabs" role="tablist" aria-label="Сценарии предварительного этапа" hidden>
           <button type="button" id="tab-past" role="tab" aria-controls="format-past" aria-selected="true">Как было</button>
@@ -421,43 +552,60 @@
         </div>
         <article class="format-panel" id="format-past" aria-labelledby="format-past-title">
           <span class="badge past">Прошлый формат</span><h4 id="format-past-title"><a href="#format-past">Как было</a></h4>
-          <ol class="flow"><li class="catalog"><b>Каталог</b><span>Доступен во время онлайн-этапа.</span></li><li class="bidding"><b>Ставки → неделю</b><span>Все лоты торгуются параллельно.</span></li><li class="final"><b>Финал → в зале</b><span>Лоты идут по очереди, есть трансляция.</span></li></ol>
+          <ol class="flow"><li class="catalog"><b>Каталог</b><span>Открывался вместе со ставками: увидел лот — сразу можешь ставить.</span></li><li class="bidding"><b>Ставки → неделя или две</b><span>Все лоты торгуются параллельно. Точную длительность нужно уточнить.</span></li><li class="final"><b>Финал → в зале</b><span>Лоты идут по очереди, есть трансляция.</span></li></ol>
           <dl class="attributes"><dt>Участнику</dt><dd>Есть время изучить лоты и сделать ставки. Онлайн-участие в финале осталось неудобным.</dd><dt>Организаторам</dt><dd>Подготовить каталог и провести последовательные торги с ведущим.</dd><dt>Боту</dt><dd>Показывать лоты, принимать ставки, сообщать о смене лидера.</dd></dl>
-          <p class="question">Что ещё из двух прошлых аукционов стоит сохранить? Что раздражало участников?</p>
+          <aside class="note" data-kind="q" data-note="n-b048e35b"><span class="note-kind">Вопрос</span><p>Что ещё из двух прошлых аукционов стоит сохранить? Что раздражало участников?</p></aside>
         </article>
         <article class="format-panel" id="format-none" aria-labelledby="format-none-title">
           <span class="badge new">Вариант для обсуждения</span><h4 id="format-none-title"><a href="#format-none">Без предварительных торгов</a></h4>
           <ol class="flow"><li class="catalog"><b>Каталог → заранее?</b><span>Лоты и истории авторов до события.</span></li><li class="bidding"><b>Предварительных ставок нет</b><span>Интерес поддерживают знакомство и активности.</span></li><li class="final"><b>Все торги → в финале</b><span>Зал и онлайн участвуют вместе.</span></li></ol>
           <dl class="attributes"><dt>Участнику</dt><dd>Всё движение цен приходится на финал. Пропустивший его сможет участвовать только при наличии заранее заданного лимита или другого согласованного способа.</dd><dt>Организаторам</dt><dd>Не нужно сопровождать предварительные торги. Придётся отдельно создавать поводы открыть каталог и прийти на финал.</dd><dt>Боту</dt><dd>Нужны удобный вход в финал и напоминания. Если разрешаем заранее задать максимум, отдельно определяем, когда он начинает участвовать.</dd></dl>
-          <p class="question">Что теряем без первых ставок: азарт, понимание интереса к лотам, стартовую цену финала? Чем это заменяем?</p>
+          <aside class="note" data-kind="q" data-note="n-6dbe4156"><span class="note-kind">Вопрос</span><p>Что теряем без первых ставок: азарт, понимание интереса к лотам, стартовую цену финала? Чем это заменяем?</p></aside>
         </article>
         <article class="format-panel" id="format-day" aria-labelledby="format-day-title">
           <span class="badge new">Вариант для обсуждения</span><h4 id="format-day-title"><a href="#format-day">Один день предварительных торгов</a></h4>
           <ol class="flow"><li class="catalog"><b>Каталог → заранее?</b><span>Время познакомиться с лотами.</span></li><li class="bidding"><b>Ставки → один день</b><span>Короткий общий старт перед финалом.</span></li><li class="final"><b>Финал → вместе</b><span>Продолжаем борьбу за лоты.</span></li></ol>
           <dl class="attributes"><dt>Участнику</dt><dd>Проще держать событие в голове, но меньше времени включиться. Занятый в этот день человек может пропустить весь разогрев.</dd><dt>Организаторам</dt><dd>Анонсы и сопровождение концентрируются в коротком промежутке. Каталог и правила должны быть понятны к открытию ставок.</dd><dt>Боту</dt><dd>Помочь заранее выбрать лоты, напомнить об открытии и понятно перевести участника в финал.</dd></dl>
-          <p class="question">Один день — это день накануне или день самого финала? Успеют ли новые люди разобраться и увлечься?</p>
+          <aside class="note" data-kind="q" data-note="n-ebb273e6"><span class="note-kind">Вопрос</span><p>Один день — это день накануне или день самого финала? Успеют ли новые люди разобраться и увлечься?</p></aside>
         </article>
         <article class="format-panel" id="format-week" aria-labelledby="format-week-title">
           <span class="badge new">Вариант для обсуждения</span><h4 id="format-week-title"><a href="#format-week">Неделя с поводами возвращаться</a></h4>
           <ol class="flow"><li class="catalog"><b>Каталог → до старта?</b><span>Знакомство с лотами и авторами.</span></li><li class="bidding"><b>Ставки → неделю</b><span>Истории, прогнозы, активности между ставками.</span></li><li class="final"><b>Финал → вместе</b><span>Онлайн остаётся участником торгов.</span></li></ol>
           <dl class="attributes"><dt>Участнику</dt><dd>Больше возможностей присоединиться в удобный день. Для возвращения нужен интерес помимо уже сделанной ставки.</dd><dt>Организаторам</dt><dd>Подготовить содержательную программу недели: истории лотов, активности, напоминания о финале.</dd><dt>Боту</dt><dd>Поддерживать выбранные активности и личные подписки. Длительность сама по себе не обеспечивает интерес.</dd></dl>
-          <p class="question">Какие поводы вернуться есть на третий и пятый день? Что интересно человеку, которого уже перебили и который больше не ставит?</p>
+          <aside class="note" data-kind="q" data-note="n-d0847ef9"><span class="note-kind">Вопрос</span><p>Какие поводы вернуться есть на третий и пятый день? Что интересно человеку, которого уже перебили и который больше не ставит?</p></aside>
         </article>
-        <p class="question">Как предварительные ставки переходят в финал: какую цену и чьи максимумы сохраняем? Сколько лотов и времени хотим дать финалу?</p>
+        <aside class="note" data-kind="q" data-note="n-0b7f13ff"><span class="note-kind">Вопрос</span><p>Как предварительные ставки переходят в финал: какую цену и чьи максимумы сохраняем? Сколько лотов и времени хотим дать финалу?</p></aside>
+        </div>
       </section>
       <section class="chapter" id="features" aria-labelledby="features-title">
         <span class="section-number">05</span>
         <h2 id="features-title">Фичи для обсуждения</h2>
-        <p>Сначала смотрим, что интересно и зачем. Приоритет и оценку проставляем в обсуждении, поля пока пустые. «Ядро» было в прошлом аукционе, «новое» предлагаем сейчас, остальное предлагали раньше.</p>
-        <nav class="feature-nav" aria-label="Группы фич"><a href="#discovery">Знакомство</a><a href="#engagement">Возвращение</a><a href="#trading">Торги</a><a href="#online">Финал</a><a href="#money">Оплата и получение</a><a href="#organizers">Организаторам</a></nav>
+        <p>Сначала смотрим, что интересно и зачем. У каждой фичи два поля, и они про разное:
+          <strong>важность</strong> — нужна ли она на этом аукционе, это заполняешь ты;
+          <strong>сложность</strong> — сколько стоит её сделать, это заполняем вместе с разработкой.
+          Выбранное сохраняется в твоём браузере и попадает в печатную версию — так свой вариант можно
+          принести на обсуждение. «Ядро» было в прошлом аукционе, «новое» предлагаем сейчас,
+          остальное предлагали раньше.</p>
         <div class="toolbar" hidden>
+          <div class="tool wide">
+            <span class="tool-label">Раздел</span>
+            <div class="segmented" role="group" aria-label="Фильтр по разделу">
+              <button type="button" data-section="all" aria-pressed="true">Все<span class="count">50</span></button>
+              <button type="button" data-section="discovery" aria-pressed="false">Знакомство<span class="count">5</span></button>
+              <button type="button" data-section="engagement" aria-pressed="false">Возвращение<span class="count">13</span></button>
+              <button type="button" data-section="trading" aria-pressed="false">Торги<span class="count">12</span></button>
+              <button type="button" data-section="online" aria-pressed="false">Финал<span class="count">5</span></button>
+              <button type="button" data-section="money" aria-pressed="false">Оплата<span class="count">6</span></button>
+              <button type="button" data-section="organizers" aria-pressed="false">Организаторам<span class="count">9</span></button>
+            </div>
+          </div>
           <div class="tool">
-            <span class="tool-label">Показать</span>
-            <div class="filters segmented" role="group" aria-label="Фильтр по происхождению идеи">
-              <button type="button" data-filter="all" aria-pressed="true">Все<span class="count">49</span></button>
+            <span class="tool-label">Происхождение</span>
+            <div class="segmented" role="group" aria-label="Фильтр по происхождению идеи">
+              <button type="button" data-filter="all" aria-pressed="true">Все<span class="count">50</span></button>
               <button type="button" data-filter="core" aria-pressed="false">Ядро<span class="count">4</span></button>
               <button type="button" data-filter="old" aria-pressed="false">Предлагали раньше<span class="count">41</span></button>
-              <button type="button" data-filter="fresh" aria-pressed="false">Новое<span class="count">4</span></button>
+              <button type="button" data-filter="fresh" aria-pressed="false">Новое<span class="count">5</span></button>
             </div>
           </div>
           <div class="tool">
@@ -474,6 +622,7 @@
               <button type="button" id="collapse-all">Свернуть</button>
             </div>
           </div>
+          <p class="filter-total" id="filter-total" role="status">Показаны все 50</p>
         </div>
         <section class="feature-group" id="discovery" aria-labelledby="discovery-title">
           <h3 id="discovery-title">Знакомство с аукционом и лотами</h3>
@@ -481,23 +630,23 @@
             <!-- P-01 -->
             <article class="feature core" id="catalog" aria-labelledby="catalog-title">
               <span class="badge past">Ядро</span>
-              <h4 id="catalog-title"><a href="#catalog">Каталог с фотографиями</a></h4>
-              <p class="pitch">Открываешь бот и находишь лот по фотографии и описанию.</p>
+              <h4 id="catalog-title"><a href="#catalog">Каталог лотов</a></h4>
+              <p class="pitch">Открываешь бот и листаешь карточки: фото, описание, цена.</p>
               <details open><summary aria-label="Подробнее: Каталог с фотографиями">Подробности</summary>
                 <p>Карточка показывает, что предлагается, стартовую цену и условия получения. По ней можно перейти к торгам.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как удобнее искать лоты: по категориям, автору или общей лентой?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-a0ffafa0"><span class="note-kind">Вопрос</span><p>Как удобнее искать лоты: по категориям, автору или общей лентой?</p></aside>
               </details>
             </article>
             <!-- Новая идея: путь новой аудитории -->
             <article class="feature fresh" id="welcome" aria-labelledby="welcome-title">
               <span class="badge new">Новое</span>
               <h4 id="welcome-title"><a href="#welcome">Первый вход без знакомства с чатом</a></h4>
-              <p class="pitch">Пришёл по рекламной ссылке и за минуту понял, как участвовать.</p>
+              <p class="pitch">Пришёл по ссылке из анонса и за минуту понял, как участвовать.</p>
               <details open><summary aria-label="Подробнее: Первый вход без знакомства с чатом">Подробности</summary>
-                <p>Короткое знакомство с событием: что продаём, куда идут средства, как сделать ставку и получить лот. Правила доступны рядом с торгами.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как человек извне присоединяется к аукциону? Какие сведения нужны до первой ставки?</p>
+                <p>Короткое знакомство с событием: что продаём, куда идут средства, как сделать ставку и получить лот, в чём вообще прикол. Правила доступны рядом с торгами.</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-ab7b0bc7"><span class="note-kind">Вопрос</span><p>Как человек извне присоединяется к аукциону? Какие сведения нужны до первой ставки?</p></aside>
               </details>
             </article>
             <!-- Новая идея: знакомство до открытия ставок -->
@@ -507,8 +656,8 @@
               <p class="pitch">Увидел, как автор делает вещь, и захотел побороться именно за неё.</p>
               <details open><summary aria-label="Подробнее: Истории лотов и авторов">Подробности</summary>
                 <p>К карточке можно добавить историю, фотографии процесса или короткое видео автора. Новые истории дают повод открыть каталог до торгов.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие лоты стоит представить отдельно и кто подготовит истории?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-fbd90e3d"><span class="note-kind">Вопрос</span><p>Какие лоты стоит представить отдельно и кто подготовит истории?</p></aside>
               </details>
             </article>
             <!-- Спецификация: подписки на лоты; избранное как подача -->
@@ -518,8 +667,8 @@
               <p class="pitch">Сохранил два интересных лота и следишь только за ними.</p>
               <details open><summary aria-label="Подробнее: Избранное и подписки на лоты">Подробности</summary>
                 <p>Личный список собирает выбранные лоты. Участник выбирает напоминания: открытие торгов, приближение финала, последняя минута или продление.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие поводы действительно стоят личного уведомления?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-a780624d"><span class="note-kind">Вопрос</span><p>Какие поводы действительно стоят личного уведомления?</p></aside>
               </details>
             </article>
             <!-- Спецификация: rarity и теги -->
@@ -529,7 +678,7 @@
               <p class="pitch">Листая каталог, замечаешь необычный лот по оформлению.</p>
               <details open><summary aria-label="Подробнее: Категории и редкость лотов">Подробности</summary>
                 <p>Категории помогают ориентироваться; отметки Common, Rare или Legendary добавляют коллекционное настроение. Редкость может влиять только на оформление.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
           </div>
@@ -544,8 +693,8 @@
               <p class="pitch">Не собираешься покупать, но хочешь проверить свою интуицию.</p>
               <details open><summary aria-label="Подробнее: «Пророк Аукциона»">Подробности</summary>
                 <p>Бесплатно прогнозируешь самый дорогой лот, общую сумму, лот с наибольшим числом ставок и наибольшим ростом цены. Следишь за торгами и сравниваешь прогнозы с итогом.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Когда закрываем прогнозы и можно ли их менять?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-15bfc33d"><span class="note-kind">Вопрос</span><p>Когда закрываем прогнозы и можно ли их менять?</p></aside>
               </details>
             </article>
             <!-- P-24, P-41; спецификация: альтернативный набор ачивок -->
@@ -558,8 +707,8 @@
                 <p><strong>В прошлой презентации:</strong> «Легенда Аукциона» — автор самого дорогого лота; «Король/Королева Торгов» — его покупатель; «Эпицентр Битвы» — автор самого оспариваемого; «Непоколебимый» — победитель самой горячей борьбы.</p>
                 <p>За вклад: «Меценат» с уровнями, «Коллекционер» за три выигранных лота, «Дарящий радость» за три проданных авторских лота, «Верный соратник» за участие в сезонах. За стиль: «Первая кровь» за первую ставку, «Стратег» за победу автоставками, «Дуэлянт» за личное противостояние. За прогнозы — «Оракул» и «Финансовый гений».</p>
                 <p><strong>В последующих предложениях:</strong> победа автоставками, победа зала над автоставкой, возвращение в лидеры, победа с запасом бюджета, победа на «раз-два», лидерство в категории; первая ставка, ответ в последние секунды, своевременная оплата, коллекционирование и тихая поддержка. Наборы пересекаются — состав и названия можно выбрать вместе.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие достижения забавны сами по себе и не сводятся к потраченным деньгам?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-14f8a1d8"><span class="note-kind">Вопрос</span><p>Какие достижения забавны сами по себе и не сводятся к потраченным деньгам?</p></aside>
               </details>
             </article>
             <!-- P-25 -->
@@ -569,8 +718,8 @@
               <p class="pitch">Несколько лотов образуют набор, который хочется собрать целиком.</p>
               <details open><summary aria-label="Подробнее: Коллекционные сеты">Подробности</summary>
                 <p>Организатор объединяет связанные лоты в сет. За полный набор победитель получает особую ачивку.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Есть ли естественные наборы среди наших лотов?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-f9f5d132"><span class="note-kind">Вопрос</span><p>Есть ли естественные наборы среди наших лотов?</p></aside>
               </details>
             </article>
             <!-- P-26 -->
@@ -580,8 +729,8 @@
               <p class="pitch">В каталоге появляется загадочный лот с несколькими подсказками.</p>
               <details open><summary aria-label="Подробнее: Скрытые сокровища">Подробности</summary>
                 <p>Автор скрывает часть описания до оговорённого момента. Участники торгуются за сам лот; интрига в его содержимом.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Что покупатель обязательно должен знать, а что оставим сюрпризом?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-3df24648"><span class="note-kind">Вопрос</span><p>Что покупатель обязательно должен знать, а что оставим сюрпризом?</p></aside>
               </details>
             </article>
             <!-- P-27 -->
@@ -591,7 +740,7 @@
               <p class="pitch">Пропустил день и быстро узнаёшь, за какие лоты шла борьба.</p>
               <details open><summary aria-label="Подробнее: Хроники дня">Подробности</summary>
                 <p>Короткая подборка: новая максимальная цена, интересная дуэль, неожиданный фаворит. Из истории можно открыть нужный лот.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
             <!-- Спецификация: редактируемый тикер в группе -->
@@ -601,7 +750,7 @@
               <p class="pitch">Хочешь посмотреть общую картину, не открывая каждую карточку.</p>
               <details open><summary aria-label="Подробнее: Одна обновляемая лента торгов">Подробности</summary>
                 <p>Одно сообщение показывает текущие события торгов и обновляется без потока новых сообщений. Это отдельная идея от ежедневных хроник.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
             <!-- P-20, P-45 -->
@@ -611,8 +760,8 @@
               <p class="pitch">В середине недели начинается короткая активность, к которой хочется присоединиться.</p>
               <details open><summary aria-label="Подробнее: Мини-ивенты">Подробности</summary>
                 <p>Организатор запускает событие на несколько часов по заранее объявленным правилам. Например, «Счастливые часы» или «Король горы».</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие активности подходят нашему сообществу и кто их ведёт?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-560c35c4"><span class="note-kind">Вопрос</span><p>Какие активности подходят нашему сообществу и кто их ведёт?</p></aside>
               </details>
             </article>
             <!-- P-21 -->
@@ -622,7 +771,7 @@
               <p class="pitch">На ограниченное время можно повышать ставку маленькими шагами.</p>
               <details open><summary aria-label="Подробнее: Счастливые часы">Подробности</summary>
                 <p>Шаг ставки временно снижается, например до 1–10 рублей. Участник легче включается в движение вокруг лота.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
             <!-- P-22 -->
@@ -632,8 +781,8 @@
               <p class="pitch">Можно получить награду за удержание лидерства, даже если лот выиграет другой.</p>
               <details open><summary aria-label="Подробнее: Король горы">Подробности</summary>
                 <p>Во время мини-ивента считается, кто дольше всех лидировал по выбранному лоту. Правила и награда объявляются до начала.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как сделать механику интересной при разном бюджете участников?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-2286e2ff"><span class="note-kind">Вопрос</span><p>Как сделать механику интересной при разном бюджете участников?</p></aside>
               </details>
             </article>
             <!-- Спецификация: Raffle; прежнее обсуждение розыгрыша -->
@@ -643,8 +792,8 @@
               <p class="pitch">Участвуешь в общем событии и можешь получить отдельный приз без покупки лота.</p>
               <details open><summary aria-label="Подробнее: Розыгрыш среди участников">Подробности</summary>
                 <p>Одна из предложенных форм: бесплатная регистрация, затем жеребьёвка среди участников. Покупки и суммы ставок не увеличивают вероятность выигрыша.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Что разыгрываем и в какой момент события?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-b9742041"><span class="note-kind">Вопрос</span><p>Что разыгрываем и в какой момент события?</p></aside>
               </details>
             </article>
             <!-- P-42 -->
@@ -654,8 +803,8 @@
               <p class="pitch">Открыл бот и увидел, что интересного будет сегодня и когда финал.</p>
               <details open><summary aria-label="Подробнее: Программа недели">Подробности</summary>
                 <p>Расписание объединяет открытие торгов, активности и финал. Напоминания можно выбрать под себя.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Есть ли программа на всю неделю или достаточно нескольких общих моментов?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-ea23b9ff"><span class="note-kind">Вопрос</span><p>Есть ли программа на всю неделю или достаточно нескольких общих моментов?</p></aside>
               </details>
             </article>
             <!-- Новая идея: разогрев отдельно от торгов -->
@@ -665,8 +814,19 @@
               <p class="pitch">Возвращаешься посмотреть новый лот или очередную подсказку.</p>
               <details open><summary aria-label="Подробнее: Постепенное раскрытие каталога">Подробности</summary>
                 <p>Часть лотов или материалов об авторах появляется по расписанию. Публикация каталога и начало ставок могут происходить в разные дни.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Показываем сразу все лоты или сохраняем несколько премьер?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-33bd5630"><span class="note-kind">Вопрос</span><p>Показываем сразу все лоты или сохраняем несколько премьер?</p></aside>
+              </details>
+            </article>
+            <!-- Новая идея: реакция зала и онлайна на презентацию лотов -->
+            <article class="feature fresh" id="hype" aria-labelledby="hype-title">
+              <span class="badge new">Новое</span>
+              <h4 id="hype-title"><a href="#hype">Уровень хайпа на презентации лотов</a></h4>
+              <p class="pitch">Лот показывают — и сразу видно, сколько людей от него в восторге.</p>
+              <details open><summary aria-label="Подробнее: Уровень хайпа на презентации лотов">Подробности</summary>
+                <p>Во время показа лота участники жмут реакции в боте, а общий счётчик видно всем. Много реакций — анимация на экране, как на стриме. Это и обратная связь автору, и сигнал организаторам: какой лот стоит поставить в сильное место программы.</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-37fc7e92"><span class="note-kind">Вопрос</span><p>Презентации лотов раньше не было — это отдельное решение, а не только фича бота. Проводим ли мы её вообще, кто ведёт и когда: до открытия ставок или на финале?</p></aside>
               </details>
             </article>
           </div>
@@ -681,8 +841,8 @@
               <p class="pitch">Открыл лот и сделал ставку с телефона.</p>
               <details open><summary aria-label="Подробнее: Ставки в боте">Подробности</summary>
                 <p>В карточке видно, сколько стоит следующая ставка. После действия бот сообщает, принял ли её.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Достаточно кнопки следующей ставки или нужна возможность указать свою сумму?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-d2eae864"><span class="note-kind">Вопрос</span><p>Достаточно кнопки следующей ставки или нужна возможность указать свою сумму?</p></aside>
               </details>
             </article>
             <!-- P-03 -->
@@ -692,8 +852,8 @@
               <p class="pitch">Сразу понимаешь, твоя ли ставка сейчас выигрывает.</p>
               <details open><summary aria-label="Подробнее: Текущая цена и лидер">Подробности</summary>
                 <p>Карточка показывает актуальную цену и текущего лидера. После новой ставки сведения обновляются.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Показываем имя, псевдоним или только собственную позицию?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-a17c41c0"><span class="note-kind">Вопрос</span><p>Показываем имя, псевдоним или только собственную позицию?</p></aside>
               </details>
             </article>
             <!-- P-04 -->
@@ -703,8 +863,8 @@
               <p class="pitch">Не сидишь в боте постоянно: он сообщает, когда ты перестал лидировать.</p>
               <details open><summary aria-label="Подробнее: «Твою ставку перебили»">Подробности</summary>
                 <p>Личное сообщение приводит к лоту и следующей ставке. Частые перебивания можно объединять, чтобы не заваливать участника сообщениями.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Сообщать о каждом перебитии или дать выбрать частоту?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-a7a6502f"><span class="note-kind">Вопрос</span><p>Сообщать о каждом перебитии или дать выбрать частоту?</p></aside>
               </details>
             </article>
             <!-- P-34; факт использования на живом событии не подтверждён -->
@@ -714,8 +874,8 @@
               <p class="pitch">Задал максимум и занимаешься своими делами, пока бот торгуется за тебя.</p>
               <details open><summary aria-label="Подробнее: Автоставки до своего максимума">Подробности</summary>
                 <p>Бот повышает цену необходимыми шагами в пределах скрытого лимита. Максимум не показывается другим; он не означает, что участник сразу платит всю сумму. Отдельно решаем, что происходит при равных максимумах и как автоставка сходится со ставками зала.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как объяснить текущую цену и лимит так, чтобы их не путали?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-e716332f"><span class="note-kind">Вопрос</span><p>Как объяснить текущую цену и лимит так, чтобы их не путали?</p></aside>
               </details>
             </article>
             <!-- Спецификация: пресеты, автодоливка, бюджет финала -->
@@ -725,8 +885,8 @@
               <p class="pitch">Следишь за несколькими лотами и хочешь ограничить общие траты.</p>
               <details open><summary aria-label="Подробнее: Управление лимитами и общим бюджетом">Подробности</summary>
                 <p>Можно предложить быстрые изменения лимита «+1 шаг», «+3 шага», «до суммы», заранее заданные правила повышения и общий бюджет финала.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие действия удобно автоматизировать, а какие подтверждать лично?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-0ae46f7d"><span class="note-kind">Вопрос</span><p>Какие действия удобно автоматизировать, а какие подтверждать лично?</p></aside>
               </details>
             </article>
             <!-- P-30 -->
@@ -736,8 +896,8 @@
               <p class="pitch">Ставку сделали перед закрытием, но ты ещё успеваешь ответить.</p>
               <details open><summary aria-label="Подробнее: Время ответить на последнюю ставку">Подробности</summary>
                 <p>В торгах с таймером поздняя ставка добавляет время. Продолжительность и предел продлений объявляются заранее.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Где нужен таймер, а где темп задаёт ведущий?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-525db1c4"><span class="note-kind">Вопрос</span><p>Где нужен таймер, а где темп задаёт ведущий?</p></aside>
               </details>
             </article>
             <!-- P-29 -->
@@ -747,8 +907,8 @@
               <p class="pitch">Все следят за одним лотом, затем переходят к следующему.</p>
               <details open><summary aria-label="Подробнее: Онлайн-торги по очереди">Подробности</summary>
                 <p>Каждому лоту выделяется временной слот. Карточка показывает очередь и оставшееся время; при необходимости применяется продление.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Для каких лотов это интереснее параллельных торгов?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-bfd0e385"><span class="note-kind">Вопрос</span><p>Для каких лотов это интереснее параллельных торгов?</p></aside>
               </details>
             </article>
             <!-- P-31; спецификация: Best &amp; Final и blind-режим -->
@@ -758,8 +918,8 @@
               <p class="pitch">Один раз указал максимум, не наблюдая за чужими ставками.</p>
               <details open><summary aria-label="Подробнее: Закрытые ставки">Подробности</summary>
                 <p>Ранее предлагали механику со скрытыми суммами: выигрывает наибольшая, цена рассчитывается по второй ставке и шагу. Точное правило нужно обсудить и объяснить до торгов: как считаем цену при близких суммах, при равенстве и при единственной ставке.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Для каких лотов такой формат уместен и понятен участникам?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-8b3cf997"><span class="note-kind">Вопрос</span><p>Для каких лотов такой формат уместен и понятен участникам?</p></aside>
               </details>
             </article>
             <!-- P-32, P-47 -->
@@ -769,8 +929,8 @@
               <p class="pitch">Цена постепенно падает. Забрать сейчас или рискнуть подождать?</p>
               <details open><summary aria-label="Подробнее: Торги на понижение">Подробности</summary>
                 <p>Первый согласившийся покупает по текущей цене. Это способ попробовать найти покупателя для лота с низким спросом, без гарантии продажи.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие лоты подходят и что делаем, если покупателя не нашлось?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-6c54d724"><span class="note-kind">Вопрос</span><p>Какие лоты подходят и что делаем, если покупателя не нашлось?</p></aside>
               </details>
             </article>
             <!-- Спецификация: Buy-Now -->
@@ -780,8 +940,8 @@
               <p class="pitch">Лот очень нравится, и ты готов забрать его по объявленной цене.</p>
               <details open><summary aria-label="Подробнее: Купить сразу">Подробности</summary>
                 <p>У карточки есть возможность немедленной покупки. Отдельно определяем, когда она доступна и что происходит с уже сделанными ставками.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие лоты стоит продавать так и до какого момента?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-dfe0b1aa"><span class="note-kind">Вопрос</span><p>Какие лоты стоит продавать так и до какого момента?</p></aside>
               </details>
             </article>
             <!-- Спецификация: top-K -->
@@ -791,8 +951,8 @@
               <p class="pitch">Автор предлагает несколько одинаковых вещей или мест на мастер-классе.</p>
               <details open><summary aria-label="Подробнее: Несколько одинаковых лотов">Подробности</summary>
                 <p>У одного предложения несколько победителей по числу доступных единиц. Правила количества и цены объявляются заранее. Отдельно решаем, может ли один человек забрать несколько единиц и что делаем при равных ставках.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Цена общая для победителей или у каждого своя?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-7c365521"><span class="note-kind">Вопрос</span><p>Цена общая для победителей или у каждого своя?</p></aside>
               </details>
             </article>
             <!-- Спецификация: динамический шаг -->
@@ -802,7 +962,7 @@
               <p class="pitch">У недорогого лота небольшой шаг, у дорогого — крупнее.</p>
               <details open><summary aria-label="Подробнее: Шаг ставки по цене лота">Подробности</summary>
                 <p>Шаг меняется по заранее показанным ценовым порогам. Участник видит сумму следующей ставки до нажатия.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
           </div>
@@ -817,8 +977,8 @@
               <p class="pitch">Участник в зале поднял руку, а ты отвечаешь ставкой с телефона.</p>
               <details open><summary aria-label="Подробнее: Живые онлайн-ставки">Подробности</summary>
                 <p>Ставки обоих участников попадают в одни торги. Ведущий видит действия онлайна, а онлайн — цену, подтверждение и момент закрытия.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как дадим онлайну столько же возможностей ответить, сколько есть у зала?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-c962076d"><span class="note-kind">Вопрос</span><p>Как дадим онлайну столько же возможностей ответить, сколько есть у зала?</p></aside>
               </details>
             </article>
             <!-- P-37 -->
@@ -828,7 +988,7 @@
               <p class="pitch">Весь зал видит текущий лот и борьбу с онлайном.</p>
               <details open><summary aria-label="Подробнее: Большой экран в зале">Подробности</summary>
                 <p>Экран показывает фотографию, цену, лидера и последние изменения. Ведущему не нужно пересказывать каждое действие бота.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
             <!-- P-38; владелец подтвердил прошлые трансляции -->
@@ -838,8 +998,8 @@
               <p class="pitch">Слышишь ведущего и видишь реакции зала, даже находясь дома.</p>
               <details open><summary aria-label="Подробнее: Трансляция финала">Подробности</summary>
                 <p>Трансляция уже была на прошлых аукционах. Обсуждаем её удобное сочетание с карточкой торгов на одном телефоне.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как смотреть и ставить без постоянного переключения окон?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-edd7061d"><span class="note-kind">Вопрос</span><p>Как смотреть и ставить без постоянного переключения окон?</p></aside>
               </details>
             </article>
             <!-- P-39; спецификация: позиция в очереди, ETA -->
@@ -849,8 +1009,8 @@
               <p class="pitch">Ты ждёшь один лот. Бот сообщает, что перед ним осталось два, и даёт открыть текущие торги.</p>
               <details open><summary aria-label="Подробнее: «Скоро твой лот»">Подробности</summary>
                 <p>Участник видит очередь и подписывается на приближение выбранного лота. Оценка времени обновляется при изменении темпа финала.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Напоминать по числу оставшихся лотов, по времени или обоими способами?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-7e465247"><span class="note-kind">Вопрос</span><p>Напоминать по числу оставшихся лотов, по времени или обоими способами?</p></aside>
               </details>
             </article>
             <!-- Спецификация: офлайн-кэш консоли и восстановление -->
@@ -860,8 +1020,8 @@
               <p class="pitch">Связь ненадолго пропала. После возвращения понятно, какие ставки приняты и что произошло.</p>
               <details open><summary aria-label="Подробнее: Продолжение после потери связи">Подробности</summary>
                 <p>Ранее предлагали сохранение действий помощника без сети и последующую сверку. Для общей торговли нужно отдельно определить, когда допустимо продолжать и как не оставить онлайн за бортом.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Если зал потерял интернет, приостанавливаем общие торги или действуем иначе?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-479e11ad"><span class="note-kind">Вопрос</span><p>Если зал потерял интернет, приостанавливаем общие торги или действуем иначе?</p></aside>
               </details>
             </article>
           </div>
@@ -876,8 +1036,8 @@
               <p class="pitch">После победы видишь сумму, инструкцию и следующий шаг.</p>
               <details open><summary aria-label="Подробнее: Победил → оплатил → получил">Подробности</summary>
                 <p>Бот отправляет счёт с дедлайном. Организатор подтверждает оплату и отмечает выдачу; участнику виден статус.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Один общий счёт или отдельный на каждый лот? Кто подтверждает оплату?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-0816917c"><span class="note-kind">Вопрос</span><p>Один общий счёт или отдельный на каждый лот? Кто подтверждает оплату?</p></aside>
               </details>
             </article>
             <!-- Спецификация: просрочка и напоминания -->
@@ -887,8 +1047,8 @@
               <p class="pitch">Выиграл лот, отвлёкся и получил личное напоминание.</p>
               <details open><summary aria-label="Подробнее: Напоминания об оплате">Подробности</summary>
                 <p>Бот напоминает о сроке, организатор видит неоплаченные лоты. Порядок действий при просрочке обсуждаем заранее.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Что делаем с невыкупленным лотом и как связываемся с победителем?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-f5dfb618"><span class="note-kind">Вопрос</span><p>Что делаем с невыкупленным лотом и как связываемся с победителем?</p></aside>
               </details>
             </article>
             <!-- Новая идея: путь удалённого победителя -->
@@ -898,8 +1058,8 @@
               <p class="pitch">Выиграл из другого города и сразу понимаешь, как получить покупку.</p>
               <details open><summary aria-label="Подробнее: Получение без визита в зал">Подробности</summary>
                 <p>В карточке заранее указаны самовывоз, доставка или цифровой способ получения. После победы доступны договорённости и нужный контакт.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Кто оплачивает доставку? Какие лоты доступны удалённым участникам?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-2b3a3a53"><span class="note-kind">Вопрос</span><p>Кто оплачивает доставку? Какие лоты доступны удалённым участникам?</p></aside>
               </details>
             </article>
             <!-- Спецификация: ранее упомянутые провайдеры, депозиты и эскроу -->
@@ -909,7 +1069,7 @@
               <p class="pitch">Оплатил по ссылке, и статус обновился без ручного подтверждения.</p>
               <details open><summary aria-label="Подробнее: Автоматическое подтверждение оплаты">Подробности</summary>
                 <p>Платёжный провайдер сообщает об оплате, и бот меняет статус счёта. Организатору не нужно вручную сверять каждый перевод.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
             <!-- Спецификация: депозиты, ранее упомянутая идея. -->
@@ -919,8 +1079,8 @@
               <p class="pitch">Участник заранее вносит сумму в подтверждение намерения выкупить лот.</p>
               <details open><summary aria-label="Подробнее: Депозит перед торгами">Подробности</summary>
                 <p>Можно обсудить предварительный взнос, его зачёт в оплату и возврат. Такая механика добавляет обязательный шаг перед участием.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Оправдывает ли проблема невыкупа дополнительный барьер для новых участников?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-cb192eaa"><span class="note-kind">Вопрос</span><p>Оправдывает ли проблема невыкупа дополнительный барьер для новых участников?</p></aside>
               </details>
             </article>
             <!-- Спецификация: эскроу, ранее упомянутая идея. -->
@@ -930,7 +1090,7 @@
               <p class="pitch">Деньги передаются получателю после подтверждения, что победитель получил лот.</p>
               <details open><summary aria-label="Подробнее: Оплата с удержанием до передачи">Подробности</summary>
                 <p>Средства временно удерживаются посредником. До выбора механики нужно договориться, кто подтверждает передачу и разбирает спор.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
           </div>
@@ -945,8 +1105,8 @@
               <p class="pitch">Добавляешь лот в Telegram и видишь его глазами участника до публикации.</p>
               <details open><summary aria-label="Подробнее: Создание и подготовка лотов">Подробности</summary>
                 <p>Пошаговая форма: название, описание, цена, шаг и фотографии. Предпросмотр и редактирование помогают подготовить каталог без обращения к разработчику.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Авторы сами присылают лоты через форму или всё заводит организатор?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-43e9f374"><span class="note-kind">Вопрос</span><p>Авторы сами присылают лоты через форму или всё заводит организатор?</p></aside>
               </details>
             </article>
             <!-- P-09, P-10, P-28; спецификация: переопределения и freeze-окно -->
@@ -956,8 +1116,8 @@
               <p class="pitch">Обычные вещи торгуются привычно, а особый лот получает другую механику.</p>
               <details open><summary aria-label="Подробнее: Свой режим для каждого лота">Подробности</summary>
                 <p>Организатор выбирает режим и настройки конкретного лота. Участник видит правила до ставки; момент прекращения изменений определяем заранее.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие различия между лотами действительно нужны?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-44da0c60"><span class="note-kind">Вопрос</span><p>Какие различия между лотами действительно нужны?</p></aside>
               </details>
             </article>
             <!-- P-11; спецификация: freeze-окно -->
@@ -967,8 +1127,8 @@
               <p class="pitch">Автор уточнил описание, когда участники уже сделали ставки.</p>
               <details open><summary aria-label="Подробнее: Правки во время аукциона">Подробности</summary>
                 <p>Можно обсудить исправления с видимой историей и уведомлением заинтересованных участников. Отдельно решаем, какие условия нельзя менять после старта.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Как отличаем исправление опечатки от изменения условий покупки?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-c2cc7eb5"><span class="note-kind">Вопрос</span><p>Как отличаем исправление опечатки от изменения условий покупки?</p></aside>
               </details>
             </article>
             <!-- P-35, P-46; спецификация: QR, номера и горячие клавиши -->
@@ -978,8 +1138,8 @@
               <p class="pitch">Ведущий открывает лот, помощник отмечает поднятую руку, цена обновляется у всех.</p>
               <details open><summary aria-label="Подробнее: Панель ведущего и помощника">Подробности</summary>
                 <p>Действия: открыть лот, повысить цену, указать участника, объявить продажу. Для участника зала предлагали номер таблички или QR-бейдж; для быстрых действий — клавиши.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Ведущий работает с панелью сам или нужен отдельный помощник?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-5b1a6e7b"><span class="note-kind">Вопрос</span><p>Ведущий работает с панелью сам или нужен отдельный помощник?</p></aside>
               </details>
             </article>
             <!-- P-12, P-13, P-14, P-44, P-49, P-50 -->
@@ -989,8 +1149,8 @@
               <p class="pitch">Видишь, какие лоты вызывают интерес и в какие дни люди включаются.</p>
               <details open><summary aria-label="Подробнее: Статистика аукциона и лотов">Подробности</summary>
                 <p>По событию: активность по дням и участники. По лоту: история ставок со временем, рост цены и число уникальных участников. Дополнительные отчёты выбираем по вопросам организаторов.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие решения хотим принимать по статистике? Нужен ли публичный топ участников?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-8ebe12a1"><span class="note-kind">Вопрос</span><p>Какие решения хотим принимать по статистике? Нужен ли публичный топ участников?</p></aside>
               </details>
             </article>
             <!-- P-15 -->
@@ -1000,7 +1160,7 @@
               <p class="pitch">После финала можно вспомнить самые яркие истории, а не только итоговую сумму.</p>
               <details open><summary aria-label="Подробнее: «Тёмная лошадка» и «Эпичная дуэль»">Подробности</summary>
                 <p>По ходу торгов определяются необычные лоты и противостояния: самый оспариваемый, неожиданный рост цены, напряжённая дуэль.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
               </details>
             </article>
             <!-- P-16, P-18, P-19; спецификация: дедупликация, таймеры и скрытые суммы -->
@@ -1010,8 +1170,8 @@
               <p class="pitch">Два человека нажали одновременно, но итог торгов один и его можно объяснить.</p>
               <details open><summary aria-label="Подробнее: Понятный результат каждой ставки">Подробности</summary>
                 <p>Принятые ставки и результат сохраняются. Повторный клик не становится второй покупкой; перезапуск не теряет торги и таймеры. Скрытые максимумы остаются скрытыми.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какой порядок считаем справедливым при почти одновременных ставках?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-1c366229"><span class="note-kind">Вопрос</span><p>Какой порядок считаем справедливым при почти одновременных ставках?</p></aside>
               </details>
             </article>
             <!-- P-17, P-19 -->
@@ -1021,8 +1181,8 @@
               <p class="pitch">Участник сомневается в результате. Организатор восстанавливает последовательность торгов.</p>
               <details open><summary aria-label="Подробнее: Разбор спорного момента">Подробности</summary>
                 <p>История позволяет увидеть, кто, когда и какую ставку сделал, и посмотреть состояние лота в нужный момент. Просмотр истории сам по себе не отменяет результаты.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Кто разбирает спор и что из истории показываем участникам?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-64f645de"><span class="note-kind">Вопрос</span><p>Кто разбирает спор и что из истории показываем участникам?</p></aside>
               </details>
             </article>
             <!-- Спецификация: драй-ран на тестовых лотах -->
@@ -1032,8 +1192,8 @@
               <p class="pitch">Пробуем финал на учебных лотах до настоящего события.</p>
               <details open><summary aria-label="Подробнее: Репетиция с залом и онлайном">Подробности</summary>
                 <p>Ведущий, помощник и удалённые участники проходят ставки, очередь, закрытие и получение результата. Проверяют задержки, повторные нажатия и возвращение после потери связи.</p>
-                <dl class="slots"><div><dt>Приоритет</dt><dd>—</dd></div><div><dt>Оценка</dt><dd>—</dd></div></dl>
-                <p class="question">Какие ситуации обязательно воспроизведём с телефона вне площадки?</p>
+                <div class="slots"><div class="slot" data-filled="no"><span>Важность</span><select data-slot="value" aria-label="Важность фичи"><option value="">—</option><option>Обязательно</option><option>Хорошо бы</option><option>Можно без неё</option><option>Не нужно</option></select><span class="slot-print">—</span></div><div class="slot" data-filled="no"><span>Сложность</span><select data-slot="cost" aria-label="Сложность фичи"><option value="">—</option><option>Мелочь</option><option>Средняя</option><option>Большая</option><option>Отдельный проект</option></select><span class="slot-print">—</span></div></div>
+                <aside class="note" data-kind="q" data-note="n-36d75a4e"><span class="note-kind">Вопрос</span><p>Какие ситуации обязательно воспроизведём с телефона вне площадки?</p></aside>
               </details>
             </article>
           </div>
@@ -1047,7 +1207,7 @@
           <li><h3>Следующие две недели · тестируем и дорабатываем</h3><p>Пробуем участие с телефона и из зала, исправляем неудобства, допиливаем фичи.</p></li>
           <li><h3>Дальше · готовимся к финалу</h3><p>Доводим выбранные фичи и репетируем событие с ведущим и участниками онлайн.</p></li>
         </ol>
-        <p class="question">Какие сценарии хотим попробовать первыми? Кто сможет участвовать в тесте онлайн и из зала?</p>
+        <aside class="note" data-kind="q" data-note="n-905ebf99"><span class="note-kind">Вопрос</span><p>Какие сценарии хотим попробовать первыми? Кто сможет участвовать в тесте онлайн и из зала?</p></aside>
       </section>
       <footer><a href="#top">↑ Аукцион 2026</a></footer>
     </main>
@@ -1103,7 +1263,7 @@
     const panel = target.closest('.format-panel');
     if (panel) selectTab(tabs.find(tab => tab.getAttribute('aria-controls') === panel.id));
     const feature = target.closest('.feature');
-    if (feature) feature.querySelectorAll('details').forEach(item => { item.open = true; });
+    if (feature) feature.querySelectorAll(':scope > details').forEach(item => { item.open = true; });
     // Scroll twice: the browser's scroll anchoring can nudge the page after the
     // first call, which used to leave a shared card ~170px above the viewport.
     const settle = () => target.scrollIntoView({ block: 'start' });
@@ -1131,13 +1291,27 @@
   document.querySelector('.print-button').addEventListener('click', () => window.print());
 })();
 
-// Настройки чтения и фильтр. Всё, что читатель здесь меняет, живёт в его
-// браузере: общего состояния между админами нет, у каждого свой порядок.
+
+// Всё, что читатель здесь заполняет, живёт только в его браузере: общего
+// состояния между админами нет. Печать — способ вынести заполненное наружу,
+// поэтому каждое поле обязано корректно попадать в печатную версию.
 (() => {
   const root = document.documentElement;
   const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
   const write = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
+  const readJSON = key => { try { return JSON.parse(read(key) || 'null'); } catch { return null; } };
+  // Разбор мог вернуть валидный JSON неподходящей формы — строку или массив.
+  // Писать в такое молча бесполезно, и читатель потерял бы всё заполненное.
+  const readMap = key => {
+    const value = readJSON(key);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  };
+  const debounce = (fn, ms) => {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  };
 
+  // ------------------------------------------------------ тема и вид списка
   function group(selector, attr, apply, key, fallback, allowed) {
     const buttons = [...document.querySelectorAll(selector)];
     const set = (value, remember) => {
@@ -1156,60 +1330,185 @@
         'rfc007-theme', systemDark ? 'dark' : 'light', ['light', 'dark']);
 
   const cards = [...document.querySelectorAll('.cards')];
-  // Прежняя редакция звала сетку «блоками»; сохранённое значение уже не подходит.
-  const views = ['grid', 'list'];
   group('[data-view-set]', 'viewSet', value => cards.forEach(node => { node.dataset.view = value; }),
-        'rfc007-view', 'grid', views);
+        'rfc007-view', 'grid', ['grid', 'list']);
 
   document.querySelector('.prefs').hidden = false;
 
-  // ------------------------------------------------------------- фильтр фич
-  const filters = document.querySelector('.filters');
-  const features = [...document.querySelectorAll('.feature')];
-  const kind = feature => feature.classList.contains('core') ? 'core'
-                        : feature.classList.contains('fresh') ? 'fresh' : 'old';
+  // Высота липкой панели меняется от переносов кнопок и пропадает на узком
+  // экране, где панель обычная. Пересчитываем при каждом изменении размеров.
+  const toolbar = document.querySelector('.toolbar');
+  const syncJump = () => {
+    const sticky = getComputedStyle(toolbar).position === 'sticky';
+    root.style.setProperty('--jump', sticky ? toolbar.offsetHeight + 'px' : '0px');
+  };
+  syncJump();
+  window.addEventListener('resize', syncJump);
 
-  filters.addEventListener('click', event => {
-    const button = event.target.closest('button');
-    if (!button) return;
-    const wanted = button.dataset.filter;
-    filters.querySelectorAll('button').forEach(item => {
-      item.setAttribute('aria-pressed', String(item === button));
+  // ----------------------------------------------------------- фильтры фич
+  // Две независимые оси: раздел (о чём фича) и происхождение (откуда взялась).
+  // Разделы были навигацией, но по ней приходилось прыгать вверх-вниз; фильтр
+  // решает ту же задачу, не унося читателя со своего места.
+  const features = [...document.querySelectorAll('.feature')];
+  const groups = [...document.querySelectorAll('.feature-group')];
+  const origin = feature => feature.classList.contains('core') ? 'core'
+                          : feature.classList.contains('fresh') ? 'fresh' : 'old';
+  const state = { origin: 'all', section: 'all' };
+  const total = document.getElementById('filter-total');
+
+  function applyFilters() {
+    features.forEach(feature => {
+      const byOrigin = state.origin === 'all' || origin(feature) === state.origin;
+      const bySection = state.section === 'all' || feature.closest('.feature-group').id === state.section;
+      feature.hidden = !(byOrigin && bySection);
     });
-    features.forEach(feature => { feature.hidden = wanted !== 'all' && kind(feature) !== wanted; });
     // Заголовок группы без единой фичи под ним — мусор.
-    document.querySelectorAll('.feature-group').forEach(section => {
-      section.hidden = ![...section.querySelectorAll('.feature')].some(feature => !feature.hidden);
+    groups.forEach(section => { section.hidden = !section.querySelector('.feature:not([hidden])'); });
+    const shown = features.filter(feature => !feature.hidden).length;
+    total.textContent = shown === features.length
+      ? 'Показаны все ' + features.length
+      : 'Показано ' + shown + ' из ' + features.length;
+  }
+
+  function axis(selector, attrName, key) {
+    const buttons = [...document.querySelectorAll(selector)];
+    buttons.forEach(button => button.addEventListener('click', () => {
+      state[key] = button.dataset[attrName];
+      buttons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      applyFilters();
+    }));
+  }
+  axis('[data-filter]', 'filter', 'origin');
+  axis('[data-section]', 'section', 'section');
+  applyFilters();
+
+  // --------------------------------------------- важность и сложность фичи
+  // Значения читателя нужны в обсуждении и в распечатке, поэтому в печать
+  // уходит выбранный текст, а не сам элемент управления.
+  const slots = readMap('rfc007-slots');
+  const saveSlots = debounce(() => write('rfc007-slots', JSON.stringify(slots)), 200);
+  document.querySelectorAll('.slot select').forEach(select => {
+    const feature = select.closest('.feature').id;
+    const kind = select.dataset.slot;
+    const echo = select.parentElement.querySelector('.slot-print');
+    const sync = () => {
+      select.parentElement.dataset.filled = select.value ? 'yes' : 'no';
+      echo.textContent = select.value || '—';
+    };
+    const stored = slots[feature] && slots[feature][kind];
+    if (stored && [...select.options].some(option => option.value === stored)) select.value = stored;
+    sync();
+    select.addEventListener('change', () => {
+      slots[feature] = slots[feature] || {};
+      slots[feature][kind] = select.value;
+      sync();
+      saveSlots();
     });
   });
-  filters.hidden = false;
 
-  // -------------------------------------------------------- порядок приоритетов
+  // ---------------------------------------------------- ответы на вопросы
+  // Вопросы разбросаны по всему тексту. Ответ пишется прямо под вопросом,
+  // хранится локально и печатается там же, где задан вопрос.
+  const answers = readMap('rfc007-answers');
+  const saveAnswers = debounce(() => write('rfc007-answers', JSON.stringify(answers)), 400);
+  document.querySelectorAll('.note[data-note]').forEach(note => {
+    const id = note.dataset.note;
+    const box = document.createElement('details');
+    box.className = 'answer';
+    box.innerHTML = '<summary></summary><textarea rows="3" aria-label="Ответ или заметка"></textarea>';
+    const summary = box.querySelector('summary');
+    const field = box.querySelector('textarea');
+    const echo = document.createElement('p');
+    echo.className = 'answer-print';
+
+    const sync = () => {
+      const filled = field.value.trim();
+      note.dataset.answered = filled ? 'yes' : 'no';
+      summary.textContent = filled ? 'Записано' : (note.dataset.kind === 'q' ? 'Ответить' : 'Заметка');
+      echo.textContent = filled;
+    };
+    field.value = answers[id] || '';
+    box.open = Boolean(field.value);
+    sync();
+    field.addEventListener('input', () => {
+      answers[id] = field.value;
+      if (!field.value.trim()) delete answers[id];
+      sync();
+      saveAnswers();
+    });
+    note.append(box, echo);
+  });
+
+  // ---------------------------------------------------- приоритеты события
+  // Список редактируемый: порядок, состав и формулировки — заготовка, а не
+  // готовый ответ. Поэтому сохранённое значение принимается любым, а вернуть
+  // исходный вариант можно кнопкой.
   const list = document.getElementById('priorities');
   const saved = document.getElementById('rank-saved');
-  const label = item => item.querySelector('.t').textContent.trim();
+  const defaults = [...list.children].map(item => item.querySelector('.t').textContent.trim());
+
   const renumber = () => [...list.children].forEach((item, index) => {
     item.querySelector('.n').textContent = String(index + 1).padStart(2, '0');
   });
 
   const remember = () => {
-    write('rfc007-priorities', JSON.stringify([...list.children].map(label)));
+    const items = [...list.children].map(item => item.querySelector('.t').textContent.trim()).filter(Boolean);
+    write('rfc007-priorities', JSON.stringify(items));
     saved.hidden = false;
     clearTimeout(remember.timer);
     remember.timer = setTimeout(() => { saved.hidden = true; }, 1800);
   };
+  const rememberSoon = debounce(remember, 500);
 
-  let order;
-  try { order = JSON.parse(read('rfc007-priorities') || 'null'); } catch { order = null; }
-  if (Array.isArray(order)) {
-    const byLabel = new Map([...list.children].map(item => [label(item), item]));
-    // Сохранённый порядок от другой редакции текста не применяем.
-    if (order.length === byLabel.size && order.every(text => byLabel.has(text))) {
-      order.forEach(text => list.appendChild(byLabel.get(text)));
-      renumber();
-    }
+  function makeRow(text) {
+    const row = document.createElement('li');
+    row.tabIndex = 0;
+    row.innerHTML = '<span class="n"></span><span class="t" contenteditable="true"></span>'
+      + '<span class="grip" draggable="true" aria-hidden="true"></span>'
+      + '<button class="row-drop" type="button">Убрать</button>';
+    row.querySelector('.t').textContent = text;
+    return row;
   }
 
+  function fill(items) {
+    list.textContent = '';
+    items.forEach(text => list.append(makeRow(text)));
+    renumber();
+  }
+
+  const storedOrder = readJSON('rfc007-priorities');
+  fill(Array.isArray(storedOrder) && storedOrder.length ? storedOrder.map(String) : defaults);
+
+  list.addEventListener('input', event => {
+    if (event.target.classList.contains('t')) rememberSoon();
+  });
+  list.addEventListener('keydown', event => {
+    const item = event.target.closest('li');
+    if (!item) return;
+    if (event.target.classList.contains('t')) {
+      // Пункт — одна строка; перенос внутри него смысла не имеет.
+      if (event.key === 'Enter') { event.preventDefault(); event.target.blur(); }
+      return;
+    }
+    if (event.key === 'ArrowUp' && item.previousElementSibling) {
+      list.insertBefore(item, item.previousElementSibling);
+    } else if (event.key === 'ArrowDown' && item.nextElementSibling) {
+      list.insertBefore(item.nextElementSibling, item);
+    } else return;
+    event.preventDefault();
+    item.focus();
+    renumber();
+    remember();
+  });
+  list.addEventListener('click', event => {
+    if (!event.target.classList.contains('row-drop')) return;
+    event.target.closest('li').remove();
+    renumber();
+    remember();
+  });
+
+  // Перетаскивание живёт на ручке: сам пункт редактируется, и draggable на нём
+  // не дал бы поставить курсор в текст.
   let dragged = null;
   list.addEventListener('dragstart', event => {
     dragged = event.target.closest('li');
@@ -1230,20 +1529,19 @@
     list.insertBefore(dragged, event.clientY > box.top + box.height / 2 ? over.nextSibling : over);
   });
 
-  // Перетаскивание мышью недоступно с клавиатуры, поэтому стрелки делают то же.
-  list.addEventListener('keydown', event => {
-    const item = event.target.closest('li');
-    if (!item) return;
-    if (event.key === 'ArrowUp' && item.previousElementSibling) {
-      list.insertBefore(item, item.previousElementSibling);
-    } else if (event.key === 'ArrowDown' && item.nextElementSibling) {
-      list.insertBefore(item.nextElementSibling, item);
-    } else return;
-    event.preventDefault();
-    item.focus();
+  const field = document.getElementById('rank-new');
+  const add = () => {
+    const text = field.value.trim();
+    if (!text) return;
+    list.append(makeRow(text));
+    field.value = '';
     renumber();
     remember();
-  });
+  };
+  document.getElementById('rank-add').addEventListener('click', add);
+  field.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); add(); } });
+  document.getElementById('rank-reset').addEventListener('click', () => { fill(defaults); remember(); });
+  document.querySelector('.rank-edit').hidden = false;
 })();
 </script>
 </body>
