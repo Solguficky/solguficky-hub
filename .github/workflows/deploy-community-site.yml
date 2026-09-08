@@ -1,0 +1,60 @@
+name: Deploy community site
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'docs/published/**'
+      - '.github/workflows/deploy-community-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-site-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: ${{ vars.NETLIFY_COMMUNITY_SITE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # Гейт конфигурации идёт первым: отсутствие секрета или переменной должно
+      # падать здесь с внятным текстом, а не внутри netlify-cli.
+      - name: Verify Netlify configuration
+        shell: bash
+        run: |
+          if [[ -z "${NETLIFY_AUTH_TOKEN}" ]]; then
+            echo "::error::GitHub secret NETLIFY_AUTH_TOKEN is not configured"
+            exit 1
+          fi
+          if [[ -z "${NETLIFY_SITE_ID}" ]]; then
+            echo "::error::GitHub variable NETLIFY_COMMUNITY_SITE_ID is not configured"
+            exit 1
+          fi
+
+      - name: Published pages are addressable
+        run: sh tools/community-site/check-published-pages.sh
+
+      # Каталог `docs/published/` уже собран в форме сайта: путь до `index.html`
+      # равен адресу. В деплой едет он целиком минус Markdown — раздел объясняет
+      # себя на Markdown, а сайт состоит из HTML.
+      - name: Prepare static site
+        run: |
+          mkdir -p dist
+          cp -R docs/published dist/community-site
+          find dist/community-site -name '*.md' -delete
+
+      # `deploy --prod --dir` заменяет содержимое сайта целиком, а не дополняет:
+      # публикуется весь каталог, поэтому и фильтр `paths` стоит на всём каталоге.
+      - name: Deploy production site
+        run: npx --yes netlify-cli@27.0.1 deploy --prod --dir dist/community-site
