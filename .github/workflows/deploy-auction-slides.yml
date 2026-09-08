@@ -1,10 +1,11 @@
-name: Deploy auction slides
+name: Deploy auction pages
 
 on:
   push:
     branches: [develop]
     paths:
       - 'docs/archive/services/auction-module-presentation.html'
+      - 'docs/rfcs/RFC-007-auction-for-admins.html'
       - '.github/workflows/deploy-auction-slides.yml'
   workflow_dispatch:
 
@@ -40,10 +41,15 @@ jobs:
             exit 1
           fi
 
+      # Каталог собирается с нуля и деплоится целиком: `deploy --prod --dir` заменяет
+      # содержимое сайта, а не дополняет его. Поэтому обе страницы копируются здесь
+      # каждый прогон, а `paths` выше перечисляет оба источника: иначе push, тронувший
+      # один файл, опубликовал бы сайт без второго.
       - name: Prepare static site
         run: |
           mkdir -p dist/auction-slides
           cp docs/archive/services/auction-module-presentation.html dist/auction-slides/index.html
+          cp docs/rfcs/RFC-007-auction-for-admins.html dist/auction-slides/rfc-007.html
 
       - name: Deploy production site
         run: npx --yes netlify-cli@27.0.1 deploy --prod --dir dist/auction-slides

@@ -34,15 +34,22 @@ Workflow собирает, тестирует и линтит Identity на из
 
 Конкретные задачи и их прогресс ведутся в Linear.
 
-## Презентация аукционного модуля
+## Автономные страницы аукциона
 
-Workflow `.github/workflows/deploy-auction-slides.yml` публикует автономную историческую презентацию на [Netlify](https://solguficky-auction-module-slides.netlify.app/) после изменения HTML-файла в `develop`. Его также можно запустить вручную через `workflow_dispatch`.
+Workflow `.github/workflows/deploy-auction-slides.yml` публикует на [Netlify](https://solguficky-auction-module-slides.netlify.app/) две автономные страницы после изменения любой из них в `develop`. Его также можно запустить вручную через `workflow_dispatch`.
+
+| Страница | Источник | Адрес |
+|---|---|---|
+| Историческая презентация модуля | [auction-module-presentation.html](../archive/services/auction-module-presentation.html) | корень сайта |
+| Версия RFC-007 для админа | [RFC-007-auction-for-admins.html](../rfcs/RFC-007-auction-for-admins.html) | `/rfc-007` |
 
 Для работы workflow в настройках GitHub repository должны быть заданы:
 
 - secret `NETLIFY_AUTH_TOKEN` — персональный Netlify access token с доступом к проекту;
 - variable `NETLIFY_AUCTION_SLIDES_SITE_ID` — Netlify Project ID сайта `solguficky-auction-module-slides`.
 
-Workflow собирает отдельный каталог, копирует презентацию в `index.html` и выполняет production deploy через зафиксированную версию Netlify CLI. Токен и Project ID не хранятся в Git.
+Workflow собирает отдельный каталог, копирует в него обе страницы и выполняет production deploy через зафиксированную версию Netlify CLI. Токен и Project ID не хранятся в Git.
+
+Обе страницы копируются каждый прогон, и `paths` перечисляет оба источника намеренно: `deploy --prod --dir` заменяет содержимое сайта целиком, а не дополняет его. Прогон, собравший каталог из одного файла, увёл бы вторую страницу в 404. По той же причине новая страница на этом сайте добавляется правкой обоих мест сразу, а не одного.
 
 Если Netlify-проект уже связан с Git-репозиторием и сам выполняет continuous deployment, перед включением GitHub workflow нужно оставить только один production-механизм. Иначе один push может породить два независимых deploy.
