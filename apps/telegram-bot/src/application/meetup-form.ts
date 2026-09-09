@@ -28,6 +28,9 @@ export function createMeetupForm(meetups: Meetups) {
           request.meetupId,
           request.requestId,
         );
+        if (current.kind === "not-found") {
+          return { kind: "dependency-rejected", reason: "unavailable" };
+        }
         if (current.kind !== "ok") return failure(current);
         if (request.field === "schedule") {
           const schedule = parseSchedule(request.value);
@@ -147,10 +150,7 @@ function failure(
       message: result.message,
     };
   }
-  return {
-    kind: "dependency-rejected",
-    reason: result.kind === "not-found" ? "unavailable" : result.kind,
-  };
+  return { kind: "dependency-rejected", reason: result.kind };
 }
 
 function invalidField(

@@ -14,8 +14,8 @@ export type MeetupSnapshot = {
   description: string;
   venue: string;
   schedule?: MeetupSchedule;
-  lifecycle?: "planned" | "held" | "cancelled";
-  visibility?: "hidden" | "visible";
+  lifecycle: "planned" | "held" | "cancelled";
+  visibility: "hidden" | "visible";
 };
 
 export type MeetupSummary = {
@@ -25,7 +25,6 @@ export type MeetupSummary = {
 };
 
 export type MeetupFailure =
-  | { kind: "not-found" }
   | { kind: "forbidden" }
   | { kind: "invalid"; message: string }
   | { kind: "unavailable"; cause: unknown };
@@ -33,6 +32,8 @@ export type MeetupFailure =
 export type MeetupResult =
   | { kind: "ok"; meetup: MeetupSnapshot }
   | MeetupFailure;
+
+export type MeetupGetResult = MeetupResult | { kind: "not-found" };
 
 export type MeetupListResult =
   | { kind: "ok"; meetups: readonly MeetupSummary[] }
@@ -45,7 +46,7 @@ export type Meetups = {
     id: string,
     requestId?: string,
   ): Promise<MeetupResult>;
-  get(person: Person, id: string, requestId?: string): Promise<MeetupResult>;
+  get(person: Person, id: string, requestId?: string): Promise<MeetupGetResult>;
   changeAttributes(
     person: Person,
     meetup: MeetupSnapshot,

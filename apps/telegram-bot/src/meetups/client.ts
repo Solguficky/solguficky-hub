@@ -71,9 +71,6 @@ export function createMeetupsAdapter(
       ) {
         return { kind: "invalid", message: cause.message };
       }
-      if (cause instanceof ConnectError && cause.code === Code.NotFound) {
-        return { kind: "not-found" };
-      }
       return { kind: "unavailable", cause };
     }
   };
@@ -116,15 +113,36 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
-    get: (person, id, requestId) =>
-      call(async () =>
-        toSnapshot(
-          await rpc.getMeetup(
-            { viewer: viewer(person), id },
-            options(requestId),
+    get: async (person, id, requestId) => {
+      try {
+        return {
+          kind: "ok",
+          meetup: toSnapshot(
+            await rpc.getMeetup(
+              { viewer: viewer(person), id },
+              options(requestId),
+            ),
           ),
-        ),
-      ),
+        };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.PermissionDenied
+        ) {
+          return { kind: "forbidden" };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.InvalidArgument
+        ) {
+          return { kind: "invalid", message: cause.message };
+        }
+        return { kind: "unavailable", cause };
+      }
+    },
     changeAttributes: (person, meetup, requestId) =>
       call(async () =>
         toSnapshot(

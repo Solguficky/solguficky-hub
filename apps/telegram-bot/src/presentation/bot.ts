@@ -179,19 +179,34 @@ async function handleMessage(
           }
         : startExecuteRequest(identity, deepLink),
     );
-    if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+    if (
+      result.kind === "meetup-card" ||
+      result.kind === "meetup-not-found" ||
+      result.kind === "dependency-rejected" ||
+      result.kind === "rejected"
+    ) {
       await renderMeetupCard(
         ctx,
         result,
         false,
         runtime.presentation ?? "rich",
       );
-      outcome = {
-        level: "debug",
-        message: "meetup card sent",
-        result: "ok",
-        use_case: "view_meetup",
-      };
+      outcome =
+        result.kind === "meetup-card" || result.kind === "meetup-not-found"
+          ? {
+              level: "debug",
+              message: "meetup card sent",
+              result: "ok",
+              use_case: "view_meetup",
+            }
+          : {
+              level: "warn",
+              message: "meetup card rejected",
+              result: "error",
+              use_case: "view_meetup",
+              error_category: result.reason,
+              error: result.reason,
+            };
       return;
     }
     switch (result.kind) {
@@ -209,20 +224,9 @@ async function handleMessage(
           use_case: "start",
         };
         return;
-      case "rejected":
-        outcome = {
-          level: "warn",
-          message: "dispatcher rejected request",
-          result: "error",
-          use_case: "start",
-          error_category: result.reason,
-          error: result.reason,
-        };
-        return;
       case "ask":
       case "preview":
       case "published":
-      case "dependency-rejected":
       case "meetup-list":
         outcome = {
           level: "error",
@@ -410,12 +414,20 @@ async function renderMeetupCard(
         ctx.chat !== undefined &&
         ctx.callbackQuery?.message !== undefined
       ) {
-        await ctx.api.editMessageText(
-          ctx.chat.id,
-          ctx.callbackQuery.message.message_id,
-          richMessage,
-          { reply_markup: keyboard },
-        );
+        try {
+          await ctx.api.editMessageText(
+            ctx.chat.id,
+            ctx.callbackQuery.message.message_id,
+            richMessage,
+            { reply_markup: keyboard },
+          );
+        } catch (cause) {
+          if (!errorText(cause).includes("message is not modified")) {
+            await ctx.replyWithRichMessage(richMessage, {
+              reply_markup: keyboard,
+            });
+          }
+        }
       } else {
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }

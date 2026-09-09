@@ -11,6 +11,8 @@ const empty: MeetupSnapshot = {
   title: "",
   description: "",
   venue: "",
+  lifecycle: "planned",
+  visibility: "hidden",
 };
 
 function harness() {
