@@ -14,6 +14,8 @@ export type MeetupSnapshot = {
   description: string;
   venue: string;
   schedule?: MeetupSchedule;
+  lifecycle?: "planned" | "held" | "cancelled";
+  visibility?: "hidden" | "visible";
 };
 
 export type MeetupSummary = {
@@ -23,6 +25,7 @@ export type MeetupSummary = {
 };
 
 export type MeetupFailure =
+  | { kind: "not-found" }
   | { kind: "forbidden" }
   | { kind: "invalid"; message: string }
   | { kind: "unavailable"; cause: unknown };

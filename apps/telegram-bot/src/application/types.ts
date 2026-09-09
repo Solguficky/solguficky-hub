@@ -11,6 +11,12 @@ export type ExecuteRequest =
   | { identity: Person; intent: "list-visible-meetups"; requestId?: string }
   | {
       identity: Person;
+      intent: "view-meetup";
+      meetupId: string;
+      requestId?: string;
+    }
+  | {
+      identity: Person;
       intent: "create-meetup";
       meetupId: string;
       requestId?: string;
@@ -42,6 +48,8 @@ export function startExecuteRequest(
 export type ExecuteResult =
   | { kind: "message"; text: string }
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
+  | { kind: "meetup-card"; meetup: MeetupSnapshot }
+  | { kind: "meetup-not-found" }
   | { kind: "ask"; field: FormField; meetup: MeetupSnapshot; error?: string }
   | { kind: "preview"; meetup: MeetupSnapshot }
   | { kind: "published"; meetup: MeetupSnapshot }

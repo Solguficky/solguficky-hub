@@ -323,6 +323,18 @@ describe("presentation adapter", () => {
         ),
         reply_markup: {
           inline_keyboard: [
+            [
+              {
+                text: "Без даты",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
+              },
+            ],
+            [
+              {
+                text: "Настолки",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+              },
+            ],
             [{ text: "Обновить", callback_data: "v1:nav:hub" }],
           ],
         },
@@ -367,7 +379,7 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("passes the parsed deep link payload to the dispatcher", async () => {
+  it("opens a meetup from the parsed deep link payload", async () => {
     const execute = vi.fn(() => ({
       kind: "message" as const,
       text: "ok",
@@ -380,11 +392,9 @@ describe("presentation adapter", () => {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: [],
       },
-      intent: "start",
-      deepLink: {
-        kind: "meetup",
-        payload: "m_AZLzpLXGfY6fChssPU5fYA",
-      },
+      intent: "view-meetup",
+      meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+      requestId: expect.any(String),
     });
   });
 

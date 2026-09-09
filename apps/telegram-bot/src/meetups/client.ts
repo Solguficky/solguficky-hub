@@ -5,7 +5,11 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
-import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
+import {
+  MeetupLifecycle,
+  MeetupsService,
+  MeetupVisibility,
+} from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
 import { requestIdHeader } from "../identity/client.js";
 import type {
@@ -66,6 +70,9 @@ export function createMeetupsAdapter(
         cause.code === Code.InvalidArgument
       ) {
         return { kind: "invalid", message: cause.message };
+      }
+      if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+        return { kind: "not-found" };
       }
       return { kind: "unavailable", cause };
     }
@@ -241,6 +248,8 @@ function toSnapshot(
     title: value.title,
     description: value.description,
     venue: value.venue,
+    lifecycle: toLifecycle(value.lifecycle),
+    visibility: toVisibility(value.visibility),
   };
   const fixed =
     value.schedule?.form.case === "fixed"
@@ -254,4 +263,32 @@ function toSnapshot(
     snapshot.schedule = { ...fixed.value.date, ...fixed.value.time };
   }
   return snapshot;
+}
+
+function toLifecycle(
+  value: MeetupLifecycle,
+): NonNullable<MeetupSnapshot["lifecycle"]> {
+  switch (value) {
+    case MeetupLifecycle.PLANNED:
+      return "planned";
+    case MeetupLifecycle.HELD:
+      return "held";
+    case MeetupLifecycle.CANCELLED:
+      return "cancelled";
+    default:
+      throw new Error(`Meetups returned unsupported lifecycle ${value}`);
+  }
+}
+
+function toVisibility(
+  value: MeetupVisibility,
+): NonNullable<MeetupSnapshot["visibility"]> {
+  switch (value) {
+    case MeetupVisibility.HIDDEN:
+      return "hidden";
+    case MeetupVisibility.VISIBLE:
+      return "visible";
+    default:
+      throw new Error(`Meetups returned unsupported visibility ${value}`);
+  }
 }

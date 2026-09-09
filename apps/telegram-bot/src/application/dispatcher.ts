@@ -30,7 +30,31 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
                   reason: "invalid",
                   message: result.message,
                 }
-              : { kind: "dependency-rejected", reason: result.kind };
+              : {
+                  kind: "dependency-rejected",
+                  reason:
+                    result.kind === "not-found" ? "unavailable" : result.kind,
+                };
+        }
+        case "view-meetup": {
+          if (meetups === undefined)
+            return { kind: "rejected", reason: "meetups-not-configured" };
+          const result = await meetups.get(
+            request.identity,
+            request.meetupId,
+            request.requestId,
+          );
+          if (result.kind === "ok")
+            return { kind: "meetup-card", meetup: result.meetup };
+          if (result.kind === "not-found" || result.kind === "forbidden")
+            return { kind: "meetup-not-found" };
+          return result.kind === "invalid"
+            ? {
+                kind: "dependency-rejected",
+                reason: "invalid",
+                message: result.message,
+              }
+            : { kind: "dependency-rejected", reason: "unavailable" };
         }
         case "create-meetup":
         case "set-meetup-field":

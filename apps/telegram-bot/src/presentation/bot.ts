@@ -9,7 +9,7 @@ import {
   toResolveIdentityInput,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
-import type { MeetupSummary } from "../meetups/port.js";
+import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
 import { parseCallback } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -18,6 +18,7 @@ export type BotRuntime = {
   dispatcher: Dispatcher;
   identity: IdentityResolver;
   logger: Logger;
+  presentation?: "rich" | "plain";
 };
 
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
@@ -163,15 +164,36 @@ async function handleMessage(
       outcome = await replyFailClosed(ctx, identityFailureOutcome(resolved));
       return;
     }
+    const identity = {
+      identityId: resolved.identityId,
+      globalRoles: resolved.globalRoles,
+    };
+    const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
     const result = await runtime.dispatcher.execute(
-      startExecuteRequest(
-        {
-          identityId: resolved.identityId,
-          globalRoles: resolved.globalRoles,
-        },
-        "deepLink" in parsed ? parsed.deepLink : undefined,
-      ),
+      deepLink?.kind === "meetup"
+        ? {
+            identity,
+            intent: "view-meetup",
+            meetupId: tokenToUuid(deepLink.payload.slice(2)),
+            ...requestId(ctx),
+          }
+        : startExecuteRequest(identity, deepLink),
     );
+    if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+      await renderMeetupCard(
+        ctx,
+        result,
+        false,
+        runtime.presentation ?? "rich",
+      );
+      outcome = {
+        level: "debug",
+        message: "meetup card sent",
+        result: "ok",
+        use_case: "view_meetup",
+      };
+      return;
+    }
     switch (result.kind) {
       case "message":
         await ctx.reply(result.text, {
@@ -256,6 +278,16 @@ async function handleCallback(
     await renderMeetupList(ctx, result);
     return;
   }
+  if (action.kind === "view-meetup") {
+    const result = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "view-meetup",
+      meetupId: tokenToUuid(action.token),
+      ...requestId(ctx),
+    });
+    await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
+    return;
+  }
   if (action.kind === "manage-menu") {
     const id = createUuidV7();
     await ctx.reply("Управление сходками", {
@@ -293,7 +325,7 @@ async function renderMeetupList(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
-    const keyboard = meetupListKeyboard();
+    const keyboard = meetupListKeyboard(result.meetups);
     const text =
       result.meetups.length === 0
         ? `Пока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.`
@@ -344,10 +376,86 @@ function meetupSection(
     : `${heading}\n${meetups.map(meetupListLine).join("\n")}`;
 }
 
-function meetupListKeyboard(): InlineKeyboard {
-  // Карточка и переход к ней принадлежат PER-62. Пока строка списка не должна
-  // притворяться рабочей кнопкой с callback, который этот срез не обрабатывает.
-  return new InlineKeyboard().text("Обновить", "v1:nav:hub");
+function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const meetup of meetups) {
+    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+  }
+  return keyboard.text("Обновить", "v1:nav:hub");
+}
+
+async function renderMeetupCard(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  edit: boolean,
+  presentation: "rich" | "plain",
+): Promise<void> {
+  if (result.kind === "meetup-not-found") {
+    const text = "Сходка не найдена или больше недоступна.";
+    const keyboard = new InlineKeyboard().text("К списку", "v1:nav:hub");
+    if (edit) await editScreen(ctx, text, keyboard);
+    else await ctx.reply(text, { reply_markup: keyboard });
+    return;
+  }
+  if (result.kind === "meetup-card") {
+    const text = meetupCardText(result.meetup);
+    const keyboard = new InlineKeyboard()
+      .text("Обновить", `v1:view:${uuidToToken(result.meetup.id)}`)
+      .row()
+      .text("К списку", "v1:nav:hub");
+    if (presentation === "rich") {
+      const richMessage = { html: meetupCardHtml(result.meetup) };
+      if (
+        edit &&
+        ctx.chat !== undefined &&
+        ctx.callbackQuery?.message !== undefined
+      ) {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          ctx.callbackQuery.message.message_id,
+          richMessage,
+          { reply_markup: keyboard },
+        );
+      } else {
+        await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
+      }
+    } else if (edit) await editScreen(ctx, text, keyboard);
+    else await ctx.reply(text, { reply_markup: keyboard });
+    return;
+  }
+  const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
+  if (edit) await editScreen(ctx, unavailableText, keyboard);
+  else await ctx.reply(unavailableText, { reply_markup: keyboard });
+}
+
+function meetupCardHtml(meetup: MeetupSnapshot): string {
+  const lines = meetupCardText(meetup).split("\n");
+  const title = escapeHtml(lines.shift() ?? "");
+  return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}</p>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function meetupCardText(meetup: MeetupSnapshot): string {
+  const lifecycle =
+    meetup.lifecycle === "cancelled"
+      ? "отменена"
+      : meetup.lifecycle === "held"
+        ? "состоялась"
+        : "запланирована";
+  const visibility = meetup.visibility === "hidden" ? "скрыта" : "видна";
+  const when = formatSchedule(meetup);
+  const venue = meetup.venue === "" ? "не указано" : meetup.venue;
+  const description =
+    meetup.description === ""
+      ? "Описание пока не добавлено."
+      : meetup.description;
+  return `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
 }
 
 function meetupListLine(meetup: MeetupSummary): string {

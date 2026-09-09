@@ -78,4 +78,33 @@ describe("dispatcher", () => {
       ],
     });
   });
+
+  it("returns the same result for a hidden and a missing meetup", async () => {
+    const notUsed = async (): Promise<never> => {
+      throw new Error("not used");
+    };
+    for (const failure of [
+      { kind: "not-found" },
+      { kind: "forbidden" },
+    ] as const) {
+      const meetups: Meetups = {
+        listVisible: notUsed,
+        createDraft: notUsed,
+        get: async () => failure,
+        changeAttributes: notUsed,
+        setSchedule: notUsed,
+        publish: notUsed,
+      };
+      await expect(
+        createDispatcher(meetups).execute({
+          identity: {
+            identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            globalRoles: [],
+          },
+          intent: "view-meetup",
+          meetupId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+        }),
+      ).resolves.toEqual({ kind: "meetup-not-found" });
+    }
+  });
 });

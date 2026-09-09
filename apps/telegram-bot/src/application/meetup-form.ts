@@ -147,7 +147,10 @@ function failure(
       message: result.message,
     };
   }
-  return { kind: "dependency-rejected", reason: result.kind };
+  return {
+    kind: "dependency-rejected",
+    reason: result.kind === "not-found" ? "unavailable" : result.kind,
+  };
 }
 
 function invalidField(
@@ -157,6 +160,7 @@ function invalidField(
       intent:
         | "start"
         | "list-visible-meetups"
+        | "view-meetup"
         | "create-meetup"
         | "publish-meetup";
     }
