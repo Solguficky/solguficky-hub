@@ -58,15 +58,28 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 // сервиса. Уровень Warning и никакого stack: норматив держит stack
                 // для неожиданного отказа.
                 | :? RpcException as declined ->
-                    logger.LogWarning(
-                        "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error}",
-                        service,
-                        context.Method,
-                        "error",
-                        elapsedMicroseconds (),
-                        string declined.StatusCode,
-                        declined.Status.Detail
-                    )
+                    match declined.Data["meetups.denial_reason"] with
+                    | :? string as denialReason ->
+                        logger.LogWarning(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {denial_reason}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string declined.StatusCode,
+                            declined.Status.Detail,
+                            denialReason
+                        )
+                    | _ ->
+                        logger.LogWarning(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string declined.StatusCode,
+                            declined.Status.Detail
+                        )
 
                     rethrow declined
                     return Unchecked.defaultof<'TResponse>

@@ -21,7 +21,7 @@ let ``The get query returns the read result for its viewer and identifier`` () =
 
     let read viewer id =
         calls.Add(viewer, id)
-        Task.FromResult(Some stored)
+        Task.FromResult(LookupResult.Found stored)
 
     let result =
         execute
@@ -41,7 +41,7 @@ let ``The get query returns the read result for its viewer and identifier`` () =
 
 [<Fact>]
 let ``The get query reports a missing meetup as not found`` () =
-    let read _ _ = Task.FromResult None
+    let read _ _ = Task.FromResult LookupResult.Missing
 
     let result =
         execute
@@ -53,14 +53,31 @@ let ``The get query reports a missing meetup as not found`` () =
         |> Async.AwaitTask
         |> Async.RunSynchronously
 
-    test <@ result = Error GetMeetupError.NotFound @>
+    test <@ result = Error(GetMeetupError.NotFound NotFoundReason.Missing) @>
 
 [<Fact>]
 let ``The get API maps a missing meetup to NOT_FOUND`` () =
-    let read _ _ = Task.FromResult None
+    let read _ _ = Task.FromResult LookupResult.Missing
     let code = codeOf (fun () -> Api.handle read (request ()))
 
     test <@ code = Some StatusCode.NotFound @>
+
+[<Fact>]
+let ``The get API gives hidden and missing meetups the same public error`` () =
+    let status result =
+        try
+            let call = Api.handle (fun _ _ -> Task.FromResult result) (request ())
+            call.GetAwaiter().GetResult() |> ignore
+
+            None
+        with :? RpcException as declined ->
+            Some declined.Status
+
+    test
+        <@
+            status LookupResult.NotVisible = status LookupResult.Missing
+            && status LookupResult.Missing = Some(Status(StatusCode.NotFound, "meetup not found"))
+        @>
 
 [<Fact>]
 let ``The get API refuses a malformed identifier before reading`` () =

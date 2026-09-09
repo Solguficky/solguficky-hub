@@ -20,3 +20,13 @@ module Access =
     /// отказ по праву стал бы способом узнать про чужой черновик.
     let forCommand (viewer: Viewer) : Result<unit, AccessDenied> =
         if Viewer.isAdministrator viewer then Ok() else Error NotAnAdministrator
+
+    /// Published meetups are community-visible. A hidden meetup is visible only
+    /// to its author (the organizer represented by the current slice) and to an
+    /// administrator. Lifecycle is deliberately not folded into this decision:
+    /// held and cancelled meetups retain the visibility chosen on the independent
+    /// visibility axis (ADR-022).
+    let canView (viewer: Viewer) (snapshot: MeetupSnapshot) : bool =
+        snapshot.Visibility = Visible
+        || snapshot.Author = viewer.IdentityId
+        || Viewer.isAdministrator viewer

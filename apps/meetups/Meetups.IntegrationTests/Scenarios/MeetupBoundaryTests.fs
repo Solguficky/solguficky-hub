@@ -207,6 +207,47 @@ type MeetupBoundaryTests() =
         test <@ actual = Some StatusCode.NotFound @>
 
     [<Fact>]
+    member _.``A hidden meetup is visible only to its author and administrators``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let author = administrator ()
+        let id = newId ()
+        let key = id.ToString "D"
+
+        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = author, Id = key))
+        |> ignore
+
+        let own = client.GetMeetup(GetMeetupRequest(Viewer = author, Id = key))
+
+        let administrative =
+            client.GetMeetup(GetMeetupRequest(Viewer = otherAdministrator (), Id = key))
+
+        let concealed =
+            Rpc.codeOf (fun () ->
+                client.GetMeetup(GetMeetupRequest(Viewer = ordinary (), Id = key))
+                |> ignore
+            )
+
+        let listed =
+            client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ())).Meetups
+            |> Seq.map _.Id
+            |> Seq.contains key
+
+        test
+            <@
+                own.Id = key
+                && administrative.Id = key
+                && concealed = Some StatusCode.NotFound
+                && not listed
+            @>
+
+        let denial =
+            live.Records
+            |> List.tryFind (fun entry -> entry.Fields.TryFind "denial_reason" = Some "not_visible")
+
+        test <@ denial.IsSome @>
+
+    [<Fact>]
     member _.``The boundary fills the log frame for a read call``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
