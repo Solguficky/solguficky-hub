@@ -241,6 +241,8 @@ describe("presentation adapter", () => {
         title: "",
         description: "",
         venue: "",
+        lifecycle: "planned",
+        visibility: "hidden",
       },
     });
     const { bot } = createHarness(resolvedIdentity(), { execute });
@@ -323,6 +325,18 @@ describe("presentation adapter", () => {
         ),
         reply_markup: {
           inline_keyboard: [
+            [
+              {
+                text: "Без даты",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
+              },
+            ],
+            [
+              {
+                text: "Настолки",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+              },
+            ],
             [{ text: "Обновить", callback_data: "v1:nav:hub" }],
           ],
         },
@@ -367,12 +381,19 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("passes the parsed deep link payload to the dispatcher", async () => {
-    const execute = vi.fn(() => ({
-      kind: "message" as const,
-      text: "ok",
-    }));
-    const { bot } = createHarness(resolvedIdentity(), { execute });
+  it("opens a meetup from the parsed deep link payload", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: {
+        id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+        title: "Настолки",
+        description: "Берём свои игры",
+        venue: "Циферблат",
+        lifecycle: "planned",
+        visibility: "visible",
+      },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(execute).toHaveBeenCalledWith({
@@ -380,11 +401,35 @@ describe("presentation adapter", () => {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: [],
       },
-      intent: "start",
-      deepLink: {
-        kind: "meetup",
-        payload: "m_AZLzpLXGfY6fChssPU5fYA",
+      intent: "view-meetup",
+      meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+      requestId: expect.any(String),
+    });
+    expect(calls[0]).toMatchObject({
+      method: "sendRichMessage",
+      payload: {
+        rich_message: {
+          html: expect.stringContaining("Статус: запланирована, видна"),
+        },
       },
+    });
+  });
+
+  it("answers a deep link when Meetups is unavailable", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "unavailable",
     });
   });
 

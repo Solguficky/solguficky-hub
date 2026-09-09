@@ -21,10 +21,21 @@ async function main(): Promise<number> {
   }
   const identityUrl = readEnv("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051";
   const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
+  const presentationRaw = readEnv("TELEGRAM_BOT_PRESENTATION") ?? "rich";
+  if (presentationRaw !== "rich" && presentationRaw !== "plain") {
+    logger.error("TELEGRAM_BOT_PRESENTATION must be rich or plain");
+    return 1;
+  }
   const meetups = createMeetupsClient(meetupsUrl);
   const dispatcher = createDispatcher(meetups);
   const identity = createIdentityClient(identityUrl);
-  const bot = createBot({ token, dispatcher, identity, logger });
+  const bot = createBot({
+    token,
+    dispatcher,
+    identity,
+    logger,
+    presentation: presentationRaw,
+  });
   const shutdown = createShutdown({
     bot,
     resources: {

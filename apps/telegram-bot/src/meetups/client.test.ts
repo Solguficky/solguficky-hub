@@ -84,4 +84,14 @@ describe("Meetups client", () => {
       kind: "unavailable",
     });
   });
+
+  it("maps a missing or hidden meetup to not-found", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.getMeetup.mockRejectedValue(new ConnectError("hidden", Code.NotFound));
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(meetups.get(person, "meetup-id")).resolves.toEqual({
+      kind: "not-found",
+    });
+  });
 });

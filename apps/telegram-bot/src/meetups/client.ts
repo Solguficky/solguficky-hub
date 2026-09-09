@@ -5,7 +5,11 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
-import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
+import {
+  MeetupLifecycle,
+  MeetupsService,
+  MeetupVisibility,
+} from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
 import { requestIdHeader } from "../identity/client.js";
 import type {
@@ -109,15 +113,36 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
-    get: (person, id, requestId) =>
-      call(async () =>
-        toSnapshot(
-          await rpc.getMeetup(
-            { viewer: viewer(person), id },
-            options(requestId),
+    get: async (person, id, requestId) => {
+      try {
+        return {
+          kind: "ok",
+          meetup: toSnapshot(
+            await rpc.getMeetup(
+              { viewer: viewer(person), id },
+              options(requestId),
+            ),
           ),
-        ),
-      ),
+        };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.PermissionDenied
+        ) {
+          return { kind: "forbidden" };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.InvalidArgument
+        ) {
+          return { kind: "invalid", message: cause.message };
+        }
+        return { kind: "unavailable", cause };
+      }
+    },
     changeAttributes: (person, meetup, requestId) =>
       call(async () =>
         toSnapshot(
@@ -241,6 +266,8 @@ function toSnapshot(
     title: value.title,
     description: value.description,
     venue: value.venue,
+    lifecycle: toLifecycle(value.lifecycle),
+    visibility: toVisibility(value.visibility),
   };
   const fixed =
     value.schedule?.form.case === "fixed"
@@ -254,4 +281,32 @@ function toSnapshot(
     snapshot.schedule = { ...fixed.value.date, ...fixed.value.time };
   }
   return snapshot;
+}
+
+function toLifecycle(
+  value: MeetupLifecycle,
+): NonNullable<MeetupSnapshot["lifecycle"]> {
+  switch (value) {
+    case MeetupLifecycle.PLANNED:
+      return "planned";
+    case MeetupLifecycle.HELD:
+      return "held";
+    case MeetupLifecycle.CANCELLED:
+      return "cancelled";
+    default:
+      throw new Error(`Meetups returned unsupported lifecycle ${value}`);
+  }
+}
+
+function toVisibility(
+  value: MeetupVisibility,
+): NonNullable<MeetupSnapshot["visibility"]> {
+  switch (value) {
+    case MeetupVisibility.HIDDEN:
+      return "hidden";
+    case MeetupVisibility.VISIBLE:
+      return "visible";
+    default:
+      throw new Error(`Meetups returned unsupported visibility ${value}`);
+  }
 }

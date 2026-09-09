@@ -8,6 +8,7 @@ export type CallbackAction =
   | { kind: "manage-menu" }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
+  | { kind: "view-meetup"; token: string }
   | { kind: "outdated" }
   | { kind: "malformed" };
 
@@ -18,6 +19,12 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts[0] !== "v1") return { kind: "outdated" };
   if (parsed.data === "v1:manage:menu") return { kind: "manage-menu" };
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
+  if (parts.length === 3 && parts[1] === "view") {
+    const viewToken = TokenSchema.safeParse(parts[2]);
+    return viewToken.success
+      ? { kind: "view-meetup", token: viewToken.data }
+      : { kind: "malformed" };
+  }
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success || parts.length !== 4 || parts[1] !== "manage") {
     return { kind: "malformed" };
