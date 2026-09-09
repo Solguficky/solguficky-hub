@@ -14,6 +14,24 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
       switch (request.intent) {
         case "start":
           return start(request);
+        case "list-visible-meetups": {
+          if (meetups === undefined) {
+            return { kind: "rejected", reason: "meetups-not-configured" };
+          }
+          const result = await meetups.listVisible(
+            request.identity,
+            request.requestId,
+          );
+          return result.kind === "ok"
+            ? { kind: "meetup-list", meetups: result.meetups }
+            : result.kind === "invalid"
+              ? {
+                  kind: "dependency-rejected",
+                  reason: "invalid",
+                  message: result.message,
+                }
+              : { kind: "dependency-rejected", reason: result.kind };
+        }
         case "create-meetup":
         case "set-meetup-field":
         case "publish-meetup":

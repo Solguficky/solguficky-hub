@@ -8,7 +8,13 @@ import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
 import { requestIdHeader } from "../identity/client.js";
-import type { MeetupResult, MeetupSnapshot, Meetups } from "./port.js";
+import type {
+  MeetupListResult,
+  MeetupResult,
+  MeetupSnapshot,
+  MeetupSummary,
+  Meetups,
+} from "./port.js";
 
 type MeetupsRpc = Pick<
   Client<typeof MeetupsService>,
@@ -17,6 +23,7 @@ type MeetupsRpc = Pick<
   | "setMeetupSchedule"
   | "publishMeetup"
   | "getMeetup"
+  | "listVisibleMeetups"
 >;
 
 export type MeetupsClient = Meetups & { close(): void };
@@ -70,6 +77,29 @@ export function createMeetupsAdapter(
       : { headers: { [requestIdHeader]: requestId } }),
   });
   return {
+    listVisible: async (person, requestId): Promise<MeetupListResult> => {
+      try {
+        const response = await rpc.listVisibleMeetups(
+          { viewer: viewer(person) },
+          options(requestId),
+        );
+        return { kind: "ok", meetups: response.meetups.map(toSummary) };
+      } catch (cause) {
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.PermissionDenied
+        ) {
+          return { kind: "forbidden" };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.InvalidArgument
+        ) {
+          return { kind: "invalid", message: cause.message };
+        }
+        return { kind: "unavailable", cause };
+      }
+    },
     createDraft: (person, id, requestId) =>
       call(async () =>
         toSnapshot(
@@ -148,6 +178,50 @@ export function createMeetupsAdapter(
         ),
       ),
   };
+}
+
+function toSummary(
+  value: Awaited<
+    ReturnType<MeetupsRpc["listVisibleMeetups"]>
+  >["meetups"][number],
+): MeetupSummary {
+  const summary: MeetupSummary = { id: value.id, title: value.title };
+  const date = scheduleDate(value.schedule);
+  return date === undefined ? summary : { ...summary, schedule: date };
+}
+
+function scheduleDate(
+  schedule: Awaited<
+    ReturnType<MeetupsRpc["listVisibleMeetups"]>
+  >["meetups"][number]["schedule"],
+): MeetupSummary["schedule"] {
+  const form = schedule?.form;
+  if (form?.case !== "fixed" && form?.case !== "tentative") {
+    return undefined;
+  }
+  const precision = form.value.precision;
+  if (precision.case === "day") {
+    return calendarDate(precision.value);
+  }
+  if (precision.case === "dayStart") {
+    return precision.value.date === undefined
+      ? undefined
+      : calendarDate(precision.value.date);
+  }
+  if (precision.case === "interval") {
+    return precision.value.start?.date === undefined
+      ? undefined
+      : calendarDate(precision.value.start.date);
+  }
+  return undefined;
+}
+
+function calendarDate(value: {
+  year: number;
+  month: number;
+  day: number;
+}): NonNullable<MeetupSummary["schedule"]> {
+  return { year: value.year, month: value.month, day: value.day };
 }
 
 function viewer(person: Person) {

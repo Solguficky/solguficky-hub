@@ -16,6 +16,7 @@ const empty: MeetupSnapshot = {
 function harness() {
   let snapshot = empty;
   const meetups: Meetups = {
+    listVisible: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
     createDraft: vi.fn(async (_person, id) => ({
       kind: "ok" as const,
       meetup: { ...snapshot, id },

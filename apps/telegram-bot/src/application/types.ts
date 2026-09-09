@@ -1,4 +1,4 @@
-import type { MeetupSnapshot } from "../meetups/port.js";
+import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
 
 export type Person = { identityId: string; globalRoles: readonly string[] };
 export type DeepLink =
@@ -8,6 +8,7 @@ export type FormField = "title" | "schedule" | "venue" | "description";
 
 export type ExecuteRequest =
   | { identity: Person; intent: "start"; deepLink?: DeepLink }
+  | { identity: Person; intent: "list-visible-meetups"; requestId?: string }
   | {
       identity: Person;
       intent: "create-meetup";
@@ -40,6 +41,7 @@ export function startExecuteRequest(
 
 export type ExecuteResult =
   | { kind: "message"; text: string }
+  | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
   | { kind: "ask"; field: FormField; meetup: MeetupSnapshot; error?: string }
   | { kind: "preview"; meetup: MeetupSnapshot }
   | { kind: "published"; meetup: MeetupSnapshot }

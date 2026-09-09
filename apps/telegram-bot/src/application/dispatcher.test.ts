@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Meetups } from "../meetups/port.js";
 import { createDispatcher } from "./dispatcher.js";
 
 describe("dispatcher", () => {
@@ -33,6 +34,48 @@ describe("dispatcher", () => {
     expect(result).toEqual({
       kind: "message",
       text: expect.stringContaining("Привет."),
+    });
+  });
+
+  it("returns exactly the visible list supplied by Meetups", async () => {
+    const listVisible = async () => ({
+      kind: "ok" as const,
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Настолки",
+        },
+      ],
+    });
+    const notUsed = async (): Promise<never> => {
+      throw new Error("not used");
+    };
+    const meetups: Meetups = {
+      listVisible,
+      createDraft: notUsed,
+      get: notUsed,
+      changeAttributes: notUsed,
+      setSchedule: notUsed,
+      publish: notUsed,
+    };
+    const dispatcher = createDispatcher(meetups);
+
+    await expect(
+      dispatcher.execute({
+        identity: {
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          globalRoles: [],
+        },
+        intent: "list-visible-meetups",
+      }),
+    ).resolves.toEqual({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Настолки",
+        },
+      ],
     });
   });
 });
