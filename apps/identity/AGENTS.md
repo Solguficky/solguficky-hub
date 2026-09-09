@@ -1,6 +1,6 @@
 # Identity
 
-Go + gRPC. Устройство — [ADR-026](../../docs/decisions/ADR-026-identity-mvp-model-and-access.md), стек — [ADR-027](../../docs/decisions/ADR-027-identity-go-stack.md), первая выдача роли администратора в срезе — [ADR-036](../../docs/decisions/ADR-036-temporary-first-admin-bootstrap.md), ответственность — [бриф](../../docs/services/identity.md). Языковые правила — пак скиллов `golang-*`, точка входа `golang-how-to`. Состав полей лога — [standard](../../docs/standards/observability/logging.md).
+Go + gRPC. Устройство — [ADR-026](../../docs/decisions/ADR-026-identity-mvp-model-and-access.md), стек — [ADR-027](../../docs/decisions/ADR-027-identity-go-stack.md), первая выдача роли администратора в срезе — [ADR-036](../../docs/decisions/ADR-036-first-admin-via-service-endpoint.md), ответственность — [бриф](../../docs/services/identity.md). Языковые правила — пак скиллов `golang-*`, точка входа `golang-how-to`. Состав полей лога — [standard](../../docs/standards/observability/logging.md).
 
 - `cmd/identity/` только собирает процесс: env, логгер, листенер, сигналы, graceful shutdown. gRPC-поверхность туда не переезжает.
 - `internal/server/` владеет gRPC: регистрация сервисов, interceptors, health, reflection и обработчики. Схема — `internal/migrations/`, изолированная база для тестов — `internal/testdb/`. Каталога `pkg/` нет: наружу сервис отдаёт только контракт.
