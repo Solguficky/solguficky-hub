@@ -75,8 +75,7 @@ let ``The get API gives hidden and missing meetups the same public error`` () =
 
     test
         <@
-            status LookupResult.NotVisible
-            = status LookupResult.Missing
+            status LookupResult.NotVisible = status LookupResult.Missing
             && status LookupResult.Missing = Some(Status(StatusCode.NotFound, "meetup not found"))
         @>
 

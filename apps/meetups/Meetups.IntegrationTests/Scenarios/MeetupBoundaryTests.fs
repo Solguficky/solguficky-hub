@@ -218,7 +218,9 @@ type MeetupBoundaryTests() =
         |> ignore
 
         let own = client.GetMeetup(GetMeetupRequest(Viewer = author, Id = key))
-        let administrative = client.GetMeetup(GetMeetupRequest(Viewer = otherAdministrator (), Id = key))
+
+        let administrative =
+            client.GetMeetup(GetMeetupRequest(Viewer = otherAdministrator (), Id = key))
 
         let concealed =
             Rpc.codeOf (fun () ->

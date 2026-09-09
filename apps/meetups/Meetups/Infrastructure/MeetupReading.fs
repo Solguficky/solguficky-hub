@@ -78,7 +78,12 @@ let read (source: NpgsqlDataSource) (viewer: Viewer) (scope: Scope) : Task<ReadR
         match scope with
         | Scope.All ->
             let! rows = connection.QueryAsync<MeetupRow.MeetupRow>(selectVisibleSql, parameters)
-            return rows |> Seq.map MeetupRow.toSnapshot |> List.ofSeq |> ReadResult.Snapshots
+
+            return
+                rows
+                |> Seq.map MeetupRow.toSnapshot
+                |> List.ofSeq
+                |> ReadResult.Snapshots
         | Scope.ById(MeetupId id) ->
             let! rows =
                 connection.QueryAsync<MeetupRow.MeetupRow>(
@@ -90,7 +95,13 @@ let read (source: NpgsqlDataSource) (viewer: Viewer) (scope: Scope) : Task<ReadR
                     |}
                 )
 
-            let! exists = connection.ExecuteScalarAsync<bool>(existsByIdSql, {| id = id |})
+            let! exists =
+                connection.ExecuteScalarAsync<bool>(
+                    existsByIdSql,
+                    {|
+                        id = id
+                    |}
+                )
 
             match rows |> Seq.map MeetupRow.toSnapshot |> List.ofSeq with
             | [ snapshot ] -> return ReadResult.Snapshots [ snapshot ]
