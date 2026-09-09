@@ -293,7 +293,7 @@ async function renderMeetupList(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
-    const keyboard = meetupListKeyboard(result.meetups);
+    const keyboard = meetupListKeyboard();
     const text =
       result.meetups.length === 0
         ? `Пока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.`
@@ -301,7 +301,7 @@ async function renderMeetupList(
     await editScreen(ctx, text, keyboard);
     return;
   }
-  if (result.kind === "dependency-rejected") {
+  if (result.kind === "dependency-rejected" || result.kind === "rejected") {
     await editScreen(
       ctx,
       `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
@@ -326,35 +326,33 @@ async function editScreen(
 }
 
 function meetupListText(meetups: readonly MeetupSummary[]): string {
-  const dated = meetups.some((meetup) => meetup.schedule !== undefined);
-  const undated = meetups.some((meetup) => meetup.schedule === undefined);
-  return [
-    "Ближайшие сходки",
-    dated ? "С датой" : undefined,
-    undated ? "Без даты" : undefined,
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n\n");
-}
-
-function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
   const dated = meetups.filter((meetup) => meetup.schedule !== undefined);
   const undated = meetups.filter((meetup) => meetup.schedule === undefined);
-  for (const meetup of [...dated, ...undated]) {
-    keyboard
-      .text(
-        meetupButtonText(meetup),
-        `v1:meetup:view:${uuidToToken(meetup.id)}`,
-      )
-      .row();
-  }
-  return keyboard.text("Обновить", "v1:nav:hub");
+  const sections = [
+    meetupSection("С датой", dated),
+    meetupSection("Без даты", undated),
+  ].filter((section) => section !== undefined);
+  return ["Ближайшие сходки", ...sections].join("\n\n");
 }
 
-function meetupButtonText(meetup: MeetupSummary): string {
+function meetupSection(
+  heading: string,
+  meetups: readonly MeetupSummary[],
+): string | undefined {
+  return meetups.length === 0
+    ? undefined
+    : `${heading}\n${meetups.map(meetupListLine).join("\n")}`;
+}
+
+function meetupListKeyboard(): InlineKeyboard {
+  // Карточка и переход к ней принадлежат PER-62. Пока строка списка не должна
+  // притворяться рабочей кнопкой с callback, который этот срез не обрабатывает.
+  return new InlineKeyboard().text("Обновить", "v1:nav:hub");
+}
+
+function meetupListLine(meetup: MeetupSummary): string {
   if (meetup.schedule === undefined) {
-    return `Без даты — ${meetup.title}`;
+    return `• ${meetup.title}`;
   }
   const { year, month, day } = meetup.schedule;
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -370,7 +368,7 @@ function meetupButtonText(meetup: MeetupSummary): string {
   })
     .format(date)
     .replaceAll(".", "");
-  return `${day} ${monthLabel}, ${weekdayLabel} — ${meetup.title}`;
+  return `• ${day} ${monthLabel}, ${weekdayLabel} — ${meetup.title}`;
 }
 
 async function resolvePerson(

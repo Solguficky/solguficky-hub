@@ -318,21 +318,11 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Ближайшие сходки\n\nС датой\n\nБез даты",
+        text: expect.stringMatching(
+          /^Ближайшие сходки\n\nС датой\n• 15 авг, сб — Настолки\n\nБез даты\n• Без даты$/,
+        ),
         reply_markup: {
           inline_keyboard: [
-            [
-              {
-                text: expect.stringContaining("Настолки"),
-                callback_data: "v1:meetup:view:AZjypHwefTqbIU-OEqs0zw",
-              },
-            ],
-            [
-              {
-                text: "Без даты — Без даты",
-                callback_data: "v1:meetup:view:AZjypHwefTqbIU-OEqs0zg",
-              },
-            ],
             [{ text: "Обновить", callback_data: "v1:nav:hub" }],
           ],
         },
@@ -357,6 +347,22 @@ describe("presentation adapter", () => {
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
           ],
         },
+      },
+    });
+  });
+
+  it("renders a dispatcher rejection as E-05 instead of going silent", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "meetups-not-configured",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Не получилось загрузить сходки"),
       },
     });
   });
