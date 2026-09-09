@@ -86,12 +86,12 @@ just aspire core -- --skip-services telegram-bot
 7. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт.
 8. `IdentityService/ResolveIdentity` через proxy endpoint Aspire возвращает UUIDv7.
 9. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
-10. Профиль `meetups` поднимает PostgreSQL и доводит Meetups до `Healthy` за ~9 с: сервис применяет миграции DbUp до того, как начинает слушать. `grpcurl` через reflection перечисляет `meetups.v1.MeetupsService`, шесть операций отвечают заглушкой, `grpc.health.v1.Health/Check` возвращает `SERVING`. В базе `meetups` появляются `meetups`, `meetup_events` и журнал `meetups_schema_versions` с единственной записью `Meetups.Migrations.001_meetups_schema.sql`.
-11. Срез `core` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держит Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечают на вызовы через свои proxy endpoint: `ResolveIdentity` возвращает UUIDv7, `ListVisibleMeetups` — заглушку. Схемы разведены по базам одного сервера: goose ведёт `identity`, DbUp — `meetups`; на сервере нет базы, которую писали бы оба сервиса.
+10. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Через назначенный Aspire proxy endpoint `ListVisibleMeetups` со смотрящим отвечает пустым списком на чистой базе, а `GetMeetup` по отсутствующему UUID — `NOT_FOUND`; оба вызова выполнены `grpcurl` без Telegram. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+11. На зафиксированном до PER-58 прогоне срез `core` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держал Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечали через свои proxy endpoint. Схемы были разведены по базам одного сервера: goose вёл `identity`, DbUp — `meetups`; на сервере не было базы, которую писали бы оба сервиса.
 
 ## Неподтверждённая граница
 
-Профиль с Telegram Bot и настоящим токеном ни разу не прогонялся, как и повторное подключение тома `solguficky-postgres-data` после перезапуска AppHost. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+После замены заглушек чтения в PER-58 срез `core` через Aspire ещё нужно повторить с живыми `ListVisibleMeetups` и `GetMeetup`; предыдущий прогон подтверждает только более раннюю совместную топологию Identity и Meetups. Профиль с Telegram Bot и настоящим токеном ни разу не прогонялся, как и повторное подключение тома `solguficky-postgres-data` после перезапуска AppHost. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
 
 ## Повторная проверка
 

@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Include="TestUtilities/TestData/Sample.fs" />
+    <Compile Include="TestUtilities/TestRpc.fs" />
     <Compile Include="DomainTests/ScheduleTests.fs" />
     <Compile Include="DomainTests/CreateMeetupDraftTests.fs" />
     <Compile Include="DomainTests/ChangeMeetupAttributesTests.fs" />
@@ -26,13 +27,15 @@
     <Compile Include="DomainTests/MeetupRehydrateTests.fs" />
     <Compile Include="InfrastructureTests/MeetupRowTests.fs" />
     <Compile Include="InfrastructureTests/MeetupEventPayloadTests.fs" />
+    <Compile Include="InfrastructureTests/MeetupReadingTests.fs" />
     <Compile Include="SliceTests/ContractTests.fs" />
     <Compile Include="SliceTests/CreateMeetupDraftWorkflowTests.fs" />
     <Compile Include="SliceTests/SetMeetupScheduleWorkflowTests.fs" />
     <Compile Include="SliceTests/PublishMeetupWorkflowTests.fs" />
     <Compile Include="SliceTests/CommandApiTests.fs" />
+    <Compile Include="SliceTests/ListVisibleMeetupsTests.fs" />
+    <Compile Include="SliceTests/GetMeetupTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />
-    <Compile Include="PlaceholderTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />
     <Compile Include="MigrationsTests.fs" />
   </ItemGroup>

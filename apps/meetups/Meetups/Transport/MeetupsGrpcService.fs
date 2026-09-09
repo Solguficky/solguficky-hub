@@ -1,6 +1,5 @@
 namespace Meetups.Transport
 
-open System.Threading.Tasks
 open Grpc.Core
 open Meetups.Slices
 open Meetups.V1
@@ -21,8 +20,6 @@ open Meetups.V1
 /// ServerCallContext глубже диспетчера не проходит: наружу из него берётся только
 /// RequestServices, и срез о существовании контекста не знает.
 ///
-/// Две читающие операции ещё на заглушке: единый путь чтения со смотрящим —
-/// отдельная задача, и до неё Placeholder остаётся жив.
 type MeetupsGrpcService() =
     inherit MeetupsService.MeetupsServiceBase()
 
@@ -42,8 +39,10 @@ type MeetupsGrpcService() =
         let services = context.GetHttpContext().RequestServices
         PublishMeetup.Api.handle (PublishMeetup.Composition.buildDeps services) request
 
-    override _.GetMeetup(request: GetMeetupRequest, _context: ServerCallContext) =
-        Placeholder.snapshot request.Id |> Task.FromResult
+    override _.GetMeetup(request: GetMeetupRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        GetMeetup.Api.handle (GetMeetup.Composition.buildRead services) request
 
-    override _.ListVisibleMeetups(_request: ListVisibleMeetupsRequest, _context: ServerCallContext) =
-        Placeholder.visibleMeetups () |> Task.FromResult
+    override _.ListVisibleMeetups(request: ListVisibleMeetupsRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        ListVisibleMeetups.Api.handle (ListVisibleMeetups.Composition.buildRead services) request

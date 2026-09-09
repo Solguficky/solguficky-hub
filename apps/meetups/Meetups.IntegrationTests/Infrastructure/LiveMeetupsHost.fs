@@ -1,11 +1,14 @@
 namespace Meetups.IntegrationTests.Infrastructure
 
 open System
+open System.Collections.Concurrent
 open Grpc.Net.Client
+open Meetups.TestKit
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting.Server
 open Microsoft.AspNetCore.Hosting.Server.Features
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 
 /// Тот же composition root, что и запуск, но с настоящей изолированной базой.
 /// Этим проверяется сквозной путь «запрос — срез — PostgreSQL — снимок в ответе»:
@@ -18,6 +21,7 @@ open Microsoft.Extensions.DependencyInjection
 /// приёмом, что и в тестах схемы.
 type LiveMeetupsHost() =
     let db = new IsolatedDatabase()
+    let records = ConcurrentQueue<LogRecord>()
 
     let app =
         try
@@ -38,6 +42,7 @@ type LiveMeetupsHost() =
     // этого слушающий хост и созданная база остались бы жить до конца прогона.
     let channel =
         try
+            app.Services.GetRequiredService<ILoggerFactory>().AddProvider(new RecordingLoggerProvider(records))
             app.StartAsync().GetAwaiter().GetResult()
 
             app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses
@@ -57,6 +62,8 @@ type LiveMeetupsHost() =
     /// Нужен утверждениям про строки: отказ по праву обязан не только вернуть код,
     /// но и ничего не записать.
     member _.ConnectionString = db.ConnectionString
+
+    member _.Records = List.ofSeq records
 
     interface IDisposable with
         member _.Dispose() =
