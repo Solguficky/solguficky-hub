@@ -7,8 +7,8 @@ open Meetups.V1
 open Swensen.Unquote
 open Xunit
 
-/// Командные операции через настоящий Kestrel и настоящий PostgreSQL. Это и есть
-/// автоматическая форма критерия «команды отвечают через grpcurl без Telegram»:
+/// Операции контракта через настоящий Kestrel и настоящий PostgreSQL. Это
+/// автоматическая проверка пути, который вручную вызывается grpcurl без Telegram:
 /// ручной grpcurl остаётся для проверки того, что Aspire собрал сервис, а не того,
 /// что сервис работает.
 ///
@@ -29,6 +29,43 @@ type MeetupBoundaryTests() =
     let ordinary () = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000c")
 
     let newId () = Guid.CreateVersion7()
+
+    let createPublished
+        (client: MeetupsService.MeetupsServiceClient)
+        (admin: Viewer)
+        (id: Guid)
+        (title: string)
+        (schedule: Schedule option)
+        =
+        let key = id.ToString "D"
+
+        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
+        |> ignore
+
+        client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = admin, Id = key, Title = title))
+        |> ignore
+
+        match schedule with
+        | Some value ->
+            client.SetMeetupSchedule(SetMeetupScheduleRequest(Viewer = admin, Id = key, Schedule = value))
+            |> ignore
+        | None -> ()
+
+        client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
+
+    let fixedDay year month day = Schedule(Fixed = DateValue(Day = CalendarDate(Year = year, Month = month, Day = day)))
+
+    let fixedTime year month day hours minutes =
+        Schedule(
+            Fixed =
+                DateValue(
+                    DayStart =
+                        LocalDateTime(
+                            Date = CalendarDate(Year = year, Month = month, Day = day),
+                            Time = LocalTime(Hours = hours, Minutes = minutes)
+                        )
+                )
+        )
 
     [<Fact>]
     member _.``An administrator drives a meetup from draft to visible over gRPC``() =
@@ -91,6 +128,102 @@ type MeetupBoundaryTests() =
                 && published.Visibility = MeetupVisibility.Visible
                 && published.HasFirstPublishedAt
             @>
+
+    [<Fact>]
+    member _.``Listing meetups from an empty database answers with an empty page``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+
+        let response =
+            client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ()))
+
+        test <@ response.Meetups.Count = 0 @>
+
+    [<Fact>]
+    member _.``Meetups are listed by date with day first and no date last``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let admin = administrator ()
+
+        createPublished client admin (newId ()) "No date" None
+        |> ignore
+
+        createPublished client admin (newId ()) "Same day at 18:00" (Some(fixedTime 2026 10 3 18 0))
+        |> ignore
+
+        createPublished client admin (newId ()) "Same day" (Some(fixedDay 2026 10 3))
+        |> ignore
+
+        createPublished client admin (newId ()) "Earlier" (Some(fixedTime 2026 10 2 21 0))
+        |> ignore
+
+        let actual =
+            client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ())).Meetups
+            |> Seq.map (fun meetup -> meetup.Title)
+            |> List.ofSeq
+
+        test
+            <@
+                actual = [
+                    "Earlier"
+                    "Same day"
+                    "Same day at 18:00"
+                    "No date"
+                ]
+            @>
+
+    [<Fact>]
+    member _.``An ordinary viewer gets the stored meetup snapshot``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let id = newId ()
+        let expectedId = id.ToString "D"
+
+        createPublished client (administrator ()) id "Readable meetup" (Some(fixedDay 2026 10 3))
+        |> ignore
+
+        let snapshot =
+            client.GetMeetup(GetMeetupRequest(Viewer = ordinary (), Id = id.ToString "D"))
+
+        test
+            <@
+                snapshot.Id = expectedId
+                && snapshot.Title = "Readable meetup"
+                && snapshot.Visibility = MeetupVisibility.Visible
+                && snapshot.Schedule.Fixed.Day.Day = 3
+            @>
+
+    [<Fact>]
+    member _.``A missing meetup answers NOT_FOUND``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+
+        let actual =
+            Rpc.codeOf (fun () ->
+                client.GetMeetup(GetMeetupRequest(Viewer = ordinary (), Id = (newId ()).ToString "D"))
+                |> ignore
+            )
+
+        test <@ actual = Some StatusCode.NotFound @>
+
+    [<Fact>]
+    member _.``The boundary fills the log frame for a read call``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+
+        client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ()))
+        |> ignore
+
+        let frame =
+            live.Records
+            |> List.tryFind (fun entry ->
+                entry.Fields.TryFind "operation" = Some "/meetups.v1.MeetupsService/ListVisibleMeetups"
+            )
+            |> Option.map (fun entry ->
+                entry.Fields.TryFind "service", entry.Fields.TryFind "result", entry.Fields.ContainsKey "duration_us"
+            )
+
+        test <@ frame = Some(Some "meetups", Some "ok", true) @>
 
     /// Идемпотентность через провод: ключ создания и есть идентификатор (ADR-031),
     /// поэтому повтор обязан вернуть тот же снимок, а не завести вторую сходку.

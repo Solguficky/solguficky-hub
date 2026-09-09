@@ -19,13 +19,15 @@
     <Compile Include="Infrastructure/MeetupRow.fs" />
     <Compile Include="Infrastructure/MeetupEventPayload.fs" />
     <Compile Include="Infrastructure/MeetupStore.fs" />
+    <Compile Include="Infrastructure/MeetupReading.fs" />
     <Compile Include="Slices/Contract.fs" />
     <Compile Include="Slices/CreateMeetupDraft.fs" />
     <Compile Include="Slices/ChangeMeetupAttributes.fs" />
     <Compile Include="Slices/SetMeetupSchedule.fs" />
     <Compile Include="Slices/PublishMeetup.fs" />
+    <Compile Include="Slices/ListVisibleMeetups.fs" />
+    <Compile Include="Slices/GetMeetup.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
-    <Compile Include="Transport/Placeholder.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
     <Compile Include="Host.fs" />
     <Compile Include="Program.fs" />

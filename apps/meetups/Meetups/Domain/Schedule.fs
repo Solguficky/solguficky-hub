@@ -57,3 +57,30 @@ type Schedule =
     | NoDate
     | Tentative of DateValue
     | Fixed of DateValue
+
+/// Явная группа расписания для порядка чтения (ADR-022). Dated объявлен раньше
+/// Undated намеренно: сходки с датой показываются первыми, а отсутствие даты не
+/// полагается на поведение СУБД при NULL.
+[<RequireQualifiedAccess>]
+type ScheduleOrder =
+    | Dated of date: DateOnly * time: TimeOnly option
+    | Undated
+
+module Schedule =
+
+    /// Ключ порядка не различает tentative и fixed: обе формы сообщают одну и ту
+    /// же дату человеку. День без времени идёт раньше времени в тот же день, а
+    /// равные ключи намеренно не получают tie-break по идентификатору (ADR-022).
+    let order (schedule: Schedule) : ScheduleOrder =
+        let dateOrder (value: DateValue) =
+            match value with
+            | Day date -> ScheduleOrder.Dated(date, None)
+            | DayStart moment -> ScheduleOrder.Dated(moment.Date, Some moment.Time)
+            | Interval interval ->
+                let start = LocalInterval.start interval
+                ScheduleOrder.Dated(start.Date, Some start.Time)
+
+        match schedule with
+        | NoDate -> ScheduleOrder.Undated
+        | Tentative value
+        | Fixed value -> dateOrder value

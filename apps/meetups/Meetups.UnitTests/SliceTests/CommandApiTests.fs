@@ -14,6 +14,7 @@ open Meetups.Domain
 open Meetups.Infrastructure
 open Meetups.Slices
 open Meetups.TestData
+open Meetups.TestRpc
 open Swensen.Unquote
 open Xunit
 
@@ -30,15 +31,6 @@ let private ordinary () = viewerWith []
 /// Отказ, а не молчание: заглушка, возвращающая пустоту, оставила бы пропущенную
 /// проверку прав зелёным тестом.
 let private unreachable name : 'a = failwith $"{name} must not be reached"
-
-/// GetAwaiter().GetResult(), а не Async.RunSynchronously: второй заворачивает отказ
-/// в AggregateException, и объявленный RpcException перестал бы ловиться по типу.
-let private codeOf (call: unit -> Task<'a>) =
-    try
-        call().GetAwaiter().GetResult() |> ignore
-        None
-    with :? RpcException as declined ->
-        Some declined.StatusCode
 
 module private Create =
 

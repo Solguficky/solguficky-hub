@@ -12,10 +12,8 @@ open Xunit
 ///
 /// Живой базы у этого хоста нет: DSN валиден по форме и заведомо недостижим.
 /// Отсюда следует, что здесь проверяются каркас границы и те отказы, которые
-/// принимаются до открытия соединения, — по праву и по разбору запроса. Зелёный
-/// тест поэтому доказывает не только код ответа, но и то, что соединения не было:
-/// попытка сходить в базу дала бы необъявленный NpgsqlException, который интерцептор
-/// пишет как Unknown, а клиент увидел бы вместо ожидаемого кода.
+/// принимаются до открытия соединения, — по праву и по разбору запроса. Успешные
+/// чтения живут в MeetupBoundaryTests с настоящей PostgreSQL.
 ///
 /// «До обращения к хранилищу» относится к соединению, а не к контейнеру: сборку
 /// зависимостей диспетчер делает раньше разбора запроса, и NpgsqlDataSource
@@ -86,15 +84,22 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
                     client.SetMeetupSchedule(SetMeetupScheduleRequest(Viewer = viewer, Id = id, Schedule = Schedule()))
                     |> ignore
                 )
+                // Читающие срезы разбирают тот же viewer и id до открытия соединения.
+                Rpc.codeOf (fun () ->
+                    client.ListVisibleMeetups(ListVisibleMeetupsRequest())
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.GetMeetup(GetMeetupRequest(Id = id))
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id.ToUpperInvariant()))
+                    |> ignore
+                )
             ]
 
-        test <@ actual = List.replicate 3 (Some StatusCode.InvalidArgument) @>
-
-    [<Fact>]
-    member _.``Listing visible meetups answers with an empty page, not an error``() =
-        let response = client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = viewer))
-
-        test <@ response.Meetups.Count = 0 @>
+        test <@ actual = List.replicate 6 (Some StatusCode.InvalidArgument) @>
 
     [<Fact>]
     member _.``The service reports itself serving over grpc health v1``() =
@@ -103,19 +108,6 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         let actual = health.Check(HealthCheckRequest()).Status
 
         test <@ actual = HealthCheckResponse.Types.ServingStatus.Serving @>
-
-    [<Fact>]
-    member _.``The boundary fills the log frame for a product call``() =
-        client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id))
-        |> ignore
-
-        let frame =
-            recordOf "/meetups.v1.MeetupsService/GetMeetup"
-            |> Option.map (fun entry ->
-                entry.Fields.TryFind "service", entry.Fields.TryFind "result", entry.Fields.ContainsKey "duration_us"
-            )
-
-        test <@ frame = Some(Some "meetups", Some "ok", true) @>
 
     /// Объявленный отказ — часть контракта, а не сбой сервиса: Warning без stack и
     /// код транспорта в своём поле, а не в result. До этой задачи такого отказа у

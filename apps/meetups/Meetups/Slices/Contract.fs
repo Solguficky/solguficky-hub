@@ -115,13 +115,13 @@ module Outbound =
         | Tentative date -> Meetups.V1.Schedule(Tentative = dateValue date)
         | Fixed date -> Meetups.V1.Schedule(Fixed = dateValue date)
 
-    let private lifecycle (value: MeetupLifecycle) : Meetups.V1.MeetupLifecycle =
+    let lifecycle (value: MeetupLifecycle) : Meetups.V1.MeetupLifecycle =
         match value with
         | Planned -> Meetups.V1.MeetupLifecycle.Planned
         | Held -> Meetups.V1.MeetupLifecycle.Held
         | Cancelled -> Meetups.V1.MeetupLifecycle.Cancelled
 
-    let private visibility (value: MeetupVisibility) : Meetups.V1.MeetupVisibility =
+    let visibility (value: MeetupVisibility) : Meetups.V1.MeetupVisibility =
         match value with
         | Hidden -> Meetups.V1.MeetupVisibility.Hidden
         | Visible -> Meetups.V1.MeetupVisibility.Visible
