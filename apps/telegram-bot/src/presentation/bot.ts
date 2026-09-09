@@ -267,13 +267,21 @@ async function handleCallback(
 ): Promise<void> {
   await ctx.answerCallbackQuery();
   const action = parseCallback(ctx.callbackQuery?.data);
-  if (action.kind === "outdated" || action.kind === "malformed") {
-    await ctx.reply("Этот экран устарел. Открой актуальное меню через /start.");
+  if (action.kind === "malformed") {
+    await editScreen(
+      ctx,
+      "Не получилось прочитать эту кнопку. Открой актуальное меню.",
+      new InlineKeyboard().text("К списку", "v1:nav:hub"),
+    );
     return;
   }
-  const person = await resolvePerson(ctx, runtime);
+  const retryCallback =
+    action.kind === "outdated"
+      ? "v1:nav:hub"
+      : (ctx.callbackQuery?.data ?? "v1:nav:hub");
+  const person = await resolvePerson(ctx, runtime, retryCallback);
   if (person === undefined) return;
-  if (action.kind === "hub") {
+  if (action.kind === "hub" || action.kind === "outdated") {
     const result = await runtime.dispatcher.execute({
       identity: person,
       intent: "list-visible-meetups",
@@ -494,6 +502,7 @@ function meetupListLine(meetup: MeetupSummary): string {
 async function resolvePerson(
   ctx: UpdateContext,
   runtime: BotRuntime,
+  retryCallback?: string,
 ): Promise<Person | undefined> {
   const from = ctx.from;
   if (from === undefined) return undefined;
@@ -502,7 +511,15 @@ async function resolvePerson(
     ctx.requestId,
   );
   if (resolved.kind !== "resolved") {
-    await ctx.reply(unavailableText);
+    if (retryCallback === undefined) {
+      await ctx.reply(unavailableText);
+    } else {
+      await editScreen(
+        ctx,
+        unavailableText,
+        new InlineKeyboard().text("Повторить", retryCallback),
+      );
+    }
     return undefined;
   }
   return { identityId: resolved.identityId, globalRoles: resolved.globalRoles };

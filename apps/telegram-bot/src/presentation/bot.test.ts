@@ -381,6 +381,56 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("fails closed on a callback and edits the screen after acknowledging it", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const identity: IdentityResolver = {
+      resolve: async () => ({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]).toMatchObject({
+      payload: {
+        text: expect.stringContaining("Это на моей стороне"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds an outdated callback from current Meetups state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v2:nav:hub"));
+
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(execute).toHaveBeenCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: [],
+      },
+      intent: "list-visible-meetups",
+      requestId: expect.any(String),
+    });
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("ни одной запланированной") },
+    });
+  });
+
   it("opens a meetup from the parsed deep link payload", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",
