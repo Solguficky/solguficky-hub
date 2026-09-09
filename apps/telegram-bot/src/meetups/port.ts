@@ -16,6 +16,12 @@ export type MeetupSnapshot = {
   schedule?: MeetupSchedule;
 };
 
+export type MeetupSummary = {
+  id: string;
+  title: string;
+  schedule?: { year: number; month: number; day: number };
+};
+
 export type MeetupFailure =
   | { kind: "forbidden" }
   | { kind: "invalid"; message: string }
@@ -25,7 +31,12 @@ export type MeetupResult =
   | { kind: "ok"; meetup: MeetupSnapshot }
   | MeetupFailure;
 
+export type MeetupListResult =
+  | { kind: "ok"; meetups: readonly MeetupSummary[] }
+  | MeetupFailure;
+
 export type Meetups = {
+  listVisible(person: Person, requestId?: string): Promise<MeetupListResult>;
   createDraft(
     person: Person,
     id: string,

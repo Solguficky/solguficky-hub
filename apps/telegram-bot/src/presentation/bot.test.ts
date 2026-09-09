@@ -265,6 +265,106 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(records.some((record) => record.level === "info")).toBe(false);
     expectBoundary(records[0], { level: "debug", result: "ok" });
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Ближайшие сходки", callback_data: "v1:nav:hub" }],
+          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+        ],
+      },
+    });
+  });
+
+  it("renders an empty meetup list as an empty state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("ни одной запланированной сходки"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("groups dated meetups before meetups without a date", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Без даты",
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Настолки",
+          schedule: { year: 2026, month: 8, day: 15 },
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringMatching(
+          /^Ближайшие сходки\n\nС датой\n• 15 авг, сб — Настолки\n\nБез даты\n• Без даты$/,
+        ),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("renders Meetups unavailability as E-05 instead of an empty list", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Не получилось загрузить сходки"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("renders a dispatcher rejection as E-05 instead of going silent", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "meetups-not-configured",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Не получилось загрузить сходки"),
+      },
+    });
   });
 
   it("passes the parsed deep link payload to the dispatcher", async () => {

@@ -18,4 +18,8 @@ describe("callback parser", () => {
       token: "AZLzpLXGfY6fChssPU5fYA",
     });
   });
+
+  it("parses the hub navigation action", () => {
+    expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
+  });
 });

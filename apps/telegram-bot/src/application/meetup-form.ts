@@ -7,7 +7,10 @@ import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
 
 export function createMeetupForm(meetups: Meetups) {
   return async (
-    request: Exclude<ExecuteRequest, { intent: "start" }>,
+    request: Extract<
+      ExecuteRequest,
+      { intent: "create-meetup" | "set-meetup-field" | "publish-meetup" }
+    >,
   ): Promise<ExecuteResult> => {
     switch (request.intent) {
       case "create-meetup":
@@ -150,7 +153,13 @@ function failure(
 function invalidField(
   field: Exclude<
     ExecuteRequest,
-    { intent: "start" | "create-meetup" | "publish-meetup" }
+    {
+      intent:
+        | "start"
+        | "list-visible-meetups"
+        | "create-meetup"
+        | "publish-meetup";
+    }
   >["field"],
   meetup: MeetupSnapshot,
   message: string,

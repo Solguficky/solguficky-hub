@@ -1,6 +1,6 @@
 # Telegram Bot
 
-Первый TypeScript-компонент платформы. Принимает `/start` в личном чате, разрешает личность через Identity и ведёт форму создания сходки, сохраняя каждый шаг в Meetups.
+Первый TypeScript-компонент платформы. Принимает `/start` в личном чате, разрешает личность через Identity, показывает полученный из Meetups список видимых сходок и ведёт форму создания сходки, сохраняя каждый шаг в Meetups. Список разделяет сходки с датой и без неё; пустой ответ и недоступность Meetups показаны разными экранами.
 
 Сгенерированный контракт Identity лежит в `gen/` и в Git не хранится. Команда сборки сначала вызывает `buf generate`.
 
@@ -29,4 +29,4 @@ just telegram-bot-run
 - `src/presentation/` — grammY, разбор update, Zod-схемы недоверенного ввода.
 - `src/application/` — диспетчер и юзкейсы. Сюда не импортируют `grammy`.
 - `src/identity/` — клиент `ResolveIdentity` через Connect gRPC.
-- `src/meetups/` — клиент команд формы Meetups через Connect gRPC.
+- `src/meetups/` — клиент команд формы и `ListVisibleMeetups` через Connect gRPC.

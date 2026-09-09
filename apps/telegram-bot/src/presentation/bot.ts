@@ -9,6 +9,7 @@ import {
   toResolveIdentityInput,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
+import type { MeetupSummary } from "../meetups/port.js";
 import { parseCallback } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -174,10 +175,10 @@ async function handleMessage(
     switch (result.kind) {
       case "message":
         await ctx.reply(result.text, {
-          reply_markup: new InlineKeyboard().text(
-            "Управление сходками",
-            "v1:manage:menu",
-          ),
+          reply_markup: new InlineKeyboard()
+            .text("Ближайшие сходки", "v1:nav:hub")
+            .row()
+            .text("Управление сходками", "v1:manage:menu"),
         });
         outcome = {
           level: "debug",
@@ -200,6 +201,7 @@ async function handleMessage(
       case "preview":
       case "published":
       case "dependency-rejected":
+      case "meetup-list":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -245,6 +247,15 @@ async function handleCallback(
   }
   const person = await resolvePerson(ctx, runtime);
   if (person === undefined) return;
+  if (action.kind === "hub") {
+    const result = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "list-visible-meetups",
+      ...requestId(ctx),
+    });
+    await renderMeetupList(ctx, result);
+    return;
+  }
   if (action.kind === "manage-menu") {
     const id = createUuidV7();
     await ctx.reply("Управление сходками", {
@@ -275,6 +286,89 @@ async function handleCallback(
     await renderFormResult(ctx, result, questions);
     return;
   }
+}
+
+async function renderMeetupList(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+): Promise<void> {
+  if (result.kind === "meetup-list") {
+    const keyboard = meetupListKeyboard();
+    const text =
+      result.meetups.length === 0
+        ? `Пока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.`
+        : meetupListText(result.meetups);
+    await editScreen(ctx, text, keyboard);
+    return;
+  }
+  if (result.kind === "dependency-rejected" || result.kind === "rejected") {
+    await editScreen(
+      ctx,
+      `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
+      new InlineKeyboard().text("Повторить", "v1:nav:hub"),
+    );
+  }
+}
+
+async function editScreen(
+  ctx: UpdateContext,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<void> {
+  try {
+    await ctx.editMessageText(text, { reply_markup: keyboard });
+  } catch (cause) {
+    if (errorText(cause).includes("message is not modified")) {
+      return;
+    }
+    await ctx.reply(text, { reply_markup: keyboard });
+  }
+}
+
+function meetupListText(meetups: readonly MeetupSummary[]): string {
+  const dated = meetups.filter((meetup) => meetup.schedule !== undefined);
+  const undated = meetups.filter((meetup) => meetup.schedule === undefined);
+  const sections = [
+    meetupSection("С датой", dated),
+    meetupSection("Без даты", undated),
+  ].filter((section) => section !== undefined);
+  return ["Ближайшие сходки", ...sections].join("\n\n");
+}
+
+function meetupSection(
+  heading: string,
+  meetups: readonly MeetupSummary[],
+): string | undefined {
+  return meetups.length === 0
+    ? undefined
+    : `${heading}\n${meetups.map(meetupListLine).join("\n")}`;
+}
+
+function meetupListKeyboard(): InlineKeyboard {
+  // Карточка и переход к ней принадлежат PER-62. Пока строка списка не должна
+  // притворяться рабочей кнопкой с callback, который этот срез не обрабатывает.
+  return new InlineKeyboard().text("Обновить", "v1:nav:hub");
+}
+
+function meetupListLine(meetup: MeetupSummary): string {
+  if (meetup.schedule === undefined) {
+    return `• ${meetup.title}`;
+  }
+  const { year, month, day } = meetup.schedule;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const monthLabel = new Intl.DateTimeFormat("ru-RU", {
+    month: "short",
+    timeZone: "UTC",
+  })
+    .format(date)
+    .replaceAll(".", "");
+  const weekdayLabel = new Intl.DateTimeFormat("ru-RU", {
+    weekday: "short",
+    timeZone: "UTC",
+  })
+    .format(date)
+    .replaceAll(".", "");
+  return `• ${day} ${monthLabel}, ${weekdayLabel} — ${meetup.title}`;
 }
 
 async function resolvePerson(
