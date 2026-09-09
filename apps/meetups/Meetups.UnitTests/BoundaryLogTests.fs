@@ -76,6 +76,20 @@ let ``A failure the service declared itself is a warning without a stack`` () =
     test <@ thrown |> Option.map (fun exn -> exn.GetType()) = Some(typeof<RpcException>) @>
 
 [<Fact>]
+let ``A concealed meetup denial records its real reason only in the boundary log`` () =
+    let declined = RpcException(Status(StatusCode.NotFound, "meetup not found"))
+    declined.Data["meetups.denial_reason"] <- "not_visible"
+
+    let records, thrown =
+        intercept product (fun () -> Task.FromException<string> declined)
+
+    let record = only records
+
+    test <@ record.Fields.TryFind "denial_reason" = Some "not_visible" @>
+    test <@ declined.Status.Detail = "meetup not found" @>
+    test <@ thrown = Some(declined :> exn) @>
+
+[<Fact>]
 let ``Cancellation is a warning, not a service failure`` () =
     use cancelled = new CancellationTokenSource()
     cancelled.Cancel()

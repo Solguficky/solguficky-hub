@@ -31,7 +31,15 @@ module Composition =
 
     let buildRead (services: IServiceProvider) =
         let source = services.GetRequiredService<NpgsqlDataSource>()
-        fun viewer -> MeetupReading.read source viewer MeetupReading.Scope.All
+
+        fun viewer ->
+            task {
+                match! MeetupReading.read source viewer MeetupReading.Scope.All with
+                | MeetupReading.ReadResult.Snapshots snapshots -> return snapshots
+                | MeetupReading.ReadResult.NotFound
+                | MeetupReading.ReadResult.NotVisible ->
+                    return invalidOp "an unscoped meetup read returned a lookup denial"
+            }
 
 module Api =
 

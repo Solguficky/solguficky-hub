@@ -14,6 +14,12 @@ type Scope =
     | All
     | ById of MeetupId
 
+[<RequireQualifiedAccess>]
+type ReadResult =
+    | Snapshots of MeetupSnapshot list
+    | NotFound
+    | NotVisible
+
 do Db.ensureTypeHandlers ()
 
 let private selectAllSql =
@@ -39,25 +45,56 @@ let private selectAllSql =
     FROM meetups
     """
 
-let private selectByIdSql = selectAllSql + " WHERE id = @id"
+let private visibleToViewerSql =
+    """
+    WHERE (
+        visibility = 'visible'
+        OR author = @viewer_id
+        OR @is_administrator
+    )
+    """
 
-/// PER-58 вводит обязательный viewer-aware шов, но правило наблюдаемости остаётся
-/// границей PER-59. Поэтому смотрящий пока намеренно не влияет на результат: этот
-/// временный путь пропускает все строки и не обращается к Identity.
-let read (source: NpgsqlDataSource) (_viewer: Viewer) (scope: Scope) : Task<MeetupSnapshot list> =
+let private selectVisibleSql = selectAllSql + visibleToViewerSql
+let private selectVisibleByIdSql = selectVisibleSql + " AND id = @id"
+let private existsByIdSql = "SELECT EXISTS (SELECT 1 FROM meetups WHERE id = @id)"
+
+/// Both lookup outcomes execute the same two statements in the same order. The
+/// second lookup is not skipped after a visible hit: keeping the database work
+/// independent of existence prevents the hidden/missing branch order from
+/// becoming a useful timing oracle while retaining the real denial reason for
+/// the boundary log.
+let read (source: NpgsqlDataSource) (viewer: Viewer) (scope: Scope) : Task<ReadResult> =
     task {
         use! connection = source.OpenConnectionAsync()
 
-        let! rows =
-            match scope with
-            | Scope.All -> connection.QueryAsync<MeetupRow.MeetupRow>(selectAllSql)
-            | Scope.ById(MeetupId id) ->
+        let (PersonId viewerId) = viewer.IdentityId
+
+        let parameters =
+            {|
+                viewer_id = viewerId
+                is_administrator = Viewer.isAdministrator viewer
+            |}
+
+        match scope with
+        | Scope.All ->
+            let! rows = connection.QueryAsync<MeetupRow.MeetupRow>(selectVisibleSql, parameters)
+            return rows |> Seq.map MeetupRow.toSnapshot |> List.ofSeq |> ReadResult.Snapshots
+        | Scope.ById(MeetupId id) ->
+            let! rows =
                 connection.QueryAsync<MeetupRow.MeetupRow>(
-                    selectByIdSql,
+                    selectVisibleByIdSql,
                     {|
                         id = id
+                        viewer_id = viewerId
+                        is_administrator = Viewer.isAdministrator viewer
                     |}
                 )
 
-        return rows |> Seq.map MeetupRow.toSnapshot |> List.ofSeq
+            let! exists = connection.ExecuteScalarAsync<bool>(existsByIdSql, {| id = id |})
+
+            match rows |> Seq.map MeetupRow.toSnapshot |> List.ofSeq with
+            | [ snapshot ] -> return ReadResult.Snapshots [ snapshot ]
+            | [] when exists -> return ReadResult.NotVisible
+            | [] -> return ReadResult.NotFound
+            | _ -> return invalidOp "a primary-key lookup returned more than one meetup"
     }

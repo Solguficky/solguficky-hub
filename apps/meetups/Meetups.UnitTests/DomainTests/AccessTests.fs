@@ -32,3 +32,29 @@ let ``Administrator should be recognised among several roles`` () =
         }
 
     test <@ Viewer.isAdministrator viewer @>
+
+[<Fact>]
+let ``A published meetup should be visible to the community`` () =
+    test <@ Access.canView Sample.ordinary (Meetup.toSnapshot Sample.published) @>
+
+[<Fact>]
+let ``A hidden meetup should be visible to its author`` () =
+    test <@ Access.canView Sample.ordinary (Meetup.toSnapshot Sample.draft) @>
+
+[<Fact>]
+let ``A hidden meetup should be visible to any administrator`` () =
+    let otherAdministrator =
+        { Sample.administrator with
+            IdentityId = Sample.otherAuthorId
+        }
+
+    test <@ Access.canView otherAdministrator (Meetup.toSnapshot Sample.draft) @>
+
+[<Fact>]
+let ``A hidden meetup should not be visible to another ordinary viewer`` () =
+    let stranger =
+        { Sample.ordinary with
+            IdentityId = Sample.otherAuthorId
+        }
+
+    test <@ not (Access.canView stranger (Meetup.toSnapshot Sample.draft)) @>
