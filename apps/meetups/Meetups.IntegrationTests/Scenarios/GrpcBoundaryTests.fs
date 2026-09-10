@@ -29,7 +29,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
     let recordOf operation =
         host.Records
-        |> List.tryFind (fun entry -> entry.Fields.TryFind "operation" = Some operation)
+        |> List.tryFindBack (fun entry -> entry.Fields.TryFind "operation" = Some operation)
 
     interface IClassFixture<MeetupsHostFixture>
 
@@ -130,25 +130,37 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
             <@ frame = Some(Microsoft.Extensions.Logging.LogLevel.Warning, Some "error", Some "PermissionDenied", false) @>
 
     [<Fact>]
-    member _.``The boundary omits fields it has nothing to fill``() =
+    member _.``The boundary records an incoming request id as a structured field``() =
+        let headers = Metadata()
+        headers.Add("x-request-id", "request-42")
+
         Rpc.codeOf (fun () ->
-            client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id))
+            client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id), headers)
             |> ignore
         )
         |> ignore
 
-        // Утверждение идёт по найденной записи, а не по пустому множеству: иначе
-        // тест остался бы зелёным с выключенным интерцептором. Пустое значение
-        // неотличимо от заполненного при запросе на существование поля, поэтому
-        // use_case и request_id опускаются до PER-104 и PER-65.
         let declared =
             recordOf "/meetups.v1.MeetupsService/PublishMeetup"
             |> Option.map (fun entry ->
-                [ "use_case"; "request_id" ]
-                |> List.filter entry.Fields.ContainsKey
+                entry.Fields.TryFind "request_id", entry.Fields.ContainsKey "use_case"
             )
 
-        test <@ declared = Some [] @>
+        test <@ declared = Some(Some "request-42", false) @>
+
+    [<Fact>]
+    member _.``The boundary omits a request id when the caller sent none``() =
+        Rpc.codeOf (fun () ->
+            client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id))
+            |> ignore
+        )
+        |> ignore
+
+        let hasRequestId =
+            recordOf "/meetups.v1.MeetupsService/GetMeetup"
+            |> Option.map (fun entry -> entry.Fields.ContainsKey "request_id")
+
+        test <@ hasRequestId = Some false @>
 
     [<Fact>]
     member _.``The readiness probe leaves no boundary record``() =
