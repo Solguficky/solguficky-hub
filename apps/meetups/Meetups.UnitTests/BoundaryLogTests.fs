@@ -13,7 +13,7 @@ open Xunit
 
 /// Прогоняет один вызов через интерцептор и возвращает снятые записи вместе с
 /// тем, что вылетело наружу: граница обязана и записать отказ, и пропустить его.
-let private intercept method (continuation: unit -> Task<string>) =
+let private interceptWithContext (context: ServerCallContext) (continuation: unit -> Task<string>) =
     let records = ConcurrentQueue<LogRecord>()
 
     use factory =
@@ -28,11 +28,7 @@ let private intercept method (continuation: unit -> Task<string>) =
     let thrown =
         try
             interceptor
-                .UnaryServerHandler(
-                    "request",
-                    FakeServerCallContext method,
-                    UnaryServerMethod<string, string>(fun _ _ -> continuation ())
-                )
+                .UnaryServerHandler("request", context, UnaryServerMethod<string, string>(fun _ _ -> continuation ()))
                 .GetAwaiter()
                 .GetResult()
             |> ignore
@@ -42,6 +38,8 @@ let private intercept method (continuation: unit -> Task<string>) =
             Some exn
 
     List.ofSeq records, thrown
+
+let private intercept method continuation = interceptWithContext (FakeServerCallContext method) continuation
 
 let private only records = List.exactlyOne records
 
@@ -72,6 +70,7 @@ let ``A failure the service declared itself is a warning without a stack`` () =
     // сделал бы каждый скрытый митап аварией в журнале.
     test <@ record.Level = LogLevel.Warning @>
     test <@ record.Fields.TryFind "grpc_code" = Some "NotFound" @>
+    test <@ record.Fields.TryFind "error_category" = Some "invariant" @>
     test <@ record.Fields.ContainsKey "stack" = false @>
     test <@ thrown |> Option.map (fun exn -> exn.GetType()) = Some(typeof<RpcException>) @>
 
@@ -86,8 +85,20 @@ let ``A concealed meetup denial records its real reason only in the boundary log
     let record = only records
 
     test <@ record.Fields.TryFind "denial_reason" = Some "not_visible" @>
+    test <@ record.Fields.TryFind "error_category" = Some "visibility" @>
     test <@ declined.Status.Detail = "meetup not found" @>
     test <@ thrown = Some(declined :> exn) @>
+
+[<Theory>]
+[<InlineData(StatusCode.PermissionDenied, "authorization")>]
+[<InlineData(StatusCode.FailedPrecondition, "invariant")>]
+[<InlineData(StatusCode.Unavailable, "dependency_unavailable")>]
+[<InlineData(StatusCode.DeadlineExceeded, "timeout")>]
+let ``Declared failures use the shared category dictionary`` (code: StatusCode) expected =
+    let declined = RpcException(Status(code, "declined"))
+    let records, _ = intercept product (fun () -> Task.FromException<string> declined)
+
+    test <@ (only records).Fields.TryFind "error_category" = Some expected @>
 
 [<Fact>]
 let ``Cancellation is a warning, not a service failure`` () =
@@ -101,8 +112,25 @@ let ``Cancellation is a warning, not a service failure`` () =
 
     test <@ record.Level = LogLevel.Warning @>
     test <@ record.Fields.TryFind "grpc_code" = Some "Cancelled" @>
+    test <@ record.Fields.ContainsKey "error_category" = false @>
     test <@ record.Fields.ContainsKey "stack" = false @>
     test <@ thrown.IsSome @>
+
+[<Fact>]
+let ``An expired deadline is counted separately from client cancellation`` () =
+    use cancelled = new CancellationTokenSource()
+    cancelled.Cancel()
+
+    let context =
+        FakeServerCallContext(product, cancelled.Token, DateTime.UtcNow.AddSeconds -1.0)
+
+    let records, _ =
+        interceptWithContext context (fun () -> Task.FromCanceled<string> cancelled.Token)
+
+    let record = only records
+
+    test <@ record.Fields.TryFind "grpc_code" = Some "DeadlineExceeded" @>
+    test <@ record.Fields.TryFind "error_category" = Some "timeout" @>
 
 [<Fact>]
 let ``An unexpected failure keeps its cause and is recorded once with a stack`` () =
@@ -116,6 +144,7 @@ let ``An unexpected failure keeps its cause and is recorded once with a stack`` 
     test <@ record.Level = LogLevel.Error @>
     test <@ record.Fields.TryFind "result" = Some "error" @>
     test <@ record.Fields.TryFind "error" = Some "storage is gone" @>
+    test <@ record.Fields.TryFind "error_category" = Some "unexpected" @>
     test <@ record.Exception = Some(broken :> exn) @>
     test <@ thrown = Some(broken :> exn) @>
 

@@ -61,6 +61,12 @@ export function createMeetupsAdapter(
     } catch (cause) {
       if (
         cause instanceof ConnectError &&
+        cause.code === Code.DeadlineExceeded
+      ) {
+        return { kind: "timeout", cause };
+      }
+      if (
+        cause instanceof ConnectError &&
         cause.code === Code.PermissionDenied
       ) {
         return { kind: "forbidden" };
@@ -89,6 +95,12 @@ export function createMeetupsAdapter(
         );
         return { kind: "ok", meetups: response.meetups.map(toSummary) };
       } catch (cause) {
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.DeadlineExceeded
+        ) {
+          return { kind: "timeout", cause };
+        }
         if (
           cause instanceof ConnectError &&
           cause.code === Code.PermissionDenied
@@ -125,6 +137,12 @@ export function createMeetupsAdapter(
           ),
         };
       } catch (cause) {
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.DeadlineExceeded
+        ) {
+          return { kind: "timeout", cause };
+        }
         if (cause instanceof ConnectError && cause.code === Code.NotFound) {
           return { kind: "not-found" };
         }

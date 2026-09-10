@@ -55,7 +55,7 @@ export type ExecuteResult =
   | { kind: "published"; meetup: MeetupSnapshot }
   | {
       kind: "dependency-rejected";
-      reason: "forbidden" | "unavailable";
+      reason: "forbidden" | "timeout" | "unavailable";
     }
   | { kind: "dependency-rejected"; reason: "invalid"; message: string }
   | { kind: "rejected"; reason: string };

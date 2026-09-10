@@ -4,6 +4,7 @@ import type { Dispatcher } from "../application/dispatcher.js";
 import { formatSchedule } from "../application/meetup-form.js";
 import type { FormField, Person } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
+import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type IdentityResolver,
   toResolveIdentityInput,
@@ -52,7 +53,7 @@ type BoundaryOutcome =
       message: string;
       result: "error";
       use_case?: string;
-      error_category: string;
+      error_category: FailureCategory;
       error: string;
       stack?: string;
       grpc_code?: string;
@@ -102,10 +103,13 @@ async function handleMessage(
       if (ctx.from?.id !== pending.telegramUserId) {
         return;
       }
-      const person = await resolvePerson(ctx, runtime);
-      if (person === undefined) return;
+      const identity = await resolvePerson(ctx, runtime);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
       const result = await runtime.dispatcher.execute({
-        identity: person,
+        identity: identity.person,
         intent: "set-meetup-field",
         field: pending.field,
         value: ctx.message.text,
@@ -143,7 +147,7 @@ async function handleMessage(
         level: "warn",
         message: "malformed telegram update",
         result: "error",
-        error_category: "malformed",
+        error_category: "invariant",
         error: "telegram update failed validation",
       };
       return;
@@ -199,14 +203,23 @@ async function handleMessage(
               result: "ok",
               use_case: "view_meetup",
             }
-          : {
-              level: "warn",
-              message: "meetup card rejected",
-              result: "error",
-              use_case: "view_meetup",
-              error_category: result.reason,
-              error: result.reason,
-            };
+          : result.kind === "dependency-rejected"
+            ? {
+                level: "warn",
+                message: "meetup card rejected",
+                result: "error",
+                use_case: "view_meetup",
+                error_category: dependencyCategory(result.reason),
+                error: result.reason,
+              }
+            : {
+                level: "error",
+                message: "meetup card rejected",
+                result: "error",
+                use_case: "view_meetup",
+                error_category: "unexpected",
+                error: result.reason,
+              };
       return;
     }
     switch (result.kind) {
@@ -233,7 +246,7 @@ async function handleMessage(
           message: "unexpected form result",
           result: "error",
           use_case: "start",
-          error_category: "unhandled_result",
+          error_category: "unexpected",
           error: result.kind,
         };
         return;
@@ -244,7 +257,7 @@ async function handleMessage(
           message: "unhandled dispatcher result",
           result: "error",
           use_case: "start",
-          error_category: "unhandled_result",
+          error_category: "unexpected",
           error: String(_exhaustive),
         };
       }
@@ -279,8 +292,12 @@ async function handleCallback(
     action.kind === "outdated"
       ? "v1:nav:hub"
       : (ctx.callbackQuery?.data ?? "v1:nav:hub");
-  const person = await resolvePerson(ctx, runtime, retryCallback);
-  if (person === undefined) return;
+  const identity = await resolvePerson(ctx, runtime, retryCallback);
+  if (identity.kind === "failed") {
+    writeBoundary(runtime.logger, ctx, identity.outcome);
+    return;
+  }
+  const person = identity.person;
   if (action.kind === "hub" || action.kind === "outdated") {
     const result = await runtime.dispatcher.execute({
       identity: person,
@@ -503,9 +520,14 @@ async function resolvePerson(
   ctx: UpdateContext,
   runtime: BotRuntime,
   retryCallback?: string,
-): Promise<Person | undefined> {
+): Promise<
+  | { kind: "resolved"; person: Person }
+  | { kind: "failed"; outcome: BoundaryOutcome }
+> {
   const from = ctx.from;
-  if (from === undefined) return undefined;
+  if (from === undefined) {
+    return { kind: "failed", outcome: unexpectedOutcome("sender is missing") };
+  }
   const resolved = await runtime.identity.resolve(
     toResolveIdentityInput(BigInt(from.id), from.username),
     ctx.requestId,
@@ -520,9 +542,15 @@ async function resolvePerson(
         new InlineKeyboard().text("Повторить", retryCallback),
       );
     }
-    return undefined;
+    return { kind: "failed", outcome: identityFailureOutcome(resolved) };
   }
-  return { identityId: resolved.identityId, globalRoles: resolved.globalRoles };
+  return {
+    kind: "resolved",
+    person: {
+      identityId: resolved.identityId,
+      globalRoles: resolved.globalRoles,
+    },
+  };
 }
 
 async function renderFormResult(
@@ -636,7 +664,7 @@ function identityFailureOutcome(
       message: "identity rejected the request",
       result: "error",
       use_case: "start",
-      error_category: "identity_rejected",
+      error_category: grpcFailureCategory(resolved.code),
       grpc_code: resolved.code,
       error: errorText(resolved.cause),
     };
@@ -646,7 +674,7 @@ function identityFailureOutcome(
     message: "identity unavailable",
     result: "error",
     use_case: "start",
-    error_category: "identity_unavailable",
+    error_category: unavailableCategory(resolved.cause),
     error: errorText(resolved.cause),
   };
 }
@@ -706,6 +734,7 @@ function writeBoundary(
     fields.use_case = outcome.use_case;
   }
   if (outcome.result === "error") {
+    countFailure(outcome.error_category);
     fields.error_category = outcome.error_category;
     fields.error = outcome.error;
     if (outcome.stack !== undefined) {
@@ -719,6 +748,47 @@ function writeBoundary(
     }
   }
   logger[outcome.level](outcome.message, fields);
+}
+
+function grpcFailureCategory(code: string): FailureCategory {
+  switch (code) {
+    case "PermissionDenied":
+    case "Unauthenticated":
+      return "authorization";
+    case "DeadlineExceeded":
+      return "timeout";
+    case "Unavailable":
+      return "dependency_unavailable";
+    case "InvalidArgument":
+    case "FailedPrecondition":
+    case "Aborted":
+    case "AlreadyExists":
+    case "NotFound":
+    case "OutOfRange":
+      return "invariant";
+    default:
+      return "unexpected";
+  }
+}
+
+function dependencyCategory(reason: string): FailureCategory {
+  switch (reason) {
+    case "forbidden":
+      return "authorization";
+    case "invalid":
+      return "invariant";
+    case "timeout":
+      return "timeout";
+    default:
+      return "dependency_unavailable";
+  }
+}
+
+function unavailableCategory(cause: unknown): FailureCategory {
+  const text = errorText(cause).toLowerCase();
+  return text.includes("deadline") || text.includes("timeout")
+    ? "timeout"
+    : "dependency_unavailable";
 }
 
 function errorText(cause: unknown): string {

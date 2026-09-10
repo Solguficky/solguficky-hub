@@ -40,6 +40,18 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	metrics, err := startMetrics(ctx)
+	if err != nil {
+		log.Error("metrics setup failed", "service", server.ServiceName, "error", err)
+		return 1
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := metrics.Shutdown(shutdownCtx); err != nil {
+			log.Error("metrics shutdown failed", "service", server.ServiceName, "error", err)
+		}
+	}()
 
 	db, err := openStore(ctx)
 	if err != nil {

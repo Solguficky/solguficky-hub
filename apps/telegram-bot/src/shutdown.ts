@@ -6,7 +6,7 @@ export type Stoppable = {
 };
 
 export type Closable = {
-  close(): void;
+  close(): void | Promise<void>;
 };
 
 export type Shutdown = {
@@ -70,7 +70,7 @@ export function createShutdown(options: {
           });
         }
       }
-      options.resources.close();
+      await options.resources.close();
       options.logger.info("graceful shutdown complete");
     } finally {
       clearTimeout(force);
