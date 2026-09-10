@@ -32,12 +32,13 @@ type HiddenMeetupReadTests() =
     [<Fact>]
     member _.``Every contract read operation has a hidden-meetup scenario``() =
         let writeOperations =
-            set [
-                "CreateMeetupDraft"
-                "ChangeMeetupAttributes"
-                "SetMeetupSchedule"
-                "PublishMeetup"
-            ]
+            set
+                [
+                    "CreateMeetupDraft"
+                    "ChangeMeetupAttributes"
+                    "SetMeetupSchedule"
+                    "PublishMeetup"
+                ]
 
         let contractReadOperations =
             MeetupsService.Descriptor.Methods
