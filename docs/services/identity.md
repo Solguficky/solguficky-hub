@@ -143,8 +143,8 @@ Identity реализуется на Go. Сложного домена здес�
 - метод разрешения внутреннего идентификатора в Telegram id: отдельный вызов или расширение существующего;
 - чем запись роли назовёт `granted_by` при выдаче maintainer'ом — [PER-169](https://linear.app/anticnvm/issue/per-169);
 - набор и формат административных команд бота;
-- формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29);
+- формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29), разбор — [RFC-009](../rfcs/RFC-009-identity-access-data-retention.md);
 - timeout при fail-closed; тексты ответов человеку — часть дизайн-сессии [PER-32](https://linear.app/anticnvm/issue/per-32);
-- retention заблокированных профилей, погашенных записей whitelist и истёкших токенов — [PER-29](https://linear.app/anticnvm/issue/per-29).
+- retention заблокированных профилей, погашенных записей whitelist и истёкших токенов — [PER-29](https://linear.app/anticnvm/issue/per-29), разбор — [RFC-009](../rfcs/RFC-009-identity-access-data-retention.md).
 
 Контракт разрешения личности зафиксирован в `contracts/proto/` и [integration.md](../architecture/integration.md). События, обратное разрешение в Telegram id и служебные endpoints остаются после закрытия открытых вопросов. Решения по модели, стеку, первому администратору и authentication endpoint — в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), [ADR-027](../decisions/ADR-027-identity-go-stack.md), [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md) и [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md).
