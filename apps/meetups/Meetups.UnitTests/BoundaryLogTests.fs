@@ -72,6 +72,7 @@ let ``A failure the service declared itself is a warning without a stack`` () =
     // сделал бы каждый скрытый митап аварией в журнале.
     test <@ record.Level = LogLevel.Warning @>
     test <@ record.Fields.TryFind "grpc_code" = Some "NotFound" @>
+    test <@ record.Fields.TryFind "error_category" = Some "invariant" @>
     test <@ record.Fields.ContainsKey "stack" = false @>
     test <@ thrown |> Option.map (fun exn -> exn.GetType()) = Some(typeof<RpcException>) @>
 
@@ -86,8 +87,20 @@ let ``A concealed meetup denial records its real reason only in the boundary log
     let record = only records
 
     test <@ record.Fields.TryFind "denial_reason" = Some "not_visible" @>
+    test <@ record.Fields.TryFind "error_category" = Some "visibility" @>
     test <@ declined.Status.Detail = "meetup not found" @>
     test <@ thrown = Some(declined :> exn) @>
+
+[<Theory>]
+[<InlineData(StatusCode.PermissionDenied, "authorization")>]
+[<InlineData(StatusCode.FailedPrecondition, "invariant")>]
+[<InlineData(StatusCode.Unavailable, "dependency_unavailable")>]
+[<InlineData(StatusCode.DeadlineExceeded, "timeout")>]
+let ``Declared failures use the shared category dictionary`` (code: StatusCode) expected =
+    let declined = RpcException(Status(code, "declined"))
+    let records, _ = intercept product (fun () -> Task.FromException<string> declined)
+
+    test <@ (only records).Fields.TryFind "error_category" = Some expected @>
 
 [<Fact>]
 let ``Cancellation is a warning, not a service failure`` () =
@@ -101,6 +114,7 @@ let ``Cancellation is a warning, not a service failure`` () =
 
     test <@ record.Level = LogLevel.Warning @>
     test <@ record.Fields.TryFind "grpc_code" = Some "Cancelled" @>
+    test <@ record.Fields.TryFind "error_category" = Some "timeout" @>
     test <@ record.Fields.ContainsKey "stack" = false @>
     test <@ thrown.IsSome @>
 
@@ -116,6 +130,7 @@ let ``An unexpected failure keeps its cause and is recorded once with a stack`` 
     test <@ record.Level = LogLevel.Error @>
     test <@ record.Fields.TryFind "result" = Some "error" @>
     test <@ record.Fields.TryFind "error" = Some "storage is gone" @>
+    test <@ record.Fields.TryFind "error_category" = Some "unexpected" @>
     test <@ record.Exception = Some(broken :> exn) @>
     test <@ thrown = Some(broken :> exn) @>
 

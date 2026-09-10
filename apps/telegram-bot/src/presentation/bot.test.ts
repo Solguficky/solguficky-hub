@@ -479,7 +479,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "warn",
       result: "error",
-      error_category: "unavailable",
+      error_category: "dependency_unavailable",
     });
   });
 
@@ -515,7 +515,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_unavailable",
+      error_category: "dependency_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
     expect(records[0]?.fields.use_case).toBe("start");
@@ -549,7 +549,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_unavailable",
+      error_category: "timeout",
     });
   });
 
@@ -570,7 +570,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_rejected",
+      error_category: "invariant",
     });
     expect(records[0]?.fields.grpc_code).toBe("InvalidArgument");
     expect(records[0]?.fields.use_case).toBe("start");
@@ -621,7 +621,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "warn",
       result: "error",
-      error_category: "malformed",
+      error_category: "invariant",
     });
     expect(records[0]?.fields.use_case).toBeUndefined();
   });
@@ -665,7 +665,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_unavailable",
+      error_category: "dependency_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
     expect(records[0]?.fields.reply_error).toContain("Forbidden");

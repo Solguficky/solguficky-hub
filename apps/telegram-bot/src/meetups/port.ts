@@ -27,6 +27,7 @@ export type MeetupSummary = {
 export type MeetupFailure =
   | { kind: "forbidden" }
   | { kind: "invalid"; message: string }
+  | { kind: "timeout"; cause: unknown }
   | { kind: "unavailable"; cause: unknown };
 
 export type MeetupResult =

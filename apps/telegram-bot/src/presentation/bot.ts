@@ -4,6 +4,7 @@ import type { Dispatcher } from "../application/dispatcher.js";
 import { formatSchedule } from "../application/meetup-form.js";
 import type { FormField, Person } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
+import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type IdentityResolver,
   toResolveIdentityInput,
@@ -52,7 +53,7 @@ type BoundaryOutcome =
       message: string;
       result: "error";
       use_case?: string;
-      error_category: string;
+      error_category: FailureCategory;
       error: string;
       stack?: string;
       grpc_code?: string;
@@ -143,7 +144,7 @@ async function handleMessage(
         level: "warn",
         message: "malformed telegram update",
         result: "error",
-        error_category: "malformed",
+        error_category: "invariant",
         error: "telegram update failed validation",
       };
       return;
@@ -204,7 +205,7 @@ async function handleMessage(
               message: "meetup card rejected",
               result: "error",
               use_case: "view_meetup",
-              error_category: result.reason,
+              error_category: dependencyCategory(result.reason),
               error: result.reason,
             };
       return;
@@ -233,7 +234,7 @@ async function handleMessage(
           message: "unexpected form result",
           result: "error",
           use_case: "start",
-          error_category: "unhandled_result",
+          error_category: "unexpected",
           error: result.kind,
         };
         return;
@@ -244,7 +245,7 @@ async function handleMessage(
           message: "unhandled dispatcher result",
           result: "error",
           use_case: "start",
-          error_category: "unhandled_result",
+          error_category: "unexpected",
           error: String(_exhaustive),
         };
       }
@@ -636,7 +637,7 @@ function identityFailureOutcome(
       message: "identity rejected the request",
       result: "error",
       use_case: "start",
-      error_category: "identity_rejected",
+      error_category: grpcFailureCategory(resolved.code),
       grpc_code: resolved.code,
       error: errorText(resolved.cause),
     };
@@ -646,7 +647,7 @@ function identityFailureOutcome(
     message: "identity unavailable",
     result: "error",
     use_case: "start",
-    error_category: "identity_unavailable",
+    error_category: unavailableCategory(resolved.cause),
     error: errorText(resolved.cause),
   };
 }
@@ -706,6 +707,7 @@ function writeBoundary(
     fields.use_case = outcome.use_case;
   }
   if (outcome.result === "error") {
+    countFailure(outcome.error_category);
     fields.error_category = outcome.error_category;
     fields.error = outcome.error;
     if (outcome.stack !== undefined) {
@@ -719,6 +721,47 @@ function writeBoundary(
     }
   }
   logger[outcome.level](outcome.message, fields);
+}
+
+function grpcFailureCategory(code: string): FailureCategory {
+  switch (code) {
+    case "PermissionDenied":
+    case "Unauthenticated":
+      return "authorization";
+    case "DeadlineExceeded":
+      return "timeout";
+    case "Unavailable":
+      return "dependency_unavailable";
+    case "InvalidArgument":
+    case "FailedPrecondition":
+    case "Aborted":
+    case "AlreadyExists":
+    case "NotFound":
+    case "OutOfRange":
+      return "invariant";
+    default:
+      return "unexpected";
+  }
+}
+
+function dependencyCategory(reason: string): FailureCategory {
+  switch (reason) {
+    case "forbidden":
+      return "authorization";
+    case "invalid":
+      return "invariant";
+    case "timeout":
+      return "timeout";
+    default:
+      return "dependency_unavailable";
+  }
+}
+
+function unavailableCategory(cause: unknown): FailureCategory {
+  const text = errorText(cause).toLowerCase();
+  return text.includes("deadline") || text.includes("timeout")
+    ? "timeout"
+    : "dependency_unavailable";
 }
 
 function errorText(cause: unknown): string {
