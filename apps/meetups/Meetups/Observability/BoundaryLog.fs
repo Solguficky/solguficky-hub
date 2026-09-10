@@ -34,7 +34,8 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
             then
                 Some entry.Value
             else
-                None)
+                None
+        )
 
     /// reraise() внутри task недоступен: он разрешён только прямо в with-блоке.
     /// Capture().Throw() сохраняет исходный stack.

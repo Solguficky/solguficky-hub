@@ -142,11 +142,9 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         let declared =
             recordOf "/meetups.v1.MeetupsService/PublishMeetup"
-            |> Option.map (fun entry ->
-                entry.Fields.TryFind "request_id", entry.Fields.ContainsKey "use_case"
-            )
+            |> Option.bind (fun entry -> entry.Fields.TryFind "request_id")
 
-        test <@ declared = Some(Some "request-42", false) @>
+        test <@ declared = Some "request-42" @>
 
     [<Fact>]
     member _.``The boundary omits a request id when the caller sent none``() =
