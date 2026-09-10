@@ -28,6 +28,7 @@
     <Compile Include="Scenarios/SchemaTests.fs" />
     <Compile Include="Scenarios/MeetupCommandTests.fs" />
     <Compile Include="Scenarios/MeetupBoundaryTests.fs" />
+    <Compile Include="Scenarios/HiddenMeetupReadTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
