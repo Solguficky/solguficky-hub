@@ -22,6 +22,21 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
     /// каждые несколько секунд, поэтому её запись была бы шумом, а не журналом.
     static let isProbe (method: string) = method.StartsWith "/grpc.health.v1.Health/"
 
+    /// Идентификатор рождается на Telegram-краю и приходит транспортными
+    /// метаданными. Пустой заголовок не превращается в структурное поле:
+    /// logging.md требует опускать значение, которое граница не получила.
+    static let requestId (context: ServerCallContext) =
+        context.RequestHeaders
+        |> Seq.tryPick (fun entry ->
+            if
+                String.Equals(entry.Key, "x-request-id", StringComparison.OrdinalIgnoreCase)
+                && not (String.IsNullOrWhiteSpace entry.Value)
+            then
+                Some entry.Value
+            else
+                None
+        )
+
     /// reraise() внутри task недоступен: он разрешён только прямо в with-блоке.
     /// Capture().Throw() сохраняет исходный stack.
     static let rethrow (exn: exn) = ExceptionDispatchInfo.Capture(exn).Throw()
@@ -35,22 +50,31 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
             task {
                 let started = Stopwatch.GetTimestamp()
                 let elapsedMicroseconds () = int64 (Stopwatch.GetElapsedTime started).TotalMicroseconds
+                let requestId = requestId context
 
                 try
                     let! response = continuation.Invoke(request, context)
 
-                    // use_case и request_id не заполняются: механизмы за PER-104 и
-                    // PER-65. Норматив требует опускать поле, которое нечем
-                    // заполнить, а не писать его пустым. Код транспорта живёт в
-                    // своём поле, а не в result: у result только ok и error.
-                    logger.LogInformation(
-                        "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
-                        service,
-                        context.Method,
-                        "ok",
-                        elapsedMicroseconds (),
-                        string StatusCode.OK
-                    )
+                    match requestId with
+                    | Some id ->
+                        logger.LogInformation(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {request_id}",
+                            service,
+                            context.Method,
+                            "ok",
+                            elapsedMicroseconds (),
+                            string StatusCode.OK,
+                            id
+                        )
+                    | None ->
+                        logger.LogInformation(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
+                            service,
+                            context.Method,
+                            "ok",
+                            elapsedMicroseconds (),
+                            string StatusCode.OK
+                        )
 
                     return response
                 with
@@ -58,8 +82,20 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 // сервиса. Уровень Warning и никакого stack: норматив держит stack
                 // для неожиданного отказа.
                 | :? RpcException as declined ->
-                    match declined.Data["meetups.denial_reason"] with
-                    | :? string as denialReason ->
+                    match declined.Data["meetups.denial_reason"], requestId with
+                    | (:? string as denialReason), Some id ->
+                        logger.LogWarning(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {denial_reason} {request_id}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string declined.StatusCode,
+                            declined.Status.Detail,
+                            denialReason,
+                            id
+                        )
+                    | (:? string as denialReason), None ->
                         logger.LogWarning(
                             "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {denial_reason}",
                             service,
@@ -70,7 +106,18 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                             declined.Status.Detail,
                             denialReason
                         )
-                    | _ ->
+                    | _, Some id ->
+                        logger.LogWarning(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {request_id}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string declined.StatusCode,
+                            declined.Status.Detail,
+                            id
+                        )
+                    | _, None ->
                         logger.LogWarning(
                             "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error}",
                             service,
@@ -86,14 +133,26 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 // Отмена клиентом, истёкший deadline и остановка хоста. Клиент,
                 // закрывший канал, не должен оставлять в журнале сервиса ошибку.
                 | :? OperationCanceledException as cancelled ->
-                    logger.LogWarning(
-                        "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
-                        service,
-                        context.Method,
-                        "error",
-                        elapsedMicroseconds (),
-                        string StatusCode.Cancelled
-                    )
+                    match requestId with
+                    | Some id ->
+                        logger.LogWarning(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {request_id}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string StatusCode.Cancelled,
+                            id
+                        )
+                    | None ->
+                        logger.LogWarning(
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string StatusCode.Cancelled
+                        )
 
                     rethrow cancelled
                     return Unchecked.defaultof<'TResponse>
@@ -103,17 +162,32 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 // что каркас норматива запрашивается по именам полей.
                 // error_category ждёт словаря из PER-66 и пока опущено.
                 | unexpected ->
-                    logger.LogError(
-                        unexpected,
-                        "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {stack}",
-                        service,
-                        context.Method,
-                        "error",
-                        elapsedMicroseconds (),
-                        string StatusCode.Unknown,
-                        unexpected.Message,
-                        unexpected.StackTrace
-                    )
+                    match requestId with
+                    | Some id ->
+                        logger.LogError(
+                            unexpected,
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {stack} {request_id}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string StatusCode.Unknown,
+                            unexpected.Message,
+                            unexpected.StackTrace,
+                            id
+                        )
+                    | None ->
+                        logger.LogError(
+                            unexpected,
+                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error} {stack}",
+                            service,
+                            context.Method,
+                            "error",
+                            elapsedMicroseconds (),
+                            string StatusCode.Unknown,
+                            unexpected.Message,
+                            unexpected.StackTrace
+                        )
 
                     rethrow unexpected
                     return Unchecked.defaultof<'TResponse>
