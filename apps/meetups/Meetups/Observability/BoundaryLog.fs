@@ -113,6 +113,7 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 | :? RpcException as declined ->
                     let category = declaredCategory declined
                     countFailure category
+
                     match declined.Data["meetups.denial_reason"], requestId with
                     | (:? string as denialReason), Some id ->
                         logger.LogWarning(
@@ -168,30 +169,52 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 // Отмена клиентом, истёкший deadline и остановка хоста. Клиент,
                 // закрывший канал, не должен оставлять в журнале сервиса ошибку.
                 | :? OperationCanceledException as cancelled ->
-                    let category = "timeout"
-                    countFailure category
-                    match requestId with
-                    | Some id ->
-                        logger.LogWarning(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {request_id}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string StatusCode.Cancelled,
-                            category,
-                            id
-                        )
-                    | None ->
-                        logger.LogWarning(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string StatusCode.Cancelled,
-                            category
-                        )
+                    if context.Deadline <= DateTime.UtcNow then
+                        countFailure "timeout"
+
+                        match requestId with
+                        | Some id ->
+                            logger.LogWarning(
+                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {request_id}",
+                                service,
+                                context.Method,
+                                "error",
+                                elapsedMicroseconds (),
+                                string StatusCode.DeadlineExceeded,
+                                "timeout",
+                                id
+                            )
+                        | None ->
+                            logger.LogWarning(
+                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category}",
+                                service,
+                                context.Method,
+                                "error",
+                                elapsedMicroseconds (),
+                                string StatusCode.DeadlineExceeded,
+                                "timeout"
+                            )
+                    else
+                        match requestId with
+                        | Some id ->
+                            logger.LogWarning(
+                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {request_id}",
+                                service,
+                                context.Method,
+                                "error",
+                                elapsedMicroseconds (),
+                                string StatusCode.Cancelled,
+                                id
+                            )
+                        | None ->
+                            logger.LogWarning(
+                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
+                                service,
+                                context.Method,
+                                "error",
+                                elapsedMicroseconds (),
+                                string StatusCode.Cancelled
+                            )
 
                     rethrow cancelled
                     return Unchecked.defaultof<'TResponse>
@@ -207,6 +230,7 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                         | _ -> "unexpected"
 
                     countFailure category
+
                     match requestId with
                     | Some id ->
                         logger.LogError(

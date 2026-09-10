@@ -386,7 +386,7 @@ describe("presentation adapter", () => {
     const identity: IdentityResolver = {
       resolve: async () => ({ kind: "unavailable", cause: new Error("down") }),
     };
-    const { bot, calls } = createHarness(identity, { execute });
+    const { bot, calls, records } = createHarness(identity, { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
 
@@ -405,6 +405,58 @@ describe("presentation adapter", () => {
       },
     });
     expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  it("records an Identity refusal while handling a form answer", async () => {
+    let available = true;
+    const identity: IdentityResolver = {
+      resolve: async () =>
+        available
+          ? {
+              kind: "resolved",
+              identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+              globalRoles: [],
+            }
+          : { kind: "unavailable", cause: new Error("down") },
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "ask",
+      field: "title",
+      meetup: {
+        id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+        title: "",
+        description: "",
+        venue: "",
+        lifecycle: "planned",
+        visibility: "hidden",
+      },
+    });
+    const { bot, calls, records } = createHarness(identity, { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    available = false;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Настолки",
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(sendMessageText(calls.at(-1))).toContain("Это на моей стороне");
+    expectBoundary(records.at(-1), {
+      level: "error",
+      result: "error",
+      error_category: "dependency_unavailable",
+    });
   });
 
   it("rebuilds an outdated callback from current Meetups state", async () => {
@@ -480,6 +532,22 @@ describe("presentation adapter", () => {
       level: "warn",
       result: "error",
       error_category: "dependency_unavailable",
+    });
+  });
+
+  it("does not report a dispatcher rejection as dependency unavailability", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "meetups-not-configured",
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
     });
   });
 

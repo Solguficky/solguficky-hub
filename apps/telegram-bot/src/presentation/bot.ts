@@ -103,10 +103,13 @@ async function handleMessage(
       if (ctx.from?.id !== pending.telegramUserId) {
         return;
       }
-      const person = await resolvePerson(ctx, runtime);
-      if (person === undefined) return;
+      const identity = await resolvePerson(ctx, runtime);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
       const result = await runtime.dispatcher.execute({
-        identity: person,
+        identity: identity.person,
         intent: "set-meetup-field",
         field: pending.field,
         value: ctx.message.text,
@@ -200,14 +203,23 @@ async function handleMessage(
               result: "ok",
               use_case: "view_meetup",
             }
-          : {
-              level: "warn",
-              message: "meetup card rejected",
-              result: "error",
-              use_case: "view_meetup",
-              error_category: dependencyCategory(result.reason),
-              error: result.reason,
-            };
+          : result.kind === "dependency-rejected"
+            ? {
+                level: "warn",
+                message: "meetup card rejected",
+                result: "error",
+                use_case: "view_meetup",
+                error_category: dependencyCategory(result.reason),
+                error: result.reason,
+              }
+            : {
+                level: "error",
+                message: "meetup card rejected",
+                result: "error",
+                use_case: "view_meetup",
+                error_category: "unexpected",
+                error: result.reason,
+              };
       return;
     }
     switch (result.kind) {
@@ -280,8 +292,12 @@ async function handleCallback(
     action.kind === "outdated"
       ? "v1:nav:hub"
       : (ctx.callbackQuery?.data ?? "v1:nav:hub");
-  const person = await resolvePerson(ctx, runtime, retryCallback);
-  if (person === undefined) return;
+  const identity = await resolvePerson(ctx, runtime, retryCallback);
+  if (identity.kind === "failed") {
+    writeBoundary(runtime.logger, ctx, identity.outcome);
+    return;
+  }
+  const person = identity.person;
   if (action.kind === "hub" || action.kind === "outdated") {
     const result = await runtime.dispatcher.execute({
       identity: person,
@@ -504,9 +520,14 @@ async function resolvePerson(
   ctx: UpdateContext,
   runtime: BotRuntime,
   retryCallback?: string,
-): Promise<Person | undefined> {
+): Promise<
+  | { kind: "resolved"; person: Person }
+  | { kind: "failed"; outcome: BoundaryOutcome }
+> {
   const from = ctx.from;
-  if (from === undefined) return undefined;
+  if (from === undefined) {
+    return { kind: "failed", outcome: unexpectedOutcome("sender is missing") };
+  }
   const resolved = await runtime.identity.resolve(
     toResolveIdentityInput(BigInt(from.id), from.username),
     ctx.requestId,
@@ -521,9 +542,15 @@ async function resolvePerson(
         new InlineKeyboard().text("Повторить", retryCallback),
       );
     }
-    return undefined;
+    return { kind: "failed", outcome: identityFailureOutcome(resolved) };
   }
-  return { identityId: resolved.identityId, globalRoles: resolved.globalRoles };
+  return {
+    kind: "resolved",
+    person: {
+      identityId: resolved.identityId,
+      globalRoles: resolved.globalRoles,
+    },
+  };
 }
 
 async function renderFormResult(

@@ -4,6 +4,7 @@ import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createBot } from "./presentation/bot.js";
 import { createShutdown } from "./shutdown.js";
+import { startMetrics } from "./telemetry.js";
 
 const shutdownTimeoutMs = 15_000;
 
@@ -27,6 +28,7 @@ async function main(): Promise<number> {
     return 1;
   }
   const meetups = createMeetupsClient(meetupsUrl);
+  const metrics = startMetrics();
   const dispatcher = createDispatcher(meetups);
   const identity = createIdentityClient(identityUrl);
   const bot = createBot({
@@ -39,9 +41,10 @@ async function main(): Promise<number> {
   const shutdown = createShutdown({
     bot,
     resources: {
-      close() {
+      async close() {
         identity.close();
         meetups.close();
+        await metrics.shutdown();
       },
     },
     logger,
