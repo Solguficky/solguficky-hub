@@ -1,6 +1,6 @@
 # Identity Service
 
-> **Слой:** MVP. **Граница, модель и язык:** Accepted. **Первая выдача роли администратора в срезе:** только служебный endpoint, [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md). **Wire-контракты:** контракт разрешения личности Accepted; остальные Open.
+> **Слой:** MVP. **Граница, модель и язык:** Accepted. **Первая выдача роли администратора в срезе:** только служебный endpoint, [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md). **Аутентификация служебного endpoint:** общий секрет в metadata gRPC, [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md). **Wire-контракты:** контракт разрешения личности Accepted; служебные операции Open.
 
 ## Ответственность
 
@@ -76,7 +76,7 @@ Membership моделируется статусом доступа профил
 
 ## Роль администратора
 
-Роль хранится отдельно от профиля в таблице `identity_roles` как данные вида `(identity_id, role, granted_at, granted_by, revoked_at)`, а не как список Telegram `user_id` в конфигурации или коде. Первый администратор назначается maintainer'ом после того, как человек уже начал пользоваться ботом и получил внутренний идентификатор. `ResolveIdentity` роли не выдаёт и не восстанавливает: повторный `/start` возвращает только активные записи. Выдача и отзыв — maintainer-операции через защищённый служебный endpoint. Другого пути в срезе нет: bootstrap переменной окружения отвергнут вместе с [PER-167](https://linear.app/anticnvm/issue/per-167), прямой SQL путём не является ([ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md)). Authentication endpoint выбирает [PER-30](https://linear.app/anticnvm/issue/per-30) в milestone среза; реализация выдачи заводится после этого выбора.
+Роль хранится отдельно от профиля в таблице `identity_roles` как данные вида `(identity_id, role, granted_at, granted_by, revoked_at)`, а не как список Telegram `user_id` в конфигурации или коде. Первый администратор назначается maintainer'ом после того, как человек уже начал пользоваться ботом и получил внутренний идентификатор. `ResolveIdentity` роли не выдаёт и не восстанавливает: повторный `/start` возвращает только активные записи. Выдача и отзыв — maintainer-операции через служебный endpoint, защищённый общим секретом `IDENTITY_MAINTAINER_TOKEN` в metadata gRPC ([ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md)). Другого пути в срезе нет: bootstrap переменной окружения отвергнут вместе с [PER-167](https://linear.app/anticnvm/issue/per-167), прямой SQL путём не является ([ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md)).
 
 Операции делятся по владельцу вопроса, и из этого следуют поверхности:
 
@@ -90,9 +90,9 @@ Membership моделируется статусом доступа профил
 
 Курирование состава — вопрос администратора, и он решается там, где администратор уже работает. Права в системе — вопрос maintainer'а, и его нельзя решать инструментом, доступ к которому сам зависит от роли; этим же путём назначается первый администратор, когда нажать в боте ещё некому. Отдельная веб-админка в MVP не вводится.
 
-Служебный endpoint идемпотентен, не является публичным API и требует спроектированной service authentication до реализации. Прямое редактирование БД и hardcoded-список не являются штатными путями ни для одной группы операций. Команды бота не содержат доменных правил: бот маршрутизирует вызов, решение принимает Identity.
+Служебный endpoint идемпотентен и не является публичным API. Право на вызов доказывает секрет в metadata: локально и в развёрнутом контуре проверка одна, обхода нет ([ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md)). Прямое редактирование БД и hardcoded-список не являются штатными путями ни для одной группы операций. Команды бота не содержат доменных правил: бот маршрутизирует вызов, решение принимает Identity.
 
-Конкретные transport и authentication служебных операций проектируются вместе с контрактами Identity; до их принятия это требование к реализации, а не готовый API-контракт.
+Контракт служебных операций ещё не принят; authentication выбран и реализацию не блокирует. Чем запись роли назовёт `granted_by` — вопрос схемы [PER-169](https://linear.app/anticnvm/issue/per-169): колонка сейчас ссылается на `profiles(id)`, профиля maintainer'а нет.
 
 Это заменяет hardcoded-список из [ADR-016](../decisions/ADR-016-rbac-action-pattern-and-transport.md), который относился к удалённой аукционной ветке.
 
@@ -141,10 +141,10 @@ Identity реализуется на Go. Сложного домена здес�
 - схема таблицы outbox, устройство релея и его наблюдаемость; словарь исходящих событий и их полнота;
 - форма перечисления состава: отдельный метод, пагинация и поведение при параллельных изменениях — вне MVP;
 - метод разрешения внутреннего идентификатора в Telegram id: отдельный вызов или расширение существующего;
-- service authentication и авторизация служебного endpoint — [PER-30](https://linear.app/anticnvm/issue/per-30), варианты в [RFC-008](../rfcs/RFC-008-identity-service-endpoint-auth.md); первый администратор среза появляется только этим endpoint ([ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md));
+- чем запись роли назовёт `granted_by` при выдаче maintainer'ом — [PER-169](https://linear.app/anticnvm/issue/per-169);
 - набор и формат административных команд бота;
 - формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29);
 - timeout при fail-closed; тексты ответов человеку — часть дизайн-сессии [PER-32](https://linear.app/anticnvm/issue/per-32);
 - retention заблокированных профилей, погашенных записей whitelist и истёкших токенов — [PER-29](https://linear.app/anticnvm/issue/per-29).
 
-Контракт разрешения личности зафиксирован в `contracts/proto/` и [integration.md](../architecture/integration.md). События, обратное разрешение в Telegram id и служебные endpoints остаются после закрытия открытых вопросов. Решения по модели и стеку — в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) и [ADR-027](../decisions/ADR-027-identity-go-stack.md).
+Контракт разрешения личности зафиксирован в `contracts/proto/` и [integration.md](../architecture/integration.md). События, обратное разрешение в Telegram id и служебные endpoints остаются после закрытия открытых вопросов. Решения по модели, стеку, первому администратору и authentication endpoint — в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md), [ADR-027](../decisions/ADR-027-identity-go-stack.md), [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md) и [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md).

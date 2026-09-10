@@ -58,7 +58,8 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-033](ADR-033-meetups-functional-vertical-slices.md) | Функциональные вертикальные срезы в Meetups | Active, limited scope | VSA выбран для Meetups, но не назначается всем F#-сервисам; Oxpecker ограничен HTTP-границей |
 | [ADR-034](ADR-034-telegram-bot-rich-presentation.md) | Представление бота: Rich Messages по умолчанию, плоский текст за тоглом | Active | Дефолт — `sendRichMessage`; та же экранная модель собирает `sendMessage`. Тогл процесса, не детект клиента. Контракт модуля и экран настроек не выбираются |
 | [ADR-035](ADR-035-meetups-dispatch-mark-in-journal.md) | Отправленное наружу отмечается в самом журнале Meetups | Active | `dispatched_at` и частичный индекс в `meetup_events`, отдельной таблицы нет; high-water cursor по `position` запрещён, запись события неизменяема по триггеру |
-| [ADR-036](ADR-036-first-admin-via-service-endpoint.md) | Первый администратор среза появляется только через служебный endpoint | Active | Применяет ADR-026 к срезу: `ResolveIdentity` роли не выдаёт, hardcoded-список и SQL не являются путём. [PER-30](https://linear.app/anticnvm/issue/per-30) поднимается в milestone среза; механизм authentication эта запись не выбирает |
+| [ADR-036](ADR-036-first-admin-via-service-endpoint.md) | Первый администратор среза появляется только через служебный endpoint | Active | Применяет ADR-026 к срезу: `ResolveIdentity` роли не выдаёт, hardcoded-список и SQL не являются путём. Механизм authentication выбран [ADR-037](ADR-037-identity-maintainer-shared-secret.md) |
+| [ADR-037](ADR-037-identity-maintainer-shared-secret.md) | Служебный endpoint Identity защищается общим секретом в metadata gRPC | Active | Один секрет локально и в развёрнутом контуре, без обхода; mTLS, JWT и сеть без auth отвергнуты. Закрывает [PER-30](https://linear.app/anticnvm/issue/per-30) |
 
 ## Когда решение заслуживает ADR
 
