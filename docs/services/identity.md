@@ -141,7 +141,7 @@ Identity реализуется на Go. Сложного домена здес�
 - схема таблицы outbox, устройство релея и его наблюдаемость; словарь исходящих событий и их полнота;
 - форма перечисления состава: отдельный метод, пагинация и поведение при параллельных изменениях — вне MVP;
 - метод разрешения внутреннего идентификатора в Telegram id: отдельный вызов или расширение существующего;
-- service authentication и авторизация служебного endpoint — [PER-30](https://linear.app/anticnvm/issue/per-30); первый администратор среза появляется только этим endpoint ([ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md));
+- service authentication и авторизация служебного endpoint — [PER-30](https://linear.app/anticnvm/issue/per-30), варианты в [RFC-008](../rfcs/RFC-008-identity-service-endpoint-auth.md); первый администратор среза появляется только этим endpoint ([ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md));
 - набор и формат административных команд бота;
 - формат payload инвайт-токена рядом с уже занятым `m_<uuid>`; срок жизни — [PER-29](https://linear.app/anticnvm/issue/per-29);
 - timeout при fail-closed; тексты ответов человеку — часть дизайн-сессии [PER-32](https://linear.app/anticnvm/issue/per-32);
