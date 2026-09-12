@@ -867,6 +867,135 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.operation).not.toBe(records[1]?.fields.operation);
   });
 
+  it("records a successful callback, not only its failures", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [],
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expectBoundary(records[0], {
+      level: "debug",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+  });
+
+  it("records a rejected callback screen as an error", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "dependency_unavailable",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+  });
+
+  it("keeps use_case on an unexpected callback failure", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockImplementation(() => {
+      throw new Error("boom");
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("boom");
+    expect(typeof records[0]?.fields.stack).toBe("string");
+  });
+
+  it("keeps use_case when acknowledging a callback fails", async () => {
+    const { logger, records } = createCapturingLogger();
+    const bot = createBot({
+      token: "111:test-token",
+      dispatcher: createDispatcher(),
+      identity: resolvedIdentity(),
+      logger,
+    });
+    bot.botInfo = botInfo;
+    const failing: Transformer = (_prev, method) =>
+      method === "answerCallbackQuery"
+        ? Promise.reject(new Error("query is too old"))
+        : Promise.resolve({ ok: true, result: true as never });
+    bot.api.config.use(failing);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
+      operation: "callback_query",
+      use_case: "view_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("query is too old");
+  });
+
+  it("logs malformed callback data without its payload", async () => {
+    const { bot, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:short"));
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+    });
+    expect(records[0]?.fields.use_case).toBeUndefined();
+    expect(JSON.stringify(records[0]?.fields)).not.toContain("short");
+  });
+
+  it("records a foreign answer to a pending question", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
+      kind: "ask",
+      field: "title",
+      meetup: {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+        title: "",
+        description: "",
+        venue: "",
+        lifecycle: "planned",
+        visibility: "hidden",
+      },
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const before = records.length;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Чужое название",
+        fromId: 43,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+    expect(records.length).toBe(before + 1);
+    expectBoundary(records.at(-1), {
+      level: "debug",
+      result: "ok",
+      operation: "message",
+      use_case: "create_meetup",
+    });
+  });
+
   it("records view_meetup when identity refuses opening a meetup", async () => {
     const { bot, records } = createHarness(refusedIdentity());
     await bot.init();

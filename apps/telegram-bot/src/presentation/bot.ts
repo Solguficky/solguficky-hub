@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Bot, type Context, InlineKeyboard } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { formatSchedule } from "../application/meetup-form.js";
-import type { FormField, Person } from "../application/types.js";
+import type { ExecuteResult, FormField, Person } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
@@ -109,10 +109,16 @@ async function handleMessage(
       pending !== undefined &&
       ctx.message?.text !== undefined
     ) {
+      useCase = "create_meetup";
       if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "debug",
+          message: "foreign form answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
         return;
       }
-      useCase = "create_meetup";
       const identity = await resolvePerson(ctx, runtime, useCase);
       if (identity.kind === "failed") {
         outcome = identity.outcome;
@@ -128,12 +134,13 @@ async function handleMessage(
       });
       questions.delete(questionKey(ctx.chat?.id, replyId));
       await renderFormResult(ctx, result, questions);
-      outcome = {
-        level: "debug",
-        message: "meetup form answer handled",
-        result: "ok",
-        use_case: "create_meetup",
-      };
+      outcome = screenBoundary(result, {
+        ok: ["ask", "preview", "published"],
+        okMessage: "meetup form answer handled",
+        rejectedMessage: "meetup form answer rejected",
+        useCase,
+        meetupId: pending.meetupId,
+      });
       return;
     }
     if (
@@ -210,31 +217,12 @@ async function handleMessage(
         false,
         runtime.presentation ?? "rich",
       );
-      outcome =
-        result.kind === "meetup-card" || result.kind === "meetup-not-found"
-          ? {
-              level: "debug",
-              message: "meetup card sent",
-              result: "ok",
-              use_case: "view_meetup",
-            }
-          : result.kind === "dependency-rejected"
-            ? {
-                level: "warn",
-                message: "meetup card rejected",
-                result: "error",
-                use_case: "view_meetup",
-                error_category: dependencyCategory(result.reason),
-                error: result.reason,
-              }
-            : {
-                level: "error",
-                message: "meetup card rejected",
-                result: "error",
-                use_case: "view_meetup",
-                error_category: "unexpected",
-                error: result.reason,
-              };
+      outcome = screenBoundary(result, {
+        ok: ["meetup-card", "meetup-not-found"],
+        okMessage: "meetup card sent",
+        rejectedMessage: "meetup card rejected",
+        useCase,
+      });
       return;
     }
     switch (result.kind) {
@@ -293,90 +281,133 @@ async function handleCallback(
   runtime: BotRuntime,
   questions: Map<string, PendingQuestion>,
 ): Promise<void> {
-  await ctx.answerCallbackQuery();
-  const action = parseCallback(ctx.callbackQuery?.data);
-  if (action.kind === "malformed") {
-    await editScreen(
-      ctx,
-      "Не получилось прочитать эту кнопку. Открой актуальное меню.",
-      new InlineKeyboard().text("К списку", "v1:nav:hub"),
-    );
-    return;
-  }
-  const retryCallback =
-    action.kind === "outdated"
-      ? "v1:nav:hub"
-      : (ctx.callbackQuery?.data ?? "v1:nav:hub");
-  const useCase = callbackUseCase(action.kind);
-  const identity = await resolvePerson(ctx, runtime, useCase, retryCallback);
-  if (identity.kind === "failed") {
-    writeBoundary(runtime.logger, ctx, identity.outcome);
-    return;
-  }
-  const person = identity.person;
-  if (action.kind === "hub" || action.kind === "outdated") {
-    const result = await runtime.dispatcher.execute({
-      identity: person,
-      intent: "list-visible-meetups",
-      ...rpcCall(ctx, useCase),
-    });
-    await renderMeetupList(ctx, result);
-    return;
-  }
-  if (action.kind === "view-meetup") {
-    const result = await runtime.dispatcher.execute({
-      identity: person,
-      intent: "view-meetup",
-      meetupId: tokenToUuid(action.token),
-      ...rpcCall(ctx, "view_meetup"),
-    });
-    await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
-    return;
-  }
-  if (action.kind === "manage-menu") {
-    const id = createUuidV7();
-    await ctx.reply("Управление сходками", {
-      reply_markup: new InlineKeyboard().text(
-        "Создать сходку",
-        `v1:manage:new:${uuidToToken(id)}`,
-      ),
-    });
-    return;
-  }
-  if (action.kind === "create-meetup") {
-    const result = await runtime.dispatcher.execute({
-      identity: person,
-      intent: "create-meetup",
-      meetupId: tokenToUuid(action.token),
-      ...rpcCall(ctx, "create_meetup"),
-    });
-    await renderFormResult(ctx, result, questions);
-    return;
-  }
-  if (action.kind === "publish-meetup") {
-    const meetupId = tokenToUuid(action.token);
-    let outcome: BoundaryOutcome | undefined;
-    try {
+  let outcome: BoundaryOutcome | undefined;
+  let useCase: ProductUseCase | undefined;
+  try {
+    // Разбор чистый и синхронный, поэтому он идёт до подтверждения: ack ничего
+    // не ждёт, а его собственный отказ попадает в запись уже со сценарием.
+    const action = parseCallback(ctx.callbackQuery?.data);
+    if (action.kind === "malformed") {
+      await ctx.answerCallbackQuery();
+      await editScreen(
+        ctx,
+        "Не получилось прочитать эту кнопку. Открой актуальное меню.",
+        new InlineKeyboard().text("К списку", "v1:nav:hub"),
+      );
+      outcome = {
+        level: "warn",
+        message: "malformed callback data",
+        result: "error",
+        error_category: "invariant",
+        error: "callback data failed validation",
+      };
+      return;
+    }
+    useCase = callbackUseCase(action.kind);
+    await ctx.answerCallbackQuery();
+    const retryCallback =
+      action.kind === "outdated"
+        ? "v1:nav:hub"
+        : (ctx.callbackQuery?.data ?? "v1:nav:hub");
+    const identity = await resolvePerson(ctx, runtime, useCase, retryCallback);
+    if (identity.kind === "failed") {
+      outcome = identity.outcome;
+      return;
+    }
+    const person = identity.person;
+    if (action.kind === "hub" || action.kind === "outdated") {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-visible-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderMeetupList(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["meetup-list"],
+        okMessage: "meetup list sent",
+        rejectedMessage: "meetup list rejected",
+        useCase,
+      });
+      return;
+    }
+    if (action.kind === "view-meetup") {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-meetup",
+        meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
+      outcome = screenBoundary(result, {
+        ok: ["meetup-card", "meetup-not-found"],
+        okMessage: "meetup card sent",
+        rejectedMessage: "meetup card rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (action.kind === "manage-menu") {
+      const id = createUuidV7();
+      await ctx.reply("Управление сходками", {
+        reply_markup: new InlineKeyboard().text(
+          "Создать сходку",
+          `v1:manage:new:${uuidToToken(id)}`,
+        ),
+      });
+      outcome = {
+        level: "debug",
+        message: "manage menu sent",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
+    if (action.kind === "create-meetup") {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "create-meetup",
+        meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      await renderFormResult(ctx, result, questions);
+      outcome = screenBoundary(result, {
+        ok: ["ask", "preview", "published"],
+        okMessage: "meetup form step sent",
+        rejectedMessage: "meetup form step rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (action.kind === "publish-meetup") {
+      const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
         intent: "publish-meetup",
         meetupId,
-        ...rpcCall(ctx, "create_meetup"),
+        ...rpcCall(ctx, useCase),
       });
       await renderFormResult(ctx, result, questions);
-      outcome = publishBoundary(result, meetupId);
-    } catch (cause) {
-      outcome = {
-        ...unexpectedOutcome(cause),
-        use_case: "create_meetup",
-        meetup_id: meetupId,
-      };
-    } finally {
-      if (outcome !== undefined) {
-        writeBoundary(runtime.logger, ctx, outcome);
-      }
+      outcome = screenBoundary(result, {
+        ok: ["published"],
+        okMessage: "meetup published",
+        rejectedMessage: "meetup publish rejected",
+        useCase,
+        meetupId,
+      });
+      return;
     }
-    return;
+  } catch (cause) {
+    if (outcome === undefined) {
+      outcome = unexpectedOutcome(cause, undefined, useCase);
+    }
+  } finally {
+    if (outcome !== undefined) {
+      writeBoundary(runtime.logger, ctx, outcome);
+    }
   }
 }
 
@@ -558,7 +589,10 @@ async function resolvePerson(
 > {
   const from = ctx.from;
   if (from === undefined) {
-    return { kind: "failed", outcome: unexpectedOutcome("sender is missing") };
+    return {
+      kind: "failed",
+      outcome: unexpectedOutcome("sender is missing", undefined, useCase),
+    };
   }
   const resolved = await runtime.identity.resolve(
     toResolveIdentityInput(BigInt(from.id), from.username),
@@ -715,38 +749,51 @@ function callbackUseCase(
 function questionKey(chatId: number | undefined, messageId: number): string {
   return `${chatId ?? "unknown"}:${messageId}`;
 }
-function publishBoundary(
-  result: Awaited<ReturnType<Dispatcher["execute"]>>,
-  meetupId: string,
+// Экран границы кончается либо отрисовкой, либо отказом. Разбор отказа везде
+// один и тот же, поэтому вызывающий называет только те kind, которые считает
+// успехом своего экрана; всё остальное — отказ зависимости или дефект.
+type BoundaryScreen = {
+  ok: readonly ExecuteResult["kind"][];
+  okMessage: string;
+  rejectedMessage: string;
+  useCase: ProductUseCase;
+  meetupId?: string;
+};
+
+function screenBoundary(
+  result: ExecuteResult,
+  screen: BoundaryScreen,
 ): BoundaryOutcome {
-  if (result.kind === "published") {
+  const meetup =
+    screen.meetupId === undefined ? {} : { meetup_id: screen.meetupId };
+  if (screen.ok.includes(result.kind)) {
     return {
       level: "debug",
-      message: "meetup published",
+      message: screen.okMessage,
       result: "ok",
-      use_case: "create_meetup",
-      meetup_id: result.meetup.id,
+      use_case: screen.useCase,
+      ...meetup,
     };
   }
   if (result.kind === "dependency-rejected") {
     return {
       level: "warn",
-      message: "meetup publish rejected",
+      message: screen.rejectedMessage,
       result: "error",
-      use_case: "create_meetup",
-      meetup_id: meetupId,
+      use_case: screen.useCase,
+      ...meetup,
       error_category: dependencyCategory(result.reason),
       error: result.reason,
     };
   }
   return {
     level: "error",
-    message: "meetup publish rejected",
+    message: screen.rejectedMessage,
     result: "error",
-    use_case: "create_meetup",
-    meetup_id: meetupId,
+    use_case: screen.useCase,
+    ...meetup,
     error_category: "unexpected",
-    error: result.kind,
+    error: result.kind === "rejected" ? result.reason : result.kind,
   };
 }
 
