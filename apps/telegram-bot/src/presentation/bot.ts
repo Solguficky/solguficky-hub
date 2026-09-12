@@ -96,6 +96,7 @@ async function handleMessage(
   questions: Map<string, PendingQuestion>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
+  let useCase: ProductUseCase | undefined;
   try {
     const replyId = ctx.message?.reply_to_message?.message_id;
     removeExpiredQuestions(questions, Date.now());
@@ -111,7 +112,8 @@ async function handleMessage(
       if (ctx.from?.id !== pending.telegramUserId) {
         return;
       }
-      const identity = await resolvePerson(ctx, runtime, "create_meetup");
+      useCase = "create_meetup";
+      const identity = await resolvePerson(ctx, runtime, useCase);
       if (identity.kind === "failed") {
         outcome = identity.outcome;
         return;
@@ -138,6 +140,7 @@ async function handleMessage(
       replyId !== undefined &&
       ctx.message?.reply_to_message?.from?.id === ctx.me.id
     ) {
+      useCase = "create_meetup";
       await ctx.reply(
         "Этот вопрос уже устарел. Открой управление сходками и продолжи с актуального экрана.",
       );
@@ -145,7 +148,7 @@ async function handleMessage(
         level: "debug",
         message: "stale form answer handled",
         result: "ok",
-        use_case: "create_meetup",
+        use_case: useCase,
       };
       return;
     }
@@ -169,8 +172,7 @@ async function handleMessage(
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
-    const useCase: ProductUseCase =
-      deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
+    useCase = deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
     const resolved = await runtime.identity.resolve(
       toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
       rpcCall(ctx, useCase),
@@ -277,7 +279,7 @@ async function handleMessage(
     }
   } catch (cause) {
     if (outcome === undefined) {
-      outcome = unexpectedOutcome(cause);
+      outcome = unexpectedOutcome(cause, undefined, useCase);
     }
   } finally {
     if (outcome !== undefined) {
@@ -316,7 +318,7 @@ async function handleCallback(
     const result = await runtime.dispatcher.execute({
       identity: person,
       intent: "list-visible-meetups",
-      ...rpcCall(ctx, "find_meetup"),
+      ...rpcCall(ctx, useCase),
     });
     await renderMeetupList(ctx, result);
     return;
@@ -693,17 +695,21 @@ function callbackUseCase(
     | "create-meetup"
     | "publish-meetup",
 ): ProductUseCase {
-  if (kind === "view-meetup") {
-    return "view_meetup";
+  switch (kind) {
+    case "view-meetup":
+      return "view_meetup";
+    case "create-meetup":
+    case "publish-meetup":
+    case "manage-menu":
+      return "create_meetup";
+    case "hub":
+    case "outdated":
+      return "find_meetup";
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
   }
-  if (
-    kind === "create-meetup" ||
-    kind === "publish-meetup" ||
-    kind === "manage-menu"
-  ) {
-    return "create_meetup";
-  }
-  return "find_meetup";
 }
 
 function questionKey(chatId: number | undefined, messageId: number): string {
@@ -795,6 +801,7 @@ async function replyFailClosed(
 function unexpectedOutcome(
   cause: unknown,
   fallback?: unknown,
+  useCase?: ProductUseCase,
 ): BoundaryOutcome {
   const outcome: BoundaryOutcome = {
     level: "error",
@@ -803,6 +810,9 @@ function unexpectedOutcome(
     error_category: "unexpected",
     error: errorText(cause),
   };
+  if (useCase !== undefined) {
+    outcome.use_case = useCase;
+  }
   const stack = errorStack(cause) ?? errorStack(fallback);
   if (stack !== undefined) {
     outcome.stack = stack;

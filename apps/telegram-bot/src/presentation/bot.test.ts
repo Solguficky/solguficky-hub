@@ -857,7 +857,7 @@ describe("presentation adapter", () => {
     expect(seenUseCase).toBe("view_meetup");
   });
 
-  it("names message and callback records after different handlers", async () => {
+  it("uses different operation values for message and callback records", async () => {
     const { bot, records } = createHarness(refusedIdentity());
     await bot.init();
     await bot.handleUpdate(messageUpdate());
@@ -951,6 +951,7 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "unexpected",
+      use_case: "find_meetup",
     });
     expect(records[0]?.fields.error).toBe("boom");
     expect(typeof records[0]?.fields.stack).toBe("string");
