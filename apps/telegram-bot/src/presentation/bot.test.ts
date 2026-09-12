@@ -4,9 +4,9 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type { IdentityResolver } from "../identity/port.js";
-import * as failures from "../failures.js";
 import type { LogFields, Logger } from "../logging.js";
 import { createBot } from "./bot.js";
 
