@@ -19,7 +19,7 @@ type Server struct {
 	health *health.Server
 }
 
-func New(log *slog.Logger, db *sql.DB) *Server {
+func New(log *slog.Logger, db *sql.DB, maintainerToken string) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -37,7 +37,7 @@ func New(log *slog.Logger, db *sql.DB) *Server {
 			streamRecovery(),
 		),
 	)
-	identityv1.RegisterIdentityServiceServer(srv, identityService{db: db})
+	identityv1.RegisterIdentityServiceServer(srv, identityService{db: db, log: log, maintainerToken: maintainerToken})
 
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)

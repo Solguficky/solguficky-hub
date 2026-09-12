@@ -67,7 +67,7 @@ func run() int {
 		return 1
 	}
 
-	srv := server.New(log, db)
+	srv := server.New(log, db, os.Getenv("IDENTITY_MAINTAINER_TOKEN"))
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String())

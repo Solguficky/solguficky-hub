@@ -17,13 +17,13 @@ func TestNewPanicsOnNilDB(t *testing.T) {
 			t.Fatal("New(nil db): got no panic")
 		}
 	}()
-	New(slog.New(slog.DiscardHandler), nil)
+	New(slog.New(slog.DiscardHandler), nil, "")
 }
 
 func TestGracefulStopMarksHealthNotServing(t *testing.T) {
 	t.Parallel()
 
-	srv := New(slog.New(slog.DiscardHandler), new(sql.DB))
+	srv := New(slog.New(slog.DiscardHandler), new(sql.DB), "")
 	names := []string{"", identityv1.IdentityService_ServiceDesc.ServiceName}
 
 	assertStatus := func(when string, want healthgrpc.HealthCheckResponse_ServingStatus) {
