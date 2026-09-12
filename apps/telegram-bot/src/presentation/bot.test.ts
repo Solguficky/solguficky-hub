@@ -143,6 +143,16 @@ function publishedMeetup() {
   };
 }
 
+function draftMeetup() {
+  return {
+    ...publishedMeetup(),
+    title: "",
+    description: "",
+    venue: "",
+    visibility: "hidden" as const,
+  };
+}
+
 function resolvedIdentity(): IdentityResolver {
   return {
     resolve: async () => ({
@@ -916,14 +926,7 @@ describe("presentation adapter", () => {
       result: {
         kind: "ask" as const,
         field: "title" as const,
-        meetup: {
-          id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
-          title: "",
-          description: "",
-          venue: "",
-          lifecycle: "planned" as const,
-          visibility: "hidden" as const,
-        },
+        meetup: draftMeetup(),
       },
       use_case: "create_meetup",
       message: "meetup form step sent",
@@ -1073,6 +1076,7 @@ describe("presentation adapter", () => {
       operation: "callback_query",
     });
     expect(records[0]?.fields.stack).toBeUndefined();
+    expect(records[0]?.fields.reply_error).toBe("query is too old");
     expect(counted).toHaveBeenCalledOnce();
     expect(counted).toHaveBeenCalledWith("invariant");
   });

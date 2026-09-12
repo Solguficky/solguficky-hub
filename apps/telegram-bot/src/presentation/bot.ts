@@ -409,6 +409,8 @@ async function handleCallback(
   } catch (cause) {
     if (outcome === undefined) {
       outcome = unexpectedOutcome(cause, undefined, useCase);
+    } else if (outcome.result === "error") {
+      outcome = { ...outcome, reply_error: errorText(cause) };
     }
   } finally {
     if (outcome !== undefined) {
