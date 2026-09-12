@@ -61,6 +61,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-036](ADR-036-first-admin-via-service-endpoint.md) | Первый администратор среза появляется только через служебный endpoint | Active | Применяет ADR-026 к срезу: `ResolveIdentity` роли не выдаёт, hardcoded-список и SQL не являются путём. Механизм authentication выбран [ADR-037](ADR-037-identity-maintainer-shared-secret.md) |
 | [ADR-037](ADR-037-identity-maintainer-shared-secret.md) | Служебный endpoint Identity защищается общим секретом в metadata gRPC | Active | Один секрет локально и в развёрнутом контуре, без обхода; mTLS, JWT и сеть без auth отвергнуты. Закрывает [PER-30](https://linear.app/anticnvm/issue/per-30) |
 | [ADR-038](ADR-038-identity-hub-access-retention.md) | Retention данных допуска к хабу | Active | Whitelist гасится пометкой без TTL; инвайт хаба в срезе отложен; закрытый профиль — `blocked` навсегда; журнал вечен независимо от профиля и называет людей `identity_id`. Ограничивает ADR-026. Закрывает [PER-29](https://linear.app/anticnvm/issue/per-29) |
+| [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md) | Один Linux VPS для начального self-hosting | Active | Один хост размещает dev, agents, test и production; регистратор не входит в решение; отдельный production VPS вводится только по сигналу пересмотра |
 
 ## Когда решение заслуживает ADR
 

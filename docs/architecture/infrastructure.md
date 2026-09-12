@@ -1,6 +1,6 @@
 # Инфраструктурные контуры и hosting
 
-> **Статус:** Canonical для границы local / production-like / production hosting. Выбор production-площадки остаётся Open.
+> **Статус:** Canonical для границы local / production-like / production hosting. Начальная production-площадка выбрана в ADR-039, реализация не завершена.
 
 ## Daily local development
 
@@ -16,27 +16,19 @@
 
 ## Production-like integration
 
-k3s предназначен для практики контейнерной оркестрации и проверки production-like deployment. Он не заменяет быстрый inner loop Aspire.
+k3s предназначен для практики контейнерной оркестрации и проверки production-like deployment. Он не заменяет быстрый inner loop Aspire и не является путём PER-80: начальный production runtime — rootless Podman Quadlet на VPS. Генерация deployment-артефактов из Aspire — направление того же слоя после MVP и отдельный spike: Quadlet и k3s потребляют одни и те же OCI images, поэтому начальный runtime этот путь не закрывает.
 
 ## Production hosting
 
-Приоритетом является собственно управляемая инфраструктура, но площадка остаётся открытым решением:
+Начальная площадка — один Linux VPS для dev, agents, test и production. Полный одновременный срез рассчитан на 16 GB RAM; 8 GB остаются нижней рабочей границей с ужатыми agent/build limits. Среды получают разные Unix accounts, rootless container storage, networks, данные, tokens и backup credentials, но общий kernel и operator plane остаются осознанным риском первого этапа. Отдельный production VPS не является обязательным следующим шагом: он вводится при resource contention, росте чувствительности данных, расширении прав агента или необходимости независимого availability/maintenance.
 
-- домашний мини-ПК;
-- VPS;
-- Railway как fallback или быстрый временный deployment.
+Railway остаётся fallback, если self-hosting окажется непригоден. Домашний мини-ПК не входит в начальный срез.
 
-Выбор площадки и deployability — разные решения. Даже без мини-ПК сервис должен иметь воспроизводимый build, configuration model, migrations, secrets boundary, health checks, backup/restore и deployment artifact.
+Выбор площадки и deployability — разные решения. Регистратор и тариф выбираются операционно и не фиксируются в архитектуре. Даже без мини-ПК сервис должен иметь воспроизводимый build, configuration model, migrations, secrets boundary, health checks, backup/restore и deployment artifact.
 
 Production deployment не обязан быть первым milestone; порядок хранится в Linear. Эксплуатационные требования при этом формулируются вместе с сервисами, а не в последнюю неделю перед сходкой.
 
-ADR-006 с безусловным Railway больше не выражает целевую позицию. Заменяющее решение должно отдельно описать:
-
-- требования к hosting;
-- критерии выбора площадки;
-- deployment model;
-- learning goals;
-- fallback strategy.
+[ADR-039](../decisions/ADR-039-single-vps-for-initial-self-hosting.md) заменяет безусловный выбор Railway из ADR-006 и фиксирует цену общего хоста, сигналы пересмотра и переносимость. Требования к deployment, backup и восстановлению уточняет [RFC-010](../rfcs/RFC-010-remote-development-and-self-hosting-platform.md) до реализации PER-80.
 
 ## Current-ограничения
 
@@ -49,6 +41,7 @@ ADR-006 с безусловным Railway больше не выражает ц�
 
 ## Связанные решения
 
-- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Needs review
+- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Superseded by ADR-039
+- [ADR-039: один Linux VPS для начального self-hosting](../decisions/ADR-039-single-vps-for-initial-self-hosting.md)
 - [ADR-021: Aspire local orchestration](../decisions/ADR-021-aspire-local-orchestration.md)
 - [Aspire 13: JavaScript hosting](https://aspire.dev/whats-new/aspire-13/)

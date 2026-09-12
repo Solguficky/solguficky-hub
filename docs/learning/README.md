@@ -6,7 +6,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `typescript/`, `biome/`, `grammy/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -29,6 +29,7 @@
 | [typescript/testing.md](typescript/testing.md) | раскладка тестов и `include`, отсутствие проверки типов в раннере, структурная подмена соседа без мок-фреймворка, фейковые таймеры и дедлайн, харнесс и ассерт по каркасу лога, `Parameters<F>`, покрытие v8 | вернуться |
 | [grammy/bot-adapter.md](grammy/bot-adapter.md) | middleware-цепочка и `next`, context flavor, filter queries, два входа для update и область действия `bot.catch`, transformer как шов Bot API, `init`/`start`/`stop`, откуда берутся поля записи границы | вернуться |
 | [biome/check.md](biome/check.md) | `biome check` как lint+format+assist, отсутствие compiler API у TypeScript 7, почему не ESLint/Prettier/oxlint, спор `useLiteralKeys` с индексом, LF как часть формата и `eol=lf` в `.gitattributes` | вернуться |
+| [self-hosting/vocabulary.md](self-hosting/vocabulary.md) | SSH и console/rescue, порядок работ по цене ошибки, образ и digest, rootless Podman и Quadlet, cgroup/slice и квоты, один poller при long polling, SOPS/age и tmpfs против swap, WAL/PITR, off-provider, escrow и restore drill, attestation, идемпотентность Ansible | вернуться |
 
 Статус ставится по факту, а не по ощущению:
 
