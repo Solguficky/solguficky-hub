@@ -55,7 +55,7 @@ just aspire infra
 
 Telegram Bot создаёт `request_id` на каждый update и передаёт его Identity и Meetups в gRPC-заголовке `x-request-id`. Рядом уходит `use_case` в `x-use-case`: одно действие человека даёт одно и то же значение во всех трёх сервисах. В Aspire dashboard открой **Structured logs**, возьми `request_id` из записи `telegram-bot` и добавь фильтр по точному значению поля `request_id`: один фильтр показывает записи границ всех сервисов, затронутых update. Поиск по тексту сообщения для этого не используется, а backend логов контрактом приложения не является.
 
-Для `/start` ожидаются записи `telegram-bot`, Identity и Meetups с одним `request_id` и одним `use_case`. Каждый следующий ответ формы создания сходки — новый Telegram update и поэтому новая цепочка со своим `request_id`; `use_case` при этом остаётся сценарием создания. Health checks идут без пользовательского сценария: без `request_id` и без `use_case`.
+Для открытия списка и deep link сходки ожидаются записи `telegram-bot`, Identity и Meetups с одним `request_id` и одним `use_case`. Чистый `/start` без payload вызывает Identity и не ходит в Meetups. Каждый следующий ответ формы создания сходки — новый Telegram update и поэтому новая цепочка со своим `request_id`; `use_case` при этом остаётся сценарием создания. Health checks идут без пользовательского сценария: без `request_id` и без `use_case`.
 
 ## Владение вместо режимов
 
