@@ -22,11 +22,9 @@ describe("meetup deep link", () => {
     );
   });
 
-  it("builds a start link from the resolved bot username", () => {
+  it("builds an absolute start link from the resolved bot username", () => {
     expect(meetupStartLink("stub_bot", meetupId)).toBe(
       `https://t.me/stub_bot?start=m_${token}`,
     );
-    expect(meetupStartLink(undefined, meetupId)).toBe(`?start=m_${token}`);
-    expect(meetupStartLink("", meetupId)).toBe(`?start=m_${token}`);
   });
 });

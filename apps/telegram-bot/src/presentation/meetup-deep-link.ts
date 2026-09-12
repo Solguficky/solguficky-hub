@@ -11,13 +11,11 @@ export function meetupDeepLinkPayload(meetupId: string): string {
   return `m_${uuidToToken(meetupId)}`;
 }
 
-export function meetupStartLink(
-  botUsername: string | undefined,
-  meetupId: string,
-): string {
-  const payload = meetupDeepLinkPayload(meetupId);
-  if (botUsername === undefined || botUsername === "") {
-    return `?start=${payload}`;
-  }
-  return `https://t.me/${botUsername}?start=${payload}`;
+// Ветки «имени нет» здесь нет намеренно. getMe возвращает username бота
+// обязательным полем, и grammY типизирует `ctx.me` как `UserFromGetMe`, где
+// `username: string`. Запасной `?start=<payload>` был бы хуже отсутствия
+// ссылки: человек копирует его в чат под надписью «Ссылка для чата», а
+// ссылкой эта строка не является. Инвариант держит тип, а не проверка.
+export function meetupStartLink(botUsername: string, meetupId: string): string {
+  return `https://t.me/${botUsername}?start=${meetupDeepLinkPayload(meetupId)}`;
 }

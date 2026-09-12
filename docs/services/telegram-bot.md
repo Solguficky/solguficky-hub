@@ -106,7 +106,7 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 | A-01 | Управление сходками | `v1:manage:menu` | 14 |
 | A-02 | Создать сходку | `v1:manage:new:kR7dNq2XmB` | 24 |
 | A-06 | Опубликовать | `v1:manage:publish:AZLzpLXGfY6fChssPU5fYA` | 40 |
-| A-07 | Открыть сходку | `v1:view:AZLzpLXGfY6fChssPU5fYA` | 31 |
+| A-07 | Открыть сходку | `v1:view:AZLzpLXGfY6fChssPU5fYA` | 30 |
 | A-07 | К управлению | `v1:manage:menu` | 14 |
 | A-09 | изменить поле «дата» | `v1:manage:field:AZLzpLXGfY6fChssPU5fYA:schedule` | 47 |
 
