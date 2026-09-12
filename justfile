@@ -30,6 +30,11 @@ default:
 setup:
     lefthook install
 
+# Внешние скиллы по .skillshare/config.yaml, один раз после клонирования.
+# Падает, если install переписал само объявление зависимостей.
+skillshare-install:
+    sh tools/skillshare/install.sh
+
 # --- Проверки --------------------------------------------------------------
 #
 # Тот же скрипт вызывает git-хук через lefthook.yml.
@@ -38,7 +43,7 @@ setup:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
-# Frontmatter скиллов разбирается, а skills, agents и commands совпадают с источниками
+# Frontmatter скиллов разбирается, а agents и commands совпадают с источниками
 check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
