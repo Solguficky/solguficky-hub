@@ -22,6 +22,22 @@ let ``The first migration creates both meetup tables`` () =
         @>
 
 [<Fact>]
+let ``The second migration turns the journal into a dispatchable queue`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 1).Sql
+
+    test
+        <@
+            sql.Contains("ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ")
+            && sql.Contains("CREATE INDEX IF NOT EXISTS meetup_events_pending_dispatch")
+            && sql.Contains("WHERE dispatched_at IS NULL")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_record_immutable")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_row_undeletable")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_untruncatable")
+            && sql.Contains("ERRCODE = 'MT001'")
+            && sql.Contains("ERRCODE = 'MT002'")
+        @>
+
+[<Fact>]
 let ``A postgres URI becomes a keyword connection string`` () =
     let cs =
         Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"

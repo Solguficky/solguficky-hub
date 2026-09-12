@@ -13,6 +13,21 @@ let authorId = PersonId(Guid.Parse "0199c0de-0000-7000-8000-000000000001")
 let otherAuthorId = PersonId(Guid.Parse "0199c0de-0000-7000-8000-000000000002")
 let meetupId = MeetupId(Guid.Parse "0199c0de-0000-7000-8000-0000000000f1")
 
+/// Смотрящий, которому пишущие команды доступны (ADR-031).
+let administrator =
+    {
+        IdentityId = authorId
+        Roles = Set.singleton Administrator
+    }
+
+/// Тот же человек, но без роли: автор отдельным правом не является, и на этом
+/// образце это видно без комментария.
+let ordinary =
+    {
+        IdentityId = authorId
+        Roles = Set.empty
+    }
+
 /// Время приходит в домен значением, поэтому тесту достаточно двух моментов и он
 /// не зависит от часов машины.
 let fixedNow = DateTimeOffset(2026, 9, 7, 18, 30, 0, TimeSpan.Zero)

@@ -1,6 +1,6 @@
 # Инфраструктурные контуры и hosting
 
-> **Статус:** Canonical для границы local / production-like / production hosting. Начальная production-площадка выбрана в ADR-035, реализация не завершена.
+> **Статус:** Canonical для границы local / production-like / production hosting. Начальная production-площадка выбрана в ADR-039, реализация не завершена.
 
 ## Daily local development
 
@@ -28,7 +28,7 @@ Railway остаётся fallback, если self-hosting окажется неп
 
 Production deployment не обязан быть первым milestone; порядок хранится в Linear. Эксплуатационные требования при этом формулируются вместе с сервисами, а не в последнюю неделю перед сходкой.
 
-[ADR-035](../decisions/ADR-035-single-vps-for-initial-self-hosting.md) заменяет безусловный выбор Railway из ADR-006 и фиксирует цену общего хоста, сигналы пересмотра и переносимость. Требования к deployment, backup и восстановлению уточняет [RFC-008](../rfcs/RFC-008-remote-development-and-self-hosting-platform.md) до реализации PER-80.
+[ADR-039](../decisions/ADR-039-single-vps-for-initial-self-hosting.md) заменяет безусловный выбор Railway из ADR-006 и фиксирует цену общего хоста, сигналы пересмотра и переносимость. Требования к deployment, backup и восстановлению уточняет [RFC-010](../rfcs/RFC-010-remote-development-and-self-hosting-platform.md) до реализации PER-80.
 
 ## Current-ограничения
 
@@ -41,7 +41,7 @@ Production deployment не обязан быть первым milestone; пор�
 
 ## Связанные решения
 
-- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Superseded by ADR-035
-- [ADR-035: один Linux VPS для начального self-hosting](../decisions/ADR-035-single-vps-for-initial-self-hosting.md)
+- [ADR-006: Railway hosting](../decisions/ADR-006-railway-hosting.md) — Superseded by ADR-039
+- [ADR-039: один Linux VPS для начального self-hosting](../decisions/ADR-039-single-vps-for-initial-self-hosting.md)
 - [ADR-021: Aspire local orchestration](../decisions/ADR-021-aspire-local-orchestration.md)
 - [Aspire 13: JavaScript hosting](https://aspire.dev/whats-new/aspire-13/)

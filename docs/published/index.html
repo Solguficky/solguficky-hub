@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Solguficky: страницы сообщества, опубликованные из репозитория платформы.">
+<title>Solguficky</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  /* Индекс сайта. Оформление намеренно повторяет страницы, на которые он ведёт:
+     те же токены, те же два шрифта, те же заливки без обводок. Переключателя
+     темы здесь нет — на странице из трёх ссылок он был бы мебелью, поэтому
+     тема просто следует системной. */
+  :root {
+    color-scheme: light dark;
+    --paper: #fbfbfa;
+    --fill: #eeeeec;
+    --fill-2: #e2e2e0;
+    --ink: #17191b;
+    --muted: #56595c;
+    --accent: #a8331b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121316;
+      --fill: #1c1e22;
+      --fill-2: #24272c;
+      --ink: #eceae4;
+      --muted: #9b9b95;
+      --accent: #e2724d;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 "Golos Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .shell { width: min(720px, calc(100% - 48px)); margin: 0 auto; padding: 58px 0 80px; }
+
+  .eyebrow, .group-title {
+    font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+    font-size: 12px; letter-spacing: .03em; text-transform: uppercase;
+    display: block; color: var(--muted);
+  }
+  h1 { font-size: clamp(28px, 5vw, 42px); line-height: 1.05; letter-spacing: -.02em;
+       font-weight: 600; margin: 12px 0 0; }
+  .lede { color: var(--muted); margin: 12px 0 0; max-width: 52ch; }
+
+  .group { margin-top: 40px; }
+  .group-title { margin-bottom: 10px; }
+  .pages { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .pages a {
+    display: block; background: var(--fill); color: inherit; text-decoration: none;
+    padding: 18px 20px;
+  }
+  .pages a:hover { background: var(--fill-2); }
+  .pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pages b { display: block; font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  .pages span { color: var(--muted); font-size: 15px; }
+
+  footer { margin-top: 44px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <span class="eyebrow">Solguficky</span>
+    <h1>Материалы сообщества</h1>
+    <p class="lede">Автономные страницы, опубликованные из репозитория платформы. Каждая открывается
+      по ссылке и не требует установки или логина.</p>
+  </header>
+
+  <section class="group">
+    <span class="group-title">Сейчас обсуждаем</span>
+    <ul class="pages">
+      <li><a href="/auction-2026"><b>Аукцион 2026</b><span>Формат события, участие онлайн и фичи бота.
+        Приоритеты, важность фич и ответы на вопросы заполняются прямо на странице.</span></a></li>
+    </ul>
+  </section>
+
+  <section class="group">
+    <span class="group-title">Архив</span>
+    <ul class="pages">
+      <li><a href="/archive/auction-module"><b>Модуль аукциона</b><span>Презентация прошлой реализации.
+        Отражает состояние обсуждения на 28 октября 2025 года и текущий объём работ не определяет.</span></a></li>
+    </ul>
+  </section>
+
+  <footer>Страницы собираются из репозитория платформы и обновляются вместе с ним.</footer>
+</div>
+</body>
+</html>

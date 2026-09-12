@@ -43,8 +43,12 @@ check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
-# Механический гейт перед сдачей: agent tooling, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
+check-published-pages:
+    sh tools/community-site/check-published-pages.sh
+
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-published-pages identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 

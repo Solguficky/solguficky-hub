@@ -10,6 +10,9 @@ import (
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -145,7 +148,26 @@ func streamRecovery() grpc.StreamServerInterceptor {
 const (
 	resultOK    = "ok"
 	resultError = "error"
+
+	failureAuthorization         = "authorization"
+	failureInvariant             = "invariant"
+	failureDependencyUnavailable = "dependency_unavailable"
+	failureTimeout               = "timeout"
+	failureUnexpected            = "unexpected"
 )
+
+var failureCounter = mustFailureCounter()
+
+func mustFailureCounter() metric.Int64Counter {
+	counter, err := otel.Meter("solguficky.failures").Int64Counter(
+		"solguficky.failures",
+		metric.WithDescription("Operations rejected or failed, grouped by failure category"),
+	)
+	if err != nil {
+		panic(err)
+	}
+	return counter
+}
 
 func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, resp any, err error) {
 	result := resultOK
@@ -179,8 +201,9 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	}
 
 	if panicErr, ok := errors.AsType[*panicError](err); ok {
+		countFailure(ctx, failureUnexpected)
 		attrs = append(attrs,
-			slog.String("error_category", "panic"),
+			slog.String("error_category", failureUnexpected),
 			slog.Any("error", panicErr.value),
 			slog.String("stack", string(panicErr.stack)),
 		)
@@ -189,13 +212,41 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	}
 
 	level := slog.LevelWarn
-	category := "client_error"
+	category := failureCategory(err)
 	if serverFault(status.Code(err)) {
 		level = slog.LevelError
-		category = "server_error"
 	}
+	countFailure(ctx, category)
 	attrs = append(attrs, slog.String("error_category", category), slog.String("error", errorText(err)))
 	log.Log(ctx, level, "rpc failed", attrs...)
+}
+
+func countFailure(ctx context.Context, category string) {
+	failureCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("service", ServiceName),
+		attribute.String("error_category", category),
+	))
+}
+
+func failureCategory(err error) string {
+	if _, ok := errors.AsType[*internalError](err); ok {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return failureTimeout
+		}
+		return failureDependencyUnavailable
+	}
+	switch status.Code(err) {
+	case codes.PermissionDenied, codes.Unauthenticated:
+		return failureAuthorization
+	case codes.InvalidArgument, codes.FailedPrecondition, codes.Aborted, codes.AlreadyExists, codes.NotFound, codes.OutOfRange:
+		return failureInvariant
+	case codes.DeadlineExceeded:
+		return failureTimeout
+	case codes.Unavailable:
+		return failureDependencyUnavailable
+	default:
+		return failureUnexpected
+	}
 }
 
 func serverFault(code codes.Code) bool {

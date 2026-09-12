@@ -1,6 +1,6 @@
-# RFC-008: Удалённая среда разработки и self-hosting Solguficky
+# RFC-010: Удалённая среда разработки и self-hosting Solguficky
 
-> **Статус:** In Review; hosting model принят в ADR-035  
+> **Статус:** In Review; hosting model принят в ADR-039  
 > **Автор:** Dmitriy Panfilyonok  
 > **Дата:** 2026-09-06
 
@@ -8,7 +8,7 @@
 
 PER-80 должен дать две постоянно работающие возможности: удалённую среду разработки с coding agents и воспроизводимый запуск Solguficky в test и production без зависимости от ноутбука. Эти нагрузки имеют противоположный профиль доверия. Среда разработки исполняет изменяемый код, package scripts, плагины и агентские команды; production хранит токен бота и пользовательские данные. Rootless-контейнеры разделяют пользователей и процессы, но используют ядро одного хоста, поэтому не образуют жёсткую границу между недоверенной разработкой и production ([Podman rootless](https://docs.podman.io/en/stable/markdown/podman.1.html), [границы namespaces](https://docs.kernel.org/admin-guide/namespaces/resource-control.html)).
 
-Начальный этап принят в [ADR-035](../decisions/ADR-035-single-vps-for-initial-self-hosting.md):
+Начальный этап принят в [ADR-039](../decisions/ADR-039-single-vps-for-initial-self-hosting.md):
 
 - один Linux VPS размещает remote development, project-scoped coding agents, test и production;
 - хост — x86-64 KVM с Debian stable, user namespaces, cgroup v2 и rootless Podman; полный одновременный срез рассчитан на 16 GB RAM, 8 GB — нижняя рабочая граница с ужатыми agent/build limits;
@@ -17,7 +17,7 @@ PER-80 должен дать две постоянно работающие во
 - PostgreSQL получает off-host pgBackRest repository с continuous WAL archiving и проверяемым PITR, остальные незаменимые файлы — отдельный restic repository;
 - штатный и ручной redeploy используют один узкий deploy-контракт: `environment + OCI digest`, обязательную проверку подписи и один и тот же health gate.
 
-Один VPS сознательно принят для старта. Отдельные Unix-пользователи и rootless Podman ограничивают обычные ошибки, но компрометация ядра, `ops` или конфигурации хоста открывает и dev, и production. Это остаточный риск, а не обещание жёсткой изоляции. Переезд production на отдельный хост выполняется только по сигналам ADR-035, а не как обязательный пятый этап.
+Один VPS сознательно принят для старта. Отдельные Unix-пользователи и rootless Podman ограничивают обычные ошибки, но компрометация ядра, `ops` или конфигурации хоста открывает и dev, и production. Это остаточный риск, а не обещание жёсткой изоляции. Переезд production на отдельный хост выполняется только по сигналам ADR-039, а не как обязательный пятый этап.
 
 ## Проблема и границы
 
@@ -126,13 +126,13 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 Плюсы: один host lifecycle, общая ёмкость без преждевременного разделения, простое начало. Минусы: общий kernel и operator plane; вредоносная dependency или агент увеличивает blast radius до production; сборка конкурирует с PostgreSQL и ботом; host maintenance одновременно останавливает всё. Отдельные rootless users полезны, но не исправляют общую доверительную границу.
 
-**Вывод:** выбран для начального self-hosting в ADR-035 с явным остаточным риском и измеримыми сигналами выноса production.
+**Вывод:** выбран для начального self-hosting в ADR-039 с явным остаточным риском и измеримыми сигналами выноса production.
 
 ### Вариант B: dev/test и production на отдельных VPS
 
 Плюсы: production не делит kernel, filesystem, Podman daemon и operator tokens с недоверенными build/agent workloads; test остаётся близким к dev; отказ dev host не останавливает бота. Минусы: второй хост, два host lifecycle, раздельное наблюдение и backup.
 
-**Вывод:** следующий вариант при срабатывании сигнала ADR-035, но не обязательный календарный этап.
+**Вывод:** следующий вариант при срабатывании сигнала ADR-039, но не обязательный календарный этап.
 
 ### Вариант C: отдельные dev, test и production hosts
 
@@ -142,7 +142,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 
 ### Вариант D: managed PaaS для приложения, VPS только для agents
 
-Плюсы: меньше host operations для production. Минусы: иные secret/deploy/backup contracts, возможный vendor lock-in и необходимость отдельно проверить PostgreSQL PITR и ручной redeploy. [ADR-006](../decisions/ADR-006-railway-hosting.md) заменён ADR-035 и больше не подтверждает этот вариант.
+Плюсы: меньше host operations для production. Минусы: иные secret/deploy/backup contracts, возможный vendor lock-in и необходимость отдельно проверить PostgreSQL PITR и ручной redeploy. [ADR-006](../decisions/ADR-006-railway-hosting.md) заменён ADR-039 и больше не подтверждает этот вариант.
 
 **Вывод:** сохраняется как альтернатива при пересмотре hosting ADR.
 
@@ -247,7 +247,7 @@ AllowUsers ops
 | Production | 2 GB | 2 GB | 100% | приоритет над agent jobs; отдельный account и volumes |
 | Операционный запас | 2 GB RAM + 2 GB zram | 0 GB RAM + 1 GB zram | — | на 8 GB запас RAM отсутствует; zram страхует краткий пик и не заменяет RAM |
 
-Лимиты — максимумы, а не гарантированные резервации; их сумма оставляет headroom, но shared vCore не обещают постоянной CPU performance. PER-80 не должен обещать количество одновременных агентов до недельного замера peak RSS, memory pressure, swap activity, CPU steal, disk latency и OOM events. При конкуренции сначала ограничиваются agent/build workloads; перенос production выполняется по сигналам ADR-035.
+Лимиты — максимумы, а не гарантированные резервации; их сумма оставляет headroom, но shared vCore не обещают постоянной CPU performance. PER-80 не должен обещать количество одновременных агентов до недельного замера peak RSS, memory pressure, swap activity, CPU steal, disk latency и OOM events. При конкуренции сначала ограничиваются agent/build workloads; перенос production выполняется по сигналам ADR-039.
 
 ### Runtime test/production
 
@@ -430,7 +430,7 @@ PER-80 должен дать владельцу практику безопас�
 - стартовый хост — один Linux VPS; регистратор и тариф выбираются операционно и в платформу не входят;
 - полный одновременный срез рассчитан на 16 GB RAM, 8 GB — нижняя рабочая граница с ужатыми agent/build limits;
 - dev, agents, test и production на первом этапе размещаются на одном хосте с зафиксированным остаточным риском;
-- отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-035;
+- отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-039;
 - production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии; объектное хранилище того же регистратора, что VPS, этим условием не является.
 
 ### Решения владельца до реализации
@@ -452,13 +452,13 @@ PER-80 должен дать владельцу практику безопас�
 - сколько места и bandwidth занимают WAL и restic при реальной частоте изменений;
 - достигаются ли заявленные RPO/RTO и 15 минут planned downtime;
 - можно ли ограничить deploy SSH source addresses, не ломая GitHub-hosted Actions и доступ владельца;
-- срабатывает ли хотя бы один сигнал ADR-035 для переноса production на отдельный VPS.
+- срабатывает ли хотя бы один сигнал ADR-039 для переноса production на отдельный VPS.
 
 ## Результирующие артефакты
 
 После принятия и реализации решения должны появиться:
 
-- принятый [ADR-035](../decisions/ADR-035-single-vps-for-initial-self-hosting.md), который заменяет ADR-006;
+- принятый [ADR-039](../decisions/ADR-039-single-vps-for-initial-self-hosting.md), который заменяет ADR-006;
 - versioned Ansible inventory schema/roles и bootstrap runbook;
 - `.devcontainer/` declarations и documented project credential boundary;
 - systemd/Quadlet units для agents, test и production;

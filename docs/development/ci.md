@@ -17,7 +17,7 @@ Workflow собирает, тестирует и линтит Identity на из
 
 ## Проверки репозитория
 
-Джоба `repo-hygiene` запускает `tools/skillshare/check-generated.sh`. Скрипт сверяет собственные `proj-` skills и закоммиченный пак `golang/` с обоими таргетами, доступные локально источники внешних skills с их таргетами, общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agents и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
+Джоба `repo-hygiene` запускает `tools/skillshare/check-frontmatter.sh`, `tools/skillshare/check-generated.sh` и `tools/community-site/check-published-pages.sh`; последний описан в разделе «Сайт сообщества». Скрипт сверяет собственные `proj-` skills и закоммиченный пак `golang/` с обоими таргетами, доступные локально источники внешних skills с их таргетами, общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agents и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
 
 Источники внешних skills из Skillshare не коммитятся, поэтому в CI сверка этих источников ничего не находит и пропускается: удалённо остаётся сравнение закоммиченных таргетов между собой плюс сверка пака `golang/`. Локальный прогон строже удалённого намеренно — рассинхрон источника ловится до push, а не в review.
 
@@ -34,15 +34,23 @@ Workflow собирает, тестирует и линтит Identity на из
 
 Конкретные задачи и их прогресс ведутся в Linear.
 
-## Презентация аукционного модуля
+## Сайт сообщества
 
-Workflow `.github/workflows/deploy-auction-slides.yml` публикует автономную историческую презентацию на [Netlify](https://solguficky-auction-module-slides.netlify.app/) после изменения HTML-файла в `develop`. Его также можно запустить вручную через `workflow_dispatch`.
+Workflow `.github/workflows/deploy-community-site.yml` публикует каталог [published/](../published/README.md) на [Netlify](https://solguficky.netlify.app) после его изменения в `develop`. Его также можно запустить вручную через `workflow_dispatch`.
+
+Состав сайта и адреса страниц — [published/README.md](../published/README.md); здесь описана только доставка. Раскладка каталога и есть карта адресов: путь до `index.html` минус имя файла читается как URL.
 
 Для работы workflow в настройках GitHub repository должны быть заданы:
 
 - secret `NETLIFY_AUTH_TOKEN` — персональный Netlify access token с доступом к проекту;
-- variable `NETLIFY_AUCTION_SLIDES_SITE_ID` — Netlify Project ID сайта `solguficky-auction-module-slides`.
+- variable `NETLIFY_COMMUNITY_SITE_ID` — Netlify Project ID проекта `solguficky`.
 
-Workflow собирает отдельный каталог, копирует презентацию в `index.html` и выполняет production deploy через зафиксированную версию Netlify CLI. Токен и Project ID не хранятся в Git.
+Токен и Project ID не хранятся в Git. Прогон без любого из них падает на шаге `Verify Netlify configuration` с явным сообщением, не дойдя до Netlify CLI: гейт конфигурации стоит первым шагом именно ради этого.
 
-Если Netlify-проект уже связан с Git-репозиторием и сам выполняет continuous deployment, перед включением GitHub workflow нужно оставить только один production-механизм. Иначе один push может породить два независимых deploy.
+Дальше workflow прогоняет `tools/community-site/check-published-pages.sh`, копирует каталог целиком, удаляет из копии Markdown и выполняет production deploy через зафиксированную версию Netlify CLI. Публикуется весь каталог, и `paths` стоит на нём же: `deploy --prod --dir` заменяет содержимое сайта целиком, а не дополняет, поэтому каталог, собранный не полностью, увёл бы недостающие страницы в 404. Новая страница добавляется созданием каталога с `index.html`, а workflow и его фильтр при этом не трогаются.
+
+Проверка `check-published-pages.sh` держит два свойства, которых не видно в диффе постранично: страницей может быть только `index.html`, и каждая корневая ссылка разрешается в существующую страницу. Второе связывает индекс с раскладкой: опечатка в имени каталога иначе видна только на живом сайте. Почему адрес обязан быть каталогом — в [published/README.md](../published/README.md). Тот же скрипт запускают `just check-published-pages`, джоба `repo-hygiene` и сам этот workflow.
+
+Если Netlify-проект связан с Git-репозиторием и сам выполняет continuous deployment, нужно оставить только один production-механизм. Иначе один push может породить два независимых deploy. На проекте `solguficky` continuous deployment не настроен: единственный деплой до этого workflow был ручной загрузкой файла.
+
+Зелёного прогона у workflow пока не было: оба прошлых падали на гейте конфигурации, потому что secret не был заведён, и шаги сборки и деплоя не выполнялись ни разу. Первый зелёный прогон подтверждает связку целиком; до него доставка сайта остаётся частью `verification pending` в шапке документа.

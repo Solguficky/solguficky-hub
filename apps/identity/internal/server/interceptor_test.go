@@ -215,8 +215,8 @@ func TestUnaryChainLogsPanicOnce(t *testing.T) {
 	rec := logs.sole(t)
 	assertRecord(t, rec, slog.LevelError, "rpc panic")
 	assertFrame(t, rec, frameWant{result: resultError, code: codes.Internal, operation: info.FullMethod})
-	if got := attrValue(t, rec, "error_category").String(); got != "panic" {
-		t.Fatalf("error_category: got %q want %q", got, "panic")
+	if got := attrValue(t, rec, "error_category").String(); got != failureUnexpected {
+		t.Fatalf("error_category: got %q want %q", got, failureUnexpected)
 	}
 	if stack := attrValue(t, rec, "stack").String(); !strings.Contains(stack, "TestUnaryChainLogsPanicOnce") {
 		t.Fatalf("stack does not reach the panicking frame: %q", stack)
@@ -424,11 +424,13 @@ func TestUnaryLoggingLevelByCode(t *testing.T) {
 		level    slog.Level
 		category string
 	}{
-		{name: "invalid argument", code: codes.InvalidArgument, level: slog.LevelWarn, category: "client_error"},
-		{name: "unknown health service", code: codes.NotFound, level: slog.LevelWarn, category: "client_error"},
-		{name: "failed precondition", code: codes.FailedPrecondition, level: slog.LevelWarn, category: "client_error"},
-		{name: "internal", code: codes.Internal, level: slog.LevelError, category: "server_error"},
-		{name: "unavailable", code: codes.Unavailable, level: slog.LevelError, category: "server_error"},
+		{name: "invalid argument", code: codes.InvalidArgument, level: slog.LevelWarn, category: failureInvariant},
+		{name: "unknown health service", code: codes.NotFound, level: slog.LevelWarn, category: failureInvariant},
+		{name: "failed precondition", code: codes.FailedPrecondition, level: slog.LevelWarn, category: failureInvariant},
+		{name: "permission denied", code: codes.PermissionDenied, level: slog.LevelWarn, category: failureAuthorization},
+		{name: "deadline exceeded", code: codes.DeadlineExceeded, level: slog.LevelWarn, category: failureTimeout},
+		{name: "internal", code: codes.Internal, level: slog.LevelError, category: failureUnexpected},
+		{name: "unavailable", code: codes.Unavailable, level: slog.LevelError, category: failureDependencyUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

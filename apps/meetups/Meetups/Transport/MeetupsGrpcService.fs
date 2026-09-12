@@ -1,7 +1,7 @@
 namespace Meetups.Transport
 
-open System.Threading.Tasks
 open Grpc.Core
+open Meetups.Slices
 open Meetups.V1
 
 /// Транспортная граница шести операций контракта.
@@ -11,29 +11,38 @@ open Meetups.V1
 /// свойство gRPC, а не выбор раскладки. Класс остаётся диспетчером — тело
 /// сценария живёт в срезе, а не здесь.
 ///
-/// Форма метода после PER-54:
-///     Composition.buildDeps ctx.RequestServices
-///     |> Workflow.execute
-///     |> Api.toRpc
-/// Сейчас в ней просто нет середины. Ветвление по содержимому запроса в этом
-/// файле означает, что граница поехала.
+/// Форма метода: собрать зависимости своего среза, отдать их его же границе.
+/// Разбор запроса, решение и отображение отказа в код принадлежат срезу; общий
+/// mapError на сервис запрещён нормативом. Ветвление по содержимому запроса,
+/// проверка инвариантов и вызов инфраструктуры в этом файле означают, что граница
+/// поехала.
+///
+/// ServerCallContext глубже диспетчера не проходит: наружу из него берётся только
+/// RequestServices, и срез о существовании контекста не знает.
+///
 type MeetupsGrpcService() =
     inherit MeetupsService.MeetupsServiceBase()
 
-    override _.CreateMeetupDraft(request: CreateMeetupDraftRequest, _context: ServerCallContext) =
-        Placeholder.snapshot request.Id |> Task.FromResult
+    override _.CreateMeetupDraft(request: CreateMeetupDraftRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        CreateMeetupDraft.Api.handle (CreateMeetupDraft.Composition.buildDeps services) request
 
-    override _.ChangeMeetupAttributes(request: ChangeMeetupAttributesRequest, _context: ServerCallContext) =
-        Placeholder.snapshot request.Id |> Task.FromResult
+    override _.ChangeMeetupAttributes(request: ChangeMeetupAttributesRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        ChangeMeetupAttributes.Api.handle (ChangeMeetupAttributes.Composition.buildDeps services) request
 
-    override _.SetMeetupSchedule(request: SetMeetupScheduleRequest, _context: ServerCallContext) =
-        Placeholder.snapshot request.Id |> Task.FromResult
+    override _.SetMeetupSchedule(request: SetMeetupScheduleRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        SetMeetupSchedule.Api.handle (SetMeetupSchedule.Composition.buildDeps services) request
 
-    override _.PublishMeetup(request: PublishMeetupRequest, _context: ServerCallContext) =
-        Placeholder.snapshot request.Id |> Task.FromResult
+    override _.PublishMeetup(request: PublishMeetupRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        PublishMeetup.Api.handle (PublishMeetup.Composition.buildDeps services) request
 
-    override _.GetMeetup(request: GetMeetupRequest, _context: ServerCallContext) =
-        Placeholder.snapshot request.Id |> Task.FromResult
+    override _.GetMeetup(request: GetMeetupRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        GetMeetup.Api.handle (GetMeetup.Composition.buildRead services) request
 
-    override _.ListVisibleMeetups(_request: ListVisibleMeetupsRequest, _context: ServerCallContext) =
-        Placeholder.visibleMeetups () |> Task.FromResult
+    override _.ListVisibleMeetups(request: ListVisibleMeetupsRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        ListVisibleMeetups.Api.handle (ListVisibleMeetups.Composition.buildRead services) request

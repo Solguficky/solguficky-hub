@@ -64,6 +64,51 @@ function ignoredUpdate(): Update {
   };
 }
 
+function callbackUpdate(data: string, fromId = 42): Update {
+  return {
+    update_id: 3,
+    callback_query: {
+      id: "callback-1",
+      chat_instance: "chat-1",
+      from: { id: fromId, is_bot: false, first_name: "tester" },
+      data,
+      message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+      },
+    },
+  };
+}
+
+function replyUpdate(options: {
+  text: string;
+  fromId: number;
+  replyMessageId: number;
+  replyFromId: number;
+}): Update {
+  return {
+    update_id: 4,
+    message: {
+      message_id: 10,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: options.fromId, is_bot: false, first_name: "tester" },
+      text: options.text,
+      reply_to_message: {
+        message_id: options.replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: {
+          id: options.replyFromId,
+          is_bot: options.replyFromId === 1,
+          first_name: "sender",
+        },
+      } as never,
+    },
+  };
+}
+
 function recordCall(method: ApiMethod, payload: ApiPayload): RecordedCall {
   return { method, payload };
 }
@@ -111,6 +156,16 @@ function createHarness(
   const calls: RecordedCall[] = [];
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push(recordCall(method, payload));
+    if (method === "sendMessage") {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          message_id: 100 + calls.length,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+        } as never,
+      });
+    }
     return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult depends on method; fixture never calls prev
   };
   bot.api.config.use(recorder);
@@ -161,6 +216,50 @@ afterEach(() => {
 });
 
 describe("presentation adapter", () => {
+  it("does not treat a command replying to a user as a stale form answer", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "/start",
+        fromId: 42,
+        replyMessageId: 8,
+        replyFromId: 42,
+      }),
+    );
+    expect(
+      sendMessageText(calls.find((call) => call.method === "sendMessage")),
+    ).toContain("Привет.");
+  });
+
+  it("does not dispatch another user's answer to a pending question", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
+      kind: "ask",
+      field: "title",
+      meetup: {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+        title: "",
+        description: "",
+        venue: "",
+        lifecycle: "planned",
+        visibility: "hidden",
+      },
+    });
+    const { bot } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Чужое название",
+        fromId: 43,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
   it("resolves identity and replies to /start", async () => {
     const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();
@@ -168,14 +267,235 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(records.some((record) => record.level === "info")).toBe(false);
     expectBoundary(records[0], { level: "debug", result: "ok" });
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Ближайшие сходки", callback_data: "v1:nav:hub" }],
+          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+        ],
+      },
+    });
   });
 
-  it("passes the parsed deep link payload to the dispatcher", async () => {
-    const execute = vi.fn(() => ({
-      kind: "message" as const,
-      text: "ok",
-    }));
-    const { bot } = createHarness(resolvedIdentity(), { execute });
+  it("renders an empty meetup list as an empty state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("ни одной запланированной сходки"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("groups dated meetups before meetups without a date", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Без даты",
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Настолки",
+          schedule: { year: 2026, month: 8, day: 15 },
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringMatching(
+          /^Ближайшие сходки\n\nС датой\n• 15 авг, сб — Настолки\n\nБез даты\n• Без даты$/,
+        ),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Без даты",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
+              },
+            ],
+            [
+              {
+                text: "Настолки",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+              },
+            ],
+            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("renders Meetups unavailability as E-05 instead of an empty list", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Не получилось загрузить сходки"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("renders a dispatcher rejection as E-05 instead of going silent", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "meetups-not-configured",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Не получилось загрузить сходки"),
+      },
+    });
+  });
+
+  it("fails closed on a callback and edits the screen after acknowledging it", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const identity: IdentityResolver = {
+      resolve: async () => ({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls, records } = createHarness(identity, { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]).toMatchObject({
+      payload: {
+        text: expect.stringContaining("Это на моей стороне"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  it("records an Identity refusal while handling a form answer", async () => {
+    let available = true;
+    const identity: IdentityResolver = {
+      resolve: async () =>
+        available
+          ? {
+              kind: "resolved",
+              identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+              globalRoles: [],
+            }
+          : { kind: "unavailable", cause: new Error("down") },
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "ask",
+      field: "title",
+      meetup: {
+        id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+        title: "",
+        description: "",
+        venue: "",
+        lifecycle: "planned",
+        visibility: "hidden",
+      },
+    });
+    const { bot, calls, records } = createHarness(identity, { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    available = false;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Настолки",
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(sendMessageText(calls.at(-1))).toContain("Это на моей стороне");
+    expectBoundary(records.at(-1), {
+      level: "error",
+      result: "error",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  it("rebuilds an outdated callback from current Meetups state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v2:nav:hub"));
+
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(execute).toHaveBeenCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: [],
+      },
+      intent: "list-visible-meetups",
+      requestId: expect.any(String),
+    });
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("ни одной запланированной") },
+    });
+  });
+
+  it("opens a meetup from the parsed deep link payload", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: {
+        id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+        title: "Настолки",
+        description: "Берём свои игры",
+        venue: "Циферблат",
+        lifecycle: "planned",
+        visibility: "visible",
+      },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(execute).toHaveBeenCalledWith({
@@ -183,11 +503,51 @@ describe("presentation adapter", () => {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: [],
       },
-      intent: "start",
-      deepLink: {
-        kind: "meetup",
-        payload: "m_AZLzpLXGfY6fChssPU5fYA",
+      intent: "view-meetup",
+      meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+      requestId: expect.any(String),
+    });
+    expect(calls[0]).toMatchObject({
+      method: "sendRichMessage",
+      payload: {
+        rich_message: {
+          html: expect.stringContaining("Статус: запланирована, видна"),
+        },
       },
+    });
+  });
+
+  it("answers a deep link when Meetups is unavailable", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  it("does not report a dispatcher rejection as dependency unavailability", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "meetups-not-configured",
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
     });
   });
 
@@ -223,7 +583,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_unavailable",
+      error_category: "dependency_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
     expect(records[0]?.fields.use_case).toBe("start");
@@ -257,7 +617,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_unavailable",
+      error_category: "timeout",
     });
   });
 
@@ -278,7 +638,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_rejected",
+      error_category: "invariant",
     });
     expect(records[0]?.fields.grpc_code).toBe("InvalidArgument");
     expect(records[0]?.fields.use_case).toBe("start");
@@ -329,7 +689,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "warn",
       result: "error",
-      error_category: "malformed",
+      error_category: "invariant",
     });
     expect(records[0]?.fields.use_case).toBeUndefined();
   });
@@ -373,7 +733,7 @@ describe("presentation adapter", () => {
     expectBoundary(records[0], {
       level: "error",
       result: "error",
-      error_category: "identity_unavailable",
+      error_category: "dependency_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
     expect(records[0]?.fields.reply_error).toContain("Forbidden");

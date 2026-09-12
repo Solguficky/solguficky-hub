@@ -1,0 +1,32 @@
+namespace Meetups.Domain
+
+/// Отклонённое право действовать. Отдельный тип, а не вариант DomainError: право не
+/// является инвариантом перехода состояния, и в решении о нём состояние не участвует.
+/// Транспортного словаря здесь тоже нет — PERMISSION_DENIED называет срез.
+type AccessDenied = NotAnAdministrator
+
+/// Политика доступа среза. Живёт в ядре, а не в срезах, потому что решение
+/// принимается из значений и без I/O, а правило одно на все команды: четыре копии
+/// предиката разошлись бы на первой же правке. Файл стоит до Domain/Meetup.fs
+/// намеренно — политика не должна быть способна увидеть приватное представление
+/// агрегата и читает состояние только снимком.
+module Access =
+
+    /// ADR-031: пишущие команды среза доступны администратору; автор отдельным правом
+    /// не является — в срезе он всегда администратор.
+    ///
+    /// Состояние сходки в решении не участвует, поэтому проверка стоит до загрузки:
+    /// иначе ответ обычному смотрящему зависел бы от того, существует ли сходка, и
+    /// отказ по праву стал бы способом узнать про чужой черновик.
+    let forCommand (viewer: Viewer) : Result<unit, AccessDenied> =
+        if Viewer.isAdministrator viewer then Ok() else Error NotAnAdministrator
+
+    /// Published meetups are community-visible. A hidden meetup is visible only
+    /// to its author (the organizer represented by the current slice) and to an
+    /// administrator. Lifecycle is deliberately not folded into this decision:
+    /// held and cancelled meetups retain the visibility chosen on the independent
+    /// visibility axis (ADR-022).
+    let canView (viewer: Viewer) (snapshot: MeetupSnapshot) : bool =
+        snapshot.Visibility = Visible
+        || snapshot.Author = viewer.IdentityId
+        || Viewer.isAdministrator viewer

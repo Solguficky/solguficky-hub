@@ -203,3 +203,5 @@ jobs:
         run: sh tools/skillshare/check-frontmatter.sh
       - name: Agent tooling is generated from Skillshare sources
         run: sh tools/skillshare/check-generated.sh
+      - name: Published pages are addressable
+        run: sh tools/community-site/check-published-pages.sh

@@ -30,8 +30,10 @@ type MeetupEvent =
     | MeetupChanged of MeetupChange
     | MeetupPublished of at: DateTimeOffset
 
-/// Отклонённый переход состояния. Отказа по правам здесь нет и не будет: право
-/// действовать — политика границы, а не бизнес-инвариант.
+/// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
+/// является инвариантом перехода, и состояние в решении о нём не участвует. Само
+/// правило при этом остаётся доменным и живёт в Domain/Access.fs со своим типом
+/// отказа — сюда оно не переезжает.
 type DomainError =
     | MeetupNotFound
     | DraftBelongsToAnotherAuthor
@@ -144,6 +146,36 @@ module Meetup =
             FirstPublishedAt = meetup.FirstPublishedAt
             Version = meetup.Version
         }
+
+    /// Восстановление состояния из снимка — обратная функция к toSnapshot. Живёт
+    /// здесь по той же причине, что и apply: представление приватно, и собрать
+    /// запись снаружи невозможно. Снимок взят входом потому, что другого описания
+    /// сходки целиком в домене нет. Это осознанная связь двух определений, которые
+    /// ADR-031 развёл: в день, когда у состояния появится поле, отсутствующее в
+    /// снимке, вход придётся заменить собственным типом восстановления.
+    let rehydrate (snapshot: MeetupSnapshot) : Meetup =
+        {
+            Id = snapshot.Id
+            Author = snapshot.Author
+            Title = snapshot.Title
+            Description = snapshot.Description
+            Venue = snapshot.Venue
+            Kind = snapshot.Kind
+            CalendarLink = snapshot.CalendarLink
+            Schedule = snapshot.Schedule
+            Lifecycle = snapshot.Lifecycle
+            Visibility = snapshot.Visibility
+            FirstPublishedAt = snapshot.FirstPublishedAt
+            Version = snapshot.Version
+        }
+
+    /// Отсутствие строки в хранилище — это Initial, а не особый случай оболочки:
+    /// команда к несуществующей сходке остаётся обычным отказом домена, и решать
+    /// это должен домен, а не проверка перед его вызовом.
+    let restore (snapshot: MeetupSnapshot option) : MeetupState =
+        match snapshot with
+        | None -> Initial
+        | Some snapshot -> Existing(rehydrate snapshot)
 
     // Решения: состояние и все недетерминированные факты приходят значениями.
 

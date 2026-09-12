@@ -53,3 +53,25 @@ let ``Interval should compare the date before the time`` () =
             LocalInterval.create start finish
             |> Result.map bounds = Ok(start, finish)
         @>
+
+[<Fact>]
+let ``Schedule order should put a day before a time and no date last`` () =
+    let date = DateOnly(2026, 10, 3)
+
+    let schedules =
+        [
+            NoDate
+            Fixed(DayStart(at (2026, 10, 3) (18, 0)))
+            Tentative(Day date)
+            Fixed(DayStart(at (2026, 10, 2) (21, 0)))
+        ]
+
+    test
+        <@
+            schedules |> List.sortBy Schedule.order = [
+                Fixed(DayStart(at (2026, 10, 2) (21, 0)))
+                Tentative(Day date)
+                Fixed(DayStart(at (2026, 10, 3) (18, 0)))
+                NoDate
+            ]
+        @>

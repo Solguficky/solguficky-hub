@@ -1,4 +1,4 @@
-# ADR-035: Один Linux VPS для начального self-hosting
+# ADR-039: Один Linux VPS для начального self-hosting
 
 > **Дата:** 2026-09-06  
 > **Статус:** Accepted
@@ -11,7 +11,7 @@ PER-80 должен перенести удалённую разработку, 
 
 Предыдущее решение [ADR-006](ADR-006-railway-hosting.md) безусловно выбирало Railway. Оно больше не соответствует цели владельца получить переносимый self-hosting и практику эксплуатации Linux-хоста.
 
-Конкретный регистратор, тариф и способ оплаты не являются частью платформы: хост должен удовлетворять техническим требованиям RFC-008 и заменяться без смены deploy/backup contract.
+Конкретный регистратор, тариф и способ оплаты не являются частью платформы: хост должен удовлетворять техническим требованиям RFC-010 и заменяться без смены deploy/backup contract.
 
 ## Варианты
 
@@ -29,7 +29,7 @@ PER-80 должен перенести удалённую разработку, 
 
 Начальный self-hosting размещается на одном Linux VPS. Хост — x86-64 KVM с Debian stable, user namespaces, cgroup v2 и rootless Podman. Полный одновременный срез (dev/agents, test, production и операционный запас) рассчитан на 16 GB RAM; 8 GB — нижняя рабочая граница, при которой потолки agent/build сжимаются так, чтобы reservation production и хоста сохранилась. Диск — SSD или NVMe с запасом на две рабочие копии, image cache и backup staging.
 
-Dev, agents, test и production используют один хост, но получают разные Unix accounts, rootless Podman storage, container networks, volumes, bot tokens, databases, age identities и backup credentials. Coding agent либо живёт под отдельным `agent-<project>` без SSH, либо как user service того же `dev-<project>` — выбор ещё открыт в RFC-008. В обоих случаях агент не получает `sudo`, production secrets, deploy credential, host network или container socket. Общие cgroup limits оставляют отдельный запас памяти и CPU production и хосту. Block и inode quotas ограничивают dev/agent/test homes и container storage, а production state получает отдельный bounded filesystem/volume, который эти accounts не могут заполнить.
+Dev, agents, test и production используют один хост, но получают разные Unix accounts, rootless Podman storage, container networks, volumes, bot tokens, databases, age identities и backup credentials. Coding agent либо живёт под отдельным `agent-<project>` без SSH, либо как user service того же `dev-<project>` — выбор ещё открыт в RFC-010. В обоих случаях агент не получает `sudo`, production secrets, deploy credential, host network или container socket. Общие cgroup limits оставляют отдельный запас памяти и CPU production и хосту. Block и inode quotas ограничивают dev/agent/test homes и container storage, а production state получает отдельный bounded filesystem/volume, который эти accounts не могут заполнить.
 
 Общий kernel, operator account, диск и сетевой контур принимаются как остаточный риск начального этапа. Off-provider backup и проверяемое восстановление обязательны с первого production-запуска: snapshot этого VPS не считается независимой копией.
 
@@ -79,7 +79,7 @@ Production переносится на отдельный VPS, если выпо
 
 ## Связанные документы
 
-- RFC: [RFC-008](../rfcs/RFC-008-remote-development-and-self-hosting-platform.md)
+- RFC: [RFC-010](../rfcs/RFC-010-remote-development-and-self-hosting-platform.md)
 - Architecture: [infrastructure.md](../architecture/infrastructure.md)
 - Standards: новые нормативы этим ADR не создаются
 - Другие ADR: [ADR-006](ADR-006-railway-hosting.md) — заменён этим решением; [ADR-021](ADR-021-aspire-local-orchestration.md) — Aspire остаётся local inner loop

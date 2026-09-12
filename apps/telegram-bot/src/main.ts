@@ -1,8 +1,10 @@
 import { createDispatcher } from "./application/dispatcher.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
+import { createMeetupsClient } from "./meetups/client.js";
 import { createBot } from "./presentation/bot.js";
 import { createShutdown } from "./shutdown.js";
+import { startMetrics } from "./telemetry.js";
 
 const shutdownTimeoutMs = 15_000;
 
@@ -19,12 +21,32 @@ async function main(): Promise<number> {
     return 1;
   }
   const identityUrl = readEnv("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051";
-  const dispatcher = createDispatcher();
+  const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
+  const presentationRaw = readEnv("TELEGRAM_BOT_PRESENTATION") ?? "rich";
+  if (presentationRaw !== "rich" && presentationRaw !== "plain") {
+    logger.error("TELEGRAM_BOT_PRESENTATION must be rich or plain");
+    return 1;
+  }
+  const meetups = createMeetupsClient(meetupsUrl);
+  const metrics = startMetrics();
+  const dispatcher = createDispatcher(meetups);
   const identity = createIdentityClient(identityUrl);
-  const bot = createBot({ token, dispatcher, identity, logger });
+  const bot = createBot({
+    token,
+    dispatcher,
+    identity,
+    logger,
+    presentation: presentationRaw,
+  });
   const shutdown = createShutdown({
     bot,
-    resources: identity,
+    resources: {
+      async close() {
+        identity.close();
+        meetups.close();
+        await metrics.shutdown();
+      },
+    },
     logger,
     timeoutMs: shutdownTimeoutMs,
     exit: (code) => {
