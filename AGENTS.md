@@ -31,6 +31,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/skillshare/` — две проверки скиллов: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные таргеты с источниками. Их вызывают `just check-agent-tools` и CI.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
+- `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
@@ -63,7 +64,10 @@ just check-agent-tools
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 just check-published-pages
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+# Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
+just check-document-numbers
+
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/

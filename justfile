@@ -47,8 +47,13 @@ check-agent-tools:
 check-published-pages:
     sh tools/community-site/check-published-pages.sh
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-published-pages identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
+check-document-numbers:
+    sh tools/docs/check-document-numbers.sh
+    sh tools/docs/check-document-numbers-test.sh
+
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 

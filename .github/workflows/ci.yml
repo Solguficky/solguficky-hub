@@ -205,3 +205,16 @@ jobs:
         run: sh tools/skillshare/check-generated.sh
       - name: Published pages are addressable
         run: sh tools/community-site/check-published-pages.sh
+
+  # Без path-фильтра: коллизию номера вносит merge-результат pull request,
+  # а не дифф ветки. На событии pull_request checkout уже содержит базу и
+  # входящий документ рядом; фильтр путей сравнил бы только изменённые файлы
+  # и пропустил бы чужой документ с тем же номером.
+  document-numbers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ADR and RFC numbers are unique and listed
+        run: sh tools/docs/check-document-numbers.sh
+      - name: Duplicate and missing-index cases fail with paths
+        run: sh tools/docs/check-document-numbers-test.sh
