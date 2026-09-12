@@ -4,6 +4,7 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type { IdentityResolver } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
@@ -142,6 +143,16 @@ function publishedMeetup() {
   };
 }
 
+function draftMeetup() {
+  return {
+    ...publishedMeetup(),
+    title: "",
+    description: "",
+    venue: "",
+    visibility: "hidden" as const,
+  };
+}
+
 function resolvedIdentity(): IdentityResolver {
   return {
     resolve: async () => ({
@@ -241,6 +252,7 @@ function refusedIdentity(): IdentityResolver {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("presentation adapter", () => {
@@ -569,6 +581,7 @@ describe("presentation adapter", () => {
   });
 
   it("records meetup_id when publication is rejected", async () => {
+    const counted = vi.spyOn(failures, "countFailure");
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "dependency-rejected",
       reason: "forbidden",
@@ -588,6 +601,8 @@ describe("presentation adapter", () => {
       operation: "callback_query",
       use_case: "create_meetup",
     });
+    expect(counted).toHaveBeenCalledOnce();
+    expect(counted).toHaveBeenCalledWith("authorization");
     expect(rejected?.fields.meetup_id).toBe(
       "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
     );
@@ -883,6 +898,77 @@ describe("presentation adapter", () => {
     });
   });
 
+  it.each([
+    {
+      name: "list",
+      data: "v1:nav:hub",
+      result: { kind: "meetup-list" as const, meetups: [] },
+      use_case: "find_meetup",
+      message: "meetup list sent",
+    },
+    {
+      name: "card",
+      data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+      result: { kind: "meetup-card" as const, meetup: publishedMeetup() },
+      use_case: "view_meetup",
+      message: "meetup card sent",
+    },
+    {
+      name: "menu",
+      data: "v1:manage:menu",
+      result: undefined,
+      use_case: "create_meetup",
+      message: "manage menu sent",
+    },
+    {
+      name: "draft",
+      data: "v1:manage:new:AZLzpLXGfY6fChssPU5fYA",
+      result: {
+        kind: "ask" as const,
+        field: "title" as const,
+        meetup: draftMeetup(),
+      },
+      use_case: "create_meetup",
+      message: "meetup form step sent",
+    },
+    {
+      name: "publish",
+      data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
+      result: { kind: "published" as const, meetup: publishedMeetup() },
+      use_case: "create_meetup",
+      message: "meetup published",
+    },
+    {
+      name: "outdated",
+      data: "v2:nav:hub",
+      result: { kind: "meetup-list" as const, meetups: [] },
+      use_case: "find_meetup",
+      message: "meetup list sent",
+    },
+  ])(
+    "records exactly one $name callback boundary at debug",
+    async ({ data, result, use_case, message }) => {
+      const execute =
+        result === undefined
+          ? vi.fn<Dispatcher["execute"]>().mockImplementation(() => {
+              throw new Error("dispatcher should not run");
+            })
+          : vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
+      const { bot, records } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(data));
+      expect(records).toHaveLength(1);
+      expect(records.some((record) => record.level === "info")).toBe(false);
+      expectBoundary(records[0], {
+        level: "debug",
+        result: "ok",
+        operation: "callback_query",
+        use_case,
+      });
+      expect(records[0]?.message).toBe(message);
+    },
+  );
+
   it("records a rejected callback screen as an error", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "dependency-rejected",
@@ -947,9 +1033,11 @@ describe("presentation adapter", () => {
   });
 
   it("logs malformed callback data without its payload", async () => {
+    const counted = vi.spyOn(failures, "countFailure");
     const { bot, records } = createHarness(resolvedIdentity());
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:view:short"));
+    expect(records).toHaveLength(1);
     expectBoundary(records[0], {
       level: "warn",
       result: "error",
@@ -957,7 +1045,40 @@ describe("presentation adapter", () => {
       operation: "callback_query",
     });
     expect(records[0]?.fields.use_case).toBeUndefined();
+    expect(records[0]?.fields.stack).toBeUndefined();
+    expect(counted).toHaveBeenCalledOnce();
+    expect(counted).toHaveBeenCalledWith("invariant");
     expect(JSON.stringify(records[0]?.fields)).not.toContain("short");
+  });
+
+  it("keeps malformed callback data as invariant when acknowledgement fails", async () => {
+    const counted = vi.spyOn(failures, "countFailure");
+    const { logger, records } = createCapturingLogger();
+    const bot = createBot({
+      token: "111:test-token",
+      dispatcher: createDispatcher(),
+      identity: resolvedIdentity(),
+      logger,
+    });
+    bot.botInfo = botInfo;
+    const failing: Transformer = (_prev, method) =>
+      method === "answerCallbackQuery"
+        ? Promise.reject(new Error("query is too old"))
+        : Promise.resolve({ ok: true, result: true as never });
+    bot.api.config.use(failing);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:short"));
+    expect(records).toHaveLength(1);
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+    });
+    expect(records[0]?.fields.stack).toBeUndefined();
+    expect(records[0]?.fields.reply_error).toBe("query is too old");
+    expect(counted).toHaveBeenCalledOnce();
+    expect(counted).toHaveBeenCalledWith("invariant");
   });
 
   it("records a foreign answer to a pending question", async () => {
