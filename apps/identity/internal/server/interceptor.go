@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
@@ -184,7 +185,7 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	if id := requestID(ctx); id != "" {
 		attrs = append(attrs, slog.String("request_id", id))
 	}
-	if useCase := incomingMetadata(ctx, "x-use-case"); useCase != "" {
+	if useCase := incomingUseCase(ctx, method); useCase != "" {
 		attrs = append(attrs, slog.String("use_case", useCase))
 	}
 	// Запись границы берёт идентификатор из ответа, а не из запроса: Telegram
@@ -260,6 +261,13 @@ func serverFault(code codes.Code) bool {
 
 func requestID(ctx context.Context) string {
 	return incomingMetadata(ctx, "x-request-id", "x-correlation-id")
+}
+
+func incomingUseCase(ctx context.Context, method string) string {
+	if strings.HasPrefix(method, "/grpc.health.v1.Health/") {
+		return ""
+	}
+	return incomingMetadata(ctx, "x-use-case")
 }
 
 func incomingMetadata(ctx context.Context, keys ...string) string {

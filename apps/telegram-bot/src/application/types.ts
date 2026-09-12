@@ -8,18 +8,25 @@ export type FormField = "title" | "schedule" | "venue" | "description";
 
 export type ExecuteRequest =
   | { identity: Person; intent: "start"; deepLink?: DeepLink }
-  | { identity: Person; intent: "list-visible-meetups"; requestId?: string }
+  | {
+      identity: Person;
+      intent: "list-visible-meetups";
+      requestId?: string;
+      useCase?: string;
+    }
   | {
       identity: Person;
       intent: "view-meetup";
       meetupId: string;
       requestId?: string;
+      useCase?: string;
     }
   | {
       identity: Person;
       intent: "create-meetup";
       meetupId: string;
       requestId?: string;
+      useCase?: string;
     }
   | {
       identity: Person;
@@ -28,12 +35,14 @@ export type ExecuteRequest =
       value: string;
       meetupId: string;
       requestId?: string;
+      useCase?: string;
     }
   | {
       identity: Person;
       intent: "publish-meetup";
       meetupId: string;
       requestId?: string;
+      useCase?: string;
     };
 
 export function startExecuteRequest(

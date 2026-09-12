@@ -39,7 +39,7 @@ Subjects удалённой аукционной ветки перечислен
 
 `GrantAdminRole` и `RevokeAdminRole` идемпотентно меняют роль `admin` по внутреннему `identity_id`; поле ответа `changed` отличает выполненное изменение от уже достигнутого состояния. Они доказывают право общим секретом `IDENTITY_MAINTAINER_TOKEN` в metadata `authorization: Bearer <token>` и иначе отвечают `UNAUTHENTICATED` до обращения к хранилищу ([ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md)). Выдача записывает системного субъекта как `granted_by = NULL`; `ResolveIdentity`, health и reflection остаются открытыми.
 
-Каждый вызов Identity и Meetups, начатый Telegram update, получает метаданные gRPC `x-request-id`. Telegram Bot создаёт значение один раз на границе update, оба сервиса только принимают его и записывают структурным полем `request_id`; в Protobuf payload и журнал доменных событий идентификатор не входит. Вызов без заголовка допустим для health check и ручной диагностики, но новый идентификатор принимающий сервис не создаёт.
+Каждый вызов Identity и Meetups, начатый Telegram update, получает метаданные gRPC `x-request-id` и `x-use-case`. Telegram Bot создаёт `request_id` один раз на границе update и передаёт `use_case` того сценария, который начал человек; оба сервиса только принимают эти значения и записывают структурными полями. В Protobuf payload и журнал доменных событий они не входят. Вызов без заголовков допустим для health check и ручной диагностики: новый идентификатор принимающий сервис не создаёт, а `use_case` не выводит из своего метода.
 
 ### Meetups gRPC
 

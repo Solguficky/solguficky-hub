@@ -3,6 +3,7 @@ import type {
   MeetupSnapshot,
   Meetups,
 } from "../meetups/port.js";
+import { rpcMeta } from "../rpc-metadata.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
 
 export function createMeetupForm(meetups: Meetups) {
@@ -18,7 +19,7 @@ export function createMeetupForm(meetups: Meetups) {
           await meetups.createDraft(
             request.identity,
             request.meetupId,
-            request.requestId,
+            rpcMeta(request),
           ),
           "title",
         );
@@ -26,7 +27,7 @@ export function createMeetupForm(meetups: Meetups) {
         const current = await meetups.get(
           request.identity,
           request.meetupId,
-          request.requestId,
+          rpcMeta(request),
         );
         if (current.kind === "not-found") {
           return { kind: "dependency-rejected", reason: "unavailable" };
@@ -47,7 +48,7 @@ export function createMeetupForm(meetups: Meetups) {
             request.identity,
             request.meetupId,
             schedule,
-            request.requestId,
+            rpcMeta(request),
           );
           if (scheduled.kind === "invalid") {
             return invalidField(
@@ -68,7 +69,7 @@ export function createMeetupForm(meetups: Meetups) {
         const updated = await meetups.changeAttributes(
           request.identity,
           changed,
-          request.requestId,
+          rpcMeta(request),
         );
         if (updated.kind === "invalid") {
           return invalidField(request.field, current.meetup, updated.message);
@@ -80,7 +81,7 @@ export function createMeetupForm(meetups: Meetups) {
           await meetups.publish(
             request.identity,
             request.meetupId,
-            request.requestId,
+            rpcMeta(request),
           ),
         );
       default: {

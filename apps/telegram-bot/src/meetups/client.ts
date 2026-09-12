@@ -11,7 +11,7 @@ import {
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
-import { requestIdHeader } from "../identity/client.js";
+import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
   MeetupListResult,
   MeetupResult,
@@ -80,18 +80,16 @@ export function createMeetupsAdapter(
       return { kind: "unavailable", cause };
     }
   };
-  const options = (requestId?: string) => ({
+  const options = (meta?: RpcMetadata) => ({
     timeoutMs,
-    ...(requestId === undefined
-      ? {}
-      : { headers: { [requestIdHeader]: requestId } }),
+    ...callHeaders(meta),
   });
   return {
-    listVisible: async (person, requestId): Promise<MeetupListResult> => {
+    listVisible: async (person, meta): Promise<MeetupListResult> => {
       try {
         const response = await rpc.listVisibleMeetups(
           { viewer: viewer(person) },
-          options(requestId),
+          options(meta),
         );
         return { kind: "ok", meetups: response.meetups.map(toSummary) };
       } catch (cause) {
@@ -116,24 +114,21 @@ export function createMeetupsAdapter(
         return { kind: "unavailable", cause };
       }
     },
-    createDraft: (person, id, requestId) =>
+    createDraft: (person, id, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.createMeetupDraft(
             { viewer: viewer(person), id },
-            options(requestId),
+            options(meta),
           ),
         ),
       ),
-    get: async (person, id, requestId) => {
+    get: async (person, id, meta) => {
       try {
         return {
           kind: "ok",
           meetup: toSnapshot(
-            await rpc.getMeetup(
-              { viewer: viewer(person), id },
-              options(requestId),
-            ),
+            await rpc.getMeetup({ viewer: viewer(person), id }, options(meta)),
           ),
         };
       } catch (cause) {
@@ -161,7 +156,7 @@ export function createMeetupsAdapter(
         return { kind: "unavailable", cause };
       }
     },
-    changeAttributes: (person, meetup, requestId) =>
+    changeAttributes: (person, meetup, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.changeMeetupAttributes(
@@ -174,11 +169,11 @@ export function createMeetupsAdapter(
               kind: "",
               calendarLink: "",
             },
-            options(requestId),
+            options(meta),
           ),
         ),
       ),
-    setSchedule: (person, id, schedule, requestId) =>
+    setSchedule: (person, id, schedule, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.setMeetupSchedule(
@@ -207,16 +202,16 @@ export function createMeetupsAdapter(
                 },
               },
             },
-            options(requestId),
+            options(meta),
           ),
         ),
       ),
-    publish: (person, id, requestId) =>
+    publish: (person, id, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.publishMeetup(
             { viewer: viewer(person), id },
-            options(requestId),
+            options(meta),
           ),
         ),
       ),

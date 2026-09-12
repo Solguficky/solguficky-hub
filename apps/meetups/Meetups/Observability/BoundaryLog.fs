@@ -51,14 +51,14 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
     /// каждые несколько секунд, поэтому её запись была бы шумом, а не журналом.
     static let isProbe (method: string) = method.StartsWith "/grpc.health.v1.Health/"
 
-    /// Идентификатор рождается на Telegram-краю и приходит транспортными
+    /// Значения рождаются на Telegram-краю и приходят транспортными
     /// метаданными. Пустой заголовок не превращается в структурное поле:
     /// logging.md требует опускать значение, которое граница не получила.
-    static let requestId (context: ServerCallContext) =
+    static let incomingHeader (name: string) (context: ServerCallContext) =
         context.RequestHeaders
         |> Seq.tryPick (fun entry ->
             if
-                String.Equals(entry.Key, "x-request-id", StringComparison.OrdinalIgnoreCase)
+                String.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)
                 && not (String.IsNullOrWhiteSpace entry.Value)
             then
                 Some entry.Value
@@ -66,9 +66,43 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                 None
         )
 
+    static let requestId context = incomingHeader "x-request-id" context
+    static let useCase context = incomingHeader "x-use-case" context
+
+    static let optional name value extras =
+        match value with
+        | Some v -> extras @ [ name, box v ]
+        | None -> extras
+
+    static let frame (context: ServerCallContext) result duration grpcCode extras =
+        [
+            "service", box service
+            "operation", box context.Method
+            "result", box result
+            "duration_us", box duration
+            "grpc_code", box grpcCode
+        ]
+        |> optional "request_id" (requestId context)
+        |> optional "use_case" (useCase context)
+        |> fun fields -> fields @ extras
+
     /// reraise() внутри task недоступен: он разрешён только прямо в with-блоке.
     /// Capture().Throw() сохраняет исходный stack.
     static let rethrow (exn: exn) = ExceptionDispatchInfo.Capture(exn).Throw()
+
+    let write (level: LogLevel) (error: exn option) (fields: (string * obj) list) =
+        let template =
+            "gRPC boundary "
+            + String.concat
+                " "
+                (fields
+                 |> List.map (fun (name, _) -> "{" + name + "}"))
+
+        let values = fields |> List.map snd |> List.toArray
+
+        match error with
+        | Some exn -> logger.Log(level, exn, template, values)
+        | None -> logger.Log(level, template, values)
 
     override _.UnaryServerHandler<'TRequest, 'TResponse when 'TRequest: not struct and 'TResponse: not struct>
         (request: 'TRequest, context: ServerCallContext, continuation: UnaryServerMethod<'TRequest, 'TResponse>)
@@ -79,31 +113,14 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
             task {
                 let started = Stopwatch.GetTimestamp()
                 let elapsedMicroseconds () = int64 (Stopwatch.GetElapsedTime started).TotalMicroseconds
-                let requestId = requestId context
 
                 try
                     let! response = continuation.Invoke(request, context)
 
-                    match requestId with
-                    | Some id ->
-                        logger.LogInformation(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {request_id}",
-                            service,
-                            context.Method,
-                            "ok",
-                            elapsedMicroseconds (),
-                            string StatusCode.OK,
-                            id
-                        )
-                    | None ->
-                        logger.LogInformation(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
-                            service,
-                            context.Method,
-                            "ok",
-                            elapsedMicroseconds (),
-                            string StatusCode.OK
-                        )
+                    write
+                        LogLevel.Information
+                        None
+                        (frame context "ok" (elapsedMicroseconds ()) (string StatusCode.OK) [])
 
                     return response
                 with
@@ -114,55 +131,20 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                     let category = declaredCategory declined
                     countFailure category
 
-                    match declined.Data["meetups.denial_reason"], requestId with
-                    | (:? string as denialReason), Some id ->
-                        logger.LogWarning(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {error} {denial_reason} {request_id}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string declined.StatusCode,
-                            category,
-                            declined.Status.Detail,
-                            denialReason,
-                            id
-                        )
-                    | (:? string as denialReason), None ->
-                        logger.LogWarning(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {error} {denial_reason}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string declined.StatusCode,
-                            category,
-                            declined.Status.Detail,
-                            denialReason
-                        )
-                    | _, Some id ->
-                        logger.LogWarning(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {error} {request_id}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string declined.StatusCode,
-                            category,
-                            declined.Status.Detail,
-                            id
-                        )
-                    | _, None ->
-                        logger.LogWarning(
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {error}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string declined.StatusCode,
-                            category,
-                            declined.Status.Detail
-                        )
+                    let extras =
+                        [
+                            "error_category", box category
+                            "error", box declined.Status.Detail
+                        ]
+                        |> fun fields ->
+                            match declined.Data["meetups.denial_reason"] with
+                            | :? string as denialReason -> fields @ [ "denial_reason", box denialReason ]
+                            | _ -> fields
+
+                    write
+                        LogLevel.Warning
+                        None
+                        (frame context "error" (elapsedMicroseconds ()) (string declined.StatusCode) extras)
 
                     rethrow declined
                     return Unchecked.defaultof<'TResponse>
@@ -172,49 +154,20 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                     if context.Deadline <= DateTime.UtcNow then
                         countFailure "timeout"
 
-                        match requestId with
-                        | Some id ->
-                            logger.LogWarning(
-                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {request_id}",
-                                service,
-                                context.Method,
-                                "error",
-                                elapsedMicroseconds (),
-                                string StatusCode.DeadlineExceeded,
-                                "timeout",
-                                id
-                            )
-                        | None ->
-                            logger.LogWarning(
-                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category}",
-                                service,
-                                context.Method,
-                                "error",
-                                elapsedMicroseconds (),
-                                string StatusCode.DeadlineExceeded,
-                                "timeout"
-                            )
+                        write
+                            LogLevel.Warning
+                            None
+                            (frame
+                                context
+                                "error"
+                                (elapsedMicroseconds ())
+                                (string StatusCode.DeadlineExceeded)
+                                [ "error_category", box "timeout" ])
                     else
-                        match requestId with
-                        | Some id ->
-                            logger.LogWarning(
-                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {request_id}",
-                                service,
-                                context.Method,
-                                "error",
-                                elapsedMicroseconds (),
-                                string StatusCode.Cancelled,
-                                id
-                            )
-                        | None ->
-                            logger.LogWarning(
-                                "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code}",
-                                service,
-                                context.Method,
-                                "error",
-                                elapsedMicroseconds (),
-                                string StatusCode.Cancelled
-                            )
+                        write
+                            LogLevel.Warning
+                            None
+                            (frame context "error" (elapsedMicroseconds ()) (string StatusCode.Cancelled) [])
 
                     rethrow cancelled
                     return Unchecked.defaultof<'TResponse>
@@ -231,34 +184,19 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
 
                     countFailure category
 
-                    match requestId with
-                    | Some id ->
-                        logger.LogError(
-                            unexpected,
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {error} {stack} {request_id}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string StatusCode.Unknown,
-                            category,
-                            unexpected.Message,
-                            unexpected.StackTrace,
-                            id
-                        )
-                    | None ->
-                        logger.LogError(
-                            unexpected,
-                            "gRPC boundary {service} {operation} {result} {duration_us} {grpc_code} {error_category} {error} {stack}",
-                            service,
-                            context.Method,
-                            "error",
-                            elapsedMicroseconds (),
-                            string StatusCode.Unknown,
-                            category,
-                            unexpected.Message,
-                            unexpected.StackTrace
-                        )
+                    write
+                        LogLevel.Error
+                        (Some unexpected)
+                        (frame
+                            context
+                            "error"
+                            (elapsedMicroseconds ())
+                            (string StatusCode.Unknown)
+                            [
+                                "error_category", box category
+                                "error", box unexpected.Message
+                                "stack", box unexpected.StackTrace
+                            ])
 
                     rethrow unexpected
                     return Unchecked.defaultof<'TResponse>

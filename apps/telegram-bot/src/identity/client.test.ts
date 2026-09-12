@@ -8,6 +8,7 @@ import {
   createIdentityClient,
   createIdentityResolver,
   requestIdHeader,
+  useCaseHeader,
 } from "./client.js";
 
 afterEach(() => {
@@ -101,7 +102,41 @@ describe("identity client", () => {
         });
       },
     });
-    await identity.resolve({ telegramUserId: 1n }, "req-42");
+    await identity.resolve({ telegramUserId: 1n }, { requestId: "req-42" });
+    expect(seenHeaders).toEqual({ [requestIdHeader]: "req-42" });
+  });
+
+  it("carries use_case next to the request id", async () => {
+    let seenHeaders: Record<string, string> | undefined;
+    const identity = createIdentityResolver({
+      resolveIdentity: async (_request, options) => {
+        seenHeaders = options?.headers;
+        return create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+        });
+      },
+    });
+    await identity.resolve(
+      { telegramUserId: 1n },
+      { requestId: "req-42", useCase: "view_meetup" },
+    );
+    expect(seenHeaders).toEqual({
+      [requestIdHeader]: "req-42",
+      [useCaseHeader]: "view_meetup",
+    });
+  });
+
+  it("sends no use_case header when the edge produced none", async () => {
+    let seenHeaders: Record<string, string> | undefined;
+    const identity = createIdentityResolver({
+      resolveIdentity: async (_request, options) => {
+        seenHeaders = options?.headers;
+        return create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+        });
+      },
+    });
+    await identity.resolve({ telegramUserId: 1n }, { requestId: "req-42" });
     expect(seenHeaders).toEqual({ [requestIdHeader]: "req-42" });
   });
 

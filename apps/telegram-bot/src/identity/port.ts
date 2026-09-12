@@ -1,3 +1,5 @@
+import type { RpcMetadata } from "../rpc-metadata.js";
+
 export type ResolveIdentityInput = {
   telegramUserId: bigint;
   telegramUsername?: string;
@@ -24,6 +26,6 @@ export type ResolveIdentityResult =
 export type IdentityResolver = {
   resolve(
     input: ResolveIdentityInput,
-    requestId?: string,
+    meta?: RpcMetadata,
   ): Promise<ResolveIdentityResult>;
 };

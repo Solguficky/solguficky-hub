@@ -1,4 +1,5 @@
 import type { Meetups } from "../meetups/port.js";
+import { rpcMeta } from "../rpc-metadata.js";
 import { createMeetupForm } from "./meetup-form.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult } from "./types.js";
@@ -20,7 +21,7 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
           }
           const result = await meetups.listVisible(
             request.identity,
-            request.requestId,
+            rpcMeta(request),
           );
           return result.kind === "ok"
             ? { kind: "meetup-list", meetups: result.meetups }
@@ -38,7 +39,7 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
           const result = await meetups.get(
             request.identity,
             request.meetupId,
-            request.requestId,
+            rpcMeta(request),
           );
           if (result.kind === "ok")
             return { kind: "meetup-card", meetup: result.meetup };
