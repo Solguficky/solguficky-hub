@@ -288,12 +288,6 @@ async function handleCallback(
     // не ждёт, а его собственный отказ попадает в запись уже со сценарием.
     const action = parseCallback(ctx.callbackQuery?.data);
     if (action.kind === "malformed") {
-      await ctx.answerCallbackQuery();
-      await editScreen(
-        ctx,
-        "Не получилось прочитать эту кнопку. Открой актуальное меню.",
-        new InlineKeyboard().text("К списку", "v1:nav:hub"),
-      );
       outcome = {
         level: "warn",
         message: "malformed callback data",
@@ -301,6 +295,12 @@ async function handleCallback(
         error_category: "invariant",
         error: "callback data failed validation",
       };
+      await ctx.answerCallbackQuery();
+      await editScreen(
+        ctx,
+        "Не получилось прочитать эту кнопку. Открой актуальное меню.",
+        new InlineKeyboard().text("К списку", "v1:nav:hub"),
+      );
       return;
     }
     useCase = callbackUseCase(action.kind);
@@ -400,6 +400,12 @@ async function handleCallback(
       });
       return;
     }
+    const _exhaustive: never = action;
+    outcome = unexpectedOutcome(
+      `unhandled callback ${_exhaustive}`,
+      undefined,
+      useCase,
+    );
   } catch (cause) {
     if (outcome === undefined) {
       outcome = unexpectedOutcome(cause, undefined, useCase);
