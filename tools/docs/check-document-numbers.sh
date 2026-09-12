@@ -11,9 +11,11 @@
 # tree and asks two questions that need no judgment: each number occurs once,
 # and each numbered file is linked from the catalog README.
 #
-# The gate reads Git, not the working tree: an untracked scratch file is the
-# author's business, a committed one is the defect this check exists for.
-# README.md and template.md have no number and are ignored. docs/learning/ and
+# The file set comes from Git: an untracked scratch file is the author's
+# business, a committed one is the defect this check exists for. The catalog
+# text is read from the working tree, same as check-published-pages.sh: the
+# index row must be a table line that links the basename. README.md and
+# template.md have no number and are ignored. docs/learning/ and
 # docs/standards/ are out of scope.
 
 set -eu
@@ -87,7 +89,7 @@ check_catalog() {
     printf '%s\n' "$files" | while IFS= read -r file; do
         [ -n "$file" ] || continue
         name=${file##*/}
-        if ! grep -Fq "]($name)" "$index"; then
+        if ! grep -E '^\|' "$index" | grep -Fq "]($name)"; then
             echo "  - $file" >> "$scratch"
         fi
     done

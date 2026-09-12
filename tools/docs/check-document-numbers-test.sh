@@ -99,6 +99,22 @@ assert_fails \
     'docs/decisions/ADR-002-orphan.md' \
     "$missing"
 
+printf '# RFC-001: Clash\n' > "$dup/docs/rfcs/RFC-001-clash.md"
+git -C "$dup" add docs/rfcs/RFC-001-clash.md
+git -C "$dup" commit -qm rfc-clash
+assert_fails \
+    'duplicate RFC number' \
+    'docs/rfcs/RFC-001-clash.md' \
+    "$dup"
+
+printf '# RFC-002: Orphan\n' > "$missing/docs/rfcs/RFC-002-orphan.md"
+git -C "$missing" add docs/rfcs/RFC-002-orphan.md
+git -C "$missing" commit -qm rfc-orphan
+assert_fails \
+    'RFC file missing from the catalog index' \
+    'docs/rfcs/RFC-002-orphan.md' \
+    "$missing"
+
 if [ "$failed" -ne 0 ]; then
     exit 1
 fi
