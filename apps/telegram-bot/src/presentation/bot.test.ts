@@ -590,6 +590,7 @@ describe("presentation adapter", () => {
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
       requestId: expect.any(String),
+      useCase: "view_meetup",
     });
     expect(calls.at(-1)).toMatchObject({
       method: "sendRichMessage",
