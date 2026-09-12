@@ -836,7 +836,7 @@
   <div class="frames">
 
   <article class="frame t-p" id="P-01">
-    <div class="frame-head"><span class="fid">P-01</span><h3>Первый запуск бота</h3><span class="chip open">открытый вопрос</span></div>
+    <div class="frame-head"><span class="fid">P-01</span><h3>Первый запуск допущенного человека</h3><span class="chip ok">решено</span></div>
     <div class="frame-body">
       <div class="stage">
         <div class="stage-label">личный чат, /start</div>
@@ -876,17 +876,77 @@
             <li>Первый экран - единственное место, где можно сообщить о рассылке про новые сходки: бот не может написать первым. Категория включена по умолчанию, отключение доступно из любого такого уведомления.</li>
           </ul>
         </div>
-        <div class="qs">
-          <h4>Открытые вопросы</h4>
+        <div class="decided">
+          <h4>Решение дизайн-сессии PER-32</h4>
           <ul>
-            <li>Продуктовая часть решена в <a href="../../decisions/ADR-026-identity-mvp-model-and-access.md">ADR-026</a>: недопущенный человек видит отказ с указанием, к кому обратиться, и никаких данных сходок. Автоматическая проверка отвергнута - <code>getChatMember</code> про чужих пользователей требует, чтобы бот был администратором чата, а такой бот получает все сообщения группы. <strong>Кадров ещё нет:</strong> экран ожидания допуска, вход по приглашению и экран закрытого доступа не нарисованы и требуют отдельной дизайн-сессии — <a href="https://linear.app/anticnvm/issue/per-32">PER-32</a>.</li>
-            <li>Нужен ли отдельный экран "как это работает" или достаточно текста приветствия — вместе с <a href="https://linear.app/anticnvm/issue/per-32">PER-32</a>.</li>
+            <li>Отдельного экрана «как это работает» нет: приветствие кратко объясняет пользу и обещание тишины, а кнопки сразу ведут к действию.</li>
+            <li>Этот кадр показывается только после успешной проверки допуска. Остальные исходы <code>/start</code> разнесены по P-14...P-17 и E-10, поэтому интерфейс не выдаёт данные сходок до решения Identity.</li>
           </ul>
         </div>
       </div>
     </div>
   </article>
 
+
+  <article class="frame t-p" id="P-14">
+    <div class="frame-head"><span class="fid">P-14</span><h3>Ожидание допуска</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage"><div class="stage-label">личный чат, /start, статус pending</div><div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat"><div class="row user"><div class="bubble">/start</div></div><div class="row bot"><div class="bubble">Заявка на доступ ждёт проверки.
+
+Пока сходки не видны. Напиши администратору в общем чате сообщества — он сможет найти заявку после твоего запуска бота.</div></div></div>
+      </div><div class="stage-note">Ответ подтверждает регистрацию, но не обещает автоматическое уведомление или срок рассмотрения.</div></div>
+      <div class="meta"><dl class="meta-list">
+        <dt>Роль</dt><dd>Ещё не допущенный человек</dd><dt>Контекст</dt><dd>Первый или повторный <code>/start</code>, Identity вернул <code>pending</code></dd>
+        <dt>Действие</dt><dd>Обращается к администратору сообщества вне бота</dd><dt>Переход</dt><dd>Повторный <code>/start</code> остаётся P-14 или ведёт в P-01 после допуска</dd>
+        <dt>Механика</dt><dd><code>sendMessage</code> без кнопок и без данных сходок</dd></dl>
+        <div class="decided"><h4>Что зафиксировано</h4><ul><li>Человек узнаёт, что профиль создан и его можно допустить вручную.</li><li>Бот не утверждает, что администратор уже получил отдельное уведомление: такого сценария в MVP нет.</li></ul></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-15">
+    <div class="frame-head"><span class="fid">P-15</span><h3>Вход по приглашению</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage"><div class="stage-label">личный чат, /start &lt;invite-token&gt;</div><div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat"><div class="row bot"><div class="bubble">Приглашение принято — доступ открыт.
+
+Здесь живёт информация о сходках солегуфиков. Писать буду только по твоей подписке.</div><div class="kb"><div class="kb-row"><div class="key">Ближайшие сходки</div></div><div class="kb-row"><div class="key muted">Мои уведомления</div></div></div></div></div>
+      </div><div class="stage-note">Подтверждение приглашения заменяет обычное приветствие, чтобы человек видел результат ссылки.</div></div>
+      <div class="meta"><dl class="meta-list"><dt>Роль</dt><dd>Приглашённый солегуфик</dd><dt>Контекст</dt><dd>Валидный непогашенный и неистёкший токен</dd><dt>Действие</dt><dd>Открывает продукт</dd><dt>Переход</dt><dd>-> P-03 или P-02</dd><dt>Механика</dt><dd>Токен погашается Identity атомарно; результат старта несёт отдельную presentation policy с клавиатурой солегуфика</dd></dl>
+      <div class="decided"><h4>Что зафиксировано</h4><ul><li>Первый экран отличается явным подтверждением допуска, но не добавляет отдельный обучающий шаг.</li><li>Клавиатура определяется исходом допуска: принятый инвайт показывает действия солегуфика «Ближайшие сходки» и «Мои уведомления», а не общую клавиатуру текущего обработчика <code>/start</code>.</li><li>Сам токен, срок его жизни и имя пригласившего не повторяются в сообщении.</li></ul></div></div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-16">
+    <div class="frame-head"><span class="fid">P-16</span><h3>Приглашение больше не действует</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage"><div class="stage-label">истёкший или уже погашенный чужим профилем токен</div><div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat"><div class="row bot"><div class="bubble">Это приглашение больше не действует.
+
+Доступ к сходкам не открыт. Попроси администратора сообщества прислать новое приглашение.</div></div></div>
+      </div></div>
+      <div class="meta"><dl class="meta-list"><dt>Роль</dt><dd>Не допущен</dd><dt>Контекст</dt><dd>Токен истёк или уже погашен другим профилем</dd><dt>Действие</dt><dd>Запрашивает новую ссылку</dd><dt>Переход</dt><dd>Новый валидный токен -> P-15; обычный <code>/start</code> -> P-14</dd><dt>Механика</dt><dd>Отдельная presentation policy отправляет сообщение без клавиатуры; одинаковый текст для двух причин не раскрывает историю токена</dd></dl>
+      <div class="decided"><h4>Что зафиксировано</h4><ul><li>Повторный переход владельца уже погашенного токена остаётся идемпотентным входом допущенного профиля и ведёт в P-01, а не в этот кадр.</li><li>Недействующий инвайт не получает фиксированную клавиатуру текущего обработчика <code>/start</code>: до допуска нельзя показывать продуктовые действия.</li><li>Невалидное приглашение не маскируется под блокировку или сбой.</li></ul></div></div>
+    </div>
+  </article>
+
+  <article class="frame t-p" id="P-17">
+    <div class="frame-head"><span class="fid">P-17</span><h3>Доступ закрыт</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage"><div class="stage-label">личный чат, статус blocked</div><div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat"><div class="row bot"><div class="bubble">Доступ к Solguficky Hub закрыт.
+
+Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.</div></div></div>
+      </div></div>
+      <div class="meta"><dl class="meta-list"><dt>Роль</dt><dd>Заблокированный профиль</dd><dt>Контекст</dt><dd>Любое продуктовое действие, Identity вернул <code>blocked</code></dd><dt>Действие</dt><dd>Обращается к администратору</dd><dt>Переход</dt><dd>Остаётся P-17 до ручного повторного допуска</dd><dt>Механика</dt><dd><code>sendMessage</code> без кнопок; ни данные сходок, ни прежние роли не используются</dd></dl>
+      <div class="decided"><h4>Что зафиксировано</h4><ul><li>Текст прямо сообщает о закрытом доступе и не называет это ожиданием заявки.</li><li>Причина блокировки и сведения сообщества не раскрываются.</li></ul></div></div>
+    </div>
+  </article>
   <article class="frame t-p" id="P-02">
     <div class="frame-head"><span class="fid">P-02</span><h3>Список сходок пуст</h3><span class="chip ok">решено</span></div>
     <div class="frame-body">
@@ -2301,7 +2361,7 @@
       <div class="meta">
         <dl class="meta-list">
           <dt>Роль</dt><dd>Любая</dd>
-          <dt>Контекст</dt><dd>Meetups или Identity не отвечают</dd>
+          <dt>Контекст</dt><dd>После успешной проверки Identity сервис Meetups не отвечает</dd>
           <dt>Действие</dt><dd>Повторяет запрос</dd>
           <dt>Переход</dt><dd>-> P-03 при успехе, -> E-05 при повторной ошибке</dd>
           <dt>Механика</dt><dd>Бот не показывает пустой список вместо ошибки и не подставляет устаревшие данные молча</dd>
@@ -2314,17 +2374,32 @@
             <li>Незавершённый ввод при сбое не теряется.</li>
           </ul>
         </div>
-        <div class="qs">
-          <h4>Открытые вопросы</h4>
+        <div class="decided">
+          <h4>Граница с проверкой доступа</h4>
           <ul>
-            <li>Что доступно при живом Meetups и мёртвом Identity: показывать ли данные в режиме "только чтение".</li>
-            <li>Различаются ли тексты для сбоя чтения и сбоя записи. При записи человек должен понимать, применилось изменение или нет.</li>
+            <li>E-05 относится только к сбою Meetups после успешной проверки Identity.</li>
+            <li>Недоступность Identity всегда ведёт в E-10; режима «только чтение» нет.</li>
+            <li>Тексты сбоев чтения и записи остаются контекстными: при записи человек должен понимать, применилось изменение или нет.</li>
           </ul>
         </div>
       </div>
     </div>
   </article>
 
+
+  <article class="frame t-e" id="E-10">
+    <div class="frame-head"><span class="fid">E-10</span><h3>Не удалось проверить доступ</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage"><div class="stage-label">fail-closed после дедлайна Identity</div><div class="phone">
+        <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+        <div class="tg-chat"><div class="row bot"><div class="bubble">Сейчас не получилось проверить доступ. Это временная ошибка на моей стороне.
+
+Попробуй снова через минуту.</div></div></div>
+      </div></div>
+      <div class="meta"><dl class="meta-list"><dt>Роль</dt><dd>Неизвестна: Identity не ответил</dd><dt>Контекст</dt><dd>Единый транспортный дедлайн Identity — 3 секунды</dd><dt>Действие</dt><dd>Повторяет исходную команду через минуту</dd><dt>Переход</dt><dd>После успешной проверки -> P-01, P-14, P-15, P-16 или P-17</dd><dt>Механика</dt><dd>Fail-closed: без клавиатуры и без данных сходок</dd></dl>
+      <div class="decided"><h4>Что зафиксировано</h4><ul><li>Сбой назван временной проблемой продукта, а не отказом человеку.</li><li>Автоматического повтора и отдельной кнопки нет: команда <code>/start</code> безопасна и идемпотентна.</li><li>Три секунды — действующий дедлайн RPC к Identity; «через минуту» — понятная человеку рекомендация, а не блокировка интерфейса.</li></ul></div></div>
+    </div>
+  </article>
   <article class="frame t-e" id="E-06">
     <div class="frame-head"><span class="fid">E-06</span><h3>Ссылку на сообщение построить нельзя</h3><span class="chip ok">решено</span></div>
     <div class="frame-body">
@@ -2495,7 +2570,7 @@
   </div>
 
   <div class="map">
-    <svg viewBox="0 0 900 470" role="img" aria-label="Схема переходов между кадрами storyboard">
+    <svg viewBox="0 0 900 530" role="img" aria-label="Схема переходов между кадрами storyboard">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
@@ -2584,12 +2659,26 @@
         <text class="n-id" x="548" y="421">E-09</text><text class="n-t" x="548" y="434">Повторное нажатие</text>
         <text class="e-lbl" x="700" y="426">Источники перечислены в таблице ниже</text>
 
+        <text class="n-t" x="20" y="474" style="letter-spacing:.1em; text-transform:uppercase; font-size:10px">Премодерация при /start</text>
+        <rect class="n-p" x="20" y="484" width="140" height="36" rx="8"/>
+        <text class="n-id" x="32" y="501">P-14</text><text class="n-t" x="32" y="514">Ожидание допуска</text>
+        <rect class="n-p" x="192" y="484" width="140" height="36" rx="8"/>
+        <text class="n-id" x="204" y="501">P-15</text><text class="n-t" x="204" y="514">Приглашение принято</text>
+        <rect class="n-p" x="364" y="484" width="140" height="36" rx="8"/>
+        <text class="n-id" x="376" y="501">P-16</text><text class="n-t" x="376" y="514">Инвайт не действует</text>
+        <rect class="n-p" x="536" y="484" width="140" height="36" rx="8"/>
+        <text class="n-id" x="548" y="501">P-17</text><text class="n-t" x="548" y="514">Доступ закрыт</text>
+        <rect class="n-e" x="708" y="484" width="140" height="36" rx="8"/>
+        <text class="n-id" x="720" y="501">E-10</text><text class="n-t" x="720" y="514">Доступ не проверен</text>
+
       </g>
     </svg>
   </div>
 
   <table>
     <tr><th>Из</th><th>Действие</th><th>В</th></tr>
+    <tr><td><code>/start</code></td><td>Identity вернул <code>pending</code>, <code>blocked</code> или недоступен</td><td>P-14, P-17 или E-10</td></tr>
+    <tr><td><code>/start &lt;invite-token&gt;</code></td><td>токен принят или не действует</td><td>P-15 или P-16</td></tr>
     <tr><td>P-01</td><td>Ближайшие сходки</td><td>P-03, при пустом списке P-02</td></tr>
     <tr><td>P-01</td><td>вход по deep link <code>?start=m_&lt;uuid&gt;</code></td><td>P-04</td></tr>
     <tr><td>P-02</td><td>Обновить</td><td>P-02 или P-03</td></tr>
@@ -2624,7 +2713,7 @@
     <tr><td>A-12</td><td><code>/attach</code> в группе</td><td>A-13 в личном чате, без личного чата E-07</td></tr>
     <tr><td>A-13</td><td>подпись</td><td>A-14, у подписчиков P-10</td></tr>
     <tr><td>A-14</td><td>убрать связь</td><td>подтверждение, затем A-14</td></tr>
-    <tr><td>любой экран</td><td>backend не ответил</td><td>E-05</td></tr>
+    <tr><td>любой экран после успешной проверки Identity</td><td>Meetups не ответил</td><td>E-05</td></tr>
     <tr><td>любой экран</td><td>нажатие в старом сообщении</td><td>E-04, при удалённой сходке E-03</td></tr>
     <tr><td>любая кнопка</td><td>повторное нажатие</td><td>E-09, состояние не меняется</td></tr>
     <tr><td>любая длинная операция</td><td>ожидание ответа</td><td>E-08</td></tr>
@@ -2665,7 +2754,6 @@
     <tr><td>Участвуют ли модули в уведомлениях и своей ли категорией</td><td><a href="#modules">Модули сходки</a>, P-07</td><td>продукт</td><td>требования Notifications</td></tr>
     <tr><td>Планирование, отмена и перенос напоминаний</td><td>P-11, A-10</td><td>техника</td><td>дизайн Notifications</td></tr>
     <tr><td>Одновременное редактирование двумя администраторами</td><td>A-09</td><td>домен</td><td>дизайн Meetups</td></tr>
-    <tr><td>Кто является участником сообщества и что видит посторонний</td><td>P-01</td><td>продукт и Identity</td><td>дизайн Identity</td></tr>
   </table>
 </section>
 
