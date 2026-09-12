@@ -1,7 +1,6 @@
 package server_test
 
 import (
-	"context"
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
@@ -46,23 +45,28 @@ func TestMaintainerMethodsRejectMissingEmptyAndWrongCredentials(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
 		token string
-		ctx   context.Context
+		// credentials пусты, когда заголовка нет вовсе: это отдельный отрицательный путь.
+		credentials []string
 	}{
-		"missing":      {maintainerToken, t.Context()},
-		"empty":        {maintainerToken, metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer ")},
-		"wrong":        {maintainerToken, metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer wrong")},
-		"unconfigured": {"", metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer ")},
+		"missing":      {maintainerToken, nil},
+		"empty":        {maintainerToken, []string{"authorization", "Bearer "}},
+		"wrong":        {maintainerToken, []string{"authorization", "Bearer wrong"}},
+		"unconfigured": {"", []string{"authorization", "Bearer "}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			db := migratedDB(t)
 			client := identityv1.NewIdentityServiceClient(newConnWithToken(t, db, tc.token))
 			profile := resolve(t, client, 7100, nil)
-			_, grantErr := client.GrantAdminRole(tc.ctx, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+			ctx := t.Context()
+			if len(tc.credentials) > 0 {
+				ctx = metadata.AppendToOutgoingContext(ctx, tc.credentials...)
+			}
+			_, grantErr := client.GrantAdminRole(ctx, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
 			if status.Code(grantErr) != codes.Unauthenticated {
 				t.Fatalf("grant code: got %v want %s", grantErr, codes.Unauthenticated)
 			}
-			_, revokeErr := client.RevokeAdminRole(tc.ctx, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+			_, revokeErr := client.RevokeAdminRole(ctx, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()})
 			if status.Code(revokeErr) != codes.Unauthenticated {
 				t.Fatalf("revoke code: got %v want %s", revokeErr, codes.Unauthenticated)
 			}

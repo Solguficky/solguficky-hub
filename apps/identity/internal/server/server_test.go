@@ -41,6 +41,7 @@ func newConn(t *testing.T) *grpc.ClientConn {
 }
 
 func newConnWith(t *testing.T, db *sql.DB) *grpc.ClientConn {
+	t.Helper()
 	return newConnWithToken(t, db, "")
 }
 
