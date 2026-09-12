@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 # Verify the YAML frontmatter of every SKILL.md, in the Skillshare sources and
-# in the committed targets.
+# in the targets laid out on this machine.
 #
-# check-generated.sh only compares a target against its source byte for byte, so
-# an unparseable frontmatter stays invisible: it is copied faithfully. Skillshare
-# and Claude Code then drop the description and fall back to the H1 heading, and
-# the skill silently loses the text a model decides to invoke it by.
+# Nothing else looks inside a skill. Targets are generated rather than committed
+# (ADR-040), so an unparseable frontmatter reaches every machine unnoticed:
+# Skillshare and Claude Code drop the description, fall back to the H1 heading,
+# and the skill silently loses the text a model decides to invoke it by.
 #
 # The frontmatter dialect here is small but not flat: alongside `name` and
 # `description` the vendored packs carry nested mappings, sequences, flow
