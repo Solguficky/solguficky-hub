@@ -16,7 +16,7 @@
 
 ## Production-like integration
 
-k3s предназначен для практики контейнерной оркестрации и проверки production-like deployment. Он не заменяет быстрый inner loop Aspire и не является путём PER-80: начальный production runtime — rootless Podman Quadlet на VPS.
+k3s предназначен для практики контейнерной оркестрации и проверки production-like deployment. Он не заменяет быстрый inner loop Aspire и не является путём PER-80: начальный production runtime — rootless Podman Quadlet на VPS. Генерация deployment-артефактов из Aspire — направление того же слоя после MVP и отдельный spike: Quadlet и k3s потребляют одни и те же OCI images, поэтому начальный runtime этот путь не закрывает.
 
 ## Production hosting
 
