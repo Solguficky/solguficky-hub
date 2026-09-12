@@ -17,9 +17,9 @@ Workflow собирает, тестирует и линтит Identity на из
 
 ## Проверки репозитория
 
-Джоба `repo-hygiene` запускает `tools/skillshare/check-frontmatter.sh`, `tools/skillshare/check-generated.sh` и `tools/community-site/check-published-pages.sh`; последний описан в разделе «Сайт сообщества». Скрипт сверяет собственные `proj-` skills и закоммиченный пак `golang/` с обоими таргетами, доступные локально источники внешних skills с их таргетами, общие внешние skills между `.claude/skills/` и `.agents/skills/`, а также agents и commands с их источниками в `.skillshare/`. Локально запускается командой `just check-agent-tools`.
+Джоба `repo-hygiene` запускает `tools/skillshare/check-frontmatter.sh`, `tools/skillshare/check-generated.sh` и `tools/community-site/check-published-pages.sh`; последний описан в разделе «Сайт сообщества». Первый разбирает YAML-frontmatter каждого `SKILL.md` в источниках `.skillshare/skills/` и в таргетах, если те разложены на этой машине. Второй сверяет agents и commands с их источниками в `.skillshare/`. Локально оба запускаются командой `just check-agent-tools`.
 
-Источники внешних skills из Skillshare не коммитятся, поэтому в CI сверка этих источников ничего не находит и пропускается: удалённо остаётся сравнение закоммиченных таргетов между собой плюс сверка пака `golang/`. Локальный прогон строже удалённого намеренно — рассинхрон источника ловится до push, а не в review.
+Таргеты скиллов не сверяются ни локально, ни в CI: они не хранятся в Git и собираются `skillshare sync -p` на каждой машине ([ADR-040](../decisions/ADR-040-skillshare-targets-not-committed.md)). Правка `proj-`скилла читается в диффе источника, а скилл, чей frontmatter не разобрался, ловит `check-frontmatter.sh` прямо по источнику — раньше это делала косвенная проверка записи в закоммиченном манифесте. В голом чекауте CI он разбирает 16 файлов `proj-`скиллов; локально — ещё и всё, что разложено в таргетах.
 
 Проверка не полагается на `skillshare diff` для native agents в режиме `copy`: Skillshare 0.20.x не создаёт для них manifest и помечает даже идентичную копию как local override. Фактическая синхронность этого файла проверяется по содержимому, с точностью до перевода строки: таргет — копия источника, и различаться они могут только тем, как Git выполнил checkout.
 
