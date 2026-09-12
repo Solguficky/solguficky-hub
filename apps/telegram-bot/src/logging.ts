@@ -16,6 +16,7 @@ export type LogFields = {
   stack?: string;
   grpc_code?: string;
   reply_error?: string;
+  meetup_id?: string;
   signal?: string;
   timeout?: number;
 };
