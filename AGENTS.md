@@ -28,7 +28,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
-- `tools/skillshare/` — две проверки скиллов: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные таргеты с источниками. Их вызывают `just check-agent-tools` и CI.
+- `tools/skillshare/` — три скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные agents и commands с источниками, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первые два вызывают `just check-agent-tools` и CI, третий — `just skillshare-install`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
@@ -42,10 +42,11 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 # Git-хуки — один раз после клонирования, из корня
 lefthook install
 
-# Скиллы, которых нет в Git — один раз после клонирования или создания worktree.
-# Источники внешних скиллов лежат вне Git, их ставит install по config.yaml;
-# sync без них считает закоммиченные таргеты осиротевшими и удаляет.
-skillshare install -p
+# Скиллы — один раз после клонирования или создания рабочего дерева.
+# В Git лежит только источник .skillshare/; таргеты .claude/skills/
+# и .agents/skills/ собирает sync, и до него у агента нет даже своих
+# proj-скиллов. Внешние скиллы ставит install по config.yaml.
+just skillshare-install
 skillshare sync -p
 
 # Проверка из хука (можно запускать вручную); в CI не дублируется
@@ -57,7 +58,7 @@ skillshare sync -p
 # Команды: отдельная раскладка, обычный sync их не трогает
 skillshare sync extras -p
 
-# Frontmatter скиллов и закоммиченные skills, agents и commands после sync
+# Frontmatter скиллов и закоммиченные agents и commands после sync
 just check-agent-tools
 
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
@@ -149,9 +150,9 @@ CodeRabbit не ревьюит pull request автоматически; запу
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p` и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/` и `mattpocock/_skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) и [mattpocock/skills](https://github.com/mattpocock/skills) (обновляются `skillshare update golang/_golang -p` и `skillshare update mattpocock/_skills -p` — путь с группой обязателен, по одному имени `_golang` skillshare 0.20.25 клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
+Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p`, в Git не хранятся и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/` и `mattpocock/_skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) и [mattpocock/skills](https://github.com/mattpocock/skills) (обновляются `skillshare update golang/_golang -p` и `skillshare update mattpocock/_skills -p` — путь с группой обязателен, по одному имени `_golang` skillshare 0.20.25 клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
 
-Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. В Git лежат только таргеты своих `proj-`скиллов: `.claude/skills/.gitignore` и `.agents/skills/.gitignore` гасят всё, кроме `proj-*/`. Граница проходит по источнику, а не по происхождению скилла. Источник `proj-`скиллов тоже в Git, поэтому джоба `repo-hygiene` сверяет копию с источником и ловит правку скилла без `sync`. Источники внешних скиллов — зависимости: они объявлены в `.skillshare/config.yaml` и погашены в `.skillshare/.gitignore` самим skillshare, в CI их нет и сверять копию не с чем. При этом закоммиченная копия без источника выглядит для `skillshare sync` осиротевшей, и он её удаляет — так одна команда в свежем рабочем дереве вычистила 46 записей манифеста на таргет. Цена решения: закоммиченная копия была единственной записью о том, что агент реально исполнял, и воспроизводимость теперь держится на поле `version` в `.skillshare/skills/.metadata.json`, которого у tracked-клонов нет — у них только `branch: main`. После клонирования внешние скиллы ставит `skillshare install -p` и раскладывает `skillshare sync -p`. Вместе с таргетами закоммичен и их `.skillshare-manifest.json`, поэтому та же джоба проверяет, что у каждого закоммиченного каталога есть в нём запись: запись о скилле, чей frontmatter не разобрался, skillshare теряет молча, и без этой проверки потеря не видна ни в одном гейте. Закоммиченные таргеты помечены в `.gitattributes` атрибутом `linguist-generated=true`: GitHub сворачивает их содержимое в review. Соседний `diff` оставлен намеренно и на `-diff` не меняется — Git трактует его как бинарный diff, и клиенты, собирающие pull request из патча, могут такое изменение не принять. Счётчик строк в шапке pull request атрибуты не убирают: GitHub считает строки независимо от них, поэтому объём режется тем, чего в коммите нет.
+Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. Таргеты — сгенерированный артефакт и в Git не лежат ([ADR-040](docs/decisions/ADR-040-skillshare-targets-not-committed.md)): оба каталога погашены в корневом `.gitignore`, а собирает их `skillshare sync -p` на каждой машине. Поэтому свежий клон, дерево от `git worktree add` и дерево от приложения получают один и тот же состав, а `sync` в дереве без внешних источников больше не может признать закоммиченную копию осиротевшей и удалить её — раньше одна команда так вычищала 46 записей манифеста на таргет. Цена: репозиторий не хранит запись о том, какой текст скилла агент фактически исполнял, и воспроизводимость держится на поле `version` в `.skillshare/skills/.metadata.json`, которого у tracked-клонов нет — у них только `branch: main`. Правку `proj-`скилла без `sync` ловить больше не нужно: копии, с которой её сверяли, нет, а сама правка читается в диффе источника один раз вместо трёх. Скилл со сломанным frontmatter ловится по-прежнему — `check-frontmatter.sh` разбирает источники напрямую, а не запись в манифесте, ради которой манифест и держали в Git. Объявление зависимостей — `.skillshare/config.yaml` и `.skillshare/skills/.metadata.json` — остаётся в Git, и правит его сам `skillshare install`: источник, который он не смог разрешить, он вычёркивает молча. Поэтому install запускается через `just skillshare-install`: обёртка завершается ненулевым кодом, если объявление изменилось, и называет изменённый файл.
 
 Скиллы ставятся командой `skillshare install <url>`. `npx skills find` служит поиском по каталогу и ничего не устанавливает: установка мимо skillshare кладёт скилл в обход источника правды, и следующий `sync` его снесёт.
 
