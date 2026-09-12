@@ -483,6 +483,117 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("replies after publication with a start link and navigation", async () => {
+    const meetup = {
+      id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+      title: "Настолки",
+      description: "Берём свои игры",
+      venue: "Циферблат",
+      lifecycle: "planned" as const,
+      visibility: "visible" as const,
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "published",
+      meetup,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const reply = calls.find((call) => call.method === "sendMessage");
+    expect(sendMessageText(reply)).toBe(
+      "Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\nhttps://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
+    );
+    expect(reply?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Открыть сходку",
+              callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+            },
+            { text: "К управлению", callback_data: "v1:manage:menu" },
+          ],
+        ],
+      },
+    });
+    const published = records.find(
+      (record) => record.message === "meetup published",
+    );
+    expectBoundary(published, { level: "debug", result: "ok" });
+    expect(published?.fields.use_case).toBe("create_meetup");
+    expect(published?.fields.meetup_id).toBe(
+      "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+    );
+    expect(JSON.stringify(published?.fields)).not.toContain("start=");
+    expect(JSON.stringify(published?.fields)).not.toContain("m_AZL");
+    expect(published?.fields).not.toHaveProperty("payload");
+    expect(published?.fields).not.toHaveProperty("link");
+  });
+
+  it("opens the published meetup from the generated start link", async () => {
+    const meetup = {
+      id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+      title: "Настолки",
+      description: "Берём свои игры",
+      venue: "Циферблат",
+      lifecycle: "planned" as const,
+      visibility: "visible" as const,
+    };
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValueOnce({ kind: "published", meetup })
+      .mockResolvedValueOnce({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const text = sendMessageText(
+      calls.find((call) => call.method === "sendMessage"),
+    );
+    const payload = text?.match(/\?start=(m_[A-Za-z0-9_-]{22})/)?.[1];
+    expect(payload).toBe("m_AZLzpLXGfY6fChssPU5fYA");
+    await bot.handleUpdate(messageUpdate(`/start ${payload}`));
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: [],
+      },
+      intent: "view-meetup",
+      meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+      requestId: expect.any(String),
+    });
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendRichMessage",
+      payload: {
+        rich_message: {
+          html: expect.stringContaining("Статус: запланирована, видна"),
+        },
+      },
+    });
+  });
+
+  it("answers a hidden meetup deep link like a missing meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-not-found",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(sendMessageText(calls[0])).toBe(
+      "Сходка не найдена или больше недоступна.",
+    );
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [[{ text: "К списку", callback_data: "v1:nav:hub" }]],
+      },
+    });
+  });
+
   it("opens a meetup from the parsed deep link payload", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",

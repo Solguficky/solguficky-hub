@@ -11,6 +11,11 @@ import {
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import {
+  meetupStartLink,
+  tokenToUuid,
+  uuidToToken,
+} from "./meetup-deep-link.js";
 import { parseCallback } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -47,12 +52,14 @@ type BoundaryOutcome =
       message: string;
       result: "ok";
       use_case?: string;
+      meetup_id?: string;
     }
   | {
       level: "warn" | "error";
       message: string;
       result: "error";
       use_case?: string;
+      meetup_id?: string;
       error_category: FailureCategory;
       error: string;
       stack?: string;
@@ -338,13 +345,28 @@ async function handleCallback(
     return;
   }
   if (action.kind === "publish-meetup") {
-    const result = await runtime.dispatcher.execute({
-      identity: person,
-      intent: "publish-meetup",
-      meetupId: tokenToUuid(action.token),
-      ...requestId(ctx),
-    });
-    await renderFormResult(ctx, result, questions);
+    const meetupId = tokenToUuid(action.token);
+    let outcome: BoundaryOutcome | undefined;
+    try {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "publish-meetup",
+        meetupId,
+        ...requestId(ctx),
+      });
+      await renderFormResult(ctx, result, questions);
+      outcome = publishBoundary(result, meetupId);
+    } catch (cause) {
+      outcome = {
+        ...unexpectedOutcome(cause),
+        use_case: "create_meetup",
+        meetup_id: meetupId,
+      };
+    } finally {
+      if (outcome !== undefined) {
+        writeBoundary(runtime.logger, ctx, outcome);
+      }
+    }
     return;
   }
 }
@@ -591,7 +613,15 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "published") {
-    await ctx.reply(`Сходка опубликована: ${result.meetup.title}`);
+    const meetupId = result.meetup.id;
+    await ctx.reply(
+      `Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
+      {
+        reply_markup: new InlineKeyboard()
+          .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
+          .text("К управлению", "v1:manage:menu"),
+      },
+    );
     return;
   }
   if (result.kind === "dependency-rejected") {
@@ -636,18 +666,45 @@ function createUuidV7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function uuidToToken(id: string): string {
-  return Buffer.from(id.replaceAll("-", ""), "hex").toString("base64url");
-}
 function requestId(ctx: UpdateContext): { requestId?: string } {
   return ctx.requestId === undefined ? {} : { requestId: ctx.requestId };
 }
 function questionKey(chatId: number | undefined, messageId: number): string {
   return `${chatId ?? "unknown"}:${messageId}`;
 }
-function tokenToUuid(token: string): string {
-  const hex = Buffer.from(token, "base64url").toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+function publishBoundary(
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  meetupId: string,
+): BoundaryOutcome {
+  if (result.kind === "published") {
+    return {
+      level: "debug",
+      message: "meetup published",
+      result: "ok",
+      use_case: "create_meetup",
+      meetup_id: meetupId,
+    };
+  }
+  if (result.kind === "dependency-rejected") {
+    return {
+      level: "warn",
+      message: "meetup publish rejected",
+      result: "error",
+      use_case: "create_meetup",
+      meetup_id: meetupId,
+      error_category: dependencyCategory(result.reason),
+      error: result.reason,
+    };
+  }
+  return {
+    level: "error",
+    message: "meetup publish rejected",
+    result: "error",
+    use_case: "create_meetup",
+    meetup_id: meetupId,
+    error_category: "unexpected",
+    error: result.kind,
+  };
 }
 
 // Недоступность зависимости и отвергнутый ею вызов — разные отказы: первый
@@ -732,6 +789,9 @@ function writeBoundary(
   }
   if (outcome.use_case !== undefined) {
     fields.use_case = outcome.use_case;
+  }
+  if (outcome.meetup_id !== undefined) {
+    fields.meetup_id = outcome.meetup_id;
   }
   if (outcome.result === "error") {
     countFailure(outcome.error_category);
