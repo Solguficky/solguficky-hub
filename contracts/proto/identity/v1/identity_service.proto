@@ -4,9 +4,13 @@ package identity.v1;
 
 import "identity/v1/roles.proto";
 
-// Resolves a Telegram identity into the platform's internal identity.
+// Resolves Telegram identities and exposes authenticated maintainer operations.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+  // Grants the global admin role to an existing identity. Requires maintainer authentication.
+  rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
+  // Revokes the active global admin role. Requires maintainer authentication.
+  rpc RevokeAdminRole(RevokeAdminRoleRequest) returns (RevokeAdminRoleResponse);
 }
 
 message ResolveIdentityRequest {
@@ -25,4 +29,24 @@ message ResolveIdentityResponse {
   // Platform-wide roles. Domain permissions are not returned here; the owning
   // domain applies them. An empty set means an ordinary user.
   repeated GlobalRole global_roles = 2;
+}
+
+message GrantAdminRoleRequest {
+  // Canonical lowercase UUID string of an existing profile.
+  string identity_id = 1;
+}
+
+message GrantAdminRoleResponse {
+  // False when the role was already active.
+  bool changed = 1;
+}
+
+message RevokeAdminRoleRequest {
+  // Canonical lowercase UUID string of an existing profile.
+  string identity_id = 1;
+}
+
+message RevokeAdminRoleResponse {
+  // False when there was no active role.
+  bool changed = 1;
 }

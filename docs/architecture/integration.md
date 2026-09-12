@@ -28,6 +28,8 @@ Subjects удалённой аукционной ветки перечислен
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
 | `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Telegram Bot | Identity |
+| `IdentityService.GrantAdminRole` | то же | Maintainer (`grpcurl`) | Identity |
+| `IdentityService.RevokeAdminRole` | то же | Maintainer (`grpcurl`) | Identity |
 
 Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `global_roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMIN`; пустой набор — обычный пользователь.
 
@@ -35,7 +37,7 @@ Subjects удалённой аукционной ветки перечислен
 
 Для вызова бот → Identity принят синхронный gRPC на каждом Telegram update, требующем продуктового действия; при недоступности Identity операция завершается fail-closed, кэш фактов доступа не используется. Service authentication этого вызова остаётся предметом отдельного контракта и не использует maintainer-секрет.
 
-Maintainer-операции выдачи и отзыва роли, когда появятся в каталоге, доказывают право общим секретом `IDENTITY_MAINTAINER_TOKEN` в metadata gRPC ([ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md)). Их wire-схемы в этот каталог ещё не входят.
+`GrantAdminRole` и `RevokeAdminRole` идемпотентно меняют роль `admin` по внутреннему `identity_id`; поле ответа `changed` отличает выполненное изменение от уже достигнутого состояния. Они доказывают право общим секретом `IDENTITY_MAINTAINER_TOKEN` в metadata `authorization: Bearer <token>` и иначе отвечают `UNAUTHENTICATED` до обращения к хранилищу ([ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md)). Выдача записывает системного субъекта как `granted_by = NULL`; `ResolveIdentity`, health и reflection остаются открытыми.
 
 Каждый вызов Identity и Meetups, начатый Telegram update, получает метаданные gRPC `x-request-id`. Telegram Bot создаёт значение один раз на границе update, оба сервиса только принимают его и записывают структурным полем `request_id`; в Protobuf payload и журнал доменных событий идентификатор не входит. Вызов без заголовка допустим для health check и ручной диагностики, но новый идентификатор принимающий сервис не создаёт.
 

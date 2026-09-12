@@ -9,6 +9,7 @@ internal static class IdentitySetup
     {
         var repositoryRoot = RepositoryPaths.Root(context.Builder);
         var identityPath = RepositoryPaths.App(context.Builder, "identity");
+        var maintainerToken = context.Builder.AddParameter("identity-maintainer-token", secret: true);
         var binary = Path.Combine(
             identityPath,
             "bin",
@@ -34,6 +35,7 @@ internal static class IdentitySetup
 
         var identity = context.Builder
             .AddExecutable(AppHostNames.Resources.Identity, binary, identityPath)
+            .WithEnvironment("IDENTITY_MAINTAINER_TOKEN", maintainerToken)
             .WithEndpoint(scheme: "http", name: AppHostNames.Endpoints.Grpc, env: "ASPIRE_IDENTITY_GRPC_PORT")
             .WaitForCompletion(build)
             .BindConnection<ExecutableResource, PostgresDatabaseResource>(

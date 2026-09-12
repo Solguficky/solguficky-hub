@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/google/uuid"
@@ -36,7 +37,9 @@ WHERE identity_id = $1 AND revoked_at IS NULL`
 
 type identityService struct {
 	identityv1.UnimplementedIdentityServiceServer
-	db *sql.DB
+	db              *sql.DB
+	log             *slog.Logger
+	maintainerToken string
 }
 
 func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.ResolveIdentityRequest) (*identityv1.ResolveIdentityResponse, error) {
