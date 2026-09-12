@@ -60,5 +60,9 @@ export type Meetups = {
     schedule: MeetupSchedule,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
-  publish(person: Person, id: string, meta?: RpcMetadata): Promise<MeetupResult>;
+  publish(
+    person: Person,
+    id: string,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
 };

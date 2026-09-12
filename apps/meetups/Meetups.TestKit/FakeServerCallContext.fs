@@ -11,8 +11,7 @@ open Grpc.Core
 /// Пакетного помощника в этой линии grpc-dotnet нет, а базовый класс абстрактный,
 /// поэтому контекст собирается здесь. Он отвечает ровно на то, что читает
 /// граница: имя метода, заголовки и токен отмены.
-type FakeServerCallContext
-    (method: string, cancellationToken: CancellationToken, deadline: DateTime, headers: Metadata)
+type FakeServerCallContext(method: string, cancellationToken: CancellationToken, deadline: DateTime, headers: Metadata)
     =
     inherit ServerCallContext()
 

@@ -128,10 +128,7 @@ export function createMeetupsAdapter(
         return {
           kind: "ok",
           meetup: toSnapshot(
-            await rpc.getMeetup(
-              { viewer: viewer(person), id },
-              options(meta),
-            ),
+            await rpc.getMeetup({ viewer: viewer(person), id }, options(meta)),
           ),
         };
       } catch (cause) {

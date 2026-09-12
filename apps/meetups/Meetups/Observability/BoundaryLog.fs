@@ -74,13 +74,7 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
         | Some v -> extras @ [ name, box v ]
         | None -> extras
 
-    static let frame
-        (context: ServerCallContext)
-        result
-        duration
-        grpcCode
-        extras
-        =
+    static let frame (context: ServerCallContext) result duration grpcCode extras =
         [
             "service", box service
             "operation", box context.Method
@@ -99,7 +93,10 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
     let write (level: LogLevel) (error: exn option) (fields: (string * obj) list) =
         let template =
             "gRPC boundary "
-            + String.concat " " (fields |> List.map (fun (name, _) -> "{" + name + "}"))
+            + String.concat
+                " "
+                (fields
+                 |> List.map (fun (name, _) -> "{" + name + "}"))
 
         let values = fields |> List.map snd |> List.toArray
 

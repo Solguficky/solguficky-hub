@@ -10,10 +10,17 @@ export function rpcMeta(fields: {
   requestId?: string;
   useCase?: string;
 }): RpcMetadata | undefined {
-  if (fields.requestId === undefined && fields.useCase === undefined) {
+  const meta: RpcMetadata = {};
+  if (fields.requestId !== undefined) {
+    meta.requestId = fields.requestId;
+  }
+  if (fields.useCase !== undefined) {
+    meta.useCase = fields.useCase;
+  }
+  if (meta.requestId === undefined && meta.useCase === undefined) {
     return undefined;
   }
-  return { requestId: fields.requestId, useCase: fields.useCase };
+  return meta;
 }
 
 export function callHeaders(meta?: RpcMetadata): {

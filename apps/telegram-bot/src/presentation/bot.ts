@@ -162,8 +162,7 @@ async function handleMessage(
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
-    const useCase =
-      deepLink?.kind === "meetup" ? "view_meetup" : "start";
+    const useCase = deepLink?.kind === "meetup" ? "view_meetup" : "start";
     const resolved = await runtime.identity.resolve(
       toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
       rpcCall(ctx, useCase),
@@ -658,12 +657,22 @@ function rpcCall(ctx: UpdateContext, useCase?: string): RpcMetadata {
 }
 
 function callbackUseCase(
-  kind: "hub" | "outdated" | "view-meetup" | "manage-menu" | "create-meetup" | "publish-meetup",
+  kind:
+    | "hub"
+    | "outdated"
+    | "view-meetup"
+    | "manage-menu"
+    | "create-meetup"
+    | "publish-meetup",
 ): string {
   if (kind === "view-meetup") {
     return "view_meetup";
   }
-  if (kind === "create-meetup" || kind === "publish-meetup" || kind === "manage-menu") {
+  if (
+    kind === "create-meetup" ||
+    kind === "publish-meetup" ||
+    kind === "manage-menu"
+  ) {
     return "create_meetup";
   }
   return "start";
