@@ -54,7 +54,9 @@ describe("Meetups client", () => {
     );
     const meetups = createMeetupsAdapter(rpcWithList(listVisibleMeetups));
 
-    await expect(meetups.listVisible(person, "request-1")).resolves.toEqual({
+    await expect(
+      meetups.listVisible(person, { requestId: "request-1" }),
+    ).resolves.toEqual({
       kind: "ok",
       meetups: [
         {
@@ -65,6 +67,42 @@ describe("Meetups client", () => {
         { id: "meetup-without-date", title: "Без даты" },
       ],
     });
+    expect(listVisibleMeetups).toHaveBeenCalledWith(
+      {
+        viewer: { identityId: "viewer-id", globalRoles: [] },
+      },
+      { timeoutMs: 3_000, headers: { "x-request-id": "request-1" } },
+    );
+  });
+
+  it("carries use_case next to the request id", async () => {
+    const listVisibleMeetups = vi.fn(async () =>
+      create(ListVisibleMeetupsResponseSchema, { meetups: [] }),
+    );
+    const meetups = createMeetupsAdapter(rpcWithList(listVisibleMeetups));
+
+    await meetups.listVisible(person, {
+      requestId: "request-1",
+      useCase: "start",
+    });
+    expect(listVisibleMeetups).toHaveBeenCalledWith(
+      {
+        viewer: { identityId: "viewer-id", globalRoles: [] },
+      },
+      {
+        timeoutMs: 3_000,
+        headers: { "x-request-id": "request-1", "x-use-case": "start" },
+      },
+    );
+  });
+
+  it("sends no use_case header when the edge produced none", async () => {
+    const listVisibleMeetups = vi.fn(async () =>
+      create(ListVisibleMeetupsResponseSchema, { meetups: [] }),
+    );
+    const meetups = createMeetupsAdapter(rpcWithList(listVisibleMeetups));
+
+    await meetups.listVisible(person, { requestId: "request-1" });
     expect(listVisibleMeetups).toHaveBeenCalledWith(
       {
         viewer: { identityId: "viewer-id", globalRoles: [] },

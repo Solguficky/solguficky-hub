@@ -155,3 +155,36 @@ let ``The readiness probe passes through without a record`` () =
 
     test <@ records = [] @>
     test <@ thrown = None @>
+
+[<Fact>]
+let ``The boundary records an incoming use case as a structured field`` () =
+    let headers = Metadata()
+    headers.Add("x-use-case", "view_meetup")
+    let context = FakeServerCallContext(product, headers)
+
+    let records, thrown =
+        interceptWithContext context (fun () -> Task.FromResult "answer")
+
+    let record = only records
+
+    test <@ thrown = None @>
+    test <@ record.Fields.TryFind "use_case" = Some "view_meetup" @>
+    test <@ record.Fields.ContainsKey "request_id" = false @>
+
+[<Fact>]
+let ``The boundary omits a use case when the caller sent none`` () =
+    let records, _ = intercept product (fun () -> Task.FromResult "answer")
+
+    test <@ (only records).Fields.ContainsKey "use_case" = false @>
+
+[<Fact>]
+let ``The readiness probe stays silent even when a use case header arrives`` () =
+    let headers = Metadata()
+    headers.Add("x-use-case", "start")
+    let context = FakeServerCallContext("/grpc.health.v1.Health/Check", headers)
+
+    let records, thrown =
+        interceptWithContext context (fun () -> Task.FromResult "serving")
+
+    test <@ records = [] @>
+    test <@ thrown = None @>

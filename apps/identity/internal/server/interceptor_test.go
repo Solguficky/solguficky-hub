@@ -567,6 +567,33 @@ func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {
 	})
 }
 
+func TestUnaryLoggingOmitsUseCaseOnHealthEvenWhenHeaderPresent(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: "/grpc.health.v1.Health/Check"}
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(
+		"x-request-id", "req-42",
+		"x-use-case", "start",
+	))
+
+	_, err := unaryLogging(slog.New(logs))(ctx, nil, info,
+		func(context.Context, any) (any, error) {
+			return nil, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := logs.sole(t)
+	assertFrame(t, rec, frameWant{
+		result:    resultOK,
+		code:      codes.OK,
+		operation: info.FullMethod,
+		requestID: "req-42",
+	})
+}
+
 func TestUnaryLoggingOmitsEmptyUseCase(t *testing.T) {
 	t.Parallel()
 

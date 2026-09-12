@@ -1,4 +1,5 @@
 import type { Person } from "../application/types.js";
+import type { RpcMetadata } from "../rpc-metadata.js";
 
 export type MeetupSchedule = {
   year: number;
@@ -41,27 +42,23 @@ export type MeetupListResult =
   | MeetupFailure;
 
 export type Meetups = {
-  listVisible(person: Person, requestId?: string): Promise<MeetupListResult>;
+  listVisible(person: Person, meta?: RpcMetadata): Promise<MeetupListResult>;
   createDraft(
     person: Person,
     id: string,
-    requestId?: string,
+    meta?: RpcMetadata,
   ): Promise<MeetupResult>;
-  get(person: Person, id: string, requestId?: string): Promise<MeetupGetResult>;
+  get(person: Person, id: string, meta?: RpcMetadata): Promise<MeetupGetResult>;
   changeAttributes(
     person: Person,
     meetup: MeetupSnapshot,
-    requestId?: string,
+    meta?: RpcMetadata,
   ): Promise<MeetupResult>;
   setSchedule(
     person: Person,
     id: string,
     schedule: MeetupSchedule,
-    requestId?: string,
+    meta?: RpcMetadata,
   ): Promise<MeetupResult>;
-  publish(
-    person: Person,
-    id: string,
-    requestId?: string,
-  ): Promise<MeetupResult>;
+  publish(person: Person, id: string, meta?: RpcMetadata): Promise<MeetupResult>;
 };

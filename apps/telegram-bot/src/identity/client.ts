@@ -6,6 +6,7 @@ import {
 } from "@connectrpc/connect-node";
 import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
+import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
   IdentityResolver,
   ResolveIdentityInput,
@@ -14,7 +15,7 @@ import type {
 
 export const identityRpcTimeoutMs = 3_000;
 
-export const requestIdHeader = "x-request-id";
+export { requestIdHeader, useCaseHeader } from "../rpc-metadata.js";
 
 // Тип клиента берётся из схемы, а не переписывается рядом с ней: рукописная
 // копия форм запроса, ответа и CallOptions расходится с contracts/proto молча,
@@ -41,7 +42,7 @@ export function createIdentityClient(
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
   return {
-    resolve: (input, requestId) => resolver.resolve(input, requestId),
+    resolve: (input, meta) => resolver.resolve(input, meta),
     close() {
       sessionManager.abort();
     },
@@ -53,14 +54,14 @@ export function createIdentityResolver(
   timeoutMs = identityRpcTimeoutMs,
 ): IdentityResolver {
   return {
-    async resolve(input: ResolveIdentityInput, requestId?: string) {
+    async resolve(input: ResolveIdentityInput, meta?: RpcMetadata) {
       try {
         // Дедлайн один и принадлежит транспорту: он же отменяет вызов и даёт
         // ConnectError с кодом. Рукописная гонка таймеров рядом отдавала голую
         // ошибку без кода и поток не отменяла.
         const response = await rpc.resolveIdentity(input, {
           timeoutMs,
-          ...callHeaders(requestId),
+          ...callHeaders(meta),
         });
         return {
           kind: "resolved" as const,
@@ -72,15 +73,6 @@ export function createIdentityResolver(
       }
     },
   };
-}
-
-function callHeaders(requestId: string | undefined): {
-  headers?: Record<string, string>;
-} {
-  if (requestId === undefined || requestId === "") {
-    return {};
-  }
-  return { headers: { [requestIdHeader]: requestId } };
 }
 
 // Отказ, который не пройдёт и со второй попытки: нарушение контракта, рассинхрон

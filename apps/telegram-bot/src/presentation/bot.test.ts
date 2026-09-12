@@ -476,6 +476,7 @@ describe("presentation adapter", () => {
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
+      useCase: "start",
     });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
@@ -506,6 +507,7 @@ describe("presentation adapter", () => {
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
       requestId: expect.any(String),
+      useCase: "view_meetup",
     });
     expect(calls[0]).toMatchObject({
       method: "sendRichMessage",
@@ -646,9 +648,11 @@ describe("presentation adapter", () => {
 
   it("carries the boundary request id into the identity call", async () => {
     let seenRequestId: string | undefined;
+    let seenUseCase: string | undefined;
     const identity: IdentityResolver = {
-      resolve: async (_input, requestId) => {
-        seenRequestId = requestId;
+      resolve: async (_input, meta) => {
+        seenRequestId = meta?.requestId;
+        seenUseCase = meta?.useCase;
         return {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
@@ -661,6 +665,29 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(seenRequestId).toBe(records[0]?.fields.request_id);
     expect(seenRequestId).not.toBe("");
+    expect(seenUseCase).toBe("start");
+    expect(records[0]?.fields.use_case).toBe("start");
+  });
+
+  it("sends view_meetup to identity when a meetup deep link starts the chain", async () => {
+    let seenUseCase: string | undefined;
+    const identity: IdentityResolver = {
+      resolve: async (_input, meta) => {
+        seenUseCase = meta?.useCase;
+        return {
+          kind: "resolved",
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          globalRoles: [],
+        };
+      },
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-not-found",
+    });
+    const { bot } = createHarness(identity, { execute });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(seenUseCase).toBe("view_meetup");
   });
 
   it("logs ignored updates with the boundary skeleton", async () => {

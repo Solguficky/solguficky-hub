@@ -10,23 +10,32 @@ open Grpc.Core
 ///
 /// Пакетного помощника в этой линии grpc-dotnet нет, а базовый класс абстрактный,
 /// поэтому контекст собирается здесь. Он отвечает ровно на то, что читает
-/// граница: имя метода и токен отмены.
-type FakeServerCallContext(method: string, cancellationToken: CancellationToken, deadline: DateTime) =
+/// граница: имя метода, заголовки и токен отмены.
+type FakeServerCallContext
+    (method: string, cancellationToken: CancellationToken, deadline: DateTime, headers: Metadata)
+    =
     inherit ServerCallContext()
 
     let mutable status = Status.DefaultSuccess
     let mutable writeOptions = WriteOptions()
 
-    new(method: string) = FakeServerCallContext(method, CancellationToken.None, DateTime.UtcNow.AddMinutes 1.0)
+    new(method: string) =
+        FakeServerCallContext(method, CancellationToken.None, DateTime.UtcNow.AddMinutes 1.0, Metadata())
 
     new(method: string, cancellationToken: CancellationToken) =
-        FakeServerCallContext(method, cancellationToken, DateTime.UtcNow.AddMinutes 1.0)
+        FakeServerCallContext(method, cancellationToken, DateTime.UtcNow.AddMinutes 1.0, Metadata())
+
+    new(method: string, cancellationToken: CancellationToken, deadline: DateTime) =
+        FakeServerCallContext(method, cancellationToken, deadline, Metadata())
+
+    new(method: string, headers: Metadata) =
+        FakeServerCallContext(method, CancellationToken.None, DateTime.UtcNow.AddMinutes 1.0, headers)
 
     override _.MethodCore = method
     override _.HostCore = "localhost"
     override _.PeerCore = "ipv4:127.0.0.1:0"
     override _.DeadlineCore = deadline
-    override _.RequestHeadersCore = Metadata()
+    override _.RequestHeadersCore = headers
     override _.CancellationTokenCore = cancellationToken
     override _.ResponseTrailersCore = Metadata()
 

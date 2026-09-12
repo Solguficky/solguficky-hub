@@ -161,6 +161,37 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         test <@ hasRequestId = Some false @>
 
     [<Fact>]
+    member _.``The boundary records an incoming use case as a structured field``() =
+        let headers = Metadata()
+        headers.Add("x-use-case", "create_meetup")
+
+        Rpc.codeOf (fun () ->
+            client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id), headers)
+            |> ignore
+        )
+        |> ignore
+
+        let declared =
+            recordOf "/meetups.v1.MeetupsService/PublishMeetup"
+            |> Option.bind (fun entry -> entry.Fields.TryFind "use_case")
+
+        test <@ declared = Some "create_meetup" @>
+
+    [<Fact>]
+    member _.``The boundary omits a use case when the caller sent none``() =
+        Rpc.codeOf (fun () ->
+            client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id))
+            |> ignore
+        )
+        |> ignore
+
+        let hasUseCase =
+            recordOf "/meetups.v1.MeetupsService/GetMeetup"
+            |> Option.map (fun entry -> entry.Fields.ContainsKey "use_case")
+
+        test <@ hasUseCase = Some false @>
+
+    [<Fact>]
     member _.``The readiness probe leaves no boundary record``() =
         let health = Health.HealthClient(host.Channel)
         health.Check(HealthCheckRequest()) |> ignore

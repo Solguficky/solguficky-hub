@@ -11,6 +11,7 @@ import {
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import type { RpcMetadata } from "../rpc-metadata.js";
 import { parseCallback } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
@@ -103,7 +104,7 @@ async function handleMessage(
       if (ctx.from?.id !== pending.telegramUserId) {
         return;
       }
-      const identity = await resolvePerson(ctx, runtime);
+      const identity = await resolvePerson(ctx, runtime, "create_meetup");
       if (identity.kind === "failed") {
         outcome = identity.outcome;
         return;
@@ -114,7 +115,7 @@ async function handleMessage(
         field: pending.field,
         value: ctx.message.text,
         meetupId: pending.meetupId,
-        ...requestId(ctx),
+        ...rpcCall(ctx, "create_meetup"),
       });
       questions.delete(questionKey(ctx.chat?.id, replyId));
       await renderFormResult(ctx, result, questions);
@@ -160,26 +161,31 @@ async function handleMessage(
       };
       return;
     }
+    const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
+    const useCase =
+      deepLink?.kind === "meetup" ? "view_meetup" : "start";
     const resolved = await runtime.identity.resolve(
       toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
-      ctx.requestId,
+      rpcCall(ctx, useCase),
     );
     if (resolved.kind !== "resolved") {
-      outcome = await replyFailClosed(ctx, identityFailureOutcome(resolved));
+      outcome = await replyFailClosed(
+        ctx,
+        identityFailureOutcome(resolved, useCase),
+      );
       return;
     }
     const identity = {
       identityId: resolved.identityId,
       globalRoles: resolved.globalRoles,
     };
-    const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
     const result = await runtime.dispatcher.execute(
       deepLink?.kind === "meetup"
         ? {
             identity,
             intent: "view-meetup",
             meetupId: tokenToUuid(deepLink.payload.slice(2)),
-            ...requestId(ctx),
+            ...rpcCall(ctx, "view_meetup"),
           }
         : startExecuteRequest(identity, deepLink),
     );
@@ -292,7 +298,8 @@ async function handleCallback(
     action.kind === "outdated"
       ? "v1:nav:hub"
       : (ctx.callbackQuery?.data ?? "v1:nav:hub");
-  const identity = await resolvePerson(ctx, runtime, retryCallback);
+  const useCase = callbackUseCase(action.kind);
+  const identity = await resolvePerson(ctx, runtime, useCase, retryCallback);
   if (identity.kind === "failed") {
     writeBoundary(runtime.logger, ctx, identity.outcome);
     return;
@@ -302,7 +309,7 @@ async function handleCallback(
     const result = await runtime.dispatcher.execute({
       identity: person,
       intent: "list-visible-meetups",
-      ...requestId(ctx),
+      ...rpcCall(ctx, "start"),
     });
     await renderMeetupList(ctx, result);
     return;
@@ -312,7 +319,7 @@ async function handleCallback(
       identity: person,
       intent: "view-meetup",
       meetupId: tokenToUuid(action.token),
-      ...requestId(ctx),
+      ...rpcCall(ctx, "view_meetup"),
     });
     await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
     return;
@@ -332,7 +339,7 @@ async function handleCallback(
       identity: person,
       intent: "create-meetup",
       meetupId: tokenToUuid(action.token),
-      ...requestId(ctx),
+      ...rpcCall(ctx, "create_meetup"),
     });
     await renderFormResult(ctx, result, questions);
     return;
@@ -342,7 +349,7 @@ async function handleCallback(
       identity: person,
       intent: "publish-meetup",
       meetupId: tokenToUuid(action.token),
-      ...requestId(ctx),
+      ...rpcCall(ctx, "create_meetup"),
     });
     await renderFormResult(ctx, result, questions);
     return;
@@ -519,6 +526,7 @@ function meetupListLine(meetup: MeetupSummary): string {
 async function resolvePerson(
   ctx: UpdateContext,
   runtime: BotRuntime,
+  useCase?: string,
   retryCallback?: string,
 ): Promise<
   | { kind: "resolved"; person: Person }
@@ -530,7 +538,7 @@ async function resolvePerson(
   }
   const resolved = await runtime.identity.resolve(
     toResolveIdentityInput(BigInt(from.id), from.username),
-    ctx.requestId,
+    rpcCall(ctx, useCase),
   );
   if (resolved.kind !== "resolved") {
     if (retryCallback === undefined) {
@@ -542,7 +550,10 @@ async function resolvePerson(
         new InlineKeyboard().text("Повторить", retryCallback),
       );
     }
-    return { kind: "failed", outcome: identityFailureOutcome(resolved) };
+    return {
+      kind: "failed",
+      outcome: identityFailureOutcome(resolved, useCase),
+    };
   }
   return {
     kind: "resolved",
@@ -639,8 +650,23 @@ function createUuidV7(): string {
 function uuidToToken(id: string): string {
   return Buffer.from(id.replaceAll("-", ""), "hex").toString("base64url");
 }
-function requestId(ctx: UpdateContext): { requestId?: string } {
-  return ctx.requestId === undefined ? {} : { requestId: ctx.requestId };
+function rpcCall(ctx: UpdateContext, useCase?: string): RpcMetadata {
+  return {
+    ...(ctx.requestId === undefined ? {} : { requestId: ctx.requestId }),
+    ...(useCase === undefined ? {} : { useCase }),
+  };
+}
+
+function callbackUseCase(
+  kind: "hub" | "outdated" | "view-meetup" | "manage-menu" | "create-meetup" | "publish-meetup",
+): string {
+  if (kind === "view-meetup") {
+    return "view_meetup";
+  }
+  if (kind === "create-meetup" || kind === "publish-meetup" || kind === "manage-menu") {
+    return "create_meetup";
+  }
+  return "start";
 }
 function questionKey(chatId: number | undefined, messageId: number): string {
   return `${chatId ?? "unknown"}:${messageId}`;
@@ -657,13 +683,14 @@ function identityFailureOutcome(
   resolved:
     | { kind: "unavailable"; cause: unknown }
     | { kind: "rejected"; code: string; cause: unknown },
+  useCase?: string,
 ): BoundaryOutcome {
   if (resolved.kind === "rejected") {
     return {
       level: "error",
       message: "identity rejected the request",
       result: "error",
-      use_case: "start",
+      ...(useCase === undefined ? {} : { use_case: useCase }),
       error_category: grpcFailureCategory(resolved.code),
       grpc_code: resolved.code,
       error: errorText(resolved.cause),
@@ -673,7 +700,7 @@ function identityFailureOutcome(
     level: "error",
     message: "identity unavailable",
     result: "error",
-    use_case: "start",
+    ...(useCase === undefined ? {} : { use_case: useCase }),
     error_category: unavailableCategory(resolved.cause),
     error: errorText(resolved.cause),
   };
