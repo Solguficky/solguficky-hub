@@ -131,6 +131,17 @@ function createCapturingLogger(): { logger: Logger; records: LogRecord[] } {
   };
 }
 
+function publishedMeetup() {
+  return {
+    id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+    title: "Настолки",
+    description: "Берём свои игры",
+    venue: "Циферблат",
+    lifecycle: "planned" as const,
+    visibility: "visible" as const,
+  };
+}
+
 function resolvedIdentity(): IdentityResolver {
   return {
     resolve: async () => ({
@@ -484,14 +495,7 @@ describe("presentation adapter", () => {
   });
 
   it("replies after publication with a start link and navigation", async () => {
-    const meetup = {
-      id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
-      title: "Настолки",
-      description: "Берём свои игры",
-      venue: "Циферблат",
-      lifecycle: "planned" as const,
-      visibility: "visible" as const,
-    };
+    const meetup = publishedMeetup();
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "published",
       meetup,
@@ -534,15 +538,34 @@ describe("presentation adapter", () => {
     expect(published?.fields).not.toHaveProperty("link");
   });
 
+  it("records meetup_id when publication is rejected", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "forbidden",
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const rejected = records.find(
+      (record) => record.message === "meetup publish rejected",
+    );
+    expectBoundary(rejected, {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+    });
+    expect(rejected?.fields.use_case).toBe("create_meetup");
+    expect(rejected?.fields.meetup_id).toBe(
+      "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+    );
+    expect(JSON.stringify(rejected?.fields)).not.toContain("start=");
+    expect(JSON.stringify(rejected?.fields)).not.toContain("m_AZL");
+  });
+
   it("opens the published meetup from the generated start link", async () => {
-    const meetup = {
-      id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
-      title: "Настолки",
-      description: "Берём свои игры",
-      venue: "Циферблат",
-      lifecycle: "planned" as const,
-      visibility: "visible" as const,
-    };
+    const meetup = publishedMeetup();
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValueOnce({ kind: "published", meetup })

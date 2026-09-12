@@ -682,7 +682,7 @@ function publishBoundary(
       message: "meetup published",
       result: "ok",
       use_case: "create_meetup",
-      meetup_id: meetupId,
+      meetup_id: result.meetup.id,
     };
   }
   if (result.kind === "dependency-rejected") {

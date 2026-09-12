@@ -26,5 +26,7 @@ describe("meetup deep link", () => {
     expect(meetupStartLink("stub_bot", meetupId)).toBe(
       `https://t.me/stub_bot?start=m_${token}`,
     );
+    expect(meetupStartLink(undefined, meetupId)).toBe(`?start=m_${token}`);
+    expect(meetupStartLink("", meetupId)).toBe(`?start=m_${token}`);
   });
 });
