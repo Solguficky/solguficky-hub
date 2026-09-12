@@ -200,6 +200,8 @@ function expectBoundary(
     level: LogRecord["level"];
     result: "ok" | "error";
     error_category?: string;
+    operation?: "message" | "callback_query";
+    use_case?: string;
   },
 ): void {
   expect(record).toBeDefined();
@@ -207,11 +209,14 @@ function expectBoundary(
     return;
   }
   expect(record.level).toBe(expected.level);
-  expect(record.fields.operation).toBe("message");
+  expect(record.fields.operation).toBe(expected.operation ?? "message");
   expect(record.fields.result).toBe(expected.result);
   expect(typeof record.fields.request_id).toBe("string");
   expect(record.fields.request_id).not.toBe("");
   expect(typeof record.fields.duration_us).toBe("number");
+  if (expected.use_case !== undefined) {
+    expect(record.fields.use_case).toBe(expected.use_case);
+  }
   if (expected.result === "error") {
     expect(record.fields.error_category).toBe(expected.error_category);
     expect(typeof record.fields.error).toBe("string");
@@ -220,6 +225,18 @@ function expectBoundary(
     expect(record.fields.error_category).toBeUndefined();
     expect(record.fields.error).toBeUndefined();
   }
+}
+
+function refusedIdentity(): IdentityResolver {
+  return createIdentityResolver({
+    resolveIdentity: () =>
+      Promise.reject(
+        new ConnectError(
+          "telegram_user_id must be positive",
+          Code.InvalidArgument,
+        ),
+      ),
+  });
 }
 
 afterEach(() => {
@@ -277,7 +294,12 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(records.some((record) => record.level === "info")).toBe(false);
-    expectBoundary(records[0], { level: "debug", result: "ok" });
+    expectBoundary(records[0], {
+      level: "debug",
+      result: "ok",
+      operation: "message",
+      use_case: "find_meetup",
+    });
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
@@ -420,6 +442,8 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "dependency_unavailable",
+      operation: "callback_query",
+      use_case: "find_meetup",
     });
   });
 
@@ -467,6 +491,7 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "dependency_unavailable",
+      use_case: "create_meetup",
     });
   });
 
@@ -487,7 +512,7 @@ describe("presentation adapter", () => {
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
-      useCase: "start",
+      useCase: "find_meetup",
     });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
@@ -528,8 +553,12 @@ describe("presentation adapter", () => {
     const published = records.find(
       (record) => record.message === "meetup published",
     );
-    expectBoundary(published, { level: "debug", result: "ok" });
-    expect(published?.fields.use_case).toBe("create_meetup");
+    expectBoundary(published, {
+      level: "debug",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
     expect(published?.fields.meetup_id).toBe(
       "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
     );
@@ -556,8 +585,9 @@ describe("presentation adapter", () => {
       level: "warn",
       result: "error",
       error_category: "authorization",
+      operation: "callback_query",
+      use_case: "create_meetup",
     });
-    expect(rejected?.fields.use_case).toBe("create_meetup");
     expect(rejected?.fields.meetup_id).toBe(
       "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
     );
@@ -669,6 +699,7 @@ describe("presentation adapter", () => {
       level: "warn",
       result: "error",
       error_category: "dependency_unavailable",
+      use_case: "view_meetup",
     });
   });
 
@@ -685,6 +716,7 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "unexpected",
+      use_case: "view_meetup",
     });
   });
 
@@ -723,7 +755,7 @@ describe("presentation adapter", () => {
       error_category: "dependency_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
-    expect(records[0]?.fields.use_case).toBe("start");
+    expect(records[0]?.fields.use_case).toBe("find_meetup");
   });
 
   it("resolves /start with a bot mention", async () => {
@@ -778,7 +810,7 @@ describe("presentation adapter", () => {
       error_category: "invariant",
     });
     expect(records[0]?.fields.grpc_code).toBe("InvalidArgument");
-    expect(records[0]?.fields.use_case).toBe("start");
+    expect(records[0]?.fields.use_case).toBe("find_meetup");
   });
 
   it("carries the boundary request id into the identity call", async () => {
@@ -800,8 +832,8 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(seenRequestId).toBe(records[0]?.fields.request_id);
     expect(seenRequestId).not.toBe("");
-    expect(seenUseCase).toBe("start");
-    expect(records[0]?.fields.use_case).toBe("start");
+    expect(seenUseCase).toBe("find_meetup");
+    expect(records[0]?.fields.use_case).toBe("find_meetup");
   });
 
   it("sends view_meetup to identity when a meetup deep link starts the chain", async () => {
@@ -823,6 +855,56 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(seenUseCase).toBe("view_meetup");
+  });
+
+  it("names message and callback records after different handlers", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(records[0]?.fields.operation).toBe("message");
+    expect(records[1]?.fields.operation).toBe("callback_query");
+    expect(records[0]?.fields.operation).not.toBe(records[1]?.fields.operation);
+  });
+
+  it("records view_meetup when identity refuses opening a meetup", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      use_case: "view_meetup",
+    });
+  });
+
+  it("records view_meetup when identity refuses a meetup callback", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "view_meetup",
+    });
+  });
+
+  it("records create_meetup when identity refuses publication", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
   });
 
   it("logs ignored updates with the boundary skeleton", async () => {

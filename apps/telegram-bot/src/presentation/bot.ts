@@ -31,7 +31,7 @@ export type BotRuntime = {
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
-const operation = "message";
+type ProductUseCase = "create_meetup" | "find_meetup" | "view_meetup";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 
@@ -52,14 +52,14 @@ type BoundaryOutcome =
       level: "debug";
       message: string;
       result: "ok";
-      use_case?: string;
+      use_case?: ProductUseCase;
       meetup_id?: string;
     }
   | {
       level: "warn" | "error";
       message: string;
       result: "error";
-      use_case?: string;
+      use_case?: ProductUseCase;
       meetup_id?: string;
       error_category: FailureCategory;
       error: string;
@@ -169,7 +169,8 @@ async function handleMessage(
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
-    const useCase = deepLink?.kind === "meetup" ? "view_meetup" : "start";
+    const useCase: ProductUseCase =
+      deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
     const resolved = await runtime.identity.resolve(
       toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
       rpcCall(ctx, useCase),
@@ -246,7 +247,7 @@ async function handleMessage(
           level: "debug",
           message: "start reply sent",
           result: "ok",
-          use_case: "start",
+          use_case: "find_meetup",
         };
         return;
       case "ask":
@@ -257,7 +258,7 @@ async function handleMessage(
           level: "error",
           message: "unexpected form result",
           result: "error",
-          use_case: "start",
+          use_case: "find_meetup",
           error_category: "unexpected",
           error: result.kind,
         };
@@ -268,7 +269,7 @@ async function handleMessage(
           level: "error",
           message: "unhandled dispatcher result",
           result: "error",
-          use_case: "start",
+          use_case: "find_meetup",
           error_category: "unexpected",
           error: String(_exhaustive),
         };
@@ -315,7 +316,7 @@ async function handleCallback(
     const result = await runtime.dispatcher.execute({
       identity: person,
       intent: "list-visible-meetups",
-      ...rpcCall(ctx, "start"),
+      ...rpcCall(ctx, "find_meetup"),
     });
     await renderMeetupList(ctx, result);
     return;
@@ -547,7 +548,7 @@ function meetupListLine(meetup: MeetupSummary): string {
 async function resolvePerson(
   ctx: UpdateContext,
   runtime: BotRuntime,
-  useCase?: string,
+  useCase?: ProductUseCase,
   retryCallback?: string,
 ): Promise<
   | { kind: "resolved"; person: Person }
@@ -676,7 +677,7 @@ function createUuidV7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function rpcCall(ctx: UpdateContext, useCase?: string): RpcMetadata {
+function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
   return {
     ...(ctx.requestId === undefined ? {} : { requestId: ctx.requestId }),
     ...(useCase === undefined ? {} : { useCase }),
@@ -691,7 +692,7 @@ function callbackUseCase(
     | "manage-menu"
     | "create-meetup"
     | "publish-meetup",
-): string {
+): ProductUseCase {
   if (kind === "view-meetup") {
     return "view_meetup";
   }
@@ -702,7 +703,7 @@ function callbackUseCase(
   ) {
     return "create_meetup";
   }
-  return "start";
+  return "find_meetup";
 }
 
 function questionKey(chatId: number | undefined, messageId: number): string {
@@ -750,7 +751,7 @@ function identityFailureOutcome(
   resolved:
     | { kind: "unavailable"; cause: unknown }
     | { kind: "rejected"; code: string; cause: unknown },
-  useCase?: string,
+  useCase?: ProductUseCase,
 ): BoundaryOutcome {
   if (resolved.kind === "rejected") {
     return {
@@ -815,7 +816,7 @@ function writeBoundary(
   outcome: BoundaryOutcome,
 ): void {
   const fields: LogFields = {
-    operation,
+    operation: boundaryOperation(ctx),
     result: outcome.result,
   };
   if (ctx.requestId !== undefined && ctx.requestId !== "") {
@@ -845,6 +846,10 @@ function writeBoundary(
     }
   }
   logger[outcome.level](outcome.message, fields);
+}
+
+function boundaryOperation(ctx: UpdateContext): "message" | "callback_query" {
+  return ctx.update.callback_query === undefined ? "message" : "callback_query";
 }
 
 function grpcFailureCategory(code: string): FailureCategory {
