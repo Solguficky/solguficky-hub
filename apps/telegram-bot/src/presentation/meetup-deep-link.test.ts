@@ -17,7 +17,9 @@ describe("meetup deep link", () => {
     expect(
       MeetupDeepLinkPayloadSchema.parse(meetupDeepLinkPayload(meetupId)),
     ).toBe(`m_${token}`);
-    expect(tokenToUuid(meetupDeepLinkPayload(meetupId).slice(2))).toBe(meetupId);
+    expect(tokenToUuid(meetupDeepLinkPayload(meetupId).slice(2))).toBe(
+      meetupId,
+    );
   });
 
   it("builds a start link from the resolved bot username", () => {
