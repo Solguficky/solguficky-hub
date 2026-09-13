@@ -381,7 +381,7 @@
 
   <tr>
     <th>Realtime Gateway<span class="layer"><span class="st st-future">гипотеза</span></span></th>
-    <td class="open"><span class="st st-open">Open</span><span class="val">Elixir + Phoenix как гипотеза</span><span class="why">Открывается только при подтверждённом сценарии с постоянными соединениями. Текущий SignalR-шлюз заморожен и обслуживает только аукцион.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">Elixir + Phoenix как гипотеза отдельного gateway</span><span class="why">Для первого read-only экрана выбран SSE внутри Auction Service (<a href="../decisions/ADR-040-auction-screen-sse.md">ADR-040</a>). Отдельный gateway отложен до потребности в независимом масштабировании или общем realtime-компоненте; прежний SignalR-код удалён.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Транспортная граница, состояние домена ей не принадлежит.</span></td>
     <td class="open"><span class="st st-open">Open</span><span class="val">процессы под supervision | другое</span><span class="why">Закроется числом одновременных соединений и требованием к их живучести.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">не применимо</span><span class="why">Команд домена не выполняет.</span></td>

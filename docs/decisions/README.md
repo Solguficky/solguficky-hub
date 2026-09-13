@@ -40,7 +40,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-015](ADR-015-loki-centralized-logging.md) | Loki | Active, limited scope | Конфигурация существует, живой контур требует проверки |
 | [ADR-016](ADR-016-rbac-action-pattern-and-transport.md) | RBAC, Action pattern и transport | Historical | Hardcoded-роли заменены ADR-026; остальные части относятся к удалённому аукционному шлюзу |
 | [ADR-017](ADR-017-auction-service-stack.md) | C#/Akka.NET Auction Service | Historical | Код удалён; будущий аукцион на Scala/Pekko проектируется с нуля |
-| [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Historical | Код удалён; realtime-шлюз возвращается вместе с аукционом отдельным решением |
+| [ADR-018](ADR-018-websocket-gateway-signalr.md) | C#/SignalR WebSocket Gateway | Historical | Код удалён; для read-only экрана заменён [ADR-040](ADR-040-auction-screen-sse.md); прежняя Admin Panel не назначает новый дизайн |
 | [ADR-019](ADR-019-meetup-auction-separation-and-ulid.md) | Meetup/Auction и ULID | Active, limited scope | Разделение сохраняется; формат ID заменён ADR-020 |
 | [ADR-020](ADR-020-uuidv7-identifiers.md) | UUIDv7 | Active | Канонический формат идентификаторов; уточнён ADR-023 |
 | [ADR-021](ADR-021-aspire-local-orchestration.md) | Aspire local orchestration | Active, limited scope | Выбор Aspire в силе, профили `infra` и `identity` подтверждены живым прогоном. Механизм «три режима на компонент» заменён владением узлом и профилями-данными разделом «Пересмотр 2026-09-04»; предпосылка про C#-сервисы и Rust-шлюз не сбылась |
@@ -62,6 +62,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-037](ADR-037-identity-maintainer-shared-secret.md) | Служебный endpoint Identity защищается общим секретом в metadata gRPC | Active | Один секрет локально и в развёрнутом контуре, без обхода; mTLS, JWT и сеть без auth отвергнуты. Закрывает [PER-30](https://linear.app/anticnvm/issue/per-30) |
 | [ADR-038](ADR-038-identity-hub-access-retention.md) | Retention данных допуска к хабу | Active | Whitelist гасится пометкой без TTL; инвайт хаба в срезе отложен; закрытый профиль — `blocked` навсегда; журнал вечен независимо от профиля и называет людей `identity_id`. Ограничивает ADR-026. Закрывает [PER-29](https://linear.app/anticnvm/issue/per-29) |
 | [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md) | Один Linux VPS для начального self-hosting | Active | Один хост размещает dev, agents, test и production; регистратор не входит в решение; отдельный production VPS вводится только по сигналу пересмотра |
+| [ADR-040](ADR-040-auction-screen-sse.md) | Read-only экран аукциона через SSE внутри Auction Service | Active, limited scope | Восстановление снимком и явное устаревание; приёмочный ориентир p95 до 1 секунды при оценке до 100 подключений; реализации нет |
 
 ## Когда решение заслуживает ADR
 

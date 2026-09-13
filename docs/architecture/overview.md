@@ -67,7 +67,7 @@ Linear является источником правды для порядка 
 ## Future
 
 - Аукцион — Future-направление после MVP: новый сервис на Scala + Apache Pekko, проектируемый с нуля. Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md).
-- Realtime-шлюз для Big Screen возвращается вместе с аукционом и отдельным решением о стеке.
+- Read-only Big Screen и страницы зрителей получают состояние через SSE внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)); отдельный gateway не вводится. Решение принято, реализации ещё нет.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
 - Kotlin, Go и Ruby остаются technology pool и не назначаются вымышленным сервисам заранее.
 
