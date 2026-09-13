@@ -21,20 +21,3 @@
 # дерева Windows превращает каждое имя в `code-review\r`, и sync перестаёт
 # исключать хоть что-нибудь, молча раскладывая выключенные скиллы по таргетам.
 .skillignore text eol=lf
-
-# Таргеты Skillshare — копии источника из .skillshare/skills/, а не отдельный
-# код: их содержимое проверяет tools/skillshare/check-generated.sh, а не
-# читатель диффа. В Git лежат только таргеты `proj-`скиллов (см. их .gitignore),
-# но и их хватает, чтобы утопить правку рядом.
-#
-# diff явно оставляет встроенное текстовое сравнение. Не ставь здесь `-diff`:
-# Git трактует его как бинарный diff, а клиенты, которые собирают pull request
-# из патча, могут отказаться принимать такие изменения.
-#
-# linguist-generated=true — то же самое для GitHub: он сворачивает такой файл
-# в review и не учитывает его в языковой статистике.
-#
-# check-generated.sh продолжает сравнивать содержимое через
-# `git diff --no-index --ignore-cr-at-eol --exit-code`.
-.claude/skills/** diff linguist-generated=true
-.agents/skills/** diff linguist-generated=true
