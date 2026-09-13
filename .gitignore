@@ -48,7 +48,7 @@ lefthook-local.yml
 # следующей ветки.
 .claude/worktrees/
 
-# Таргеты skillshare — сгенерированный артефакт (ADR-040). Каталоги собирает
+# Таргеты skillshare — сгенерированный артефакт (ADR-041). Каталоги собирает
 # `skillshare sync -p` из источника .skillshare/skills/ на каждой машине;
 # внешние скиллы перед этим ставит `just skillshare-install`.
 #

@@ -6,7 +6,7 @@
 # treats that configuration as its own working file: a skill its security audit
 # blocks is dropped from .skillshare/config.yaml, and its entry is cut out of
 # .skillshare/skills/.metadata.json alongside. Both files are in Git - they are
-# the declaration of dependencies, not a copy of them (ADR-040) - so such an
+# the declaration of dependencies, not a copy of them (ADR-041) - so such an
 # edit is a change to the repository that nothing announced. It was found once
 # only because the author happened to run `git status` afterwards.
 #

@@ -3,7 +3,7 @@
 # in the targets laid out on this machine.
 #
 # Nothing else looks inside a skill. Targets are generated rather than committed
-# (ADR-040), so an unparseable frontmatter reaches every machine unnoticed:
+# (ADR-041), so an unparseable frontmatter reaches every machine unnoticed:
 # Skillshare and Claude Code drop the description, fall back to the H1 heading,
 # and the skill silently loses the text a model decides to invoke it by.
 #
