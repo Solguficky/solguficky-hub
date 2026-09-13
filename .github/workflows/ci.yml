@@ -201,7 +201,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
-      - name: Agent tooling is generated from Skillshare sources
+      - name: Commands are generated from Skillshare sources
         run: sh tools/skillshare/check-generated.sh
       - name: Published pages are addressable
         run: sh tools/community-site/check-published-pages.sh

@@ -28,7 +28,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
-- `tools/skillshare/` — три скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные agents и commands с источниками, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первые два вызывают `just check-agent-tools` и CI, третий — `just skillshare-install`.
+- `tools/skillshare/` — три скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные команды с источниками, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первые два вызывают `just check-agent-tools` и CI, третий — `just skillshare-install`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
@@ -58,7 +58,7 @@ skillshare sync -p
 # Команды: отдельная раскладка, обычный sync их не трогает
 skillshare sync extras -p
 
-# Frontmatter скиллов и закоммиченные agents и commands после sync
+# Frontmatter скиллов и закоммиченные команды после sync
 just check-agent-tools
 
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются

@@ -43,7 +43,7 @@ skillshare-install:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
-# Frontmatter скиллов разбирается, а agents и commands совпадают с источниками
+# Frontmatter скиллов разбирается, а команды совпадают с источниками
 check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
