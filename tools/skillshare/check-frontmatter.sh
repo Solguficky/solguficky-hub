@@ -75,6 +75,22 @@ function check_plain(text) {
         fail("value of \"" key_of_value "\" contains \" #\" and is truncated as a comment; quote the value")
 }
 
+# A quoted scalar closes on the quote it opened with, and inside a double-quoted
+# one a backslash escapes that quote. Nothing else about the dialect matters
+# here: the check only needs to know where the scalar ends.
+function closes(value, quote,   last) {
+    last = length(value)
+    if (substr(value, last, 1) != quote)
+        return 0
+    if (quote == "\"" && last > 1 && substr(value, last - 1, 1) == "\\")
+        return 0
+    return 1
+}
+
+function unclosed() {
+    fail("value of \"" key_of_value "\" opens with " open_quote " and never closes; YAML swallows the rest of the block")
+}
+
 function require(name) {
     if (!(name in seen))
         fail("frontmatter has no \"" name "\" key")
@@ -109,6 +125,7 @@ FNR == 1 {
     state = 0
     broken = 0
     mode = ""
+    open_quote = ""
     key_of_value = ""
     split("", seen)
     split("", kind)
@@ -132,6 +149,8 @@ FNR == 1 {
     }
 
     if (line == "---" || line == "...") {
+        if (mode == "quoted")
+            unclosed()
         state = 2
         next
     }
@@ -142,12 +161,30 @@ FNR == 1 {
     # scalar carries text this check cares about; anything else is a nested
     # body it deliberately does not read.
     if (line ~ /^[ \t]/) {
+        body = trim(line)
+        if (mode == "quoted") {
+            if (closes(body, open_quote)) {
+                text[key_of_value] = text[key_of_value] " " substr(body, 1, length(body) - 1)
+                mode = "opaque"
+                open_quote = ""
+            } else {
+                text[key_of_value] = text[key_of_value] " " body
+            }
+            next
+        }
         if (mode == "plain" || mode == "block") {
-            body = trim(line)
             if (mode == "plain")
                 check_plain(body)
             text[key_of_value] = text[key_of_value] " " body
         }
+        next
+    }
+
+    # A quoted scalar may run over several indented lines, so it is broken only
+    # once something that cannot belong to it arrives: the end of the block
+    # above, or the next top-level key here.
+    if (mode == "quoted") {
+        unclosed()
         next
     }
 
@@ -187,11 +224,14 @@ FNR == 1 {
     }
     if (marker == "\"" || marker == "'") {
         kind[key] = "quoted"
-        mode = "opaque"
-        if (length(value) > 1 && substr(value, length(value), 1) == marker)
+        if (length(value) > 1 && closes(value, marker)) {
+            mode = "opaque"
             text[key] = substr(value, 2, length(value) - 2)
-        else
+        } else {
+            mode = "quoted"
+            open_quote = marker
             text[key] = substr(value, 2)
+        }
         next
     }
     if (index("*&!%@`", marker) > 0) {
