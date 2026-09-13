@@ -45,7 +45,8 @@ lefthook install
 # Скиллы — один раз после клонирования или создания рабочего дерева.
 # В Git лежит только источник .skillshare/; таргеты .claude/skills/
 # и .agents/skills/ собирает sync, и до него у агента нет даже своих
-# proj-скиллов. Внешние скиллы ставит install по config.yaml.
+# proj-скиллов. Внешние скиллы ставит install по config.yaml, и только он
+# ходит в сеть: без неё запускают один sync и получают свои proj-скиллы.
 just skillshare-install
 skillshare sync -p
 

@@ -75,16 +75,36 @@ function check_plain(text) {
         fail("value of \"" key_of_value "\" contains \" #\" and is truncated as a comment; quote the value")
 }
 
-# A quoted scalar closes on the quote it opened with, and inside a double-quoted
-# one a backslash escapes that quote. Nothing else about the dialect matters
-# here: the check only needs to know where the scalar ends.
-function closes(value, quote,   last) {
-    last = length(value)
-    if (substr(value, last, 1) != quote)
-        return 0
-    if (quote == "\"" && last > 1 && substr(value, last - 1, 1) == "\\")
-        return 0
-    return 1
+# Where a quoted scalar closes, or 0 if it runs past the end of the line. The
+# scan starts at `from`: past the opening quote on the entry line, at the first
+# column on a continuation. It honours the two ways YAML hides a quote inside a
+# scalar - a backslash escape in a double-quoted one, a doubled quote in a
+# single-quoted one.
+#
+# What follows the closing quote is deliberately not inspected. A trailing
+# comment is legal there, and reading the last character of the line instead
+# would report `description: "text" # note` as an unclosed scalar.
+function close_pos(value, quote, from,   i, n, c) {
+    n = length(value)
+    i = from
+
+    while (i <= n) {
+        c = substr(value, i, 1)
+        if (quote == "\"" && c == "\\") {
+            i += 2
+            continue
+        }
+        if (c == quote) {
+            if (quote == "'" && substr(value, i + 1, 1) == quote) {
+                i += 2
+                continue
+            }
+            return i
+        }
+        i++
+    }
+
+    return 0
 }
 
 function unclosed() {
@@ -163,8 +183,9 @@ FNR == 1 {
     if (line ~ /^[ \t]/) {
         body = trim(line)
         if (mode == "quoted") {
-            if (closes(body, open_quote)) {
-                text[key_of_value] = text[key_of_value] " " substr(body, 1, length(body) - 1)
+            at = close_pos(body, open_quote, 1)
+            if (at > 0) {
+                text[key_of_value] = text[key_of_value] " " substr(body, 1, at - 1)
                 mode = "opaque"
                 open_quote = ""
             } else {
@@ -224,9 +245,10 @@ FNR == 1 {
     }
     if (marker == "\"" || marker == "'") {
         kind[key] = "quoted"
-        if (length(value) > 1 && closes(value, marker)) {
+        at = close_pos(value, marker, 2)
+        if (at > 0) {
             mode = "opaque"
-            text[key] = substr(value, 2, length(value) - 2)
+            text[key] = substr(value, 2, at - 2)
         } else {
             mode = "quoted"
             open_quote = marker
