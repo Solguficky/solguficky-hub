@@ -13,6 +13,8 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 ## Subjects
 
+Для будущего read-only экрана аукциона принят SSE endpoint внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)). Это browser boundary без дополнительного NATS-посредника. Схема сообщений пока не определена, межсервисные контракты этим решением не добавляются.
+
 Формат: `<commands|events>.<домен>.<действие>` в `snake_case`.
 
 `>` — многоуровневый wildcard. Например, `events.auction.>` получает все события аукциона; одноуровневый `*` не заменяет его.
