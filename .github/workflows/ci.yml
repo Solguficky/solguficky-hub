@@ -180,6 +180,8 @@ jobs:
         working-directory: apps/telegram-bot
       - run: npm test
         working-directory: apps/telegram-bot
+      - run: npm run build
+        working-directory: apps/telegram-bot
 
   # Функция сайта не собирается: её бандлит Netlify CLI при деплое. Гейт держат
   # typecheck, линт и тесты доменной логики ревизий — того единственного места,
@@ -208,8 +210,6 @@ jobs:
         working-directory: apps/community-site-api
       - run: npm test
         working-directory: apps/community-site-api
-      - run: npm run build
-        working-directory: apps/telegram-bot
 
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
   # джобы правка графа или setup-а ресурса, которая не собирается, проходит
