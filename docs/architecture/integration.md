@@ -15,6 +15,8 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 Для будущего read-only экрана аукциона принят SSE endpoint внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)). Это browser boundary без дополнительного NATS-посредника. Схема сообщений пока не определена, межсервисные контракты этим решением не добавляются.
 
+У будущего аукциона два Telegram-входа — бот хаба и отдельный бот аукциона — но один общий in-process пакет экранов ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). Это не межсервисная граница и записи в каталог контрактов не требует. Оба процесса вызывают Identity и Auction через собственные composition roots; Auction повторно принимает authorization-решение как владелец ресурса. Атомарная самозапись роли комьюнити при `/start` нужна боту аукциона, но имя RPC, service authentication и Protobuf-схема остаются контрактной задачей [PER-254](https://linear.app/anticnvm/issue/per-254), а не вводятся ADR-044.
+
 Заметки публикуемой страницы «Аукцион 2026» хранит собственная функция сайта сообщества ([ADR-042](../decisions/ADR-042-published-page-notes-own-backend.md)). Это тоже browser boundary: JSON поверх HTTP между страницей и её функцией. Требование «payload только в Protobuf» относится к NATS и gRPC; межсервисным контрактом эта граница не является и в каталог ниже не входит.
 
 Формат: `<commands|events>.<домен>.<действие>` в `snake_case`.
