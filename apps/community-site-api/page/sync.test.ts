@@ -673,6 +673,175 @@ describe("действия", () => {
     expect(priorityTexts(page.document)).toEqual(["Исходное"]);
   });
 
+  // Автосохранённое версией не становится, поэтому перед возвратом оно ничем
+  // не защищено: возврат перезаписал бы его без следа. Страница снимает его
+  // версией сама — так же, как снимает чужую правку в развилке конфликта.
+  it("возврат сначала фиксирует несохранённое версией «Состояние перед возвратом»", async () => {
+    const original = makeState({ priorities: ["Исходное"] });
+    const draft = makeState({
+      priorities: ["Черновик, которого нет в истории"],
+    });
+    const first = {
+      number: 1,
+      at: "2026-01-01T00:00:00.000Z",
+      label: "Начальная версия",
+      state: original,
+    };
+    const doc = makeDocument({
+      docId: DOC_ID,
+      revision: 2,
+      state: draft,
+      versions: [first],
+    });
+    const kept = {
+      number: 2,
+      at: "2026-01-02T00:00:00.000Z",
+      label: "Состояние перед возвратом",
+      state: draft,
+    };
+    const snapshot = makeDocument({
+      docId: DOC_ID,
+      revision: 3,
+      state: draft,
+      versions: [first, kept],
+    });
+    const restored = makeDocument({
+      docId: DOC_ID,
+      revision: 4,
+      state: original,
+      versions: [
+        first,
+        kept,
+        {
+          number: 3,
+          at: "2026-01-03T00:00:00.000Z",
+          label: "Откат к версии 1",
+          state: original,
+          restoredFrom: 1,
+        },
+      ],
+    });
+    const page = loadAuctionPage({
+      url: `http://localhost/auction-2026?doc=${DOC_ID}`,
+      fetchHandler: (call) => {
+        if (call.method === "GET") return { body: doc };
+        if (call.method === "POST" && call.path.endsWith("/versions"))
+          return { body: snapshot };
+        if (call.method === "POST" && call.path.endsWith("/restore"))
+          return { body: restored };
+        throw new Error(`неожиданный запрос ${call.method} ${call.path}`);
+      },
+    });
+    await page.flush();
+
+    $<HTMLButtonElement>(page.document, "#sync-history").click();
+    $<HTMLButtonElement>(page.document, "#history-list li button").click();
+    await page.flush();
+
+    expect(page.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+      `GET /${DOC_ID}`,
+      `POST /${DOC_ID}/versions`,
+      `POST /${DOC_ID}/restore`,
+    ]);
+    expect(bodyOf(page.calls[1] as FetchCall)).toEqual({
+      baseRevision: 2,
+      label: "Состояние перед возвратом",
+    });
+    // Возврат опирается на ревизию, которую вернул снимок, а не на прежнюю.
+    expect(bodyOf(page.calls[2] as FetchCall)).toEqual({
+      baseRevision: 3,
+      version: 1,
+    });
+    expect(priorityTexts(page.document)).toEqual(["Исходное"]);
+    // Черновик не пропал: он в истории и его можно вернуть тем же действием.
+    expect(text(page.document, "#history-list")).toContain(
+      "Состояние перед возвратом",
+    );
+  });
+
+  it("не плодит снимок, когда текущее состояние и есть последняя версия", async () => {
+    const current = makeState({ priorities: ["Текущее"] });
+    const doc = makeDocument({
+      docId: DOC_ID,
+      revision: 2,
+      state: current,
+      versions: [
+        {
+          number: 1,
+          at: "2026-01-01T00:00:00.000Z",
+          label: "Начальная версия",
+          state: makeState({ priorities: ["Исходное"] }),
+        },
+        {
+          number: 2,
+          at: "2026-01-02T00:00:00.000Z",
+          label: "Перед обсуждением",
+          state: current,
+        },
+      ],
+    });
+    const page = loadAuctionPage({
+      url: `http://localhost/auction-2026?doc=${DOC_ID}`,
+      fetchHandler: (call) => {
+        if (call.method === "GET") return { body: doc };
+        if (call.method === "POST" && call.path.endsWith("/restore"))
+          return { body: { ...doc, revision: 3 } };
+        throw new Error(`неожиданный запрос ${call.method} ${call.path}`);
+      },
+    });
+    await page.flush();
+
+    $<HTMLButtonElement>(page.document, "#sync-history").click();
+    $<HTMLButtonElement>(page.document, "#history-list li button").click();
+    await page.flush();
+
+    expect(page.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+      `GET /${DOC_ID}`,
+      `POST /${DOC_ID}/restore`,
+    ]);
+  });
+
+  // Снимок — не украшение поверх возврата, а его условие: если сохранить
+  // текущее не удалось, возврат не выполняется вовсе. Иначе отказ сети ровно в
+  // этот момент означал бы ту самую потерю, от которой снимок и заведён.
+  it("отменяет возврат целиком, если снимок сохранить не удалось", async () => {
+    const doc = makeDocument({
+      docId: DOC_ID,
+      revision: 2,
+      state: makeState({ priorities: ["Черновик"] }),
+      versions: [
+        {
+          number: 1,
+          at: "2026-01-01T00:00:00.000Z",
+          label: "Начальная версия",
+          state: makeState({ priorities: ["Исходное"] }),
+        },
+      ],
+    });
+    const page = loadAuctionPage({
+      url: `http://localhost/auction-2026?doc=${DOC_ID}`,
+      fetchHandler: (call) => {
+        if (call.method === "GET") return { body: doc };
+        if (call.method === "POST" && call.path.endsWith("/versions"))
+          return { status: 500, body: { error: "Внутренняя ошибка" } };
+        throw new Error(`неожиданный запрос ${call.method} ${call.path}`);
+      },
+    });
+    await page.flush();
+
+    $<HTMLButtonElement>(page.document, "#sync-history").click();
+    $<HTMLButtonElement>(page.document, "#history-list li button").click();
+    await page.flush();
+
+    expect(page.calls.some((call) => call.path.endsWith("/restore"))).toBe(
+      false,
+    );
+    expect(text(page.document, "#sync-state")).toBe(
+      "Возврат отменён: не удалось сохранить текущее состояние",
+    );
+    expect(priorityTexts(page.document)).toEqual(["Черновик"]);
+  });
+
   it("конфликт при возврате применяет актуальное состояние и не считает возврат выполненным", async () => {
     const doc = makeDocument({
       docId: DOC_ID,

@@ -51,6 +51,41 @@ test("фиксация версии по кнопке добавляет зап�
   await expect(committed).toContainText("заметок: 1");
 });
 
+// Самый недобрый сценарий из всех: человек печатал, версию не фиксировал —
+// автосохранение унесло правку на сервер, но в истории её нет, — и жмёт
+// «Вернуть». Возврат обязан сначала убрать несохранённое в историю, иначе оно
+// исчезнет вместе с нажатием.
+test("возврат не теряет автосохранённое: оно уходит в историю снимком", async ({
+  page,
+}) => {
+  await page.goto(PAGE);
+  await enableSync(page);
+  const answer = await firstAnswer(page);
+
+  await answer.fill("черновик без версии");
+  await expect(status(page)).toContainText("Сохранено на сервере");
+
+  const versions = await openHistory(page);
+  await expect(versions).toHaveCount(1);
+  await versions
+    .filter({ hasText: "Начальная версия" })
+    .getByRole("button", { name: "Вернуть" })
+    .click();
+  // Две новые записи: снимок черновика и сам возврат.
+  await expect(versions).toHaveCount(3);
+  await page.locator("#history-close").click();
+  await expect(answer).toHaveValue("");
+
+  // И черновик возвращается тем же действием, что и любая версия.
+  await openHistory(page);
+  await versions
+    .filter({ hasText: "Состояние перед возвратом" })
+    .getByRole("button", { name: "Вернуть" })
+    .click();
+  await page.locator("#history-close").click();
+  await expect(answer).toHaveValue("черновик без версии");
+});
+
 test("возврат к версии и возврат самого возврата не теряют историю", async ({
   page,
 }) => {

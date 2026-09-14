@@ -1629,7 +1629,7 @@
   const historyLabel = document.getElementById('history-label');
   const historyCommit = document.getElementById('history-commit');
 
-  const remote = { docId: null, revision: 0, versions: [], dirty: false, busy: false };
+  const remote = { docId: null, revision: 0, state: null, versions: [], dirty: false, busy: false };
   let repeatPush = false;
 
   const isMap = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -1723,6 +1723,10 @@
   const adoptMeta = doc => {
     remote.docId = doc.docId;
     remote.revision = doc.revision;
+    // Что лежит на сервере, помнится отдельно от полей: поля показывают
+    // заготовки из разметки там, где документ пуст, и сравнивать их с
+    // содержимым версии — значит находить расхождение на ровном месте.
+    remote.state = normalize(doc.state);
     remote.versions = doc.versions || [];
     remote.dirty = false;
     writeSyncMeta();
@@ -1873,7 +1877,34 @@
     });
   }
 
+  // Возврат перезаписывает текущее состояние, и незафиксированное исчезло бы
+  // без следа. Рядом, в развилке конфликта, чужая работа перед перезаписью
+  // становится версией — своя заслуживает того же. Версия заводится, только
+  // когда терять действительно есть что: состояние, совпадающее с последней
+  // версией, уже в истории.
+  const keepCurrent = async () => {
+    const last = remote.versions[remote.versions.length - 1];
+    if (last && remote.state && sameState(remote.state, normalize(last.state))) return true;
+    // Черновик уезжает первым: версия снимает то, что лежит на сервере.
+    if (remote.dirty) await push();
+    if (remote.dirty) {
+      setStatus('Сервер недоступен, возврат отменён: правки остались бы только здесь', 'warn');
+      return false;
+    }
+    try {
+      adoptMeta(await request('/' + remote.docId + '/versions', {
+        method: 'POST',
+        body: JSON.stringify({ baseRevision: remote.revision, label: 'Состояние перед возвратом' })
+      }));
+      return true;
+    } catch {
+      setStatus('Возврат отменён: не удалось сохранить текущее состояние', 'warn');
+      return false;
+    }
+  };
+
   const restore = async number => {
+    if (!await keepCurrent()) return;
     try {
       adopt(await request('/' + remote.docId + '/restore', {
         method: 'POST',
