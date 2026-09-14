@@ -64,6 +64,7 @@ ADR сохраняет принятое решение, контекст и пр
 | [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md) | Один Linux VPS для начального self-hosting | Active | Один хост размещает dev, agents, test и production; регистратор не входит в решение; отдельный production VPS вводится только по сигналу пересмотра |
 | [ADR-040](ADR-040-auction-screen-sse.md) | Read-only экран аукциона через SSE внутри Auction Service | Active, limited scope | Восстановление снимком и явное устаревание; приёмочный ориентир p95 до 1 секунды при оценке до 100 подключений; реализации нет |
 | [ADR-041](ADR-041-skillshare-targets-not-committed.md) | Таргеты skillshare не хранятся в Git | Active | В Git только источник `.skillshare/`; копии `.claude/skills/` и `.agents/skills/` с их манифестами собираются `skillshare sync -p` на каждой машине. Объявление зависимостей из Git не выносится |
+| [ADR-042](ADR-042-published-page-notes-own-backend.md) | Своя функция и Netlify Blobs для заметок публикуемой страницы | Active, limited scope | Относится к заметкам страницы «Аукцион 2026», а не к данным платформы. Пропуск к документу — ссылка со 128 случайными битами, авторизации нет; запись называет базовую ревизию и отклоняется с `409`; возврат к версии пишет новую версию и ничего не удаляет. Ограничивает [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md): production сайта остаётся на Netlify |
 
 ## Когда решение заслуживает ADR
 

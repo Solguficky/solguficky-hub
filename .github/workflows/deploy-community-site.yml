@@ -5,6 +5,7 @@ on:
     branches: [develop]
     paths:
       - 'docs/published/**'
+      - 'apps/community-site-api/**'
       - '.github/workflows/deploy-community-site.yml'
   workflow_dispatch:
 
@@ -54,7 +55,18 @@ jobs:
           cp -R docs/published dist/community-site
           find dist/community-site -name '*.md' -delete
 
+      # Функция `/api/notes` едет тем же прогоном и тем же токеном: второй
+      # production-механизм доставки породил бы два независимых деплоя. Её
+      # зависимости ставятся заранее — бандлер собирает функцию из того, что
+      # лежит рядом с ней.
+      - name: Install function dependencies
+        run: npm ci
+        working-directory: apps/community-site-api
+
       # `deploy --prod --dir` заменяет содержимое сайта целиком, а не дополняет:
       # публикуется весь каталог, поэтому и фильтр `paths` стоит на всём каталоге.
       - name: Deploy production site
-        run: npx --yes netlify-cli@27.0.1 deploy --prod --dir dist/community-site
+        run: >-
+          npx --yes netlify-cli@27.0.1 deploy --prod
+          --dir dist/community-site
+          --functions apps/community-site-api/netlify/functions
