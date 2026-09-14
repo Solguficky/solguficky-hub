@@ -23,6 +23,7 @@ jobs:
       meetups: ${{ steps.filter.outputs.meetups }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
+      community-site-api: ${{ steps.filter.outputs.community-site-api }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -47,6 +48,10 @@ jobs:
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            community-site-api:
+              - 'apps/community-site-api/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             apphost:
@@ -175,6 +180,34 @@ jobs:
         working-directory: apps/telegram-bot
       - run: npm test
         working-directory: apps/telegram-bot
+
+  # Функция сайта не собирается: её бандлит Netlify CLI при деплое. Гейт держат
+  # typecheck, линт и тесты доменной логики ревизий — того единственного места,
+  # где ошибка стоит потерянных заметок.
+  community-site-api:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.community-site-api == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/community-site-api/package-lock.json
+      - run: npm ci
+        working-directory: apps/community-site-api
+      - run: npm run typecheck
+        working-directory: apps/community-site-api
+      - run: npm run lint
+        working-directory: apps/community-site-api
+      - run: npm test
+        working-directory: apps/community-site-api
       - run: npm run build
         working-directory: apps/telegram-bot
 

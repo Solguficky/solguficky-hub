@@ -52,8 +52,8 @@ check-agent-tools:
 check-published-pages:
     sh tools/community-site/check-published-pages.sh
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-published-pages identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-published-pages identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -131,6 +131,25 @@ telegram-bot-lint: telegram-bot-proto
 
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
+
+# --- Community site API (TypeScript) ---------------------------------------
+#
+# Функция `/api/notes` держит заметки страницы «Аукцион 2026»: документ в
+# Netlify Blobs, ревизии и откаты. Кодогенерации у компонента нет, поэтому
+# рецепты прямые. Сборки тоже нет: бандлит функцию Netlify CLI при деплое,
+# а гейт держат typecheck, линт и тесты доменной логики.
+
+community-site-api-tools:
+    cd apps/community-site-api && npm ci
+
+community-site-api-typecheck:
+    cd apps/community-site-api && npm run typecheck
+
+community-site-api-test:
+    cd apps/community-site-api && npm test
+
+community-site-api-lint:
+    cd apps/community-site-api && npm run lint
 
 # --- Meetups (F# / .NET) ---------------------------------------------------
 #

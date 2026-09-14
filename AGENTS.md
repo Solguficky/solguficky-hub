@@ -22,6 +22,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
+- `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, четыре команды записи и два запроса чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и два тестовых проекта; состояние и событие пишутся одной транзакцией, а оба запроса идут через единый viewer-aware reader.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляет Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
@@ -65,7 +66,7 @@ just check-agent-tools
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 just check-published-pages
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -86,6 +87,13 @@ just identity-test
 just identity-lint
 just identity-run
 # IDENTITY_DATABASE_URL обязателен для identity-run; интеграционные тесты схемы требуют PostgreSQL
+
+# Community site API — зависимости, typecheck, линт и тесты
+just community-site-api-tools
+just community-site-api-typecheck
+just community-site-api-lint
+just community-site-api-test
+# Сборки нет: функцию бандлит Netlify CLI при деплое сайта
 
 # Telegram Bot — зависимости, кодогенерация, сборка, тесты, линт и запуск
 just telegram-bot-tools
@@ -136,7 +144,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Заголовок PR задачи — `[PER-N] Название задачи из Linear` дословно: без перевода, без своей формулировки, без типа впереди и без `(PER-N)` в хвосте. PR без задачи берёт форму коммита `type: Subject` на английском. Тело — на русском и ровно три раздела: `## Что и зачем`, `## Отклонения от плана`, `## Осталось открытым`. Встроенный шаблон инструмента (`Motivation`, `Description`, `Testing`) их не заменяет, и послабление для имён чужих веток на PR не распространяется. Формат и примеры — [branching.md](docs/standards/git/branching.md).
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, Identity, Telegram Bot, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.

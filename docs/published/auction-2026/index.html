@@ -100,6 +100,44 @@
   .prefs .tool-label { display: block; color: var(--muted); margin-bottom: 8px; }
   .print-button { margin-top: 22px; }
 
+  /* ------------------------------------------------- синхронизация заметок */
+  .sync { margin-top: 26px; }
+  .sync .tool-label { display: block; color: var(--muted); margin-bottom: 8px; }
+  .sync-state { font-size: 13px; color: var(--muted); margin: 0 0 10px; max-width: none; }
+  .sync-state[data-tone="warn"] { color: var(--accent); }
+  .sync-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sync-actions button { flex: 0 1 auto; }
+  /* Расхождение версий — не ошибка страницы, а развилка: обе стороны названы,
+     и обе доступны одним нажатием. */
+  .sync-clash { margin-top: 12px; padding: 11px; background: var(--fill);
+                box-shadow: inset 0 0 0 1px var(--accent-quiet); }
+  .sync-clash p { font-size: 13px; margin: 0 0 9px; }
+  .sync-link { margin-top: 10px; width: 100%; font-size: 12px; padding: 7px 8px;
+               font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+               background: var(--paper); color: var(--ink); border: 0;
+               box-shadow: inset 0 0 0 1px var(--line); }
+
+  .history::backdrop { background: rgba(0, 0, 0, .45); }
+  .history { width: min(620px, calc(100% - 32px)); max-height: 82vh; overflow: auto;
+             padding: 24px; border: 0; box-shadow: 0 18px 60px rgba(0, 0, 0, .3);
+             background: var(--paper); color: var(--ink); }
+  .history h2 { font-size: 21px; margin-bottom: 8px; }
+  .history-hint { font-size: 13px; color: var(--muted); }
+  .history-commit { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 20px; }
+  .history-commit input { flex: 1 1 220px; min-width: 180px; padding: 8px 11px; font: inherit;
+                          font-size: 14px; background: var(--paper); color: var(--ink);
+                          border: 0; box-shadow: inset 0 0 0 1px var(--line); }
+  .history-list { list-style: none; margin: 0; padding: 0; }
+  .history-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px;
+                     align-items: center; padding: 12px 0; box-shadow: inset 0 -1px 0 var(--line); }
+  .history-list li[data-current="yes"] { background: var(--fill); padding-left: 10px;
+                                         padding-right: 10px; box-shadow: none; }
+  .history-title { font-size: 14px; font-weight: 600; }
+  .history-meta { font-size: 12px; color: var(--muted); margin-top: 3px;
+                  font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  .history-empty { font-size: 14px; color: var(--muted); }
+  .history-close { margin-top: 18px; }
+
   /* ------------------------------------------------------------------ разделы */
   .chapter { padding-top: 54px; }
   .section-number { display: block; color: var(--accent); margin-bottom: 8px; }
@@ -372,7 +410,7 @@
     }
     body { font-size: 10.5pt; }
     .shell { width: auto; }
-    .sidebar, .toolbar, .format-tabs, .skip { display: none !important; }
+    .sidebar, .toolbar, .format-tabs, .skip, .history { display: none !important; }
     /* Печать — способ вынести заполненное наружу: поля управления исчезают,
        а их значения остаются текстом. */
     .rank-edit, .row-drop, .grip, .filter-total, .answer summary, .answer textarea,
@@ -422,6 +460,24 @@
           <button type="button" data-theme-set="light" aria-pressed="true">Светлая</button>
           <button type="button" data-theme-set="dark" aria-pressed="false">Тёмная</button>
         </div>
+      </div>
+      <div class="sync" hidden>
+        <span class="tool-label">Заметки</span>
+        <p class="sync-state" id="sync-state">Только в этом браузере</p>
+        <div class="sync-actions">
+          <button type="button" id="sync-enable">Сделать переносимыми</button>
+          <button type="button" id="sync-history" hidden>История версий</button>
+          <button type="button" id="sync-share" hidden>Скопировать ссылку</button>
+        </div>
+        <div class="sync-clash" id="sync-clash" hidden>
+          <p id="sync-clash-text"></p>
+          <div class="sync-actions">
+            <button type="button" id="sync-take-theirs"></button>
+            <button type="button" id="sync-take-mine"></button>
+          </div>
+        </div>
+        <input class="sync-link" id="sync-link" type="text" readonly hidden
+               aria-label="Ссылка на заметки">
       </div>
       <button class="print-button" type="button" hidden>Печатная версия</button>
     </aside>
@@ -1211,6 +1267,22 @@
     </main>
   </div>
 </div>
+<dialog class="history" id="history-dialog" aria-labelledby="history-dialog-title">
+  <h2 id="history-dialog-title">История версий</h2>
+  <p class="history-hint">Версия — снимок всех заметок, оценок и приоритетов. Возврат к версии не
+    стирает то, что есть сейчас: он записывает её содержимое новой версией, поэтому ошибочный
+    возврат отменяется тем же способом.</p>
+  <div class="history-commit">
+    <input id="history-label" type="text" maxlength="120" placeholder="Подпись версии, необязательно">
+    <button type="button" id="history-commit">Сохранить версию</button>
+  </div>
+  <ol class="history-list" id="history-list"></ol>
+  <p class="history-empty" id="history-empty" hidden>Версий пока нет.</p>
+  <div class="history-close">
+    <button type="button" id="history-close">Закрыть</button>
+  </div>
+</dialog>
+
 <script>
 (() => {
   const tabs = [...document.querySelectorAll('[role="tab"]')];
@@ -1382,33 +1454,26 @@
 
   // --------------------------------------------- важность и сложность фичи
   // Значения читателя нужны в обсуждении и в распечатке, поэтому в печать
-  // уходит выбранный текст, а не сам элемент управления.
-  const slots = readMap('rfc007-slots');
-  const saveSlots = debounce(() => write('rfc007-slots', JSON.stringify(slots)), 200);
+  // уходит выбранный текст, а не сам элемент управления. Сами значения здесь
+  // не читаются и не пишутся: полем владеет состояние документа ниже.
+  const slotFields = [];
   document.querySelectorAll('.slot select').forEach(select => {
-    const feature = select.closest('.feature').id;
+    const featureId = select.closest('.feature').id;
     const kind = select.dataset.slot;
     const echo = select.parentElement.querySelector('.slot-print');
     const sync = () => {
       select.parentElement.dataset.filled = select.value ? 'yes' : 'no';
       echo.textContent = select.value || '—';
     };
-    const stored = slots[feature] && slots[feature][kind];
-    if (stored && [...select.options].some(option => option.value === stored)) select.value = stored;
     sync();
-    select.addEventListener('change', () => {
-      slots[feature] = slots[feature] || {};
-      slots[feature][kind] = select.value;
-      sync();
-      saveSlots();
-    });
+    slotFields.push({ featureId, kind, select, sync });
+    select.addEventListener('change', () => { sync(); touch(); });
   });
 
   // ---------------------------------------------------- ответы на вопросы
-  // Вопросы разбросаны по всему тексту. Ответ пишется прямо под вопросом,
-  // хранится локально и печатается там же, где задан вопрос.
-  const answers = readMap('rfc007-answers');
-  const saveAnswers = debounce(() => write('rfc007-answers', JSON.stringify(answers)), 400);
+  // Вопросы разбросаны по всему тексту. Ответ пишется прямо под вопросом
+  // и печатается там же, где задан вопрос.
+  const answerFields = [];
   document.querySelectorAll('.note[data-note]').forEach(note => {
     const id = note.dataset.note;
     const box = document.createElement('details');
@@ -1425,15 +1490,9 @@
       summary.textContent = filled ? 'Записано' : (note.dataset.kind === 'q' ? 'Ответить' : 'Заметка');
       echo.textContent = filled;
     };
-    field.value = answers[id] || '';
-    box.open = Boolean(field.value);
     sync();
-    field.addEventListener('input', () => {
-      answers[id] = field.value;
-      if (!field.value.trim()) delete answers[id];
-      sync();
-      saveAnswers();
-    });
+    answerFields.push({ id, field, box, sync });
+    field.addEventListener('input', () => { sync(); touch(); });
     note.append(box, echo);
   });
 
@@ -1449,9 +1508,10 @@
     item.querySelector('.n').textContent = String(index + 1).padStart(2, '0');
   });
 
+  // Список — часть общего состояния документа, и записывает его `touch`.
+  // Здесь остаётся только отметка «записано» рядом со списком.
   const remember = () => {
-    const items = [...list.children].map(item => item.querySelector('.t').textContent.trim()).filter(Boolean);
-    write('rfc007-priorities', JSON.stringify(items));
+    touch();
     saved.hidden = false;
     clearTimeout(remember.timer);
     remember.timer = setTimeout(() => { saved.hidden = true; }, 1800);
@@ -1474,8 +1534,9 @@
     renumber();
   }
 
-  const storedOrder = readJSON('rfc007-priorities');
-  fill(Array.isArray(storedOrder) && storedOrder.length ? storedOrder.map(String) : defaults);
+  // Заготовка встаёт сразу, а сохранённое состояние накладывается ниже: до
+  // ответа сервера список обязан быть рабочим, а не пустым.
+  fill(defaults);
 
   list.addEventListener('input', event => {
     if (event.target.classList.contains('t')) rememberSoon();
@@ -1540,6 +1601,391 @@
   field.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); add(); } });
   document.getElementById('rank-reset').addEventListener('click', () => { fill(defaults); remember(); });
   document.querySelector('.rank-edit').hidden = false;
+
+  // ------------------------------------------------- переносимость заметок
+  // Заполненное на странице живёт одним документом на сервере: текущее
+  // состояние плюс история зафиксированных версий. Логина нет, пропуском
+  // служит идентификатор документа — 128 случайных бит, которые знают только
+  // те, кому передали ссылку. Поэтому параметр убирается из адресной строки
+  // сразу после чтения и дальше живёт в этом браузере.
+  const API = '/api/notes';
+  const LOCAL_STATE = 'rfc007-state';
+  const LOCAL_SYNC = 'rfc007-sync';
+
+  const stateBox = document.getElementById('sync-state');
+  const clashBox = document.getElementById('sync-clash');
+  const clashText = document.getElementById('sync-clash-text');
+  const takeTheirs = document.getElementById('sync-take-theirs');
+  const takeMine = document.getElementById('sync-take-mine');
+  const enableButton = document.getElementById('sync-enable');
+  const historyButton = document.getElementById('sync-history');
+  const shareButton = document.getElementById('sync-share');
+  const linkField = document.getElementById('sync-link');
+  const historyDialog = document.getElementById('history-dialog');
+  const historyList = document.getElementById('history-list');
+  const historyEmpty = document.getElementById('history-empty');
+  const historyLabel = document.getElementById('history-label');
+  const historyCommit = document.getElementById('history-commit');
+
+  const remote = { docId: null, revision: 0, versions: [], dirty: false, busy: false };
+  let repeatPush = false;
+
+  const isMap = value => value && typeof value === 'object' && !Array.isArray(value);
+  const normalize = value => ({
+    slots: isMap(value) && isMap(value.slots) ? value.slots : {},
+    answers: isMap(value) && isMap(value.answers) ? value.answers : {},
+    priorities: isMap(value) && Array.isArray(value.priorities) ? value.priorities.map(String) : []
+  });
+
+  const sameState = (one, other) => JSON.stringify(one) === JSON.stringify(other);
+
+  // Состояние собирается с самой страницы, а не из копии в памяти: DOM здесь
+  // единственный источник правды, и рассинхрону взяться неоткуда.
+  const collectState = () => {
+    const slots = {};
+    slotFields.forEach(entry => {
+      if (!entry.select.value) return;
+      slots[entry.featureId] = slots[entry.featureId] || {};
+      slots[entry.featureId][entry.kind] = entry.select.value;
+    });
+    const answers = {};
+    answerFields.forEach(entry => { if (entry.field.value.trim()) answers[entry.id] = entry.field.value; });
+    const priorities = [...list.children]
+      .map(item => item.querySelector('.t').textContent.trim()).filter(Boolean);
+    return { slots, answers, priorities };
+  };
+
+  const applyState = state => {
+    slotFields.forEach(entry => {
+      const stored = (state.slots[entry.featureId] || {})[entry.kind] || '';
+      entry.select.value = [...entry.select.options].some(option => option.value === stored) ? stored : '';
+      entry.sync();
+    });
+    answerFields.forEach(entry => {
+      entry.field.value = state.answers[entry.id] || '';
+      entry.box.open = Boolean(entry.field.value);
+      entry.sync();
+    });
+    fill(state.priorities.length ? state.priorities : defaults);
+  };
+
+  // Прежние три ключа читаются один раз: заполненное до появления сервера
+  // обязано пережить переход, а не начаться с чистого листа.
+  const legacyState = () => normalize({
+    slots: readMap('rfc007-slots'),
+    answers: readMap('rfc007-answers'),
+    priorities: readJSON('rfc007-priorities')
+  });
+
+  const localState = () => {
+    const saved = readJSON(LOCAL_STATE);
+    return saved ? normalize(saved) : legacyState();
+  };
+
+  const writeLocal = state => write(LOCAL_STATE, JSON.stringify(state));
+  const writeSyncMeta = () => write(LOCAL_SYNC, JSON.stringify({
+    docId: remote.docId, revision: remote.revision, dirty: remote.dirty
+  }));
+
+  const shareUrl = () => location.origin + location.pathname + '?doc=' + remote.docId;
+
+  const setStatus = (text, tone) => {
+    stateBox.textContent = text;
+    if (tone) stateBox.dataset.tone = tone;
+    else delete stateBox.dataset.tone;
+  };
+
+  const describeSaved = () => setStatus('Сохранено на сервере'
+    + (remote.versions.length ? ' · версий: ' + remote.versions.length : ''));
+
+  const request = async (path, options) => {
+    const response = await fetch(API + path, Object.assign({
+      headers: { 'content-type': 'application/json' }
+    }, options || {}));
+    let body = null;
+    try { body = await response.json(); } catch { body = null; }
+    if (!response.ok) {
+      const error = new Error((body && body.error) || 'Сервер отказал');
+      error.status = response.status;
+      // Отказ без JSON пришёл не от нашего обработчика: так отвечает статика,
+      // где функции нет вовсе. Путать это с «документ удалён» нельзя.
+      error.fromApi = body !== null;
+      error.current = body && body.current;
+      throw error;
+    }
+    return body;
+  };
+
+  // Метаданные обновляются отдельно от содержимого: после записи читатель
+  // продолжает печатать, и трогать поля в этот момент нельзя.
+  const adoptMeta = doc => {
+    remote.docId = doc.docId;
+    remote.revision = doc.revision;
+    remote.versions = doc.versions || [];
+    remote.dirty = false;
+    writeSyncMeta();
+    enableButton.hidden = true;
+    historyButton.hidden = false;
+    shareButton.hidden = false;
+    linkField.value = shareUrl();
+    renderHistory();
+  };
+
+  const adopt = doc => {
+    applyState(normalize(doc.state));
+    writeLocal(collectState());
+    adoptMeta(doc);
+  };
+
+  const push = async () => {
+    if (!remote.docId) return;
+    if (remote.busy) { repeatPush = true; return; }
+    remote.busy = true;
+    const state = collectState();
+    try {
+      const doc = await request('/' + remote.docId, {
+        method: 'PUT',
+        body: JSON.stringify({ baseRevision: remote.revision, state })
+      });
+      adoptMeta(doc);
+      describeSaved();
+    } catch (error) {
+      if (error.status === 409 && error.current) showClash(error.current, state);
+      else if (error.status === 404 && error.fromApi) setStatus('Документ на сервере не найден', 'warn');
+      else setStatus('Сервер недоступен, правки лежат в браузере', 'warn');
+    } finally {
+      remote.busy = false;
+      if (repeatPush) { repeatPush = false; push(); }
+    }
+  };
+
+  const pushSoon = debounce(push, 1200);
+
+  // Правка сначала ложится в браузер и только потом уезжает: связь отваливается
+  // без предупреждения, и терять набранное из-за этого нельзя.
+  function touch() {
+    writeLocal(collectState());
+    if (!remote.docId) { setStatus('Только в этом браузере'); return; }
+    remote.dirty = true;
+    writeSyncMeta();
+    setStatus('Сохраняю…');
+    pushSoon();
+  }
+
+  const showClash = (theirs, mine) => {
+    clashBox.hidden = false;
+    clashText.textContent = 'Документ изменили в другом месте, ваша правка не записана.';
+    takeTheirs.textContent = 'Взять чужую';
+    takeMine.textContent = 'Оставить мою';
+    setStatus('Расхождение версий', 'warn');
+    takeTheirs.onclick = () => { adopt(theirs); clashBox.hidden = true; describeSaved(); };
+    // Чужая работа не исчезает от нажатия «оставить мою»: сначала она
+    // фиксируется версией и остаётся доступной для возврата.
+    takeMine.onclick = async () => {
+      clashBox.hidden = true;
+      try {
+        adoptMeta(await request('/' + theirs.docId + '/versions', {
+          method: 'POST',
+          body: JSON.stringify({ baseRevision: theirs.revision, label: 'Чужая правка перед перезаписью' })
+        }));
+        applyState(normalize(mine));
+        writeLocal(mine);
+        await push();
+      } catch {
+        setStatus('Перезаписать не удалось, повторите', 'warn');
+      }
+    };
+  };
+
+  const offerMine = mine => {
+    clashBox.hidden = false;
+    clashText.textContent = 'В этом браузере есть заметки, которых нет в серверной версии.';
+    takeTheirs.textContent = 'Оставить серверные';
+    takeMine.textContent = 'Залить мои';
+    setStatus('Показана серверная версия', 'warn');
+    takeTheirs.onclick = () => { clashBox.hidden = true; describeSaved(); };
+    takeMine.onclick = async () => {
+      clashBox.hidden = true;
+      applyState(mine);
+      writeLocal(mine);
+      await push();
+      try {
+        adoptMeta(await request('/' + remote.docId + '/versions', {
+          method: 'POST',
+          body: JSON.stringify({ baseRevision: remote.revision, label: 'Заметки из браузера' })
+        }));
+        describeSaved();
+      } catch { /* версия — украшение поверх уже уехавшего состояния */ }
+    };
+  };
+
+  // ------------------------------------------------------- история версий
+  const countChanged = (before, after) => {
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    let changed = 0;
+    keys.forEach(key => { if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changed += 1; });
+    return changed;
+  };
+
+  // Сводку считает страница, а не сервер: только здесь известно, что стоит за
+  // идентификатором поля, и только здесь её есть кому читать.
+  const summarize = (before, after) => {
+    if (!before) return 'Начало отсчёта';
+    const parts = [];
+    const answers = countChanged(before.answers, after.answers);
+    const slots = countChanged(before.slots, after.slots);
+    if (answers) parts.push('заметок: ' + answers);
+    if (slots) parts.push('оценок: ' + slots);
+    if (JSON.stringify(before.priorities) !== JSON.stringify(after.priorities)) parts.push('приоритеты');
+    return parts.length ? 'изменено — ' + parts.join(', ') : 'без изменений';
+  };
+
+  const when = iso => {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('ru-RU',
+      { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  };
+
+  function renderHistory() {
+    historyList.textContent = '';
+    historyEmpty.hidden = remote.versions.length > 0;
+    remote.versions.forEach((version, index) => {
+      const previous = index > 0 ? normalize(remote.versions[index - 1].state) : null;
+      const row = document.createElement('li');
+      if (index === remote.versions.length - 1) row.dataset.current = 'yes';
+      const info = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'history-title';
+      title.textContent = version.label;
+      const meta = document.createElement('div');
+      meta.className = 'history-meta';
+      meta.textContent = ['v' + version.number, when(version.at), summarize(previous, normalize(version.state))]
+        .filter(Boolean).join(' · ');
+      info.append(title, meta);
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.textContent = 'Вернуть';
+      action.addEventListener('click', () => restore(version.number));
+      row.append(info, action);
+      historyList.append(row);
+    });
+  }
+
+  const restore = async number => {
+    try {
+      adopt(await request('/' + remote.docId + '/restore', {
+        method: 'POST',
+        body: JSON.stringify({ baseRevision: remote.revision, version: number })
+      }));
+      describeSaved();
+    } catch (error) {
+      if (error.status === 409 && error.current) {
+        adopt(error.current);
+        setStatus('Документ успели изменить, возврат не выполнен', 'warn');
+        return;
+      }
+      setStatus('Вернуть версию не удалось', 'warn');
+    }
+  };
+
+  // ------------------------------------------------------------- действия
+  enableButton.addEventListener('click', async () => {
+    enableButton.disabled = true;
+    setStatus('Создаю документ…');
+    try {
+      adoptMeta(await request('', { method: 'POST', body: JSON.stringify({ state: collectState() }) }));
+      linkField.hidden = false;
+      describeSaved();
+    } catch {
+      setStatus('Сервер недоступен: заметки остаются в браузере', 'warn');
+    } finally {
+      enableButton.disabled = false;
+    }
+  });
+
+  shareButton.addEventListener('click', async () => {
+    linkField.hidden = false;
+    linkField.value = shareUrl();
+    try {
+      await navigator.clipboard.writeText(linkField.value);
+      setStatus('Ссылка скопирована');
+      setTimeout(describeSaved, 1800);
+    } catch {
+      linkField.focus();
+      linkField.select();
+    }
+  });
+
+  historyButton.addEventListener('click', () => { renderHistory(); historyDialog.showModal(); });
+  document.getElementById('history-close').addEventListener('click', () => historyDialog.close());
+
+  historyCommit.addEventListener('click', async () => {
+    if (!remote.docId) return;
+    // Версия фиксирует то, что уже на сервере, поэтому черновик уезжает первым.
+    await push();
+    try {
+      adoptMeta(await request('/' + remote.docId + '/versions', {
+        method: 'POST',
+        body: JSON.stringify({ baseRevision: remote.revision, label: historyLabel.value })
+      }));
+      historyLabel.value = '';
+      describeSaved();
+    } catch {
+      setStatus('Сохранить версию не удалось', 'warn');
+    }
+  });
+
+  const pull = async docId => {
+    setStatus('Читаю с сервера…');
+    const mine = collectState();
+    try {
+      const doc = await request('/' + docId);
+      const theirs = normalize(doc.state);
+      adopt(doc);
+      // Локальное заполнение не выбрасывается молча: если оно расходится с
+      // серверным, чья версия останется, решает читатель. Незаполненная
+      // страница при этом не считается расхождением: список приоритетов
+      // приходит из разметки заготовкой и сам по себе ничего не значит.
+      if (!sameState(mine, pristine) && !sameState(mine, theirs)) offerMine(mine);
+      else describeSaved();
+    } catch (error) {
+      if (error.status === 404 && error.fromApi) {
+        remote.docId = null;
+        write(LOCAL_SYNC, JSON.stringify({}));
+        enableButton.hidden = false;
+        setStatus('Документ по ссылке не найден, показаны заметки из браузера', 'warn');
+      } else {
+        setStatus('Сервер недоступен, показаны заметки из браузера', 'warn');
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------- старт
+  // Снимок незаполненной страницы: эталон, с которым сравнивается локальное
+  // состояние, когда документ открывают по чужой ссылке.
+  const pristine = collectState();
+  applyState(localState());
+  document.querySelector('.sync').hidden = false;
+
+  const params = new URLSearchParams(location.search);
+  const fromLink = params.get('doc');
+  if (fromLink) {
+    // Пропуск своё дело сделал: в адресной строке и в истории браузера ему
+    // больше не место.
+    params.delete('doc');
+    const rest = params.toString();
+    history.replaceState({}, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  }
+  const known = readJSON(LOCAL_SYNC);
+  const docId = fromLink || (isMap(known) ? known.docId : null) || null;
+  if (docId) {
+    remote.docId = docId;
+    enableButton.hidden = true;
+    linkField.value = shareUrl();
+    pull(docId);
+  } else {
+    setStatus('Только в этом браузере');
+  }
 })();
 </script>
 </body>
