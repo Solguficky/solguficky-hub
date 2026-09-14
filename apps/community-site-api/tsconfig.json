@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    // DOM нужен тестам страницы: они работают с настоящим документом в jsdom.
+    "lib": ["ES2023", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
@@ -19,5 +20,11 @@
     "outDir": "dist",
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "netlify/**/*.mts"]
+  "include": [
+    "src/**/*.ts",
+    "netlify/**/*.mts",
+    "page/**/*.ts",
+    "e2e/**/*.ts",
+    "playwright.config.ts"
+  ]
 }

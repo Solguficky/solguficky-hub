@@ -151,6 +151,17 @@ community-site-api-test:
 community-site-api-lint:
     cd apps/community-site-api && npm run lint
 
+# Браузер ставится один раз:
+# cd apps/community-site-api && npx playwright install chromium
+# E2E страницы в настоящем браузере; в `verify` не входит — гейт обязан работать без Chromium
+community-site-api-e2e:
+    cd apps/community-site-api && npm run e2e
+
+# Сервер поднимает настоящий обработчик поверх хранилища в памяти; E2E запускает его сам.
+# Статика docs/published плюс /api/notes — для ручного прогона страницы
+community-site-serve:
+    cd apps/community-site-api && node e2e/server.mjs
+
 # --- Meetups (F# / .NET) ---------------------------------------------------
 #
 # Кодогенерация C# — часть `dotnet build` контрактного проекта.

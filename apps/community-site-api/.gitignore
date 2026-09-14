@@ -1,3 +1,7 @@
 dist/
 coverage/
 *.tsbuildinfo
+
+# Артефакты прогона Playwright: следы, отчёты, скриншоты падений.
+test-results/
+playwright-report/

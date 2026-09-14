@@ -15,7 +15,10 @@ just community-site-api-tools
 just community-site-api-typecheck
 just community-site-api-lint
 just community-site-api-test
+just community-site-api-e2e
 ```
+
+Перед первым прогоном E2E нужен браузер: `cd apps/community-site-api && npx playwright install chromium`. В `just verify` этот слой не входит — гейт обязан работать на машине, где браузера нет.
 
 Сборки нет: функцию бандлит Netlify CLI при деплое сайта, тем же прогоном и тем же токеном, что и статику. Доставка описана в [ci.md](../../docs/development/ci.md).
 
@@ -24,6 +27,10 @@ just community-site-api-test
 `src/document.ts` — вся логика документа: разбор недоверенного состояния, ревизии, версии, откаты. Модуль чистый, поэтому история и откаты проверяются обычными тестами, без Netlify и без сети.
 
 `netlify/functions/notes.mts` — HTTP-граница: маршрут, коды ответа, Netlify Blobs.
+
+`page/` — тесты опубликованной страницы: её клиентская логика прогоняется в jsdom на настоящем `index.html`, а не на копии, плюс проверки разметки и доступности всех страниц сайта.
+
+`e2e/` — то же, но в настоящем браузере: сценарии Playwright поверх проверочного сервера, где статика и обработчик настоящие, а хранилище живёт в памяти.
 
 Контракт, границы и причины решений — в [AGENTS.md](AGENTS.md).
 
