@@ -63,7 +63,21 @@ const sendFile = async (response, filePath) => {
   }
 };
 
+// Колбэк асинхронный, и брошенное в нём исключение становится необработанным
+// отклонением промиса — для Node это повод убить процесс. Сервер бы исчез
+// посреди прогона, а упал бы при этом совсем другой сценарий. Достаточно
+// испорченного `%` в адресе: `decodeURIComponent` ниже на нём бросает.
 const server = createServer(async (incoming, response) => {
+  try {
+    await handle(incoming, response);
+  } catch (error) {
+    process.stderr.write(`Отказ проверочного сервера: ${String(error)}\n`);
+    if (!response.headersSent) response.writeHead(500);
+    response.end();
+  }
+});
+
+const handle = async (incoming, response) => {
   const url = new URL(incoming.url ?? "/", `http://${incoming.headers.host}`);
 
   if (url.pathname === "/api/notes" || url.pathname.startsWith("/api/notes/")) {
@@ -89,7 +103,7 @@ const server = createServer(async (incoming, response) => {
     response,
     extname(target) ? target : join(target, "index.html"),
   );
-});
+};
 
 const port = Number(process.env["PORT"] ?? 4321);
 server.listen(port, () => {
