@@ -16,6 +16,7 @@
 # на всех файлах пакета сразу, хотя в индексе и на Linux-раннере CI они в порядке.
 *.ts text eol=lf
 *.mts text eol=lf
+*.mjs text eol=lf
 *.json text eol=lf
 
 # Файл исключений skillshare сравнивается по строкам буквально: CRLF из рабочего
