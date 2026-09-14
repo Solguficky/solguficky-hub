@@ -200,10 +200,13 @@ export default async (
     .filter(Boolean)
     .slice(2);
   const [docId, action] = segments;
-  const store = openStore(context);
-  const now = new Date().toISOString();
 
   try {
+    // Хранилище открывается внутри `try`: отказ `getStore` — такой же отказ
+    // сервера, как и любой другой, и отвечать на него должен общий путь.
+    const store = openStore(context);
+    const now = new Date().toISOString();
+
     if (docId === undefined) {
       return request.method === "POST"
         ? await handleCreate(store, request, now)
