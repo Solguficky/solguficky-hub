@@ -1966,7 +1966,14 @@
   // Снимок незаполненной страницы: эталон, с которым сравнивается локальное
   // состояние, когда документ открывают по чужой ссылке.
   const pristine = collectState();
-  applyState(localState());
+  const started = localState();
+  applyState(started);
+  // Перенос с прежних трёх ключей доводится до конца здесь, а не откладывается
+  // до первой правки: читатель, который ничего не тронул, иначе остаётся с
+  // заполненным, которое умеет прочитать только прежняя версия страницы. Сами
+  // прежние ключи не удаляются — стоят они ничего, а откат страницы на
+  // предыдущую версию без них потерял бы всё.
+  if (readJSON(LOCAL_STATE) === null && !sameState(started, normalize(null))) writeLocal(started);
   document.querySelector('.sync').hidden = false;
 
   const params = new URLSearchParams(location.search);

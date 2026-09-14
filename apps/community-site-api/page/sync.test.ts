@@ -144,14 +144,10 @@ describe("старт без сервера", () => {
     expect(priorityTexts(page.document)).toEqual(["Из старого ключа"]);
   });
 
-  // Миграция не фиксируется сама по себе: `localState()` читает прежние ключи
-  // через `legacyState()`, но `writeLocal` вызывается только из `touch()` и
-  // `adopt()`, а на чистом старте без правки и без документа не срабатывает ни
-  // тот, ни другой. Заметки при этом не теряются — прежние ключи остаются на
-  // месте и перечитываются на каждой загрузке, — но новый ключ появляется лишь
-  // с первой правкой. Тест фиксирует это поведение целиком; если страницу
-  // научат записывать перенос сразу, тест обязан упасть и быть переписанным.
-  it("переносит прежние ключи в новый только с первой правкой, ничего не теряя", async () => {
+  // Перенос завершается на загрузке, а не с первой правкой: иначе читатель,
+  // который ничего не тронул, продолжает жить на прежних ключах, и заполненное
+  // видит только код прежней страницы.
+  it("переносит прежние ключи в новый сразу при загрузке, ничего не теряя", async () => {
     const legacy = {
       "rfc007-slots": JSON.stringify({ [FEATURE_ID]: { value: "Хорошо бы" } }),
       "rfc007-answers": JSON.stringify({ [NOTE_ID]: "старый ответ" }),
@@ -160,28 +156,31 @@ describe("старт без сервера", () => {
     const page = loadAuctionPage({ seedLocalStorage: legacy });
     await page.flush();
 
-    expect(storedJSON(page.window, "rfc007-state")).toBeNull();
-
-    const textarea = $<HTMLTextAreaElement>(
-      page.document,
-      `[data-note="${NOTE_ID}"] textarea`,
-    );
-    typeInto(page.window, textarea, "новый ответ");
-
     const state = storedJSON(page.window, "rfc007-state") as {
       answers: Record<string, string>;
       slots: Record<string, Record<string, string>>;
       priorities: string[];
     };
-    // В новый ключ уезжает не только правка, но и всё перенесённое из прежних.
-    expect(state.answers[NOTE_ID]).toBe("новый ответ");
+    expect(state.answers[NOTE_ID]).toBe("старый ответ");
     expect(state.slots[FEATURE_ID]?.["value"]).toBe("Хорошо бы");
     expect(state.priorities).toEqual(["Из старого ключа"]);
-    // Прежние ключи не вычищаются: пока перенос не зафиксирован, они —
-    // единственный носитель заполненного.
+    // Прежние ключи не вычищаются: откат страницы на предыдущую версию без них
+    // потерял бы всё, а стоят они ничего.
     for (const [key, value] of Object.entries(legacy)) {
       expect(page.window.localStorage.getItem(key)).toBe(value);
     }
+    // Перенос — это запись в браузере, а не повод пойти в сеть.
+    expect(page.calls).toHaveLength(0);
+  });
+
+  // Обратная сторона переноса: он не должен заводить ключ там, где переносить
+  // нечего. Иначе первое же открытие страницы оставляет след в браузере
+  // читателя, который ничего не заполнял.
+  it("в чистом браузере не заводит ключ состояния вовсе", async () => {
+    const page = loadAuctionPage();
+    await page.flush();
+
+    expect(storedJSON(page.window, "rfc007-state")).toBeNull();
   });
 
   it("при обоих ключах побеждает новый", async () => {
