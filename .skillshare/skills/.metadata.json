@@ -37,10 +37,10 @@
     "aspire-orchestration": {
       "source": "github.com/microsoft/aspire-skills/skills/aspire-orchestration",
       "type": "github-subdir",
-      "installed_at": "2026-09-04T00:15:25.4355095+03:00",
+      "installed_at": "2026-09-13T20:13:24.0222573+03:00",
       "repo_url": "https://github.com/microsoft/aspire-skills.git",
       "subdir": "skills/aspire-orchestration",
-      "version": "c9d042e",
+      "version": "7f3dca0",
       "tree_hash": "1acf3680894cd7863ec4ad61dc840b26996c1d94",
       "file_hashes": {
         "SKILL.md": "sha256:622bd7059bca7cf15ff3c4ae83a167bc6531d71d657c5204256139b69f6a7da9",

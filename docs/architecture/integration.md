@@ -13,6 +13,10 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 ## Subjects
 
+Для будущего read-only экрана аукциона принят SSE endpoint внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)). Это browser boundary без дополнительного NATS-посредника. Схема сообщений пока не определена, межсервисные контракты этим решением не добавляются.
+
+Заметки публикуемой страницы «Аукцион 2026» хранит собственная функция сайта сообщества ([ADR-042](../decisions/ADR-042-published-page-notes-own-backend.md)). Это тоже browser boundary: JSON поверх HTTP между страницей и её функцией. Требование «payload только в Protobuf» относится к NATS и gRPC; межсервисным контрактом эта граница не является и в каталог ниже не входит.
+
 Формат: `<commands|events>.<домен>.<действие>` в `snake_case`.
 
 `>` — многоуровневый wildcard. Например, `events.auction.>` получает все события аукциона; одноуровневый `*` не заменяет его.
@@ -31,7 +35,7 @@ Subjects удалённой аукционной ветки перечислен
 | `IdentityService.GrantAdminRole` | то же | Maintainer (`grpcurl`) | Identity |
 | `IdentityService.RevokeAdminRole` | то же | Maintainer (`grpcurl`) | Identity |
 
-Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `global_roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMIN`; пустой набор — обычный пользователь.
+Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой и `global_roles` из `GlobalRole`. В срезе единственная роль — `GLOBAL_ROLE_ADMIN`; пустой набор — обычный пользователь. [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md) расширяет словарь до четырёх ролей — maintainer, admin, солегуфик, комьюнити — и добавляет в ответ отметку блокировки отдельным полем. В текущий контракт это ещё не внесено: изменение затрагивает `Viewer.global_roles` в Meetups и проводится задачей [PER-254](https://linear.app/anticnvm/issue/per-254).
 
 Операция устанавливает личность: создаёт профиль при первом обращении и обновляет ник как кэш. Роли не выдаёт ([ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md)). Статус допуска, whitelist, журнал доступа и служебные endpoints премодерации в этот контракт не входят — полей под них нет. Отказы передаются статусами gRPC, отдельного error-message нет.
 
@@ -89,7 +93,7 @@ Wire-схемы gRPC API для Telegram Bot и reminders ещё не приня
 
 Notifications публикует наружу не команду каналу, а факт «человеку положено такое уведомление»: явный получатель во внутреннем идентификаторе, тип уведомления со структурированными данными — типизированным `oneof`, а не строковым кодом со свободным словарём. Готового текста и `chat_id` в сообщении нет, обратных событий о доставке нет. Команда `commands.telegram.send_message` из удалённой аукционной ветки формой будущего контракта не является: она несла `chat_id` и готовый текст, то есть ровно то, от чего [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) отказался. Словарь кодов типов уведомлений становится межсервисным контрактом и меняется согласованно с потребителями.
 
-Identity публикует события о регистрации и смене статуса допуска: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md)). Эти события вне среза и в текущем `.proto` не описаны. Telegram Bot устанавливает Telegram identity из принятого апдейта: вход идёт long polling, доверенностью служит владение bot token, входящего HTTP и secret token у компонента нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity разрешает Telegram user id во внутренний id и глобальные роли, а Meetups принимает доменные authorization-решения. Статус допуска входит в полную модель ADR-026, но в контракт среза не входит. Authentication material через Identity не проходит.
+Identity публикует события о регистрации, выдаче и отзыве роли и о блокировке: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) вводит эти события, [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md) заменяет в них смену статуса допуска сменой роли). Текст ADR-028 говорит про статус допуска и задним числом не переписывается; действующей формулировкой является эта. Эти события вне среза и в текущем `.proto` не описаны. Telegram Bot устанавливает Telegram identity из принятого апдейта: вход идёт long polling, доверенностью служит владение bot token, входящего HTTP и secret token у компонента нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity разрешает Telegram user id во внутренний id и глобальные роли, а Meetups принимает доменные authorization-решения. Статус допуска входит в полную модель ADR-026, но в контракт среза не входит; в целевой модели его место занимают роли и отметка блокировки ([ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md)), и в контракт они тоже ещё не внесены. Authentication material через Identity не проходит.
 
 ## Выбор sync и async
 
@@ -138,7 +142,7 @@ Schema Registry — не одно бинарное решение:
 
 ## Delivery semantics
 
-- В коде используются обычные NATS subscriptions; наличие JetStream в локальной конфигурации не делает consumers durable автоматически.
+- Действующих consumers нет: сервисы среза NATS не используют, принятых subject тоже нет. Наличие JetStream в локальной конфигурации само по себе durability не даёт, поэтому первый consumer проектируется сразу с ней.
 - Durable consumers, redelivery, deduplication и idempotency должны проектироваться совместно.
 - Наличие `op_id` в части команд само по себе не обеспечивает идемпотентность: consumer должен сохранять или проверять обработанные операции.
 - Требования к допустимой потере, повтору и порядку задаются отдельно для каждого сценария.

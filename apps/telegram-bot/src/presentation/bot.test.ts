@@ -4,6 +4,7 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type { IdentityResolver } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
@@ -142,6 +143,16 @@ function publishedMeetup() {
   };
 }
 
+function draftMeetup() {
+  return {
+    ...publishedMeetup(),
+    title: "",
+    description: "",
+    venue: "",
+    visibility: "hidden" as const,
+  };
+}
+
 function resolvedIdentity(): IdentityResolver {
   return {
     resolve: async () => ({
@@ -200,6 +211,8 @@ function expectBoundary(
     level: LogRecord["level"];
     result: "ok" | "error";
     error_category?: string;
+    operation?: "message" | "callback_query";
+    use_case?: string;
   },
 ): void {
   expect(record).toBeDefined();
@@ -207,11 +220,14 @@ function expectBoundary(
     return;
   }
   expect(record.level).toBe(expected.level);
-  expect(record.fields.operation).toBe("message");
+  expect(record.fields.operation).toBe(expected.operation ?? "message");
   expect(record.fields.result).toBe(expected.result);
   expect(typeof record.fields.request_id).toBe("string");
   expect(record.fields.request_id).not.toBe("");
   expect(typeof record.fields.duration_us).toBe("number");
+  if (expected.use_case !== undefined) {
+    expect(record.fields.use_case).toBe(expected.use_case);
+  }
   if (expected.result === "error") {
     expect(record.fields.error_category).toBe(expected.error_category);
     expect(typeof record.fields.error).toBe("string");
@@ -222,8 +238,21 @@ function expectBoundary(
   }
 }
 
+function refusedIdentity(): IdentityResolver {
+  return createIdentityResolver({
+    resolveIdentity: () =>
+      Promise.reject(
+        new ConnectError(
+          "telegram_user_id must be positive",
+          Code.InvalidArgument,
+        ),
+      ),
+  });
+}
+
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("presentation adapter", () => {
@@ -277,7 +306,12 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(records.some((record) => record.level === "info")).toBe(false);
-    expectBoundary(records[0], { level: "debug", result: "ok" });
+    expectBoundary(records[0], {
+      level: "debug",
+      result: "ok",
+      operation: "message",
+      use_case: "find_meetup",
+    });
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
@@ -420,6 +454,8 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "dependency_unavailable",
+      operation: "callback_query",
+      use_case: "find_meetup",
     });
   });
 
@@ -467,6 +503,7 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "dependency_unavailable",
+      use_case: "create_meetup",
     });
   });
 
@@ -487,7 +524,7 @@ describe("presentation adapter", () => {
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
-      useCase: "start",
+      useCase: "find_meetup",
     });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
@@ -528,8 +565,12 @@ describe("presentation adapter", () => {
     const published = records.find(
       (record) => record.message === "meetup published",
     );
-    expectBoundary(published, { level: "debug", result: "ok" });
-    expect(published?.fields.use_case).toBe("create_meetup");
+    expectBoundary(published, {
+      level: "debug",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
     expect(published?.fields.meetup_id).toBe(
       "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
     );
@@ -540,6 +581,7 @@ describe("presentation adapter", () => {
   });
 
   it("records meetup_id when publication is rejected", async () => {
+    const counted = vi.spyOn(failures, "countFailure");
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "dependency-rejected",
       reason: "forbidden",
@@ -556,8 +598,11 @@ describe("presentation adapter", () => {
       level: "warn",
       result: "error",
       error_category: "authorization",
+      operation: "callback_query",
+      use_case: "create_meetup",
     });
-    expect(rejected?.fields.use_case).toBe("create_meetup");
+    expect(counted).toHaveBeenCalledOnce();
+    expect(counted).toHaveBeenCalledWith("authorization");
     expect(rejected?.fields.meetup_id).toBe(
       "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
     );
@@ -669,6 +714,7 @@ describe("presentation adapter", () => {
       level: "warn",
       result: "error",
       error_category: "dependency_unavailable",
+      use_case: "view_meetup",
     });
   });
 
@@ -685,6 +731,7 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "unexpected",
+      use_case: "view_meetup",
     });
   });
 
@@ -723,7 +770,7 @@ describe("presentation adapter", () => {
       error_category: "dependency_unavailable",
     });
     expect(records[0]?.fields.error).toBe("down");
-    expect(records[0]?.fields.use_case).toBe("start");
+    expect(records[0]?.fields.use_case).toBe("find_meetup");
   });
 
   it("resolves /start with a bot mention", async () => {
@@ -778,7 +825,7 @@ describe("presentation adapter", () => {
       error_category: "invariant",
     });
     expect(records[0]?.fields.grpc_code).toBe("InvalidArgument");
-    expect(records[0]?.fields.use_case).toBe("start");
+    expect(records[0]?.fields.use_case).toBe("find_meetup");
   });
 
   it("carries the boundary request id into the identity call", async () => {
@@ -800,8 +847,8 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(seenRequestId).toBe(records[0]?.fields.request_id);
     expect(seenRequestId).not.toBe("");
-    expect(seenUseCase).toBe("start");
-    expect(records[0]?.fields.use_case).toBe("start");
+    expect(seenUseCase).toBe("find_meetup");
+    expect(records[0]?.fields.use_case).toBe("find_meetup");
   });
 
   it("sends view_meetup to identity when a meetup deep link starts the chain", async () => {
@@ -823,6 +870,291 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(seenUseCase).toBe("view_meetup");
+  });
+
+  it("uses different operation values for message and callback records", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(records[0]?.fields.operation).toBe("message");
+    expect(records[1]?.fields.operation).toBe("callback_query");
+    expect(records[0]?.fields.operation).not.toBe(records[1]?.fields.operation);
+  });
+
+  it("records a successful callback, not only its failures", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [],
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expectBoundary(records[0], {
+      level: "debug",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+  });
+
+  it.each([
+    {
+      name: "list",
+      data: "v1:nav:hub",
+      result: { kind: "meetup-list" as const, meetups: [] },
+      use_case: "find_meetup",
+      message: "meetup list sent",
+    },
+    {
+      name: "card",
+      data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+      result: { kind: "meetup-card" as const, meetup: publishedMeetup() },
+      use_case: "view_meetup",
+      message: "meetup card sent",
+    },
+    {
+      name: "menu",
+      data: "v1:manage:menu",
+      result: undefined,
+      use_case: "create_meetup",
+      message: "manage menu sent",
+    },
+    {
+      name: "draft",
+      data: "v1:manage:new:AZLzpLXGfY6fChssPU5fYA",
+      result: {
+        kind: "ask" as const,
+        field: "title" as const,
+        meetup: draftMeetup(),
+      },
+      use_case: "create_meetup",
+      message: "meetup form step sent",
+    },
+    {
+      name: "publish",
+      data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
+      result: { kind: "published" as const, meetup: publishedMeetup() },
+      use_case: "create_meetup",
+      message: "meetup published",
+    },
+    {
+      name: "outdated",
+      data: "v2:nav:hub",
+      result: { kind: "meetup-list" as const, meetups: [] },
+      use_case: "find_meetup",
+      message: "meetup list sent",
+    },
+  ])(
+    "records exactly one $name callback boundary at debug",
+    async ({ data, result, use_case, message }) => {
+      const execute =
+        result === undefined
+          ? vi.fn<Dispatcher["execute"]>().mockImplementation(() => {
+              throw new Error("dispatcher should not run");
+            })
+          : vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
+      const { bot, records } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(data));
+      expect(records).toHaveLength(1);
+      expect(records.some((record) => record.level === "info")).toBe(false);
+      expectBoundary(records[0], {
+        level: "debug",
+        result: "ok",
+        operation: "callback_query",
+        use_case,
+      });
+      expect(records[0]?.message).toBe(message);
+    },
+  );
+
+  it("records a rejected callback screen as an error", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "dependency_unavailable",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+  });
+
+  it("keeps use_case on an unexpected callback failure", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockImplementation(() => {
+      throw new Error("boom");
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("boom");
+    expect(typeof records[0]?.fields.stack).toBe("string");
+  });
+
+  it("keeps use_case when acknowledging a callback fails", async () => {
+    const { logger, records } = createCapturingLogger();
+    const bot = createBot({
+      token: "111:test-token",
+      dispatcher: createDispatcher(),
+      identity: resolvedIdentity(),
+      logger,
+    });
+    bot.botInfo = botInfo;
+    const failing: Transformer = (_prev, method) =>
+      method === "answerCallbackQuery"
+        ? Promise.reject(new Error("query is too old"))
+        : Promise.resolve({ ok: true, result: true as never });
+    bot.api.config.use(failing);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "unexpected",
+      operation: "callback_query",
+      use_case: "view_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("query is too old");
+  });
+
+  it("logs malformed callback data without its payload", async () => {
+    const counted = vi.spyOn(failures, "countFailure");
+    const { bot, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:short"));
+    expect(records).toHaveLength(1);
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+    });
+    expect(records[0]?.fields.use_case).toBeUndefined();
+    expect(records[0]?.fields.stack).toBeUndefined();
+    expect(counted).toHaveBeenCalledOnce();
+    expect(counted).toHaveBeenCalledWith("invariant");
+    expect(JSON.stringify(records[0]?.fields)).not.toContain("short");
+  });
+
+  it("keeps malformed callback data as invariant when acknowledgement fails", async () => {
+    const counted = vi.spyOn(failures, "countFailure");
+    const { logger, records } = createCapturingLogger();
+    const bot = createBot({
+      token: "111:test-token",
+      dispatcher: createDispatcher(),
+      identity: resolvedIdentity(),
+      logger,
+    });
+    bot.botInfo = botInfo;
+    const failing: Transformer = (_prev, method) =>
+      method === "answerCallbackQuery"
+        ? Promise.reject(new Error("query is too old"))
+        : Promise.resolve({ ok: true, result: true as never });
+    bot.api.config.use(failing);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:short"));
+    expect(records).toHaveLength(1);
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+    });
+    expect(records[0]?.fields.stack).toBeUndefined();
+    expect(records[0]?.fields.reply_error).toBe("query is too old");
+    expect(counted).toHaveBeenCalledOnce();
+    expect(counted).toHaveBeenCalledWith("invariant");
+  });
+
+  it("records a foreign answer to a pending question", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
+      kind: "ask",
+      field: "title",
+      meetup: {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+        title: "",
+        description: "",
+        venue: "",
+        lifecycle: "planned",
+        visibility: "hidden",
+      },
+    });
+    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const before = records.length;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Чужое название",
+        fromId: 43,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+    expect(records.length).toBe(before + 1);
+    expectBoundary(records.at(-1), {
+      level: "debug",
+      result: "ok",
+      operation: "message",
+      use_case: "create_meetup",
+    });
+  });
+
+  it("records view_meetup when identity refuses opening a meetup", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      use_case: "view_meetup",
+    });
+  });
+
+  it("records view_meetup when identity refuses a meetup callback", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "view_meetup",
+    });
+  });
+
+  it("records create_meetup when identity refuses publication", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
   });
 
   it("logs ignored updates with the boundary skeleton", async () => {
@@ -869,6 +1201,7 @@ describe("presentation adapter", () => {
       level: "error",
       result: "error",
       error_category: "unexpected",
+      use_case: "find_meetup",
     });
     expect(records[0]?.fields.error).toBe("boom");
     expect(typeof records[0]?.fields.stack).toBe("string");

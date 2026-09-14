@@ -23,6 +23,7 @@ jobs:
       meetups: ${{ steps.filter.outputs.meetups }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
+      community-site-api: ${{ steps.filter.outputs.community-site-api }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -47,6 +48,14 @@ jobs:
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            community-site-api:
+              - 'apps/community-site-api/**'
+              # Тесты страницы и браузерные сценарии читают саму опубликованную
+              # страницу, поэтому её правка обязана поднимать эту джобу: иначе
+              # самое частое изменение сайта проходит мимо собственных тестов.
+              - 'docs/published/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             apphost:
@@ -178,6 +187,47 @@ jobs:
       - run: npm run build
         working-directory: apps/telegram-bot
 
+  # Функция сайта не собирается: её бандлит Netlify CLI при деплое. Гейт держат
+  # typecheck, линт и тесты доменной логики ревизий — того единственного места,
+  # где ошибка стоит потерянных заметок.
+  community-site-api:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.community-site-api == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/community-site-api/package-lock.json
+      - run: npm ci
+        working-directory: apps/community-site-api
+      - run: npm run typecheck
+        working-directory: apps/community-site-api
+      - run: npm run lint
+        working-directory: apps/community-site-api
+      - run: npm test
+        working-directory: apps/community-site-api
+      # E2E держат отдельным шагом: им нужен скачанный браузер, поэтому в
+      # локальный `just verify` они не входят, а здесь идут последними —
+      # после того как дешёвые проверки уже дали свой сигнал.
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/community-site-api
+      - run: npm run e2e
+        working-directory: apps/community-site-api
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/community-site-api/playwright-report/
+          retention-days: 7
+
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
   # джобы правка графа или setup-а ресурса, которая не собирается, проходит
   # ревью зелёной.
@@ -201,7 +251,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
-      - name: Agent tooling is generated from Skillshare sources
+      - name: Commands are generated from Skillshare sources
         run: sh tools/skillshare/check-generated.sh
       - name: Published pages are addressable
         run: sh tools/community-site/check-published-pages.sh

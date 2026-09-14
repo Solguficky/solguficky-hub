@@ -22,13 +22,14 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
+- `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, четыре команды записи и два запроса чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и два тестовых проекта; состояние и событие пишутся одной транзакцией, а оба запроса идут через единый viewer-aware reader.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляет Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
-- `tools/skillshare/` — две проверки скиллов: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные таргеты с источниками. Их вызывают `just check-agent-tools` и CI.
+- `tools/skillshare/` — три скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные команды с источниками, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первые два вызывают `just check-agent-tools` и CI, третий — `just skillshare-install`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
@@ -43,10 +44,12 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 # Git-хуки — один раз после клонирования, из корня
 lefthook install
 
-# Скиллы, которых нет в Git — один раз после клонирования или создания worktree.
-# Источники внешних скиллов лежат вне Git, их ставит install по config.yaml;
-# sync без них считает закоммиченные таргеты осиротевшими и удаляет.
-skillshare install -p
+# Скиллы — один раз после клонирования или создания рабочего дерева.
+# В Git лежит только источник .skillshare/; таргеты .claude/skills/
+# и .agents/skills/ собирает sync, и до него у агента нет даже своих
+# proj-скиллов. Внешние скиллы ставит install по config.yaml, и только он
+# ходит в сеть: без неё запускают один sync и получают свои proj-скиллы.
+just skillshare-install
 skillshare sync -p
 
 # Проверка из хука (можно запускать вручную); в CI не дублируется
@@ -58,7 +61,7 @@ skillshare sync -p
 # Команды: отдельная раскладка, обычный sync их не трогает
 skillshare sync extras -p
 
-# Frontmatter скиллов и закоммиченные skills, agents и commands после sync
+# Frontmatter скиллов и закоммиченные команды после sync
 just check-agent-tools
 
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
@@ -67,7 +70,7 @@ just check-published-pages
 # Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
 just check-document-numbers
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -88,6 +91,13 @@ just identity-test
 just identity-lint
 just identity-run
 # IDENTITY_DATABASE_URL обязателен для identity-run; интеграционные тесты схемы требуют PostgreSQL
+
+# Community site API — зависимости, typecheck, линт и тесты
+just community-site-api-tools
+just community-site-api-typecheck
+just community-site-api-lint
+just community-site-api-test
+# Сборки нет: функцию бандлит Netlify CLI при деплое сайта
 
 # Telegram Bot — зависимости, кодогенерация, сборка, тесты, линт и запуск
 just telegram-bot-tools
@@ -138,7 +148,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Заголовок PR задачи — `[PER-N] Название задачи из Linear` дословно: без перевода, без своей формулировки, без типа впереди и без `(PER-N)` в хвосте. PR без задачи берёт форму коммита `type: Subject` на английском. Тело — на русском и ровно три раздела: `## Что и зачем`, `## Отклонения от плана`, `## Осталось открытым`. Встроенный шаблон инструмента (`Motivation`, `Description`, `Testing`) их не заменяет, и послабление для имён чужих веток на PR не распространяется. Формат и примеры — [branching.md](docs/standards/git/branching.md).
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, номеров ADR/RFC, Identity, Telegram Bot, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, номеров ADR/RFC, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
@@ -153,9 +163,9 @@ CodeRabbit не ревьюит pull request автоматически; запу
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p` и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/` и `mattpocock/_skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) и [mattpocock/skills](https://github.com/mattpocock/skills) (обновляются `skillshare update golang/_golang -p` и `skillshare update mattpocock/_skills -p` — путь с группой обязателен, по одному имени `_golang` skillshare 0.20.25 клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
+Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p`, в Git не хранятся и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/` и `mattpocock/_skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) и [mattpocock/skills](https://github.com/mattpocock/skills) (обновляются `skillshare update golang/_golang -p` и `skillshare update mattpocock/_skills -p` — путь с группой обязателен, по одному имени `_golang` skillshare 0.20.25 клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
 
-Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. В Git лежат только таргеты своих `proj-`скиллов: `.claude/skills/.gitignore` и `.agents/skills/.gitignore` гасят всё, кроме `proj-*/`. Граница проходит по источнику, а не по происхождению скилла. Источник `proj-`скиллов тоже в Git, поэтому джоба `repo-hygiene` сверяет копию с источником и ловит правку скилла без `sync`. Источники внешних скиллов — зависимости: они объявлены в `.skillshare/config.yaml` и погашены в `.skillshare/.gitignore` самим skillshare, в CI их нет и сверять копию не с чем. При этом закоммиченная копия без источника выглядит для `skillshare sync` осиротевшей, и он её удаляет — так одна команда в свежем рабочем дереве вычистила 46 записей манифеста на таргет. Цена решения: закоммиченная копия была единственной записью о том, что агент реально исполнял, и воспроизводимость теперь держится на поле `version` в `.skillshare/skills/.metadata.json`, которого у tracked-клонов нет — у них только `branch: main`. После клонирования внешние скиллы ставит `skillshare install -p` и раскладывает `skillshare sync -p`. Вместе с таргетами закоммичен и их `.skillshare-manifest.json`, поэтому та же джоба проверяет, что у каждого закоммиченного каталога есть в нём запись: запись о скилле, чей frontmatter не разобрался, skillshare теряет молча, и без этой проверки потеря не видна ни в одном гейте. Закоммиченные таргеты помечены в `.gitattributes` атрибутом `linguist-generated=true`: GitHub сворачивает их содержимое в review. Соседний `diff` оставлен намеренно и на `-diff` не меняется — Git трактует его как бинарный diff, и клиенты, собирающие pull request из патча, могут такое изменение не принять. Счётчик строк в шапке pull request атрибуты не убирают: GitHub считает строки независимо от них, поэтому объём режется тем, чего в коммите нет.
+Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. Таргеты — сгенерированный артефакт и в Git не лежат ([ADR-041](docs/decisions/ADR-041-skillshare-targets-not-committed.md)): оба каталога погашены в корневом `.gitignore`, а собирает их `skillshare sync -p` на каждой машине. Поэтому свежий клон, дерево от `git worktree add` и дерево от приложения получают один и тот же состав, а `sync` в дереве без внешних источников больше не может признать закоммиченную копию осиротевшей и удалить её — раньше одна команда так вычищала 46 записей манифеста на таргет. Цена: репозиторий не хранит запись о том, какой текст скилла агент фактически исполнял, и воспроизводимость держится на поле `version` в `.skillshare/skills/.metadata.json`, которого у tracked-клонов нет — у них только `branch: main`. Правку `proj-`скилла без `sync` ловить больше не нужно: копии, с которой её сверяли, нет, а сама правка читается в диффе источника один раз вместо трёх. Скилл со сломанным frontmatter ловится по-прежнему — `check-frontmatter.sh` разбирает источники напрямую, а не запись в манифесте, ради которой манифест и держали в Git. Объявление зависимостей — `.skillshare/config.yaml` и `.skillshare/skills/.metadata.json` — остаётся в Git, и правит его сам `skillshare install`: скилл, который блокирует его security audit, он вычёркивает из объявления молча (источник, который просто не клонируется, он оставляет на месте и печатает отказ). Поэтому install запускается через `just skillshare-install`: обёртка завершается ненулевым кодом, если объявление изменилось, и называет изменённый файл. Она же ставит `aspire-orchestration` отдельной командой с `--force` — аудит блокирует его ложным срабатыванием на строке чужого руководства, запрещающей агенту врать про сборку, а уже установленный скилл bulk-прогон не переаудирует и объявление не трогает.
 
 Скиллы ставятся командой `skillshare install <url>`. `npx skills find` служит поиском по каталогу и ничего не устанавливает: установка мимо skillshare кладёт скилл в обход источника правды, и следующий `sync` его снесёт.
 
