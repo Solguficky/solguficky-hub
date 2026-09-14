@@ -87,12 +87,27 @@ const readBody = async (request: Request): Promise<RequestBody> => {
   }
 };
 
+/** Запись в хранилище оказалась нечитаемой. Тип отдельный и намеренно не
+ *  наследует `ValidationError`: порча данных на сервере не должна смешиваться
+ *  с недоверенным вводом. Клиент такого не присылал, и `400` спрятал бы
+ *  инцидент за отказом ввода — поэтому ошибка уходит в общий путь пятисотки. */
+class CorruptedDocumentError extends Error {}
+
 const load = async (
   store: Store,
   docId: string,
 ): Promise<NotesDocument | null> => {
   const raw = await store.get(docId, { type: "json" });
-  return raw === null || raw === undefined ? null : parseDocument(raw);
+  if (raw === null || raw === undefined) return null;
+  try {
+    return parseDocument(raw);
+  } catch (error) {
+    // Причина сохраняется: сообщение разбора называет поле, а не содержимое
+    // заметок, и в логе оно безопасно.
+    throw new CorruptedDocumentError("Документ в хранилище не читается", {
+      cause: error,
+    });
+  }
 };
 
 const save = async (
