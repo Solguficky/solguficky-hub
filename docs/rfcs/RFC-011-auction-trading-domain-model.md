@@ -103,11 +103,11 @@ LotState    = Draft
             | Withdrawn of WithdrawnReason
 
 TradingState =
-  { currentPrice   : Money                        // последняя принятая цена
+  { config         : LotConfig                     // из LotOpened; заморожен, см. И-10
+    currentPrice   : Money                         // последняя принятая цена
     ask            : Money option                  // цена, объявленная аукционистом; см. П-08
     leader         : ParticipantId option          // None до первой ставки
     leadingBidId   : BidId option                  // ставка, которой держится лидерство
-    stepPolicy     : StepPolicy                    // см. П-03
     proxyLimits    : Map<ParticipantId, ProxyLimit>
     deadline       : Instant option                // None, если лот ведёт человек
     extensionsUsed : int }
@@ -116,12 +116,20 @@ floor(s)    = max(s.currentPrice, s.ask)           // нижняя границ�
 
 Sale        = { winner : ParticipantId; price : Money; bidId : BidId; at : Instant }
 
+LotConfig   =
+  { currency     : CurrencyCode
+    stepPolicy   : StepPolicy                      // см. П-03
+    antiSnipe    : { N : Duration; M : Duration; K : int }   // см. П-04
+    proxyEnabled : bool }
+
 Money       = { minorUnits : int64; currency : CurrencyCode }
 ProxyLimit  = { max : Money; setAt : Instant; setSeq : int64 }   // setSeq — sequence события ProxyLimitSet
 StepPolicy  = Fixed of Money | Tiered of (Money * Money) list    // (нижняя граница, шаг); П-03
 UnsoldReason    = NoBids
 WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 ```
+
+Конфигурация торгов лежит **в состоянии**, а не читается правилом из настроек лота на стороне: `LotOpened` несёт её целиком, `apply` кладёт её в `config`, и дальше каждое правило берёт валюту, шаг, параметры анти-снайпа и признак прокси оттуда. Так выполняется И-07 — состояние восстанавливается из журнала и ничего не спрашивает снаружи; заодно закрывается дефект 5.3 архива, где часть настроек жила вне восстанавливаемого состояния. После входа в `Trading` конфигурация заморожена (И-10).
 
 `floor` отделён от `currentPrice` потому, что в офлайн-финале цену диктует не последняя ставка, а объявленный аукционистом ask: без этого ставка из бота на сумму ниже ask прошла бы как валидная и увела лидерство у зала. При этом сам ask шага сверху не требует — он уже названная в зале следующая цена, и П-01 принимает ставку, равную ему.
 
@@ -135,7 +143,7 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 | `PlaceBid` | участник (бот), аукционист (зал) | `BidPlaced` | `LotNotOpen`, `BidBelowMinimum`, `BidderIsLeader`, `CurrencyMismatch` |
 | `SetProxyLimit` | участник | `ProxyLimitSet` (+ производный `BidPlaced`) | `LotNotOpen`, `ProxyBelowCurrentPrice`, `ProxyDisabledForLot`, `CurrencyMismatch` |
 | `WithdrawProxyLimit` | участник | `ProxyLimitWithdrawn` | `NoActiveProxyLimit`, `ProxyLimitIsLeading` |
-| `AdvanceAsk` | аукционист | `AskAdvanced` (+ производный `BidPlaced`) | `LotNotOpen`, `AskBelowCurrentPrice` |
+| `AdvanceAsk` | аукционист | `AskAdvanced` | `LotNotOpen`, `AskBelowCurrentPrice`, `CurrencyMismatch` |
 | `CloseLot` | внешний планировщик, аукционист | `LotSold` \| `LotUnsold` | `LotNotOpen`, `DeadlineNotReached` |
 | `WithdrawLot` | организатор | `LotWithdrawn` | `LotAlreadyClosed` |
 
@@ -208,7 +216,7 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 ```text
 decide(Trading s, PlaceBid c):
     if seen(c.op_id)                  → повтор: вернуть исходный ответ    // П-06
-    if c.amount.currency ≠ s.currency → CurrencyMismatch
+    if c.amount.currency ≠ s.config.currency → CurrencyMismatch
     minRequired = if s.ask существует и s.ask > s.currentPrice
                   then s.ask                     // аукционист уже назвал следующую цену
                   else s.currentPrice + step(s, s.currentPrice)             // П-03
@@ -273,7 +281,7 @@ resolve(Trading s):
 
 ```text
 step(s, price) =
-    match s.stepPolicy with
+    match s.config.stepPolicy with
     | Fixed m   → m
     | Tiered ts → шаг последнего порога, чья нижняя граница ≤ price
 ```
@@ -286,13 +294,14 @@ step(s, price) =
 
 ```text
 on BidPlaced at t:
+    N, M, K = s.config.antiSnipe
     if s.deadline = None                   → ничего                // лот ведёт человек
     if t ≤ s.deadline − N                   → ничего                // ставка не в окне
     if s.extensionsUsed ≥ K                 → ничего                // лимит продлений
     else → DeadlineExtended(s.deadline + M, extensionsUsed + 1)
 ```
 
-`N`, `M`, `K` — параметры лота с умолчанием сессии (2 / 2 / 3). Продление — событие, а не пересчёт в памяти: иначе дедлайн не переживает рестарт ([ПП-2](RFC-007-auction-scope-and-format-options.md#приёмочные-признаки-первого-среза)).
+`N`, `M`, `K` — параметры лота с умолчанием сессии (2 / 2 / 3). Они приходят в состояние из `LotOpened` и лежат в `config`, а не в настройках, которые правило пошло бы читать снаружи. Продление — событие, а не пересчёт в памяти: иначе дедлайн не переживает рестарт ([ПП-2](RFC-007-auction-scope-and-format-options.md#приёмочные-признаки-первого-среза)).
 
 #### П-05. Закрытие лота
 
@@ -338,8 +347,9 @@ seen(op_id) ⟺ в журнале агрегата есть событие с э
 
 ```text
 decide(Trading s, AdvanceAsk c):
-    if c.new_ask ≤ floor(s) → AskBelowCurrentPrice
-    else                    → AskAdvanced(c.new_ask, c.operator)
+    if c.new_ask.currency ≠ s.config.currency → CurrencyMismatch
+    if c.new_ask ≤ floor(s)                   → AskBelowCurrentPrice
+    else                                      → AskAdvanced(c.new_ask, c.operator)
 ```
 
 `AskAdvanced` поднимает `floor`, но не меняет ни цену, ни лидера: ask — это приглашение, а не ставка. Ставка из зала приходит обычной командой `PlaceBid` с `source = Floor` и суммой, равной ask; её принимает П-01, потому что порог уже поднят.
@@ -371,7 +381,7 @@ decide(Trading s, AdvanceAsk c):
 | И-12 | `DeadlineExtended` следует только за `BidPlaced` того же лота |
 | И-13 | Каждое `BidPlaced` с `origin = Proxy` ссылается на `ProxyLimitSet`, действующий на момент ставки |
 | И-14 | Сессия отмечает лот активным только после подтверждения от лота; неподтверждённый `OpenLot` активным лот не делает |
-| И-15 | Вход в `Trading` возможен только с непротиворечивой `stepPolicy`: `Tiered` непуст, отсортирован по возрастанию границы, первая граница равна нулю, все шаги положительны |
+| И-15 | Вход в `Trading` возможен только с непротиворечивой `config.stepPolicy`: `Tiered` непуст, отсортирован по возрастанию границы, первая граница равна нулю, все шаги положительны |
 
 ### Глоссарий
 
@@ -521,6 +531,7 @@ ClosingPolicy = ByAuctioneer | ByDeadline | Mixed of { onlineByDeadline : bool }
 | Т-30 | П-01 | ask поднят до 500 при цене 200, ставка из зала ровно 500 | `BidPlaced`, цена 500 | лот |
 | Т-31 | П-06 | `BidderIsLeader`, затем соперник перебил, затем повтор той же команды с тем же `op_id` | ставка принята; исходный отказ не воспроизводится | лот |
 | Т-32 | П-03 | `Tiered=[(0,10),(200,20)]`, цена 300 | шаг 20, команда не остаётся без ответа | лот |
+| Т-33 | П-08 | `AdvanceAsk` в валюте, отличной от валюты лота | `CurrencyMismatch`, ask не изменился | лот |
 
 Т-06а стоит особняком: проекция журнала — не агрегат, и её offset модель не описывает (М1, 5.5). Кейс записан здесь, чтобы ПП-3 не потерялся между этим документом и выбором хранилища.
 
