@@ -99,8 +99,9 @@ const load = async (
 ): Promise<NotesDocument | null> => {
   const raw = await store.get(docId, { type: "json" });
   if (raw === null || raw === undefined) return null;
+  let document: NotesDocument;
   try {
-    return parseDocument(raw);
+    document = parseDocument(raw);
   } catch (error) {
     // Причина сохраняется: сообщение разбора называет поле, а не содержимое
     // заметок, и в логе оно безопасно.
@@ -108,6 +109,16 @@ const load = async (
       cause: error,
     });
   }
+  // Ключ и документ обязаны говорить об одном и том же. Запись идёт по
+  // `document.docId`, поэтому документ с чужим идентификатором уехал бы под
+  // другой ключ, а запрошенный остался бы нетронутым — и клиент получил бы на
+  // это `200`. Прислать такое клиент не может: идентификатор выдаёт сервер.
+  if (document.docId !== docId) {
+    throw new CorruptedDocumentError(
+      "Идентификатор в документе не совпадает с ключом хранилища",
+    );
+  }
+  return document;
 };
 
 const save = async (

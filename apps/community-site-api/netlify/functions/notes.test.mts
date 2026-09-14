@@ -393,6 +393,28 @@ describe("недоверенный вход", () => {
     // причина разбора.
     expect(console.error).toHaveBeenCalled();
   });
+
+  it("отказывается работать с документом, чей идентификатор не совпал с ключом", async () => {
+    // Запись идёт по идентификатору из самого документа. Если под ключом лежит
+    // чужой документ, правка уехала бы под его ключ, запрошенный остался бы
+    // нетронутым, а клиент получил бы на это `200` — молчаливая потеря.
+    const key = "D".repeat(22);
+    const foreign = "E".repeat(22);
+    const created = await createDoc();
+    blobs.set(key, { ...created, docId: foreign });
+
+    const read = await call("GET", `/${key}`);
+    expect(read.status).toBe(500);
+    expect(await read.json()).toEqual({ error: "Внутренняя ошибка" });
+
+    const write = await call("PUT", `/${key}`, {
+      baseRevision: 1,
+      state: { answers: { "n-1": "правка" } },
+    });
+    expect(write.status).toBe(500);
+    // Чужой ключ не тронут: запись до него не дошла.
+    expect(blobs.get(foreign)).toBeUndefined();
+  });
 });
 
 describe("секреты и заголовки", () => {
