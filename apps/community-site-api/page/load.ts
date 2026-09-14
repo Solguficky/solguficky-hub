@@ -138,6 +138,18 @@ const installStubs = (
   }) as typeof window.fetch;
 };
 
+// Закрытое окно jsdom уносит с собой свои таймеры, а незакрытое — держит их и
+// весь DOM страницы. Дело не теоретическое: страница «Аукцион 2026» ставит
+// debounce на каждую правку, а архивная презентация — бесконечный `setInterval`,
+// который никто не снимает. Загруженные окна собираются здесь, чтобы тест
+// закрывал их разом своим хуком, а не помнил про каждое.
+const opened: JSDOM[] = [];
+
+/** Закрывает все окна, загруженные в этом файле тестов. */
+export const closeLoadedPages = (): void => {
+  while (opened.length > 0) opened.pop()?.window.close();
+};
+
 /** Грузит `docs/published/auction-2026/index.html` в jsdom и исполняет её
  *  скрипт целиком: и блок вкладок/печати, и блок синхронизации заметок. */
 export const loadAuctionPage = (options: LoadOptions = {}): LoadedPage => {
@@ -169,6 +181,7 @@ export const loadAuctionPage = (options: LoadOptions = {}): LoadedPage => {
     },
   });
 
+  opened.push(dom);
   const window = dom.window as unknown as Window & typeof globalThis;
   return {
     window,
@@ -335,6 +348,7 @@ export const loadPublishedPage = (filePath: string): StaticPage => {
       };
     },
   });
+  opened.push(dom);
   const window = dom.window as unknown as Window & typeof globalThis;
   return { window, document: window.document };
 };

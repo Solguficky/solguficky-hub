@@ -8,10 +8,11 @@
 import { readFileSync } from "node:fs";
 import { relative, sep } from "node:path";
 import { HtmlValidate } from "html-validate";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   AUCTION_PAGE_PATH,
   type AxeRunner,
+  closeLoadedPages,
   findPublishedPages,
   loadAxe,
   loadPublishedPage,
@@ -47,6 +48,15 @@ const getAxe = (filePath: string): AxeRunner => {
   axeCache.set(filePath, axe);
   return axe;
 };
+
+// Окна живут весь файл ради кэша выше, поэтому закрываются разом в конце.
+// Архивная презентация ставит `setInterval` и не снимает его: пока её окно
+// открыто, таймер продолжает будить процесс уже после последнего теста.
+afterAll(() => {
+  closeLoadedPages();
+  pageCache.clear();
+  axeCache.clear();
+});
 
 // Разбор архивной презентации (5000+ строк) и полный прогон axe под нагрузкой
 // не укладываются в дефолтные 5 секунд vitest даже с кэшем выше.

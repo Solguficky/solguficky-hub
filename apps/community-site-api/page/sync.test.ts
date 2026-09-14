@@ -5,6 +5,7 @@
 // опубликованная страница, а не копия для тестов.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  closeLoadedPages,
   deferred,
   type FetchCall,
   type FetchResult,
@@ -89,6 +90,9 @@ const typeInto = (
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  // Каждый кейс грузит своё окно, и у страницы остаются висеть отложенные
+  // таймеры. Окно закрывается здесь, иначе они переживают тест.
+  closeLoadedPages();
 });
 
 describe("старт без сервера", () => {
