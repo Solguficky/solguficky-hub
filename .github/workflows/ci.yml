@@ -52,6 +52,10 @@ jobs:
               - '.github/workflows/ci.yml'
             community-site-api:
               - 'apps/community-site-api/**'
+              # Тесты страницы и браузерные сценарии читают саму опубликованную
+              # страницу, поэтому её правка обязана поднимать эту джобу: иначе
+              # самое частое изменение сайта проходит мимо собственных тестов.
+              - 'docs/published/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             apphost:
