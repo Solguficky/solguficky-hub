@@ -44,7 +44,7 @@ RFC не нужен для локального bugfix или очевидной
 | [RFC-008](RFC-008-identity-service-endpoint-auth.md) | Аутентификация служебного endpoint Identity | Accepted, [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md) |
 | [RFC-009](RFC-009-identity-access-data-retention.md) | Retention и жизненный цикл данных доступа Identity | Accepted, [ADR-038](../decisions/ADR-038-identity-hub-access-retention.md) |
 | [RFC-010](RFC-010-remote-development-and-self-hosting-platform.md) | Удалённая среда разработки и self-hosting Solguficky | In Review; hosting model принят в ADR-039 |
-| [RFC-011](RFC-011-auction-trading-domain-model.md) | Доменная модель торгов аукциона: словарь, правила и инварианты | Draft; открыта граница консистентности |
+| [RFC-011](RFC-011-auction-trading-domain-model.md) | Доменная модель торгов аукциона: словарь, правила и инварианты | Draft; семь осей решены владельцем, открыт протокол открытия лота |
 
 Документы разделены по границе, которую каждый блокирует: RFC-001 — контракт расширения, RFC-002 — продуктовую модель сходки, RFC-003 — форму сообщений бота (механика принята, открыты вклад модуля и настройки), RFC-004 — схему и язык Meetups, RFC-005 — устройство Notifications и границу доставки, RFC-006 — устройство Telegram-края и его состояние, RFC-007 — формат и объём аукциона как события, RFC-008 — доказательство права на maintainer-операцию Identity, RFC-009 — retention допуска к хабу (принято, [ADR-038](../decisions/ADR-038-identity-hub-access-retention.md)), RFC-010 — модель удалённой разработки, self-hosting и восстановления, RFC-011 — словарь торгов аукциона, от которого зависят выбор стека и состав контрактов.
 
