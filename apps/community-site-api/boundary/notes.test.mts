@@ -3,8 +3,8 @@
 // покрыты `src/document.test.ts` и здесь не повторяются.
 import type { Context } from "@netlify/functions";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { NotesDocument } from "../../src/document.js";
-import handler from "./notes.mjs";
+import handler from "../netlify/functions/notes.mjs";
+import type { NotesDocument } from "../src/document.js";
 
 // `@netlify/blobs` подменяется общим хранилищем поверх `Map`. `vi.hoisted`
 // нужен, потому что `vi.mock` поднимается над импортами: без него фабрика

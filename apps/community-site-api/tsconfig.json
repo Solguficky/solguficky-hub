@@ -23,6 +23,7 @@
   "include": [
     "src/**/*.ts",
     "netlify/**/*.mts",
+    "boundary/**/*.mts",
     "page/**/*.ts",
     "e2e/**/*.ts",
     "playwright.config.ts"
