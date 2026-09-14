@@ -15,6 +15,8 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 
 Для будущего read-only экрана аукциона принят SSE endpoint внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)). Это browser boundary без дополнительного NATS-посредника. Схема сообщений пока не определена, межсервисные контракты этим решением не добавляются.
 
+Внутри будущего Auction Service события читает Pekko Projection JDBC ([ADR-044](../decisions/ADR-044-auction-scala-pekko-persistence-jdbc.md)): offset хранится в PostgreSQL и обновляется одной транзакцией с read model, поэтому обычный рестарт не запускает replay с начала. Это не выбирает NATS subjects и не добавляет межсервисный контракт; внешняя публикация остаётся отдельной at-least-once границей со стабильным event id.
+
 Заметки публикуемой страницы «Аукцион 2026» хранит собственная функция сайта сообщества ([ADR-042](../decisions/ADR-042-published-page-notes-own-backend.md)). Это тоже browser boundary: JSON поверх HTTP между страницей и её функцией. Требование «payload только в Protobuf» относится к NATS и gRPC; межсервисным контрактом эта граница не является и в каталог ниже не входит.
 
 Формат: `<commands|events>.<домен>.<действие>` в `snake_case`.

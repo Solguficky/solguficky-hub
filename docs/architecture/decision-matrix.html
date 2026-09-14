@@ -359,13 +359,13 @@
 
   <tr>
     <th>Аукцион<span class="layer"><span class="st st-future">Future</span></span></th>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">Scala 3 + Apache Pekko</span><span class="why">Принятое стратегическое направление; Pekko как открытая actor-экосистема. ADR будет собственным.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">поток событий</span><span class="why">Аудит ставок является продуктовым требованием, а прошлое лота неизменяемо по природе домена.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">актор на агрегат</span><span class="why">На один лот приходится поток конкурирующих ставок с требованием порядка. Единственное место, где актор окупается доменом.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">единственный писатель</span><span class="why">Следствие актора: команды к лоту выполняются по очереди.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Scala 3 + Apache Pekko Typed</span><span class="why">ADR-044: открытая actor-экосистема принимается вместе с ценой отдельного JVM/Scala operational-контура.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">поток событий</span><span class="why">ADR-044: <code>EventSourcedBehavior</code>, journal является источником истины; снапшот только ускоряет recovery.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">persistent entity на агрегат</span><span class="why">ADR-044: аукцион восстанавливает реестр лотов и получает их <code>EntityRef</code> через Cluster Sharding; каждый лот восстанавливает собственный stream.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">единственный писатель</span><span class="why">ADR-044: Cluster Sharding удерживает одну активную entity на persistence id, команды лота выполняются последовательно.</span></td>
     <td class="open"><span class="st st-open">Open</span><span class="val">синхронная | асинхронная модель</span><span class="why">Закроется требованием к задержке табло ставок.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | KurrentDB | Marten</span><span class="why">Единственное место, где выбор специализированного хранилища вообще стоит на повестке. Закроется spike; критерии ведутся в brief аукциона.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">подписка на хранилище | outbox</span><span class="why">Закроется вместе с продуктом хранения.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Pekko Persistence JDBC + PostgreSQL</span><span class="why">ADR-044: actor-native journal без отдельной СУБД. Собственная таблица дублирует persistence-слой, KurrentDB не окупает эксплуатацию, Marten требует .NET.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Pekko Projection JDBC</span><span class="why">ADR-044: read model и offset меняются одной транзакцией; рестарт продолжает с сохранённого offset. Публикация наружу остаётся at-least-once и требует идемпотентности.</span></td>
   </tr>
 
   <tr>
