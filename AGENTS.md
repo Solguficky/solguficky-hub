@@ -32,6 +32,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/skillshare/` — три скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `check-generated.sh` сверяет закоммиченные команды с источниками, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первые два вызывают `just check-agent-tools` и CI, третий — `just skillshare-install`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
+- `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
@@ -66,7 +67,10 @@ just check-agent-tools
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 just check-published-pages
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+# Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
+just check-document-numbers
+
+# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -144,7 +148,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Заголовок PR задачи — `[PER-N] Название задачи из Linear` дословно: без перевода, без своей формулировки, без типа впереди и без `(PER-N)` в хвосте. PR без задачи берёт форму коммита `type: Subject` на английском. Тело — на русском и ровно три раздела: `## Что и зачем`, `## Отклонения от плана`, `## Осталось открытым`. Встроенный шаблон инструмента (`Motivation`, `Description`, `Testing`) их не заменяет, и послабление для имён чужих веток на PR не распространяется. Формат и примеры — [branching.md](docs/standards/git/branching.md).
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, номеров ADR/RFC, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.

@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-044](../decisions/ADR-044-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов предложена в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md) и ждёт перевода в `Accepted`, схемы и реализации ещё нет.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов предложена в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md) и ждёт перевода в `Accepted`, схемы и реализации ещё нет.
 
 ## Источники правды
 
@@ -53,7 +53,7 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса. Будущий общий слой аукциона и второй процесс определены ADR-044 |
 | Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа, retention допуска к хабу и стек Accepted: ADR-026, ADR-027, [ADR-038](../decisions/ADR-038-identity-hub-access-retention.md); круги сообщества выражаются ролями, статус допуска заменён, блокировка — поле профиля: [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md); первая выдача роли администратора в срезе — только служебный endpoint: [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md); authentication endpoint — общий секрет в metadata gRPC: [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md); контракт разрешения личности Accepted, служебные операции Open | Telegram identity, круги сообщества и системные роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
@@ -66,7 +66,8 @@ Linear является источником правды для порядка 
 
 ## Future
 
-- Аукцион — Future-направление после MVP: новый сервис на Scala 3 + Apache Pekko Typed с полным Event Sourcing через Pekko Persistence JDBC в PostgreSQL ([ADR-044](../decisions/ADR-044-auction-scala-pekko-persistence-jdbc.md)). Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md); схемы и реализации ещё нет.
+- Аукцион — Future-направление после MVP: новый сервис на Scala 3 + Apache Pekko Typed с полным Event Sourcing через Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)). Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md); схемы и реализации ещё нет.
+- Аукцион доступен через два независимых TypeScript/grammY-процесса: `telegram-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). В `full` целевым состоянием являются оба ресурса, `core` сохраняет только бот хаба; Current-граф второго ресурса ещё не содержит.
 - Read-only Big Screen и страницы зрителей получают состояние через SSE внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)); отдельный gateway не вводится. Решение принято, реализации ещё нет.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
 - Kotlin, Go и Ruby остаются technology pool и не назначаются вымышленным сервисам заранее.

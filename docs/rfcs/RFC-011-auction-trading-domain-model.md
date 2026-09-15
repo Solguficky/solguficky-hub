@@ -27,7 +27,7 @@
 | Вне границ | Где решается |
 |---|---|
 | Язык, рантайм, actor-топология | [PER-145](https://linear.app/anticnvm/issue/per-145) |
-| Продукт хранения событий | выбран в [ADR-044](../decisions/ADR-044-auction-scala-pekko-persistence-jdbc.md): Pekko Persistence JDBC в PostgreSQL; критерии — решение 5 [RFC-004](RFC-004-meetups-domain-events-persistence.md) |
+| Продукт хранения событий | выбран в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md): Pekko Persistence JDBC в PostgreSQL; критерии — решение 5 [RFC-004](RFC-004-meetups-domain-events-persistence.md) |
 | Protobuf-контракты и subjects шины | [PER-149](https://linear.app/anticnvm/issue/per-149), skill `proj-change-contract` |
 | Схема таблиц, индексы, партиционирование | после выбора хранилища |
 | Экран зала и его транспорт | [ADR-040](../decisions/ADR-040-auction-screen-sse.md) |

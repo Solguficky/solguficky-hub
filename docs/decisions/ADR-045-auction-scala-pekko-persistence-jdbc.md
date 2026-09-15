@@ -1,4 +1,4 @@
-# ADR-044: Scala, Apache Pekko и PostgreSQL для событий аукциона
+# ADR-045: Scala, Apache Pekko и PostgreSQL для событий аукциона
 
 > **Дата:** 2026-09-14  
 > **Статус:** Accepted

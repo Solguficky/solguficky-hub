@@ -1,6 +1,6 @@
 # Auction
 
-> **Слой:** Future. **MVP:** не входит. **Стек:** Accepted — новый сервис на Scala 3 + Apache Pekko Typed поверх Pekko Persistence JDBC в PostgreSQL ([ADR-044](../decisions/ADR-044-auction-scala-pekko-persistence-jdbc.md)), проектируемый с нуля после MVP.
+> **Слой:** Future. **MVP:** не входит. **Стек:** Accepted — новый сервис на Scala 3 + Apache Pekko Typed поверх Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)), проектируемый с нуля после MVP.
 
 Реализация предыдущего поколения (C# + Akka.NET) удалена из репозитория. Аукцион существует как продуктовая гипотеза и как накопленный опыт, но не как код.
 
@@ -26,7 +26,7 @@
 
 ## Стек и хранение
 
-Стек и хранение приняты в [ADR-044](../decisions/ADR-044-auction-scala-pekko-persistence-jdbc.md): Scala 3, Apache Pekko Typed и полный Event Sourcing через Pekko Persistence JDBC в отдельной PostgreSQL-базе сервиса. Это добавляет JVM/Scala operational-контур и привязывает схему журнала к плагину, но не вводит отдельную СУБД. Собственная append-only таблица дублировала бы persistence-слой, KurrentDB не окупает отдельную эксплуатацию на ожидаемом масштабе, Marten исключён вместе с .NET.
+Стек и хранение приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md): Scala 3, Apache Pekko Typed и полный Event Sourcing через Pekko Persistence JDBC в отдельной PostgreSQL-базе сервиса. Это добавляет JVM/Scala operational-контур и привязывает схему журнала к плагину, но не вводит отдельную СУБД. Собственная append-only таблица дублировала бы persistence-слой, KurrentDB не окупает отдельную эксплуатацию на ожидаемом масштабе, Marten исключён вместе с .NET.
 
 Offset проекции хранится Pekko Projection JDBC рядом с read model и обновляется с ним одной транзакцией; обычный рестарт продолжает обработку с offset, а не переигрывает историю. Торговая сессия восстанавливает реестр лотов из своих событий, после recovery опрашивает каждый нетерминальный лот через Cluster Sharding и заново взводит таймеры закрытия; каждый лот при этом восстанавливает собственный stream. Одной ссылки `EntityRef` для этого мало: она не будит entity и не возвращает таймер. Критерии и обязательный до production acceptance test удаления субъекта взяты из решения 5 [RFC-004](../rfcs/RFC-004-meetups-domain-events-persistence.md).
 
