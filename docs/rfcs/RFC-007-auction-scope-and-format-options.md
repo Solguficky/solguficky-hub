@@ -44,7 +44,7 @@
 |---|---|---|
 | Аукциона в репозитории нет: код предыдущего поколения удалён | [services/auction.md](../services/auction.md) | Всё, что ниже, пишется с нуля |
 | Языкового контура Scala нет вовсе: ни сборки, ни кодогенерации, ни рецептов `just`, ни CI | [PER-143](https://linear.app/anticnvm/issue/per-143) | До этого контура доменная логика не пишется и не тестируется |
-| Стек Scala + Apache Pekko — направление, ADR не принят | [services/auction.md](../services/auction.md), [PER-145](https://linear.app/anticnvm/issue/per-145) | Продукт хранения событий тоже открыт |
+| Стек Scala 3 + Apache Pekko Typed принят, хранение — Pekko Persistence JDBC в PostgreSQL | [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), [PER-145](https://linear.app/anticnvm/issue/per-145) | Отдельного spike по продукту хранения не нужно; остаются схема, миграции и acceptance test удаления |
 | Доменная модель торгов не спроектирована | [PER-144](https://linear.app/anticnvm/issue/per-144) | Ставка, прокси-лимит, завершение лота — открытый дизайн |
 | Межсервисных контрактов аукциона нет, прежние proto удалены | [PER-149](https://linear.app/anticnvm/issue/per-149), [architecture/integration.md](../architecture/integration.md) | Ни один субъект не подписан на события торгов |
 | Второй бот не спроектирован; ADR-030 требует отдельного токена и отдельного компонента | [PER-147](https://linear.app/anticnvm/issue/per-147), [ADR-030](../decisions/ADR-030-telegram-bot.md) | Вход в аукцион не переиспользует бота сообщества автоматически |

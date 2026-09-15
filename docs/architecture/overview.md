@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стратегическое направление принято, доменная модель торгов предложена в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), стек и хранилище ещё не выбраны.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов предложена в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md) и ждёт перевода в `Accepted`, схемы и реализации ещё нет.
 
 ## Источники правды
 
@@ -66,7 +66,7 @@ Linear является источником правды для порядка 
 
 ## Future
 
-- Аукцион — Future-направление после MVP: новый сервис на Scala + Apache Pekko, проектируемый с нуля. Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md).
+- Аукцион — Future-направление после MVP: новый сервис на Scala 3 + Apache Pekko Typed с полным Event Sourcing через Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)). Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md); схемы и реализации ещё нет.
 - Аукцион доступен через два независимых TypeScript/grammY-процесса: `telegram-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). В `full` целевым состоянием являются оба ресурса, `core` сохраняет только бот хаба; Current-граф второго ресурса ещё не содержит.
 - Read-only Big Screen и страницы зрителей получают состояние через SSE внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)); отдельный gateway не вводится. Решение принято, реализации ещё нет.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
