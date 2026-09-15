@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 # Verify the YAML frontmatter of every SKILL.md, in the Skillshare sources and
-# in the committed targets.
+# in the targets laid out on this machine.
 #
-# check-generated.sh only compares a target against its source byte for byte, so
-# an unparseable frontmatter stays invisible: it is copied faithfully. Skillshare
-# and Claude Code then drop the description and fall back to the H1 heading, and
-# the skill silently loses the text a model decides to invoke it by.
+# Nothing else looks inside a skill. Targets are generated rather than committed
+# (ADR-041), so an unparseable frontmatter reaches every machine unnoticed:
+# Skillshare and Claude Code drop the description, fall back to the H1 heading,
+# and the skill silently loses the text a model decides to invoke it by.
 #
 # The frontmatter dialect here is small but not flat: alongside `name` and
 # `description` the vendored packs carry nested mappings, sequences, flow
@@ -75,6 +75,42 @@ function check_plain(text) {
         fail("value of \"" key_of_value "\" contains \" #\" and is truncated as a comment; quote the value")
 }
 
+# Where a quoted scalar closes, or 0 if it runs past the end of the line. The
+# scan starts at `from`: past the opening quote on the entry line, at the first
+# column on a continuation. It honours the two ways YAML hides a quote inside a
+# scalar - a backslash escape in a double-quoted one, a doubled quote in a
+# single-quoted one.
+#
+# What follows the closing quote is deliberately not inspected. A trailing
+# comment is legal there, and reading the last character of the line instead
+# would report `description: "text" # note` as an unclosed scalar.
+function close_pos(value, quote, from,   i, n, c) {
+    n = length(value)
+    i = from
+
+    while (i <= n) {
+        c = substr(value, i, 1)
+        if (quote == "\"" && c == "\\") {
+            i += 2
+            continue
+        }
+        if (c == quote) {
+            if (quote == "'" && substr(value, i + 1, 1) == quote) {
+                i += 2
+                continue
+            }
+            return i
+        }
+        i++
+    }
+
+    return 0
+}
+
+function unclosed() {
+    fail("value of \"" key_of_value "\" opens with " open_quote " and never closes; YAML swallows the rest of the block")
+}
+
 function require(name) {
     if (!(name in seen))
         fail("frontmatter has no \"" name "\" key")
@@ -109,6 +145,7 @@ FNR == 1 {
     state = 0
     broken = 0
     mode = ""
+    open_quote = ""
     key_of_value = ""
     split("", seen)
     split("", kind)
@@ -132,6 +169,8 @@ FNR == 1 {
     }
 
     if (line == "---" || line == "...") {
+        if (mode == "quoted")
+            unclosed()
         state = 2
         next
     }
@@ -142,12 +181,31 @@ FNR == 1 {
     # scalar carries text this check cares about; anything else is a nested
     # body it deliberately does not read.
     if (line ~ /^[ \t]/) {
+        body = trim(line)
+        if (mode == "quoted") {
+            at = close_pos(body, open_quote, 1)
+            if (at > 0) {
+                text[key_of_value] = text[key_of_value] " " substr(body, 1, at - 1)
+                mode = "opaque"
+                open_quote = ""
+            } else {
+                text[key_of_value] = text[key_of_value] " " body
+            }
+            next
+        }
         if (mode == "plain" || mode == "block") {
-            body = trim(line)
             if (mode == "plain")
                 check_plain(body)
             text[key_of_value] = text[key_of_value] " " body
         }
+        next
+    }
+
+    # A quoted scalar may run over several indented lines, so it is broken only
+    # once something that cannot belong to it arrives: the end of the block
+    # above, or the next top-level key here.
+    if (mode == "quoted") {
+        unclosed()
         next
     }
 
@@ -187,11 +245,15 @@ FNR == 1 {
     }
     if (marker == "\"" || marker == "'") {
         kind[key] = "quoted"
-        mode = "opaque"
-        if (length(value) > 1 && substr(value, length(value), 1) == marker)
-            text[key] = substr(value, 2, length(value) - 2)
-        else
+        at = close_pos(value, marker, 2)
+        if (at > 0) {
+            mode = "opaque"
+            text[key] = substr(value, 2, at - 2)
+        } else {
+            mode = "quoted"
+            open_quote = marker
             text[key] = substr(value, 2)
+        }
         next
     }
     if (index("*&!%@`", marker) > 0) {

@@ -20,7 +20,8 @@
 ## Материалы аукционного модуля
 
 - [исходник презентации в Marp Markdown](services/auction-module-slides.md);
-- [автономная HTML-презентация для администраторов](services/auction-module-presentation.html);
-- [опубликованная презентация](https://solguficky-auction-module-slides.netlify.app/).
+- [собранная HTML-презентация](../published/archive/auction-module/index.html), опубликована по адресу `/archive/auction-module`.
+
+Собранная страница лежит не здесь, а в [published/](../published/README.md): публикуемое живёт там, откуда публикуется. Исторический статус несут её адрес и эта запись.
 
 Презентация отражает состояние обсуждения на 28.10.2025 и не определяет текущий scope MVP.

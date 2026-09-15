@@ -11,6 +11,7 @@ Standards — канонические нормативы для реализа�
 | [testing/fsharp.md](testing/fsharp.md) | инструменты и проверяемые свойства F#-тестов |
 | [testing/naming.md](testing/naming.md) | форма имени теста, файла и группы в Go, TypeScript, F# и C# |
 | [languages/fsharp.md](languages/fsharp.md) | типы, эффекты, ошибки, interop и порядок компиляции F# |
+| [data/postgresql.md](data/postgresql.md) | рекомендованный набор для PostgreSQL в .NET: DbUp, Dapper, база на сервис |
 | [architecture/functional-slices.md](architecture/functional-slices.md) | устройство F#-приложения из срезов: чистое ядро, зависимости, error flow, границы |
 | [observability/logging.md](observability/logging.md) | каркас полей структурной записи, correlation и privacy |
 | [git/branching.md](git/branching.md) | база ветвления, имя ветки, параллельные рабочие деревья, заголовок и тело pull request |

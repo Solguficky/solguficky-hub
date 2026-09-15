@@ -255,7 +255,8 @@
 <table class="opts">
   <thead><tr><th>Вариант</th><th>Что это значит</th><th>Когда оправдан</th><th>Цена</th></tr></thead>
   <tbody>
-    <tr><th>PostgreSQL</th><td>Основное хранилище платформы по ADR-004.</td><td>Любая реляционная модель; состояние, журнал и модель чтения живут в одной транзакции.</td><td class="cost">Поток событий требует собственной append-only таблицы и своей механики версий.</td></tr>
+    <tr><th>PostgreSQL</th><td>Основное хранилище платформы по ADR-004.</td><td>Любая реляционная модель; состояние, журнал и модель чтения живут в одной транзакции.</td><td class="cost">Поток событий без библиотеки поверх требует собственной append-only таблицы и своей механики версий.</td></tr>
+    <tr><th>Pekko Persistence JDBC поверх PostgreSQL</th><td>Journal, snapshot store и read journal actor-рантайма над той же СУБД, для JVM.</td><td>Агрегаты уже реализованы персистентными акторами, и второй базы заводить не хотят.</td><td class="cost">Привязка к JVM и к схеме плагина; глобальная выборка только по тегам, а схема тегов фиксируется до первого события.</td></tr>
     <tr><th>Marten поверх PostgreSQL</th><td>Библиотека потоков и проекций над той же СУБД, только для .NET.</td><td>Нужен готовый событийный слой без второй базы.</td><td class="cost">Привязка к .NET; компромисс с удалением данных не снимается.</td></tr>
     <tr><th>KurrentDB</th><td>Специализированное хранилище потоков с подписками и проекциями.</td><td>Поток событий является продуктом, а не деталью реализации.</td><td class="cost">Вторая СУБД в эксплуатации; освобождение места после удаления требует отдельного обслуживания.</td></tr>
     <tr><th>Память процесса</th><td>Состояние живёт внутри процесса и не переживает его перезапуск.</td><td>Факт восстановим из внешнего источника или его потеря наблюдаема и приемлема.</td><td class="cost">Требует единственного экземпляра; при масштабировании исчезает вместе с ним.</td></tr>
@@ -270,8 +271,8 @@
 <table class="opts">
   <thead><tr><th>Вариант</th><th>Сторона</th><th>Что это значит</th><th>Цена</th></tr></thead>
   <tbody>
-    <tr><th>Журнал как outbox</th><td class="side">публикация</td><td>Наружу отправляется то, что записано в журнал домена той же транзакцией.</td><td class="cost">Нужен релей и наблюдаемость за его отставанием.</td></tr>
-    <tr><th>Отдельная таблица outbox</th><td class="side">публикация</td><td>Запись для отправки кладётся рядом с состоянием в той же транзакции.</td><td class="cost">Лишняя таблица; нужна там, где журнала домена нет.</td></tr>
+    <tr><th>Журнал как outbox</th><td class="side">публикация</td><td>Наружу отправляется то, что записано в журнал домена той же транзакцией; отправленное журнал отмечает сам.</td><td class="cost">Нужен релей и наблюдаемость за его отставанием; журнал перестаёт быть строго append-only.</td></tr>
+    <tr><th>Отдельная таблица outbox</th><td class="side">публикация</td><td>Запись для отправки кладётся рядом с состоянием в той же транзакции.</td><td class="cost">Третья запись и дублирование event record; нужна там, где журнала домена нет.</td></tr>
     <tr><th>Подписка на хранилище событий</th><td class="side">публикация</td><td>Потребители читают поток напрямую из хранилища.</td><td class="cost">Связывает потребителей с внутренней моделью событий сервиса.</td></tr>
     <tr><th>Прямая отправка без журнала</th><td class="side">публикация</td><td>Сообщение уходит в шину прямо из обработчика.</td><td class="cost">Событие теряется при сбое между записью состояния и отправкой.</td></tr>
     <tr><th>Устойчивый потребитель</th><td class="side">потребление</td><td>Позиция хранится брокером, доставка повторяется до подтверждения.</td><td class="cost">Требует подтверждений и готовности к повторам.</td></tr>
@@ -315,7 +316,7 @@
 
   <tr>
     <th>Telegram Bot<span class="layer"><span class="st st-mvp">MVP</span></span></th>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-030: быстро меняющийся Telegram edge; плагин Conversations не используется. Rust-шлюз предыдущего поколения удалён.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-030: быстро меняющийся Telegram edge; плагин Conversations не используется. Rust-шлюз предыдущего поколения удалён. ADR-034: карточка по умолчанию <code>sendRichMessage</code>, плоский текст за тоглом процесса. ADR-044: общий аукционный UI — отдельный TypeScript workspace-пакет, а не импорт второго приложения.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">ADR-030: собственного домена у компонента нет, инварианты сходки и допуска ему не принадлежат. Состояние экрана живёт в <code>callback_data</code>, память процесса — в клетке «Хранилище».</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-030: апдейт обрабатывается без удержания состояния между сообщениями; юзкейс вызывается через диспетчер приложения, вне типов Telegram.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">ключ идемпотентности</span><span class="why">ADR-030: ключ создания рождается при отрисовке кнопки и разрешается в Meetups (E-09). Остальные команды идемпотентны формой: кнопка несёт целевое состояние.</span></td>
@@ -325,14 +326,25 @@
   </tr>
 
   <tr>
+    <th>Auction Bot<span class="layer"><span class="st st-future">Future</span></span></th>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">TypeScript + grammY</span><span class="why">ADR-044: отдельный процесс <code>auction-bot</code>; торговое поведение и каноническое тело экрана разделяет с ботом хаба через <code>shared/typescript/auction-bot-ui</code>.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Инварианты торгов принадлежат Auction; пакет экранов содержит только намерения, модель представления и порты.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-044: обязательный шлюз политики поверхности предшествует общему диспетчеру; автовыдача комьюнити в Identity атомарна.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">не выбрана</span><span class="why">ADR-030 и ADR-044 оставляют состояние и ключи в <code>callback_data</code>, собственного механизма дедупликации у края нет. Но конкуренцию ставок это не решает: гонка двух нажатий на одном лоте принадлежит Auction и вместе с его доменом ещё не спроектирована.</span></td>
+    <td class="na"><span class="st st-na">N/A</span><span class="val">читает через Auction</span><span class="why">Общий UI-пакет не заводит read model; владелец ресурса повторно принимает authorization-решение.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">без хранилища</span><span class="why">ADR-030 сохраняется для второго long-polling процесса: состояние экрана несёт сообщение.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">Protobuf, transport не выбран</span><span class="why">ADR-044 не вводит wire-контракт. RPC самозаписи Identity и вызовы Auction проектируются контрактными задачами.</span></td>
+  </tr>
+
+  <tr>
     <th>Identity<span class="layer"><span class="st st-mvp">MVP</span></span></th>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Go</span><span class="why">ADR-027: простой CRUD не назначает язык; Go выбран ради самого дешёвого operational-эксперимента с gRPC, PostgreSQL и не-.NET deployment.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">текущее состояние в строках</span><span class="why">ADR-026: профиль, статус допуска и роли — изменяемые факты, replay не нужен. Журнал изменений допуска и отметки выдачи ролей ведутся отдельным механизмом и источником истины не являются.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">текущее состояние в строках</span><span class="why">ADR-026: профиль, статус допуска и роли — изменяемые факты, replay не нужен. Журнал изменений допуска вечен независимо от профиля и источником истины не является (ADR-038). ADR-043 заменил статус допуска набором ролей: круг сообщества, административные и технические права живут одной таблицей выдач, а блокировка — отдельным полем профиля. Отозванные строки копятся, поэтому история выдач и отзывов получается тем же механизмом.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">обычная транзакция</span><span class="why">ADR-026: CRUD выполняется ACID-транзакциями без CQRS, Event Sourcing и actor runtime.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">уникальный ключ и upsert</span><span class="why">ADR-026: INSERT ON CONFLICT по telegram_user_id устраняет гонку параллельных /start; остальные updates не создают профиль, а ник записывают только при фактическом изменении.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-026: отдельной read model и кэша фактов авторизации нет; бот вызывает Identity на каждом update.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004, основное хранилище.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">синхронный gRPC плюс outbox</span><span class="why">ADR-026: ответ нужен для текущего действия, при недоступности fail-closed. ADR-028 добавил исходящие события о регистрации и смене статуса допуска: у Identity нет журнала домена, поэтому они публикуются из отдельной таблицы outbox.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">синхронный gRPC плюс outbox</span><span class="why">ADR-026: ответ нужен для текущего действия, при недоступности fail-closed. ADR-028 добавил исходящие события о регистрации и смене статуса допуска: у Identity нет журнала домена, поэтому они публикуются из отдельной таблицы outbox. ADR-036: первая роль admin выдаётся только служебным endpoint; ResolveIdentity роли не выдаёт. ADR-037: endpoint защищается общим секретом в metadata gRPC, без локального обхода. ADR-043: роль maintainer существует как факт, но путём авторизации служебных RPC не становится — иначе первого maintainer'а некому выдать.</span></td>
   </tr>
 
   <tr>
@@ -343,7 +355,7 @@
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">версия строки</span><span class="why">ADR-024: конфликт становится видимой ошибкой, а не тихой потерей чужой правки.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">запросы к тем же таблицам</span><span class="why">ADR-024: бот обязан показать собственную запись сразу, отдельная модель чтения здесь только удорожает.</span></td>
     <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">PostgreSQL</span><span class="why">ADR-004; специализированное хранилище имело бы смысл только при потоке событий.</span></td>
-    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">журнал как outbox, событие снимком</span><span class="why">ADR-024: публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим. ADR-031: тело события — снимок состояния, тип называет повод, «что изменилось» вычисляет потребитель по своей реплике; версия агрегата несущая, апкаст не требуется.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">журнал как outbox с отметкой отправленного, событие снимком</span><span class="why">ADR-024: публикация из журнала at-least-once со стабильным event id; end-to-end exactly-once недостижим. ADR-035: отправленное отмечает <code>dispatched_at</code> в самом журнале, выборка идёт по отметке, а не по high-water cursor; запись события неизменяема по триггеру. ADR-031: тело события — снимок состояния, тип называет повод, «что изменилось» вычисляет потребитель по своей реплике.</span></td>
   </tr>
 
   <tr>
@@ -359,13 +371,13 @@
 
   <tr>
     <th>Аукцион<span class="layer"><span class="st st-future">Future</span></span></th>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">Scala 3 + Apache Pekko</span><span class="why">Принятое стратегическое направление; Pekko как открытая actor-экосистема. ADR будет собственным.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">поток событий</span><span class="why">Аудит ставок является продуктовым требованием, а прошлое лота неизменяемо по природе домена.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">актор на агрегат</span><span class="why">На один лот приходится поток конкурирующих ставок с требованием порядка. Единственное место, где актор окупается доменом.</span></td>
-    <td class="proposed"><span class="st st-proposed">Proposed</span><span class="val">единственный писатель</span><span class="why">Следствие актора: команды к лоту выполняются по очереди.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">синхронная | асинхронная модель</span><span class="why">Закроется требованием к задержке табло ставок.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">PostgreSQL | KurrentDB | Marten</span><span class="why">Единственное место, где выбор специализированного хранилища вообще стоит на повестке. Закроется spike; критерии ведутся в brief аукциона.</span></td>
-    <td class="open"><span class="st st-open">Open</span><span class="val">подписка на хранилище | outbox</span><span class="why">Закроется вместе с продуктом хранения.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Scala 3 + Apache Pekko Typed</span><span class="why">ADR-045: открытая actor-экосистема принимается вместе с ценой отдельного JVM/Scala operational-контура.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">поток событий</span><span class="why">ADR-045: <code>EventSourcedBehavior</code>, journal является источником истины; снапшот только ускоряет recovery.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">persistent entity на агрегат</span><span class="why">ADR-045: торговая сессия восстанавливает реестр лотов, после recovery опрашивает каждый нетерминальный лот через Cluster Sharding и заново взводит таймеры закрытия; каждый лот восстанавливает собственный stream. Одной ссылки <code>EntityRef</code> мало — она не будит entity и не возвращает таймер.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">единственный писатель</span><span class="why">ADR-045: Cluster Sharding удерживает одну активную entity на persistence id, команды лота выполняются последовательно. Гарантию при rebalance и сетевом разделе держит не шардинг, а уникальное ограничение журнала <code>(persistence_id, sequence_number)</code>: вторая запись отвергается, entity останавливается. Кластер обязан нести split-brain resolver.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">денормализованная модель, обновляемая подписчиком</span><span class="why">ADR-045: read model и offset обновляются одной транзакцией через <code>JdbcProjection.exactlyOnce</code>. Цена варианта принята: модель восстанавливается пересборкой, а чтение сразу после своей записи требует отдельного решения. Требование к задержке табло ставок уточняет реализацию, а не выбор.</span></td>
+    <td class="accepted"><span class="st st-accepted">Accepted</span><span class="val">Pekko Persistence JDBC + PostgreSQL</span><span class="why">ADR-045: actor-native journal без отдельной СУБД. Собственная таблица дублирует persistence-слой, KurrentDB не окупает эксплуатацию, Marten требует .NET.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">подписка на хранилище | outbox</span><span class="why">ADR-045 эту ось не решает: subjects и Protobuf-контракты им не вводятся, а Pekko Projection JDBC обновляет внутреннюю read model, публикацией наружу не является. Внешняя граница остаётся at-least-once и требует стабильного event id. Закроется в PER-149 вместе с контрактами аукциона.</span></td>
   </tr>
 
   <tr>
@@ -381,7 +393,7 @@
 
   <tr>
     <th>Realtime Gateway<span class="layer"><span class="st st-future">гипотеза</span></span></th>
-    <td class="open"><span class="st st-open">Open</span><span class="val">Elixir + Phoenix как гипотеза</span><span class="why">Открывается только при подтверждённом сценарии с постоянными соединениями. Текущий SignalR-шлюз заморожен и обслуживает только аукцион.</span></td>
+    <td class="open"><span class="st st-open">Open</span><span class="val">Elixir + Phoenix как гипотеза отдельного gateway</span><span class="why">Для первого read-only экрана выбран SSE внутри Auction Service (<a href="../decisions/ADR-040-auction-screen-sse.md">ADR-040</a>). Отдельный gateway отложен до потребности в независимом масштабировании или общем realtime-компоненте; прежний SignalR-код удалён.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">своего домена нет</span><span class="why">Транспортная граница, состояние домена ей не принадлежит.</span></td>
     <td class="open"><span class="st st-open">Open</span><span class="val">процессы под supervision | другое</span><span class="why">Закроется числом одновременных соединений и требованием к их живучести.</span></td>
     <td class="na"><span class="st st-na">N/A</span><span class="val">не применимо</span><span class="why">Команд домена не выполняет.</span></td>
@@ -427,6 +439,7 @@
     <a href="first-slice.md">first-slice.md</a> — состав первого среза;
     <a href="../services/README.md">services/</a> — открытые вопросы каждого сервиса;
     <a href="../decisions/README.md">decisions/</a> — принятые решения;
+    <a href="../decisions/ADR-034-telegram-bot-rich-presentation.md">ADR-034</a> — форма сообщений бота;
     <a href="../rfcs/RFC-004-meetups-domain-events-persistence.md">RFC-004</a> — происхождение осей и разбор вариантов хранения.</p>
   <p class="muted">Матрица обновляется вместе с решениями. Расхождение матрицы с ADR является дефектом матрицы.</p>
 </footer>

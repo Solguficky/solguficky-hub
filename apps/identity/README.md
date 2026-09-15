@@ -1,6 +1,6 @@
 # Identity
 
-gRPC-сервис разрешения Telegram-личности во внутренний идентификатор. Схема профилей и глобальных ролей применяется миграциями PostgreSQL при старте. `ResolveIdentity` создаёт профиль при первом обращении и возвращает внутренний идентификатор с активными общими ролями.
+gRPC-сервис разрешения Telegram-личности во внутренний идентификатор и служебной выдачи глобальной роли администратора. Схема профилей и глобальных ролей применяется миграциями PostgreSQL при старте. `ResolveIdentity` создаёт профиль при первом обращении и возвращает внутренний идентификатор с активными общими ролями.
 
 Сгенерированный контракт лежит в `gen/` и в Git не хранится. Команда сборки сначала вызывает `buf generate`.
 
@@ -20,12 +20,13 @@ just identity-run
 В составе локальной топологии профиль `core` или `full` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
 
 ```bash
+dotnet user-secrets --project infra/apphost set Parameters:identity-maintainer-token "<secret>"
 just aspire core
 ```
 
 Фактический endpoint при таком запуске смотри в Aspire dashboard или `aspire describe`; фиксированный `localhost:50051` относится только к ручному `just identity-run` без переопределения адреса.
 
-По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, строка подключения к PostgreSQL — `IDENTITY_DATABASE_URL` (обязательна), уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При старте процесс применяет миграции из `internal/migrations/` и только потом начинает слушать. Пул `database/sql` ограничен 16 открытыми соединениями, время жизни соединения — 30 минут. Успешный RPC пишется на `Debug`, поэтому журнал доступа включает `IDENTITY_LOG_LEVEL=debug`.
+По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, строка подключения к PostgreSQL — `IDENTITY_DATABASE_URL` (обязательна), секрет служебных RPC — `IDENTITY_MAINTAINER_TOKEN` (пустое или отсутствующее значение закрывает методы), уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При старте процесс применяет миграции из `internal/migrations/` и только потом начинает слушать. Пул `database/sql` ограничен 16 открытыми соединениями, время жизни соединения — 30 минут. Успешный обычный RPC пишется на `Debug`, поэтому журнал доступа включает `IDENTITY_LOG_LEVEL=debug`. Успешные maintainer-вызовы дополнительно пишутся на `Info` с `identity_id` цели и без значения секрета.
 
 Интеграционные тесты схемы и разрешения поднимают изолированную базу на том же PostgreSQL. Если `IDENTITY_DATABASE_URL` не задан, они пробуют `postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable`; без доступной базы локальный прогон пропускает их, а в CI отсутствие базы — ошибка.
 
@@ -40,3 +41,17 @@ grpcurl -plaintext -d '{"telegram_user_id": 1}' \
 ```
 
 Повторный вызов с тем же `telegram_user_id` возвращает тот же `identity_id`. Reflection включена, чтобы `grpcurl` работал без локальных `.proto`.
+
+Сначала зарегистрируйте профиль через `ResolveIdentity`, затем используйте возвращённый `identity_id`:
+
+```bash
+export IDENTITY_MAINTAINER_TOKEN='<secret>'
+grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_MAINTAINER_TOKEN}" \
+  -d '{"identity_id":"<identity-id>"}' \
+  localhost:50051 identity.v1.IdentityService/GrantAdminRole
+grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_MAINTAINER_TOKEN}" \
+  -d '{"identity_id":"<identity-id>"}' \
+  localhost:50051 identity.v1.IdentityService/RevokeAdminRole
+```
+
+Повтор операции успешен с `changed: false`. Не передавайте секрет параметром `-vv` и не печатайте его в журнал.

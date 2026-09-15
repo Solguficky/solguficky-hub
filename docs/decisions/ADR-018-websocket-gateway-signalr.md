@@ -1,5 +1,7 @@
 # ADR-018: WebSocket Gateway на C# + SignalR для MVP
 
+> **Текущая применимость:** Historical. Для read-only экрана нового аукциона заменён [ADR-040](ADR-040-auction-screen-sse.md): SSE внутри Auction Service. Решения о прежней Admin Panel не переносятся в новый дизайн.
+
 **Дата**: 29.10.2025
 
 **Статус**: Принято

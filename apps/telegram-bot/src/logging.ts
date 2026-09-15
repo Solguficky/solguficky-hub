@@ -1,5 +1,7 @@
 export const serviceName = "telegram-bot";
 
+import type { FailureCategory } from "./failures.js";
+
 export type LogFields = {
   service?: string;
   level?: string;
@@ -9,9 +11,12 @@ export type LogFields = {
   result?: string;
   duration_us?: number;
   request_id?: string;
-  error_category?: string;
+  error_category?: FailureCategory;
   error?: string;
   stack?: string;
+  grpc_code?: string;
+  reply_error?: string;
+  meetup_id?: string;
   signal?: string;
   timeout?: number;
 };

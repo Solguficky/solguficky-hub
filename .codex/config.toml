@@ -1,2 +1,6 @@
 [mcp_servers.linear]
 url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.aspire]
+command = "aspire"
+args = [ "agent", "mcp" ]

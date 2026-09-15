@@ -15,6 +15,8 @@
 # история, что с gofmt выше. Без eol=lf `just telegram-bot-lint` на Windows падает
 # на всех файлах пакета сразу, хотя в индексе и на Linux-раннере CI они в порядке.
 *.ts text eol=lf
+*.mts text eol=lf
+*.mjs text eol=lf
 *.json text eol=lf
 
 # Файл исключений skillshare сравнивается по строкам буквально: CRLF из рабочего
@@ -22,27 +24,11 @@
 # исключать хоть что-нибудь, молча раскладывая выключенные скиллы по таргетам.
 .skillignore text eol=lf
 
-# Таргеты Skillshare — копии источника из .skillshare/skills/, а не отдельный
-# код: их содержимое проверяет tools/skillshare/check-generated.sh, а не
-# читатель диффа. В Git лежат только таргеты `proj-`скиллов (см. их .gitignore),
-# но и их хватает, чтобы утопить правку рядом.
-#
-# diff явно оставляет встроенное текстовое сравнение. Не ставь здесь `-diff`:
-# Git трактует его как бинарный diff, а клиенты, которые собирают pull request
-# из патча, могут отказаться принимать такие изменения.
-#
-# linguist-generated=true — то же самое для GitHub: он сворачивает такой файл
-# в review и не учитывает его в языковой статистике.
-#
-# check-generated.sh продолжает сравнивать содержимое через
-# `git diff --no-index --ignore-cr-at-eol --exit-code`.
-.claude/skills/** diff linguist-generated=true
-.agents/skills/** diff linguist-generated=true
-
-# Конфигурация MCP каждого агента — тот же случай: три файла генерируются из
-# .rulesync/mcp.jsonc, их сверяет `just check-mcp`, и читать в review нужно
-# источник, а не три его перевода. `.codex/config.toml` попадает сюда целиком:
-# rulesync владеет всем файлом, а не отдельной секцией в нём.
+# Конфигурация MCP каждого агента генерируется из .rulesync/mcp.jsonc и
+# проверяется командой `just check-mcp`. В review читается источник, а не его
+# переводы. `.codex/config.toml` и `opencode.jsonc` принадлежат rulesync целиком.
 .mcp.json diff linguist-generated=true
 .cursor/mcp.json diff linguist-generated=true
 .codex/config.toml diff linguist-generated=true
+.vscode/mcp.json diff linguist-generated=true
+opencode.jsonc diff linguist-generated=true

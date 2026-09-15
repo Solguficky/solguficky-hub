@@ -6,7 +6,7 @@ export type Stoppable = {
 };
 
 export type Closable = {
-  close(): void;
+  close(): void | Promise<void>;
 };
 
 export type Shutdown = {
@@ -58,10 +58,19 @@ export function createShutdown(options: {
       options.exit(1);
     }, options.timeoutMs);
     try {
+      // Отказ самого стопа не отменяет остальную остановку: раньше он уносил с
+      // собой и закрытие ресурсов, и запись в лог, а finally гасил сторожевой
+      // таймер — процесс оставался с открытой HTTP/2-сессией и без диагностики.
       if (options.bot.isRunning()) {
-        await options.bot.stop();
+        try {
+          await options.bot.stop();
+        } catch (cause) {
+          options.logger.error("bot stop failed", {
+            error: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
       }
-      options.resources.close();
+      await options.resources.close();
       options.logger.info("graceful shutdown complete");
     } finally {
       clearTimeout(force);

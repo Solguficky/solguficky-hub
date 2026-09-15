@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стратегическое направление принято, дизайн ещё не начат.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов предложена в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md) и ждёт перевода в `Accepted`, схемы и реализации ещё нет.
 
 ## Источники правды
 
@@ -34,18 +34,18 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Продуктовое ядро сходок не реализовано: исполняемых Meetups и Notifications нет, у Meetups приняты gRPC-контракт среза и проекты кодогенерации. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
+Продуктовое ядро сходок не реализовано: доменной логики нет ни у Meetups, ни у Notifications. Meetups поднят скелетом — gRPC-сервер отвечает на шесть операций контракта заглушкой. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
-| Telegram Bot | Long polling, `/start` с разбором deep link payload, клиент Identity и приветствие; остальные команды и экраны отсутствуют | Единственный вход пользователя |
-| Meetups | Контракт среза: gRPC-схема, C#-кодогенерация и F#-ссылка; исполняемого сервиса нет | Владелец данных о сходках |
-| Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, допуск к продукту и системные роли |
+| Telegram Bot | Long polling, Identity на каждом продуктовом действии, форма создания и публикации, список видимых сходок и карточка с deep link `m_<uuid>`; карточка по умолчанию использует Rich Messages, плоский рендерер включается тоглом процесса | Единственный вход пользователя |
+| Meetups | Скелет gRPC-сервиса на F#: контракт среза, C#-кодогенерация, заглушечные ответы, health, каркас лога границы и миграции состояния и журнала событий с отметкой публикации; домена нет | Владелец данных о сходках |
+| Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, круги сообщества и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и шесть gRPC-операций среза Meetups | Current |
 | `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
-| Aspire AppHost | Граф узлов и профили-данные; профили `infra` и `identity` подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
+| Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `core` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
 Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
 
@@ -53,21 +53,22 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении |
+| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса. Будущий общий слой аукциона и второй процесс определены ADR-044 |
 | Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
-| Identity | Граница, модель доступа и стек Accepted: ADR-026, ADR-027; контракт разрешения личности Accepted, остальные Open | Telegram identity, допуск к продукту и общие роли |
+| Identity | Граница, модель доступа, retention допуска к хабу и стек Accepted: ADR-026, ADR-027, [ADR-038](../decisions/ADR-038-identity-hub-access-retention.md); круги сообщества выражаются ролями, статус допуска заменён, блокировка — поле профиля: [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md); первая выдача роли администратора в срезе — только служебный endpoint: [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md); authentication endpoint — общий секрет в metadata gRPC: [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md); контракт разрешения личности Accepted, служебные операции Open | Telegram identity, круги сообщества и системные роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; схема и контракты Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
-| Production hosting | Open | Мини-ПК приоритетен; VPS и Railway остаются вариантами |
+| Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-039 |
 | Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks ещё нет |
 
 Основной архитектурный поток строится вокруг сходок.
 
 ## Future
 
-- Аукцион — Future-направление после MVP: новый сервис на Scala + Apache Pekko, проектируемый с нуля. Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md).
-- Realtime-шлюз для Big Screen возвращается вместе с аукционом и отдельным решением о стеке.
+- Аукцион — Future-направление после MVP: новый сервис на Scala 3 + Apache Pekko Typed с полным Event Sourcing через Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)). Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md); схемы и реализации ещё нет.
+- Аукцион доступен через два независимых TypeScript/grammY-процесса: `telegram-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). В `full` целевым состоянием являются оба ресурса, `core` сохраняет только бот хаба; Current-граф второго ресурса ещё не содержит.
+- Read-only Big Screen и страницы зрителей получают состояние через SSE внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)); отдельный gateway не вводится. Решение принято, реализации ещё нет.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
 - Kotlin, Go и Ruby остаются technology pool и не назначаются вымышленным сервисам заранее.
 

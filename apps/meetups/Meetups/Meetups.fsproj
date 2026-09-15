@@ -1,15 +1,50 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
+  <!-- Порядок Compile — направление зависимостей: файл видит только объявленное
+       выше. Domain/ стоит первым и потому не способен увидеть транспорт.
+       Slices/ и Infrastructure/ появятся вместе с записью и gRPC-слоем. -->
   <ItemGroup>
-    <Compile Include="ContractSurface.fs" />
+    <Compile Include="Domain/Ids.fs" />
+    <Compile Include="Domain/Viewer.fs" />
+    <Compile Include="Domain/Schedule.fs" />
+    <Compile Include="Domain/MeetupSnapshot.fs" />
+    <Compile Include="Domain/Access.fs" />
+    <Compile Include="Domain/Meetup.fs" />
+    <Compile Include="Migrations.fs" />
+    <Compile Include="Infrastructure/Db.fs" />
+    <Compile Include="Infrastructure/MeetupRow.fs" />
+    <Compile Include="Infrastructure/MeetupEventPayload.fs" />
+    <Compile Include="Infrastructure/MeetupStore.fs" />
+    <Compile Include="Infrastructure/MeetupReading.fs" />
+    <Compile Include="Slices/Contract.fs" />
+    <Compile Include="Slices/CreateMeetupDraft.fs" />
+    <Compile Include="Slices/ChangeMeetupAttributes.fs" />
+    <Compile Include="Slices/SetMeetupSchedule.fs" />
+    <Compile Include="Slices/PublishMeetup.fs" />
+    <Compile Include="Slices/ListVisibleMeetups.fs" />
+    <Compile Include="Slices/GetMeetup.fs" />
+    <Compile Include="Observability/BoundaryLog.fs" />
+    <Compile Include="Transport/MeetupsGrpcService.fs" />
+    <Compile Include="Host.fs" />
+    <Compile Include="Program.fs" />
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="dbup-postgresql" Version="7.0.1" />
+    <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.67.0" />
+    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.67.0" />
+    <PackageReference Include="Npgsql" Version="10.0.1" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Meetups.Contracts\Meetups.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\shared\dotnet\ServiceDefaults\ServiceDefaults.csproj" />
   </ItemGroup>
 
 </Project>

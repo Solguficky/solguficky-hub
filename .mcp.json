@@ -3,6 +3,13 @@
     "linear": {
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
+    },
+    "aspire": {
+      "command": "aspire",
+      "args": [
+        "agent",
+        "mcp"
+      ]
     }
   }
 }

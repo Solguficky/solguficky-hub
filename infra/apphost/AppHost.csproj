@@ -21,6 +21,12 @@
     <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
   </ItemGroup>
 
+  <!-- Ссылка на сервис даёт типизованный Projects.Meetups: опечатка в пути падает
+       на сборке AppHost, а не на старте графа. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\apps\meetups\Meetups\Meetups.fsproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

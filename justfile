@@ -11,24 +11,20 @@
 
 # --- Версии инструментов ---------------------------------------------------
 #
-# Единственное место, где закреплены версии buf, golangci-lint и rulesync.
-# Джобы identity, telegram-bot и repo-hygiene в CI читают версии отсюда, а
-# `just identity-tools` ставит buf локально, чтобы локальная и CI-проверка шли
-# одними бинарниками; identity-lint отказывается работать на другой версии.
-# Версии protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
-#
-# rulesync запускается через npx и потому закрепляется точной версией, а не
-# `@latest`: генератор пишет закоммиченные файлы, и смена версии на стороне
-# npm иначе разошлась бы с тем, что проверяет CI.
+# Единственное место, где закреплены версии buf и golangci-lint. Джобы
+# identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
+# ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
+# identity-lint отказывается работать на другой версии. Версии
+# protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
 GOLANGCI_LINT_VERSION := "2.13.2"
 RULESYNC_VERSION := "16.24.1"
 
-# Таргеты MCP: три агента, у каждого свой формат одного и того же объявления.
+# Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.
 # Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
 # и затёр бы редакторские настройки репозитория.
-RULESYNC_MCP_TARGETS := "claudecode,cursor,codexcli"
+RULESYNC_MCP_TARGETS := "claudecode,cursor,codexcli,copilot,opencode"
 
 # Список рецептов
 default:
@@ -40,6 +36,11 @@ default:
 setup:
     lefthook install
 
+# Внешние скиллы по .skillshare/config.yaml, один раз после клонирования.
+# Падает, если install переписал само объявление зависимостей.
+skillshare-install:
+    sh tools/skillshare/install.sh
+
 # --- Раскладка agent tooling -----------------------------------------------
 #
 # Скиллы, агентов и команды раскладывает сам skillshare (`skillshare sync -p`
@@ -49,7 +50,7 @@ setup:
 
 # MCP-конфигурация всех агентов из .rulesync/mcp.jsonc
 sync-mcp:
-    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
+    npx.cmd --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
 
 # --- Проверки --------------------------------------------------------------
 #
@@ -59,17 +60,26 @@ sync-mcp:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
-# Frontmatter скиллов разбирается, а skills, agents и commands совпадают с источниками
+# Frontmatter скиллов разбирается, а команды совпадают с источниками
 check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
 # Конфигурация MCP каждого агента совпадает с .rulesync/mcp.jsonc
 check-mcp:
-    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
+    npx.cmd --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
 
-# Механический гейт перед сдачей: agent tooling, MCP, Identity, Telegram Bot, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-mcp identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build apphost-build meetups-build meetups-test meetups-format-check
+# Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
+check-published-pages:
+    sh tools/community-site/check-published-pages.sh
+
+# Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
+check-document-numbers:
+    sh tools/docs/check-document-numbers.sh
+    sh tools/docs/check-document-numbers-test.sh
+
+# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-mcp check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -148,19 +158,60 @@ telegram-bot-lint: telegram-bot-proto
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
 
+# --- Community site API (TypeScript) ---------------------------------------
+#
+# Функция `/api/notes` держит заметки страницы «Аукцион 2026»: документ в
+# Netlify Blobs, ревизии и откаты. Кодогенерации у компонента нет, поэтому
+# рецепты прямые. Сборки тоже нет: бандлит функцию Netlify CLI при деплое,
+# а гейт держат typecheck, линт и тесты доменной логики.
+
+community-site-api-tools:
+    cd apps/community-site-api && npm ci
+
+community-site-api-typecheck:
+    cd apps/community-site-api && npm run typecheck
+
+community-site-api-test:
+    cd apps/community-site-api && npm test
+
+community-site-api-lint:
+    cd apps/community-site-api && npm run lint
+
+# Браузер ставится один раз:
+# cd apps/community-site-api && npx playwright install chromium
+# E2E страницы в настоящем браузере; в `verify` не входит — гейт обязан работать без Chromium
+community-site-api-e2e:
+    cd apps/community-site-api && npm run e2e
+
+# Сервер поднимает настоящий обработчик поверх хранилища в памяти; E2E запускает его сам.
+# Статика docs/published плюс /api/notes — для ручного прогона страницы
+community-site-serve:
+    cd apps/community-site-api && node e2e/server.mjs
+
 # --- Meetups (F# / .NET) ---------------------------------------------------
 #
 # Кодогенерация C# — часть `dotnet build` контрактного проекта.
-# Исполняемого сервиса ещё нет: собираются контракты и F#-ссылка на них.
+# Сервис — gRPC-сервер на Kestrel в h2c; готовность отдаётся по grpc.health.v1,
+# HTTP-эндпоинтов health у него нет.
 
-# Сборка контрактного C#-проекта и F#-библиотеки
+# Сборка контрактов, сервиса и обоих тестовых проектов
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Проверка, что в схеме ровно шесть операций среза.
+# Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
+# Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
+# схемы применяют миграции к PostgreSQL. Без доступной базы они пропускаются.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
     dotnet test --solution apps/meetups/Meetups.sln
+
+# Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
+meetups-contracts-check:
+    sh tools/meetups/check-contracts-generated.sh
+
+# Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS, база — MEETUPS_DATABASE_URL
+meetups-run:
+    dotnet run --project apps/meetups/Meetups
 
 # Форматирование F# по корневому .editorconfig (секция Fantomas)
 meetups-format: dotnet-tools
@@ -179,3 +230,7 @@ dotnet-tools:
 # Установка nats-tester в текущее окружение
 nats-tester-install:
     cd tools/nats-tester && python generate_proto.py && pip install -e .
+
+# Исследовательский зонд Rich Messages; не входит в verify
+telegram-rich-probe:
+    node tools/telegram-rich-probe/probe.mjs

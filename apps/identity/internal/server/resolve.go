@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/google/uuid"
@@ -36,7 +37,9 @@ WHERE identity_id = $1 AND revoked_at IS NULL`
 
 type identityService struct {
 	identityv1.UnimplementedIdentityServiceServer
-	db *sql.DB
+	db              *sql.DB
+	log             *slog.Logger
+	maintainerToken string
 }
 
 func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.ResolveIdentityRequest) (*identityv1.ResolveIdentityResponse, error) {
@@ -46,22 +49,22 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return nil, internal(fmt.Errorf("begin transaction: %w", err))
+		return nil, internal("begin transaction", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	identityID, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
 	if err != nil {
-		return nil, internal(fmt.Errorf("upsert profile: %w", err))
+		return nil, internal("upsert profile", err)
 	}
 
 	roles, err := listRoles(ctx, tx, identityID)
 	if err != nil {
-		return nil, internal(fmt.Errorf("list roles: %w", err))
+		return nil, internal("list roles", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, internal(fmt.Errorf("commit: %w", err))
+		return nil, internal("commit", err)
 	}
 
 	return &identityv1.ResolveIdentityResponse{

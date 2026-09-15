@@ -41,8 +41,8 @@ let private firstField (message: MessageDescriptor) =
     | field -> message.Name, $"{field.Name}: {field.FieldType}"
 
 [<Fact>]
-let ``The F# library sees the generated service under the meetups v1 package`` () =
-    test <@ ContractSurface.serviceFullName = "meetups.v1.MeetupsService" @>
+let ``The generated service lives under the meetups v1 package`` () =
+    test <@ MeetupsService.Descriptor.FullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
 let ``Service exposes exactly the six slice operations`` () =
