@@ -7,4 +7,5 @@
 - [local-development.md](local-development.md) — Aspire, профили и незакрытый smoke-test gate;
 - [ci.md](ci.md) — текущая область CI и известные gaps;
 - [observations.md](observations.md) — журнал повторяющихся сигналов до перевода в действующее правило;
-- [mcp-servers.md](mcp-servers.md) — исследование MCP-серверов для повторяемых действий контура агента.
+- [mcp-servers.md](mcp-servers.md) — исследование MCP-серверов для повторяемых действий контура агента;
+- [omp.md](omp.md) — разбор харнесса OMP и его настройка под контур исполнения.
