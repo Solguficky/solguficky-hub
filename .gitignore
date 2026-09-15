@@ -116,3 +116,5 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

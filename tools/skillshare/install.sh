@@ -25,13 +25,11 @@ CONFIG='.skillshare/config.yaml'
 METADATA='.skillshare/skills/.metadata.json'
 SKILLS='.skillshare/skills'
 
-# One declared skill the bulk install cannot resolve on its own. Skillshare's
-# audit blocks it at CRITICAL on a false positive: the analyzer reads
-# "do not tell the user the project has a permanent build failure" in Microsoft's
-# own references/safety-guardrails.md as an output suppression directive, while
-# the line instructs the agent not to lie about a file lock. CRITICAL is already
-# the most permissive block threshold, so there is nothing to loosen, and
-# `--exclude` does not apply to this mode - it needs a source argument.
+# Some declared skills cannot be bulk-installed because Skillshare's audit finds
+# false-positive output-suppression directives in Microsoft reference files.
+# CRITICAL is already the most permissive block threshold, so there is nothing
+# to loosen, and `--exclude` does not apply to this mode - it needs a source
+# argument.
 #
 # Installing it by name with --force puts it on disk first. The bulk run that
 # follows then reports it as "already exists" and leaves the declaration alone:
@@ -39,7 +37,7 @@ SKILLS='.skillshare/skills'
 #
 # Drop this block once the analyzer stops matching that line; the skill itself
 # carries no finding this repository accepts as real.
-AUDIT_EXEMPT='aspire-orchestration'
+AUDIT_EXEMPTS='aspire-orchestration aspire-deployment'
 
 if ! command -v skillshare >/dev/null 2>&1; then
     printf 'skillshare not found in PATH; see AGENTS.md for the setup.\n' >&2
@@ -58,26 +56,30 @@ fingerprint() {
 # changed. A declaration an earlier run already stripped looks unchanged to it
 # forever, and the skill it named would quietly stop being a dependency. So the
 # state is asserted once, up front, against the declaration itself.
-if ! grep -Fq "name: ${AUDIT_EXEMPT}" "$CONFIG"; then
-    printf '%s is not declared in %s any more.\n\n' "$AUDIT_EXEMPT" "$CONFIG" >&2
-    printf 'An earlier install most likely dropped it on its audit verdict.\n' >&2
-    printf 'Restore the declaration, or remove this exemption from %s.\n' "$0" >&2
-    exit 1
-fi
+for audit_exempt in $AUDIT_EXEMPTS; do
+    if ! grep -Fq "name: ${audit_exempt}" "$CONFIG"; then
+        printf '%s is not declared in %s any more.\n\n' "$audit_exempt" "$CONFIG" >&2
+        printf 'An earlier install most likely dropped it on its audit verdict.\n' >&2
+        printf 'Restore the declaration, or remove this exemption from %s.\n' "$0" >&2
+        exit 1
+    fi
+done
 
 config_before=$(fingerprint "$CONFIG")
 metadata_before=$(fingerprint "$METADATA")
 
-if [ ! -d "$SKILLS/$AUDIT_EXEMPT" ]; then
-    printf 'Installing %s by name: its audit finding is reviewed and rejected.\n\n' "$AUDIT_EXEMPT"
-    exempt_status=0
-    skillshare install "$AUDIT_EXEMPT" --force -p || exempt_status=$?
-    if [ "$exempt_status" -ne 0 ]; then
-        printf '\nskillshare install %s exited %s.\n' "$AUDIT_EXEMPT" "$exempt_status" >&2
-        exit "$exempt_status"
+for audit_exempt in $AUDIT_EXEMPTS; do
+    if [ ! -d "$SKILLS/$audit_exempt" ]; then
+        printf 'Installing %s by name: its audit finding is reviewed and rejected.\n\n' "$audit_exempt"
+        exempt_status=0
+        skillshare install "github.com/microsoft/aspire-skills/skills/$audit_exempt" --force -p || exempt_status=$?
+        if [ "$exempt_status" -ne 0 ]; then
+            printf '\nskillshare install %s exited %s.\n' "$audit_exempt" "$exempt_status" >&2
+            exit "$exempt_status"
+        fi
+        printf '\n'
     fi
-    printf '\n'
-fi
+done
 
 config_exempt=$(fingerprint "$CONFIG")
 metadata_exempt=$(fingerprint "$METADATA")
@@ -114,18 +116,18 @@ if [ "$bulk_status" -ne 0 ]; then
     exit "$bulk_status"
 fi
 
-# The named install above records a fresh `version` for the skill it reinstalls,
-# and that is the point of running it. Only .metadata.json may move that way:
+# The named installs above record a fresh `version` for skills they reinstall,
+# and that is the point of running them. Only .metadata.json may move that way:
 # config.yaml is the list of dependencies, and nothing in this script has a
 # reason to rewrite it.
 if [ "$config_exempt" != "$config_before" ]; then
-    printf '\nInstalling %s rewrote %s, which it has no reason to touch:\n\n' "$AUDIT_EXEMPT" "$CONFIG" >&2
+    printf '\nInstalling audit-exempt skills rewrote %s, which they have no reason to touch:\n\n' "$CONFIG" >&2
     printf '  git diff -- %s\n' "$CONFIG" >&2
     exit 1
 fi
 
 if [ "$metadata_exempt" != "$metadata_before" ]; then
-    printf '\nInstalling %s refreshed the declaration it records.\n' "$AUDIT_EXEMPT"
+    printf '\nInstalling audit-exempt skills refreshed the declaration they record.\n'
     printf 'Review and commit it - the `version` field is what pins the skill text:\n\n'
     printf '  git diff -- %s\n' "$METADATA"
     exit 0
