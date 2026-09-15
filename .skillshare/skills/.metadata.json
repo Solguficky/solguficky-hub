@@ -17,6 +17,44 @@
         "references/aspire-13-5-breaking-changes.md": "sha256:d9e83ce2bc2fa262707b262852bc065bca92492d24b00e5a962aeb8743eaf186"
       }
     },
+    "aspire-deployment": {
+      "source": "github.com/microsoft/aspire-skills/skills/aspire-deployment",
+      "type": "github-subdir",
+      "installed_at": "2026-09-15T15:45:59.0469216+03:00",
+      "repo_url": "https://github.com/microsoft/aspire-skills.git",
+      "subdir": "skills/aspire-deployment",
+      "version": "27f3b61",
+      "tree_hash": "7c337887ae734fcd862844004485e00c824e2304",
+      "file_hashes": {
+        "SKILL.md": "sha256:404909db89b097ea45849a091136350ca41963469adde8c7d0e74dadda5a924f",
+        "evals/eval.yaml": "sha256:e6549aea81197a1f79ad5e1d016e9a3bb6ccd6ca61c07d3ea7c084dd45445064",
+        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
+        "references/aws.md": "sha256:8a9b2659a7f4a31d33f0b3a6cab4196b3276f12e78e865e1715a7397528d2b03",
+        "references/azure.md": "sha256:c07304d9b5cb5163d32011673d5df5ea724f15a4549184587c6ea90068ed854b",
+        "references/cicd.md": "sha256:2cd5af0e375fd555bdc0f2eedeaa45e06654f3f2d4104a14753fdca07bad4c6e",
+        "references/docker-compose.md": "sha256:d65fc8c26ac693b9c2f53c0c4886afd1cac66e11b25778feef4a9ceb4c802291",
+        "references/github-actions-azure-csharp.yml": "sha256:f750970df019cd63cf8f80a66294c4cf388ea2241cad424546eb26d8b546ed39",
+        "references/github-actions-azure-typescript.yml": "sha256:b3a62693d3f3b90cc79bd657e8300f76506e4fcf96171d9bfce2dd7e546d3480",
+        "references/javascript.md": "sha256:e890b460742a7deba0de2ddf765972849aa95cc70dc4a42819f568638f3aa154",
+        "references/kubernetes.md": "sha256:efd92bc819f37e8f77d663ca857c953ef5824f052de9a057cb0d2df4a5aab09b",
+        "references/preflight.md": "sha256:ddeb01a4e2c4016dac8b3036dbd69488b3f6c8c4d55e34c96c22a27770e94513"
+      }
+    },
+    "aspire-init": {
+      "source": "https://github.com/microsoft/aspire-skills.git/skills/aspire-init",
+      "type": "github-subdir",
+      "installed_at": "2026-09-15T15:43:17.5208679+03:00",
+      "repo_url": "https://github.com/microsoft/aspire-skills.git",
+      "subdir": "skills/aspire-init",
+      "version": "27f3b61",
+      "tree_hash": "7d0b03ac1ca36bc53e89d08656150fe93e9b4a67",
+      "file_hashes": {
+        "SKILL.md": "sha256:9777f24aa0da62dd955301d67360b12ef2273ebda2892668e55dc83fa3886c51",
+        "evals/eval.yaml": "sha256:41e59203af883db8ce6787a9e7ede7fe1897b52072e52fb80d62557dbdf6558c",
+        "references/init-workflow.md": "sha256:22ac51276687e0815871fc7b7510ea03f4dc85b7a693b21addaa00d9d2099897",
+        "references/templates.md": "sha256:cf2d0610d148616bb75effdf900cd55f090fd5cf09a33a9f10014c007ac40e22"
+      }
+    },
     "aspire-monitoring": {
       "source": "github.com/microsoft/aspire-skills/skills/aspire-monitoring",
       "type": "github-subdir",
@@ -51,6 +89,29 @@
         "references/detection.md": "sha256:84c5a49633cdf803dfbfe1d62dcbef0218a5d4dd7ed26c644bdc931520e8b2ec",
         "references/resource-management.md": "sha256:5058b4e2009f98a1f6e5a6c0d8b15aa17d33087e54502953d5428034557ed629",
         "references/safety-guardrails.md": "sha256:92088f091bbb810fbe6e98f6dc61d19fd0edcf82689a3a2aa271a2cb4a42a98f"
+      }
+    },
+    "aspireify": {
+      "source": "https://github.com/microsoft/aspire-skills.git/skills/aspireify",
+      "type": "github-subdir",
+      "installed_at": "2026-09-15T15:43:18.2554966+03:00",
+      "repo_url": "https://github.com/microsoft/aspire-skills.git",
+      "subdir": "skills/aspireify",
+      "version": "27f3b61",
+      "tree_hash": "80b84ecdf6f7c5d54d529e1124a1c3fe18cac4a3",
+      "file_hashes": {
+        "SKILL.md": "sha256:06486e28d403fa77ab4f26f94a6ddc9947749fa457a8fe725da69ba66568344c",
+        "evals/eval.yaml": "sha256:a99af2c9b2329871a3814d4dc1c4db4fde2f5167daa9b07b0175791c097958ae",
+        "references/apphost-wiring.md": "sha256:00b7cb88e0c8ee24a545f7a21b63c2b28b518220cac073c494b78fd1763f66c3",
+        "references/csharp-authoring.md": "sha256:bf2479c712688ec6e0cbd227cead270af2f3583c74962c6414ac8315557e6fb7",
+        "references/docker-compose.md": "sha256:f1de0210164abbdaad9396132349a45ecdb7a0fd6bca053cc07828539f4d4089",
+        "references/full-solution-apphosts.md": "sha256:e561361e7071ac70f3a046e52f62fcc7d949ab69aab8777dce84f0822beb35a3",
+        "references/javascript-apps.md": "sha256:97d2412e2d8ca439c1799e1dc5e326e3e5f4d0ff36d6816ad896ebe84a926339",
+        "references/opentelemetry.md": "sha256:d51deb7a30e0279f93fcc17182797bd0c4eb25ba55b9bd68283614add82dd3d8",
+        "references/scan-and-propose.md": "sha256:c132e4a98f549551adf8f6922f4061b38a66a09b57a63b2d7736654e398ce31d",
+        "references/service-defaults.md": "sha256:795b5dcb66a101b98c1d806023b199be2f8fc3c39fcebf9820aff4068a1c34e1",
+        "references/typescript-authoring.md": "sha256:5c71426de96ada576c2820538bd99175a5ff8fda766ffb5436a07584a0154cb2",
+        "references/validation.md": "sha256:4009d9f0f41e4430488e69202061a035493bae3e2e0ce8a4512f16cf50d49bc4"
       }
     },
     "cli-for-agents": {
