@@ -11,7 +11,7 @@
 | Проверить `delegate`, статус, связи и комментарии задачи; оставить отчёт | захват, чтение, отчёт | Linear MCP | нет |
 | Прочитать PR, checks и review threads; открыть PR | ревью и сдача | GitHub MCP или `gh` | нет |
 | Свериться с актуальной документацией зависимости | чтение и реализация | web и запланированный Context7 | нет |
-| Дождаться ресурсов AppHost, прочитать health, логи и traces | гейт; [local-development.md](local-development.md) | Aspire CLI и запланированный Aspire MCP | нет нового кандидата |
+| Дождаться ресурсов AppHost, прочитать health, логи и traces | гейт; [local-development.md](local-development.md) | Aspire CLI и Aspire MCP | нет нового кандидата |
 | Проверить локальную веб-поверхность глазами пользователя | гейт; Aspire dashboard, будущий Mini App | ручной браузер | да, браузерный MCP |
 | Разобрать Loki при красном живом гейте | гейт и стоп-триггер | Grafana UI, файлы логов, Aspire | возможно, Grafana MCP |
 | Прогнать живой путь `/start` от пользователя до ответа бота | неподтверждённая граница в [architecture overview](../architecture/overview.md) | component-тесты и отдельный живой запуск | Telegram MCP не закрывает сценарий безопасно |

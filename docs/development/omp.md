@@ -203,7 +203,7 @@ openrouter/deepseek/deepseek-v4.1-flash → обслужил все 38 ходо�
 
 **MCP.** Отдельной настройки под OMP не требуется, и это тот же принцип, что со скиллами: он импортирует определения серверов из конфигураций Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Windsurf, VS Code, плагинов и расширений, а корневые `mcp.json` и `.mcp.json` читает как портативный запасной источник. Собственные файлы OMP — `.omp/mcp.json` в проекте и `~/.omp/agent/mcp.json` у пользователя; `mcp.enableProjectConfig` включён по умолчанию. Для дубликата выигрывает первое найденное определение, слияния нет.
 
-Практическое следствие для этого репозитория: на `develop` нет ни одного MCP-конфига — ни `.mcp.json`, ни `.cursor/mcp.json`, ни `.rulesync/mcp.jsonc`. Все они живут в неслитой ветке `chore/mcp-rulesync` и принадлежат [PER-244](https://linear.app/anticnvm/issue/per-244). Когда та задача сольётся, OMP подхватит результат сам, и добавлять его в `RULESYNC_MCP_TARGETS` не нужно.
+Практическое следствие для этого репозитория: `.rulesync/mcp.jsonc` — источник MCP-конфигурации, а `just sync-mcp` генерирует `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc`. OMP подхватывает результат сам; добавлять его в `RULESYNC_MCP_TARGETS` не нужно.
 
 ## Карта: сверх, дублирует, нет
 

@@ -19,6 +19,12 @@
 
 BUF_VERSION := "1.54.0"
 GOLANGCI_LINT_VERSION := "2.13.2"
+RULESYNC_VERSION := "16.24.1"
+
+# Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.
+# Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
+# и затёр бы редакторские настройки репозитория.
+RULESYNC_MCP_TARGETS := "claudecode,cursor,codexcli,copilot,opencode"
 
 # Список рецептов
 default:
@@ -35,6 +41,17 @@ setup:
 skillshare-install:
     sh tools/skillshare/install.sh
 
+# --- Раскладка agent tooling -----------------------------------------------
+#
+# Скиллы, агентов и команды раскладывает сам skillshare (`skillshare sync -p`
+# и `skillshare sync extras -p`, см. AGENTS.md). Здесь только MCP: у rulesync
+# длинная командная строка с закреплённой версией и списком таргетов, и её
+# незачем держать в голове.
+
+# MCP-конфигурация всех агентов из .rulesync/mcp.jsonc
+sync-mcp:
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
+
 # --- Проверки --------------------------------------------------------------
 #
 # Тот же скрипт вызывает git-хук через lefthook.yml.
@@ -48,6 +65,10 @@ check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
     sh tools/skillshare/check-generated.sh
 
+# Конфигурация MCP каждого агента совпадает с .rulesync/mcp.jsonc
+check-mcp:
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
+
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 check-published-pages:
     sh tools/community-site/check-published-pages.sh
@@ -57,8 +78,8 @@ check-document-numbers:
     sh tools/docs/check-document-numbers.sh
     sh tools/docs/check-document-numbers-test.sh
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-mcp check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 

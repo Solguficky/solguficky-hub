@@ -33,6 +33,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
+- `.rulesync/` — источник правды по MCP-серверам; `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из него.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
 
@@ -64,13 +65,19 @@ skillshare sync extras -p
 # Frontmatter скиллов и закоммиченные команды после sync
 just check-agent-tools
 
+# MCP: раскладка по агентам после правок в .rulesync/mcp.jsonc
+just sync-mcp
+
+# Конфигурация MCP каждого агента совпадает с источником
+just check-mcp
+
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 just check-published-pages
 
 # Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
 just check-document-numbers
 
-# Механический гейт перед сдачей: agent tooling, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -127,7 +134,7 @@ pip install -e .
 nats-tester --help
 ```
 
-Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**` и `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
+Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
 Профили `infra`, `identity`, `meetups` и срез `core` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3, включая Meetups с PostgreSQL и применением миграций при старте; полный профиль с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
 
@@ -148,7 +155,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Заголовок PR задачи — `[PER-N] Название задачи из Linear` дословно: без перевода, без своей формулировки, без типа впереди и без `(PER-N)` в хвосте. PR без задачи берёт форму коммита `type: Subject` на английском. Тело — на русском и ровно три раздела: `## Что и зачем`, `## Отклонения от плана`, `## Осталось открытым`. Встроенный шаблон инструмента (`Motivation`, `Description`, `Testing`) их не заменяет, и послабление для имён чужих веток на PR не распространяется. Формат и примеры — [branching.md](docs/standards/git/branching.md).
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, публикуемых страниц, номеров ADR/RFC, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, MCP, публикуемых страниц, номеров ADR/RFC, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.
@@ -162,6 +169,10 @@ CodeRabbit не ревьюит pull request автоматически; запу
 ## Стандарты и локальные правила
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
+
+Источник правды по MCP-серверам — `.rulesync/mcp.jsonc`; `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из него командой `just sync-mcp` и руками не правятся. Здесь не копирование, а перевод: Claude Code и Cursor читают JSON с ключом `mcpServers`, VS Code — JSON с ключом `servers`, OpenCode — JSONC с ключом `mcp`, а Codex — TOML с таблицами `mcp_servers`. Версия rulesync закреплена в `justfile`; `just check-mcp` возвращает 1 при расхождении таргета с источником и входит в `verify`. В источник попадают только серверы, от которых зависит контур исполнения; какие подключать сверх Linear и Aspire — решение владельца, а кандидаты и ограничения разобраны в [mcp-servers.md](docs/development/mcp-servers.md).
+
+Граница с skillshare проведена по фичам: rulesync умеет ещё skills, commands, subagents и hooks, но `--features "mcp"` закреплён в рецептах `sync-mcp` и `check-mcp`, поэтому внешние скиллы продолжает собирать только skillshare. Zed не входит в `RULESYNC_MCP_TARGETS`, потому что rulesync владеет `.zed/settings.json` целиком. По той же причине проектные настройки Codex и OpenCode в их конфигурации не добавляют вручную.
 
 Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync -p`, в Git не хранятся и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/` и `mattpocock/_skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) и [mattpocock/skills](https://github.com/mattpocock/skills) (обновляются `skillshare update golang/_golang -p` и `skillshare update mattpocock/_skills -p` — путь с группой обязателен, по одному имени `_golang` skillshare 0.20.25 клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
 

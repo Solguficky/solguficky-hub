@@ -249,10 +249,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: extractions/setup-just@v4
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
       - name: Commands are generated from Skillshare sources
         run: sh tools/skillshare/check-generated.sh
+      - name: MCP configuration is generated from the rulesync source
+        run: just check-mcp
       - name: Published pages are addressable
         run: sh tools/community-site/check-published-pages.sh
 

@@ -23,3 +23,12 @@
 # дерева Windows превращает каждое имя в `code-review\r`, и sync перестаёт
 # исключать хоть что-нибудь, молча раскладывая выключенные скиллы по таргетам.
 .skillignore text eol=lf
+
+# Конфигурация MCP каждого агента генерируется из .rulesync/mcp.jsonc и
+# проверяется командой `just check-mcp`. В review читается источник, а не его
+# переводы. `.codex/config.toml` и `opencode.jsonc` принадлежат rulesync целиком.
+.mcp.json diff linguist-generated=true
+.cursor/mcp.json diff linguist-generated=true
+.codex/config.toml diff linguist-generated=true
+.vscode/mcp.json diff linguist-generated=true
+opencode.jsonc diff linguist-generated=true
