@@ -50,7 +50,7 @@ skillshare-install:
 
 # MCP-конфигурация всех агентов из .rulesync/mcp.jsonc
 sync-mcp:
-    npx.cmd --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
 
 # --- Проверки --------------------------------------------------------------
 #
@@ -67,7 +67,7 @@ check-agent-tools:
 
 # Конфигурация MCP каждого агента совпадает с .rulesync/mcp.jsonc
 check-mcp:
-    npx.cmd --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
 
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 check-published-pages:
