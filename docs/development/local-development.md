@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Профили `infra`, `identity`, `meetups` и срез `core` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль с Telegram Bot и production-like публикация не проверены.
+> **Статус:** Current, частично подтверждено. Профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль `hub` с Telegram Bot и production-like публикация не проверены.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -35,11 +35,10 @@ AppHost объявляет граф узлов и их связи, а профи
 
 | Профиль | Инфраструктура | Компоненты |
 |---|---|---|
-| `infra` | PostgreSQL, NATS | нет |
+| `infra` | PostgreSQL | нет |
 | `identity` | PostgreSQL | Identity |
 | `meetups` | PostgreSQL | Meetups |
-| `core` | PostgreSQL | Identity, Meetups, Telegram Bot |
-| `full` | PostgreSQL, NATS | Identity, Meetups, Telegram Bot |
+| `hub` | PostgreSQL | Identity, Meetups, Telegram Bot |
 
 Профиль `meetups` поднимает PostgreSQL: сервис применяет миграции при старте и без строки подключения не слушает. Смотрящий по-прежнему приходит в запросе, шины в профиле нет.
 
@@ -68,8 +67,8 @@ Telegram Bot создаёт `request_id` на каждый update и перед�
 `--run-services` и `--skip-services` меняют состав запуска, не меняя wiring:
 
 ```powershell
-just aspire core -- --run-services identity
-just aspire core -- --skip-services telegram-bot
+just aspire hub -- --run-services identity
+just aspire hub -- --skip-services telegram-bot
 ```
 
 Срез не подтягивает соседний сервис из зависимостей: узел вне среза остаётся владельцу. Баннер называет такие зависимости поимённо.
@@ -93,11 +92,11 @@ just aspire core -- --skip-services telegram-bot
 8. `IdentityService/ResolveIdentity` через proxy endpoint Aspire возвращает UUIDv7.
 9. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
 10. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Через назначенный Aspire proxy endpoint `ListVisibleMeetups` со смотрящим отвечает пустым списком на чистой базе, а `GetMeetup` по отсутствующему UUID — `NOT_FOUND`; оба вызова выполнены `grpcurl` без Telegram. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-11. На зафиксированном до PER-58 прогоне срез `core` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держал Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечали через свои proxy endpoint. Схемы были разведены по базам одного сервера: goose вёл `identity`, DbUp — `meetups`; на сервере не было базы, которую писали бы оба сервиса.
+11. На зафиксированном до PER-58 прогоне срез `hub` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держал Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечали через свои proxy endpoint. Схемы были разведены по базам одного сервера: goose вёл `identity`, DbUp — `meetups`; на сервере не было базы, которую писали бы оба сервиса.
 
 ## Неподтверждённая граница
 
-После замены заглушек чтения в PER-58 срез `core` через Aspire ещё нужно повторить с живыми `ListVisibleMeetups` и `GetMeetup`; предыдущий прогон подтверждает только более раннюю совместную топологию Identity и Meetups. Профиль с Telegram Bot и настоящим токеном ни разу не прогонялся, как и повторное подключение тома `solguficky-postgres-data` после перезапуска AppHost. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+После замены заглушек чтения в PER-58 срез `hub` через Aspire ещё нужно повторить с живыми `ListVisibleMeetups` и `GetMeetup`; предыдущий прогон подтверждает только более раннюю совместную топологию Identity и Meetups. Профиль с Telegram Bot и настоящим токеном ни разу не прогонялся, как и повторное подключение тома `solguficky-postgres-data` после перезапуска AppHost. NATS не входит в текущие профили, пока его использование в приложениях не настроено. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
 
 ## Повторная проверка
 
@@ -107,6 +106,6 @@ just aspire core -- --skip-services telegram-bot
 just verify
 ```
 
-Живой gate требует отдельных запусков профилей `infra`, `identity` и `meetups` плюс среза `core` без Telegram Bot, а после появления токена — и `full`: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи, затем вызвать `IdentityService/ResolveIdentity` и любую операцию `MeetupsService` через найденные в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
+Живой gate требует отдельных запусков профилей `infra`, `identity` и `meetups` плюс среза `hub` без Telegram Bot, а после появления токена — и полного `hub`: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи, затем вызвать `IdentityService/ResolveIdentity` и любую операцию `MeetupsService` через найденные в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
 
 Работа и её прогресс должны быть заведены в Linear; этот документ хранит только устойчивые правила и проверяемый gap.

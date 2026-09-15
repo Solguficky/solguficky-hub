@@ -17,11 +17,11 @@ just identity-lint
 just identity-run
 ```
 
-В составе локальной топологии профиль `core` или `full` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
+В составе локальной топологии профиль `hub` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
 
 ```bash
 dotnet user-secrets --project infra/apphost set Parameters:identity-maintainer-token "<secret>"
-just aspire core
+just aspire hub
 ```
 
 Фактический endpoint при таком запуске смотри в Aspire dashboard или `aspire describe`; фиксированный `localhost:50051` относится только к ручному `just identity-run` без переопределения адреса.

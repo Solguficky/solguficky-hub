@@ -45,7 +45,7 @@ Linear является источником правды для порядка 
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и шесть gRPC-операций среза Meetups | Current |
 | `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
-| Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `core` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
+| Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
 Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
 
@@ -67,7 +67,7 @@ Linear является источником правды для порядка 
 ## Future
 
 - Аукцион — Future-направление после MVP: новый сервис на Scala 3 + Apache Pekko Typed с полным Event Sourcing через Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)). Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md); схемы и реализации ещё нет.
-- Аукцион доступен через два независимых TypeScript/grammY-процесса: `telegram-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). В `full` целевым состоянием являются оба ресурса, `core` сохраняет только бот хаба; Current-граф второго ресурса ещё не содержит.
+- Аукцион доступен через два независимых TypeScript/grammY-процесса: `telegram-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). `hub` сохраняет только бот хаба; профиль для одновременного запуска обоих ресурсов появится вместе со вторым приложением.
 - Read-only Big Screen и страницы зрителей получают состояние через SSE внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)); отдельный gateway не вводится. Решение принято, реализации ещё нет.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
 - Kotlin, Go и Ruby остаются technology pool и не назначаются вымышленным сервисам заранее.

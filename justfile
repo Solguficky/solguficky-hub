@@ -85,8 +85,8 @@ verify: check-agent-tools check-mcp check-published-pages check-document-numbers
 
 # AppHost поднимает узлы, которыми владеет профиль. Профили — данные:
 # секция Topology:Profiles в infra/apphost/appsettings.json, там же их список.
-# Срез внутри профиля: `just aspire core -- --run-services identity`.
-aspire profile="core" *args="":
+# Срез внутри профиля: `just aspire hub -- --run-services identity`.
+aspire profile="hub" *args="":
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run {{args}}
 
 # Сборка Aspire AppHost

@@ -85,10 +85,10 @@ aspire run
 
 # Профили топологии — данные в Topology:Profiles (infra/apphost/appsettings.json)
 TOPOLOGY__PROFILE=infra aspire run
-aspire run -- --profile full
+aspire run -- --profile hub
 
 # Срез внутри профиля
-aspire run -- --profile core --run-services identity
+aspire run -- --profile hub --run-services identity
 
 # Identity — инструменты, кодогенерация, сборка, тесты и линт
 just identity-tools
@@ -136,7 +136,7 @@ nats-tester --help
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
-Профили `infra`, `identity`, `meetups` и срез `core` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3, включая Meetups с PostgreSQL и применением миграций при старте; полный профиль с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
+Профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3, включая Meetups с PostgreSQL и применением миграций при старте; профиль `hub` с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
 
 CodeRabbit не ревьюит pull request автоматически; запуск — комментарием `@coderabbitai review`. Активную конфигурацию показывает `@coderabbitai configuration`. Его находки помогают владельцу при ревью, но не становятся гейтом мержа.
 
