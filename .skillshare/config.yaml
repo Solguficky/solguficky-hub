@@ -10,6 +10,10 @@ targets:
     skills:
       mode: copy
       target_naming: standard
+  - name: opencode
+    skills:
+      exclude:
+        - '*'
 skills:
   - name: skillshare
     source: https://github.com/runkids/skillshare/skills/skillshare
