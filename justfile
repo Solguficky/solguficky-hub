@@ -26,6 +26,12 @@ RULESYNC_VERSION := "16.24.1"
 # и затёр бы редакторские настройки репозитория.
 RULESYNC_MCP_TARGETS := "claudecode,cursor,codexcli,copilot,opencode"
 
+# Таргеты команд: только те агенты, чей формат разворачивает подстановки
+# самого тела команды. У Codex CLI промпты лежат вне репозитория
+# (~/.codex/prompts), а Cursor и Copilot не раскрывают ни аргументы, ни
+# вставки вывода команд — там тело доехало бы до модели текстом.
+RULESYNC_COMMAND_TARGETS := "claudecode,opencode"
+
 # Список рецептов
 default:
     @just --list
@@ -43,14 +49,18 @@ skillshare-install:
 
 # --- Раскладка agent tooling -----------------------------------------------
 #
-# Скиллы, агентов и команды раскладывает сам skillshare (`skillshare sync -p`
-# и `skillshare sync extras -p`, см. AGENTS.md). Здесь только MCP: у rulesync
-# длинная командная строка с закреплённой версией и списком таргетов, и её
-# незачем держать в голове.
+# Скиллы и агентов раскладывает skillshare (`skillshare sync -p`, см.
+# AGENTS.md). MCP и команды генерирует rulesync: у него длинная командная
+# строка с закреплённой версией и списком таргетов, и её незачем держать
+# в голове.
 
 # MCP-конфигурация всех агентов из .rulesync/mcp.jsonc
 sync-mcp:
     npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp"
+
+# Команды всех агентов из .rulesync/commands/
+sync-commands:
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_COMMAND_TARGETS}}" --features "commands"
 
 # --- Проверки --------------------------------------------------------------
 #
@@ -60,14 +70,17 @@ sync-mcp:
 check-commit-message file:
     sh tools/git-hooks/check-commit-message.sh {{file}}
 
-# Frontmatter скиллов разбирается, а команды совпадают с источниками
+# Frontmatter скиллов разбирается
 check-agent-tools:
     sh tools/skillshare/check-frontmatter.sh
-    sh tools/skillshare/check-generated.sh
 
 # Конфигурация MCP каждого агента совпадает с .rulesync/mcp.jsonc
 check-mcp:
     npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_MCP_TARGETS}}" --features "mcp" --check
+
+# Команды каждого агента совпадают с .rulesync/commands/
+check-commands:
+    npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_COMMAND_TARGETS}}" --features "commands" --check
 
 # Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
 check-published-pages:
@@ -78,8 +91,8 @@ check-document-numbers:
     sh tools/docs/check-document-numbers.sh
     sh tools/docs/check-document-numbers-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-mcp check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # --- Локальная оркестрация -------------------------------------------------
 

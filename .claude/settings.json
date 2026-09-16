@@ -18,9 +18,9 @@
           },
           {
             "type": "command",
-            "command": "just sync-mcp || exit 2",
+            "command": "just sync-mcp && just sync-commands || exit 2",
             "if": "Edit(.rulesync/**)",
-            "statusMessage": "Раскладываю конфигурацию MCP по агентам"
+            "statusMessage": "Раскладываю конфигурацию MCP и команды по агентам"
           }
         ]
       }

@@ -1,9 +1,5 @@
 ---
 description: 'Предложить сообщение коммита по формату проекта, ничего не коммитя'
-argument-hint: '[all] — по умолчанию читается staged, с all — всё дерево'
-allowed-tools: >-
-  Bash(git branch:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*),
-  Read
 ---
 Норматив формата прочитай сам: `docs/standards/git/commit-messages.md`.
 

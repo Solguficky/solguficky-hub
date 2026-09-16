@@ -60,7 +60,7 @@ fingerprint() {
 }
 
 # Names declared under the top-level `skills:` list, one per line, sorted.
-# Deliberately scoped to that list alone: it ignores `targets:` and `extras:`,
+# Deliberately scoped to that list alone: it ignores `targets:`,
 # so an unrelated edit there (a new sync target, say) never trips this check.
 # CRLF is stripped so a Windows checkout compares the same as a Unix one.
 skill_names() {

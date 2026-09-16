@@ -255,8 +255,8 @@ jobs:
       - uses: extractions/setup-just@v4
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
-      - name: Commands are generated from Skillshare sources
-        run: sh tools/skillshare/check-generated.sh
+      - name: Commands are generated from the rulesync source
+        run: just check-commands
       - name: MCP configuration is generated from the rulesync source
         run: just check-mcp
       - name: Published pages are addressable

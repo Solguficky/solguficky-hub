@@ -1,6 +1,5 @@
 ---
 description: Открыть контур исполнения задачи Linear по идентификатору PER-N
-argument-hint: PER-N — идентификатор задачи Linear
 ---
 Задача: `$ARGUMENTS`
 

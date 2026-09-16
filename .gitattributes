@@ -32,3 +32,9 @@
 .codex/config.toml diff linguist-generated=true
 .vscode/mcp.json diff linguist-generated=true
 opencode.jsonc diff linguist-generated=true
+
+# Команды каждого агента генерируются из .rulesync/commands/ и проверяются
+# командой `just check-commands`. Здесь та же причина: перевод команды в форму
+# конкретного харнеса читается в источнике.
+.claude/commands/*.md diff linguist-generated=true
+.opencode/commands/*.md diff linguist-generated=true

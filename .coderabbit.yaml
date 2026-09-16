@@ -6,6 +6,7 @@ reviews:
     - "!.claude/skills/**"
     - "!.agents/skills/**"
     - "!.claude/commands/**"
+    - "!.opencode/commands/**"
   path_instructions:
     - path: "contracts/proto/**"
       instructions: >-

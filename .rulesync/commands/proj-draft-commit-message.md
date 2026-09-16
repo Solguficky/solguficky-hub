@@ -1,12 +1,13 @@
 ---
 description: Предложить сообщение коммита по формату проекта, ничего не коммитя
-argument-hint: "[all] — по умолчанию читается staged, с all — всё дерево"
-allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Read
+claudecode:
+  argument-hint: "[all] — по умолчанию читается staged, с all — всё дерево"
+  allowed-tools: Bash(git branch:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Read
 ---
 
-Норматив формата: @docs/standards/git/commit-messages.md
+Норматив формата прочитай сам: `docs/standards/git/commit-messages.md`.
 
-Аргумент: `$1` (пусто — только staged; `all` — всё дерево, включая незастейдженное).
+Аргумент: `$ARGUMENTS` (пусто — только staged; `all` — всё дерево, включая незастейдженное).
 
 Состояние репозитория:
 
