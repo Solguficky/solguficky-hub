@@ -14,6 +14,19 @@ worktree:
 # 2026-09-15). Поэтому список обязан быть самодостаточным: запреты
 # повторены здесь, иначе проектный allow-лист молча снимет глобальные.
 # Первое совпавшее правило выигрывает, поэтому запреты идут первыми.
+#
+# Почему allow-лист, а не смена approvalMode на yolo: правило `allow`
+# понижает ярус команды с exec до write, то есть команда проходит молча
+# в текущем режиме `write`, и режим менять не нужно. При этом остаются
+# включёнными и запреты ниже, и встроенная проверка критических форм
+# bash (`curl | sh`, `mkfs`, `dd of=/dev/`, `shutdown`), которую yolo
+# пропускает. Аргумент за сам режим `write` — в docs/development/omp.md.
+#
+# Список не универсальный: в него входит то, что читает состояние или
+# собирает проект. Запись в историю (`git commit`, `git push`,
+# `gh pr create`) в него сознательно не входит и остаётся вопросом —
+# на этом различии agent-execution-loop.md строит границу
+# «внутри контура / вне контура».
 bash:
   patterns:
     - match: "rm -rf *"
@@ -33,4 +46,44 @@ bash:
     - match: "git diff*"
       approval: allow
     - match: "git log*"
+      approval: allow
+    - match: "git branch*"
+      approval: allow
+    - match: "git worktree list*"
+      approval: allow
+    # Индекс правится, история нет: откатывается одним `git reset`.
+    - match: "git add*"
+      approval: allow
+    # Чтение и навигация по дереву.
+    - match: "ls *"
+      approval: allow
+    - match: "cat *"
+      approval: allow
+    - match: "sed -n*"
+      approval: allow
+    - match: "rg *"
+      approval: allow
+    # Стеки репозитория. Сборка и тесты идут через `just`, но прямой
+    # вызов инструмента нужен для точечной диагностики.
+    - match: "go *"
+      approval: allow
+    - match: "dotnet *"
+      approval: allow
+    - match: "npm *"
+      approval: allow
+    - match: "pnpm *"
+      approval: allow
+    - match: "node *"
+      approval: allow
+    - match: "python *"
+      approval: allow
+    # Скрипты проверок репозитория, tools/*/check-*.sh.
+    - match: "sh tools/*"
+      approval: allow
+    # GitHub только на чтение: создание PR остаётся вопросом.
+    - match: "gh pr view*"
+      approval: allow
+    - match: "gh pr list*"
+      approval: allow
+    - match: "gh pr checks*"
       approval: allow
