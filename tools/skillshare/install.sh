@@ -1,23 +1,32 @@
 #!/usr/bin/env sh
-# Install the declared external skills and refuse to pass if the command
-# rewrote the declaration itself.
+# Install the declared external skills and refuse to pass if the run left the
+# declaration with a different set of skills than it started with.
 #
-# `skillshare install -p` reconciles .skillshare/ with its configuration, and it
-# treats that configuration as its own working file: a skill its security audit
-# blocks is dropped from .skillshare/config.yaml, and its entry is cut out of
-# .skillshare/skills/.metadata.json alongside. Both files are in Git - they are
-# the declaration of dependencies, not a copy of them (ADR-041) - so such an
-# edit is a change to the repository that nothing announced. It was found once
-# only because the author happened to run `git status` afterwards.
+# `skillshare install` treats .skillshare/config.yaml as its own working
+# file, not just a spec to read from: on a completely empty
+# .skillshare/skills/ - every fresh worktree starts this way, the directory
+# is gitignored per ADR-041 - it can drop declared entries. Confirmed by
+# reinstalling from scratch: bulk `install -p` against an empty directory
+# dropped most of the declaration in skillshare 0.20.25, upstream-fixed for
+# successfully-installed entries in 0.20.29 (changelog names this exact
+# symptom, issue #280). Entries that hit a CRITICAL audit block are a
+# separate case that release does not cover: bulk still drops those from the
+# declaration on 0.20.29, which is why the two audit-exempt skills below get
+# reinstalled by name afterward - that step restores exactly the entries
+# bulk just dropped. Bulk runs first, before those named installs, because
+# doing it in the opposite order let a single named install drop an
+# unrelated declared entry too, on the same empty-directory test - a smaller
+# but still real instance of the same bug. Neither order eliminates it,
+# which is why the check below looks at the net result of the whole run
+# rather than trusting either step alone.
 #
 # A source that simply fails to resolve is not this case: the run reports
-# "failed to clone" and leaves the declaration alone. The silent edit comes from
-# the audit verdict, which is why the exemption below is about the audit and not
-# about reachability.
+# "failed to clone" and leaves the declaration alone.
 #
-# The comparison goes through `git hash-object`, which applies the same filters
-# Git applies on commit. A line ending that differs only in the working tree is
-# therefore not reported: this check is about content, not about checkout style.
+# The metadata comparison goes through `git hash-object`, which applies the
+# same filters Git applies on commit. A line ending that differs only in the
+# working tree is therefore not reported: this check is about content, not
+# about checkout style.
 
 set -eu
 
@@ -29,11 +38,9 @@ SKILLS='.skillshare/skills'
 # false-positive output-suppression directives in Microsoft reference files.
 # CRITICAL is already the most permissive block threshold, so there is nothing
 # to loosen, and `--exclude` does not apply to this mode - it needs a source
-# argument.
-#
-# Installing it by name with --force puts it on disk first. The bulk run that
-# follows then reports it as "already exists" and leaves the declaration alone:
-# `install -p` rewrites the declaration only for a source it tries to resolve.
+# argument. Bulk reports each as audit-blocked and drops it from the
+# declaration (see above); installing it by name with --force is what
+# actually puts it on disk and restores the entry.
 #
 # Drop this block once the analyzer stops matching that line; the skill itself
 # carries no finding this repository accepts as real.
@@ -52,10 +59,22 @@ fingerprint() {
     fi
 }
 
-# The guard below compares before and after, so it sees only what this run
-# changed. A declaration an earlier run already stripped looks unchanged to it
-# forever, and the skill it named would quietly stop being a dependency. So the
-# state is asserted once, up front, against the declaration itself.
+# Names declared under the top-level `skills:` list, one per line, sorted.
+# Deliberately scoped to that list alone: it ignores `targets:` and `extras:`,
+# so an unrelated edit there (a new sync target, say) never trips this check.
+# CRLF is stripped so a Windows checkout compares the same as a Unix one.
+skill_names() {
+    awk '
+        /^skills:/ { insection = 1; next }
+        /^[^[:space:]]/ { insection = 0 }
+        insection && /^  - name: / { print $3 }
+    ' "$CONFIG" | tr -d '\r' | sort
+}
+
+# The guard at the end compares before and after, so it sees only whether
+# this run changed the set of declared skills - not whether an earlier run
+# already had. So that state is asserted once, up front, against the
+# declaration itself.
 for audit_exempt in $AUDIT_EXEMPTS; do
     if ! grep -Fq "name: ${audit_exempt}" "$CONFIG"; then
         printf '%s is not declared in %s any more.\n\n' "$audit_exempt" "$CONFIG" >&2
@@ -65,8 +84,14 @@ for audit_exempt in $AUDIT_EXEMPTS; do
     fi
 done
 
-config_before=$(fingerprint "$CONFIG")
+names_before=$(skill_names)
 metadata_before=$(fingerprint "$METADATA")
+
+# Without `|| status=$?` a non-zero exit would end the script here under `set -e`
+# and skip the guard entirely - losing exactly the case the guard is for, where
+# bulk touches the declaration on its way to reporting an audit block.
+bulk_status=0
+skillshare install -p || bulk_status=$?
 
 for audit_exempt in $AUDIT_EXEMPTS; do
     if [ ! -d "$SKILLS/$audit_exempt" ]; then
@@ -81,32 +106,20 @@ for audit_exempt in $AUDIT_EXEMPTS; do
     fi
 done
 
-config_exempt=$(fingerprint "$CONFIG")
-metadata_exempt=$(fingerprint "$METADATA")
+names_after=$(skill_names)
 
-# Without `|| status=$?` a non-zero exit would end the script here under `set -e`
-# and skip the guard entirely - losing exactly the case the guard is for, where
-# one source fails to resolve and the audit strips another in the same run.
-bulk_status=0
-skillshare install -p || bulk_status=$?
-
-changed=''
-if [ "$(fingerprint "$CONFIG")" != "$config_exempt" ]; then
-    changed="${changed}  - ${CONFIG}
-"
-fi
-if [ "$(fingerprint "$METADATA")" != "$metadata_exempt" ]; then
-    changed="${changed}  - ${METADATA}
-"
-fi
-
-if [ -n "$changed" ]; then
-    printf '\nskillshare install changed the dependency declaration:\n\n%s\n' "$changed" >&2
+if [ "$names_after" != "$names_before" ]; then
+    tmp_before=$(mktemp)
+    tmp_after=$(mktemp)
+    printf '%s\n' "$names_before" >"$tmp_before"
+    printf '%s\n' "$names_after" >"$tmp_after"
+    printf '\nskillshare install changed the set of declared skills:\n\n' >&2
+    printf '  dropped: %s\n' "$(comm -23 "$tmp_before" "$tmp_after" | tr '\n' ' ')" >&2
+    printf '  added:   %s\n\n' "$(comm -13 "$tmp_before" "$tmp_after" | tr '\n' ' ')" >&2
+    rm -f "$tmp_before" "$tmp_after"
     printf 'Review the change before it becomes a commit:\n\n' >&2
     printf '  git diff -- %s %s\n\n' "$CONFIG" "$METADATA" >&2
-    printf 'Keep it only if the removed or rewritten entry is meant to go.\n' >&2
-    printf 'Otherwise restore the file and decide what to do with the skill\n' >&2
-    printf 'the audit rejected:\n\n' >&2
+    printf 'Restore it and retry, or decide what to do with the skill that was dropped:\n\n' >&2
     printf '  git checkout -- %s %s\n' "$CONFIG" "$METADATA" >&2
     exit 1
 fi
@@ -117,17 +130,9 @@ if [ "$bulk_status" -ne 0 ]; then
 fi
 
 # The named installs above record a fresh `version` for skills they reinstall,
-# and that is the point of running them. Only .metadata.json may move that way:
-# config.yaml is the list of dependencies, and nothing in this script has a
-# reason to rewrite it.
-if [ "$config_exempt" != "$config_before" ]; then
-    printf '\nInstalling audit-exempt skills rewrote %s, which they have no reason to touch:\n\n' "$CONFIG" >&2
-    printf '  git diff -- %s\n' "$CONFIG" >&2
-    exit 1
-fi
-
-if [ "$metadata_exempt" != "$metadata_before" ]; then
-    printf '\nInstalling audit-exempt skills refreshed the declaration they record.\n'
+# and that is the point of running them.
+if [ "$(fingerprint "$METADATA")" != "$metadata_before" ]; then
+    printf 'External skills installed; %s refreshed the version it records.\n' "$METADATA"
     printf 'Review and commit it - the `version` field is what pins the skill text:\n\n'
     printf '  git diff -- %s\n' "$METADATA"
     exit 0
