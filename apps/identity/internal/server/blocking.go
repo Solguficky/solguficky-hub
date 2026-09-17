@@ -26,7 +26,7 @@ RETURNING role`
 // потому что now() внутри транзакции не меняется. Отсутствие активных ролей после
 // блокировки — инвариант, поэтому уже заблокированный профиль не повод выйти
 // рано: роли могли остаться от блокировки мимо этой функции, и они отзываются.
-func (s identityService) blockIdentity(ctx context.Context, identityID string, actor uuid.NullUUID) (bool, error) {
+func (s identityService) blockIdentity(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, internal("begin transaction", err)
@@ -43,7 +43,7 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, a
 		if err != nil {
 			return false, internal("revoke active roles", err)
 		}
-		if err := journalRevokedRoles(ctx, tx, identityID, actor, revoked); err != nil {
+		if err := journalRevokedRoles(ctx, tx, identityID, performedBy, revoked); err != nil {
 			return false, internal("journal revoked roles", err)
 		}
 		if len(revoked) == 0 {
@@ -62,9 +62,9 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, a
 		return false, internal("revoke active roles", err)
 	}
 	if err := appendJournal(ctx, tx, journalEntry{
-		identityID: identityID,
-		actor:      actor,
-		action:     actionBlock,
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionBlock,
 	}); err != nil {
 		return false, internal("journal block", err)
 	}
@@ -77,7 +77,7 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, a
 // unblockIdentity снимает отметку и не возвращает ни одной роли: отзыв был
 // записью revoked_at, а повторный допуск начинается заново, выдачей роли
 // отдельным решением.
-func (s identityService) unblockIdentity(ctx context.Context, identityID string, actor uuid.NullUUID) (bool, error) {
+func (s identityService) unblockIdentity(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, internal("begin transaction", err)
@@ -95,9 +95,9 @@ func (s identityService) unblockIdentity(ctx context.Context, identityID string,
 		return false, internal("unblock identity", err)
 	}
 	if err := appendJournal(ctx, tx, journalEntry{
-		identityID: identityID,
-		actor:      actor,
-		action:     actionUnblock,
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionUnblock,
 	}); err != nil {
 		return false, internal("journal unblock", err)
 	}
@@ -125,13 +125,13 @@ func revokeActiveRoles(ctx context.Context, tx *sql.Tx, identityID string) ([]st
 	return roles, rows.Err()
 }
 
-func journalRevokedRoles(ctx context.Context, tx *sql.Tx, identityID string, actor uuid.NullUUID, roles []string) error {
+func journalRevokedRoles(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID, roles []string) error {
 	for _, role := range roles {
 		if err := appendJournal(ctx, tx, journalEntry{
-			identityID: identityID,
-			actor:      actor,
-			action:     actionRevoke,
-			role:       role,
+			identityID:  identityID,
+			performedBy: performedBy,
+			action:      actionRevoke,
+			role:        role,
 		}); err != nil {
 			return err
 		}

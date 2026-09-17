@@ -104,9 +104,9 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	const profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3601"
+	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3601"
 	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4001, 'roles')`, profileID)
+		VALUES ($1, 4001, 'roles')`, identityID)
 
 	roles := []string{"maintainer", "admin", "солегуфик", "комьюнити"}
 	grantIDs := []string{
@@ -123,10 +123,10 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 	}
 	for i, role := range roles {
 		execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, grantIDs[i], profileID, role)
+			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, grantIDs[i], identityID, role)
 
 		err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, duplicateIDs[i], profileID, role)
+			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, duplicateIDs[i], identityID, role)
 		assertUniqueViolation(t, err)
 	}
 }
@@ -138,12 +138,12 @@ func TestRoleDictionaryRejectsUnknownRole(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	const profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3621"
+	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3621"
 	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4002, 'roles')`, profileID)
+		VALUES ($1, 4002, 'roles')`, identityID)
 
 	err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3622', $1, 'unknown', TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, profileID)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3622', $1, 'unknown', TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, identityID)
 	assertCheckViolation(t, err)
 }
 
@@ -155,12 +155,12 @@ func TestAccessJournalIsAppendOnly(t *testing.T) {
 	}
 
 	const (
-		profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3711"
-		journalID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3712"
+		identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3711"
+		journalID  = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3712"
 	)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`, profileID)
-	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, actor_id, action, role, occurred_at)
-		VALUES ($1, $2, NULL, 'grant', 'admin', now())`, journalID, profileID)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`, identityID)
+	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, performed_by, action, role, occurred_at)
+		VALUES ($1, $2, NULL, 'grant', 'admin', now())`, journalID, identityID)
 
 	assertPgErrorCode(t, execMigration(t, db,
 		`UPDATE identity_access_journal SET action = 'revoke' WHERE id = $1`, journalID), "ID001")
@@ -213,24 +213,24 @@ func TestBlockedGuardWaitsForConcurrentBlock(t *testing.T) {
 	}
 
 	const (
-		profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3741"
-		roleID    = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3742"
+		identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3741"
+		roleID     = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3742"
 	)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9203)`, profileID)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9203)`, identityID)
 
 	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("begin block transaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, profileID); err != nil {
+	if _, err := tx.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, identityID); err != nil {
 		t.Fatalf("block profile: %v", err)
 	}
 
 	result := make(chan error, 1)
 	go func() {
 		_, err := db.ExecContext(context.Background(), `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, 'admin', now(), NULL)`, roleID, profileID)
+			VALUES ($1, $2, 'admin', now(), NULL)`, roleID, identityID)
 		result <- err
 	}()
 

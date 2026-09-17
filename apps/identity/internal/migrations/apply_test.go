@@ -82,14 +82,14 @@ func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
 	db := isolatedDB(t)
 	mustApply(t, db)
 
-	const profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3501"
+	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3501"
 	const grantID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3502"
 	const regrantID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3503"
 
 	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 3001, 'admin')`, profileID)
+		VALUES ($1, 3001, 'admin')`, identityID)
 	mustExec(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 12:00:00+00', $2)`, grantID, profileID)
+		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 12:00:00+00', $2)`, grantID, identityID)
 
 	mustExec(t, db, `UPDATE identity_roles SET revoked_at = TIMESTAMPTZ '2026-09-01 13:00:00+00' WHERE id = $1`, grantID)
 
@@ -110,7 +110,7 @@ func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
 	}
 
 	mustExec(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 14:00:00+00', $2)`, regrantID, profileID)
+		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 14:00:00+00', $2)`, regrantID, identityID)
 }
 
 func isolatedDB(t *testing.T) *sql.DB {

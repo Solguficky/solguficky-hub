@@ -45,14 +45,14 @@ const blockedGuardSQLState = "ID003"
 // активной выдачи не создаёт второй строки и не пишет журнал, потому что
 // изменения не было. Проверка блокировки идёт до вставки, под блокировкой строки
 // профиля, поэтому выдача заблокированному отклоняется на любом пути.
-func (s identityService) grantRole(ctx context.Context, identityID, role string, actor uuid.NullUUID) (bool, error) {
+func (s identityService) grantRole(ctx context.Context, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, internal("begin transaction", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	changed, err := grantRoleTx(ctx, tx, identityID, role, actor)
+	changed, err := grantRoleTx(ctx, tx, identityID, role, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant role", err)
 	}
@@ -62,14 +62,14 @@ func (s identityService) grantRole(ctx context.Context, identityID, role string,
 	return changed, nil
 }
 
-func (s identityService) revokeRole(ctx context.Context, identityID, role string, actor uuid.NullUUID) (bool, error) {
+func (s identityService) revokeRole(ctx context.Context, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, internal("begin transaction", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	changed, err := revokeRoleTx(ctx, tx, identityID, role, actor)
+	changed, err := revokeRoleTx(ctx, tx, identityID, role, performedBy)
 	if err != nil {
 		return false, roleStorageError("revoke role", err)
 	}
@@ -82,18 +82,18 @@ func (s identityService) revokeRole(ctx context.Context, identityID, role string
 // grantHubAdmission выдаёт обе роли допуска к хабу одной транзакцией: круги
 // вложенные (солегуфик входит в комьюнити), и допуск половинкой инвариант
 // ADR-043 нарушает. Идемпотентность сохраняется по каждой роли отдельно.
-func (s identityService) grantHubAdmission(ctx context.Context, identityID string, actor uuid.NullUUID) (bool, error) {
+func (s identityService) grantHubAdmission(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, internal("begin transaction", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	solegufikChanged, err := grantRoleTx(ctx, tx, identityID, roleSolegufik, actor)
+	solegufikChanged, err := grantRoleTx(ctx, tx, identityID, roleSolegufik, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
-	communityChanged, err := grantRoleTx(ctx, tx, identityID, roleCommunity, actor)
+	communityChanged, err := grantRoleTx(ctx, tx, identityID, roleCommunity, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
@@ -103,7 +103,7 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	return solegufikChanged || communityChanged, nil
 }
 
-func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, actor uuid.NullUUID) (bool, error) {
+func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
 		return false, err
@@ -115,7 +115,7 @@ func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, actor
 	if err != nil {
 		return false, err
 	}
-	result, err := tx.ExecContext(ctx, grantRoleSQL, grantID.String(), role, actorValue(actor), identityID)
+	result, err := tx.ExecContext(ctx, grantRoleSQL, grantID.String(), role, performedByValue(performedBy), identityID)
 	if err != nil {
 		return false, err
 	}
@@ -127,17 +127,17 @@ func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, actor
 		return false, nil
 	}
 	if err := appendJournal(ctx, tx, journalEntry{
-		identityID: identityID,
-		actor:      actor,
-		action:     actionGrant,
-		role:       role,
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionGrant,
+		role:        role,
 	}); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func revokeRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, actor uuid.NullUUID) (bool, error) {
+func revokeRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
 	result, err := tx.ExecContext(ctx, revokeRoleSQL, identityID, role)
 	if err != nil {
 		return false, err
@@ -150,10 +150,10 @@ func revokeRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, acto
 		return false, nil
 	}
 	if err := appendJournal(ctx, tx, journalEntry{
-		identityID: identityID,
-		actor:      actor,
-		action:     actionRevoke,
-		role:       role,
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionRevoke,
+		role:        role,
 	}); err != nil {
 		return false, err
 	}

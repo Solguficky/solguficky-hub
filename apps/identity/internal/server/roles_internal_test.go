@@ -31,17 +31,17 @@ func TestGrantRoleIsIdempotentAndJournaled(t *testing.T) {
 	assertJournalSummary(t, db, identityID, "grant:admin")
 }
 
-func TestGrantRoleRecordsActor(t *testing.T) {
+func TestGrantRoleRecordsPerformer(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	actorID := seedProfile(t, db, 9302)
+	performerID := seedProfile(t, db, 9302)
 	identityID := seedProfile(t, db, 9303)
-	actor := uuid.NullUUID{UUID: uuid.MustParse(actorID), Valid: true}
+	performer := uuid.NullUUID{UUID: uuid.MustParse(performerID), Valid: true}
 
-	if _, err := svc.grantRole(t.Context(), identityID, roleCommunity, actor); err != nil {
+	if _, err := svc.grantRole(t.Context(), identityID, roleCommunity, performer); err != nil {
 		t.Fatal(err)
 	}
-	assertJournalSummary(t, db, identityID, "grant:комьюнити@"+actorID)
+	assertJournalSummary(t, db, identityID, "grant:комьюнити@"+performerID)
 }
 
 func TestGrantRoleRefusesBlockedProfile(t *testing.T) {
@@ -218,7 +218,7 @@ func assertJournalSummary(t *testing.T, db *sql.DB, identityID string, want ...s
 func journalSummary(t *testing.T, db *sql.DB, identityID string) []string {
 	t.Helper()
 	rows, err := db.QueryContext(t.Context(), `
-		SELECT action, role, actor_id FROM identity_access_journal
+		SELECT action, role, performed_by FROM identity_access_journal
 		WHERE identity_id = $1`, identityID)
 	if err != nil {
 		t.Fatal(err)
@@ -228,16 +228,16 @@ func journalSummary(t *testing.T, db *sql.DB, identityID string) []string {
 	var entries []string
 	for rows.Next() {
 		var action string
-		var role, actor sql.NullString
-		if err := rows.Scan(&action, &role, &actor); err != nil {
+		var role, performer sql.NullString
+		if err := rows.Scan(&action, &role, &performer); err != nil {
 			t.Fatal(err)
 		}
 		entry := action
 		if role.Valid {
 			entry += ":" + role.String
 		}
-		if actor.Valid {
-			entry += "@" + actor.String
+		if performer.Valid {
+			entry += "@" + performer.String
 		}
 		entries = append(entries, entry)
 	}

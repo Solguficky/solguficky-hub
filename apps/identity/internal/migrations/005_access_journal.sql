@@ -7,7 +7,7 @@
 CREATE TABLE identity_access_journal (
     id UUID PRIMARY KEY,
     identity_id UUID NOT NULL,
-    actor_id UUID,
+    performed_by UUID,
     action TEXT NOT NULL,
     role TEXT,
     occurred_at TIMESTAMPTZ NOT NULL,

@@ -147,10 +147,10 @@ func assertSystemJournalActor(t *testing.T, db *sql.DB, identityID string) {
 	t.Helper()
 	var count int
 	if err := db.QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM identity_access_journal WHERE identity_id = $1 AND actor_id IS NULL`, identityID).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM identity_access_journal WHERE identity_id = $1 AND performed_by IS NULL`, identityID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count == 0 {
-		t.Fatal("journal has no row with NULL actor")
+		t.Fatal("journal has no row with NULL performed_by")
 	}
 }

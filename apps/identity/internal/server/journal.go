@@ -15,16 +15,17 @@ const (
 )
 
 const appendJournalSQL = `
-INSERT INTO identity_access_journal (id, identity_id, actor_id, action, role, occurred_at)
+INSERT INTO identity_access_journal (id, identity_id, performed_by, action, role, occurred_at)
 VALUES ($1, $2, $3, $4, $5, now())`
 
 // journalEntry — одно изменение роли или блокировки. Пустая роль означает
-// block/unblock: там роль не названа. Актор NULL означает системный переход.
+// block/unblock: там роль не названа. Пустой performedBy означает системный
+// переход: решение приняла система, а не человек.
 type journalEntry struct {
-	identityID string
-	actor      uuid.NullUUID
-	action     string
-	role       string
+	identityID  string
+	performedBy uuid.NullUUID
+	action      string
+	role        string
 }
 
 func appendJournal(ctx context.Context, tx *sql.Tx, entry journalEntry) error {
@@ -37,13 +38,13 @@ func appendJournal(ctx context.Context, tx *sql.Tx, entry journalEntry) error {
 		role = entry.role
 	}
 	_, err = tx.ExecContext(ctx, appendJournalSQL,
-		id.String(), entry.identityID, actorValue(entry.actor), entry.action, role)
+		id.String(), entry.identityID, performedByValue(entry.performedBy), entry.action, role)
 	return err
 }
 
-func actorValue(actor uuid.NullUUID) any {
-	if !actor.Valid {
+func performedByValue(performedBy uuid.NullUUID) any {
+	if !performedBy.Valid {
 		return nil
 	}
-	return actor.UUID.String()
+	return performedBy.UUID.String()
 }
