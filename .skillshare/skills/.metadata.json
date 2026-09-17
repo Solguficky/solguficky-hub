@@ -183,6 +183,18 @@
       "group": "mattpocock",
       "branch": "main"
     },
+    "orca-linear": {
+      "source": "https://github.com/stablyai/orca/skills/orca-linear",
+      "type": "github-subdir",
+      "installed_at": "2026-09-17T05:18:03.8661273+03:00",
+      "repo_url": "https://github.com/stablyai/orca.git",
+      "subdir": "skills/orca-linear",
+      "version": "77cd61df",
+      "tree_hash": "2b0b3b3d422f0d9cdb88574e955c345ed4370ea8",
+      "file_hashes": {
+        "SKILL.md": "sha256:85ee0d4d3cfadfec301e3a852c8ff959a1f366ac51b9c312cf463f050e427e72"
+      }
+    },
     "playwright-cli": {
       "source": "github.com/microsoft/playwright-cli/skills/playwright-cli",
       "type": "github-subdir",
