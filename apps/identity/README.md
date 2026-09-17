@@ -54,4 +54,4 @@ grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_MAINTAINER_TOKEN}" \
   localhost:50051 identity.v1.IdentityService/RevokeAdminRole
 ```
 
-Повтор операции успешен с `changed: false`. Не передавайте секрет параметром `-vv` и не печатайте его в журнал.
+Повтор операции успешен с `changed: false`. Выдача заблокированному профилю отвечает `FAILED_PRECONDITION`, отличимо от `NOT_FOUND` для отсутствующего профиля; каждое изменение ложится в журнал доступа в той же транзакции. Не передавайте секрет параметром `-vv` и не печатайте его в журнал.

@@ -6,7 +6,7 @@ ALTER TABLE profiles
 ALTER TABLE identity_roles
     DROP CONSTRAINT identity_roles_role_check,
     ADD CONSTRAINT identity_roles_role_check
-        CHECK (role IN ('maintainer', 'admin', 'солегуфик', 'комьюнити'));
+        CHECK (role IN ('maintainer', 'admin', 'member', 'public'));
 
 UPDATE identity_roles AS roles
 SET revoked_at = GREATEST(now(), roles.granted_at)
@@ -18,7 +18,7 @@ WHERE roles.identity_id = profiles.id
 INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 SELECT gen_random_uuid(), profiles.id, roles.role, profiles.created_at, NULL
 FROM profiles
-CROSS JOIN (VALUES ('солегуфик'::TEXT), ('комьюнити'::TEXT)) AS roles(role)
+CROSS JOIN (VALUES ('member'::TEXT), ('public'::TEXT)) AS roles(role)
 WHERE profiles.access_status = 'allowed'
 ON CONFLICT (identity_id, role) WHERE revoked_at IS NULL DO NOTHING;
 
@@ -42,7 +42,7 @@ SET access_status = CASE
         SELECT 1
         FROM identity_roles
         WHERE identity_roles.identity_id = profiles.id
-          AND identity_roles.role = 'солегуфик'
+          AND identity_roles.role = 'member'
           AND identity_roles.revoked_at IS NULL
     ) THEN 'allowed'
     ELSE 'pending'
@@ -52,7 +52,7 @@ ALTER TABLE profiles
     ALTER COLUMN access_status DROP DEFAULT;
 
 DELETE FROM identity_roles
-WHERE role IN ('maintainer', 'солегуфик', 'комьюнити');
+WHERE role IN ('maintainer', 'member', 'public');
 
 ALTER TABLE identity_roles
     DROP CONSTRAINT identity_roles_role_check,

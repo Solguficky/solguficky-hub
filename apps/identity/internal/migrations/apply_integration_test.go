@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -62,7 +63,7 @@ func TestApplyMigratesLegacyAccessStatus(t *testing.T) {
 	if got := activeRoleCount(t, db, allowedID); got != 2 {
 		t.Fatalf("allowed active roles: got %d want 2", got)
 	}
-	for _, role := range []string{"солегуфик", "комьюнити"} {
+	for _, role := range []string{"member", "public"} {
 		var grantedAt time.Time
 		var grantedBy sql.NullString
 		if err := db.QueryRowContext(t.Context(), `
@@ -103,11 +104,11 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	const profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3601"
+	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3601"
 	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4001, 'roles')`, profileID)
+		VALUES ($1, 4001, 'roles')`, identityID)
 
-	roles := []string{"maintainer", "admin", "солегуфик", "комьюнити"}
+	roles := []string{"maintainer", "admin", "member", "public"}
 	grantIDs := []string{
 		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3602",
 		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3603",
@@ -122,10 +123,10 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 	}
 	for i, role := range roles {
 		execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, grantIDs[i], profileID, role)
+			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, grantIDs[i], identityID, role)
 
 		err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, duplicateIDs[i], profileID, role)
+			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, duplicateIDs[i], identityID, role)
 		assertUniqueViolation(t, err)
 	}
 }
@@ -137,16 +138,193 @@ func TestRoleDictionaryRejectsUnknownRole(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	const profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3621"
+	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3621"
 	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4002, 'roles')`, profileID)
+		VALUES ($1, 4002, 'roles')`, identityID)
 
 	err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3622', $1, 'unknown', TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, profileID)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3622', $1, 'unknown', TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, identityID)
 	assertCheckViolation(t, err)
 }
 
+func TestAccessJournalIsAppendOnly(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const (
+		identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3711"
+		journalID  = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3712"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`, identityID)
+	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, performed_by, action, role, occurred_at)
+		VALUES ($1, $2, NULL, 'grant', 'admin', now())`, journalID, identityID)
+
+	assertPgErrorCode(t, execMigration(t, db,
+		`UPDATE identity_access_journal SET action = 'revoke' WHERE id = $1`, journalID), "ID001")
+	assertPgErrorCode(t, execMigration(t, db,
+		`DELETE FROM identity_access_journal WHERE id = $1`, journalID), "ID002")
+	assertPgErrorCode(t, execMigration(t, db, `TRUNCATE identity_access_journal`), "ID002")
+}
+
+func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const (
+		blockedID   = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3721"
+		unblockedID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3722"
+		revokedID   = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3723"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9202)`, unblockedID)
+
+	const insertRole = `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		VALUES ($1, $2, 'admin', now(), NULL)`
+
+	assertPgErrorCode(t, execMigration(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3724", blockedID), "ID003")
+
+	// Отозванная строка щиту не мешает: ограничение держит только активные выдачи.
+	execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by, revoked_at)
+		VALUES ($1, $2, 'admin', now() - interval '1 day', NULL, now())`, revokedID, blockedID)
+
+	// Возврат доступа снятием отметки отзыва закрыт тем же щитом.
+	assertPgErrorCode(t, execMigration(t, db,
+		`UPDATE identity_roles SET revoked_at = NULL WHERE id = $1`, revokedID), "ID003")
+
+	// Незаблокированный профиль активную выдачу принимает.
+	execMigrationTest(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
+}
+
+// TestBlockedGuardWaitsForConcurrentBlock проверяет, что щит читает blocked под
+// FOR UPDATE: незафиксированная блокировка заставляет INSERT активной роли ждать
+// освобождения строки профиля и после коммита получить ID003. С обычным SELECT
+// вставка прошла бы по снимку, снятому до блокировки.
+func TestBlockedGuardWaitsForConcurrentBlock(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const (
+		identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3741"
+		roleID     = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3742"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9203)`, identityID)
+
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("begin block transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, identityID); err != nil {
+		t.Fatalf("block profile: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := db.ExecContext(context.Background(), `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+			VALUES ($1, $2, 'admin', now(), NULL)`, roleID, identityID)
+		result <- err
+	}()
+
+	waitForProfileLockWait(t, db)
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit block: %v", err)
+	}
+
+	select {
+	case err := <-result:
+		assertPgErrorCode(t, err, "ID003")
+	case <-time.After(5 * time.Second):
+		t.Fatal("grant neither waited, nor was rejected")
+	}
+}
+
+// waitForProfileLockWait ждёт, пока INSERT из параллельной горутины встанет в
+// ожидание блокировки строки профиля. База теста изолирована, поэтому ожидающий
+// бэкенд в ней ровно один.
+func waitForProfileLockWait(t *testing.T, db *sql.DB) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int
+		if err := db.QueryRowContext(t.Context(), `
+			SELECT COUNT(*) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND datname = current_database()`).Scan(&waiting); err != nil {
+			t.Fatalf("read lock waits: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("grant did not wait for the profile lock")
+}
+
+func TestDownMigrationRemovesAccessJournalAndGuard(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	provider := migrationProvider(t, db)
+	if _, err := provider.Up(t.Context()); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := provider.DownTo(t.Context(), 4); err != nil {
+		t.Fatalf("roll back migration 5: %v", err)
+	}
+
+	if got := tableCount(t, db, "identity_access_journal"); got != 0 {
+		t.Fatalf("identity_access_journal tables after rollback: got %d want 0", got)
+	}
+	if got := tableCount(t, db, "identity_roles"); got != 1 {
+		t.Fatalf("identity_roles tables after rollback: got %d want 1", got)
+	}
+
+	var guardTriggers int
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM pg_trigger
+		WHERE tgname = 'identity_roles_blocked_guard' AND NOT tgisinternal`).Scan(&guardTriggers); err != nil {
+		t.Fatal(err)
+	}
+	if guardTriggers != 0 {
+		t.Fatalf("blocked guard triggers after rollback: got %d want 0", guardTriggers)
+	}
+}
+
+func tableCount(t *testing.T, db *sql.DB, name string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = $1`, name).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func assertPgErrorCode(t *testing.T, err error, want string) {
+	t.Helper()
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != want {
+		t.Fatalf("got %v want pg error %s", err, want)
+	}
+}
+
 func applyThrough(t *testing.T, db *sql.DB, version int64) {
+	t.Helper()
+	if _, err := migrationProvider(t, db).UpTo(t.Context(), version); err != nil {
+		t.Fatalf("apply migrations through %d: %v", version, err)
+	}
+}
+
+func migrationProvider(t *testing.T, db *sql.DB) *goose.Provider {
 	t.Helper()
 	locker, err := lock.NewPostgresSessionLocker()
 	if err != nil {
@@ -161,9 +339,7 @@ func applyThrough(t *testing.T, db *sql.DB, version int64) {
 			t.Errorf("close migration provider: %v", err)
 		}
 	})
-	if _, err := provider.UpTo(t.Context(), version); err != nil {
-		t.Fatalf("apply migrations through %d: %v", version, err)
-	}
+	return provider
 }
 
 func assertProfileBlocked(t *testing.T, db *sql.DB, identityID string, want bool) {

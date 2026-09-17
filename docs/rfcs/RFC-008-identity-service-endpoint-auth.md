@@ -48,7 +48,7 @@
 | Публичный HTTP-прокси Railway ломает gRPC; публичный gRPC — это TCP Proxy в интернет | [документация Railway](https://docs.railway.com/networking/tcp-proxy), [разбор сотрудника](https://station.railway.com/questions/nest-js-g-rpc-request-not-working-6d81108e) | Сеть без auth превращается в дыру в тот момент, когда порт публикуют «чтобы дёрнуть grpcurl» |
 | Приватная сеть Railway шифрует трафик WireGuard и не ограничивает протокол | [private networking](https://docs.railway.com/networking/private-networking) | Это защита транзита между сервисами одной среды, не доказательство, что вызывающий — maintainer |
 | Журнал ADR-026 пишет смену статуса допуска, не выдачу роли | ADR-026, бриф Identity | Он не аудитит этот endpoint |
-| Строка роли несёт `granted_at`, `granted_by`, `revoked_at` | миграция `00001_identity_schema.sql` | Долговечный след выдачи уже спроектирован; субъект для maintainer'а — дыра схемы, не дыра auth |
+| Строка роли несёт `granted_at`, `granted_by`, `revoked_at` | миграция `001_identity_schema.sql` | Долговечный след выдачи уже спроектирован; субъект для maintainer'а — дыра схемы, не дыра auth |
 | Успешный RPC пишется на `Debug` | README Identity, `logging.md` | Выдача роли — редкая операция вне горячего цикла; её успех на границе должен быть виден без debug |
 
 ## Сценарии и требования

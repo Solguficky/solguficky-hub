@@ -13,16 +13,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const (
-	grantAdminSQL = `
-INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-SELECT $1, id, '` + roleAdmin + `', now(), NULL FROM profiles WHERE id = $2
-ON CONFLICT (identity_id, role) WHERE revoked_at IS NULL DO NOTHING`
-	revokeAdminSQL = `
-UPDATE identity_roles SET revoked_at = now()
-WHERE identity_id = $1 AND role = '` + roleAdmin + `' AND revoked_at IS NULL`
-)
-
 func (s identityService) GrantAdminRole(ctx context.Context, req *identityv1.GrantAdminRoleRequest) (*identityv1.GrantAdminRoleResponse, error) {
 	if err := s.authenticateMaintainer(ctx); err != nil {
 		return nil, err
@@ -31,26 +21,9 @@ func (s identityService) GrantAdminRole(ctx context.Context, req *identityv1.Gra
 	if err != nil {
 		return nil, err
 	}
-	grantID, err := uuid.NewV7()
+	changed, err := s.grantRole(ctx, identityID, roleAdmin, maintainerActor())
 	if err != nil {
-		return nil, internal("generate role grant id", err)
-	}
-	result, err := s.db.ExecContext(ctx, grantAdminSQL, grantID.String(), identityID)
-	if err != nil {
-		return nil, internal("grant admin role", err)
-	}
-	changed, err := changed(result)
-	if err != nil {
-		return nil, internal("read grant result", err)
-	}
-	if !changed {
-		var exists bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM profiles WHERE id = $1)`, identityID).Scan(&exists); err != nil {
-			return nil, internal("find profile", err)
-		}
-		if !exists {
-			return nil, status.Error(codes.NotFound, "identity not found")
-		}
+		return nil, roleStatus(err)
 	}
 	s.log.Info("admin role granted", "service", ServiceName, "identity_id", identityID, "changed", changed)
 	return &identityv1.GrantAdminRoleResponse{Changed: changed}, nil
@@ -64,16 +37,18 @@ func (s identityService) RevokeAdminRole(ctx context.Context, req *identityv1.Re
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.db.ExecContext(ctx, revokeAdminSQL, identityID)
+	changed, err := s.revokeRole(ctx, identityID, roleAdmin, maintainerActor())
 	if err != nil {
-		return nil, internal("revoke admin role", err)
+		return nil, roleStatus(err)
 	}
-	wasChanged, err := changed(result)
-	if err != nil {
-		return nil, internal("read revoke result", err)
-	}
-	s.log.Info("admin role revoked", "service", ServiceName, "identity_id", identityID, "changed", wasChanged)
-	return &identityv1.RevokeAdminRoleResponse{Changed: wasChanged}, nil
+	s.log.Info("admin role revoked", "service", ServiceName, "identity_id", identityID, "changed", changed)
+	return &identityv1.RevokeAdminRoleResponse{Changed: changed}, nil
+}
+
+// maintainerActor: профиля maintainer'а нет, поэтому и granted_by, и актор
+// журнала остаются NULL ([PER-169]). Системный переход называет актора так же.
+func maintainerActor() uuid.NullUUID {
+	return uuid.NullUUID{}
 }
 
 func (s identityService) authenticateMaintainer(ctx context.Context) error {

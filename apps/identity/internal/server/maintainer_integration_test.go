@@ -1,9 +1,11 @@
 package server_test
 
 import (
+	"database/sql"
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -72,5 +74,83 @@ func TestMaintainerMethodsRejectMissingEmptyAndWrongCredentials(t *testing.T) {
 			}
 			assertRoleCount(t, db, profile.GetIdentityId(), 0)
 		})
+	}
+}
+
+func TestGrantAdminRoleRejectsBlockedProfileDistinctFromMissing(t *testing.T) {
+	t.Parallel()
+	db := migratedDB(t)
+	conn := newConnWithToken(t, db, maintainerToken)
+	client := identityv1.NewIdentityServiceClient(conn)
+	profile := resolve(t, client, 7201, nil)
+	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, profile.GetIdentityId())
+	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
+
+	_, blockedErr := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+	if status.Code(blockedErr) != codes.FailedPrecondition {
+		t.Fatalf("blocked grant code: got %v want %s", blockedErr, codes.FailedPrecondition)
+	}
+	_, missingErr := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: uuid.NewString()})
+	if status.Code(missingErr) != codes.NotFound {
+		t.Fatalf("missing grant code: got %v want %s", missingErr, codes.NotFound)
+	}
+
+	assertRoleCount(t, db, profile.GetIdentityId(), 0)
+	assertJournalCount(t, db, profile.GetIdentityId(), 0)
+}
+
+func TestMaintainerRoleChangesAreJournaled(t *testing.T) {
+	t.Parallel()
+	db := migratedDB(t)
+	conn := newConnWithToken(t, db, maintainerToken)
+	client := identityv1.NewIdentityServiceClient(conn)
+	profile := resolve(t, client, 7202, nil)
+	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
+
+	granted, err := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+	if err != nil || !granted.GetChanged() {
+		t.Fatalf("grant: response=%v error=%v", granted, err)
+	}
+	assertJournalCount(t, db, profile.GetIdentityId(), 1)
+	assertSystemJournalActor(t, db, profile.GetIdentityId())
+
+	again, err := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+	if err != nil || again.GetChanged() {
+		t.Fatalf("second grant: response=%v error=%v", again, err)
+	}
+	assertJournalCount(t, db, profile.GetIdentityId(), 1)
+
+	if _, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()}); err != nil {
+		t.Fatal(err)
+	}
+	assertJournalCount(t, db, profile.GetIdentityId(), 2)
+
+	if _, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()}); err != nil {
+		t.Fatal(err)
+	}
+	assertJournalCount(t, db, profile.GetIdentityId(), 2)
+}
+
+func assertJournalCount(t *testing.T, db *sql.DB, identityID string, want int) {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM identity_access_journal WHERE identity_id = $1`, identityID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != want {
+		t.Fatalf("journal rows for %s: got %d want %d", identityID, count, want)
+	}
+}
+
+func assertSystemJournalActor(t *testing.T, db *sql.DB, identityID string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM identity_access_journal WHERE identity_id = $1 AND performed_by IS NULL`, identityID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Fatal("journal has no row with NULL performed_by")
 	}
 }
