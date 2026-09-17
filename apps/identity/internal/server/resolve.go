@@ -14,14 +14,13 @@ import (
 )
 
 const (
-	accessPending = "pending"
-	roleAdmin     = "admin"
+	roleAdmin = "admin"
 )
 
 const (
 	upsertProfileSQL = `
-INSERT INTO profiles (id, telegram_user_id, username, access_status)
-VALUES ($1, $2, $3, '` + accessPending + `')
+INSERT INTO profiles (id, telegram_user_id, username)
+VALUES ($1, $2, $3)
 ON CONFLICT (telegram_user_id) DO UPDATE
 SET username = EXCLUDED.username,
     updated_at = now()

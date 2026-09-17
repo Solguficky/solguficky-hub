@@ -28,7 +28,7 @@ func TestResolveIdentityCreatesProfileAndReusesID(t *testing.T) {
 	if len(first.GetGlobalRoles()) != 0 {
 		t.Fatalf("global_roles: got %v want empty", first.GetGlobalRoles())
 	}
-	assertAccessStatus(t, db, 1001, "pending")
+	assertBlocked(t, db, 1001, false)
 
 	second := resolve(t, client, 1001, &username)
 	if second.GetIdentityId() != first.GetIdentityId() {
@@ -36,7 +36,7 @@ func TestResolveIdentityCreatesProfileAndReusesID(t *testing.T) {
 	}
 
 	assertProfileCount(t, db, 1001, 1)
-	assertAccessStatus(t, db, 1001, "pending")
+	assertBlocked(t, db, 1001, false)
 }
 
 func TestResolveIdentityConcurrentSameTelegramUserID(t *testing.T) {
@@ -131,7 +131,7 @@ func TestResolveIdentityReturnsExistingAdminRole(t *testing.T) {
 	if len(first.GetGlobalRoles()) != 0 {
 		t.Fatalf("global_roles before grant: got %v want empty", first.GetGlobalRoles())
 	}
-	assertAccessStatus(t, db, adminTelegramID, "pending")
+	assertBlocked(t, db, adminTelegramID, false)
 
 	insertAdminRole(t, db, first.GetIdentityId())
 
@@ -305,14 +305,14 @@ func assertActiveRoleCount(t *testing.T, db *sql.DB, identityID string, want int
 	}
 }
 
-func assertAccessStatus(t *testing.T, db *sql.DB, telegramUserID int64, want string) {
+func assertBlocked(t *testing.T, db *sql.DB, telegramUserID int64, want bool) {
 	t.Helper()
-	var got string
-	if err := db.QueryRowContext(t.Context(), `SELECT access_status FROM profiles WHERE telegram_user_id = $1`, telegramUserID).Scan(&got); err != nil {
+	var got bool
+	if err := db.QueryRowContext(t.Context(), `SELECT blocked FROM profiles WHERE telegram_user_id = $1`, telegramUserID).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Fatalf("access_status for %d: got %q want %q", telegramUserID, got, want)
+		t.Fatalf("blocked for %d: got %t want %t", telegramUserID, got, want)
 	}
 }
 
