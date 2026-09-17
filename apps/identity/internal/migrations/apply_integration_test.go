@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -198,6 +199,74 @@ func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
 
 	// Незаблокированный профиль активную выдачу принимает.
 	execMigrationTest(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
+}
+
+// TestBlockedGuardWaitsForConcurrentBlock проверяет, что щит читает blocked под
+// FOR UPDATE: незафиксированная блокировка заставляет INSERT активной роли ждать
+// освобождения строки профиля и после коммита получить ID003. С обычным SELECT
+// вставка прошла бы по снимку, снятому до блокировки.
+func TestBlockedGuardWaitsForConcurrentBlock(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const (
+		profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3741"
+		roleID    = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3742"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9203)`, profileID)
+
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("begin block transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, profileID); err != nil {
+		t.Fatalf("block profile: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := db.ExecContext(context.Background(), `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+			VALUES ($1, $2, 'admin', now(), NULL)`, roleID, profileID)
+		result <- err
+	}()
+
+	waitForProfileLockWait(t, db)
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit block: %v", err)
+	}
+
+	select {
+	case err := <-result:
+		assertPgErrorCode(t, err, "ID003")
+	case <-time.After(5 * time.Second):
+		t.Fatal("grant neither waited, nor was rejected")
+	}
+}
+
+// waitForProfileLockWait ждёт, пока INSERT из параллельной горутины встанет в
+// ожидание блокировки строки профиля. База теста изолирована, поэтому ожидающий
+// бэкенд в ней ровно один.
+func waitForProfileLockWait(t *testing.T, db *sql.DB) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int
+		if err := db.QueryRowContext(t.Context(), `
+			SELECT COUNT(*) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND datname = current_database()`).Scan(&waiting); err != nil {
+			t.Fatalf("read lock waits: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("grant did not wait for the profile lock")
 }
 
 func TestApplySweepsActiveRolesOfBlockedProfiles(t *testing.T) {

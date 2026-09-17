@@ -87,17 +87,33 @@ SELECT gen_random_uuid(), identity_id, NULL, 'revoke', role, now() FROM revoked;
 -- неустранимым для любого пути выдачи, включая будущую автовыдачу и правку SQL
 -- напрямую, и закрывает возврат доступа через revoked_at = NULL. ID003 —
 -- «профиль заблокирован», отличимо от нарушения ограничения схемы.
+--
+-- Состояние читается под FOR UPDATE: на READ COMMITTED обычный SELECT увидел бы
+-- зафиксированное `blocked = false`, пока параллельный blockIdentity ещё не
+-- зафиксировал свою отметку, и пропустил бы активную роль на только что
+-- заблокированный профиль. FOR UPDATE ждёт блокировку строки профиля и после
+-- неё перечитывает актуальную версию. Порядок блокировок совпадает с
+-- blockIdentity — сначала profiles, потом identity_roles, — поэтому дедлока нет.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION reject_blocked_identity_role_grant()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+    blocked BOOLEAN;
 BEGIN
-    IF NEW.revoked_at IS NULL
-       AND (SELECT profiles.blocked FROM profiles WHERE profiles.id = NEW.identity_id) THEN
-        RAISE EXCEPTION 'identity is blocked'
-            USING ERRCODE = 'ID003';
+    IF NEW.revoked_at IS NULL THEN
+        SELECT profiles.blocked
+        INTO blocked
+        FROM profiles
+        WHERE profiles.id = NEW.identity_id
+        FOR UPDATE;
+
+        IF blocked THEN
+            RAISE EXCEPTION 'identity is blocked'
+                USING ERRCODE = 'ID003';
+        END IF;
     END IF;
     RETURN NEW;
 END;
