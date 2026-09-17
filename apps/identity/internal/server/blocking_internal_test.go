@@ -28,7 +28,7 @@ func TestBlockIdentityRevokesEveryActiveRole(t *testing.T) {
 	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
 		t.Fatalf("active roles after block: got %d want 0", got)
 	}
-	assertJournalSummary(t, db, identityID, "block", "grant:admin", "grant:солегуфик", "grant:комьюнити")
+	assertJournalSummary(t, db, identityID, "block", "grant:admin", "grant:member", "grant:public")
 }
 
 func TestBlockIdentityIsIdempotent(t *testing.T) {

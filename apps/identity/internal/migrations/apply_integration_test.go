@@ -63,7 +63,7 @@ func TestApplyMigratesLegacyAccessStatus(t *testing.T) {
 	if got := activeRoleCount(t, db, allowedID); got != 2 {
 		t.Fatalf("allowed active roles: got %d want 2", got)
 	}
-	for _, role := range []string{"солегуфик", "комьюнити"} {
+	for _, role := range []string{"member", "public"} {
 		var grantedAt time.Time
 		var grantedBy sql.NullString
 		if err := db.QueryRowContext(t.Context(), `
@@ -108,7 +108,7 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
 		VALUES ($1, 4001, 'roles')`, identityID)
 
-	roles := []string{"maintainer", "admin", "солегуфик", "комьюнити"}
+	roles := []string{"maintainer", "admin", "member", "public"}
 	grantIDs := []string{
 		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3602",
 		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3603",

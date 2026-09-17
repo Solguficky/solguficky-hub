@@ -38,10 +38,10 @@ func TestGrantRoleRecordsPerformer(t *testing.T) {
 	identityID := seedProfile(t, db, 9303)
 	performer := uuid.NullUUID{UUID: uuid.MustParse(performerID), Valid: true}
 
-	if _, err := svc.grantRole(t.Context(), identityID, roleCommunity, performer); err != nil {
+	if _, err := svc.grantRole(t.Context(), identityID, rolePublic, performer); err != nil {
 		t.Fatal(err)
 	}
-	assertJournalSummary(t, db, identityID, "grant:комьюнити@"+performerID)
+	assertJournalSummary(t, db, identityID, "grant:public@"+performerID)
 }
 
 func TestGrantRoleRefusesBlockedProfile(t *testing.T) {
@@ -120,13 +120,13 @@ func TestGrantHubAdmissionGrantsBothRolesInOneTransaction(t *testing.T) {
 	if got := activeRoleCountInternal(t, db, identityID); got != 2 {
 		t.Fatalf("active roles: got %d want 2", got)
 	}
-	assertJournalSummary(t, db, identityID, "grant:солегуфик", "grant:комьюнити")
+	assertJournalSummary(t, db, identityID, "grant:member", "grant:public")
 
 	again, err := svc.grantHubAdmission(t.Context(), identityID, uuid.NullUUID{})
 	if err != nil || again {
 		t.Fatalf("repeated hub admission: changed=%t error=%v", again, err)
 	}
-	assertJournalSummary(t, db, identityID, "grant:солегуфик", "grant:комьюнити")
+	assertJournalSummary(t, db, identityID, "grant:member", "grant:public")
 }
 
 func TestGrantHubAdmissionRefusesBlockedProfile(t *testing.T) {

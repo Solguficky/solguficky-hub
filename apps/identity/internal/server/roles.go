@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	roleAdmin     = "admin"
-	roleSolegufik = "солегуфик"
-	roleCommunity = "комьюнити"
+	roleAdmin  = "admin"
+	roleMember = "member"
+	rolePublic = "public"
 )
 
 const (
@@ -80,7 +80,7 @@ func (s identityService) revokeRole(ctx context.Context, identityID, role string
 }
 
 // grantHubAdmission выдаёт обе роли допуска к хабу одной транзакцией: круги
-// вложенные (солегуфик входит в комьюнити), и допуск половинкой инвариант
+// вложенные (member входит в public), и допуск половинкой инвариант
 // ADR-043 нарушает. Идемпотентность сохраняется по каждой роли отдельно.
 func (s identityService) grantHubAdmission(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -89,18 +89,18 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	solegufikChanged, err := grantRoleTx(ctx, tx, identityID, roleSolegufik, performedBy)
+	memberChanged, err := grantRoleTx(ctx, tx, identityID, roleMember, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
-	communityChanged, err := grantRoleTx(ctx, tx, identityID, roleCommunity, performedBy)
+	publicChanged, err := grantRoleTx(ctx, tx, identityID, rolePublic, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return false, internal("commit", err)
 	}
-	return solegufikChanged || communityChanged, nil
+	return memberChanged || publicChanged, nil
 }
 
 func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
