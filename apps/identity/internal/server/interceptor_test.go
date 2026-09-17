@@ -317,8 +317,8 @@ func TestUnaryLoggingRedactsPostgresRowValues(t *testing.T) {
 	pgErr := &pgconn.PgError{
 		Code:           "23514",
 		Message:        `new row for relation "profiles" violates check constraint`,
-		Detail:         `Failing row contains (0198f2a4, 515151, solgufik_nickname, pending).`,
-		ConstraintName: "profiles_access_status_check",
+		Detail:         `Failing row contains (0198f2a4, -1, solgufik_nickname, 2026-09-01, 2026-09-01, f).`,
+		ConstraintName: "profiles_telegram_user_id_positive",
 	}
 
 	_, err := unaryLogging(slog.New(logs))(t.Context(), nil, info,
@@ -334,7 +334,7 @@ func TestUnaryLoggingRedactsPostgresRowValues(t *testing.T) {
 	if strings.Contains(logged, "solgufik_nickname") {
 		t.Fatalf("error carries the failing row into the log: %q", logged)
 	}
-	for _, want := range []string{"upsert profile", "23514", "profiles_access_status_check"} {
+	for _, want := range []string{"upsert profile", "23514", "profiles_telegram_user_id_positive"} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("error drops %q, leaving the failure unreadable: %q", want, logged)
 		}

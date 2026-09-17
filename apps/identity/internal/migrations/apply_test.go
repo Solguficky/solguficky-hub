@@ -54,11 +54,11 @@ func TestDuplicateTelegramUserIDIsRejected(t *testing.T) {
 	db := isolatedDB(t)
 	mustApply(t, db)
 
-	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd', 1001, 'alice', 'allowed')`)
+	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd', 1001, 'alice')`)
 
-	err := exec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce', 1001, 'bob', 'allowed')`)
+	err := exec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce', 1001, 'bob')`)
 	assertUniqueViolation(t, err)
 }
 
@@ -67,14 +67,14 @@ func TestDuplicateUsernameAndMissingUsernameAreAllowed(t *testing.T) {
 	db := isolatedDB(t)
 	mustApply(t, db)
 
-	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401', 2001, 'same', 'allowed')`)
-	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402', 2002, 'same', 'allowed')`)
-	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3403', 2003, NULL, 'allowed')`)
-	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3404', 2004, NULL, 'pending')`)
+	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401', 2001, 'same')`)
+	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402', 2002, 'same')`)
+	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3403', 2003, NULL)`)
+	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3404', 2004, NULL)`)
 }
 
 func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
@@ -86,8 +86,8 @@ func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
 	const grantID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3502"
 	const regrantID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3503"
 
-	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username, access_status)
-		VALUES ($1, 3001, 'admin', 'allowed')`, profileID)
+	mustExec(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ($1, 3001, 'admin')`, profileID)
 	mustExec(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 12:00:00+00', $2)`, grantID, profileID)
 
