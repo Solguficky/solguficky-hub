@@ -14,10 +14,6 @@ import (
 )
 
 const (
-	roleAdmin = "admin"
-)
-
-const (
 	upsertProfileSQL = `
 INSERT INTO profiles (id, telegram_user_id, username)
 VALUES ($1, $2, $3)

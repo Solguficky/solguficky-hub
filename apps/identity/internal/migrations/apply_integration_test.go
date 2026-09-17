@@ -146,7 +146,154 @@ func TestRoleDictionaryRejectsUnknownRole(t *testing.T) {
 	assertCheckViolation(t, err)
 }
 
+func TestAccessJournalIsAppendOnly(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const (
+		profileID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3711"
+		journalID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3712"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`, profileID)
+	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, actor_id, action, role, occurred_at)
+		VALUES ($1, $2, NULL, 'grant', 'admin', now())`, journalID, profileID)
+
+	assertPgErrorCode(t, execMigration(t, db,
+		`UPDATE identity_access_journal SET action = 'revoke' WHERE id = $1`, journalID), "ID001")
+	assertPgErrorCode(t, execMigration(t, db,
+		`DELETE FROM identity_access_journal WHERE id = $1`, journalID), "ID002")
+	assertPgErrorCode(t, execMigration(t, db, `TRUNCATE identity_access_journal`), "ID002")
+}
+
+func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	const (
+		blockedID   = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3721"
+		unblockedID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3722"
+		revokedID   = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3723"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9202)`, unblockedID)
+
+	const insertRole = `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		VALUES ($1, $2, 'admin', now(), NULL)`
+
+	assertPgErrorCode(t, execMigration(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3724", blockedID), "ID003")
+
+	// Отозванная строка щиту не мешает: ограничение держит только активные выдачи.
+	execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by, revoked_at)
+		VALUES ($1, $2, 'admin', now() - interval '1 day', NULL, now())`, revokedID, blockedID)
+
+	// Возврат доступа снятием отметки отзыва закрыт тем же щитом.
+	assertPgErrorCode(t, execMigration(t, db,
+		`UPDATE identity_roles SET revoked_at = NULL WHERE id = $1`, revokedID), "ID003")
+
+	// Незаблокированный профиль активную выдачу принимает.
+	execMigrationTest(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
+}
+
+func TestApplySweepsActiveRolesOfBlockedProfiles(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	applyThrough(t, db, 4)
+
+	const (
+		blockedID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3731"
+		roleID    = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3732"
+	)
+	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
+	// granted_at в будущем: отзыв обязан выставить revoked_at не раньше выдачи,
+	// иначе sweep уронил бы ограничение и всю миграцию.
+	execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		VALUES ($1, $2, 'admin', now() + interval '1 day', NULL)`, roleID, blockedID)
+
+	if err := migrations.Apply(t.Context(), db); err != nil {
+		t.Fatalf("apply current migrations: %v", err)
+	}
+
+	if got := activeRoleCount(t, db, blockedID); got != 0 {
+		t.Fatalf("active roles after sweep: got %d want 0", got)
+	}
+
+	var action, role string
+	var actor sql.NullString
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT action, role, actor_id FROM identity_access_journal WHERE identity_id = $1`, blockedID).
+		Scan(&action, &role, &actor); err != nil {
+		t.Fatalf("read sweep journal row: %v", err)
+	}
+	if action != "revoke" || role != "admin" {
+		t.Fatalf("sweep journal row: got %s/%s want revoke/admin", action, role)
+	}
+	if actor.Valid {
+		t.Fatalf("sweep journal actor: got %q want NULL", actor.String)
+	}
+}
+
+func TestDownMigrationRemovesAccessJournalAndGuard(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	provider := migrationProvider(t, db)
+	if _, err := provider.Up(t.Context()); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if _, err := provider.DownTo(t.Context(), 4); err != nil {
+		t.Fatalf("roll back migration 5: %v", err)
+	}
+
+	if got := tableCount(t, db, "identity_access_journal"); got != 0 {
+		t.Fatalf("identity_access_journal tables after rollback: got %d want 0", got)
+	}
+	if got := tableCount(t, db, "identity_roles"); got != 1 {
+		t.Fatalf("identity_roles tables after rollback: got %d want 1", got)
+	}
+
+	var guardTriggers int
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM pg_trigger
+		WHERE tgname = 'identity_roles_blocked_guard' AND NOT tgisinternal`).Scan(&guardTriggers); err != nil {
+		t.Fatal(err)
+	}
+	if guardTriggers != 0 {
+		t.Fatalf("blocked guard triggers after rollback: got %d want 0", guardTriggers)
+	}
+}
+
+func tableCount(t *testing.T, db *sql.DB, name string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = $1`, name).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func assertPgErrorCode(t *testing.T, err error, want string) {
+	t.Helper()
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != want {
+		t.Fatalf("got %v want pg error %s", err, want)
+	}
+}
+
 func applyThrough(t *testing.T, db *sql.DB, version int64) {
+	t.Helper()
+	if _, err := migrationProvider(t, db).UpTo(t.Context(), version); err != nil {
+		t.Fatalf("apply migrations through %d: %v", version, err)
+	}
+}
+
+func migrationProvider(t *testing.T, db *sql.DB) *goose.Provider {
 	t.Helper()
 	locker, err := lock.NewPostgresSessionLocker()
 	if err != nil {
@@ -161,9 +308,7 @@ func applyThrough(t *testing.T, db *sql.DB, version int64) {
 			t.Errorf("close migration provider: %v", err)
 		}
 	})
-	if _, err := provider.UpTo(t.Context(), version); err != nil {
-		t.Fatalf("apply migrations through %d: %v", version, err)
-	}
+	return provider
 }
 
 func assertProfileBlocked(t *testing.T, db *sql.DB, identityID string, want bool) {
