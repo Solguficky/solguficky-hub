@@ -269,44 +269,6 @@ func waitForProfileLockWait(t *testing.T, db *sql.DB) {
 	t.Fatal("grant did not wait for the profile lock")
 }
 
-func TestApplySweepsActiveRolesOfBlockedProfiles(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	applyThrough(t, db, 4)
-
-	const (
-		blockedID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3731"
-		roleID    = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3732"
-	)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
-	// granted_at в будущем: отзыв обязан выставить revoked_at не раньше выдачи,
-	// иначе sweep уронил бы ограничение и всю миграцию.
-	execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', now() + interval '1 day', NULL)`, roleID, blockedID)
-
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply current migrations: %v", err)
-	}
-
-	if got := activeRoleCount(t, db, blockedID); got != 0 {
-		t.Fatalf("active roles after sweep: got %d want 0", got)
-	}
-
-	var action, role string
-	var actor sql.NullString
-	if err := db.QueryRowContext(t.Context(), `
-		SELECT action, role, actor_id FROM identity_access_journal WHERE identity_id = $1`, blockedID).
-		Scan(&action, &role, &actor); err != nil {
-		t.Fatalf("read sweep journal row: %v", err)
-	}
-	if action != "revoke" || role != "admin" {
-		t.Fatalf("sweep journal row: got %s/%s want revoke/admin", action, role)
-	}
-	if actor.Valid {
-		t.Fatalf("sweep journal actor: got %q want NULL", actor.String)
-	}
-}
-
 func TestDownMigrationRemovesAccessJournalAndGuard(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

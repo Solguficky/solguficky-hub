@@ -68,21 +68,6 @@ ON identity_access_journal
 FOR EACH STATEMENT
 EXECUTE FUNCTION reject_identity_access_journal_change();
 
--- Sweep: до этого ограничения выдача роли не проверяла блокировку, и
--- заблокированный профиль мог держать активную роль. Миграция приводит данные к
--- инварианту и записывает системный отзыв актором NULL. GREATEST держит
--- `revoked_at >= granted_at`: выдача могла записать granted_at позже now() этой
--- транзакции, и голый now() уронил бы ограничение вместе со всей миграцией.
-WITH revoked AS (
-    UPDATE identity_roles
-    SET revoked_at = GREATEST(now(), granted_at)
-    WHERE revoked_at IS NULL
-      AND identity_id IN (SELECT id FROM profiles WHERE blocked)
-    RETURNING identity_id, role
-)
-INSERT INTO identity_access_journal (id, identity_id, actor_id, action, role, occurred_at)
-SELECT gen_random_uuid(), identity_id, NULL, 'revoke', role, now() FROM revoked;
-
 -- Проверка блокировки на выдаче живёт и в коде, и здесь. Триггер делает инвариант
 -- неустранимым для любого пути выдачи, включая будущую автовыдачу и правку SQL
 -- напрямую, и закрывает возврат доступа через revoked_at = NULL. ID003 —
