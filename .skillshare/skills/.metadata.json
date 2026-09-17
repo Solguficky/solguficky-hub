@@ -183,6 +183,28 @@
       "group": "mattpocock",
       "branch": "main"
     },
+    "playwright-cli": {
+      "source": "github.com/microsoft/playwright-cli/skills/playwright-cli",
+      "type": "github-subdir",
+      "installed_at": "2026-09-17T04:39:42.9638114+03:00",
+      "repo_url": "https://github.com/microsoft/playwright-cli.git",
+      "subdir": "skills/playwright-cli",
+      "version": "1222845",
+      "tree_hash": "10104bd92881e5ca5688f0a2cd1372e3c0e413a9",
+      "file_hashes": {
+        "SKILL.md": "sha256:0ce19770409b7dbae7285c4634497f17e977405cd0dea846752cd47f83040c16",
+        "references/element-attributes.md": "sha256:f9ccaf85f43b7fa522a48ece60e3f18f10d43cb509ebd48a010eefbd0cd4f47a",
+        "references/playwright-tests.md": "sha256:8da5c537cf6335c1e7590d5418b9a68c9007fd5851aa58331530e09f6ec06b78",
+        "references/pr-attachments.md": "sha256:3f3be9d08e21125ff1b29f03fe6957d3ba8804da650b13cdeee1e5965f0999ce",
+        "references/request-mocking.md": "sha256:f1f6e6360309394bd457e1a9f78a66b1abd016a29d463a1e1215f168458a6fcd",
+        "references/running-code.md": "sha256:511fab7eab47171768d9f73048febe99fcbf6c7d9311984f9abeb2759ae47c07",
+        "references/session-management.md": "sha256:be81d12b1113f0a0fa5523a61e6a9adec02400359137d09269deeb6f90559622",
+        "references/storage-state.md": "sha256:463a013d7f895773235f324c3adeaa261426269e5c55b194e64fa81ccb12bd79",
+        "references/test-generation.md": "sha256:15f1185a3ffd28a004fdcc41cd89442a1ce942dca06d878e3c6485f9d76ce937",
+        "references/tracing.md": "sha256:ffedf46640bed3a1d32e29c9a8a4cbc6d5ffa5d2de42ab6dcbf1071c8fb966f2",
+        "references/video-recording.md": "sha256:2071e176ed3e02fd18f689f56ace450f7126202072a683e4b0ad25642df2e1f3"
+      }
+    },
     "presentation-design": {
       "source": "github.com/jwynia/agent-skills/skills/general/communication/presentation-design",
       "type": "github-subdir",

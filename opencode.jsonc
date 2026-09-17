@@ -15,5 +15,10 @@
       "url": "https://mcp.linear.app/mcp",
       "enabled": true
     }
+  },
+  "permission": {
+    "external_directory": {
+      "*solguficky-wt/*": "allow"
+    }
   }
 }
