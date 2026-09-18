@@ -11,22 +11,26 @@ describe("decideHubAccess", () => {
     expect(decideHubAccess(["member"], false)).toBe("admitted");
   });
 
+  it("admits nested admin and maintainer as the member circle", () => {
+    expect(decideHubAccess(["admin"], false)).toBe("admitted");
+    expect(decideHubAccess(["maintainer"], false)).toBe("admitted");
+  });
+
   it("admits a member even when other roles are present", () => {
     expect(decideHubAccess(["admin", "member", "public"], false)).toBe(
       "admitted",
     );
   });
 
-  it("keeps a person without member in pending", () => {
+  it("keeps a person outside the member circle in pending", () => {
     expect(decideHubAccess([], false)).toBe("pending");
-    expect(decideHubAccess(["admin"], false)).toBe("pending");
     expect(decideHubAccess(["public"], false)).toBe("pending");
-    expect(decideHubAccess(["maintainer"], false)).toBe("pending");
   });
 
   it("closes access when the blocked mark is set", () => {
     expect(decideHubAccess([], true)).toBe("blocked");
     expect(decideHubAccess(["member"], true)).toBe("blocked");
+    expect(decideHubAccess(["admin"], true)).toBe("blocked");
   });
 
   it("names pending and blocked refusals differently", () => {

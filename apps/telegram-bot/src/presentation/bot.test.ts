@@ -395,9 +395,9 @@ describe("presentation adapter", () => {
     ]);
   });
 
-  it("does not open management for a person without member", async () => {
+  it("does not open management for a person outside the member circle", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity(["public"]), {
       execute,
     });
     await bot.init();
@@ -407,6 +407,14 @@ describe("presentation adapter", () => {
       method: "editMessageText",
       payload: { text: pendingHubAccessText },
     });
+  });
+
+  it("opens /start for an admin without a stored member row", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
   });
 
   it("keeps Identity unavailability distinct from a hub access refusal", async () => {

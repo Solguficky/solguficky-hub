@@ -18,6 +18,8 @@ export const hubAccessErrors = {
   blocked: "hub_access_blocked",
 } as const;
 
+const memberCircleRoles = ["admin", "maintainer", "member"] as const;
+
 export function decideHubAccess(
   globalRoles: readonly string[],
   blocked: boolean,
@@ -25,7 +27,7 @@ export function decideHubAccess(
   if (blocked) {
     return "blocked";
   }
-  if (globalRoles.includes("member")) {
+  if (memberCircleRoles.some((role) => globalRoles.includes(role))) {
     return "admitted";
   }
   return "pending";
