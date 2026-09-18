@@ -11,6 +11,7 @@ export type LogFields = {
   result?: string;
   duration_us?: number;
   request_id?: string;
+  identity_id?: string;
   error_category?: FailureCategory;
   error?: string;
   stack?: string;

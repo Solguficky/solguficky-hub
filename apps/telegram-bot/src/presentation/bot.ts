@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Bot, type Context, InlineKeyboard } from "grammy";
 import type { Dispatcher } from "../application/dispatcher.js";
+import {
+  decideHubAccess,
+  type HubAccess,
+  hubAccessErrors,
+  hubAccessTexts,
+} from "../application/hub-access.js";
 import { formatSchedule } from "../application/meetup-form.js";
 import type { ExecuteResult, FormField, Person } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
@@ -54,6 +60,7 @@ type BoundaryOutcome =
       result: "ok";
       use_case?: ProductUseCase;
       meetup_id?: string;
+      identity_id?: string;
     }
   | {
       level: "warn" | "error";
@@ -61,6 +68,7 @@ type BoundaryOutcome =
       result: "error";
       use_case?: ProductUseCase;
       meetup_id?: string;
+      identity_id?: string;
       error_category: FailureCategory;
       error: string;
       stack?: string;
@@ -122,6 +130,11 @@ async function handleMessage(
       const identity = await resolvePerson(ctx, runtime, useCase);
       if (identity.kind === "failed") {
         outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
         return;
       }
       const result = await runtime.dispatcher.execute({
@@ -195,6 +208,16 @@ async function handleMessage(
       identityId: resolved.identityId,
       globalRoles: resolved.globalRoles,
     };
+    const denied = await denyHubAccessIfNeeded(
+      ctx,
+      { person: identity, blocked: resolved.blocked },
+      useCase,
+      false,
+    );
+    if (denied !== undefined) {
+      outcome = denied;
+      return;
+    }
     const result = await runtime.dispatcher.execute(
       deepLink?.kind === "meetup"
         ? {
@@ -218,7 +241,7 @@ async function handleMessage(
         runtime.presentation ?? "rich",
       );
       outcome = screenBoundary(result, {
-        ok: ["meetup-card", "meetup-not-found"],
+        ok: ["meetup-card"],
         okMessage: "meetup card sent",
         rejectedMessage: "meetup card rejected",
         useCase,
@@ -314,6 +337,11 @@ async function handleCallback(
       outcome = identity.outcome;
       return;
     }
+    const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, true);
+    if (denied !== undefined) {
+      outcome = denied;
+      return;
+    }
     const person = identity.person;
     if (action.kind === "hub" || action.kind === "outdated") {
       const result = await runtime.dispatcher.execute({
@@ -340,7 +368,7 @@ async function handleCallback(
       });
       await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
       outcome = screenBoundary(result, {
-        ok: ["meetup-card", "meetup-not-found"],
+        ok: ["meetup-card"],
         okMessage: "meetup card sent",
         rejectedMessage: "meetup card rejected",
         useCase,
@@ -586,13 +614,48 @@ function meetupListLine(meetup: MeetupSummary): string {
   return `• ${day} ${monthLabel}, ${weekdayLabel} — ${meetup.title}`;
 }
 
+async function denyHubAccessIfNeeded(
+  ctx: UpdateContext,
+  identity: { person: Person; blocked: boolean },
+  useCase: ProductUseCase | undefined,
+  edit: boolean,
+): Promise<BoundaryOutcome | undefined> {
+  const access = decideHubAccess(identity.person.globalRoles, identity.blocked);
+  if (access === "admitted") {
+    return undefined;
+  }
+  const text = hubAccessTexts[access];
+  if (edit) {
+    await editScreen(ctx, text, new InlineKeyboard());
+  } else {
+    await ctx.reply(text);
+  }
+  return hubAccessOutcome(access, identity.person.identityId, useCase);
+}
+
+function hubAccessOutcome(
+  access: Exclude<HubAccess, "admitted">,
+  identityId: string,
+  useCase: ProductUseCase | undefined,
+): BoundaryOutcome {
+  return {
+    level: "warn",
+    message: "hub access denied",
+    result: "error",
+    ...(useCase === undefined ? {} : { use_case: useCase }),
+    identity_id: identityId,
+    error_category: "authorization",
+    error: hubAccessErrors[access],
+  };
+}
+
 async function resolvePerson(
   ctx: UpdateContext,
   runtime: BotRuntime,
   useCase?: ProductUseCase,
   retryCallback?: string,
 ): Promise<
-  | { kind: "resolved"; person: Person }
+  | { kind: "resolved"; person: Person; blocked: boolean }
   | { kind: "failed"; outcome: BoundaryOutcome }
 > {
   const from = ctx.from;
@@ -627,6 +690,7 @@ async function resolvePerson(
       identityId: resolved.identityId,
       globalRoles: resolved.globalRoles,
     },
+    blocked: resolved.blocked,
   };
 }
 
@@ -774,6 +838,17 @@ function screenBoundary(
 ): BoundaryOutcome {
   const meetup =
     screen.meetupId === undefined ? {} : { meetup_id: screen.meetupId };
+  if (result.kind === "meetup-not-found") {
+    return {
+      level: "warn",
+      message: "meetup not visible",
+      result: "error",
+      use_case: screen.useCase,
+      ...meetup,
+      error_category: "visibility",
+      error: "meetup_not_visible",
+    };
+  }
   if (screen.ok.includes(result.kind)) {
     return {
       level: "debug",
@@ -886,6 +961,9 @@ function writeBoundary(
   };
   if (ctx.requestId !== undefined && ctx.requestId !== "") {
     fields.request_id = ctx.requestId;
+  }
+  if (outcome.identity_id !== undefined) {
+    fields.identity_id = outcome.identity_id;
   }
   if (ctx.startedAt !== undefined) {
     fields.duration_us = elapsedUs(ctx.startedAt);
