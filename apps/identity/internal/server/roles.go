@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	roleAdmin  = "admin"
-	roleMember = "member"
-	rolePublic = "public"
+	roleMaintainer = "maintainer"
+	roleAdmin      = "admin"
+	roleMember     = "member"
+	rolePublic     = "public"
 )
 
 const (

@@ -66,9 +66,15 @@ module Inbound =
     /// роль ничего не разрешает — отбрасывание остаётся fail-closed. Отказ по ней
     /// превратил бы расширение словаря ролей в Identity в отказ обслуживания у
     /// Meetups до согласованного деплоя обоих сервисов.
+    ///
+    /// Известные роли переходят в доменный словарь целиком: решения читают только
+    /// Administrator, но словарь типа совпадает со словарём контракта.
     let private role (value: Identity.V1.GlobalRole) : GlobalRole option =
         match value with
+        | Identity.V1.GlobalRole.Maintainer -> Some Maintainer
         | Identity.V1.GlobalRole.Admin -> Some Administrator
+        | Identity.V1.GlobalRole.Member -> Some Member
+        | Identity.V1.GlobalRole.Public -> Some Public
         | _ -> None
 
     let viewer (value: Meetups.V1.Viewer) : Result<Viewer, InvalidRequest> =

@@ -61,6 +61,30 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         test <@ actual = List.replicate 4 (Some StatusCode.PermissionDenied) @>
 
+    /// Новые роли контракта и значение вне словаря не отвергают запрос по разбору:
+    /// перевод в домен их отбрасывает, а отказ приходит от правила по праву.
+    [<Fact>]
+    member _.``Commands refuse a viewer carrying only new or unknown roles by right``() =
+        let newcomer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000b")
+        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Maintainer)
+        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Member)
+        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Public)
+        newcomer.GlobalRoles.Add(enum<Identity.V1.GlobalRole> 99)
+
+        let actual =
+            [
+                Rpc.codeOf (fun () ->
+                    client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = newcomer, Id = id))
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = newcomer, Id = id))
+                    |> ignore
+                )
+            ]
+
+        test <@ actual = List.replicate 2 (Some StatusCode.PermissionDenied) @>
+
     /// Клиент собрал запрос неправильно — это INVALID_ARGUMENT, а не отказ домена.
     /// Проверяются три разных дефекта сборки, потому что каждый разбирает своя
     /// функция границы.

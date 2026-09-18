@@ -28,6 +28,8 @@ RETURNING id`
 	listRolesSQL = `
 SELECT role FROM identity_roles
 WHERE identity_id = $1 AND revoked_at IS NULL`
+
+	selectBlockedSQL = `SELECT blocked FROM profiles WHERE id = $1`
 )
 
 type identityService struct {
@@ -58,6 +60,11 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 		return nil, internal("list roles", err)
 	}
 
+	blocked, err := profileBlocked(ctx, tx, identityID)
+	if err != nil {
+		return nil, internal("select blocked", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, internal("commit", err)
 	}
@@ -65,6 +72,7 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	return &identityv1.ResolveIdentityResponse{
 		IdentityId:  identityID,
 		GlobalRoles: roles,
+		Blocked:     blocked,
 	}, nil
 }
 
@@ -117,10 +125,30 @@ func listRoles(ctx context.Context, tx *sql.Tx, identityID string) ([]identityv1
 	return roles, rows.Err()
 }
 
+// profileBlocked читает отметку блокировки отдельным запросом: она не выводится
+// из набора ролей, потому что блокировка отзывает активные роли и пустой набор
+// иначе не отличить от профиля, который ни разу не начинал.
+func profileBlocked(ctx context.Context, tx *sql.Tx, identityID string) (bool, error) {
+	var blocked bool
+	if err := tx.QueryRowContext(ctx, selectBlockedSQL, identityID).Scan(&blocked); err != nil {
+		return false, err
+	}
+	return blocked, nil
+}
+
+// globalRole переводит строку словаря identity_roles в значение контракта.
+// Неизвестная строка отбрасывается, а не отвергает ответ: словарь схемы и
+// контракта могут разойтись на время согласованного развёртывания.
 func globalRole(role string) (identityv1.GlobalRole, bool) {
 	switch role {
+	case roleMaintainer:
+		return identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, true
 	case roleAdmin:
 		return identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, true
+	case roleMember:
+		return identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, true
+	case rolePublic:
+		return identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC, true
 	default:
 		return identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, false
 	}

@@ -265,10 +265,25 @@ function calendarDate(value: {
 function viewer(person: Person) {
   return {
     identityId: person.identityId,
-    globalRoles: person.globalRoles.map((role) =>
-      role === "admin" ? GlobalRole.ADMIN : GlobalRole.UNSPECIFIED,
-    ),
+    globalRoles: person.globalRoles.map(roleValue),
   };
+}
+
+// Строка роли пришла из Identity. Неизвестное имя не превращается в разрешение:
+// Meetups отбрасывает UNSPECIFIED, как и любое значение вне своего словаря.
+function roleValue(role: string): GlobalRole {
+  switch (role) {
+    case "maintainer":
+      return GlobalRole.MAINTAINER;
+    case "admin":
+      return GlobalRole.ADMIN;
+    case "member":
+      return GlobalRole.MEMBER;
+    case "public":
+      return GlobalRole.PUBLIC;
+    default:
+      return GlobalRole.UNSPECIFIED;
+  }
 }
 
 function toSnapshot(

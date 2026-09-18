@@ -29,6 +29,11 @@ message ResolveIdentityResponse {
   // Platform-wide roles. Domain permissions are not returned here; the owning
   // domain applies them. An empty set means an ordinary user.
   repeated GlobalRole global_roles = 2;
+
+  // True when the profile's block mark is on. It is not a role and is never
+  // derived from global_roles: blocking revokes active roles, so an empty set
+  // alone does not distinguish a blocked profile from one that never started.
+  bool blocked = 3;
 }
 
 message GrantAdminRoleRequest {

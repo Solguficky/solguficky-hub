@@ -1,4 +1,4 @@
-import { create } from "@bufbuild/protobuf";
+import { create, fromBinary } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -88,8 +88,86 @@ describe("identity client", () => {
       kind: "resolved",
       identityId: "id-1",
       globalRoles: ["admin"],
+      blocked: false,
     });
     expect(seenTimeout).toBe(75);
+  });
+
+  it("maps every known global role to its canonical name", async () => {
+    const identity = createIdentityResolver({
+      resolveIdentity: async () =>
+        create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+          globalRoles: [
+            GlobalRole.MAINTAINER,
+            GlobalRole.ADMIN,
+            GlobalRole.MEMBER,
+            GlobalRole.PUBLIC,
+          ],
+        }),
+    });
+
+    await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
+      kind: "resolved",
+      identityId: "id-1",
+      globalRoles: ["maintainer", "admin", "member", "public"],
+      blocked: false,
+    });
+  });
+
+  it("reads the blocked mark separately from the role set", async () => {
+    const identity = createIdentityResolver({
+      resolveIdentity: async () =>
+        create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+          globalRoles: [GlobalRole.ADMIN],
+          blocked: true,
+        }),
+    });
+
+    await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
+      kind: "resolved",
+      identityId: "id-1",
+      globalRoles: ["admin"],
+      blocked: true,
+    });
+  });
+
+  it("keeps a blocked response with no roles distinct from an ordinary one", async () => {
+    const identity = createIdentityResolver({
+      resolveIdentity: async () =>
+        create(ResolveIdentityResponseSchema, {
+          identityId: "id-1",
+          blocked: true,
+        }),
+    });
+
+    await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
+      kind: "resolved",
+      identityId: "id-1",
+      globalRoles: [],
+      blocked: true,
+    });
+  });
+
+  // Поле 2 (global_roles) со значением 99 и поле 3 (blocked) = true: более новая
+  // Identity может прислать роль, которой этот клиент ещё не знает. Разбор не
+  // падает, роль игнорируется, отметка читается отдельно.
+  it("parses an unknown role value off the wire and ignores it", async () => {
+    const response = fromBinary(
+      ResolveIdentityResponseSchema,
+      Uint8Array.of(0x10, 0x63, 0x18, 0x01),
+    );
+    const identity = createIdentityResolver({
+      resolveIdentity: async () => response,
+    });
+
+    await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
+      kind: "resolved",
+      identityId: "",
+      globalRoles: [],
+      blocked: true,
+    });
   });
 
   it("carries the request id to identity as a header", async () => {
