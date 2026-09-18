@@ -4,6 +4,10 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import {
+  blockedHubAccessText,
+  pendingHubAccessText,
+} from "../application/hub-access.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type { IdentityResolver } from "../identity/port.js";
@@ -153,13 +157,16 @@ function draftMeetup() {
   };
 }
 
-function resolvedIdentity(): IdentityResolver {
+function resolvedIdentity(
+  globalRoles: readonly string[] = ["member"],
+  blocked = false,
+): IdentityResolver {
   return {
     resolve: async () => ({
       kind: "resolved",
       identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-      globalRoles: [],
-      blocked: false,
+      globalRoles,
+      blocked,
     }),
   };
 }
@@ -323,6 +330,123 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("shows the waiting frame on /start when the person has no member role", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(resolvedIdentity([]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toBe(pendingHubAccessText);
+    expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("hub_access_pending");
+    expect(records[0]?.fields.identity_id).toBe(
+      "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    );
+  });
+
+  it("shows the closed frame on /start when the person is blocked", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"], true),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toBe(blockedHubAccessText);
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("hub_access_blocked");
+  });
+
+  it("does not show meetups to a pending person by list or deep link", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["public"]),
+      {
+        execute,
+      },
+    );
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: pendingHubAccessText },
+    });
+    expect(JSON.stringify(calls[1]?.payload)).not.toContain("v1:nav:hub");
+    expect(sendMessageText(calls[2])).toBe(pendingHubAccessText);
+    expect(records.map((record) => record.fields.error)).toEqual([
+      "hub_access_pending",
+      "hub_access_pending",
+    ]);
+  });
+
+  it("does not open management for a person without member", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: pendingHubAccessText },
+    });
+  });
+
+  it("keeps Identity unavailability distinct from a hub access refusal", async () => {
+    const identity: IdentityResolver = {
+      resolve: async () => ({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
+    expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(blockedHubAccessText);
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  it("logs a missing meetup as visibility, not as hub access", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-not-found",
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
+    expect(sendMessageText(calls[0])).toBe(
+      "Сходка не найдена или больше недоступна.",
+    );
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "visibility",
+      use_case: "view_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("meetup_not_visible");
+  });
+
   it("renders an empty meetup list as an empty state", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-list",
@@ -468,7 +592,7 @@ describe("presentation adapter", () => {
           ? {
               kind: "resolved",
               identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-              globalRoles: [],
+              globalRoles: ["member"],
               blocked: false,
             }
           : { kind: "unavailable", cause: new Error("down") },
@@ -522,7 +646,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: [],
+        globalRoles: ["member"],
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
@@ -632,7 +756,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: [],
+        globalRoles: ["member"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -684,7 +808,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: [],
+        globalRoles: ["member"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -840,7 +964,7 @@ describe("presentation adapter", () => {
         return {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-          globalRoles: [],
+          globalRoles: ["member"],
           blocked: false,
         };
       },
@@ -862,7 +986,7 @@ describe("presentation adapter", () => {
         return {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-          globalRoles: [],
+          globalRoles: ["member"],
           blocked: false,
         };
       },
