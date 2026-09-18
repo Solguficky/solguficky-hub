@@ -18,7 +18,9 @@ message Viewer {
   string identity_id = 1;
 
   // Platform-wide roles from Identity. Domain permissions are not precomputed
-  // here; Meetups applies them. An empty set means an ordinary user.
+  // here; Meetups applies them. An empty set means an ordinary user. The block
+  // mark is deliberately absent: Meetups decides access by roles and only the
+  // caller reads the mark from ResolveIdentityResponse to choose a refusal.
   repeated identity.v1.GlobalRole global_roles = 2;
 }
 

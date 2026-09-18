@@ -28,11 +28,17 @@ func TestResolveIdentityCreatesProfileAndReusesID(t *testing.T) {
 	if len(first.GetGlobalRoles()) != 0 {
 		t.Fatalf("global_roles: got %v want empty", first.GetGlobalRoles())
 	}
+	if first.GetBlocked() {
+		t.Fatal("blocked on first resolve: got true want false")
+	}
 	assertBlocked(t, db, 1001, false)
 
 	second := resolve(t, client, 1001, &username)
 	if second.GetIdentityId() != first.GetIdentityId() {
 		t.Fatalf("identity_id: got %q want %q", second.GetIdentityId(), first.GetIdentityId())
+	}
+	if second.GetBlocked() {
+		t.Fatal("blocked on repeated resolve: got true want false")
 	}
 
 	assertProfileCount(t, db, 1001, 1)
@@ -175,6 +181,76 @@ func TestResolveIdentityDoesNotRestoreRevokedAdmin(t *testing.T) {
 	assertActiveRoleCount(t, db, first.GetIdentityId(), 0)
 }
 
+func TestResolveIdentityReturnsEveryGlobalRole(t *testing.T) {
+	t.Parallel()
+
+	db := migratedDB(t)
+	client := resolveClient(t, db)
+	username := "every-role"
+	const telegramUserID int64 = 7001
+
+	first := resolve(t, client, telegramUserID, &username)
+	for _, role := range []string{"maintainer", "admin", "member", "public"} {
+		insertRole(t, db, first.GetIdentityId(), role)
+	}
+
+	second := resolve(t, client, telegramUserID, &username)
+	assertRoleSet(t, second.GetGlobalRoles(),
+		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER,
+		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
+		identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC,
+	)
+	if second.GetBlocked() {
+		t.Fatal("blocked with active roles: got true want false")
+	}
+	assertRoleCount(t, db, first.GetIdentityId(), 4)
+}
+
+// Отметка блокировки и набор ролей читаются по отдельности: блокировка мимо ядра
+// оставляет активную роль, и ответ обязан отдать обе стороны независимо, а не
+// вывести одну из другой.
+func TestResolveIdentityReadsBlockedSeparatelyFromRoles(t *testing.T) {
+	t.Parallel()
+
+	db := migratedDB(t)
+	client := resolveClient(t, db)
+	username := "blocked-owner"
+	const blockedWithRolesID int64 = 7101
+	const blockedWithoutRolesID int64 = 7102
+	const activeWithoutBlockID int64 = 7103
+
+	withRoles := resolve(t, client, blockedWithRolesID, &username)
+	insertRole(t, db, withRoles.GetIdentityId(), "admin")
+	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, withRoles.GetIdentityId())
+
+	withoutRoles := resolve(t, client, blockedWithoutRolesID, &username)
+	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, withoutRoles.GetIdentityId())
+
+	active := resolve(t, client, activeWithoutBlockID, &username)
+	insertRole(t, db, active.GetIdentityId(), "public")
+
+	got := resolve(t, client, blockedWithRolesID, &username)
+	assertRoles(t, got.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
+	if !got.GetBlocked() {
+		t.Fatal("blocked with active role: got false want true")
+	}
+
+	got = resolve(t, client, blockedWithoutRolesID, &username)
+	if len(got.GetGlobalRoles()) != 0 {
+		t.Fatalf("blocked global_roles: got %v want empty", got.GetGlobalRoles())
+	}
+	if !got.GetBlocked() {
+		t.Fatal("blocked without roles: got false want true")
+	}
+
+	got = resolve(t, client, activeWithoutBlockID, &username)
+	assertRoles(t, got.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	if got.GetBlocked() {
+		t.Fatal("active without block: got true want false")
+	}
+}
+
 func TestResolveIdentityOptionalUsernameOverGRPC(t *testing.T) {
 	t.Parallel()
 
@@ -272,6 +348,27 @@ func assertRoles(t *testing.T, got []identityv1.GlobalRole, want ...identityv1.G
 	}
 }
 
+// assertRoleSet сравнивает без порядка: listRolesSQL его не обещает, и контракт
+// тоже — роли приходят repeated-полем, а не упорядоченным списком.
+func assertRoleSet(t *testing.T, got []identityv1.GlobalRole, want ...identityv1.GlobalRole) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("global_roles: got %v want %v (any order)", got, want)
+	}
+	seen := make(map[identityv1.GlobalRole]bool, len(got))
+	for _, role := range got {
+		if seen[role] {
+			t.Fatalf("global_roles: duplicate %v in %v", role, got)
+		}
+		seen[role] = true
+	}
+	for _, role := range want {
+		if !seen[role] {
+			t.Fatalf("global_roles: got %v want %v (any order)", got, want)
+		}
+	}
+}
+
 func assertProfileCount(t *testing.T, db *sql.DB, telegramUserID int64, want int) {
 	t.Helper()
 	var n int
@@ -318,12 +415,17 @@ func assertBlocked(t *testing.T, db *sql.DB, telegramUserID int64, want bool) {
 
 func insertAdminRole(t *testing.T, db *sql.DB, identityID string) {
 	t.Helper()
+	insertRole(t, db, identityID, "admin")
+}
+
+func insertRole(t *testing.T, db *sql.DB, identityID, role string) {
+	t.Helper()
 	grantID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustExec(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', now(), $2)`, grantID.String(), identityID)
+		VALUES ($1, $2, $3, now(), $2)`, grantID.String(), identityID, role)
 }
 
 func profileUsername(t *testing.T, db *sql.DB, telegramUserID int64) string {

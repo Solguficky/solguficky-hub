@@ -7,4 +7,13 @@ enum GlobalRole {
   GLOBAL_ROLE_UNSPECIFIED = 0;
 
   GLOBAL_ROLE_ADMIN = 1;
+
+  // Operates the platform. The grant path stays a separate contract decision.
+  GLOBAL_ROLE_MAINTAINER = 2;
+
+  // Inner community circle.
+  GLOBAL_ROLE_MEMBER = 3;
+
+  // Outer circle: entered through the public auction link.
+  GLOBAL_ROLE_PUBLIC = 4;
 }

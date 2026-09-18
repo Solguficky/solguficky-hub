@@ -66,7 +66,10 @@ export function createIdentityResolver(
         return {
           kind: "resolved" as const,
           identityId: response.identityId,
-          globalRoles: response.globalRoles.map(roleName),
+          globalRoles: response.globalRoles.flatMap(
+            (role) => roleName(role) ?? [],
+          ),
+          blocked: response.blocked,
         };
       } catch (cause) {
         return classifyFailure(cause);
@@ -96,15 +99,25 @@ function classifyFailure(cause: unknown): ResolveIdentityResult {
   return { kind: "unavailable", cause };
 }
 
-function roleName(role: GlobalRole): string {
+function roleName(role: GlobalRole): string | undefined {
   switch (role) {
+    case GlobalRole.MAINTAINER:
+      return "maintainer";
     case GlobalRole.ADMIN:
       return "admin";
+    case GlobalRole.MEMBER:
+      return "member";
+    case GlobalRole.PUBLIC:
+      return "public";
     case GlobalRole.UNSPECIFIED:
       return "unspecified";
-    default: {
-      const _exhaustive: never = role;
-      return String(_exhaustive);
-    }
+    default:
+      // Новое значение словаря обязано получить имя: параметр типа never не
+      // соберётся. Число, которого словарь ещё не знает, игнорируется.
+      return ignoreUnknownRole(role);
   }
+}
+
+function ignoreUnknownRole(_role: never): undefined {
+  return undefined;
 }

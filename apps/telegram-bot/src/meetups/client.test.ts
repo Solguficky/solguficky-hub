@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   ListVisibleMeetupsResponseSchema,
   MeetupSummarySchema,
@@ -70,6 +71,35 @@ describe("Meetups client", () => {
     expect(listVisibleMeetups).toHaveBeenCalledWith(
       {
         viewer: { identityId: "viewer-id", globalRoles: [] },
+      },
+      { timeoutMs: 3_000, headers: { "x-request-id": "request-1" } },
+    );
+  });
+
+  it("passes every known role through and sends an unknown name as unspecified", async () => {
+    const listVisibleMeetups = vi.fn(async () =>
+      create(ListVisibleMeetupsResponseSchema, { meetups: [] }),
+    );
+    const meetups = createMeetupsAdapter(rpcWithList(listVisibleMeetups));
+    const viewer = {
+      identityId: "viewer-id",
+      globalRoles: ["maintainer", "admin", "member", "public", "owner"],
+    };
+
+    await meetups.listVisible(viewer, { requestId: "request-1" });
+
+    expect(listVisibleMeetups).toHaveBeenCalledWith(
+      {
+        viewer: {
+          identityId: "viewer-id",
+          globalRoles: [
+            GlobalRole.MAINTAINER,
+            GlobalRole.ADMIN,
+            GlobalRole.MEMBER,
+            GlobalRole.PUBLIC,
+            GlobalRole.UNSPECIFIED,
+          ],
+        },
       },
       { timeoutMs: 3_000, headers: { "x-request-id": "request-1" } },
     );

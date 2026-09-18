@@ -24,13 +24,13 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17identity/v1/roles.proto\x12\x0bidentity.v1*@\n\nGlobalRole\x12\x1b\n\x17GLOBAL_ROLE_UNSPECIFIED\x10\x00\x12\x15\n\x11GLOBAL_ROLE_ADMIN\x10\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17identity/v1/roles.proto\x12\x0bidentity.v1*\x8c\x01\n\nGlobalRole\x12\x1b\n\x17GLOBAL_ROLE_UNSPECIFIED\x10\x00\x12\x15\n\x11GLOBAL_ROLE_ADMIN\x10\x01\x12\x1a\n\x16GLOBAL_ROLE_MAINTAINER\x10\x02\x12\x16\n\x12GLOBAL_ROLE_MEMBER\x10\x03\x12\x16\n\x12GLOBAL_ROLE_PUBLIC\x10\x04\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'identity.v1.roles_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_GLOBALROLE']._serialized_start=40
-  _globals['_GLOBALROLE']._serialized_end=104
+  _globals['_GLOBALROLE']._serialized_start=41
+  _globals['_GLOBALROLE']._serialized_end=181
 # @@protoc_insertion_point(module_scope)

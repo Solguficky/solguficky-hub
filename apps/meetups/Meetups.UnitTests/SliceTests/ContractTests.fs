@@ -73,6 +73,33 @@ let ``Viewer with the admin role should carry it into the domain`` () =
             |> Result.map (fun viewer -> Viewer.isAdministrator viewer) = Ok true
         @>
 
+[<Fact>]
+let ``Viewer with every known role should carry all of them into the domain`` () =
+    let roles =
+        [
+            Identity.V1.GlobalRole.Maintainer
+            Identity.V1.GlobalRole.Admin
+            Identity.V1.GlobalRole.Member
+            Identity.V1.GlobalRole.Public
+        ]
+
+    let parsed = Contract.Inbound.viewer (viewerWith roles)
+
+    let carried = parsed |> Result.map (fun viewer -> viewer.Roles)
+
+    test
+        <@
+            carried = Ok(
+                Set.ofList
+                    [
+                        Maintainer
+                        Administrator
+                        Member
+                        Public
+                    ]
+            )
+        @>
+
 /// Схема объявляет UNSPECIFIED значением «роль неизвестна потребителю», поэтому
 /// неизвестное значение отбрасывается, а не отвергается: отказ превратил бы
 /// добавление роли в Identity в отказ обслуживания у Meetups.

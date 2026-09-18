@@ -28,10 +28,34 @@ let ``Command should be refused for the author who lost the administrator role``
 let ``Administrator should be recognised among several roles`` () =
     let viewer =
         { Sample.ordinary with
-            Roles = Set.singleton Administrator
+            Roles =
+                Set.ofList
+                    [
+                        Maintainer
+                        Administrator
+                        Member
+                        Public
+                    ]
         }
 
     test <@ Viewer.isAdministrator viewer @>
+
+/// Расширение словаря ролей не меняет доменных решений Meetups: новые роли
+/// приходят в домен, но правила на них появятся отдельным срезом.
+[<Fact>]
+let ``Command should be refused for a viewer holding only a new role`` () =
+    test
+        <@
+            [ Maintainer; Member; Public ]
+            |> List.forall (fun role ->
+                let viewer =
+                    { Sample.ordinary with
+                        Roles = Set.singleton role
+                    }
+
+                Access.forCommand viewer = Error NotAnAdministrator
+            )
+        @>
 
 [<Fact>]
 let ``A published meetup should be visible to the community`` () =
