@@ -45,6 +45,42 @@ let ``When an already visible meetup is published again expect no event`` () =
     test <@ Meetup.decidePublish Sample.later (Existing Sample.published) = Ok None @>
 
 [<Fact>]
+let ``When the meetup is cancelled expect the publication is refused`` () =
+    test <@ Meetup.decidePublish Sample.fixedNow (Existing Sample.cancelled) = Error TransitionNotAllowed @>
+
+/// Порядок проверок наблюдаем: у отменённого черновика нет и заголовка, и оба отказа
+/// достижимы. Тест требует именно отказ перехода — иначе настоящая причина пряталась
+/// бы за требованием заголовка, а «различимый код» наблюдался бы только тогда, когда
+/// заголовок случайно заполнен.
+[<Fact>]
+let ``When a cancelled meetup has no title expect the refusal to name the transition`` () =
+    test <@ Meetup.decidePublish Sample.fixedNow (Existing Sample.cancelledDraft) = Error TransitionNotAllowed @>
+
+/// Отмена закрывает переход к видимости, а не команду как таковую: у уже видимой
+/// сходки переходить некуда, и I5 выигрывает. Тест закрепляет именно приоритет —
+/// без него порядок веток остался бы случайным, а поведение обнаружилось бы только
+/// после того, как соседний лист заведёт отмену, не скрывающую сходку.
+[<Fact>]
+let ``When a cancelled meetup is already visible expect no event rather than a refusal`` () =
+    test <@ Meetup.decidePublish Sample.later (Existing Sample.cancelledVisible) = Ok None @>
+
+/// Узкое правило PER-195: публикацию закрывает отмена, а не любая терминальная
+/// стадия. Ретроспективно заведённую прошедшую сходку сообществу показать нужно.
+[<Fact>]
+let ``When the meetup is held expect the publication is still allowed`` () =
+    test <@ Meetup.decidePublish Sample.fixedNow (Existing Sample.held) = Ok(Some(MeetupPublished Sample.fixedNow)) @>
+
+/// Ось видимости не двигает жизненный цикл: у публикации состоявшейся сходки
+/// меняется только видимость и отметка.
+[<Fact>]
+let ``When a held meetup is published expect its lifecycle to stay untouched`` () =
+    let snapshot =
+        Meetup.apply (Existing Sample.held) (MeetupPublished Sample.fixedNow)
+        |> Meetup.toSnapshot
+
+    test <@ (snapshot.Lifecycle, snapshot.Visibility) = (Held, Visible) @>
+
+[<Fact>]
 let ``When the publication is applied twice expect the first publication mark to survive`` () =
     let republished =
         Meetup.apply (Existing Sample.published) (MeetupPublished Sample.later)

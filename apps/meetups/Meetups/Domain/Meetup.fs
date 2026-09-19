@@ -34,10 +34,21 @@ type MeetupEvent =
 /// является инвариантом перехода, и состояние в решении о нём не участвует. Само
 /// правило при этом остаётся доменным и живёт в Domain/Access.fs со своим типом
 /// отказа — сюда оно не переезжает.
+///
+/// TransitionNotAllowed означает «из текущего состояния в запрошенное не попасть» —
+/// и когда пару отвергла таблица оси, и когда переход закрыло состояние второй оси.
+/// Для отвечающего наружу это один класс отказа: различать причину внутри него —
+/// дело детали статуса, а не отдельного варианта.
+///
+/// С TitleRequiredForPublication они намеренно не сливаются: первый означает «не
+/// попасть», второй — «переход разрешён, но данных не хватает». ADR-022 разводит
+/// единственное условие полноты и переходные инварианты, и у человека на них разные
+/// действия: слить их значило бы отнять у него это различие.
 type DomainError =
     | MeetupNotFound
     | DraftBelongsToAnotherAuthor
     | TitleRequiredForPublication
+    | TransitionNotAllowed
 
 /// Сходка (ADR-031). Представление приватно, поэтому запись копией вне этого файла
 /// не собирается: единственный путь появления и изменения полей — применение
@@ -206,14 +217,36 @@ module Meetup =
         | Initial -> Error MeetupNotFound
         | Existing _ -> Ok(MeetupChanged(ScheduleChanged schedule))
 
-    /// I5 проверяется раньше I4: уже видимая сходка успешна независимо от остального,
-    /// потому что команда сформулирована как целевое состояние и повтор не ошибка.
-    /// I4: заголовок из одних пробелов заголовком не считается.
+    /// Порядок проверок наблюдаем снаружи, поэтому он зафиксирован здесь, а не
+    /// выведен из удобства записи.
+    ///
+    /// I5 идёт первым: уже видимая сходка успешна независимо от остального, потому
+    /// что команда сформулирована как целевое состояние и повтор не ошибка. Отмена
+    /// его не перебивает: у видимой сходки переходить некуда, и отказывать не в чем.
+    /// Приоритет осознанный и закреплён тестом — иначе отменённая видимая сходка
+    /// начала бы отвечать отказом в тот день, когда соседний лист заведёт отмену, не
+    /// скрывающую сходку. Дальше
+    /// таблица оси видимости — единственное место, где решается сама допустимость
+    /// перехода. Затем жизненный цикл: отменённую сходку не публикуют, и это условие
+    /// команды поверх разрешённого перехода, а не переход, поэтому в таблицу оно не
+    /// уехало. I4 проверяется последним намеренно: иначе отменённый черновик без
+    /// заголовка отвечал бы «нужен заголовок» и прятал настоящую причину отказа.
     let decidePublish (now: DateTimeOffset) (state: MeetupState) : Result<MeetupEvent option, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
         | Existing meetup ->
-            match meetup.Visibility with
-            | Visible -> Ok None
-            | Hidden when String.IsNullOrWhiteSpace meetup.Title -> Error TitleRequiredForPublication
-            | Hidden -> Ok(Some(MeetupPublished now))
+            match MeetupTransitions.visibility meetup.Visibility Visible with
+            | TransitionOutcome.AlreadyThere -> Ok None
+            | TransitionOutcome.Rejected -> Error TransitionNotAllowed
+            | TransitionOutcome.Allowed ->
+                // Held не закрывает публикацию: ретроспективно заведённую прошедшую
+                // сходку показать сообществу нужно. Отменённая — закрывает: отмена
+                // описывает ход сходки, а не способ её спрятать (PER-197).
+                match meetup.Lifecycle with
+                | Cancelled -> Error TransitionNotAllowed
+                | Planned
+                | Held ->
+                    if String.IsNullOrWhiteSpace meetup.Title then
+                        Error TitleRequiredForPublication
+                    else
+                        Ok(Some(MeetupPublished now))
