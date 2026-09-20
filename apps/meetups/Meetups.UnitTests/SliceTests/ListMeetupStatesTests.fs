@@ -95,11 +95,15 @@ let ``A cursor round trip returns the identifier it was made from`` () =
 
 [<Fact>]
 let ``An empty cursor opens the enumeration at its start`` () =
-    test <@ Cursor.decode "" = Ok None @>
+    let opened = Cursor.decode ""
+
+    test <@ opened = Ok None @>
 
 [<Fact>]
 let ``A cursor that is not base64 is refused`` () =
-    test <@ Cursor.decode "not-a-token" = Error() @>
+    let refused = Cursor.decode "not-a-token"
+
+    test <@ refused = Error() @>
 
 [<Fact>]
 let ``A cursor that decodes to something other than an identifier is refused`` () =

@@ -53,7 +53,9 @@ type ListMeetupStatesTests() =
     member _.``A page stops at the requested size and hands back a cursor``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        List.init 3 (fun _ -> createDraft client) |> ignore
+
+        List.init 3 (fun _ -> createDraft client)
+        |> ignore
 
         let first = page client "" 2
 
@@ -84,8 +86,11 @@ type ListMeetupStatesTests() =
 
         let moment = (page client "" 50).ConsistentAt
         let parsed = DateTimeOffset.Parse(moment, CultureInfo.InvariantCulture)
+        // Само чтение поля внутри quotation требует адреса структуры, поэтому
+        // смещение достаётся значением до утверждения (FS3155).
+        let offset = parsed.Offset
 
-        test <@ parsed.Offset = TimeSpan.Zero @>
+        test <@ offset = TimeSpan.Zero @>
 
     /// Перечисление отдаёт полный снимок, а не сводку: реплика восстанавливает
     /// состояние целиком, и версия агрегата нужна ей, чтобы разрешить гонку с
