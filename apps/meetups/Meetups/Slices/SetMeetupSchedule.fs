@@ -124,12 +124,10 @@ module Api =
                 with :? ArgumentOutOfRangeException ->
                     Error(Contract.invalid field "is not a calendar date")
 
-        /// Минутную точность держит граница: TimeOnly умеет секунды, которых в схеме
-        /// нет, поэтому диапазон проверяется здесь, а не подразумевается.
         let private localTime
             (field: string)
             (value: Meetups.V1.LocalTime)
-            : Result<TimeOnly, Contract.InvalidRequest> =
+            : Result<LocalTime, Contract.InvalidRequest> =
             if isNull (box value) then
                 Error(Contract.invalid field "is required")
             elif
@@ -140,7 +138,9 @@ module Api =
             then
                 Error(Contract.invalid field "must be a time of day at minute precision")
             else
-                Ok(TimeOnly(value.Hours, value.Minutes))
+                TimeOnly(value.Hours, value.Minutes)
+                |> LocalTime.create
+                |> Result.mapError (fun _ -> Contract.invalid field "must be a time of day at minute precision")
 
         let private localDateTime
             (field: string)

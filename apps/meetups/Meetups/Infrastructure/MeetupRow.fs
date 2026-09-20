@@ -55,10 +55,14 @@ let private visibilityOf (id: Guid) (value: string) : MeetupVisibility =
     | "visible" -> Visible
     | other -> malformed id $"unknown visibility {other}"
 
-let private localOf (date: DateOnly) (time: TimeOnly) : LocalDateTime =
+let private localOf (id: Guid) (date: DateOnly) (time: TimeOnly) : LocalDateTime =
+    let localTime =
+        LocalTime.create time
+        |> Result.defaultWith (fun _ -> malformed id $"schedule time {time} is more precise than a minute")
+
     {
         Date = date
-        Time = time
+        Time = localTime
     }
 
 /// Пара «форма и точность» разворачивается в DateValue. Схема допускает ровно семь
@@ -79,18 +83,18 @@ let private dateValueOf (row: MeetupRow) : DateValue =
 
     match row.SchedulePrecision with
     | "day" -> Day(startDate ())
-    | "day_start" -> DayStart(localOf (startDate ()) (startTime ()))
+    | "day_start" -> DayStart(localOf row.Id (startDate ()) (startTime ()))
     | "interval" ->
         let finish =
             if
                 row.ScheduleEndDate.HasValue
                 && row.ScheduleEndTime.HasValue
             then
-                localOf row.ScheduleEndDate.Value row.ScheduleEndTime.Value
+                localOf row.Id row.ScheduleEndDate.Value row.ScheduleEndTime.Value
             else
                 malformed row.Id "schedule interval end is missing"
 
-        match LocalInterval.create (localOf (startDate ()) (startTime ())) finish with
+        match LocalInterval.create (localOf row.Id (startDate ()) (startTime ())) finish with
         | Ok interval -> Interval interval
         | Error IntervalEndsBeforeItStarts -> malformed row.Id "schedule interval ends before it starts"
     | other -> malformed row.Id $"unknown schedule precision {other}"
@@ -163,7 +167,7 @@ let private dateValueColumns (value: DateValue) : ScheduleColumns =
         { emptySchedule with
             Precision = "day_start"
             StartDate = Nullable local.Date
-            StartTime = Nullable local.Time
+            StartTime = Nullable(LocalTime.value local.Time)
         }
     | Interval interval ->
         let start = LocalInterval.start interval
@@ -172,9 +176,9 @@ let private dateValueColumns (value: DateValue) : ScheduleColumns =
         { emptySchedule with
             Precision = "interval"
             StartDate = Nullable start.Date
-            StartTime = Nullable start.Time
+            StartTime = Nullable(LocalTime.value start.Time)
             EndDate = Nullable finish.Date
-            EndTime = Nullable finish.Time
+            EndTime = Nullable(LocalTime.value finish.Time)
         }
 
 let scheduleColumns (schedule: Schedule) : ScheduleColumns =

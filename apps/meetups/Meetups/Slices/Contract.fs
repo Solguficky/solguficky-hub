@@ -95,11 +95,11 @@ module Outbound =
         Meetups.V1.CalendarDate(Year = date.Year, Month = date.Month, Day = date.Day)
 
     let private localDateTime (value: LocalDateTime) : Meetups.V1.LocalDateTime =
+        let time = LocalTime.value value.Time
+
         Meetups.V1.LocalDateTime(
             Date = calendarDate value.Date,
-            // Секунд в контракте нет: минутную точность держит граница, потому что
-            // TimeOnly умеет больше, чем схема.
-            Time = Meetups.V1.LocalTime(Hours = value.Time.Hour, Minutes = value.Time.Minute)
+            Time = Meetups.V1.LocalTime(Hours = time.Hour, Minutes = time.Minute)
         )
 
     let private dateValue (value: DateValue) : Meetups.V1.DateValue =

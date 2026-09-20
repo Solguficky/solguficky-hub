@@ -10,6 +10,10 @@ open Meetups.TestData
 open Swensen.Unquote
 open Xunit
 
+let private minute hours minutes =
+    LocalTime.create (TimeOnly(hours, minutes))
+    |> Result.defaultWith (fun _ -> failwith "the sample time must have minute precision")
+
 let private canonical = "0199c0de-0000-7000-8000-0000000000f1"
 
 let private viewerWith (roles: Identity.V1.GlobalRole seq) =
@@ -191,13 +195,13 @@ let ``Fixed interval should keep both bounds with minute precision`` () =
     let start =
         {
             Date = DateOnly(2026, 10, 3)
-            Time = TimeOnly(18, 30)
+            Time = minute 18 30
         }
 
     let finish =
         {
             Date = DateOnly(2026, 10, 3)
-            Time = TimeOnly(21, 0)
+            Time = minute 21 0
         }
 
     let interval =
@@ -221,7 +225,7 @@ let ``Tentative day start should keep both the date and the minute`` () =
     let moment =
         {
             Date = DateOnly(2026, 10, 3)
-            Time = TimeOnly(18, 5)
+            Time = minute 18 5
         }
 
     let contract = Contract.Outbound.schedule (Tentative(DayStart moment))
@@ -240,11 +244,11 @@ let ``Fixed day and tentative interval should keep their own forms`` () =
         LocalInterval.create
             {
                 Date = DateOnly(2026, 10, 3)
-                Time = TimeOnly(18, 0)
+                Time = minute 18 0
             }
             {
                 Date = DateOnly(2026, 10, 3)
-                Time = TimeOnly(21, 0)
+                Time = minute 21 0
             }
         |> Result.defaultWith (fun _ -> failwith "the sample interval must be valid")
 
