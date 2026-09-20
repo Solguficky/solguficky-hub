@@ -46,7 +46,13 @@ type HiddenMeetupReadTests() =
             |> Seq.filter (writeOperations.Contains >> not)
             |> Set.ofSeq
 
-        let operationsCoveredByThisSuite = set [ "ListVisibleMeetups"; "GetMeetup" ]
+        let operationsCoveredByThisSuite =
+            set
+                [
+                    "ListVisibleMeetups"
+                    "GetMeetup"
+                    "ListMeetupStates"
+                ]
 
         test <@ contractReadOperations = operationsCoveredByThisSuite @>
 
@@ -105,3 +111,20 @@ type HiddenMeetupReadTests() =
                 hidden = missing
                 && missing = Some(Status(StatusCode.NotFound, "meetup not found"))
             @>
+
+    /// Служебное перечисление — единственное чтение контракта, которое скрытую
+    /// сходку возвращает. Сценарий здесь, а не исключение из инвентаря выше:
+    /// обход мимо правил видимости обязан быть записан утверждением, иначе он
+    /// неотличим от дыры, которую этот набор и сторожит.
+    [<Fact>]
+    member _.``The service enumeration returns a hidden meetup by design``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let hiddenId = createDraft client
+
+        let returnedIds =
+            client.ListMeetupStates(ListMeetupStatesRequest()).Meetups
+            |> Seq.map _.Id
+            |> Set.ofSeq
+
+        test <@ returnedIds.Contains hiddenId @>

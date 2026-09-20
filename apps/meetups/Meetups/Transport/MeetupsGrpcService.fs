@@ -49,4 +49,4 @@ type MeetupsGrpcService() =
 
     override _.ListMeetupStates(request: ListMeetupStatesRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        ListMeetupStates.Api.handle (ListMeetupStates.Composition.source services) request
+        ListMeetupStates.Api.handle (ListMeetupStates.Composition.buildRead services) request

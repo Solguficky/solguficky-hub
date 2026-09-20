@@ -65,9 +65,15 @@ let ``Service exposes exactly the seven slice operations`` () =
 
     test <@ actual = expected @>
 
+/// Служебное перечисление состояния смотрящего не принимает намеренно (PER-211),
+/// поэтому оно исключено здесь по имени, а его собственную форму проверяет тест
+/// ниже: молчаливый пропуск был бы неотличим от забытого поля.
 [<Fact>]
 let ``Every human operation carries the viewer as field one`` () =
-    let requests = requestTypes |> List.filter (fun request -> request.Name <> "ListMeetupStatesRequest")
+    let requests =
+        requestTypes
+        |> List.filter (fun request -> request.Name <> "ListMeetupStatesRequest")
+
     let actual = requests |> List.map firstField
 
     let expected =
@@ -82,15 +88,26 @@ let ``Create draft takes the caller-generated id as its idempotency key`` () =
 
     test <@ actual = set [ "viewer"; "id" ] @>
 
+/// Запрос сверяется целиком, а не «содержит page_token»: равенство множеств и
+/// есть утверждение о том, что viewer в служебной операции не появился.
 [<Fact>]
 let ``Service enumeration is paged and carries its consistency moment`` () =
     let request = fieldNames ListMeetupStatesRequest.Descriptor
+
     let response = fieldNames ListMeetupStatesResponse.Descriptor
+
+    let expected =
+        [
+            "meetups"
+            "next_page_token"
+            "consistent_at"
+        ]
+        |> set
 
     test
         <@
             request = set [ "page_token"; "page_size" ]
-            && response = set [ "meetups"; "next_page_token"; "consistent_at" ]
+            && response = expected
         @>
 
 [<Fact>]
