@@ -45,7 +45,7 @@ let ``The generated service lives under the meetups v1 package`` () =
     test <@ MeetupsService.Descriptor.FullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
-let ``Service exposes exactly the six slice operations`` () =
+let ``Service exposes exactly the seven slice operations`` () =
     let actual =
         MeetupsService.Descriptor.Methods
         |> Seq.map (fun m -> m.Name)
@@ -59,17 +59,19 @@ let ``Service exposes exactly the six slice operations`` () =
             "PublishMeetup"
             "ListVisibleMeetups"
             "GetMeetup"
+            "ListMeetupStates"
         ]
         |> set
 
     test <@ actual = expected @>
 
 [<Fact>]
-let ``Every operation carries the viewer as field one`` () =
-    let actual = requestTypes |> List.map firstField
+let ``Every human operation carries the viewer as field one`` () =
+    let requests = requestTypes |> List.filter (fun request -> request.Name <> "ListMeetupStatesRequest")
+    let actual = requests |> List.map firstField
 
     let expected =
-        requestTypes
+        requests
         |> List.map (fun m -> m.Name, $"viewer: {Viewer.Descriptor.FullName}")
 
     test <@ actual = expected @>
@@ -79,6 +81,17 @@ let ``Create draft takes the caller-generated id as its idempotency key`` () =
     let actual = fieldNames CreateMeetupDraftRequest.Descriptor
 
     test <@ actual = set [ "viewer"; "id" ] @>
+
+[<Fact>]
+let ``Service enumeration is paged and carries its consistency moment`` () =
+    let request = fieldNames ListMeetupStatesRequest.Descriptor
+    let response = fieldNames ListMeetupStatesResponse.Descriptor
+
+    test
+        <@
+            request = set [ "page_token"; "page_size" ]
+            && response = set [ "meetups"; "next_page_token"; "consistent_at" ]
+        @>
 
 [<Fact>]
 let ``Change attributes sends every informational field as target state`` () =

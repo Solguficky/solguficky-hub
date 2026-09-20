@@ -27,6 +27,7 @@
     <Compile Include="Slices/PublishMeetup.fs" />
     <Compile Include="Slices/ListVisibleMeetups.fs" />
     <Compile Include="Slices/GetMeetup.fs" />
+    <Compile Include="Slices/ListMeetupStates.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
     <Compile Include="Host.fs" />

@@ -11,6 +11,24 @@ service MeetupsService {
   rpc PublishMeetup(PublishMeetupRequest) returns (MeetupSnapshot);
   rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
   rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
+  rpc ListMeetupStates(ListMeetupStatesRequest) returns (ListMeetupStatesResponse);
+}
+
+message ListMeetupStatesRequest {
+  // Opaque token returned as next_page_token. Empty starts an enumeration.
+  string page_token = 1;
+
+  // 0 selects the server default; the maximum accepted value is 100.
+  int32 page_size = 2;
+}
+
+message ListMeetupStatesResponse {
+  repeated MeetupSnapshot meetups = 1;
+
+  // Opaque continuation token. Empty means that the enumeration is complete.
+  string next_page_token = 2;
+  // RFC 3339 UTC instant at which this page's database snapshot was taken.
+  string consistent_at = 3;
 }
 
 message Viewer {

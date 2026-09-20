@@ -22,7 +22,7 @@ type ReadResult =
 
 do Db.ensureTypeHandlers ()
 
-let private selectAllSql =
+let selectAllSql =
     """
     SELECT
         id AS Id,
