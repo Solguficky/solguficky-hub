@@ -21,8 +21,12 @@ let ``Local time should reject seconds and fractions`` () =
             && LocalTime.create (TimeOnly(18, 30).Add(TimeSpan.FromTicks 1L)) = Error MorePreciseThanMinute
         @>
 
+/// Свойство проверяется обходом всех 1440 минут суток: утверждение про нулевые
+/// секунды на входе, построенном из часа и минуты, выполнялось бы и без инварианта,
+/// поэтому проверяется то, что смарт-конструктор действительно может нарушить, —
+/// принял ли он минуту и вернул ли её неизменной.
 [<Fact>]
-let ``Every local time should expose zero seconds`` () =
+let ``Every minute of the day should be accepted unchanged`` () =
     let times =
         [
             for hour in 0..23 do
@@ -32,11 +36,9 @@ let ``Every local time should expose zero seconds`` () =
     test
         <@
             times
-            |> List.map LocalTime.create
-            |> List.forall (
-                function
-                | Ok value -> (LocalTime.value value).Second = 0
-                | Error _ -> false
+            |> List.forall (fun time ->
+                LocalTime.create time
+                |> Result.map LocalTime.value = Ok time
             )
         @>
 
