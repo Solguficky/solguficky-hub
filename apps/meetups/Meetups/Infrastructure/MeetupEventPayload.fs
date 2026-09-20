@@ -22,8 +22,7 @@ let eventType (event: MeetupEvent) : string =
 
 let private dateText (date: DateOnly) : string = date.ToString "yyyy-MM-dd"
 
-/// Минутная точность держится схемой (`meetups_schedule_minute_precision`), и форма
-/// записи повторяет её же: секунд в LocalTime контракта нет.
+/// Доменное время уже имеет минутную точность; payload записывает его без потерь.
 let private timeText (time: TimeOnly) : string = time.ToString "HH\:mm"
 
 /// Расписание пишется той же раскладкой, что уходит в колонки. Одно определение

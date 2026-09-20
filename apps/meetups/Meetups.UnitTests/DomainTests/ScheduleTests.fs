@@ -8,8 +8,37 @@ open Xunit
 let private at (year, month, day) (hours, minutes) =
     {
         Date = DateOnly(year, month, day)
-        Time = TimeOnly(hours, minutes)
+        Time =
+            LocalTime.create (TimeOnly(hours, minutes))
+            |> Result.defaultWith (fun _ -> failwith "the sample time must have minute precision")
     }
+
+[<Fact>]
+let ``Local time should reject seconds and fractions`` () =
+    test
+        <@
+            LocalTime.create (TimeOnly(18, 30, 1)) = Error MorePreciseThanMinute
+            && LocalTime.create (TimeOnly(18, 30).Add(TimeSpan.FromTicks 1L)) = Error MorePreciseThanMinute
+        @>
+
+[<Fact>]
+let ``Every local time should expose zero seconds`` () =
+    let times =
+        [
+            for hour in 0..23 do
+                for minute in 0..59 -> TimeOnly(hour, minute)
+        ]
+
+    test
+        <@
+            times
+            |> List.map LocalTime.create
+            |> List.forall (
+                function
+                | Ok value -> (LocalTime.value value).Second = 0
+                | Error _ -> false
+            )
+        @>
 
 let private bounds interval = LocalInterval.start interval, LocalInterval.finish interval
 

@@ -2,13 +2,26 @@ namespace Meetups.Domain
 
 open System
 
+/// Отказ построения минутного времени.
+type LocalTimeError = MorePreciseThanMinute
+
+/// Локальное время сообщества с минутной точностью. Приватная форма
+/// не позволяет обойти инвариант новой границе ввода.
+type LocalTime = private LocalTime of TimeOnly
+
+module LocalTime =
+
+    let create (value: TimeOnly) : Result<LocalTime, LocalTimeError> =
+        if value.Ticks % TimeSpan.TicksPerMinute <> 0L then Error MorePreciseThanMinute else Ok(LocalTime value)
+
+    let value (LocalTime value) = value
+
 /// Локальные дата и время сообщества: часовой пояс задаётся конфигурацией и
-/// применяется при интерпретации, а не при записи (ADR-031). Минутную точность
-/// контракта держит граница: TimeOnly умеет секунды, которых в схеме нет.
+/// применяется при интерпретации, а не при записи (ADR-031).
 type LocalDateTime =
     {
         Date: DateOnly
-        Time: TimeOnly
+        Time: LocalTime
     }
 
 /// Отказ построения значения расписания. Отделён от DomainError намеренно: это
@@ -75,10 +88,10 @@ module Schedule =
         let dateOrder (value: DateValue) =
             match value with
             | Day date -> ScheduleOrder.Dated(date, None)
-            | DayStart moment -> ScheduleOrder.Dated(moment.Date, Some moment.Time)
+            | DayStart moment -> ScheduleOrder.Dated(moment.Date, Some(LocalTime.value moment.Time))
             | Interval interval ->
                 let start = LocalInterval.start interval
-                ScheduleOrder.Dated(start.Date, Some start.Time)
+                ScheduleOrder.Dated(start.Date, Some(LocalTime.value start.Time))
 
         match schedule with
         | NoDate -> ScheduleOrder.Undated

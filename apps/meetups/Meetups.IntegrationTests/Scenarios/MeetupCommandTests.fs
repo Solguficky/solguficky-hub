@@ -213,11 +213,15 @@ type MeetupCommandTests() =
             LocalInterval.create
                 {
                     Date = DateOnly(2026, 10, 3)
-                    Time = TimeOnly(18, 30)
+                    Time =
+                        LocalTime.create (TimeOnly(18, 30))
+                        |> Result.defaultWith (fun _ -> failwith "the sample time must have minute precision")
                 }
                 {
                     Date = DateOnly(2026, 10, 3)
-                    Time = TimeOnly(21, 0)
+                    Time =
+                        LocalTime.create (TimeOnly(21, 0))
+                        |> Result.defaultWith (fun _ -> failwith "the sample time must have minute precision")
                 }
             |> Result.defaultWith (fun _ -> failwith "unreachable")
 

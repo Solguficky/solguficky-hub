@@ -10,6 +10,10 @@ open Meetups.Domain
 open Meetups.Infrastructure
 open Meetups.TestData
 
+let private minute hours minutes =
+    LocalTime.create (TimeOnly(hours, minutes))
+    |> Result.defaultWith (fun _ -> failwith "the sample time must have minute precision")
+
 let private snapshotWith (schedule: Schedule) : MeetupSnapshot =
     { Meetup.toSnapshot Sample.titled with
         Schedule = schedule
@@ -19,11 +23,11 @@ let private interval =
     LocalInterval.create
         {
             Date = DateOnly(2026, 10, 3)
-            Time = TimeOnly(18, 30)
+            Time = minute 18 30
         }
         {
             Date = DateOnly(2026, 10, 3)
-            Time = TimeOnly(21, 0)
+            Time = minute 21 0
         }
     |> Result.defaultWith (fun _ -> failwith "unreachable")
 
@@ -31,7 +35,7 @@ let private dayStart =
     DayStart
         {
             Date = DateOnly(2026, 10, 3)
-            Time = TimeOnly(18, 30)
+            Time = minute 18 30
         }
 
 /// Все семь допустимых форм разом: список здесь уместнее семи почти одинаковых
@@ -58,6 +62,22 @@ let ``Every schedule form survives the round trip through row columns`` () =
         )
 
     test <@ restored = List.map snapshotWith everyForm @>
+
+[<Fact>]
+let ``Every schedule writes only minute-precision times`` () =
+    let hasZeroSeconds (time: Nullable<TimeOnly>) =
+        not time.HasValue
+        || time.Value.Ticks % TimeSpan.TicksPerMinute = 0L
+
+    test
+        <@
+            everyForm
+            |> List.map MeetupRow.scheduleColumns
+            |> List.forall (fun columns ->
+                hasZeroSeconds columns.StartTime
+                && hasZeroSeconds columns.EndTime
+            )
+        @>
 
 /// Ожидаемая раскладка строится вне цитаты: пустой Nullable боксируется в null, и
 /// Unquote, вычисляя `.HasValue` рефлексией, падает на нём вместо того, чтобы
