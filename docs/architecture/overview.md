@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов предложена в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md) и ждёт перевода в `Accepted`, схемы и реализации ещё нет.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схем и реализации ещё нет.
 
 ## Источники правды
 
