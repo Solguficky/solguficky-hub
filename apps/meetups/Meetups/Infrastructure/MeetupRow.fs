@@ -55,10 +55,10 @@ let private visibilityOf (id: Guid) (value: string) : MeetupVisibility =
     | "visible" -> Visible
     | other -> malformed id $"unknown visibility {other}"
 
-let private localOf (date: DateOnly) (time: TimeOnly) : LocalDateTime =
+let private localOf (id: Guid) (date: DateOnly) (time: TimeOnly) : LocalDateTime =
     let localTime =
         LocalTime.create time
-        |> Result.defaultWith (fun _ -> invalidOp "stored meetup schedule is more precise than a minute")
+        |> Result.defaultWith (fun _ -> malformed id $"schedule time {time} is more precise than a minute")
 
     {
         Date = date
@@ -83,18 +83,18 @@ let private dateValueOf (row: MeetupRow) : DateValue =
 
     match row.SchedulePrecision with
     | "day" -> Day(startDate ())
-    | "day_start" -> DayStart(localOf (startDate ()) (startTime ()))
+    | "day_start" -> DayStart(localOf row.Id (startDate ()) (startTime ()))
     | "interval" ->
         let finish =
             if
                 row.ScheduleEndDate.HasValue
                 && row.ScheduleEndTime.HasValue
             then
-                localOf row.ScheduleEndDate.Value row.ScheduleEndTime.Value
+                localOf row.Id row.ScheduleEndDate.Value row.ScheduleEndTime.Value
             else
                 malformed row.Id "schedule interval end is missing"
 
-        match LocalInterval.create (localOf (startDate ()) (startTime ())) finish with
+        match LocalInterval.create (localOf row.Id (startDate ()) (startTime ())) finish with
         | Ok interval -> Interval interval
         | Error IntervalEndsBeforeItStarts -> malformed row.Id "schedule interval ends before it starts"
     | other -> malformed row.Id $"unknown schedule precision {other}"
