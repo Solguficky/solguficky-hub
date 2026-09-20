@@ -109,6 +109,11 @@ module Api =
         // запрос собран верно, но домен не позволяет переход.
         | PublishMeetupError.Domain TitleRequiredForPublication ->
             Status(StatusCode.FailedPrecondition, "a title is required before publication")
+        // Тот же класс отказа, что и отсутствующий заголовок, и потому тот же код:
+        // запрос собран верно, но домен не позволяет переход. Различие с отказом по
+        // праву несёт код, различие с отсутствующим заголовком — деталь статуса.
+        | PublishMeetupError.Domain TransitionNotAllowed ->
+            Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot be published")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место
         // среди описанных закрепляет PER-78 (integration.md).
         | PublishMeetupError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")

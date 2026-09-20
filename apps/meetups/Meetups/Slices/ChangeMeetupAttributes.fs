@@ -105,6 +105,8 @@ module Api =
         // внутреннего контракта, а не код отказа.
         | ChangeMeetupAttributesError.Domain TitleRequiredForPublication ->
             invalidOp "changing attributes does not decide publication"
+        | ChangeMeetupAttributesError.Domain TransitionNotAllowed ->
+            invalidOp "changing attributes does not decide a state transition"
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место
         // среди описанных закрепляет PER-78 (integration.md).
         | ChangeMeetupAttributesError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")

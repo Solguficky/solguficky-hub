@@ -12,6 +12,7 @@
     <Compile Include="Domain/Viewer.fs" />
     <Compile Include="Domain/Schedule.fs" />
     <Compile Include="Domain/MeetupSnapshot.fs" />
+    <Compile Include="Domain/MeetupTransitions.fs" />
     <Compile Include="Domain/Access.fs" />
     <Compile Include="Domain/Meetup.fs" />
     <Compile Include="Migrations.fs" />

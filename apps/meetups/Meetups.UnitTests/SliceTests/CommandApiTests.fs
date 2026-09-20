@@ -143,6 +143,34 @@ let ``A version conflict is refused as ABORTED`` () =
 
     test <@ actual = Some StatusCode.Aborted @>
 
+/// Критерий PER-195. Отдельным тестом, а не четвёртым элементом сторожа ниже: тот
+/// требует попарно разные коды, а отказ по переходу делит FAILED_PRECONDITION с
+/// отсутствующим заголовком намеренно — оба относятся к классу «запрос верен, домен
+/// не позволяет». Различие с отказом по праву несёт код, различие с заголовком —
+/// деталь статуса.
+///
+/// Тест идёт через настоящий Api.handle, а не через decidePublish: неполный match в
+/// отображении остаётся предупреждением FS0025, сборка и гейт проходят зелёными, и
+/// увидеть пропущенную ветку можно только здесь.
+[<Fact>]
+let ``A refused transition is told apart from a refused permission`` () =
+    let cancelled =
+        Publish.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let transition =
+        codeOf (fun () -> PublishMeetup.Api.handle cancelled (Publish.request (administrator ())))
+
+    let permission =
+        codeOf (fun () -> PublishMeetup.Api.handle Publish.untouched (Publish.request (ordinary ())))
+
+    test
+        <@
+            transition = Some StatusCode.FailedPrecondition
+            && permission = Some StatusCode.PermissionDenied
+        @>
+
 /// Сам критерий приёмки, а не три литерала: отсутствие права, нарушенный инвариант
 /// и конфликт версии обязаны различаться кодом.
 [<Fact>]
