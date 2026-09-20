@@ -55,7 +55,7 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 		return nil, internal("upsert profile", err)
 	}
 	if err := admitAllowedUsername(ctx, tx, identityID, req.GetTelegramUsername()); err != nil {
-		return nil, roleStorageError("admit allowed username", err)
+		return nil, internal("admit allowed username", err)
 	}
 
 	roles, err := listRoles(ctx, tx, identityID)
@@ -79,6 +79,16 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	}, nil
 }
 
+// admitAllowedUsername гасит разрешение и выдаёт допуск в той же транзакции,
+// что и разрешение личности. Отказов ядра у него нет: профиль создан выше этой
+// же транзакцией, а заблокированному он отвечает пропуском, а не отказом.
+// Поэтому вызывающий прячет любой отказ за internal — у ResolveIdentity нет
+// исходов NOT_FOUND и FAILED_PRECONDITION, блокировка едет отдельным полем
+// ответа, — и errProfileNotFound или errProfileBlocked здесь означали бы
+// сломанный инвариант, а не ответ человеку.
+//
+// Отметка блокировки читается под FOR UPDATE до гашения записи: иначе
+// заблокированный сжёг бы своё разрешение, получив отказ триггера на выдаче.
 func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string) error {
 	if username == "" {
 		return nil
