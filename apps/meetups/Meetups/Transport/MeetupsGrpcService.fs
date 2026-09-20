@@ -4,7 +4,7 @@ open Grpc.Core
 open Meetups.Slices
 open Meetups.V1
 
-/// Транспортная граница шести операций контракта.
+/// Транспортная граница семи операций контракта.
 ///
 /// ASP.NET Core требует один класс-наследник сгенерированной базы со всеми
 /// операциями сервиса сразу, поэтому разложить его по срезам нельзя: это
@@ -46,3 +46,7 @@ type MeetupsGrpcService() =
     override _.ListVisibleMeetups(request: ListVisibleMeetupsRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
         ListVisibleMeetups.Api.handle (ListVisibleMeetups.Composition.buildRead services) request
+
+    override _.ListMeetupStates(request: ListMeetupStatesRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        ListMeetupStates.Api.handle (ListMeetupStates.Composition.buildRead services) request

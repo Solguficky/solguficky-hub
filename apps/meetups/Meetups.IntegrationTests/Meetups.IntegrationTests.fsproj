@@ -29,6 +29,7 @@
     <Compile Include="Scenarios/MeetupCommandTests.fs" />
     <Compile Include="Scenarios/MeetupBoundaryTests.fs" />
     <Compile Include="Scenarios/HiddenMeetupReadTests.fs" />
+    <Compile Include="Scenarios/ListMeetupStatesTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

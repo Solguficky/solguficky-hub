@@ -36,6 +36,7 @@
     <Compile Include="SliceTests/CommandApiTests.fs" />
     <Compile Include="SliceTests/ListVisibleMeetupsTests.fs" />
     <Compile Include="SliceTests/GetMeetupTests.fs" />
+    <Compile Include="SliceTests/ListMeetupStatesTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />
     <Compile Include="MigrationsTests.fs" />
