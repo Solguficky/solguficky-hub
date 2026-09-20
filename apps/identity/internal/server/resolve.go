@@ -54,6 +54,9 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	if err != nil {
 		return nil, internal("upsert profile", err)
 	}
+	if err := admitAllowedUsername(ctx, tx, identityID, req.GetTelegramUsername()); err != nil {
+		return nil, roleStorageError("admit allowed username", err)
+	}
 
 	roles, err := listRoles(ctx, tx, identityID)
 	if err != nil {
@@ -74,6 +77,29 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 		GlobalRoles: roles,
 		Blocked:     blocked,
 	}, nil
+}
+
+func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string) error {
+	if username == "" {
+		return nil
+	}
+	blocked, err := lockProfile(ctx, tx, identityID)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return nil
+	}
+	consumed, err := consumeAllowedUsername(ctx, tx, identityID, username)
+	if err != nil || !consumed {
+		return err
+	}
+	for _, role := range []string{roleMember, rolePublic} {
+		if _, err := grantRoleTxWithReason(ctx, tx, identityID, role, uuid.NullUUID{}, reasonAllowedUsername); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func usernameArg(req *identityv1.ResolveIdentityRequest) any {

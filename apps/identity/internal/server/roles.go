@@ -105,6 +105,16 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 }
 
 func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
+	return grantRoleTxWithReason(ctx, tx, identityID, role, performedBy, "")
+}
+
+func grantRoleTxWithReason(
+	ctx context.Context,
+	tx *sql.Tx,
+	identityID, role string,
+	performedBy uuid.NullUUID,
+	reason string,
+) (bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
 		return false, err
@@ -132,6 +142,7 @@ func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, perfo
 		performedBy: performedBy,
 		action:      actionGrant,
 		role:        role,
+		reason:      reason,
 	}); err != nil {
 		return false, err
 	}
