@@ -174,6 +174,49 @@ type MeetupCommandTests() =
 
         test <@ MeetupCommands.journalIds dsn meetupId = [ firstEvent; secondEvent; thirdEvent ] @>
 
+    /// Момент отложенной публикации не входит в снимок, поэтому ни одна команда его
+    /// не касается — а публикация обязана обнулить его той же записью, что меняет
+    /// видимость: `meetups_scheduled_publish_only_when_hidden` не пропустит видимую
+    /// строку с моментом, и публикация упала бы `23514` вместо доменного ответа.
+    /// Заполняется поле прямо в базе: команд назначения момента ещё нет (PER-203).
+    [<Fact>]
+    member _.``Publishing clears the scheduled publication moment``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        SchemaSql.exec
+            dsn
+            "UPDATE meetups SET scheduled_publish_at = @at WHERE id = @id"
+            [
+                "id", box meetupId
+                "at", box (DateTimeOffset(2026, 10, 1, 9, 0, 0, TimeSpan.Zero))
+            ]
+
+        test <@ MeetupCommands.scheduledPublicationIsSet dsn meetupId @>
+
+        let published = MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+
+        // Обе колонки, которых касается CHECK: видимость сменилась, момент обнулён.
+        test <@ MeetupCommands.versionIn published = Some 3L @>
+        test <@ MeetupCommands.visibilityOf dsn meetupId = "visible" @>
+        test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
+
+        // Повтор уже видимой сходки не пишет вовсе, поэтому момент, которого у неё
+        // быть не может, остаётся пустым, а версия и журнал доказывают отсутствие
+        // записи: сама пустота колонки у видимой строки держится ещё и CHECK.
+        let repeat = MeetupCommands.publish source fourthEvent (MeetupId meetupId)
+
+        test <@ MeetupCommands.versionIn repeat = Some 3L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 3L @>
+        test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
+
     /// Публикация ставит отметку первой публикации, и её принимает именно база: без
     /// отметки `meetups_visible_has_first_publication` отверг бы строку, а тест на
     /// счётчике событий этого бы не заметил.
