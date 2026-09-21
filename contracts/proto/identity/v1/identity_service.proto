@@ -11,7 +11,44 @@ service IdentityService {
   rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
   // Revokes the active global admin role. Requires maintainer authentication.
   rpc RevokeAdminRole(RevokeAdminRoleRequest) returns (RevokeAdminRoleResponse);
+  rpc ListCommunityMembers(ListCommunityMembersRequest) returns (ListCommunityMembersResponse);
+  rpc AdmitCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
+  rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
+  rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
 }
+
+// The caller passes the identity established from the same Telegram update.
+// Identity applies authorization from these facts; the bot does not decide it.
+message IdentityActor {
+  string identity_id = 1;
+  repeated GlobalRole global_roles = 2;
+}
+
+message CommunityMember {
+  string identity_id = 1;
+  optional string telegram_username = 2;
+  bool admitted = 3;
+}
+
+message ListCommunityMembersRequest { IdentityActor actor = 1; }
+message ListCommunityMembersResponse { repeated CommunityMember members = 1; }
+
+message ChangeCommunityMemberRequest {
+  IdentityActor actor = 1;
+  string identity_id = 2;
+}
+message ChangeCommunityMemberResponse { bool changed = 1; }
+
+message ListAllowedUsernamesRequest { IdentityActor actor = 1; }
+message ListAllowedUsernamesResponse { repeated string usernames = 1; }
+
+message ChangeAllowedUsernameRequest {
+  IdentityActor actor = 1;
+  string username = 2;
+}
+message ChangeAllowedUsernameResponse { bool changed = 1; }
 
 message ResolveIdentityRequest {
   // Telegram user id taken from a Telegram update. The caller establishes it
