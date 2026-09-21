@@ -22,6 +22,7 @@ jobs:
       contracts: ${{ steps.filter.outputs.contracts }}
       identity: ${{ steps.filter.outputs.identity }}
       meetups: ${{ steps.filter.outputs.meetups }}
+      notifications: ${{ steps.filter.outputs.notifications }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
@@ -50,6 +51,14 @@ jobs:
               - '.editorconfig'
               - '.config/dotnet-tools.json'
               - '.github/workflows/ci.yml'
+            notifications:
+              - 'contracts/proto/**'
+              - 'apps/notifications/**'
+              - 'shared/dotnet/**'
+              - 'tools/notifications/**'
+              - 'justfile'
+              - 'global.json'
+              - '.github/workflows/ci.yml'
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
@@ -67,6 +76,7 @@ jobs:
               - 'infra/apphost/**'
               - 'shared/dotnet/**'
               - 'apps/meetups/**'
+              - 'apps/notifications/**'
               - 'contracts/proto/**'
               - 'justfile'
               - 'global.json'
@@ -189,6 +199,32 @@ jobs:
       # находит ноль тестов и падает кодом 1.
       - run: dotnet test --solution Meetups.sln --no-build
         working-directory: apps/meetups
+
+  notifications:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.notifications == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      # Тот же гейт generated-only, что у Meetups: читает Git, поэтому идёт до
+      # сборки и не зависит от неё.
+      - run: sh tools/notifications/check-contracts-generated.sh
+      # Гейта форматирования здесь нет: Fantomas C# не форматирует, а своего
+      # гейта для C# в репозитории нет ни у AppHost, ни у ServiceDefaults.
+      - run: dotnet build Notifications.sln --nologo
+        working-directory: apps/notifications
+      # Интеграционные тесты поднимают PostgreSQL через Testcontainers. Docker на
+      # ubuntu-latest есть, поэтому они выполняются, а не пропускаются: фикстура
+      # под GITHUB_ACTIONS превращает отсутствие контейнера в отказ, иначе джоба
+      # зеленела бы на пропущенных тестах.
+      - run: dotnet test --solution Notifications.sln --no-build
+        working-directory: apps/notifications
 
   telegram-bot:
     needs: changes

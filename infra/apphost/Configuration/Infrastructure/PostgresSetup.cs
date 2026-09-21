@@ -23,6 +23,12 @@ internal static class PostgresSetup
             AppHostNames.Resources.MeetupsDb,
             postgres.AddDatabase(AppHostNames.Resources.MeetupsDb, AppHostNames.Resources.MeetupsDbName));
 
+        // Notifications держит в своей базе и доменную схему, и таблицы
+        // membership Orleans: и то и другое заводит один DbUp сервиса.
+        context.Publish(
+            AppHostNames.Resources.NotificationsDb,
+            postgres.AddDatabase(AppHostNames.Resources.NotificationsDb, AppHostNames.Resources.NotificationsDbName));
+
         return postgres;
     }
 }

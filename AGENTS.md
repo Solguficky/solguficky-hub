@@ -24,13 +24,15 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
 - `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, шесть команд записи и три запроса чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а два продуктовых запроса идут через единый viewer-aware reader.
+- `apps/notifications/` — Notifications на C# и Orleans: пока скелет. Силос co-hosted с gRPC-сервером, своя база PostgreSQL, миграции при старте одним DbUp — им же применяются вендорные скрипты кластеризации Orleans, — грин на сходку и тестовые проекты `Notifications.UnitTests` и `Notifications.IntegrationTests`. Grain storage и reminders не зарегистрированы намеренно: источник истины остаётся в PostgreSQL, и отсутствие провайдера делает это правило исполнимым, а не пунктом на review.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
-- `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляет Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
+- `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
 - `tools/skillshare/` — два скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первый вызывают `just check-agent-tools` и CI, второй — `just skillshare-install`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
+- `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
@@ -89,7 +91,7 @@ just check-document-numbers
 # Весь модуль contracts/proto компилируется, включая домен без потребителя
 just contracts-build
 
-# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F# и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -136,6 +138,14 @@ just meetups-format
 just meetups-format-check
 # Fantomas берётся из .config/dotnet-tools.json; `just dotnet-tools` восстанавливает его
 
+# Notifications — сборка силоса, тесты, гейт контрактов и запуск
+just notifications-build
+just notifications-test
+just notifications-contracts-check
+just notifications-run
+# NOTIFICATIONS_DATABASE_URL обязателен для notifications-run; интеграционные тесты
+# поднимают PostgreSQL через Testcontainers и без Docker пропускаются, кроме CI
+
 # .NET — из папки проекта
 dotnet build
 dotnet test
@@ -148,7 +158,7 @@ nats-tester --help
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp && just sync-commands` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
-Профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3, включая Meetups с PostgreSQL и применением миграций при старте; профиль `hub` с Telegram Bot после объединения графов ещё не проверен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
+Профили `infra`, `identity`, `meetups`, `notifications` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3, включая Meetups и Notifications с PostgreSQL и применением миграций при старте; профиль `hub` с Telegram Bot после объединения графов ещё не проверен. В рабочем дереве `aspire run` запускают с `--apphost`: иначе он находит AppHost основного клона. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
 
 CodeRabbit не ревьюит pull request автоматически; запуск — комментарием `@coderabbitai review`. Активную конфигурацию показывает `@coderabbitai configuration`. Его находки помогают владельцу при ревью, но не становятся гейтом мержа.
 
@@ -167,7 +177,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Заголовок PR задачи — `[PER-N] Название задачи из Linear` дословно: без перевода, без своей формулировки, без типа впереди и без `(PER-N)` в хвосте. PR без задачи берёт форму коммита `type: Subject` на английском. Тело — на русском и ровно три раздела: `## Что и зачем`, `## Отклонения от плана`, `## Осталось открытым`. Встроенный шаблон инструмента (`Motivation`, `Description`, `Testing`) их не заменяет, и послабление для имён чужих веток на PR не распространяется. Формат и примеры — [branching.md](docs/standards/git/branching.md).
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, MCP, публикуемых страниц, номеров ADR/RFC, компиляции контрактов, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, MCP, публикуемых страниц, номеров ADR/RFC, компиляции контрактов, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, Notifications, форматирования F# и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.

@@ -99,7 +99,7 @@ contracts-build:
     cd contracts/proto && buf build
 
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools
@@ -243,6 +243,32 @@ meetups-format: dotnet-tools
 # Гейт форматирования F#: печатает файлы, которые Fantomas переписал бы
 meetups-format-check: dotnet-tools
     dotnet fantomas --check apps/meetups
+
+# --- Notifications (C# / Orleans / .NET) -----------------------------------
+#
+# Кодогенерация C# — часть `dotnet build` контрактного проекта.
+# Сервис — силос Orleans, co-hosted с gRPC-сервером на Kestrel в h2c; готовность
+# отдаётся по grpc.health.v1, HTTP-эндпоинтов health у него нет. Реализаций
+# gRPC пока нет: command plane — PER-71.
+
+# Сборка контрактов, сервиса и обоих тестовых проектов
+notifications-build:
+    dotnet build apps/notifications/Notifications.sln --nologo
+
+# Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers
+# и без доступного Docker пропускаются — но не в CI: там отсутствие контейнера
+# красит джобу, иначе зелёный прогон на пропущенных тестах выглядит как проверка.
+# Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
+notifications-test:
+    dotnet test --solution apps/notifications/Notifications.sln
+
+# Контрактный проект остаётся generated-only: то же условие обратимости, что у Meetups
+notifications-contracts-check:
+    sh tools/notifications/check-contracts-generated.sh
+
+# Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS, база — NOTIFICATIONS_DATABASE_URL
+notifications-run:
+    dotnet run --project apps/notifications/Notifications
 
 # --- Инструменты -----------------------------------------------------------
 

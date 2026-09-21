@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.67.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- Реализации gRPC-сервиса здесь нет и в скелете не появится: она принадлежит
+       PER-71. Заглушки генерируются заранее, потому что словарь типов нужен и
+       потребителю шины, и серверу, а гейт generated-only дешевле поставить
+       вместе с проектом, чем задним числом. -->
+  <ItemGroup>
+    <!-- meetups.proto не свой: notifications.proto импортирует его напрямую,
+         и без него генерация не разрешает ссылку. -->
+    <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\notifications\v1\notifications.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\notifications\v1\notifications_service.proto" GrpcServices="Both" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
+</Project>

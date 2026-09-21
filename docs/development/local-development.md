@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль `hub` с Telegram Bot и production-like публикация не проверены.
+> **Статус:** Current, частично подтверждено. Профили `infra`, `identity`, `meetups`, `notifications` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль `hub` с Telegram Bot и production-like публикация не проверены.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -38,9 +38,14 @@ AppHost объявляет граф узлов и их связи, а профи
 | `infra` | PostgreSQL | нет |
 | `identity` | PostgreSQL | Identity |
 | `meetups` | PostgreSQL | Meetups |
-| `hub` | PostgreSQL | Identity, Meetups, Telegram Bot |
+| `notifications` | PostgreSQL | Notifications |
+| `hub` | PostgreSQL | Identity, Meetups, Notifications, Telegram Bot |
 
 Профиль `meetups` поднимает PostgreSQL: сервис применяет миграции при старте и без строки подключения не слушает. Смотрящий по-прежнему приходит в запросе, шины в профиле нет.
+
+Профиль `notifications` устроен так же, но зависимость от базы у него жёстче: в его базе лежат не только доменные таблицы, но и membership силоса Orleans, поэтому без строки подключения сервис не просто не слушает — он не поднимает силос вовсе. Миграции применяет тот же DbUp, и он же заводит таблицы Orleans. Порты силоса штатные и берутся из конфигурации: два профиля с Notifications одновременно на одной машине за них подерутся.
+
+**В рабочем дереве `aspire run` запускают с `--apphost`.** Деревья лежат в `.claude/worktrees/` внутри основного клона, поэтому поиск AppHost вверх по дереву каталогов находит `infra/apphost` родителя, а не свой. Симптом обманчив: запуск падает на `Unknown topology profile` с перечнем профилей основного клона, и выглядит это как ошибка в своей правке `appsettings.json`. Правильная форма — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile <name>`.
 
 Активный профиль задаёт `--profile <name>` или `TOPOLOGY__PROFILE`; первый перекрывает второй. Неизвестное имя профиля, ссылка на незарегистрированный узел и цикл зависимостей отвергаются до построения графа, с перечнем допустимых значений.
 
@@ -93,6 +98,7 @@ just aspire hub -- --skip-services telegram-bot
 9. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
 10. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Через назначенный Aspire proxy endpoint `ListVisibleMeetups` со смотрящим отвечает пустым списком на чистой базе, а `GetMeetup` по отсутствующему UUID — `NOT_FOUND`; оба вызова выполнены `grpcurl` без Telegram. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
 11. На зафиксированном до PER-58 прогоне срез `hub` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держал Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечали через свои proxy endpoint. Схемы были разведены по базам одного сервера: goose вёл `identity`, DbUp — `meetups`; на сервере не было базы, которую писали бы оба сервиса.
+12. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications. В логах сервиса видно применение трёх миграций DbUp — двух вендорных скриптов Orleans и своей схемы — до подъёма силоса, затем `Orleans Silo started.`; проба `grpc.health.v1.Health/Check` отвечает `SERVING` и через назначенный Aspire proxy endpoint, и напрямую, а `aspire describe` показывает узел `Healthy`. После `aspire stop` AppHost останавливается штатно.
 
 ## Неподтверждённая граница
 

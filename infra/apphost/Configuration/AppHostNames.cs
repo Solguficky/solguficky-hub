@@ -17,11 +17,14 @@ public static class AppHostNames
         public const string IdentityDbName = "identity";
         public const string MeetupsDb = "meetups-db";
         public const string MeetupsDbName = "meetups";
+        public const string NotificationsDb = "notifications-db";
+        public const string NotificationsDbName = "notifications";
 
         public const string Nats = "nats";
 
         public const string Identity = "identity";
         public const string Meetups = "meetups";
+        public const string Notifications = "notifications";
         public const string TelegramBot = "telegram-bot";
     }
 
