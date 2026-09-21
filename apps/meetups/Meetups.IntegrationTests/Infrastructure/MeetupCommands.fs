@@ -174,6 +174,14 @@ let countEvents (dsn: string) (id: Guid) =
 
 let versionOf (dsn: string) (id: Guid) = scalar<int64> dsn "SELECT version FROM meetups WHERE id = @id" [ "id", box id ]
 
+let visibilityOf (dsn: string) (id: Guid) =
+    scalar<string> dsn "SELECT visibility FROM meetups WHERE id = @id" [ "id", box id ]
+
+/// Заполнен ли момент отложенной публикации. В снимок поле не входит, поэтому
+/// наблюдать его обнуление можно только в самой строке состояния.
+let scheduledPublicationIsSet (dsn: string) (id: Guid) =
+    scalar<bool> dsn "SELECT scheduled_publish_at IS NOT NULL FROM meetups WHERE id = @id" [ "id", box id ]
+
 /// Число событий, чья версия обогнала версию состояния. Ноль означает, что обе
 /// стороны транзакции говорят об одном и том же шаге агрегата.
 let eventsAheadOfState (dsn: string) (id: Guid) =
