@@ -91,8 +91,15 @@ check-document-numbers:
     sh tools/docs/check-document-numbers.sh
     sh tools/docs/check-document-numbers-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Весь модуль contracts/proto компилируется, включая схемы, которых не читает
+# ни один потребитель. Потребители сужают вход фильтром paths и поимённым
+# списком Protobuf, поэтому домен без потребителя иначе не проверяется нигде
+# и ломается молча. Стилевых мнений не вносит: buf lint и buf breaking — PER-268.
+contracts-build:
+    cd contracts/proto && buf build
+
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools
