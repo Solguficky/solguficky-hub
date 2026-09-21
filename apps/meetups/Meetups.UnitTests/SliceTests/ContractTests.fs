@@ -268,3 +268,70 @@ let ``Fixed day and tentative interval should keep their own forms`` () =
 [<Fact>]
 let ``Meetup id should be refused when the UUID variant is not RFC 9562`` () =
     test <@ problem (Contract.Inbound.meetupId "0199c0de-0000-7000-0000-0000000000f1") = Some "id" @>
+
+[<Fact>]
+let ``Material id should be accepted in canonical form`` () =
+    test <@ Contract.Inbound.materialId "0199c0de-0000-7000-8000-0000000000a1" = Ok Sample.materialId @>
+
+[<Fact>]
+let ``Material id should be refused when the UUID version is not seven`` () =
+    test <@ problem (Contract.Inbound.materialId "0199c0de-0000-4000-8000-0000000000a1") = Some "material_id" @>
+
+[<Fact>]
+let ``A material should be rendered with its id, title and source`` () =
+    let contract = Contract.Outbound.material Sample.material
+
+    test
+        <@
+            contract.Id = "0199c0de-0000-7000-8000-0000000000a1"
+            && contract.Title = Sample.material.Title
+            && contract.Source.SourceCase = Meetups.V1.MeetupMaterialSource.SourceOneofCase.MessageLink
+            && contract.Source.MessageLink = "https://t.me/solguficky/42"
+        @>
+
+[<Fact>]
+let ``A file source should be rendered as a file id`` () =
+    let contract =
+        Contract.Outbound.material
+            { Sample.material with
+                Source = FileId "AgACAgIAAxkBAAI"
+            }
+
+    test
+        <@
+            contract.Source.SourceCase = Meetups.V1.MeetupMaterialSource.SourceOneofCase.FileId
+            && contract.Source.FileId = "AgACAgIAAxkBAAI"
+        @>
+
+/// Порядок коллекции несёт порядок repeated-поля: отдельного position в контракте
+/// нет, и отрисовка обязана сохранить порядок снимка.
+[<Fact>]
+let ``The snapshot should render the materials in the collection order`` () =
+    let second =
+        {
+            Id = Sample.otherMaterialId
+            Position = 2
+            Title = "Вторая афиша"
+            Source = FileId "file-2"
+            BoundBy = Sample.authorId
+        }
+
+    let snapshot =
+        { Meetup.toSnapshot Sample.withMaterial with
+            Materials = [ Sample.material; second ]
+        }
+
+    let contract = Contract.Outbound.snapshot snapshot
+
+    let ids =
+        contract.Materials
+        |> Seq.map (fun material -> material.Id)
+        |> List.ofSeq
+
+    test
+        <@
+            ids = [
+                "0199c0de-0000-7000-8000-0000000000a1"
+                "0199c0de-0000-7000-8000-0000000000a2"
+            ]
+        @>

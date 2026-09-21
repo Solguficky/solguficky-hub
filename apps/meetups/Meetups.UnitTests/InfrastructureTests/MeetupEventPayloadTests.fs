@@ -30,6 +30,12 @@ let ``The event type names the occasion the schema accepts`` () =
     let republished = MeetupEventPayload.eventType MeetupRepublished
     let cancelled = MeetupEventPayload.eventType MeetupCancelled
 
+    let materialAttached =
+        MeetupEventPayload.eventType (MeetupMaterialAttached Sample.material)
+
+    let materialRemoved =
+        MeetupEventPayload.eventType (MeetupMaterialRemoved Sample.materialId)
+
     test
         <@
             created = "meetup_created"
@@ -38,6 +44,8 @@ let ``The event type names the occasion the schema accepts`` () =
             && unpublished = "meetup_unpublished"
             && republished = "meetup_republished"
             && cancelled = "meetup_cancelled"
+            && materialAttached = "meetup_material_attached"
+            && materialRemoved = "meetup_material_removed"
         @>
 
 [<Fact>]
@@ -116,3 +124,34 @@ let ``A dated schedule carries its form, precision and boundaries`` () =
             && schedule["precision"].GetValue<string>() = "day"
             && schedule["start_date"].GetValue<string>() = "2026-10-03"
         @>
+
+/// Материалы входят в снимок события: потребитель выводит «материал добавлен»
+/// сравнением с собственной репликой (ADR-031), поэтому тело обязано нести
+/// коллекцию целиком, а не факт изменения.
+[<Fact>]
+let ``The payload carries the materials of the collection in order`` () =
+    let payload = parse (Meetup.toSnapshot Sample.withMaterial)
+    let materials = payload["materials"].AsArray()
+
+    test <@ materials.Count = 1 @>
+
+    let material = materials[0].AsObject()
+    let source = material["source"].AsObject()
+
+    test
+        <@
+            material["id"].GetValue<string>() = "0199c0de-0000-7000-8000-0000000000a1"
+            && material["position"].GetValue<int>() = 1
+            && material["title"].GetValue<string>() = Sample.material.Title
+            && source["kind"].GetValue<string>() = "message_link"
+            && source["value"].GetValue<string>() = "https://t.me/solguficky/42"
+            && material["bound_by"].GetValue<string>() = "0199c0de-0000-7000-8000-000000000001"
+        @>
+
+/// Пустая коллекция — пустой массив, а не отсутствующее поле: «материалов нет» и
+/// «поле не заполнено» обязаны читаться одинаково.
+[<Fact>]
+let ``A meetup without materials carries an empty array`` () =
+    let payload = parse (Meetup.toSnapshot Sample.titled)
+
+    test <@ payload["materials"].AsArray().Count = 0 @>

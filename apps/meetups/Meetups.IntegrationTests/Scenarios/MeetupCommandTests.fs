@@ -558,3 +558,205 @@ type MeetupCommandTests() =
                     fifthEvent
                 ]
             @>
+
+    /// Прикрепление материала пишет пару «состояние и событие» той же транзакцией,
+    /// что и остальные команды: у строки сходки и у строки журнала один `xmin`.
+    [<Fact>]
+    member _.``Attaching a material writes state and event in one transaction``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.attach source secondEvent (MeetupId meetupId) MeetupCommands.materialId "Афиша" (FileId "file-1")
+        |> ignore
+
+        let stateTransaction = MeetupCommands.transactionOf dsn "meetups" "id" meetupId
+        let eventTransaction = MeetupCommands.eventTransactionOf dsn secondEvent
+
+        test <@ stateTransaction = eventTransaction @>
+
+    /// Критерий приёмки сформулирован про обе команды, поэтому атомарность удаления
+    /// проверяется отдельно, а не считается следствием общего `commit`.
+    [<Fact>]
+    member _.``Removing a material writes state and event in one transaction``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.attach source secondEvent (MeetupId meetupId) MeetupCommands.materialId "Афиша" (FileId "file-1")
+        |> ignore
+
+        MeetupCommands.remove source thirdEvent (MeetupId meetupId) MeetupCommands.materialId
+        |> ignore
+
+        let stateTransaction = MeetupCommands.transactionOf dsn "meetups" "id" meetupId
+        let eventTransaction = MeetupCommands.eventTransactionOf dsn thirdEvent
+
+        test <@ stateTransaction = eventTransaction @>
+
+    /// Порядок коллекции живёт в строке состояния, а не в памяти процесса: новый
+    /// источник соединений на ту же базу видит ту же последовательность и те же
+    /// позиции. Иначе «порядок воспроизводится после перезапуска» ничем не держится.
+    [<Fact>]
+    member _.``The material order survives a fresh data source``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+
+        do
+            use source = MeetupCommands.source dsn
+
+            MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+            |> ignore
+
+            MeetupCommands.attach
+                source
+                secondEvent
+                (MeetupId meetupId)
+                MeetupCommands.materialId
+                "Первая"
+                (MessageLink "https://t.me/solguficky/42")
+            |> ignore
+
+            MeetupCommands.attach
+                source
+                thirdEvent
+                (MeetupId meetupId)
+                MeetupCommands.otherMaterialId
+                "Вторая"
+                (FileId "file-2")
+            |> ignore
+
+        use fresh = MeetupCommands.source dsn
+
+        let restored =
+            MeetupStore.load fresh (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let actual =
+            restored
+            |> Option.map (fun snapshot ->
+                snapshot.Materials
+                |> List.map (fun material -> material.Id, material.Position)
+            )
+
+        test
+            <@
+                actual = Some
+                    [
+                        MeetupCommands.materialId, 1
+                        MeetupCommands.otherMaterialId, 2
+                    ]
+            @>
+
+    /// Удаление материала не трогает остальную коллекцию: сосед остаётся тем же
+    /// материалом с той же позицией, а сам оригинал — сообщение или файл — продукт
+    /// не хранит вовсе, поэтому удалять нечего.
+    [<Fact>]
+    member _.``Removing a material leaves the rest of the collection in place``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.attach
+            source
+            secondEvent
+            (MeetupId meetupId)
+            MeetupCommands.materialId
+            "Первая"
+            (MessageLink "https://t.me/solguficky/42")
+        |> ignore
+
+        MeetupCommands.attach
+            source
+            thirdEvent
+            (MeetupId meetupId)
+            MeetupCommands.otherMaterialId
+            "Вторая"
+            (FileId "file-2")
+        |> ignore
+
+        let removed =
+            MeetupCommands.remove source fourthEvent (MeetupId meetupId) MeetupCommands.materialId
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let remaining =
+            stored
+            |> Option.map (fun snapshot -> snapshot.Materials)
+
+        let expected =
+            {
+                Id = MeetupCommands.otherMaterialId
+                Position = 2
+                Title = "Вторая"
+                Source = FileId "file-2"
+                BoundBy = MeetupCommands.author
+            }
+
+        test <@ remaining = Some [ expected ] @>
+        test <@ MeetupCommands.versionIn removed = Some 4L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 4L @>
+
+        test
+            <@
+                MeetupCommands.eventTypes dsn meetupId = [
+                    "meetup_created"
+                    "meetup_material_attached"
+                    "meetup_material_attached"
+                    "meetup_material_removed"
+                ]
+            @>
+
+    /// Идентификатор материала — ключ идемпотентности: повтор не плодит второй
+    /// материал, не двигает версию и не пишет событие.
+    [<Fact>]
+    member _.``A repeated attachment writes nothing``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        let first =
+            MeetupCommands.attach
+                source
+                secondEvent
+                (MeetupId meetupId)
+                MeetupCommands.materialId
+                "Афиша"
+                (FileId "file-1")
+
+        let repeat =
+            MeetupCommands.attach
+                source
+                thirdEvent
+                (MeetupId meetupId)
+                MeetupCommands.materialId
+                "Другое название"
+                (MessageLink "https://t.me/solguficky/42")
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        test <@ first = repeat @>
+        test <@ MeetupCommands.versionIn repeat = Some 2L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+
+        test
+            <@
+                stored
+                |> Option.map (fun snapshot -> snapshot.Materials.Length) = Some 1
+            @>

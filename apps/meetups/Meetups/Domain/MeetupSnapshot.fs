@@ -31,6 +31,7 @@ type MeetupSnapshot =
         Kind: string
         CalendarLink: string
         Schedule: Schedule
+        Materials: MeetupMaterial list
         Lifecycle: MeetupLifecycle
         Visibility: MeetupVisibility
         FirstPublishedAt: DateTimeOffset option

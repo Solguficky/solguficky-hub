@@ -49,6 +49,7 @@ let private SelectSql =
         venue AS Venue,
         kind AS Kind,
         calendar_link AS CalendarLink,
+        materials AS Materials,
         lifecycle AS Lifecycle,
         visibility AS Visibility,
         first_published_at AS FirstPublishedAt,
@@ -67,12 +68,12 @@ let private SelectSql =
 let private InsertMeetupSql =
     """
     INSERT INTO meetups (
-        id, author, title, description, venue, kind, calendar_link,
+        id, author, title, description, venue, kind, calendar_link, materials,
         lifecycle, visibility, first_published_at, version,
         schedule_form, schedule_precision,
         schedule_start_date, schedule_start_time, schedule_end_date, schedule_end_time
     ) VALUES (
-        @id, @author, @title, @description, @venue, @kind, @calendar_link,
+        @id, @author, @title, @description, @venue, @kind, @calendar_link, CAST(@materials AS jsonb),
         @lifecycle, @visibility, @first_published_at, @version,
         @schedule_form, @schedule_precision,
         @schedule_start_date, @schedule_start_time, @schedule_end_date, @schedule_end_time
@@ -101,6 +102,7 @@ let private UpdateMeetupSql =
         venue = @venue,
         kind = @kind,
         calendar_link = @calendar_link,
+        materials = CAST(@materials AS jsonb),
         lifecycle = @lifecycle,
         visibility = @visibility,
         scheduled_publish_at = CASE
@@ -138,6 +140,7 @@ let private stateParameters (row: MeetupRow.MeetupRow) =
         venue = row.Venue
         kind = row.Kind
         calendar_link = row.CalendarLink
+        materials = row.Materials
         lifecycle = row.Lifecycle
         visibility = row.Visibility
         first_published_at = row.FirstPublishedAt

@@ -23,7 +23,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
 - `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
-- `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, шесть команд записи и три запроса чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а два продуктовых запроса идут через единый viewer-aware reader.
+- `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, команды записи и запросы чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а продуктовые запросы идут через единый viewer-aware reader.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляет Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.

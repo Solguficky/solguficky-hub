@@ -11,6 +11,7 @@
     <Compile Include="Domain/Ids.fs" />
     <Compile Include="Domain/Viewer.fs" />
     <Compile Include="Domain/Schedule.fs" />
+    <Compile Include="Domain/MeetupMaterial.fs" />
     <Compile Include="Domain/MeetupSnapshot.fs" />
     <Compile Include="Domain/MeetupTransitions.fs" />
     <Compile Include="Domain/Access.fs" />
@@ -29,6 +30,8 @@
     <Compile Include="Slices/PublishMeetup.fs" />
     <Compile Include="Slices/UnpublishMeetup.fs" />
     <Compile Include="Slices/CancelMeetup.fs" />
+    <Compile Include="Slices/AttachMaterial.fs" />
+    <Compile Include="Slices/RemoveMaterial.fs" />
     <Compile Include="Slices/ListVisibleMeetups.fs" />
     <Compile Include="Slices/GetMeetup.fs" />
     <Compile Include="Slices/ListMeetupStates.fs" />

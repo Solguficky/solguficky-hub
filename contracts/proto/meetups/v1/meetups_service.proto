@@ -12,6 +12,8 @@ service MeetupsService {
   rpc PublishMeetup(PublishMeetupRequest) returns (MeetupSnapshot);
   rpc UnpublishMeetup(UnpublishMeetupRequest) returns (MeetupSnapshot);
   rpc CancelMeetup(CancelMeetupRequest) returns (MeetupSnapshot);
+  rpc AttachMaterial(AttachMaterialRequest) returns (MeetupSnapshot);
+  rpc RemoveMaterial(RemoveMaterialRequest) returns (MeetupSnapshot);
   rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
   rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
   rpc ListMeetupStates(ListMeetupStatesRequest) returns (ListMeetupStatesResponse);
@@ -96,6 +98,34 @@ message CancelMeetupRequest {
   string id = 2;
 }
 
+message AttachMaterialRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The meetup the material is
+  // attached to.
+  string id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. It is both the
+  // material id and the idempotency key; there is no separate idempotency field.
+  string material_id = 3;
+
+  // Empty string is the total value "unspecified".
+  string title = 4;
+
+  MeetupMaterialSource source = 5;
+}
+
+message RemoveMaterialRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens. The material is named by the same
+  // caller-generated id the attachment used.
+  string material_id = 3;
+}
+
 message ListVisibleMeetupsRequest {
   Viewer viewer = 1;
 }
@@ -136,6 +166,10 @@ message MeetupSnapshot {
 
   // Aggregate version. 0 is not a valid value; there is no absent state here.
   int64 version = 12;
+
+  // One ordered collection of materials. The order of this field is the order
+  // of the collection; an empty collection is not an absent state.
+  repeated MeetupMaterial materials = 13;
 }
 
 // Server-produced state. Every field is set; there is no absent state here.

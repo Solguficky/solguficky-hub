@@ -161,10 +161,65 @@ let cancel (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         }
     |> run
 
+/// Материалы среза: идентификаторы задаются тестом, потому что их генерирует
+/// вызывающая сторона, и идемпотентность повтора проверяется именно на них.
+let materialId = MaterialId(Guid.Parse "0199c0de-0000-7000-8000-0000000000a1")
+let otherMaterialId = MaterialId(Guid.Parse "0199c0de-0000-7000-8000-0000000000a2")
+
+let attachDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.AttachMaterial.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+    }
+
+let removeDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.RemoveMaterial.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+    }
+
+let attach
+    (source: NpgsqlDataSource)
+    (eventId: Guid)
+    (id: MeetupId)
+    (material: MaterialId)
+    (title: string)
+    (materialSource: MaterialSource)
+    =
+    Meetups.Slices.AttachMaterial.execute
+        (attachDeps source eventId)
+        {
+            Id = id
+            MaterialId = material
+            Title = title
+            Source = materialSource
+            Viewer = administrator
+        }
+    |> run
+
+let remove (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (material: MaterialId) =
+    Meetups.Slices.RemoveMaterial.execute
+        (removeDeps source eventId)
+        {
+            Id = id
+            MaterialId = material
+            Viewer = administrator
+        }
+    |> run
+
 /// Системная колонка приводится к тексту в запросе: сравнивать нужно факт
 /// совпадения транзакций, а не разбирать тип xid на стороне клиента.
 let transactionOf (dsn: string) (table: string) (column: string) (id: Guid) =
     scalar<string> dsn $"SELECT xmin::text FROM {table} WHERE {column} = @id" [ "id", box id ]
+
+/// Транзакция конкретной строки журнала: у сходки событий несколько, и «любое из
+/// них» здесь не утверждение.
+let eventTransactionOf (dsn: string) (eventId: Guid) =
+    scalar<string> dsn "SELECT xmin::text FROM meetup_events WHERE event_id = @id" [ "id", box eventId ]
 
 let countMeetups (dsn: string) (id: Guid) =
     scalar<int64> dsn "SELECT count(*) FROM meetups WHERE id = @id" [ "id", box id ]

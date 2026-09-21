@@ -42,6 +42,7 @@ let private selectAllSql =
         venue AS Venue,
         kind AS Kind,
         calendar_link AS CalendarLink,
+        materials AS Materials,
         lifecycle AS Lifecycle,
         visibility AS Visibility,
         first_published_at AS FirstPublishedAt,

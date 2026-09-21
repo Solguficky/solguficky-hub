@@ -549,3 +549,212 @@ let ``A successful cancellation answers with a visible cancelled snapshot`` () =
             answer.Lifecycle = Meetups.V1.MeetupLifecycle.Cancelled
             && answer.Visibility = Meetups.V1.MeetupVisibility.Visible
         @>
+
+/// Срезы материалов. Их отказы проверяются здесь по той же причине, что и у соседей:
+/// таблица кодов у каждого среза своя, и совпадение сегодня — совпадение, а не
+/// абстракция.
+module private Attach =
+
+    let deps load commit : AttachMaterial.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e7"
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer =
+        Meetups.V1.AttachMaterialRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
+            Title = "Афиша",
+            Source = Meetups.V1.MeetupMaterialSource(MessageLink = "https://t.me/solguficky/42")
+        )
+
+module private Remove =
+
+    let deps load commit : RemoveMaterial.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e8"
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer =
+        Meetups.V1.RemoveMaterialRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1"
+        )
+
+[<Fact>]
+let ``Attaching a material is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched (Attach.request (ordinary ())))
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Attaching a material to a missing meetup answers NOT_FOUND`` () =
+    let missing =
+        Attach.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> AttachMaterial.Api.handle missing (Attach.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+/// Отмена закрывает прикрепление так же, как правку атрибутов: запрос собран верно,
+/// но домен не позволяет переход.
+[<Fact>]
+let ``Attaching a material to a cancelled meetup answers FAILED_PRECONDITION`` () =
+    let cancelled =
+        Attach.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> AttachMaterial.Api.handle cancelled (Attach.request (administrator ())))
+
+    test <@ actual = Some StatusCode.FailedPrecondition @>
+
+[<Fact>]
+let ``A version conflict while attaching a material is refused as ABORTED`` () =
+    let conflicting =
+        Attach.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> AttachMaterial.Api.handle conflicting (Attach.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>
+
+/// Пустой oneof не является вторым написанием источника: у материала источник есть
+/// всегда, и дочитать пустоту значением по умолчанию значило бы завести материал
+/// без источника.
+[<Fact>]
+let ``Attaching a material without a source is refused as INVALID_ARGUMENT`` () =
+    let request =
+        Meetups.V1.AttachMaterialRequest(
+            Viewer = administrator (),
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
+            Title = "Афиша"
+        )
+
+    test <@ codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched request) = Some StatusCode.InvalidArgument @>
+
+[<Fact>]
+let ``Attaching a material with an empty source is refused as INVALID_ARGUMENT`` () =
+    let request =
+        Meetups.V1.AttachMaterialRequest(
+            Viewer = administrator (),
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
+            Title = "Афиша",
+            Source = Meetups.V1.MeetupMaterialSource(FileId = "")
+        )
+
+    test <@ codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched request) = Some StatusCode.InvalidArgument @>
+
+[<Fact>]
+let ``Attaching a material with a non-canonical material id is refused as INVALID_ARGUMENT`` () =
+    let request =
+        Meetups.V1.AttachMaterialRequest(
+            Viewer = administrator (),
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-4000-8000-0000000000a1",
+            Title = "Афиша",
+            Source = Meetups.V1.MeetupMaterialSource(MessageLink = "https://t.me/solguficky/42")
+        )
+
+    test <@ codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched request) = Some StatusCode.InvalidArgument @>
+
+/// Материал виден на проводе целиком: идентификатор, название и вид источника.
+/// Позиция и авторство привязки наружу не выходят — их в контракте нет.
+[<Fact>]
+let ``A successful attachment answers with the material in the snapshot`` () =
+    let attached =
+        Meetup.apply (Existing Sample.titled) (MeetupMaterialAttached Sample.material)
+        |> Meetup.toSnapshot
+
+    let deps =
+        Attach.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> Task.FromResult(Ok attached))
+
+    let answer =
+        (AttachMaterial.Api.handle deps (Attach.request (administrator ()))).GetAwaiter().GetResult()
+
+    let material = Seq.exactlyOne answer.Materials
+
+    test
+        <@
+            material.Id = "0199c0de-0000-7000-8000-0000000000a1"
+            && material.Title = Sample.material.Title
+            && material.Source.SourceCase = Meetups.V1.MeetupMaterialSource.SourceOneofCase.MessageLink
+        @>
+
+[<Fact>]
+let ``Removing a material is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () -> RemoveMaterial.Api.handle Remove.untouched (Remove.request (ordinary ())))
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Removing a material from a missing meetup answers NOT_FOUND`` () =
+    let missing =
+        Remove.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> RemoveMaterial.Api.handle missing (Remove.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+[<Fact>]
+let ``Removing a material from a cancelled meetup answers FAILED_PRECONDITION`` () =
+    let cancelled =
+        Remove.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelledWithMaterial)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> RemoveMaterial.Api.handle cancelled (Remove.request (administrator ())))
+
+    test <@ actual = Some StatusCode.FailedPrecondition @>
+
+[<Fact>]
+let ``A version conflict while removing a material is refused as ABORTED`` () =
+    let conflicting =
+        Remove.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.withMaterial)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> RemoveMaterial.Api.handle conflicting (Remove.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>
+
+/// Повтор удаления — достигнутое целевое состояние: ответ успешен и не несёт
+/// материала, потому что его в снимке уже нет.
+[<Fact>]
+let ``A repeated removal answers with the snapshot without the material`` () =
+    let deps =
+        Remove.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let answer =
+        (RemoveMaterial.Api.handle deps (Remove.request (administrator ()))).GetAwaiter().GetResult()
+
+    test <@ Seq.isEmpty answer.Materials @>

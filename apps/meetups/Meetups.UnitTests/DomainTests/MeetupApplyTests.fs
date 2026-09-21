@@ -54,6 +54,28 @@ let ``Apply should raise the version by exactly one for a cancellation`` () =
     test <@ version cancelled = version Sample.published + 1L @>
 
 [<Fact>]
+let ``Apply should raise the version by exactly one for a material`` () =
+    let attached =
+        Meetup.apply (Existing Sample.titled) (MeetupMaterialAttached Sample.material)
+
+    let removed =
+        Meetup.apply (Existing attached) (MeetupMaterialRemoved Sample.materialId)
+
+    test <@ version attached = version Sample.titled + 1L @>
+    test <@ version removed = version attached + 1L @>
+
+/// Материал входит в состояние применением события, а не командой записи: событие
+/// несёт и позицию, и авторство привязки, поэтому собранный снаружи материал
+/// состоянием не становится.
+[<Fact>]
+let ``Apply should take the material from the event as it is`` () =
+    let attached =
+        Meetup.apply (Existing Sample.titled) (MeetupMaterialAttached Sample.material)
+        |> Meetup.toSnapshot
+
+    test <@ attached.Materials = [ Sample.material ] @>
+
+[<Fact>]
 let ``Apply should leave the lifecycle planned`` () =
     // Оси независимы: публикация двигает видимость и жизненного цикла не касается.
     // Переход «состоялась» в срез не входит; отмену даёт своя команда, и её
@@ -71,4 +93,6 @@ let ``Apply should reject an event decided from another state`` () =
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupUnpublished @>
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupRepublished @>
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupCancelled @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupMaterialAttached Sample.material) @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupMaterialRemoved Sample.materialId) @>
     raises<InvalidOperationException> <@ Meetup.apply (Existing Sample.draft) creation @>
