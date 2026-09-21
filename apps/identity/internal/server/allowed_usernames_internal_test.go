@@ -11,6 +11,7 @@ import (
 )
 
 func TestAllowedUsernameOperationsNormalizeAndKeepHistory(t *testing.T) {
+	t.Parallel()
 	svc, db := newIdentityService(t)
 	admin := uuid.NullUUID{UUID: uuid.MustParse(seedProfile(t, db, 9391)), Valid: true}
 
