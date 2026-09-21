@@ -3,6 +3,12 @@ import { z } from "zod";
 const CallbackSchema = z.string().max(64);
 const TokenSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
 
+// Ник едет в `callback_data` как есть, и обратно он доезжает только в этом
+// алфавите и в этой длине: у Telegram на данные кнопки 64 байта, а длиннее 32
+// символов ника не бывает. Экран сверяется с тем же выражением, что и разбор:
+// кнопка, которую разбор потом назовёт сломанной, рисоваться не должна.
+export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
+
 export type CallbackAction =
   | { kind: "hub" }
   | { kind: "manage-menu" }
@@ -34,8 +40,9 @@ export function parseCallback(raw: unknown): CallbackAction {
       : { kind: "malformed" };
   }
   if (parts.length === 4 && parts[1] === "community") {
-    if (parts[2] === "remove" && /^[A-Za-z0-9_]{1,32}$/.test(parts[3] ?? "")) {
-      return { kind: "remove-allowed-username", username: parts[3] ?? "" };
+    const username = parts[3] ?? "";
+    if (parts[2] === "remove" && removableUsernamePattern.test(username)) {
+      return { kind: "remove-allowed-username", username };
     }
     const identityToken = TokenSchema.safeParse(parts[3]);
     if (!identityToken.success) return { kind: "malformed" };

@@ -75,10 +75,11 @@ func (s identityService) AdmitCommunityMember(ctx context.Context, req *identity
 	if err != nil {
 		return nil, err
 	}
-	if _, err := uuid.Parse(req.GetIdentityId()); err != nil {
-		return nil, status.Error(codes.InvalidArgument, "identity_id must be a UUID")
+	identityID, err := canonicalIdentityID(req.GetIdentityId())
+	if err != nil {
+		return nil, err
 	}
-	changed, err := s.grantHubAdmission(ctx, req.GetIdentityId(), actor)
+	changed, err := s.grantHubAdmission(ctx, identityID, actor)
 	if err != nil {
 		return nil, roleStatus(err)
 	}
@@ -90,10 +91,11 @@ func (s identityService) BlockCommunityMember(ctx context.Context, req *identity
 	if err != nil {
 		return nil, err
 	}
-	if _, err := uuid.Parse(req.GetIdentityId()); err != nil {
-		return nil, status.Error(codes.InvalidArgument, "identity_id must be a UUID")
+	identityID, err := canonicalIdentityID(req.GetIdentityId())
+	if err != nil {
+		return nil, err
 	}
-	changed, err := s.blockIdentity(ctx, req.GetIdentityId(), actor)
+	changed, err := s.blockIdentity(ctx, identityID, actor)
 	if err != nil {
 		return nil, roleStatus(err)
 	}

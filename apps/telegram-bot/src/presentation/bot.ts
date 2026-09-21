@@ -25,7 +25,7 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
-import { parseCallback } from "./parse-callback.js";
+import { parseCallback, removableUsernamePattern } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
 export type BotRuntime = {
@@ -168,7 +168,9 @@ async function handleMessage(
             ? result.value
               ? "Ник добавлен."
               : "Этот ник уже есть в списке."
-            : undefined,
+            : result.kind === "invalid"
+              ? "Это не похоже на ник Telegram. Пришли его ещё раз."
+              : undefined,
         );
         outcome = adminOutcome(result, identity.person.identityId);
         return;
@@ -461,7 +463,9 @@ async function handleCallback(
           ? result.value
             ? "Изменение сохранено."
             : "Состояние уже было актуальным."
-          : undefined;
+          : result.kind === "invalid"
+            ? "Identity отклонил изменение. Состав перечитан заново."
+            : undefined;
       await renderCommunity(ctx, runtime, person, true, confirmation);
       outcome = adminOutcome(result, person.identityId);
       return;
@@ -642,10 +646,15 @@ async function renderCommunity(
       )
       .row();
   keyboard.text("Добавить ник", "v1:community:allow").row();
-  for (const username of result.value.allowedUsernames)
+  // Кнопка рисуется только для ника, который доедет обратно в `callback_data`:
+  // более длинный вышиб бы весь экран отказом Telegram на 64 байта, а разбор
+  // всё равно назвал бы его сломанным.
+  for (const username of result.value.allowedUsernames) {
+    if (!removableUsernamePattern.test(username)) continue;
     keyboard
       .text(`Убрать @${username}`, `v1:community:remove:${username}`)
       .row();
+  }
   keyboard
     .text("Обновить", "v1:community:list")
     .text("Назад", "v1:manage:menu");
