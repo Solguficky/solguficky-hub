@@ -22,36 +22,36 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from nats_tester.generated.meetups.v1 import meetups_service_pb2 as meetups_dot_v1_dot_meetups__service__pb2
+from nats_tester.generated.meetups.v1 import meetups_pb2 as meetups_dot_v1_dot_meetups__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$notifications/v1/notifications.proto\x12\x10notifications.v1\x1a meetups/v1/meetups_service.proto\"\xea\x04\n\x0cNotification\x12\x17\n\x0fnotification_id\x18\x01 \x01(\t\x12\x14\n\x0crecipient_id\x18\x02 \x01(\t\x12\x12\n\ncreated_at\x18\x03 \x01(\t\x12\x16\n\tnot_after\x18\x04 \x01(\tH\x01\x88\x01\x01\x12&\n\x05\x63\x61use\x18\x05 \x01(\x0b\x32\x17.notifications.v1.Cause\x12=\n\x10meetup_published\x18\x06 \x01(\x0b\x32!.notifications.v1.MeetupPublishedH\x00\x12\x39\n\x0emeetup_changed\x18\x07 \x01(\x0b\x32\x1f.notifications.v1.MeetupChangedH\x00\x12;\n\x0fmeetup_material\x18\x08 \x01(\x0b\x32 .notifications.v1.MeetupMaterialH\x00\x12;\n\x0fmeetup_reminder\x18\t \x01(\x0b\x32 .notifications.v1.MeetupReminderH\x00\x12?\n\x11organizer_message\x18\n \x01(\x0b\x32\".notifications.v1.OrganizerMessageH\x00\x12I\n\x16\x63ommunity_announcement\x18\x0b \x01(\x0b\x32\'.notifications.v1.CommunityAnnouncementH\x00\x12\x41\n\x12meetup_unpublished\x18\x0c \x01(\x0b\x32#.notifications.v1.MeetupUnpublishedH\x00\x42\x06\n\x04typeB\x0c\n\n_not_after\"\x80\x01\n\x05\x43\x61use\x12\x19\n\x0fmeetup_event_id\x18\x01 \x01(\tH\x00\x12\x1b\n\x11identity_event_id\x18\x02 \x01(\tH\x00\x12\x1a\n\x10reminder_task_id\x18\x03 \x01(\tH\x00\x12\x1c\n\x12\x63ommand_request_id\x18\x04 \x01(\tH\x00\x42\x05\n\x03ref\"\xc0\x01\n\nMeetupCard\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\r\n\x05venue\x18\x03 \x01(\t\x12&\n\x08schedule\x18\x04 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\x05 \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\x06 \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\"?\n\x0fMeetupPublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"v\n\rMeetupChanged\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x37\n\x0f\x63hanged_aspects\x18\x02 \x03(\x0e\x32\x1e.notifications.v1.MeetupAspect\"k\n\x0eMeetupMaterial\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x13\n\x0bmaterial_id\x18\x02 \x01(\t\x12\x16\n\x0ematerial_title\x18\x03 \x01(\t\">\n\x0eMeetupReminder\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"a\n\x10OrganizerMessage\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x11\n\tsender_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"8\n\x15\x43ommunityAnnouncement\x12\x11\n\tsender_id\x18\x01 \x01(\t\x12\x0c\n\x04\x62ody\x18\x02 \x01(\t\"A\n\x11MeetupUnpublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard*\x8e\x02\n\x0cMeetupAspect\x12\x1d\n\x19MEETUP_ASPECT_UNSPECIFIED\x10\x00\x12\x17\n\x13MEETUP_ASPECT_TITLE\x10\x01\x12\x1d\n\x19MEETUP_ASPECT_DESCRIPTION\x10\x02\x12\x17\n\x13MEETUP_ASPECT_VENUE\x10\x03\x12\x16\n\x12MEETUP_ASPECT_KIND\x10\x04\x12\x1f\n\x1bMEETUP_ASPECT_CALENDAR_LINK\x10\x05\x12\x1a\n\x16MEETUP_ASPECT_SCHEDULE\x10\x06\x12\x1b\n\x17MEETUP_ASPECT_LIFECYCLE\x10\x07\x12\x1c\n\x18MEETUP_ASPECT_VISIBILITY\x10\x08\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$notifications/v1/notifications.proto\x12\x10notifications.v1\x1a\x18meetups/v1/meetups.proto\"\xea\x04\n\x0cNotification\x12\x17\n\x0fnotification_id\x18\x01 \x01(\t\x12\x14\n\x0crecipient_id\x18\x02 \x01(\t\x12\x12\n\ncreated_at\x18\x03 \x01(\t\x12\x16\n\tnot_after\x18\x04 \x01(\tH\x01\x88\x01\x01\x12&\n\x05\x63\x61use\x18\x05 \x01(\x0b\x32\x17.notifications.v1.Cause\x12=\n\x10meetup_published\x18\x06 \x01(\x0b\x32!.notifications.v1.MeetupPublishedH\x00\x12\x39\n\x0emeetup_changed\x18\x07 \x01(\x0b\x32\x1f.notifications.v1.MeetupChangedH\x00\x12;\n\x0fmeetup_material\x18\x08 \x01(\x0b\x32 .notifications.v1.MeetupMaterialH\x00\x12;\n\x0fmeetup_reminder\x18\t \x01(\x0b\x32 .notifications.v1.MeetupReminderH\x00\x12?\n\x11organizer_message\x18\n \x01(\x0b\x32\".notifications.v1.OrganizerMessageH\x00\x12I\n\x16\x63ommunity_announcement\x18\x0b \x01(\x0b\x32\'.notifications.v1.CommunityAnnouncementH\x00\x12\x41\n\x12meetup_unpublished\x18\x0c \x01(\x0b\x32#.notifications.v1.MeetupUnpublishedH\x00\x42\x06\n\x04typeB\x0c\n\n_not_after\"c\n\x05\x43\x61use\x12\x19\n\x0fmeetup_event_id\x18\x01 \x01(\tH\x00\x12\x1a\n\x10reminder_task_id\x18\x02 \x01(\tH\x00\x12\x1c\n\x12\x63ommand_request_id\x18\x03 \x01(\tH\x00\x42\x05\n\x03ref\"\xfa\x01\n\nMeetupCard\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\r\n\x05venue\x18\x04 \x01(\t\x12\x0c\n\x04kind\x18\x05 \x01(\t\x12\x15\n\rcalendar_link\x18\x06 \x01(\t\x12&\n\x08schedule\x18\x07 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\x08 \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\t \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\"?\n\x0fMeetupPublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"v\n\rMeetupChanged\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x37\n\x0f\x63hanged_aspects\x18\x02 \x03(\x0e\x32\x1e.notifications.v1.MeetupAspect\"k\n\x0eMeetupMaterial\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x13\n\x0bmaterial_id\x18\x02 \x01(\t\x12\x16\n\x0ematerial_title\x18\x03 \x01(\t\">\n\x0eMeetupReminder\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"a\n\x10OrganizerMessage\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x11\n\tsender_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"8\n\x15\x43ommunityAnnouncement\x12\x11\n\tsender_id\x18\x01 \x01(\t\x12\x0c\n\x04\x62ody\x18\x02 \x01(\t\"A\n\x11MeetupUnpublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard*\x8e\x02\n\x0cMeetupAspect\x12\x1d\n\x19MEETUP_ASPECT_UNSPECIFIED\x10\x00\x12\x17\n\x13MEETUP_ASPECT_TITLE\x10\x01\x12\x1d\n\x19MEETUP_ASPECT_DESCRIPTION\x10\x02\x12\x17\n\x13MEETUP_ASPECT_VENUE\x10\x03\x12\x16\n\x12MEETUP_ASPECT_KIND\x10\x04\x12\x1f\n\x1bMEETUP_ASPECT_CALENDAR_LINK\x10\x05\x12\x1a\n\x16MEETUP_ASPECT_SCHEDULE\x10\x06\x12\x1b\n\x17MEETUP_ASPECT_LIFECYCLE\x10\x07\x12\x1c\n\x18MEETUP_ASPECT_VISIBILITY\x10\x08\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'notifications.v1.notifications_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MEETUPASPECT']._serialized_start=1622
-  _globals['_MEETUPASPECT']._serialized_end=1892
-  _globals['_NOTIFICATION']._serialized_start=93
-  _globals['_NOTIFICATION']._serialized_end=711
-  _globals['_CAUSE']._serialized_start=714
-  _globals['_CAUSE']._serialized_end=842
-  _globals['_MEETUPCARD']._serialized_start=845
-  _globals['_MEETUPCARD']._serialized_end=1037
-  _globals['_MEETUPPUBLISHED']._serialized_start=1039
-  _globals['_MEETUPPUBLISHED']._serialized_end=1102
-  _globals['_MEETUPCHANGED']._serialized_start=1104
-  _globals['_MEETUPCHANGED']._serialized_end=1222
-  _globals['_MEETUPMATERIAL']._serialized_start=1224
-  _globals['_MEETUPMATERIAL']._serialized_end=1331
-  _globals['_MEETUPREMINDER']._serialized_start=1333
-  _globals['_MEETUPREMINDER']._serialized_end=1395
-  _globals['_ORGANIZERMESSAGE']._serialized_start=1397
-  _globals['_ORGANIZERMESSAGE']._serialized_end=1494
-  _globals['_COMMUNITYANNOUNCEMENT']._serialized_start=1496
-  _globals['_COMMUNITYANNOUNCEMENT']._serialized_end=1552
-  _globals['_MEETUPUNPUBLISHED']._serialized_start=1554
-  _globals['_MEETUPUNPUBLISHED']._serialized_end=1619
+  _globals['_MEETUPASPECT']._serialized_start=1642
+  _globals['_MEETUPASPECT']._serialized_end=1912
+  _globals['_NOTIFICATION']._serialized_start=85
+  _globals['_NOTIFICATION']._serialized_end=703
+  _globals['_CAUSE']._serialized_start=705
+  _globals['_CAUSE']._serialized_end=804
+  _globals['_MEETUPCARD']._serialized_start=807
+  _globals['_MEETUPCARD']._serialized_end=1057
+  _globals['_MEETUPPUBLISHED']._serialized_start=1059
+  _globals['_MEETUPPUBLISHED']._serialized_end=1122
+  _globals['_MEETUPCHANGED']._serialized_start=1124
+  _globals['_MEETUPCHANGED']._serialized_end=1242
+  _globals['_MEETUPMATERIAL']._serialized_start=1244
+  _globals['_MEETUPMATERIAL']._serialized_end=1351
+  _globals['_MEETUPREMINDER']._serialized_start=1353
+  _globals['_MEETUPREMINDER']._serialized_end=1415
+  _globals['_ORGANIZERMESSAGE']._serialized_start=1417
+  _globals['_ORGANIZERMESSAGE']._serialized_end=1514
+  _globals['_COMMUNITYANNOUNCEMENT']._serialized_start=1516
+  _globals['_COMMUNITYANNOUNCEMENT']._serialized_end=1572
+  _globals['_MEETUPUNPUBLISHED']._serialized_start=1574
+  _globals['_MEETUPUNPUBLISHED']._serialized_end=1639
 # @@protoc_insertion_point(module_scope)

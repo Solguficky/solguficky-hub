@@ -23,61 +23,44 @@ _sym_db = _symbol_database.Default()
 
 
 from nats_tester.generated.identity.v1 import roles_pb2 as identity_dot_v1_dot_roles__pb2
+from nats_tester.generated.meetups.v1 import meetups_pb2 as meetups_dot_v1_dot_meetups__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n meetups/v1/meetups_service.proto\x12\nmeetups.v1\x1a\x17identity/v1/roles.proto\"@\n\x17ListMeetupStatesRequest\x12\x12\n\npage_token\x18\x01 \x01(\t\x12\x11\n\tpage_size\x18\x02 \x01(\x05\"w\n\x18ListMeetupStatesResponse\x12+\n\x07meetups\x18\x01 \x03(\x0b\x32\x1a.meetups.v1.MeetupSnapshot\x12\x17\n\x0fnext_page_token\x18\x02 \x01(\t\x12\x15\n\rconsistent_at\x18\x03 \x01(\t\"L\n\x06Viewer\x12\x13\n\x0bidentity_id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole\"J\n\x18\x43reateMeetupDraftRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"\xa7\x01\n\x1d\x43hangeMeetupAttributesRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\r\n\x05venue\x18\x05 \x01(\t\x12\x0c\n\x04kind\x18\x06 \x01(\t\x12\x15\n\rcalendar_link\x18\x07 \x01(\t\"r\n\x18SetMeetupScheduleRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\x12&\n\x08schedule\x18\x03 \x01(\x0b\x32\x14.meetups.v1.Schedule\"F\n\x14PublishMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"H\n\x16UnpublishMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"E\n\x13\x43\x61ncelMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"?\n\x19ListVisibleMeetupsRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\"B\n\x10GetMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"H\n\x1aListVisibleMeetupsResponse\x12*\n\x07meetups\x18\x01 \x03(\x0b\x32\x19.meetups.v1.MeetupSummary\"\xd7\x02\n\x0eMeetupSnapshot\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\r\n\x05venue\x18\x05 \x01(\t\x12\x0c\n\x04kind\x18\x06 \x01(\t\x12\x15\n\rcalendar_link\x18\x07 \x01(\t\x12&\n\x08schedule\x18\x08 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\t \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\n \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\x12\x1f\n\x12\x66irst_published_at\x18\x0b \x01(\tH\x00\x88\x01\x01\x12\x0f\n\x07version\x18\x0c \x01(\x03\x42\x15\n\x13_first_published_at\"\xc3\x01\n\rMeetupSummary\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\r\n\x05venue\x18\x03 \x01(\t\x12&\n\x08schedule\x18\x04 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\x05 \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\x06 \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\"\x8d\x01\n\x08Schedule\x12%\n\x07no_date\x18\x01 \x01(\x0b\x32\x12.meetups.v1.NoDateH\x00\x12*\n\ttentative\x18\x02 \x01(\x0b\x32\x15.meetups.v1.DateValueH\x00\x12&\n\x05\x66ixed\x18\x03 \x01(\x0b\x32\x15.meetups.v1.DateValueH\x00\x42\x06\n\x04\x66orm\"\x08\n\x06NoDate\"\xa0\x01\n\tDateValue\x12\'\n\x03\x64\x61y\x18\x01 \x01(\x0b\x32\x18.meetups.v1.CalendarDateH\x00\x12.\n\tday_start\x18\x02 \x01(\x0b\x32\x19.meetups.v1.LocalDateTimeH\x00\x12-\n\x08interval\x18\x03 \x01(\x0b\x32\x19.meetups.v1.LocalIntervalH\x00\x42\x0b\n\tprecision\"8\n\x0c\x43\x61lendarDate\x12\x0c\n\x04year\x18\x01 \x01(\x05\x12\r\n\x05month\x18\x02 \x01(\x05\x12\x0b\n\x03\x64\x61y\x18\x03 \x01(\x05\"+\n\tLocalTime\x12\r\n\x05hours\x18\x01 \x01(\x05\x12\x0f\n\x07minutes\x18\x02 \x01(\x05\"\\\n\rLocalDateTime\x12&\n\x04\x64\x61te\x18\x01 \x01(\x0b\x32\x18.meetups.v1.CalendarDate\x12#\n\x04time\x18\x02 \x01(\x0b\x32\x15.meetups.v1.LocalTime\"a\n\rLocalInterval\x12(\n\x05start\x18\x01 \x01(\x0b\x32\x19.meetups.v1.LocalDateTime\x12&\n\x03\x65nd\x18\x02 \x01(\x0b\x32\x19.meetups.v1.LocalDateTime*\x8c\x01\n\x0fMeetupLifecycle\x12 \n\x1cMEETUP_LIFECYCLE_UNSPECIFIED\x10\x00\x12\x1c\n\x18MEETUP_LIFECYCLE_PLANNED\x10\x01\x12\x19\n\x15MEETUP_LIFECYCLE_HELD\x10\x02\x12\x1e\n\x1aMEETUP_LIFECYCLE_CANCELLED\x10\x03*r\n\x10MeetupVisibility\x12!\n\x1dMEETUP_VISIBILITY_UNSPECIFIED\x10\x00\x12\x1c\n\x18MEETUP_VISIBILITY_HIDDEN\x10\x01\x12\x1d\n\x19MEETUP_VISIBILITY_VISIBLE\x10\x02\x32\x99\x06\n\x0eMeetupsService\x12U\n\x11\x43reateMeetupDraft\x12$.meetups.v1.CreateMeetupDraftRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12_\n\x16\x43hangeMeetupAttributes\x12).meetups.v1.ChangeMeetupAttributesRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12U\n\x11SetMeetupSchedule\x12$.meetups.v1.SetMeetupScheduleRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12M\n\rPublishMeetup\x12 .meetups.v1.PublishMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12Q\n\x0fUnpublishMeetup\x12\".meetups.v1.UnpublishMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12K\n\x0c\x43\x61ncelMeetup\x12\x1f.meetups.v1.CancelMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12\x63\n\x12ListVisibleMeetups\x12%.meetups.v1.ListVisibleMeetupsRequest\x1a&.meetups.v1.ListVisibleMeetupsResponse\x12\x45\n\tGetMeetup\x12\x1c.meetups.v1.GetMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12]\n\x10ListMeetupStates\x12#.meetups.v1.ListMeetupStatesRequest\x1a$.meetups.v1.ListMeetupStatesResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n meetups/v1/meetups_service.proto\x12\nmeetups.v1\x1a\x17identity/v1/roles.proto\x1a\x18meetups/v1/meetups.proto\"@\n\x17ListMeetupStatesRequest\x12\x12\n\npage_token\x18\x01 \x01(\t\x12\x11\n\tpage_size\x18\x02 \x01(\x05\"w\n\x18ListMeetupStatesResponse\x12+\n\x07meetups\x18\x01 \x03(\x0b\x32\x1a.meetups.v1.MeetupSnapshot\x12\x17\n\x0fnext_page_token\x18\x02 \x01(\t\x12\x15\n\rconsistent_at\x18\x03 \x01(\t\"L\n\x06Viewer\x12\x13\n\x0bidentity_id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole\"J\n\x18\x43reateMeetupDraftRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"\xa7\x01\n\x1d\x43hangeMeetupAttributesRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\r\n\x05venue\x18\x05 \x01(\t\x12\x0c\n\x04kind\x18\x06 \x01(\t\x12\x15\n\rcalendar_link\x18\x07 \x01(\t\"r\n\x18SetMeetupScheduleRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\x12&\n\x08schedule\x18\x03 \x01(\x0b\x32\x14.meetups.v1.Schedule\"F\n\x14PublishMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"H\n\x16UnpublishMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"E\n\x13\x43\x61ncelMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"?\n\x19ListVisibleMeetupsRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\"B\n\x10GetMeetupRequest\x12\"\n\x06viewer\x18\x01 \x01(\x0b\x32\x12.meetups.v1.Viewer\x12\n\n\x02id\x18\x02 \x01(\t\"H\n\x1aListVisibleMeetupsResponse\x12*\n\x07meetups\x18\x01 \x03(\x0b\x32\x19.meetups.v1.MeetupSummary\"\xd7\x02\n\x0eMeetupSnapshot\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\r\n\x05venue\x18\x05 \x01(\t\x12\x0c\n\x04kind\x18\x06 \x01(\t\x12\x15\n\rcalendar_link\x18\x07 \x01(\t\x12&\n\x08schedule\x18\x08 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\t \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\n \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\x12\x1f\n\x12\x66irst_published_at\x18\x0b \x01(\tH\x00\x88\x01\x01\x12\x0f\n\x07version\x18\x0c \x01(\x03\x42\x15\n\x13_first_published_at\"\xc3\x01\n\rMeetupSummary\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\r\n\x05venue\x18\x03 \x01(\t\x12&\n\x08schedule\x18\x04 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\x05 \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\x06 \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility2\x99\x06\n\x0eMeetupsService\x12U\n\x11\x43reateMeetupDraft\x12$.meetups.v1.CreateMeetupDraftRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12_\n\x16\x43hangeMeetupAttributes\x12).meetups.v1.ChangeMeetupAttributesRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12U\n\x11SetMeetupSchedule\x12$.meetups.v1.SetMeetupScheduleRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12M\n\rPublishMeetup\x12 .meetups.v1.PublishMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12Q\n\x0fUnpublishMeetup\x12\".meetups.v1.UnpublishMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12K\n\x0c\x43\x61ncelMeetup\x12\x1f.meetups.v1.CancelMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12\x63\n\x12ListVisibleMeetups\x12%.meetups.v1.ListVisibleMeetupsRequest\x1a&.meetups.v1.ListVisibleMeetupsResponse\x12\x45\n\tGetMeetup\x12\x1c.meetups.v1.GetMeetupRequest\x1a\x1a.meetups.v1.MeetupSnapshot\x12]\n\x10ListMeetupStates\x12#.meetups.v1.ListMeetupStatesRequest\x1a$.meetups.v1.ListMeetupStatesResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'meetups.v1.meetups_service_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MEETUPLIFECYCLE']._serialized_start=2282
-  _globals['_MEETUPLIFECYCLE']._serialized_end=2422
-  _globals['_MEETUPVISIBILITY']._serialized_start=2424
-  _globals['_MEETUPVISIBILITY']._serialized_end=2538
-  _globals['_LISTMEETUPSTATESREQUEST']._serialized_start=73
-  _globals['_LISTMEETUPSTATESREQUEST']._serialized_end=137
-  _globals['_LISTMEETUPSTATESRESPONSE']._serialized_start=139
-  _globals['_LISTMEETUPSTATESRESPONSE']._serialized_end=258
-  _globals['_VIEWER']._serialized_start=260
-  _globals['_VIEWER']._serialized_end=336
-  _globals['_CREATEMEETUPDRAFTREQUEST']._serialized_start=338
-  _globals['_CREATEMEETUPDRAFTREQUEST']._serialized_end=412
-  _globals['_CHANGEMEETUPATTRIBUTESREQUEST']._serialized_start=415
-  _globals['_CHANGEMEETUPATTRIBUTESREQUEST']._serialized_end=582
-  _globals['_SETMEETUPSCHEDULEREQUEST']._serialized_start=584
-  _globals['_SETMEETUPSCHEDULEREQUEST']._serialized_end=698
-  _globals['_PUBLISHMEETUPREQUEST']._serialized_start=700
-  _globals['_PUBLISHMEETUPREQUEST']._serialized_end=770
-  _globals['_UNPUBLISHMEETUPREQUEST']._serialized_start=772
-  _globals['_UNPUBLISHMEETUPREQUEST']._serialized_end=844
-  _globals['_CANCELMEETUPREQUEST']._serialized_start=846
-  _globals['_CANCELMEETUPREQUEST']._serialized_end=915
-  _globals['_LISTVISIBLEMEETUPSREQUEST']._serialized_start=917
-  _globals['_LISTVISIBLEMEETUPSREQUEST']._serialized_end=980
-  _globals['_GETMEETUPREQUEST']._serialized_start=982
-  _globals['_GETMEETUPREQUEST']._serialized_end=1048
-  _globals['_LISTVISIBLEMEETUPSRESPONSE']._serialized_start=1050
-  _globals['_LISTVISIBLEMEETUPSRESPONSE']._serialized_end=1122
-  _globals['_MEETUPSNAPSHOT']._serialized_start=1125
-  _globals['_MEETUPSNAPSHOT']._serialized_end=1468
-  _globals['_MEETUPSUMMARY']._serialized_start=1471
-  _globals['_MEETUPSUMMARY']._serialized_end=1666
-  _globals['_SCHEDULE']._serialized_start=1669
-  _globals['_SCHEDULE']._serialized_end=1810
-  _globals['_NODATE']._serialized_start=1812
-  _globals['_NODATE']._serialized_end=1820
-  _globals['_DATEVALUE']._serialized_start=1823
-  _globals['_DATEVALUE']._serialized_end=1983
-  _globals['_CALENDARDATE']._serialized_start=1985
-  _globals['_CALENDARDATE']._serialized_end=2041
-  _globals['_LOCALTIME']._serialized_start=2043
-  _globals['_LOCALTIME']._serialized_end=2086
-  _globals['_LOCALDATETIME']._serialized_start=2088
-  _globals['_LOCALDATETIME']._serialized_end=2180
-  _globals['_LOCALINTERVAL']._serialized_start=2182
-  _globals['_LOCALINTERVAL']._serialized_end=2279
-  _globals['_MEETUPSSERVICE']._serialized_start=2541
-  _globals['_MEETUPSSERVICE']._serialized_end=3334
+  _globals['_LISTMEETUPSTATESREQUEST']._serialized_start=99
+  _globals['_LISTMEETUPSTATESREQUEST']._serialized_end=163
+  _globals['_LISTMEETUPSTATESRESPONSE']._serialized_start=165
+  _globals['_LISTMEETUPSTATESRESPONSE']._serialized_end=284
+  _globals['_VIEWER']._serialized_start=286
+  _globals['_VIEWER']._serialized_end=362
+  _globals['_CREATEMEETUPDRAFTREQUEST']._serialized_start=364
+  _globals['_CREATEMEETUPDRAFTREQUEST']._serialized_end=438
+  _globals['_CHANGEMEETUPATTRIBUTESREQUEST']._serialized_start=441
+  _globals['_CHANGEMEETUPATTRIBUTESREQUEST']._serialized_end=608
+  _globals['_SETMEETUPSCHEDULEREQUEST']._serialized_start=610
+  _globals['_SETMEETUPSCHEDULEREQUEST']._serialized_end=724
+  _globals['_PUBLISHMEETUPREQUEST']._serialized_start=726
+  _globals['_PUBLISHMEETUPREQUEST']._serialized_end=796
+  _globals['_UNPUBLISHMEETUPREQUEST']._serialized_start=798
+  _globals['_UNPUBLISHMEETUPREQUEST']._serialized_end=870
+  _globals['_CANCELMEETUPREQUEST']._serialized_start=872
+  _globals['_CANCELMEETUPREQUEST']._serialized_end=941
+  _globals['_LISTVISIBLEMEETUPSREQUEST']._serialized_start=943
+  _globals['_LISTVISIBLEMEETUPSREQUEST']._serialized_end=1006
+  _globals['_GETMEETUPREQUEST']._serialized_start=1008
+  _globals['_GETMEETUPREQUEST']._serialized_end=1074
+  _globals['_LISTVISIBLEMEETUPSRESPONSE']._serialized_start=1076
+  _globals['_LISTVISIBLEMEETUPSRESPONSE']._serialized_end=1148
+  _globals['_MEETUPSNAPSHOT']._serialized_start=1151
+  _globals['_MEETUPSNAPSHOT']._serialized_end=1494
+  _globals['_MEETUPSUMMARY']._serialized_start=1497
+  _globals['_MEETUPSUMMARY']._serialized_end=1692
+  _globals['_MEETUPSSERVICE']._serialized_start=1695
+  _globals['_MEETUPSSERVICE']._serialized_end=2488
 # @@protoc_insertion_point(module_scope)
