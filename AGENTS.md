@@ -35,7 +35,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
 - `.rulesync/` — источник правды по MCP-серверам и командам агента: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из `.rulesync/mcp.jsonc`, а `.claude/commands/` и `.opencode/commands/` — из `.rulesync/commands/`.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
-- `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты и свою проверку в `verify` в том же коммите, что и сборку.
+- `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты, свою проверку в `verify` и установку своего тулинга в `tools` в том же коммите, что и сборку.
 
 ## Команды
 
@@ -52,6 +52,13 @@ lefthook install
 # ходит в сеть: без неё запускают один sync и получают свои proj-скиллы.
 just skillshare-install
 skillshare sync -p
+
+# Тулинг компонентов — один раз после клонирования или создания рабочего
+# дерева, до первого `just verify`. Дерево от `git worktree add` получает
+# хуки и скиллы, но не node_modules, Go-плагины и dotnet tools: без них гейт
+# красный по окружению, а не по правке, и гоняет он все компоненты, даже
+# когда правка только в docs/.
+just tools
 
 # Проверка из хука (можно запускать вручную); в CI не дублируется
 sh tools/git-hooks/check-commit-message.sh <файл-с-сообщением>
