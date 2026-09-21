@@ -102,7 +102,7 @@ module Api =
         | SetMeetupScheduleError.Domain TitleRequiredForPublication ->
             invalidOp "setting the schedule does not decide publication"
         | SetMeetupScheduleError.Domain TransitionNotAllowed ->
-            invalidOp "setting the schedule does not decide a state transition"
+            Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot be edited")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место
         // среди описанных закрепляет PER-78 (integration.md).
         | SetMeetupScheduleError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")

@@ -89,6 +89,22 @@ let publishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Publ
         NewEventId = fun () -> eventId
     }
 
+let unpublishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.UnpublishMeetup.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+    }
+
+let cancelDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.CancelMeetup.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+    }
+
 let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: Viewer) =
     Meetups.Slices.CreateMeetupDraft.execute
         (createDeps source eventId)
@@ -121,6 +137,24 @@ let setSchedule (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (sched
 let publish (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
     Meetups.Slices.PublishMeetup.execute
         (publishDeps source eventId)
+        {
+            Id = id
+            Viewer = administrator
+        }
+    |> run
+
+let unpublish (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
+    Meetups.Slices.UnpublishMeetup.execute
+        (unpublishDeps source eventId)
+        {
+            Id = id
+            Viewer = administrator
+        }
+    |> run
+
+let cancel (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
+    Meetups.Slices.CancelMeetup.execute
+        (cancelDeps source eventId)
         {
             Id = id
             Viewer = administrator
@@ -201,6 +235,26 @@ let journalIds (dsn: string) (id: Guid) =
     [
         while reader.Read() do
             reader.GetGuid 0
+    ]
+
+/// Поводы журнала в порядке записи. Имя повода принимает не код, а CHECK-ограничение
+/// `meetup_events_type_check`: строка с незнакомым именем не запишется вовсе, и
+/// подтвердить, что миграция 004 их добавила, может только настоящая база.
+let eventTypes (dsn: string) (id: Guid) =
+    use connection = new NpgsqlConnection(dsn)
+    connection.Open()
+
+    use command =
+        new NpgsqlCommand("SELECT event_type FROM meetup_events WHERE meetup_id = @id ORDER BY position", connection)
+
+    command.Parameters.AddWithValue("id", id)
+    |> ignore
+
+    use reader = command.ExecuteReader()
+
+    [
+        while reader.Read() do
+            reader.GetString 0
     ]
 
 /// Async.RunSynchronously заворачивает отказ в AggregateException, поэтому предикат

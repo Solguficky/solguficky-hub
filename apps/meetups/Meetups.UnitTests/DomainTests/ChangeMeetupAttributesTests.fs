@@ -78,3 +78,12 @@ let ``When the title is emptied expect the change to be accepted`` () =
         |> Meetup.toSnapshot
 
     test <@ snapshot.Title = "" @>
+
+/// Отмена терминальна и закрывает редактирование. Отказ переходом, а не «не
+/// найдено»: сходка существует, и у человека на эти два случая разные действия.
+[<Fact>]
+let ``When the meetup is cancelled expect the change is refused`` () =
+    let decision =
+        Meetup.decideChangeAttributes Sample.attributes (Existing Sample.cancelled)
+
+    test <@ decision = Error TransitionNotAllowed @>

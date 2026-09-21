@@ -26,6 +26,8 @@
     <Compile Include="Slices/ChangeMeetupAttributes.fs" />
     <Compile Include="Slices/SetMeetupSchedule.fs" />
     <Compile Include="Slices/PublishMeetup.fs" />
+    <Compile Include="Slices/UnpublishMeetup.fs" />
+    <Compile Include="Slices/CancelMeetup.fs" />
     <Compile Include="Slices/ListVisibleMeetups.fs" />
     <Compile Include="Slices/GetMeetup.fs" />
     <Compile Include="Slices/ListMeetupStates.fs" />
