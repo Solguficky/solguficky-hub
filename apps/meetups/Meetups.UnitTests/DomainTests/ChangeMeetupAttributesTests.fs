@@ -87,3 +87,24 @@ let ``When the meetup is cancelled expect the change is refused`` () =
         Meetup.decideChangeAttributes Sample.attributes (Existing Sample.cancelled)
 
     test <@ decision = Error TransitionNotAllowed @>
+
+[<Fact>]
+let ``When the title of a published meetup is emptied expect the change to be accepted`` () =
+    // I4 остался переходным инвариантом и стоячим не стал (ADR-031, пересмотр
+    // 2026-09-21): заголовок обязателен на переходе к публикации, а не в покое.
+    // Тест «When the title is emptied» выше проверяет то же на скрытой сходке —
+    // и это разные утверждения: стоячий инвариант различал бы их по видимости.
+    let cleared =
+        { Sample.attributes with
+            Title = ""
+        }
+
+    let decision = Meetup.decideChangeAttributes cleared (Existing Sample.published)
+
+    let after =
+        Meetup.apply (Existing Sample.published) (MeetupChanged(AttributesChanged cleared))
+        |> Meetup.toSnapshot
+
+    let actual = decision, after.Title, after.Visibility
+
+    test <@ actual = (Ok(MeetupChanged(AttributesChanged cleared)), "", Visible) @>

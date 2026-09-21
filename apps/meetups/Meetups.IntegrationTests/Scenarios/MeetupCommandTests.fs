@@ -441,3 +441,77 @@ type MeetupCommandTests() =
 
         test <@ MeetupCommands.versionIn created = Some 1L @>
         test <@ MeetupCommands.countEvents dsn meetupId = 1L @>
+
+    /// Редактирование после публикации (PER-196) проверяется на настоящей базе,
+    /// потому что рискует здесь не домен, а схема: UPDATE идёт по видимой строке
+    /// под `meetups_visible_has_first_publication`, и отметка первой публикации
+    /// обязана пережить обе команды изменения. Мок адаптера этого не опроверг бы.
+    [<Fact>]
+    member _.``Editing a published meetup keeps it visible and advances the version``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        // Атрибуты заменяются целиком и отличаются от опубликованных: повтор тех же
+        // значений проверял бы только запись, но не саму правку сведений.
+        let renamed: Meetups.Slices.ChangeMeetupAttributes.Command =
+            {
+                Id = MeetupId meetupId
+                Viewer = MeetupCommands.administrator
+                Attributes =
+                    { MeetupCommands.attributes with
+                        Title = "F# after hours, второй заход"
+                        Venue = "Тбилиси, Impact Hub"
+                    }
+            }
+
+        Meetups.Slices.ChangeMeetupAttributes.execute (MeetupCommands.changeDeps source fourthEvent) renamed
+        |> MeetupCommands.run
+        |> ignore
+
+        let rescheduled =
+            MeetupCommands.setSchedule source fifthEvent (MeetupId meetupId) (Fixed(Day(DateOnly(2026, 11, 14))))
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let actual =
+            stored
+            |> Option.map (fun snapshot ->
+                snapshot.Title, snapshot.Venue, snapshot.Schedule, snapshot.Visibility, snapshot.FirstPublishedAt
+            )
+
+        test
+            <@
+                actual = Some(
+                    "F# after hours, второй заход",
+                    "Тбилиси, Impact Hub",
+                    Fixed(Day(DateOnly(2026, 11, 14))),
+                    Visible,
+                    Some MeetupCommands.now
+                )
+            @>
+
+        test <@ MeetupCommands.versionIn rescheduled = Some 5L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 5L @>
+
+        test
+            <@
+                MeetupCommands.journalIds dsn meetupId = [
+                    firstEvent
+                    secondEvent
+                    thirdEvent
+                    fourthEvent
+                    fifthEvent
+                ]
+            @>
