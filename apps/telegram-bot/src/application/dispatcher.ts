@@ -54,10 +54,16 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
         }
         case "create-meetup":
         case "set-meetup-field":
+        case "update-meetup-field":
         case "publish-meetup":
+        case "change-meetup-state":
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : form(request);
+        default: {
+          const _exhaustive: never = request;
+          return { kind: "rejected", reason: String(_exhaustive) };
+        }
       }
     },
   };
