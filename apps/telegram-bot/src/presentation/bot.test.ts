@@ -94,6 +94,7 @@ function replyUpdate(options: {
   fromId: number;
   replyMessageId: number;
   replyFromId: number;
+  replyText?: string | undefined;
 }): Update {
   return {
     update_id: 4,
@@ -112,6 +113,7 @@ function replyUpdate(options: {
           is_bot: options.replyFromId === 1,
           first_name: "sender",
         },
+        text: options.replyText,
       } as never,
     },
   };
@@ -700,6 +702,222 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("recovers a one-field edit from the replied bot message after restart", async () => {
+    const meetup = publishedMeetup();
+    const updated = { ...meetup, venue: "Новый зал" };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : { kind: "meetup-updated", meetup: updated },
+    );
+    const first = createHarness(resolvedIdentity(["admin"]), { execute });
+    await first.bot.init();
+    await first.bot.handleUpdate(
+      callbackUpdate("v1:manage:field:AZLzpLXGfY6fChssPU5fYA:venue"),
+    );
+    const question = first.calls.find((call) => call.method === "sendMessage");
+    const questionText = sendMessageText(question);
+    expect(questionText).toContain("Сейчас: Циферблат");
+    expect(questionText).toContain(
+      "Шаг: v1:manage:field:AZLzpLXGfY6fChssPU5fYA:venue",
+    );
+
+    const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
+    await restarted.bot.init();
+    await restarted.bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+        replyText: questionText,
+      }),
+    );
+
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: ["admin"],
+      },
+      intent: "update-meetup-field",
+      field: "venue",
+      value: "Новый зал",
+      meetupId: meetup.id,
+      requestId: expect.any(String),
+      useCase: "update_meetup",
+    });
+    expect(
+      restarted.calls.some(
+        (call) => sendMessageText(call) === "Изменение сохранено.",
+      ),
+    ).toBe(true);
+  });
+
+  it("asks before unpublishing and refusal performs no state command", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:unpublish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Точно скрыть сходку"),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Да, продолжить",
+                callback_data:
+                  "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+          ],
+        },
+      },
+    });
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:status:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
+  });
+
+  it("executes cancellation only from the confirmation callback", async () => {
+    const meetup = publishedMeetup();
+    const cancelled = { ...meetup, lifecycle: "cancelled" as const };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : {
+            kind: "meetup-state-changed",
+            action: "cancel",
+            meetup: cancelled,
+          },
+    );
+    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:cancel:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: ["admin"],
+      },
+      intent: "change-meetup-state",
+      action: "cancel",
+      meetupId: meetup.id,
+      requestId: expect.any(String),
+      useCase: "update_meetup",
+    });
+  });
+
+  it("answers an old management button from an already cancelled meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), lifecycle: "cancelled" },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:cancel:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("уже отменена") },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a stale republish button from a cancelled meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: {
+        ...publishedMeetup(),
+        lifecycle: "cancelled",
+        visibility: "hidden",
+      },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("уже отменена") },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
+  });
+
+  it("republishes a hidden meetup from the status screen", async () => {
+    const hidden = { ...publishedMeetup(), visibility: "hidden" as const };
+    const visible = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: hidden }
+        : { kind: "published", meetup: visible },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: ["admin"],
+      },
+      intent: "publish-meetup",
+      meetupId: visible.id,
+      requestId: expect.any(String),
+      useCase: "update_meetup",
+    });
+    expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
+  });
+
   it("rebuilds an outdated callback from current Meetups state", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-list",
@@ -801,6 +1019,32 @@ describe("presentation adapter", () => {
     );
     expect(JSON.stringify(rejected?.fields)).not.toContain("start=");
     expect(JSON.stringify(rejected?.fields)).not.toContain("m_AZL");
+  });
+
+  it("shows the domain's rejection message for a stale republish attempt", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : {
+            kind: "dependency-rejected",
+            reason: "invalid",
+            message: "meetup is already published",
+          },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("meetup is already published"),
+      },
+    });
   });
 
   it("opens the published meetup from the generated start link", async () => {

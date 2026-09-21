@@ -57,6 +57,8 @@ describe("dispatcher", () => {
       changeAttributes: notUsed,
       setSchedule: notUsed,
       publish: notUsed,
+      unpublish: notUsed,
+      cancel: notUsed,
     };
     const dispatcher = createDispatcher(meetups);
 
@@ -91,6 +93,8 @@ describe("dispatcher", () => {
         changeAttributes: notUsed,
         setSchedule: notUsed,
         publish: notUsed,
+        unpublish: notUsed,
+        cancel: notUsed,
       };
       await expect(
         createDispatcher(meetups).execute({
@@ -116,6 +120,8 @@ describe("dispatcher", () => {
       changeAttributes: notUsed,
       setSchedule: notUsed,
       publish: notUsed,
+      unpublish: notUsed,
+      cancel: notUsed,
     };
     await expect(
       createDispatcher(meetups).execute({
