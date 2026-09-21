@@ -10,7 +10,10 @@ import {
 } from "../application/hub-access.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
-import type { IdentityResolver } from "../identity/port.js";
+import type {
+  CommunityAdministrator,
+  IdentityResolver,
+} from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import { createBot } from "./bot.js";
 
@@ -172,7 +175,7 @@ function resolvedIdentity(
 }
 
 function createHarness(
-  identity: IdentityResolver,
+  identity: IdentityResolver & Partial<CommunityAdministrator>,
   dispatcher: Dispatcher = createDispatcher(),
 ) {
   const { logger, records } = createCapturingLogger();
@@ -415,6 +418,62 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
+  });
+
+  it("renders the community screen from current Identity state", async () => {
+    const community = vi
+      .fn<CommunityAdministrator["community"]>()
+      .mockResolvedValue({
+        kind: "ok",
+        value: {
+          members: [
+            {
+              identityId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+              telegramUsername: "waiting",
+              admitted: false,
+            },
+          ],
+          allowedUsernames: ["invited"],
+        },
+      });
+    const identity = { ...resolvedIdentity(["admin"]), community };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:community:list"));
+
+    expect(community).toHaveBeenCalledWith(
+      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ useCase: "manage_community" }),
+    );
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("@waiting") },
+    });
+    expect(JSON.stringify(calls[1]?.payload)).toContain("v1:community:admit:");
+    expect(JSON.stringify(calls[1]?.payload)).toContain("@invited");
+  });
+
+  it("lets Identity refuse community management for a non-admin", async () => {
+    const community = vi
+      .fn<CommunityAdministrator["community"]>()
+      .mockResolvedValue({ kind: "forbidden" });
+    const identity = { ...resolvedIdentity(["member"]), community };
+    const { bot, calls, records } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:community:list"));
+
+    expect(community).toHaveBeenCalledOnce();
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: "Identity не разрешил управление составом." },
+    });
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "manage_community",
+    });
   });
 
   it("keeps Identity unavailability distinct from a hub access refusal", async () => {
