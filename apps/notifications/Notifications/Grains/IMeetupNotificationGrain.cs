@@ -19,7 +19,9 @@ public sealed record ActivationRecord(
 /// В скелете грин умеет ровно одно: при активации записать факт активации в свою
 /// таблицу и вернуть его. Ни напоминания, ни разворота аудитории здесь нет —
 /// это PER-222 и PER-72. Грин намеренно не имеет <c>[PersistentState]</c>:
-/// grain storage не зарегистрирован, и попытка его завести уронит старт силоса.
+/// grain storage не зарегистрирован, и попытка его завести роняет первую активацию
+/// грина, а не старт силоса: провайдер разрешается по имени в момент создания
+/// экземпляра. Разбор механики — docs/learning/orleans/grains-and-cluster.md.
 /// </remarks>
 public interface IMeetupNotificationGrain : IGrainWithStringKey
 {

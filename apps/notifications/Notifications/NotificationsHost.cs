@@ -48,7 +48,8 @@ public static class NotificationsHost
         // Единственный провайдер Orleans, который берёт скелет. Grain storage и
         // reminders сознательно не регистрируются: источник истины остаётся в
         // PostgreSQL (ADR-029), напоминания и sweeper — PER-222. Отсутствие
-        // grain storage работает гейтом: [PersistentState] уронит старт силоса.
+        // grain storage работает гейтом: [PersistentState] роняет первую активацию
+        // грина, а не старт силоса, поэтому ловит его тест, а не проба готовности.
         builder.UseOrleans(silo =>
         {
             silo.Configure<ClusterOptions>(options =>
