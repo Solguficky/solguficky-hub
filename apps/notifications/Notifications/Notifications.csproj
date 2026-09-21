@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Notifications</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Миграции лежат в сборке, а не рядом с бинарником: путь на диске зависит от
+       того, как запущен процесс, а ресурс — нет. Тот же приём, что у Meetups. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="dbup-postgresql" Version="7.0.1" />
+    <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.67.0" />
+    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.67.0" />
+    <PackageReference Include="Microsoft.Orleans.Server" Version="10.3.1" />
+    <!-- Clustering — единственный провайдер Orleans, который берёт скелет.
+         Grain storage и reminders не регистрируются: источник истины остаётся в
+         PostgreSQL (ADR-029), а отсутствие провайдера делает это исполнимым
+         правилом — случайный [PersistentState] уронит старт силоса, а не
+         молча заведёт вторую модель состояния. -->
+    <PackageReference Include="Microsoft.Orleans.Clustering.AdoNet" Version="10.3.1" />
+    <PackageReference Include="Npgsql" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Notifications.Contracts\Notifications.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\shared\dotnet\ServiceDefaults\ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>
