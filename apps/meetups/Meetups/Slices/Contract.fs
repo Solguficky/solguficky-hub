@@ -132,6 +132,21 @@ module Outbound =
         | Hidden -> Meetups.V1.MeetupVisibility.Hidden
         | Visible -> Meetups.V1.MeetupVisibility.Visible
 
+    /// Краткие сведения списков. Живут здесь, а не в срезе: потребителей двое —
+    /// актуальный список и архив, — и разошедшиеся копии отрисовки отличались бы
+    /// только тем, какой из списков её забыл обновить.
+    let summary (value: Meetups.Domain.MeetupSnapshot) : Meetups.V1.MeetupSummary =
+        let (MeetupId id) = value.Id
+
+        Meetups.V1.MeetupSummary(
+            Id = id.ToString "D",
+            Title = value.Title,
+            Venue = value.Venue,
+            Schedule = schedule value.Schedule,
+            Lifecycle = lifecycle value.Lifecycle,
+            Visibility = visibility value.Visibility
+        )
+
     let snapshot (value: Meetups.Domain.MeetupSnapshot) : Meetups.V1.MeetupSnapshot =
         let (MeetupId id) = value.Id
         let (PersonId author) = value.Author

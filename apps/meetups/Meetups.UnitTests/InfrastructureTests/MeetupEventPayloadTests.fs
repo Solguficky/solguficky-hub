@@ -29,6 +29,7 @@ let ``The event type names the occasion the schema accepts`` () =
     let unpublished = MeetupEventPayload.eventType MeetupUnpublished
     let republished = MeetupEventPayload.eventType MeetupRepublished
     let cancelled = MeetupEventPayload.eventType MeetupCancelled
+    let held = MeetupEventPayload.eventType MeetupHeld
 
     test
         <@
@@ -38,6 +39,7 @@ let ``The event type names the occasion the schema accepts`` () =
             && unpublished = "meetup_unpublished"
             && republished = "meetup_republished"
             && cancelled = "meetup_cancelled"
+            && held = "meetup_held"
         @>
 
 [<Fact>]

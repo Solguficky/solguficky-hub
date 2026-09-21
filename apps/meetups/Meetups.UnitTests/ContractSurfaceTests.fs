@@ -52,7 +52,7 @@ let ``The generated service lives under the meetups v1 package`` () =
     test <@ MeetupsService.Descriptor.FullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
-let ``Service exposes exactly the nine slice operations`` () =
+let ``Service exposes exactly the eleven slice operations`` () =
     let actual =
         MeetupsService.Descriptor.Methods
         |> Seq.map (fun m -> m.Name)
@@ -66,7 +66,9 @@ let ``Service exposes exactly the nine slice operations`` () =
             "PublishMeetup"
             "UnpublishMeetup"
             "CancelMeetup"
+            "MarkMeetupHeld"
             "ListVisibleMeetups"
+            "ListArchivedMeetups"
             "GetMeetup"
             "ListMeetupStates"
         ]

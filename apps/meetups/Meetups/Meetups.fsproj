@@ -14,9 +14,11 @@
     <Compile Include="Domain/MeetupSnapshot.fs" />
     <Compile Include="Domain/MeetupTransitions.fs" />
     <Compile Include="Domain/Access.fs" />
+    <Compile Include="Domain/Archive.fs" />
     <Compile Include="Domain/Meetup.fs" />
     <Compile Include="Migrations.fs" />
     <Compile Include="Infrastructure/Db.fs" />
+    <Compile Include="Infrastructure/CommunityTime.fs" />
     <Compile Include="Infrastructure/MeetupRow.fs" />
     <Compile Include="Infrastructure/MeetupEventPayload.fs" />
     <Compile Include="Infrastructure/MeetupStore.fs" />
@@ -29,7 +31,9 @@
     <Compile Include="Slices/PublishMeetup.fs" />
     <Compile Include="Slices/UnpublishMeetup.fs" />
     <Compile Include="Slices/CancelMeetup.fs" />
+    <Compile Include="Slices/MarkMeetupHeld.fs" />
     <Compile Include="Slices/ListVisibleMeetups.fs" />
+    <Compile Include="Slices/ListArchivedMeetups.fs" />
     <Compile Include="Slices/GetMeetup.fs" />
     <Compile Include="Slices/ListMeetupStates.fs" />
     <Compile Include="Slices/DispatchMeetupEvents.fs" />

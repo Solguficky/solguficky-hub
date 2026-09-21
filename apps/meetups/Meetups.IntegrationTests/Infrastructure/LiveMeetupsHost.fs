@@ -32,6 +32,7 @@ type LiveMeetupsHost() =
                 [|
                     "--urls=http://127.0.0.1:0"
                     $"--{Meetups.Migrations.DatabaseUrlVariable}={db.ConnectionString}"
+                    $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
                 |]
         with _ ->
             (db :> IDisposable).Dispose()
