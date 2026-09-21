@@ -1,7 +1,21 @@
 ---
 name: proj-recon
 description: "Разведка репозитория по одному направлению: карта «файл — за что отвечает», дословные цитаты решений и ссылки «файл:строки». Запускать параллельно по 2–3 направлениям на шаге чтения контура исполнения."
-tools: Read, Glob, Grep
+tools: Read, Glob, Grep   # Claude Code
+mode: subagent            # OpenCode v2: без него роль не попадает в каталог подагентов
+permissions:              # OpenCode v2: только чтение, как в tools выше
+  - action: "*"
+    resource: "*"
+    effect: deny
+  - action: read
+    resource: "*"
+    effect: allow
+  - action: glob
+    resource: "*"
+    effect: allow
+  - action: grep
+    resource: "*"
+    effect: allow
 ---
 
 # Разведка по направлению

@@ -1,7 +1,21 @@
 ---
 name: proj-review-standards
 description: "Ось ревью «стандарты»: сверка диффа с нормативом репозитория и с базовым списком запахов. Запускать на шаге ревью контура исполнения параллельно осям спецификации и корректности."
-tools: Read, Glob, Grep
+tools: Read, Glob, Grep   # Claude Code
+mode: subagent            # OpenCode v2: без него роль не попадает в каталог подагентов
+permissions:              # OpenCode v2: только чтение, как в tools выше
+  - action: "*"
+    resource: "*"
+    effect: deny
+  - action: read
+    resource: "*"
+    effect: allow
+  - action: glob
+    resource: "*"
+    effect: allow
+  - action: grep
+    resource: "*"
+    effect: allow
 ---
 
 # Ревью: ось стандартов
