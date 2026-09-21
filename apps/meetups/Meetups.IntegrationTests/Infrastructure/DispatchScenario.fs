@@ -111,7 +111,11 @@ type CommandTransaction(dsn: string) =
 module DispatchScenario =
     let dispatchedAt = DispatchSql.dispatchedAt
 
-    let markPendingDispatched (dsn: string) =
+    /// Симуляция диспетчера, а не сам диспетчер. Имя названо так намеренно: с
+    /// появлением продуктового reader'а тест, который зовёт эту функцию и потом
+    /// проверяет, что строка вышла из batch, проверял бы симуляцию, выглядя при этом
+    /// убедительно. Продуктовый путь идёт через `DispatchReader.runTick`.
+    let simulateDispatch (dsn: string) =
         DispatchSql.queryIds
             dsn
             """
@@ -134,6 +138,61 @@ module DispatchScenario =
 
     let pendingEvents (dsn: string) =
         DispatchSql.queryIds dsn "SELECT event_id FROM meetup_events WHERE dispatched_at IS NULL ORDER BY position" []
+
+    /// Закоммиченная пара «сходка и её событие» с заданным моментом. Нужна там, где
+    /// сценарию важен возраст записи, а не только её наличие: `CommandTransaction`
+    /// держит один момент на все свои вставки и открытую транзакцию в придачу.
+    ///
+    /// Одно событие — одна сходка, поэтому версия всегда первая. Несколько событий
+    /// одной сходки потребовали бы вести их версии, а сценариям публикации нужен
+    /// набор строк, а не история конкретной сходки.
+    let seedEvent (dsn: string) (meetupId: Guid) (eventId: Guid) (occurredAt: DateTimeOffset) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+        use transaction = connection.BeginTransaction()
+
+        use state =
+            DispatchSql.command
+                connection
+                (Some transaction)
+                """
+                INSERT INTO meetups (
+                    id, author, lifecycle, visibility, version,
+                    schedule_form, schedule_precision
+                ) VALUES (
+                    @meetup_id, @actor, 'planned', 'hidden', 1,
+                    'no_date', NULL
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+                [
+                    "meetup_id", box meetupId
+                    "actor", box DispatchSql.actor
+                ]
+
+        state.ExecuteNonQuery() |> ignore
+
+        use journal =
+            DispatchSql.command
+                connection
+                (Some transaction)
+                """
+                INSERT INTO meetup_events (
+                    event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
+                ) VALUES (
+                    @event_id, @meetup_id, 1, 'meetup_created', '{}'::jsonb, @actor, @occurred_at
+                )
+                """
+                [
+                    "event_id", box eventId
+                    "meetup_id", box meetupId
+                    "actor", box DispatchSql.actor
+                    "occurred_at", box occurredAt
+                ]
+
+        journal.ExecuteNonQuery() |> ignore
+
+        transaction.Commit()
 
     let recordUpdateCode (dsn: string) (eventId: Guid) =
         DispatchSql.failureCode
