@@ -286,6 +286,6 @@ printf 'A skill whose frontmatter does not parse loses its description:\n' >&2
 printf 'Skillshare and Claude Code fall back to the H1 heading, so the model\n' >&2
 printf 'no longer sees when to invoke the skill. Fix the source under %s,\n' "$SKILLS_ROOT" >&2
 printf 'then re-sync and re-run the check:\n\n' >&2
-printf '  skillshare sync -p\n' >&2
+printf '  skillshare sync --all -p\n' >&2
 printf '  just check-agent-tools\n' >&2
 exit 1
