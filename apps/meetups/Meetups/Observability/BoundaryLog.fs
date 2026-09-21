@@ -1,9 +1,7 @@
 namespace Meetups.Observability
 
 open System
-open System.Collections.Generic
 open System.Diagnostics
-open System.Diagnostics.Metrics
 open System.Runtime.ExceptionServices
 open System.Threading.Tasks
 open Grpc.Core
@@ -19,16 +17,11 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
 
     /// Имя сервиса — константа его сборки, а не метка сборщика логов:
     /// значение внутри записи переживает смену транспорта доставки.
-    static let service = "meetups"
-    static let meter = new Meter("solguficky.failures")
-    static let failures = meter.CreateCounter<int64>("solguficky.failures")
+    static let service = Failures.Service
 
-    static let countFailure (category: string) =
-        failures.Add(
-            1L,
-            KeyValuePair<string, obj>("service", service),
-            KeyValuePair<string, obj>("error_category", category)
-        )
+    // Счётчик отказов общий с фоновой границей: у него два потребителя, и живёт он
+    // в Observability/Failures.fs.
+    static let countFailure (category: string) = Failures.count category
 
     static let declaredCategory (declined: RpcException) =
         match declined.Data["meetups.denial_reason"] with

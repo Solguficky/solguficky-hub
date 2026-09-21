@@ -4,6 +4,7 @@
 module Meetups.Host
 
 open Meetups.Observability
+open Meetups.Slices
 open Meetups.Transport
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
@@ -12,6 +13,7 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Npgsql
+open OpenTelemetry.Metrics
 
 let build (args: string array) : WebApplication =
     let builder = WebApplication.CreateBuilder(args)
@@ -53,6 +55,28 @@ let build (args: string array) : WebApplication =
     // Reflection включён безусловно, как в Identity: иначе каждая ручная проверка
     // grpcurl требует -import-path и -proto.
     builder.Services.AddGrpcReflection() |> ignore
+
+    // Фоновая публикация из журнала. Порт зарегистрирован ненастроенным, потому что
+    // адаптера ещё нет (PER-209): цикл не стартует и в базу не ходит, поэтому хост
+    // поднимается без неё ровно так же, как и до появления этой границы.
+    //
+    // Регистрация стоит здесь, а не приезжает вместе с NATS: граница существует
+    // вместе с чтением журнала, а PER-209 меняет одно это значение на рабочий порт.
+    builder.Services.AddSingleton<DispatchMeetupEvents.Port>(DispatchMeetupEvents.Port.Unconfigured)
+    |> ignore
+
+    builder.Services.AddHostedService<OutboxDispatchWorker>()
+    |> ignore
+
+    // Метр публикации экспортируется отсюда, а не из ServiceDefaults: там живёт
+    // межсервисный `solguficky.failures` из норматива, а бэклог journal-outbox
+    // принадлежит одному Meetups, и в общем проекте он раздал бы остальным сервисам
+    // метр, который они никогда не наполнят.
+    builder.Services.ConfigureOpenTelemetryMeterProvider(fun metrics ->
+        metrics.AddMeter DispatchTelemetry.MeterName
+        |> ignore
+    )
+    |> ignore
 
     let app = builder.Build()
 
