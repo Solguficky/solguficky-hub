@@ -506,9 +506,7 @@ let ``Cancelling a missing meetup answers NOT_FOUND`` () =
 [<Fact>]
 let ``Cancelling a meetup that already took place is refused as FAILED_PRECONDITION`` () =
     let held =
-        Cancel.deps
-            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.held)))
-            (fun _ _ _ -> unreachable "Commit")
+        Cancel.deps (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.held))) (fun _ _ _ -> unreachable "Commit")
 
     let transition =
         codeOf (fun () -> CancelMeetup.Api.handle held (Cancel.request (administrator ())))
