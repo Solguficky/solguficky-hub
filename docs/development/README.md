@@ -7,6 +7,6 @@
 - [agent-execution-cost.md](agent-execution-cost.md) — распределение работы внутри контура по подагентам, моделям, харнессам и сессиям;
 - [local-development.md](local-development.md) — Aspire, профили и незакрытый smoke-test gate;
 - [ci.md](ci.md) — текущая область CI и известные gaps;
-- [observations.md](observations.md) — журнал повторяющихся сигналов до перевода в действующее правило;
+- [observations.md](observations.md) — форма записи, адресаты и критерий перевода в правило; сами записи — файл на запись в [observations/](observations/), читаются командой `just observations`;
 - [mcp-servers.md](mcp-servers.md) — исследование MCP-серверов для повторяемых действий контура агента;
 - [omp.md](omp.md) — разбор харнесса OMP и его настройка под контур исполнения.
