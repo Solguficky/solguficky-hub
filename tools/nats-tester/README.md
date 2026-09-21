@@ -4,11 +4,11 @@ CLI для ручной проверки сообщений на шине: пу�
 
 ## Текущее состояние
 
-**Реестр subjects пуст.** Ни одного NATS-контракта пока не принято, поэтому `publish`, `subscribe` и `validate` не знают ни одного типа сообщений и `list-types` показывает ноль.
+Реестр знает один subject: `events.notifications.notification_created` — адресный факт уведомления по схеме `notifications/v1`. Это первый принятый NATS-контракт.
 
-Действующие схемы — `identity/v1` и `meetups/v1`, обе gRPC: subject у них не бывает, в реестр они не попадают. Генерируются они потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
+Схемы `identity/v1`, `meetups/v1` и `notifications/v1/notifications_service.proto` обслуживают gRPC: subject у них не бывает, в реестр они не попадают. Генерируются они потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
 
-Инструмент оживает, когда появится первый принятый NATS-контракт: схема кладётся в `contracts/proto/`, классы генерируются, subject добавляется в реестр — см. «Добавление типа сообщения».
+Новый тип сообщения добавляется по шагам ниже: схема в `contracts/proto/`, регенерация классов и запись в реестр — см. «Добавление типа сообщения».
 
 ## Установка
 
@@ -138,8 +138,15 @@ nats-tester/
 ├── nats_tester/
 │   ├── cli.py                   # CLI на Click; EVENT_TYPES / COMMAND_TYPES — реестр subjects
 │   └── generated/               # Сгенерированные Protobuf-классы
-│       └── identity/v1/         # gRPC-схема; subject не имеет
-│           └── identity_service_pb2.py
+│       ├── identity/v1/         # gRPC-схема; subject не имеет
+│       │   ├── identity_service_pb2.py
+│       │   └── roles_pb2.py
+│       ├── meetups/v1/          # gRPC-схема и её типы значений; subject не имеет
+│       │   ├── meetups_pb2.py
+│       │   └── meetups_service_pb2.py
+│       └── notifications/v1/    # словарь событий и gRPC-схема подписок
+│           ├── notifications_pb2.py         # subject записан в cli.py
+│           └── notifications_service_pb2.py # gRPC; subject не имеет
 ├── generate_proto.py            # Обход contracts/proto и вызов protoc
 ├── pyproject.toml
 └── README.md
@@ -150,6 +157,10 @@ nats-tester/
 **`command not found: nats-tester`** — `pip install -e .` из `tools/nats-tester`, либо `$HOME/.local/bin` не в `PATH`.
 
 **`Generated protobuf files not found`** — `python generate_proto.py`, затем `pip install -e .`.
+
+**`ImportError: cannot import name 'runtime_version'`** или **`VersionError: gencode ... runtime ...`** — рантайм `protobuf` старше закоммиченных классов. Их gencode проверяет версию рантайма на импорте, а `cli.py` импортирует классы на уровне модуля, поэтому падает любая команда, включая `list-types`. Нижняя граница объявлена в `pyproject.toml`: `pip install -e . --upgrade`.
+
+**`gencode` новее или старше вашего `protoc`** — регенерация классов требует `protoc` той же линии, что объявленный рантайм `protobuf`: `protoc` 33.x даёт gencode `6.33.0`. Пакет дистрибутива бывает старее; тогда берите релиз с [github.com/protocolbuffers/protobuf/releases](https://github.com/protocolbuffers/protobuf/releases).
 
 **`nats not found`** — установите NATS CLI и добавьте `$(go env GOPATH)/bin` в `PATH`.
 

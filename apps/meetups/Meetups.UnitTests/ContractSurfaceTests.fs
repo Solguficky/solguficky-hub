@@ -5,6 +5,11 @@ open Meetups.V1
 open Swensen.Unquote
 open Xunit
 
+/// Поверхность контракта лежит в двух файлах: значения домена — в meetups.proto,
+/// сам сервис и его запросы — в meetups_service.proto. Проверки ниже смотрят на
+/// обе схемы, иначе вынос типа в соседний файл гасил бы утверждение молча.
+let private valueTypes = MeetupsReflection.Descriptor
+
 let private schema = MeetupsServiceReflection.Descriptor
 
 let private requestTypes =
@@ -20,12 +25,14 @@ let rec private withNested (message: MessageDescriptor) =
     }
 
 let private messages =
-    schema.MessageTypes
+    Seq.append valueTypes.MessageTypes schema.MessageTypes
     |> Seq.collect withNested
     |> List.ofSeq
 
+let private fileEnums = Seq.append valueTypes.EnumTypes schema.EnumTypes
+
 let private enums =
-    Seq.append schema.EnumTypes (messages |> Seq.collect (fun m -> m.EnumTypes))
+    Seq.append fileEnums (messages |> Seq.collect (fun m -> m.EnumTypes))
     |> List.ofSeq
 
 let private fieldNames (message: MessageDescriptor) =
@@ -132,6 +139,34 @@ let ``Change attributes sends every informational field as target state`` () =
         |> List.map (fun name -> name, "String", false)
 
     test <@ actual = expected @>
+
+/// Вынос значений — часть контракта, а не раскладка по вкусу: потребитель,
+/// которому нужно расписание или ось состояния, не обязан тянуть в кодогенерацию
+/// сам сервис с его запросами.
+[<Fact>]
+let ``The value types live apart from the service schema`` () =
+    let messageNames (file: FileDescriptor) =
+        file.MessageTypes
+        |> Seq.map (fun m -> m.Name)
+        |> Set.ofSeq
+
+    let expected =
+        [
+            "Schedule"
+            "NoDate"
+            "DateValue"
+            "CalendarDate"
+            "LocalTime"
+            "LocalDateTime"
+            "LocalInterval"
+        ]
+        |> set
+
+    test
+        <@
+            messageNames valueTypes = expected
+            && Set.intersect (messageNames schema) expected = Set.empty
+        @>
 
 [<Fact>]
 let ``Schema declares only the lifecycle and visibility enums`` () =

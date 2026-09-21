@@ -13,6 +13,8 @@ from google.protobuf import json_format
 from google.protobuf.message import Message
 import nats
 
+from nats_tester.generated.notifications.v1 import notifications_pb2
+
 try:
     from uuid import uuid7  # Python 3.14+
 except ImportError:
@@ -21,12 +23,14 @@ except ImportError:
 
 # Реестр subjects: subject -> сгенерированный класс сообщения.
 #
-# Пуст: принятых NATS-контрактов в contracts/proto пока нет. Единственная
-# схема, identity/v1, обслуживает gRPC и subject не имеет.
+# Схемы identity/v1 и meetups/v1 обслуживают gRPC и в реестр не попадают:
+# subject у них не бывает.
 #
 # Запись добавляется вместе с принятием контракта, одновременно с
 # docs/architecture/integration.md.
-EVENT_TYPES: dict[str, Type[Message]] = {}
+EVENT_TYPES: dict[str, Type[Message]] = {
+    'events.notifications.notification_created': notifications_pb2.Notification,
+}
 
 COMMAND_TYPES: dict[str, Type[Message]] = {}
 
