@@ -158,6 +158,10 @@ nats-tester/
 
 **`Generated protobuf files not found`** — `python generate_proto.py`, затем `pip install -e .`.
 
+**`ImportError: cannot import name 'runtime_version'`** или **`VersionError: gencode ... runtime ...`** — рантайм `protobuf` старше закоммиченных классов. Их gencode проверяет версию рантайма на импорте, а `cli.py` импортирует классы на уровне модуля, поэтому падает любая команда, включая `list-types`. Нижняя граница объявлена в `pyproject.toml`: `pip install -e . --upgrade`.
+
+**`gencode` новее или старше вашего `protoc`** — регенерация классов требует `protoc` той же линии, что объявленный рантайм `protobuf`: `protoc` 33.x даёт gencode `6.33.0`. Пакет дистрибутива бывает старее; тогда берите релиз с [github.com/protocolbuffers/protobuf/releases](https://github.com/protocolbuffers/protobuf/releases).
+
 **`nats not found`** — установите NATS CLI и добавьте `$(go env GOPATH)/bin` в `PATH`.
 
 **`Failed to connect to NATS`** — сервер не поднят. Локально NATS запускает AppHost: `cd infra/apphost && aspire run`.
