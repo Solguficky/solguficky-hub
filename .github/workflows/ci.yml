@@ -19,6 +19,7 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
       identity: ${{ steps.filter.outputs.identity }}
       meetups: ${{ steps.filter.outputs.meetups }}
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
@@ -30,6 +31,10 @@ jobs:
         id: filter
         with:
           filters: |
+            contracts:
+              - 'contracts/proto/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
             identity:
               - 'contracts/proto/**'
               - 'apps/identity/**'
@@ -67,6 +72,31 @@ jobs:
               - 'global.json'
               - '.editorconfig'
               - '.github/workflows/ci.yml'
+
+  # Компиляция всего модуля contracts/proto. Джобы потребителей сужают вход
+  # фильтром paths и поимённым списком Protobuf, поэтому схема домена, у
+  # которого потребителя ещё нет, не читается ни одной из них: без этой джобы
+  # она ломается молча при зелёном CI. Стилевых правил не проверяет — buf lint
+  # и buf breaking вводит PER-268.
+  contracts:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.contracts == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: buf build
+        working-directory: contracts/proto
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
   # уносить за собой зависимые, поэтому условие начинается с !cancelled().
