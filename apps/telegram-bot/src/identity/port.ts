@@ -38,3 +38,49 @@ export type IdentityResolver = {
     meta?: RpcMetadata,
   ): Promise<ResolveIdentityResult>;
 };
+
+export type IdentityActor = {
+  identityId: string;
+  globalRoles: readonly string[];
+};
+export type CommunityMember = {
+  identityId: string;
+  telegramUsername?: string;
+  admitted: boolean;
+};
+export type CommunitySnapshot = {
+  members: readonly CommunityMember[];
+  allowedUsernames: readonly string[];
+};
+export type IdentityAdminResult<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "forbidden" }
+  | { kind: "invalid" }
+  | { kind: "unavailable"; cause: unknown };
+
+export type CommunityAdministrator = {
+  community(
+    actor: IdentityActor,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<CommunitySnapshot>>;
+  admit(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+  block(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+  addAllowedUsername(
+    actor: IdentityActor,
+    username: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+  removeAllowedUsername(
+    actor: IdentityActor,
+    username: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+};

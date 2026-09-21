@@ -8,6 +8,7 @@ import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
+  CommunityAdministrator,
   IdentityResolver,
   ResolveIdentityInput,
   ResolveIdentityResult,
@@ -24,10 +25,20 @@ export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
   "resolveIdentity"
 >;
+type IdentityAdminRpc = Pick<
+  Client<typeof IdentityService>,
+  | "listCommunityMembers"
+  | "admitCommunityMember"
+  | "blockCommunityMember"
+  | "listAllowedUsernames"
+  | "addAllowedUsername"
+  | "removeAllowedUsername"
+>;
 
-export type IdentityClient = IdentityResolver & {
-  close(): void;
-};
+export type IdentityClient = IdentityResolver &
+  CommunityAdministrator & {
+    close(): void;
+  };
 
 export function createIdentityClient(
   baseUrl: string,
@@ -41,12 +52,116 @@ export function createIdentityClient(
   });
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
+  const administrator = createCommunityAdministrator(client, timeoutMs);
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
+    ...administrator,
     close() {
       sessionManager.abort();
     },
   };
+}
+
+export function createCommunityAdministrator(
+  rpc: IdentityAdminRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): CommunityAdministrator {
+  const options = (meta?: RpcMetadata) => ({ timeoutMs, ...callHeaders(meta) });
+  const actorMessage = (actor: {
+    identityId: string;
+    globalRoles: readonly string[];
+  }) => ({
+    identityId: actor.identityId,
+    globalRoles: actor.globalRoles.map(roleValue),
+  });
+  const change = async (call: () => Promise<{ changed: boolean }>) => {
+    try {
+      return { kind: "ok" as const, value: (await call()).changed };
+    } catch (cause) {
+      return classifyAdminFailure(cause);
+    }
+  };
+  return {
+    async community(actor, meta) {
+      try {
+        const wireActor = actorMessage(actor);
+        const [members, usernames] = await Promise.all([
+          rpc.listCommunityMembers({ actor: wireActor }, options(meta)),
+          rpc.listAllowedUsernames({ actor: wireActor }, options(meta)),
+        ]);
+        return {
+          kind: "ok",
+          value: {
+            members: members.members.map((member) => ({
+              identityId: member.identityId,
+              ...(member.telegramUsername === undefined
+                ? {}
+                : { telegramUsername: member.telegramUsername }),
+              admitted: member.admitted,
+            })),
+            allowedUsernames: usernames.usernames,
+          },
+        };
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+    },
+    admit: (actor, identityId, meta) =>
+      change(() =>
+        rpc.admitCommunityMember(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        ),
+      ),
+    block: (actor, identityId, meta) =>
+      change(() =>
+        rpc.blockCommunityMember(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        ),
+      ),
+    addAllowedUsername: (actor, username, meta) =>
+      change(() =>
+        rpc.addAllowedUsername(
+          { actor: actorMessage(actor), username },
+          options(meta),
+        ),
+      ),
+    removeAllowedUsername: (actor, username, meta) =>
+      change(() =>
+        rpc.removeAllowedUsername(
+          { actor: actorMessage(actor), username },
+          options(meta),
+        ),
+      ),
+  };
+}
+
+function classifyAdminFailure(cause: unknown) {
+  if (cause instanceof ConnectError) {
+    if (
+      cause.code === Code.PermissionDenied ||
+      cause.code === Code.Unauthenticated
+    )
+      return { kind: "forbidden" as const };
+    if (permanentCodes.has(cause.code)) return { kind: "invalid" as const };
+  }
+  return { kind: "unavailable" as const, cause };
+}
+
+function roleValue(role: string): GlobalRole {
+  switch (role) {
+    case "admin":
+      return GlobalRole.ADMIN;
+    case "maintainer":
+      return GlobalRole.MAINTAINER;
+    case "member":
+      return GlobalRole.MEMBER;
+    case "public":
+      return GlobalRole.PUBLIC;
+    default:
+      return GlobalRole.UNSPECIFIED;
+  }
 }
 
 export function createIdentityResolver(
