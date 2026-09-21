@@ -469,6 +469,7 @@ type MeetupCommandTests() =
                 [|
                     "--urls=http://127.0.0.1:0"
                     $"--{Meetups.Migrations.DatabaseUrlVariable}={dsn}"
+                    $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
                 |]
 
         let deps = Meetups.Slices.CreateMeetupDraft.Composition.buildDeps app.Services

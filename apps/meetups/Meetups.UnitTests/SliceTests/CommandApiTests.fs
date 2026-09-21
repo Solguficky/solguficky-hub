@@ -376,9 +376,10 @@ let ``An impossible calendar date is refused as INVALID_ARGUMENT`` () =
     test
         <@ codeOf (fun () -> SetMeetupSchedule.Api.handle Schedule.untouched request) = Some StatusCode.InvalidArgument @>
 
-/// Два среза переходов PER-197. Их отказы проверяются здесь, а не считаются такими
-/// же, как у публикации: таблица кодов у каждого среза своя, и совпадение сегодня —
-/// совпадение, а не абстракция. `TitleRequiredForPublication` в обоих недостижим и
+/// Срезы переходов: снятие с публикации и отмена (PER-197), перевод в «состоялась»
+/// (PER-229). Их отказы проверяются здесь, а не считаются такими же, как у
+/// публикации: таблица кодов у каждого среза своя, и совпадение сегодня —
+/// совпадение, а не абстракция. `TitleRequiredForPublication` в них недостижим и
 /// объявлен нарушением внутреннего контракта, поэтому кода у него нет и здесь.
 module private Unpublish =
 
@@ -409,6 +410,21 @@ module private Cancel =
         deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
 
     let request viewer = Meetups.V1.CancelMeetupRequest(Viewer = viewer, Id = meetupId)
+
+module private Held =
+
+    let deps load commit : MarkMeetupHeld.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e7"
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer = Meetups.V1.MarkMeetupHeldRequest(Viewer = viewer, Id = meetupId)
 
 [<Fact>]
 let ``Unpublishing is refused for an ordinary viewer before the store`` () =
@@ -547,5 +563,76 @@ let ``A successful cancellation answers with a visible cancelled snapshot`` () =
     test
         <@
             answer.Lifecycle = Meetups.V1.MeetupLifecycle.Cancelled
+            && answer.Visibility = Meetups.V1.MeetupVisibility.Visible
+        @>
+
+[<Fact>]
+let ``Marking as held is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () -> MarkMeetupHeld.Api.handle Held.untouched (Held.request (ordinary ())))
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Marking a missing meetup as held answers NOT_FOUND`` () =
+    let missing =
+        Held.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> MarkMeetupHeld.Api.handle missing (Held.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+/// Единственный отклонённый переход этого среза: отмена необратима.
+[<Fact>]
+let ``Marking a cancelled meetup as held is refused as FAILED_PRECONDITION`` () =
+    let cancelled =
+        Held.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let transition =
+        codeOf (fun () -> MarkMeetupHeld.Api.handle cancelled (Held.request (administrator ())))
+
+    let permission =
+        codeOf (fun () -> MarkMeetupHeld.Api.handle Held.untouched (Held.request (ordinary ())))
+
+    test
+        <@
+            transition = Some StatusCode.FailedPrecondition
+            && permission = Some StatusCode.PermissionDenied
+        @>
+
+[<Fact>]
+let ``A version conflict while marking as held is refused as ABORTED`` () =
+    let conflicting =
+        Held.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> MarkMeetupHeld.Api.handle conflicting (Held.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>
+
+/// Отметка не трогает видимость: состоявшаяся видимая сходка остаётся видимой и на
+/// границе.
+[<Fact>]
+let ``A successful held transition answers with a visible held snapshot`` () =
+    let heldVisible =
+        Meetup.apply (Existing Sample.published) MeetupHeld
+        |> Meetup.toSnapshot
+
+    let deps =
+        Held.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ -> Task.FromResult(Ok heldVisible))
+
+    let answer =
+        (MarkMeetupHeld.Api.handle deps (Held.request (administrator ()))).GetAwaiter().GetResult()
+
+    test
+        <@
+            answer.Lifecycle = Meetups.V1.MeetupLifecycle.Held
             && answer.Visibility = Meetups.V1.MeetupVisibility.Visible
         @>

@@ -3,6 +3,7 @@
 /// "сервис отвечает на gRPC" навсегда остаётся ручным grpcurl.
 module Meetups.Host
 
+open System
 open Meetups.Observability
 open Meetups.Slices
 open Meetups.Transport
@@ -46,6 +47,22 @@ let build (args: string array) : WebApplication =
         | "" -> failwith $"{Meetups.Migrations.DatabaseUrlVariable} is not set"
         | url -> Meetups.Infrastructure.Db.source url
     )
+    |> ignore
+
+    // Часовой пояс сообщества разрешается здесь и падает при отсутствии значения
+    // сразу: по нему считается календарный день, отделяющий актуальные сходки от
+    // архива, и подставлять UTC молча значило бы сдвигать границу на часы, пока
+    // оператор считает настройку заданной. Ленивое разрешение прятало бы отказ до
+    // первого продуктового чтения — тем же свойством источник соединений обязан
+    // обладать по другой причине (хост поднимается без базы), но часовой пояс
+    // базой не является и ни одного теста каркаса не ломает.
+    let communityZone =
+        match builder.Configuration[Meetups.Infrastructure.CommunityTime.TimeZoneVariable] with
+        | null
+        | "" -> failwith $"{Meetups.Infrastructure.CommunityTime.TimeZoneVariable} is not set"
+        | value -> Meetups.Infrastructure.CommunityTime.zone value
+
+    builder.Services.AddSingleton<TimeZoneInfo> communityZone
     |> ignore
 
     // Мост из health checks, зарегистрированных ServiceDefaults, в grpc.health.v1.

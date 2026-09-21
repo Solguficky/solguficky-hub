@@ -32,6 +32,7 @@ type MeetupsHostFixture() =
             [|
                 "--urls=http://127.0.0.1:0"
                 "--MEETUPS_DATABASE_URL=postgres://meetups:none@127.0.0.1:1/meetups?sslmode=disable"
+                "--MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow"
             |]
 
     // Kestrel слушает уже после StartAsync, поэтому всё, что может бросить после

@@ -27,6 +27,10 @@ internal static class MeetupsSetup
                 AppHostNames.Resources.MeetupsDb,
                 "MEETUPS_DATABASE_URL",
                 database => ReferenceExpression.Create(
-                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"));
+                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"))
+            // Часовой пояс сообщества решает, когда сходка переходит в архив, и
+            // обязателен сервису: без него `Host.build` падает. Локальному прогону
+            // значение даёт AppHost; production-топология назовёт своё.
+            .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", "Europe/Moscow");
     }
 }
