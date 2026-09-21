@@ -12,6 +12,8 @@ import type { ExecuteResult, FormField, Person } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
+  type CommunityAdministrator,
+  type IdentityAdminResult,
   type IdentityResolver,
   toResolveIdentityInput,
 } from "../identity/port.js";
@@ -29,7 +31,7 @@ import { parseUpdate } from "./parse-update.js";
 export type BotRuntime = {
   token: string;
   dispatcher: Dispatcher;
-  identity: IdentityResolver;
+  identity: IdentityResolver & Partial<CommunityAdministrator>;
   logger: Logger;
   presentation?: "rich" | "plain";
 };
@@ -37,16 +39,27 @@ export type BotRuntime = {
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
-type ProductUseCase = "create_meetup" | "find_meetup" | "view_meetup";
+type ProductUseCase =
+  | "create_meetup"
+  | "find_meetup"
+  | "view_meetup"
+  | "manage_community";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 
 type PendingQuestion = {
+  kind: "meetup";
   field: FormField;
   meetupId: string;
   telegramUserId: number;
   expiresAt: number;
 };
+type PendingUsername = {
+  kind: "allowed-username";
+  telegramUserId: number;
+  expiresAt: number;
+};
+type PendingInput = PendingQuestion | PendingUsername;
 
 type UpdateContext = Context & {
   requestId?: string;
@@ -78,7 +91,7 @@ type BoundaryOutcome =
 
 export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
   const bot = new Bot<UpdateContext>(runtime.token);
-  const questions = new Map<string, PendingQuestion>();
+  const questions = new Map<string, PendingInput>();
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();
     ctx.startedAt = process.hrtime.bigint();
@@ -101,7 +114,7 @@ export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
 async function handleMessage(
   ctx: UpdateContext,
   runtime: BotRuntime,
-  questions: Map<string, PendingQuestion>,
+  questions: Map<string, PendingInput>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -125,6 +138,39 @@ async function handleMessage(
           result: "ok",
           use_case: useCase,
         };
+        return;
+      }
+      if (pending.kind === "allowed-username") {
+        useCase = "manage_community";
+        const identity = await resolvePerson(ctx, runtime, useCase);
+        if (identity.kind === "failed") {
+          outcome = identity.outcome;
+          return;
+        }
+        const result =
+          runtime.identity.addAllowedUsername === undefined
+            ? {
+                kind: "unavailable" as const,
+                cause: new Error("community administration is not configured"),
+              }
+            : await runtime.identity.addAllowedUsername(
+                identity.person,
+                ctx.message.text,
+                rpcCall(ctx, useCase),
+              );
+        questions.delete(questionKey(ctx.chat?.id, replyId));
+        await renderCommunity(
+          ctx,
+          runtime,
+          identity.person,
+          false,
+          result.kind === "ok"
+            ? result.value
+              ? "Ник добавлен."
+              : "Этот ник уже есть в списке."
+            : undefined,
+        );
+        outcome = adminOutcome(result, identity.person.identityId);
         return;
       }
       const identity = await resolvePerson(ctx, runtime, useCase);
@@ -162,7 +208,7 @@ async function handleMessage(
     ) {
       useCase = "create_meetup";
       await ctx.reply(
-        "Этот вопрос уже устарел. Открой управление сходками и продолжи с актуального экрана.",
+        "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
       );
       outcome = {
         level: "debug",
@@ -302,7 +348,7 @@ async function handleMessage(
 async function handleCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
-  questions: Map<string, PendingQuestion>,
+  questions: Map<string, PendingInput>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -343,6 +389,83 @@ async function handleCallback(
       return;
     }
     const person = identity.person;
+    if (action.kind === "community") {
+      const result = await renderCommunity(ctx, runtime, person, true);
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "ask-allowed-username") {
+      const message = await ctx.reply(
+        "Какой ник разрешить? Отправь его с @ или без.",
+        { reply_markup: { force_reply: true, selective: true } },
+      );
+      questions.set(questionKey(ctx.chat?.id, message.message_id), {
+        kind: "allowed-username",
+        telegramUserId: ctx.from?.id ?? 0,
+        expiresAt: Date.now() + questionTtlMs,
+      });
+      evictOldestQuestions(questions);
+      outcome = {
+        level: "debug",
+        message: "allowed username requested",
+        result: "ok",
+        use_case: "manage_community",
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (
+      action.kind === "admit-member" ||
+      action.kind === "block-member" ||
+      action.kind === "remove-allowed-username"
+    ) {
+      const result =
+        action.kind === "admit-member"
+          ? runtime.identity.admit === undefined
+            ? {
+                kind: "unavailable" as const,
+                cause: new Error("community administration is not configured"),
+              }
+            : await runtime.identity.admit(
+                person,
+                tokenToUuid(action.token),
+                rpcCall(ctx, "manage_community"),
+              )
+          : action.kind === "block-member"
+            ? runtime.identity.block === undefined
+              ? {
+                  kind: "unavailable" as const,
+                  cause: new Error(
+                    "community administration is not configured",
+                  ),
+                }
+              : await runtime.identity.block(
+                  person,
+                  tokenToUuid(action.token),
+                  rpcCall(ctx, "manage_community"),
+                )
+            : runtime.identity.removeAllowedUsername === undefined
+              ? {
+                  kind: "unavailable" as const,
+                  cause: new Error(
+                    "community administration is not configured",
+                  ),
+                }
+              : await runtime.identity.removeAllowedUsername(
+                  person,
+                  action.username,
+                  rpcCall(ctx, "manage_community"),
+                );
+      const confirmation =
+        result.kind === "ok"
+          ? result.value
+            ? "Изменение сохранено."
+            : "Состояние уже было актуальным."
+          : undefined;
+      await renderCommunity(ctx, runtime, person, true, confirmation);
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
     if (action.kind === "hub" || action.kind === "outdated") {
       const result = await runtime.dispatcher.execute({
         identity: person,
@@ -379,10 +502,10 @@ async function handleCallback(
     if (action.kind === "manage-menu") {
       const id = createUuidV7();
       await ctx.reply("Управление сходками", {
-        reply_markup: new InlineKeyboard().text(
-          "Создать сходку",
-          `v1:manage:new:${uuidToToken(id)}`,
-        ),
+        reply_markup: new InlineKeyboard()
+          .text("Создать сходку", `v1:manage:new:${uuidToToken(id)}`)
+          .row()
+          .text("Состав сообщества", "v1:community:list"),
       });
       outcome = {
         level: "debug",
@@ -445,6 +568,118 @@ async function handleCallback(
       writeBoundary(runtime.logger, ctx, outcome);
     }
   }
+}
+
+async function renderCommunity(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  edit: boolean,
+  confirmation?: string,
+): Promise<IdentityAdminResult<unknown>> {
+  const result =
+    runtime.identity.community === undefined
+      ? {
+          kind: "unavailable" as const,
+          cause: new Error("community administration is not configured"),
+        }
+      : await runtime.identity.community(
+          actor,
+          rpcCall(ctx, "manage_community"),
+        );
+  if (result.kind !== "ok") {
+    const text =
+      result.kind === "forbidden"
+        ? "Identity не разрешил управление составом."
+        : unavailableText;
+    if (edit)
+      await editScreen(
+        ctx,
+        text,
+        new InlineKeyboard().text("Назад", "v1:manage:menu"),
+      );
+    else await ctx.reply(text);
+    return result;
+  }
+  const pending = result.value.members.filter((member) => !member.admitted);
+  const admitted = result.value.members.filter((member) => member.admitted);
+  const label = (member: (typeof result.value.members)[number]) =>
+    member.telegramUsername === undefined
+      ? member.identityId.slice(0, 8)
+      : `@${member.telegramUsername}`;
+  const lines = [
+    ...(confirmation === undefined ? [] : [confirmation, ""]),
+    "Состав сообщества",
+    "",
+    `Ожидают допуска: ${pending.length}`,
+    ...(pending.length === 0
+      ? ["—"]
+      : pending.map((member) => `• ${label(member)}`)),
+    "",
+    `Допущены: ${admitted.length}`,
+    ...(admitted.length === 0
+      ? ["—"]
+      : admitted.map((member) => `• ${label(member)}`)),
+    "",
+    "Разрешённые ники:",
+    ...(result.value.allowedUsernames.length === 0
+      ? ["—"]
+      : result.value.allowedUsernames.map((username) => `• @${username}`)),
+  ];
+  const keyboard = new InlineKeyboard();
+  for (const member of pending)
+    keyboard
+      .text(
+        `Допустить ${label(member)}`,
+        `v1:community:admit:${uuidToToken(member.identityId)}`,
+      )
+      .row();
+  for (const member of admitted)
+    keyboard
+      .text(
+        `Закрыть ${label(member)}`,
+        `v1:community:block:${uuidToToken(member.identityId)}`,
+      )
+      .row();
+  keyboard.text("Добавить ник", "v1:community:allow").row();
+  for (const username of result.value.allowedUsernames)
+    keyboard
+      .text(`Убрать @${username}`, `v1:community:remove:${username}`)
+      .row();
+  keyboard
+    .text("Обновить", "v1:community:list")
+    .text("Назад", "v1:manage:menu");
+  if (edit) await editScreen(ctx, lines.join("\n"), keyboard);
+  else await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+  return result;
+}
+
+function adminOutcome(
+  result: IdentityAdminResult<unknown>,
+  identityId: string,
+): BoundaryOutcome {
+  if (result.kind === "ok")
+    return {
+      level: "debug",
+      message: "community changed",
+      result: "ok",
+      use_case: "manage_community",
+      identity_id: identityId,
+    };
+  return {
+    level: "warn",
+    message: "community change rejected",
+    result: "error",
+    use_case: "manage_community",
+    identity_id: identityId,
+    error_category:
+      result.kind === "forbidden"
+        ? "authorization"
+        : result.kind === "invalid"
+          ? "invariant"
+          : "dependency_unavailable",
+    error: result.kind,
+  };
 }
 
 async function renderMeetupList(
@@ -697,7 +932,7 @@ async function resolvePerson(
 async function renderFormResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
-  questions: Map<string, PendingQuestion>,
+  questions: Map<string, PendingInput>,
 ): Promise<void> {
   if (result.kind === "ask") {
     const prompts: Record<FormField, string> = {
@@ -710,6 +945,7 @@ async function renderFormResult(
       reply_markup: { force_reply: true, selective: true },
     });
     questions.set(questionKey(ctx.chat?.id, message.message_id), {
+      kind: "meetup",
       field: result.field,
       meetupId: result.meetup.id,
       telegramUserId: ctx.from?.id ?? 0,
@@ -757,7 +993,7 @@ async function renderFormResult(
 }
 
 function removeExpiredQuestions(
-  questions: Map<string, PendingQuestion>,
+  questions: Map<string, PendingInput>,
   now: number,
 ): void {
   for (const [key, question] of questions) {
@@ -765,7 +1001,7 @@ function removeExpiredQuestions(
   }
 }
 
-function evictOldestQuestions(questions: Map<string, PendingQuestion>): void {
+function evictOldestQuestions(questions: Map<string, PendingInput>): void {
   while (questions.size > questionLimit) {
     const oldest = questions.keys().next().value;
     if (oldest === undefined) return;
@@ -798,6 +1034,11 @@ function callbackUseCase(
     | "outdated"
     | "view-meetup"
     | "manage-menu"
+    | "community"
+    | "ask-allowed-username"
+    | "admit-member"
+    | "block-member"
+    | "remove-allowed-username"
     | "create-meetup"
     | "publish-meetup",
 ): ProductUseCase {
@@ -808,6 +1049,12 @@ function callbackUseCase(
     case "publish-meetup":
     case "manage-menu":
       return "create_meetup";
+    case "community":
+    case "ask-allowed-username":
+    case "admit-member":
+    case "block-member":
+    case "remove-allowed-username":
+      return "manage_community";
     case "hub":
     case "outdated":
       return "find_meetup";
