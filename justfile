@@ -62,6 +62,14 @@ sync-mcp:
 sync-commands:
     npx --yes rulesync@{{RULESYNC_VERSION}} generate --targets "{{RULESYNC_COMMAND_TARGETS}}" --features "commands"
 
+# --- Документация ----------------------------------------------------------
+
+# Журнал наблюдений подряд: файл на запись, порядок имён — порядок дат.
+# Записи разложены по файлам, потому что общий хвост одного файла конфликтовал
+# на каждой паре параллельных задач (docs/development/observations.md).
+observations:
+    @awk 'FNR==1 && NR>1 {print ""} {print}' docs/development/observations/*.md
+
 # --- Проверки --------------------------------------------------------------
 #
 # Тот же скрипт вызывает git-хук через lefthook.yml.
