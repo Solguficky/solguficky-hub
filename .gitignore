@@ -49,7 +49,7 @@ lefthook-local.yml
 .claude/worktrees/
 
 # Таргеты skillshare — сгенерированный артефакт (ADR-041). Каталоги собирает
-# `skillshare sync -p` из источника .skillshare/skills/ на каждой машине;
+# `skillshare sync --all -p` из источников .skillshare/skills/ и .skillshare/agents/;
 # внешние скиллы перед этим ставит `just skillshare-install`.
 #
 # Закоммиченная копия ничего не добавляла к доступности: sync раскладывает
@@ -58,8 +58,8 @@ lefthook-local.yml
 .claude/skills/
 .agents/skills/
 # Таргет agents объявлен в config.yaml у claude и тоже раскладывается копией.
-# Источников агентов в репозитории пока нет, но правило заводится вместе с
-# путём: иначе первый же агент приедет в отслеживаемый каталог сгенерированным.
+# Источник ролей — .skillshare/agents/, он в Git; сюда приезжает копия, и
+# раскладывает её только `sync --all`: без --all каталог остаётся пустым.
 .claude/agents/
 # Таргет opencode: скиллы исключены фильтром в config.yaml, потому что
 # OpenCode сам сканирует .agents/skills/ и .claude/skills/ (skills/**/SKILL.md);
