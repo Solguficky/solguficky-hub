@@ -6,8 +6,8 @@
 #
 # Требуется just: https://github.com/casey/just
 #
-# Новый компонент добавляет свои рецепты и свою проверку в `verify` в том же
-# коммите, в котором появляется его сборка.
+# Новый компонент добавляет свои рецепты, свою проверку в `verify` и установку
+# своего тулинга в `tools` в том же коммите, в котором появляется его сборка.
 
 # --- Версии инструментов ---------------------------------------------------
 #
@@ -93,6 +93,9 @@ check-document-numbers:
 
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
 verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+
+# Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
+tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
