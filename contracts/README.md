@@ -11,16 +11,19 @@ contracts/proto/
 │   └── v1/
 │       ├── identity_service.proto
 │       └── roles.proto
-└── meetups/
+├── meetups/
+│   └── v1/
+│       └── meetups_service.proto
+└── notifications/
     └── v1/
-        └── meetups_service.proto
+        └── notifications.proto
 ```
 
-Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`, `meetups.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
+Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`, `meetups.v1`, `notifications.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
 
 Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Как потребитель указывает этот корень — в [стандарте Protobuf](../docs/standards/contracts/protobuf.md).
 
-Аукционные схемы удалены: аукцион не входит в MVP. NATS-события Identity и контракт Telegram Bot ещё не спроектированы.
+Аукционные схемы удалены: аукцион не входит в MVP. Первый NATS-контракт — `notifications/v1`: адресный факт уведомления, который Notifications публикует каналам. NATS-события Meetups и Identity и контракт Telegram Bot ещё не спроектированы.
 
 ## Владение
 
