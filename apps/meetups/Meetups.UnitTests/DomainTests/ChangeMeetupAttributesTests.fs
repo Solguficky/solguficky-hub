@@ -79,12 +79,21 @@ let ``When the title is emptied expect the change to be accepted`` () =
 
     test <@ snapshot.Title = "" @>
 
+/// Отмена терминальна и закрывает редактирование. Отказ переходом, а не «не
+/// найдено»: сходка существует, и у человека на эти два случая разные действия.
+[<Fact>]
+let ``When the meetup is cancelled expect the change is refused`` () =
+    let decision =
+        Meetup.decideChangeAttributes Sample.attributes (Existing Sample.cancelled)
+
+    test <@ decision = Error TransitionNotAllowed @>
+
 [<Fact>]
 let ``When the title of a published meetup is emptied expect the change to be accepted`` () =
     // I4 остался переходным инвариантом и стоячим не стал (ADR-031, пересмотр
     // 2026-09-21): заголовок обязателен на переходе к публикации, а не в покое.
-    // Соседний тест выше проверяет то же на скрытой сходке — и это разные
-    // утверждения: стоячий инвариант различал бы их именно по видимости.
+    // Тест «When the title is emptied» выше проверяет то же на скрытой сходке —
+    // и это разные утверждения: стоячий инвариант различал бы их по видимости.
     let cleared =
         { Sample.attributes with
             Title = ""

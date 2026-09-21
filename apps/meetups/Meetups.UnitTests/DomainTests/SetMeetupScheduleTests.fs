@@ -49,11 +49,20 @@ let ``When the schedule is cleared to no date expect the change to be accepted``
 
     test <@ cleared.Schedule = NoDate @>
 
+/// Отмена закрывает и вторую команду редактирования: расписание отменённой сходки
+/// больше ничего не описывает.
+[<Fact>]
+let ``When the meetup is cancelled expect the schedule change is refused`` () =
+    let decision = Meetup.decideSetSchedule NoDate (Existing Sample.cancelled)
+
+    test <@ decision = Error TransitionNotAllowed @>
+
 [<Fact>]
 let ``When a published meetup is rescheduled expect the change to be accepted`` () =
     // Редактирование после публикации поддержано намеренно (PER-196), а не
-    // разрешено по недосмотру: у этой команды по-прежнему единственный отказ —
-    // несуществующая сходка, и ось видимости в решении не участвует.
+    // разрешено по недосмотру. Отказы этой команде даёт жизненный цикл — отмена
+    // закрывает обе команды редактирования, — а ось видимости в решении не
+    // участвует вовсе, поэтому видимая сходка правится так же, как черновик.
     let decision =
         Meetup.decideSetSchedule (Tentative Sample.day) (Existing Sample.published)
 

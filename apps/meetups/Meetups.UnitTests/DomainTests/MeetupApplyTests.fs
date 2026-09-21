@@ -22,19 +22,42 @@ let ``Apply should raise the version by exactly one for a publication`` () =
 
 [<Fact>]
 let ``Apply should keep the identifier and the author for every event`` () =
+    let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
+    let returned = Meetup.apply (Existing hidden) MeetupRepublished
+    let cancelled = Meetup.apply (Existing Sample.published) MeetupCancelled
+
     let identities =
         [
             identity Sample.draft
             identity Sample.titled
             identity Sample.published
+            identity hidden
+            identity returned
+            identity cancelled
         ]
         |> List.distinct
 
     test <@ identities = [ Sample.meetupId, Sample.authorId ] @>
 
 [<Fact>]
+let ``Apply should raise the version by exactly one for a visibility change`` () =
+    let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
+    let returned = Meetup.apply (Existing hidden) MeetupRepublished
+
+    test <@ version hidden = version Sample.published + 1L @>
+    test <@ version returned = version hidden + 1L @>
+
+[<Fact>]
+let ``Apply should raise the version by exactly one for a cancellation`` () =
+    let cancelled = Meetup.apply (Existing Sample.published) MeetupCancelled
+
+    test <@ version cancelled = version Sample.published + 1L @>
+
+[<Fact>]
 let ``Apply should leave the lifecycle planned`` () =
-    // Переход «состоялась» и отмена в срез не входят: ни одна команда их не даёт.
+    // Оси независимы: публикация двигает видимость и жизненного цикла не касается.
+    // Переход «состоялась» в срез не входит; отмену даёт своя команда, и её
+    // собственный эффект проверяет CancelMeetupTests.
     test <@ (Meetup.toSnapshot Sample.published).Lifecycle = Planned @>
 
 [<Fact>]
@@ -45,4 +68,7 @@ let ``Apply should reject an event decided from another state`` () =
     let creation = MeetupCreated(Sample.meetupId, Sample.authorId)
 
     raises<InvalidOperationException> <@ Meetup.apply Initial change @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial MeetupUnpublished @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial MeetupRepublished @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial MeetupCancelled @>
     raises<InvalidOperationException> <@ Meetup.apply (Existing Sample.draft) creation @>

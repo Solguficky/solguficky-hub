@@ -21,7 +21,7 @@ type MeetupChange =
     | AttributesChanged of MeetupAttributes
     | ScheduleChanged of Schedule
 
-/// Три повода строки журнала (ADR-031). Тип называет повод; тело строки — снимок,
+/// Поводы строки журнала. Тип называет повод; тело строки — снимок,
 /// его даёт Meetup.toSnapshot от уже применённого состояния. Конверт строки
 /// (event_id, occurred_at, performed_by) заполняет оболочка: домену он не нужен ни
 /// для одного инварианта.
@@ -29,6 +29,9 @@ type MeetupEvent =
     | MeetupCreated of id: MeetupId * author: PersonId
     | MeetupChanged of MeetupChange
     | MeetupPublished of at: DateTimeOffset
+    | MeetupUnpublished
+    | MeetupRepublished
+    | MeetupCancelled
 
 /// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
 /// является инвариантом перехода, и состояние в решении о нём не участвует. Само
@@ -126,6 +129,18 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    let private setVisibility visibility (meetup: Meetup) : Meetup =
+        { meetup with
+            Visibility = visibility
+            Version = meetup.Version + 1L
+        }
+
+    let private cancel (meetup: Meetup) : Meetup =
+        { meetup with
+            Lifecycle = Cancelled
+            Version = meetup.Version + 1L
+        }
+
     /// Применение события — единственный путь появления и изменения полей.
     /// Результат всегда существующая сходка: каждый повод оставляет её на месте.
     let apply (state: MeetupState) (event: MeetupEvent) : Meetup =
@@ -133,8 +148,14 @@ module Meetup =
         | Initial, MeetupCreated(id, author) -> create id author
         | Existing meetup, MeetupChanged changed -> change meetup changed
         | Existing meetup, MeetupPublished at -> publish meetup at
+        | Existing meetup, MeetupUnpublished -> setVisibility Hidden meetup
+        | Existing meetup, MeetupRepublished -> setVisibility Visible meetup
+        | Existing meetup, MeetupCancelled -> cancel meetup
         | Initial, MeetupChanged _
         | Initial, MeetupPublished _
+        | Initial, MeetupUnpublished
+        | Initial, MeetupRepublished
+        | Initial, MeetupCancelled
         | Existing _, MeetupCreated _ ->
             // Событие решено не из этого состояния. Ни одно решение такой пары не
             // возвращает, поэтому это нарушение внутреннего контракта оболочки, а не
@@ -210,11 +231,13 @@ module Meetup =
     let decideChangeAttributes (attributes: MeetupAttributes) (state: MeetupState) : Result<MeetupEvent, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
         | Existing _ -> Ok(MeetupChanged(AttributesChanged attributes))
 
     let decideSetSchedule (schedule: Schedule) (state: MeetupState) : Result<MeetupEvent, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
         | Existing _ -> Ok(MeetupChanged(ScheduleChanged schedule))
 
     /// Порядок проверок наблюдаем снаружи, поэтому он зафиксирован здесь, а не
@@ -223,14 +246,14 @@ module Meetup =
     /// I5 идёт первым: уже видимая сходка успешна независимо от остального, потому
     /// что команда сформулирована как целевое состояние и повтор не ошибка. Отмена
     /// его не перебивает: у видимой сходки переходить некуда, и отказывать не в чем.
-    /// Приоритет осознанный и закреплён тестом — иначе отменённая видимая сходка
-    /// начала бы отвечать отказом в тот день, когда соседний лист заведёт отмену, не
-    /// скрывающую сходку. Дальше
-    /// таблица оси видимости — единственное место, где решается сама допустимость
-    /// перехода. Затем жизненный цикл: отменённую сходку не публикуют, и это условие
-    /// команды поверх разрешённого перехода, а не переход, поэтому в таблицу оно не
-    /// уехало. I4 проверяется последним намеренно: иначе отменённый черновик без
-    /// заголовка отвечал бы «нужен заголовок» и прятал настоящую причину отказа.
+    /// Приоритет осознанный и закреплён тестом — отмена оси видимости не трогает,
+    /// поэтому отменённая видимая сходка достижима, и отказ на ней подменил бы
+    /// успешный повтор отклонённым переходом. Дальше таблица оси видимости —
+    /// единственное место, где решается сама допустимость перехода. Затем жизненный
+    /// цикл: отменённую сходку не публикуют, и это условие команды поверх
+    /// разрешённого перехода, а не переход, поэтому в таблицу оно не уехало. I4
+    /// проверяется последним намеренно: иначе отменённый черновик без заголовка
+    /// отвечал бы «нужен заголовок» и прятал настоящую причину отказа.
     let decidePublish (now: DateTimeOffset) (state: MeetupState) : Result<MeetupEvent option, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
@@ -249,4 +272,38 @@ module Meetup =
                     if String.IsNullOrWhiteSpace meetup.Title then
                         Error TitleRequiredForPublication
                     else
-                        Ok(Some(MeetupPublished now))
+                        match meetup.FirstPublishedAt with
+                        | None -> Ok(Some(MeetupPublished now))
+                        | Some _ -> Ok(Some MeetupRepublished)
+
+    /// Порядок проверок тот же, что у публикации, и по той же причине. I5 идёт
+    /// первым: уже скрытая сходка успешна независимо от остального, отменённая в том
+    /// числе — прятать в ней нечего. Дальше таблица оси видимости, и только потом
+    /// жизненный цикл.
+    ///
+    /// Отмена закрывает снятие ровно потому же, почему закрывает публикацию: она
+    /// описывает ход сходки, а не способ её спрятать (PER-197). Без этого условия
+    /// пара «отменить, затем снять» уводила бы сходку туда, откуда её не возвращает
+    /// ни одна команда: публикацию отменённой скрытой отклоняет decidePublish, и
+    /// извещение об отмене исчезало бы из человеческих чтений навсегда.
+    let decideUnpublish (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match MeetupTransitions.visibility meetup.Visibility Hidden with
+            | TransitionOutcome.AlreadyThere -> Ok None
+            | TransitionOutcome.Rejected -> Error TransitionNotAllowed
+            | TransitionOutcome.Allowed ->
+                match meetup.Lifecycle with
+                | Cancelled -> Error TransitionNotAllowed
+                | Planned
+                | Held -> Ok(Some MeetupUnpublished)
+
+    let decideCancel (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match MeetupTransitions.lifecycle meetup.Lifecycle Cancelled with
+            | TransitionOutcome.AlreadyThere -> Ok None
+            | TransitionOutcome.Allowed -> Ok(Some MeetupCancelled)
+            | TransitionOutcome.Rejected -> Error TransitionNotAllowed
