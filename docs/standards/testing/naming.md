@@ -1,7 +1,7 @@
 # Standard: именование тестов
 
 > **Статус:** Active  
-> **Применимость:** автоматические тесты Go, TypeScript, F# и C#-компонентов  
+> **Применимость:** автоматические тесты Go, TypeScript, F#, C# и Scala-компонентов  
 > **Связанные документы:** [testing-strategy.md](testing-strategy.md), [fsharp.md](fsharp.md), service-local `AGENTS.md`
 
 Имя теста является спецификацией: из него понятно, что проверяется и какой результат ожидается, без чтения тела. Standard фиксирует форму имени теста, файла и группы для каждого языка репозитория.
@@ -52,6 +52,15 @@ C#-тестов в репозитории пока нет; раздел реко
 - `<Метод>_<Сценарий>_<ОжидаемоеПоведение>` — форма по умолчанию для unit-теста, где виден конкретный метод SUT: `Map_RequestHasNoDrivers_MapsToUnlimitedDrivers`. Имя метода первым даёт группировку и поиск по SUT.
 - `When_<условие>_Expect_<ожидание>` — форма для поведенческого и E2E-теста, где метод SUT не выделяется: `When_MeetupPublished_Expect_SubscribersNotified`. `Expect` вместо распространённого в C# `Should` выбран сознательно: стимул и исход называются во всех стеках репозитория одним словом.
 - Одна форма на класс. Файл `<SUT>Tests.cs`, класс `<SUT>Tests`. Раскладку папок задаёт [testing-strategy.md](testing-strategy.md).
+
+## Scala
+
+- Форма — `AnyWordSpec`: внешняя строка называет SUT, внутренняя грамматически её продолжает, и вместе они читаются одним предложением. `"health route" should { "answers 200 with an ok status as json" in … }`.
+- SUT называется либо именем объекта ровно как в коде, либо ролью модуля строчными буквами — тот же выбор, что у `describe` в TypeScript: `operation frame`, `health route`, `generated identity contract`.
+- Внутреннее имя начинается с глагола в третьем лице настоящего времени, со строчной буквы, без `should` внутри и без повторения имени SUT: `should` уже стоит в конструкции блока, и второй раз он ломает фразу.
+- Отрицательный случай называет наблюдаемое бездействие: `leaves a path it does not serve unhandled`, `omits request_id when the caller did not send one`.
+- Property-тест остаётся в том же блоке и формулирует инвариант декларативно: `carries an error category exactly when the result is an error`.
+- Файл `<SUT>Spec.scala` лежит в `src/test/scala/` по пути пакета SUT, рядом с ним в дереве тестов. Суффикс `Spec` — форма ScalaTest; `Tests` не используется, чтобы имя не читалось как .NET-проект. Раскладку уровней задаёт [testing-strategy.md](testing-strategy.md).
 
 ## Пример
 

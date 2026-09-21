@@ -81,6 +81,21 @@ Buf выбран вместо прямого вызова `protoc`, потому
 
 Прямой вызов `protoc-gen-es` неудобнее: нужны `PATH`, `--proto_path` и список файлов. `buf generate` держит входы от корня модуля и локальный плагин декларативно. Клиент Connect с `createGrpcTransport` говорит с Identity обычным gRPC; протокол Connect сервер не принимает.
 
+## Кодогенерация Scala
+
+- Scala-потребители генерируют код **ScalaPB через плагин `sbt-protoc`**, и вызывает его задача `compile`. `buf generate` для Scala не вызывается. Это [ADR-048](../../decisions/ADR-048-auction-sbt-and-scalapb-build.md); он же называет цену решения.
+- Версии закреплены в сборке потребителя: `sbt-protoc` и `compilerplugin` — в `apps/auction/project/plugins.sbt`, рантайм `scalapb-runtime` — в `build.sbt` через `scalapb.compiler.Version.scalapbVersion`, то есть одним значением с генератором. Remote plugins и Buf Schema Registry в build path не входят.
+- Сгенерированный код — артефакт сборки в `target/`, не коммитится и не является источником правды. Отдельного каталога `gen/` рядом с исходниками у Scala нет, в отличие от Go и TypeScript.
+- Корень модуля потребитель не переносит: `Compile / PB.protoSources` указывает на `contracts/proto` целиком, иначе `import` между схемами не резолвится. Вход сужается фильтром генерации `Compile / PB.generate / includeFilter` по каталогу домена — это аналог `paths` у Go и TypeScript и поимённого списка `Protobuf` у .NET.
+- Сузить сам `protoSources` до каталога домена нельзя: `sbt-protoc` кладёт его ещё и на include path, одна схема становится видна по двум относительным путям, и `protoc` отвергает её как повторное определение. Ошибка выглядит как `"identity.v1.GlobalRole" is already defined`.
+- Фильтр обязан отсеивать каталоги: обход отдаёт ему и их, а каталог, принятый за вход, доезжает до `protoc` и валит его сообщением `Input file is a directory`. Условие — `isFile` вместе с расширением, а не один только путь.
+- Фильтр сужает генерацию, но не состав ресурсов: `sbt-protoc` кладёт `protoSources` ещё и в каталоги ресурсов, и без явного `Compile / unmanagedResourceDirectories` весь `contracts/proto` — включая чужие домены и `buf.yaml` — уезжает в артефакт сервиса рядом с его `application.conf`.
+- Схема, которая импортирует другой домен, сгенерируется наполовину: include path шире фильтра, поэтому `protoc` отработает, а Scala-классов импортируемого домена не будет, и отказ придёт на компиляции. Такой импорт расширяет фильтр в том же изменении.
+- Языковых `option` схемам это не добавляет: ScalaPB выводит Scala-пакет из `package <domain>.v<major>`, поэтому `identity/v1/roles.proto` даёт `identity.v1.roles`.
+- Для сборки Auction команда генерации — `sbt Compile/protocGenerate` из `apps/auction`; её оборачивает рецепт `just auction-proto`, а `just auction-build` и джоба `auction` в CI выполняют её внутри `Test/compile`. Второй копии команды нет.
+
+Цена — третий `protoc` в репозитории: `BUF_VERSION` у Go и TypeScript, встроенный в `Grpc.Tools` у .NET и тянущийся с ScalaPB у Scala. Схему, которую принимает один, другой может отвергнуть, и обнаружит это сборка соответствующего потребителя. `buf lint` и breaking check проверяют схемы, а не Scala-кодогенерацию — так же, как не проверяют C#.
+
 ## Изменение контракта
 
 - Найди producers, consumers, тестовые инструменты и generated-code configuration по имени сообщения и subject.

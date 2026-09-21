@@ -24,6 +24,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
 - `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, шесть команд записи и три запроса чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а два продуктовых запроса идут через единый viewer-aware reader.
+- `apps/auction/` — Auction на Scala 3 и Apache Pekko: пока языковой контур, а не сервис. Сборка sbt, кодогенерация ScalaPB из `contracts/proto` внутри `compile`, HTTP-граница с health на Pekko HTTP и тесты ScalaTest. Торгов, persistence и узла в графе Aspire в нём нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляет Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
@@ -89,7 +90,7 @@ just check-document-numbers
 # Весь модуль contracts/proto компилируется, включая домен без потребителя
 just contracts-build
 
-# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+# Механический гейт перед сдачей: agent tooling, MCP, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F#, Auction, формат Scala и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -135,6 +136,17 @@ just meetups-run
 just meetups-format
 just meetups-format-check
 # Fantomas берётся из .config/dotnet-tools.json; `just dotnet-tools` восстанавливает его
+
+# Auction — зависимости, кодогенерация, сборка, тесты, формат и запуск
+just auction-tools
+just auction-proto
+just auction-build
+just auction-test
+just auction-lint
+just auction-format
+just auction-run
+# Нужны JDK версии из apps/auction/.java-version и sbt; репозиторий их не ставит.
+# Кодогенерация входит в сборку: auction-proto нужен только отдельным шагом
 
 # .NET — из папки проекта
 dotnet build

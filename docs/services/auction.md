@@ -2,7 +2,7 @@
 
 > **Слой:** Future. **MVP:** не входит. **Стек:** Accepted — новый сервис на Scala 3 + Apache Pekko Typed поверх Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)), проектируемый с нуля после MVP.
 
-Реализация предыдущего поколения (C# + Akka.NET) удалена из репозитория. Аукцион существует как продуктовая гипотеза и как накопленный опыт, но не как код.
+Реализация предыдущего поколения (C# + Akka.NET) удалена из репозитория. Аукцион существует как продуктовая гипотеза, как накопленный опыт и как языковой контур в `apps/auction` — сборка, кодогенерация, HTTP-граница с health и тесты. Торгов, лотов и persistence в нём нет: доменный код начинается после доменного дизайна.
 
 ## Что уже известно
 
@@ -25,6 +25,8 @@
 - топологию прежнего realtime-шлюза как обязательную для Big Screen.
 
 ## Стек и хранение
+
+Инструмент сборки и кодогенерация приняты в [ADR-048](../decisions/ADR-048-auction-sbt-and-scalapb-build.md): sbt, ScalaPB через `sbt-protoc` внутри `compile` и scalafmt. Команды — `just auction-*`, локальные правила — [apps/auction/AGENTS.md](../../apps/auction/AGENTS.md). Узла в графе Aspire у сервиса пока нет: его вводит [PER-290](https://linear.app/anticnvm/issue/per-290).
 
 Стек и хранение приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md): Scala 3, Apache Pekko Typed и полный Event Sourcing через Pekko Persistence JDBC в отдельной PostgreSQL-базе сервиса. Это добавляет JVM/Scala operational-контур и привязывает схему журнала к плагину, но не вводит отдельную СУБД. Собственная append-only таблица дублировала бы persistence-слой, KurrentDB не окупает отдельную эксплуатацию на ожидаемом масштабе, Marten исключён вместе с .NET.
 

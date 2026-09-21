@@ -25,6 +25,7 @@ jobs:
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
+      auction: ${{ steps.filter.outputs.auction }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -53,6 +54,11 @@ jobs:
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            auction:
+              - 'contracts/proto/**'
+              - 'apps/auction/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             community-site-api:
@@ -284,6 +290,36 @@ jobs:
         with:
           global-json-file: global.json
       - run: dotnet build infra/apphost/AppHost.csproj --nologo
+
+  auction:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.auction == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Версию JDK держит файл компонента — тем же способом, каким identity
+      # держит её в go.mod, а meetups в global.json. Отдельного значения
+      # в workflow нет: оно разошлось бы с локальной сборкой молча.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version-file: apps/auction/.java-version
+          cache: sbt
+      # Образ ubuntu-latest больше не поставляет sbt, поэтому его ставит
+      # отдельное официальное действие.
+      - uses: sbt/setup-sbt@v1
+      # Один вызов на все проверки — тот же состав, что `just auction-verify`.
+      # Три отдельных шага подняли бы JVM трижды; какая из команд упала, sbt
+      # называет в логе сам. Кодогенерация ScalaPB входит в compile, поэтому
+      # отдельного шага генерации здесь нет — как и у meetups, где её делает
+      # dotnet build. Рецепт `just auction-proto` вызывает ту же задачу sbt
+      # вручную и второй командой генерации не является.
+      - name: Scala format, build and tests
+        run: sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
+        working-directory: apps/auction
 
   repo-hygiene:
     runs-on: ubuntu-latest
