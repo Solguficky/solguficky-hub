@@ -4,7 +4,7 @@ open Grpc.Core
 open Meetups.Slices
 open Meetups.V1
 
-/// Транспортная граница девяти операций контракта.
+/// Транспортная граница тринадцати операций контракта.
 ///
 /// ASP.NET Core требует один класс-наследник сгенерированной базы со всеми
 /// операциями сервиса сразу, поэтому разложить его по срезам нельзя: это
@@ -55,13 +55,21 @@ type MeetupsGrpcService() =
         let services = context.GetHttpContext().RequestServices
         RemoveMaterial.Api.handle (RemoveMaterial.Composition.buildDeps services) request
 
+    override _.MarkMeetupHeld(request: MarkMeetupHeldRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        MarkMeetupHeld.Api.handle (MarkMeetupHeld.Composition.buildDeps services) request
+
     override _.GetMeetup(request: GetMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
         GetMeetup.Api.handle (GetMeetup.Composition.buildRead services) request
 
     override _.ListVisibleMeetups(request: ListVisibleMeetupsRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        ListVisibleMeetups.Api.handle (ListVisibleMeetups.Composition.buildRead services) request
+        ListVisibleMeetups.Api.handle (ListVisibleMeetups.Composition.buildDeps services) request
+
+    override _.ListArchivedMeetups(request: ListArchivedMeetupsRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        ListArchivedMeetups.Api.handle (ListArchivedMeetups.Composition.buildDeps services) request
 
     override _.ListMeetupStates(request: ListMeetupStatesRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices

@@ -22,7 +22,8 @@ ALTER TABLE meetups
         CHECK (jsonb_typeof(materials) = 'array');
 
 -- Журнал получает два новых повода: прикрепление и удаление материала. Ограничение
--- перечисляет типы поимённо, поэтому расширяется здесь, а не в 001.
+-- перечисляет типы поимённо, поэтому расширяется здесь, а не в 001, и несёт также
+-- meetup_held из 005 — DROP+ADD того же ограничения переписывает список целиком.
 ALTER TABLE meetup_events
     DROP CONSTRAINT meetup_events_type_check;
 
@@ -35,6 +36,7 @@ ALTER TABLE meetup_events
         'meetup_unpublished',
         'meetup_republished',
         'meetup_cancelled',
+        'meetup_held',
         'meetup_material_attached',
         'meetup_material_removed'
     ));

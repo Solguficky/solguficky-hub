@@ -1,5 +1,7 @@
-/// Срез «показать список видимых сходок». Запрос идёт через единый viewer-aware
-/// путь, и правило видимости ADR-022 применяет он же, а не этот срез.
+/// Срез «показать список актуальных сходок». Запрос идёт через единый viewer-aware
+/// путь, и правило видимости ADR-022 применяет он же, а не этот срез. Архивные
+/// сходки — состоявшиеся, отменённые и прошедшие по расписанию — отсеиваются здесь
+/// доменным правилом Archive; их читает соседний срез ListArchivedMeetups.
 module Meetups.Slices.ListVisibleMeetups
 
 open System
@@ -15,12 +17,23 @@ type Query =
 [<RequireQualifiedAccess; NoComparison>]
 type ListVisibleMeetupsError = Malformed of Contract.InvalidRequest
 
-let execute (read: Viewer -> Task<MeetupSnapshot list>) (query: Query) : Task<MeetupSnapshot list> =
+/// Календарный день сообщества приходит значением, как и часы команд: домен часов
+/// не читает, а тест подставляет день без базы и без сна.
+[<NoEquality; NoComparison>]
+type Deps =
+    {
+        Read: Viewer -> Task<MeetupSnapshot list>
+        Today: unit -> DateOnly
+    }
+
+let execute (deps: Deps) (query: Query) : Task<MeetupSnapshot list> =
     task {
-        let! snapshots = read query.Viewer
+        let! snapshots = deps.Read query.Viewer
+        let today = deps.Today()
 
         return
             snapshots
+            |> List.filter (fun snapshot -> not (Archive.isArchived today snapshot))
             |> List.sortBy (fun snapshot -> Schedule.order snapshot.Schedule)
     }
 
@@ -29,17 +42,22 @@ module Composition =
     open Microsoft.Extensions.DependencyInjection
     open Npgsql
 
-    let buildRead (services: IServiceProvider) =
+    let buildDeps (services: IServiceProvider) : Deps =
         let source = services.GetRequiredService<NpgsqlDataSource>()
+        let zone = services.GetRequiredService<TimeZoneInfo>()
 
-        fun viewer ->
-            task {
-                match! MeetupReading.read source viewer MeetupReading.Scope.All with
-                | MeetupReading.ReadResult.Snapshots snapshots -> return snapshots
-                | MeetupReading.ReadResult.NotFound
-                | MeetupReading.ReadResult.NotVisible ->
-                    return invalidOp "an unscoped meetup read returned a lookup denial"
-            }
+        {
+            Read =
+                fun viewer ->
+                    task {
+                        match! MeetupReading.read source viewer MeetupReading.Scope.All with
+                        | MeetupReading.ReadResult.Snapshots snapshots -> return snapshots
+                        | MeetupReading.ReadResult.NotFound
+                        | MeetupReading.ReadResult.NotVisible ->
+                            return invalidOp "an unscoped meetup read returned a lookup denial"
+                    }
+            Today = fun () -> CommunityTime.today zone (DateTimeOffset.UtcNow)
+        }
 
 module Api =
 
@@ -50,20 +68,8 @@ module Api =
         | ListVisibleMeetupsError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
 
-    let private summary (snapshot: MeetupSnapshot) : Meetups.V1.MeetupSummary =
-        let (MeetupId id) = snapshot.Id
-
-        Meetups.V1.MeetupSummary(
-            Id = id.ToString "D",
-            Title = snapshot.Title,
-            Venue = snapshot.Venue,
-            Schedule = Contract.Outbound.schedule snapshot.Schedule,
-            Lifecycle = Contract.Outbound.lifecycle snapshot.Lifecycle,
-            Visibility = Contract.Outbound.visibility snapshot.Visibility
-        )
-
     let handle
-        (read: Viewer -> Task<MeetupSnapshot list>)
+        (deps: Deps)
         (request: Meetups.V1.ListVisibleMeetupsRequest)
         : Task<Meetups.V1.ListVisibleMeetupsResponse> =
         task {
@@ -72,12 +78,12 @@ module Api =
             | Ok viewer ->
                 let! snapshots =
                     execute
-                        read
+                        deps
                         {
                             Viewer = viewer
                         }
 
                 let response = Meetups.V1.ListVisibleMeetupsResponse()
-                response.Meetups.Add(snapshots |> Seq.map summary)
+                response.Meetups.Add(snapshots |> Seq.map Contract.Outbound.summary)
                 return response
         }

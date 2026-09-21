@@ -14,7 +14,9 @@ service MeetupsService {
   rpc CancelMeetup(CancelMeetupRequest) returns (MeetupSnapshot);
   rpc AttachMaterial(AttachMaterialRequest) returns (MeetupSnapshot);
   rpc RemoveMaterial(RemoveMaterialRequest) returns (MeetupSnapshot);
+  rpc MarkMeetupHeld(MarkMeetupHeldRequest) returns (MeetupSnapshot);
   rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
+  rpc ListArchivedMeetups(ListArchivedMeetupsRequest) returns (ListArchivedMeetupsResponse);
   rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
   rpc ListMeetupStates(ListMeetupStatesRequest) returns (ListMeetupStatesResponse);
 }
@@ -126,7 +128,23 @@ message RemoveMaterialRequest {
   string material_id = 3;
 }
 
+message MarkMeetupHeldRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+}
+
+// Returns the visible meetups that are still actual: held, cancelled and past
+// meetups are read by ListArchivedMeetups instead.
 message ListVisibleMeetupsRequest {
+  Viewer viewer = 1;
+}
+
+// Returns the visible meetups that left the actual list: held, cancelled and
+// those whose schedule has passed. The archive reads through the same
+// visibility rule as the actual list and never opens a hidden meetup.
+message ListArchivedMeetupsRequest {
   Viewer viewer = 1;
 }
 
@@ -138,6 +156,11 @@ message GetMeetupRequest {
 }
 
 message ListVisibleMeetupsResponse {
+  repeated MeetupSummary meetups = 1;
+}
+
+message ListArchivedMeetupsResponse {
+  // Newest schedule first; meetups without a date come last.
   repeated MeetupSummary meetups = 1;
 }
 

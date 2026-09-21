@@ -33,6 +33,14 @@ function harness() {
       return { kind: "ok" as const, meetup: snapshot };
     }),
     publish: vi.fn(async () => ({ kind: "ok" as const, meetup: snapshot })),
+    unpublish: vi.fn(async () => {
+      snapshot = { ...snapshot, visibility: "hidden" };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    cancel: vi.fn(async () => {
+      snapshot = { ...snapshot, lifecycle: "cancelled" };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
   };
   return { meetups, dispatcher: createDispatcher(meetups) };
 }
@@ -173,5 +181,97 @@ describe("meetup creation form", () => {
       field: "title",
       error: "Не получилось сохранить значение: title is too long",
     });
+  });
+
+  it("re-asks the schedule within the edit flow when Meetups rejects its value", async () => {
+    const { dispatcher, meetups } = harness();
+    meetups.setSchedule = vi.fn(async () => ({
+      kind: "invalid" as const,
+      message: "schedule is in the past",
+    }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "schedule",
+        value: "21.09.2026 19:30",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "edit-ask",
+      field: "schedule",
+      error: "Не получилось сохранить значение: schedule is in the past",
+    });
+  });
+
+  it("updates exactly one selected field and returns to the meetup card", async () => {
+    const { dispatcher, meetups } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "venue",
+        value: "Новый зал",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-updated",
+      meetup: { venue: "Новый зал" },
+    });
+    expect(meetups.changeAttributes).toHaveBeenCalledOnce();
+    expect(meetups.setSchedule).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate an already cancelled meetup from an old edit question", async () => {
+    const { dispatcher, meetups } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, lifecycle: "cancelled" as const },
+    }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "title",
+        value: "Позднее изменение",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "edit-unavailable",
+      reason: "cancelled",
+    });
+    expect(meetups.changeAttributes).not.toHaveBeenCalled();
+  });
+
+  it("changes state once and treats an old cancel action as already complete", async () => {
+    const { dispatcher, meetups } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-changed",
+      action: "cancel",
+      meetup: { lifecycle: "cancelled" },
+    });
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-unchanged",
+      reason: "already-cancelled",
+    });
+    expect(meetups.cancel).toHaveBeenCalledOnce();
   });
 });

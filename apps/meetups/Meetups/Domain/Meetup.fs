@@ -34,6 +34,7 @@ type MeetupEvent =
     | MeetupCancelled
     | MeetupMaterialAttached of material: MeetupMaterial
     | MeetupMaterialRemoved of materialId: MaterialId
+    | MeetupHeld
 
 /// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
 /// является инвариантом перехода, и состояние в решении о нём не участвует. Само
@@ -162,6 +163,14 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    /// Жизненный цикл двигается на конечную стадию, независимая ось видимости не
+    /// трогается: скрытая состоявшаяся остаётся скрытой, а видимая — видимой.
+    let private hold (meetup: Meetup) : Meetup =
+        { meetup with
+            Lifecycle = Held
+            Version = meetup.Version + 1L
+        }
+
     /// Применение события — единственный путь появления и изменения полей.
     /// Результат всегда существующая сходка: каждый повод оставляет её на месте.
     let apply (state: MeetupState) (event: MeetupEvent) : Meetup =
@@ -174,6 +183,7 @@ module Meetup =
         | Existing meetup, MeetupCancelled -> cancel meetup
         | Existing meetup, MeetupMaterialAttached material -> attachMaterial material meetup
         | Existing meetup, MeetupMaterialRemoved materialId -> removeMaterial materialId meetup
+        | Existing meetup, MeetupHeld -> hold meetup
         | Initial, MeetupChanged _
         | Initial, MeetupPublished _
         | Initial, MeetupUnpublished
@@ -181,6 +191,7 @@ module Meetup =
         | Initial, MeetupCancelled
         | Initial, MeetupMaterialAttached _
         | Initial, MeetupMaterialRemoved _
+        | Initial, MeetupHeld
         | Existing _, MeetupCreated _ ->
             // Событие решено не из этого состояния. Ни одно решение такой пары не
             // возвращает, поэтому это нарушение внутреннего контракта оболочки, а не
@@ -397,3 +408,17 @@ module Meetup =
             Ok None
         | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
         | Existing _ -> Ok(Some(MeetupMaterialRemoved materialId))
+
+    /// Перевод в «состоялась» — ручное действие администратора (ADR-022), повтор
+    /// на уже состоявшейся сходке — успех без события. Отменённая не переводится:
+    /// обе конечные стадии оси терминальны. Ни расписание, ни видимость в решении
+    /// не участвуют, поэтому ретроспективная отметка и скрытая сходка разрешены;
+    /// полнота атрибутов проверяется только на переходе к публикации.
+    let decideMarkHeld (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match MeetupTransitions.lifecycle meetup.Lifecycle Held with
+            | TransitionOutcome.AlreadyThere -> Ok None
+            | TransitionOutcome.Allowed -> Ok(Some MeetupHeld)
+            | TransitionOutcome.Rejected -> Error TransitionNotAllowed

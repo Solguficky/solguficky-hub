@@ -65,4 +65,10 @@ export type Meetups = {
     id: string,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
+  unpublish(
+    person: Person,
+    id: string,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  cancel(person: Person, id: string, meta?: RpcMetadata): Promise<MeetupResult>;
 };

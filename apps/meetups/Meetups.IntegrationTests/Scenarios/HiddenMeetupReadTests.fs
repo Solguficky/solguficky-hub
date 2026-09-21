@@ -42,6 +42,7 @@ type HiddenMeetupReadTests() =
                     "CancelMeetup"
                     "AttachMaterial"
                     "RemoveMaterial"
+                    "MarkMeetupHeld"
                 ]
 
         let contractReadOperations =
@@ -54,6 +55,7 @@ type HiddenMeetupReadTests() =
             set
                 [
                     "ListVisibleMeetups"
+                    "ListArchivedMeetups"
                     "GetMeetup"
                     "ListMeetupStates"
                 ]
@@ -107,6 +109,35 @@ type HiddenMeetupReadTests() =
 
         test <@ refused = Some StatusCode.NotFound @>
         test <@ visibleToAdministrator = [ "Афиша" ] @>
+
+    /// Архив — новое человеческое чтение, и правило видимости у него то же: сходка не
+    /// становится видимой оттого, что попала в архив. Скрытую состоявшуюся видит её
+    /// автор и администратор — здесь автор и есть администратор, поэтому её
+    /// отсутствие у обычного смотрящего и присутствие у администратора — оба ответа.
+    [<Fact>]
+    member _.``The archive does not expose a hidden meetup to an ordinary viewer``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let hiddenId = createDraft client
+
+        client.MarkMeetupHeld(MarkMeetupHeldRequest(Viewer = administrator (), Id = hiddenId))
+        |> ignore
+
+        let ordinaryIds =
+            client.ListArchivedMeetups(ListArchivedMeetupsRequest(Viewer = ordinary ())).Meetups
+            |> Seq.map _.Id
+            |> Set.ofSeq
+
+        let administrativeIds =
+            client.ListArchivedMeetups(ListArchivedMeetupsRequest(Viewer = administrator ())).Meetups
+            |> Seq.map _.Id
+            |> Set.ofSeq
+
+        test
+            <@
+                not (ordinaryIds.Contains hiddenId)
+                && administrativeIds.Contains hiddenId
+            @>
 
     [<Fact>]
     member _.``Reading by identifier does not expose a hidden meetup to an ordinary viewer``() =

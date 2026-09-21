@@ -76,10 +76,17 @@ let ``Apply should take the material from the event as it is`` () =
     test <@ attached.Materials = [ Sample.material ] @>
 
 [<Fact>]
+let ``Apply should raise the version by exactly one for a held transition`` () =
+    let held = Meetup.apply (Existing Sample.titled) MeetupHeld
+
+    test <@ version held = version Sample.titled + 1L @>
+    test <@ (Meetup.toSnapshot held).Lifecycle = Held @>
+
+[<Fact>]
 let ``Apply should leave the lifecycle planned`` () =
     // Оси независимы: публикация двигает видимость и жизненного цикла не касается.
-    // Переход «состоялась» в срез не входит; отмену даёт своя команда, и её
-    // собственный эффект проверяет CancelMeetupTests.
+    // Переходы обеих конечных стадий дают свои команды, и их собственный эффект
+    // проверяют CancelMeetupTests и MarkMeetupHeldTests.
     test <@ (Meetup.toSnapshot Sample.published).Lifecycle = Planned @>
 
 [<Fact>]
@@ -95,4 +102,5 @@ let ``Apply should reject an event decided from another state`` () =
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupCancelled @>
     raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupMaterialAttached Sample.material) @>
     raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupMaterialRemoved Sample.materialId) @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial MeetupHeld @>
     raises<InvalidOperationException> <@ Meetup.apply (Existing Sample.draft) creation @>

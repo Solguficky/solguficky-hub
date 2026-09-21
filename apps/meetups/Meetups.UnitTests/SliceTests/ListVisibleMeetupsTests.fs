@@ -1,5 +1,6 @@
 module Meetups.SliceTests.ListVisibleMeetupsTests
 
+open System
 open System.Threading.Tasks
 open Grpc.Core
 open Meetups.Domain
@@ -8,6 +9,14 @@ open Meetups.TestData
 open Meetups.TestRpc
 open Swensen.Unquote
 open Xunit
+
+/// День сообщества приходит значением, поэтому тесту не нужны ни часы, ни часовой
+/// пояс: он подставляет тот же день, что и продуктовое чтение.
+let private deps (read: Viewer -> Task<MeetupSnapshot list>) (today: DateOnly) : Deps =
+    {
+        Read = read
+        Today = fun () -> today
+    }
 
 let private request viewer = Meetups.V1.ListVisibleMeetupsRequest(Viewer = viewer)
 
@@ -23,7 +32,7 @@ let ``The list query returns the read result for its viewer`` () =
 
     let result =
         execute
-            read
+            (deps read (DateOnly(2026, 9, 21)))
             {
                 Viewer = Sample.ordinary
             }
@@ -41,7 +50,7 @@ let ``The list query orders dated meetups before meetups without a date`` () =
     let dated =
         { Meetup.toSnapshot Sample.published with
             Title = "Dated"
-            Schedule = Fixed(Day(System.DateOnly(2026, 10, 3)))
+            Schedule = Fixed(Day(DateOnly(2026, 10, 3)))
         }
 
     let undated =
@@ -54,7 +63,7 @@ let ``The list query orders dated meetups before meetups without a date`` () =
 
     let actual =
         execute
-            read
+            (deps read (DateOnly(2026, 10, 1)))
             {
                 Viewer = Sample.ordinary
             }
@@ -64,12 +73,53 @@ let ``The list query orders dated meetups before meetups without a date`` () =
 
     test <@ actual = [ "Dated"; "Undated" ] @>
 
+/// Критерий приёмки: состоявшаяся, отменённая и прошедшая не показываются среди
+/// актуальных. Прошедшая определяется расписанием и днём сообщества, а не командой:
+/// строка остаётся Planned и в архив попадает чтением.
+[<Fact>]
+let ``The list query drops held, cancelled and past meetups`` () =
+    let past =
+        { Meetup.toSnapshot Sample.published with
+            Title = "Past"
+            Schedule = Fixed(Day(DateOnly(2026, 9, 20)))
+        }
+
+    let today =
+        { Meetup.toSnapshot Sample.published with
+            Title = "Today"
+            Schedule = Fixed(Day(DateOnly(2026, 9, 21)))
+        }
+
+    let held =
+        { Meetup.toSnapshot Sample.held with
+            Title = "Held"
+        }
+
+    let cancelled =
+        { Meetup.toSnapshot Sample.cancelledVisible with
+            Title = "Cancelled"
+        }
+
+    let read _ = Task.FromResult [ past; today; held; cancelled ]
+
+    let actual =
+        execute
+            (deps read (DateOnly(2026, 9, 21)))
+            {
+                Viewer = Sample.ordinary
+            }
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+        |> List.map _.Title
+
+    test <@ actual = [ "Today" ] @>
+
 [<Fact>]
 let ``The list API refuses a missing viewer before reading`` () =
     let read _ = failwith "Read must not be reached"
 
     let code =
-        codeOf (fun () -> Api.handle read (Meetups.V1.ListVisibleMeetupsRequest()))
+        codeOf (fun () -> Api.handle (deps read (DateOnly(2026, 9, 21))) (Meetups.V1.ListVisibleMeetupsRequest()))
 
     test <@ code = Some StatusCode.InvalidArgument @>
 
@@ -78,7 +128,7 @@ let ``The list API renders summaries returned by the read`` () =
     let read _ = Task.FromResult [ Meetup.toSnapshot Sample.published ]
 
     let response =
-        (Api.handle read (request (contractViewer ()))).GetAwaiter().GetResult()
+        (Api.handle (deps read (DateOnly(2026, 9, 21))) (request (contractViewer ()))).GetAwaiter().GetResult()
 
     test
         <@

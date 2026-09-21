@@ -24,6 +24,7 @@ let eventType (event: MeetupEvent) : string =
     | MeetupCancelled -> "meetup_cancelled"
     | MeetupMaterialAttached _ -> "meetup_material_attached"
     | MeetupMaterialRemoved _ -> "meetup_material_removed"
+    | MeetupHeld -> "meetup_held"
 
 let private dateText (date: DateOnly) : string = date.ToString "yyyy-MM-dd"
 

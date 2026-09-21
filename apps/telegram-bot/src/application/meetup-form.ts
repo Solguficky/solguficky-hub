@@ -4,13 +4,25 @@ import type {
   Meetups,
 } from "../meetups/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
-import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
+import type {
+  ExecuteRequest,
+  ExecuteResult,
+  FormField,
+  Person,
+} from "./types.js";
 
 export function createMeetupForm(meetups: Meetups) {
   return async (
     request: Extract<
       ExecuteRequest,
-      { intent: "create-meetup" | "set-meetup-field" | "publish-meetup" }
+      {
+        intent:
+          | "create-meetup"
+          | "set-meetup-field"
+          | "update-meetup-field"
+          | "publish-meetup"
+          | "change-meetup-state";
+      }
     >,
   ): Promise<ExecuteResult> => {
     switch (request.intent) {
@@ -23,7 +35,9 @@ export function createMeetupForm(meetups: Meetups) {
           ),
           "title",
         );
-      case "set-meetup-field": {
+      case "set-meetup-field":
+      case "update-meetup-field": {
+        const editing = request.intent === "update-meetup-field";
         const current = await meetups.get(
           request.identity,
           request.meetupId,
@@ -33,11 +47,18 @@ export function createMeetupForm(meetups: Meetups) {
           return { kind: "dependency-rejected", reason: "unavailable" };
         }
         if (current.kind !== "ok") return failure(current);
+        if (editing && current.meetup.lifecycle === "cancelled") {
+          return {
+            kind: "edit-unavailable",
+            reason: "cancelled",
+            meetup: current.meetup,
+          };
+        }
         if (request.field === "schedule") {
           const schedule = parseSchedule(request.value);
           if (schedule === undefined) {
             return {
-              kind: "ask",
+              kind: editing ? "edit-ask" : "ask",
               field: "schedule",
               meetup: current.meetup,
               error:
@@ -55,7 +76,13 @@ export function createMeetupForm(meetups: Meetups) {
               request.field,
               current.meetup,
               scheduled.message,
+              editing,
             );
+          }
+          if (editing) {
+            return scheduled.kind === "ok"
+              ? { kind: "meetup-updated", meetup: scheduled.meetup }
+              : failure(scheduled);
           }
           return map(scheduled, "venue");
         }
@@ -72,7 +99,17 @@ export function createMeetupForm(meetups: Meetups) {
           rpcMeta(request),
         );
         if (updated.kind === "invalid") {
-          return invalidField(request.field, current.meetup, updated.message);
+          return invalidField(
+            request.field,
+            current.meetup,
+            updated.message,
+            editing,
+          );
+        }
+        if (editing) {
+          return updated.kind === "ok"
+            ? { kind: "meetup-updated", meetup: updated.meetup }
+            : failure(updated);
         }
         return map(updated, next);
       }
@@ -84,6 +121,51 @@ export function createMeetupForm(meetups: Meetups) {
             rpcMeta(request),
           ),
         );
+      case "change-meetup-state": {
+        const current = await meetups.get(
+          request.identity,
+          request.meetupId,
+          rpcMeta(request),
+        );
+        if (current.kind === "not-found") return { kind: "meetup-not-found" };
+        if (current.kind !== "ok") return failure(current);
+        if (current.meetup.lifecycle === "cancelled") {
+          return {
+            kind: "meetup-state-unchanged",
+            reason: "already-cancelled",
+            meetup: current.meetup,
+          };
+        }
+        if (
+          request.action === "unpublish" &&
+          current.meetup.visibility === "hidden"
+        ) {
+          return {
+            kind: "meetup-state-unchanged",
+            reason: "already-hidden",
+            meetup: current.meetup,
+          };
+        }
+        const changed =
+          request.action === "unpublish"
+            ? await meetups.unpublish(
+                request.identity,
+                request.meetupId,
+                rpcMeta(request),
+              )
+            : await meetups.cancel(
+                request.identity,
+                request.meetupId,
+                rpcMeta(request),
+              );
+        return changed.kind === "ok"
+          ? {
+              kind: "meetup-state-changed",
+              action: request.action,
+              meetup: changed.meetup,
+            }
+          : failure(changed);
+      }
       default: {
         const _exhaustive: never = request;
         return { kind: "rejected", reason: String(_exhaustive) };
@@ -155,22 +237,13 @@ function failure(
 }
 
 function invalidField(
-  field: Exclude<
-    ExecuteRequest,
-    {
-      intent:
-        | "start"
-        | "list-visible-meetups"
-        | "view-meetup"
-        | "create-meetup"
-        | "publish-meetup";
-    }
-  >["field"],
+  field: FormField,
   meetup: MeetupSnapshot,
   message: string,
+  editing = false,
 ): ExecuteResult {
   return {
-    kind: "ask",
+    kind: editing ? "edit-ask" : "ask",
     field,
     meetup,
     error: `Не получилось сохранить значение: ${message}`,

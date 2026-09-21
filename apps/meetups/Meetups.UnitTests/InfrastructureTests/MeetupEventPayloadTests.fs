@@ -29,6 +29,7 @@ let ``The event type names the occasion the schema accepts`` () =
     let unpublished = MeetupEventPayload.eventType MeetupUnpublished
     let republished = MeetupEventPayload.eventType MeetupRepublished
     let cancelled = MeetupEventPayload.eventType MeetupCancelled
+    let held = MeetupEventPayload.eventType MeetupHeld
 
     let materialAttached =
         MeetupEventPayload.eventType (MeetupMaterialAttached Sample.material)
@@ -46,6 +47,7 @@ let ``The event type names the occasion the schema accepts`` () =
             && cancelled = "meetup_cancelled"
             && materialAttached = "meetup_material_attached"
             && materialRemoved = "meetup_material_removed"
+            && held = "meetup_held"
         @>
 
 [<Fact>]

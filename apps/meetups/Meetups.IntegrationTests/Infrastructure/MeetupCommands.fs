@@ -105,6 +105,14 @@ let cancelDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Cance
         NewEventId = fun () -> eventId
     }
 
+let markHeldDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.MarkMeetupHeld.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+    }
+
 let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: Viewer) =
     Meetups.Slices.CreateMeetupDraft.execute
         (createDeps source eventId)
@@ -211,6 +219,22 @@ let remove (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (material: 
         }
     |> run
 
+let markHeld (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
+    Meetups.Slices.MarkMeetupHeld.execute
+        (markHeldDeps source eventId)
+        {
+            Id = id
+            Viewer = administrator
+        }
+    |> run
+
+/// День сообщества: списки отделяют архив от актуального по нему, и сценарий,
+/// записанный фиксированной датой, позеленел бы сегодня и покраснел после неё.
+/// Пояс — тот же, что получает хост под тестом.
+let communityToday () =
+    TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, Meetups.Infrastructure.CommunityTime.zone "Europe/Moscow").DateTime
+    |> DateOnly.FromDateTime
+
 /// Системная колонка приводится к тексту в запросе: сравнивать нужно факт
 /// совпадения транзакций, а не разбирать тип xid на стороне клиента.
 let transactionOf (dsn: string) (table: string) (column: string) (id: Guid) =
@@ -302,7 +326,7 @@ let journalIds (dsn: string) (id: Guid) =
 
 /// Поводы журнала в порядке записи. Имя повода принимает не код, а CHECK-ограничение
 /// `meetup_events_type_check`: строка с незнакомым именем не запишется вовсе, и
-/// подтвердить, что миграция 004 их добавила, может только настоящая база.
+/// подтвердить, что миграции 004 и 005 их добавили, может только настоящая база.
 let eventTypes (dsn: string) (id: Guid) =
     use connection = new NpgsqlConnection(dsn)
     connection.Open()

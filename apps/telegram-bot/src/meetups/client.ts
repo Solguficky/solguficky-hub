@@ -26,6 +26,8 @@ type MeetupsRpc = Pick<
   | "changeMeetupAttributes"
   | "setMeetupSchedule"
   | "publishMeetup"
+  | "unpublishMeetup"
+  | "cancelMeetup"
   | "getMeetup"
   | "listVisibleMeetups"
 >;
@@ -73,7 +75,8 @@ export function createMeetupsAdapter(
       }
       if (
         cause instanceof ConnectError &&
-        cause.code === Code.InvalidArgument
+        (cause.code === Code.InvalidArgument ||
+          cause.code === Code.FailedPrecondition)
       ) {
         return { kind: "invalid", message: cause.message };
       }
@@ -213,6 +216,21 @@ export function createMeetupsAdapter(
             { viewer: viewer(person), id },
             options(meta),
           ),
+        ),
+      ),
+    unpublish: (person, id, meta) =>
+      call(async () =>
+        toSnapshot(
+          await rpc.unpublishMeetup(
+            { viewer: viewer(person), id },
+            options(meta),
+          ),
+        ),
+      ),
+    cancel: (person, id, meta) =>
+      call(async () =>
+        toSnapshot(
+          await rpc.cancelMeetup({ viewer: viewer(person), id }, options(meta)),
         ),
       ),
   };
