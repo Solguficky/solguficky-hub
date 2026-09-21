@@ -28,4 +28,27 @@ describe("callback parser", () => {
   it("parses the hub navigation action", () => {
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
   });
+
+  it("parses community administration actions within the byte budget", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback("v1:community:list")).toEqual({ kind: "community" });
+    expect(parseCallback("v1:community:allow")).toEqual({
+      kind: "ask-allowed-username",
+    });
+    expect(parseCallback(`v1:community:admit:${token}`)).toEqual({
+      kind: "admit-member",
+      token,
+    });
+    expect(parseCallback(`v1:community:block:${token}`)).toEqual({
+      kind: "block-member",
+      token,
+    });
+    expect(parseCallback("v1:community:remove:alice_1")).toEqual({
+      kind: "remove-allowed-username",
+      username: "alice_1",
+    });
+    expect(
+      Buffer.byteLength(`v1:community:block:${token}`),
+    ).toBeLessThanOrEqual(64);
+  });
 });

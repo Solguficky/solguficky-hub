@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
@@ -62,7 +63,10 @@ func TestAllowedUsernameOperationsRejectUnmatchableInput(t *testing.T) {
 			t.Fatalf("add %q: got %v want %v", username, err, errEmptyUsername)
 		}
 	}
-	for _, username := range []string{"al ice", "алиса", "alice!", "al\tice", "ali@ce"} {
+	// Строка длиннее ника Telegram сюда же: ей нечему совпасть, а на экране
+	// администратора она не поместилась бы в `callback_data` кнопки снятия.
+	tooLong := strings.Repeat("a", telegramUsernameMaxLength+1)
+	for _, username := range []string{"al ice", "алиса", "alice!", "al\tice", "ali@ce", tooLong} {
 		if _, err := svc.addAllowedUsername(t.Context(), username, uuid.NullUUID{}); !errors.Is(err, errInvalidUsername) {
 			t.Fatalf("add %q: got %v want %v", username, err, errInvalidUsername)
 		}

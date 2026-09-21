@@ -38,10 +38,15 @@ var (
 	errInvalidUsername = errors.New("username is not a telegram username")
 )
 
-// telegramUsernamePattern — алфавит ника Telegram после нормализации. Длину и
-// первый символ он не проверяет: правила Telegram разные у людей и ботов и
-// меняются, а задача проверки — не пустить в список строку, которой ник
-// никогда не будет равен.
+// telegramUsernamePattern — алфавит ника Telegram после нормализации. Первый
+// символ и нижнюю границу длины он не проверяет: правила Telegram разные у
+// людей и ботов и меняются, а задача проверки — не пустить в список строку,
+// которой ник никогда не будет равен. Верхняя граница как раз такая строка и
+// отсекает: ник длиннее 32 символов Telegram не выдаёт, зато строка на сотню
+// символов не помещается в 64 байта `callback_data` и сносит администратору
+// весь экран состава.
+const telegramUsernameMaxLength = 32
+
 var telegramUsernamePattern = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 // normalizeUsername приводит ник к виду хранения: без пробелов по краям, без
@@ -56,6 +61,9 @@ func normalizeUsername(username string) (string, error) {
 	normalized = strings.ToLower(normalized)
 	if normalized == "" {
 		return "", errEmptyUsername
+	}
+	if len(normalized) > telegramUsernameMaxLength {
+		return "", errInvalidUsername
 	}
 	if !telegramUsernamePattern.MatchString(normalized) {
 		return "", errInvalidUsername
