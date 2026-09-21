@@ -21,7 +21,7 @@ type MeetupChange =
     | AttributesChanged of MeetupAttributes
     | ScheduleChanged of Schedule
 
-/// Три повода строки журнала (ADR-031). Тип называет повод; тело строки — снимок,
+/// Поводы строки журнала. Тип называет повод; тело строки — снимок,
 /// его даёт Meetup.toSnapshot от уже применённого состояния. Конверт строки
 /// (event_id, occurred_at, performed_by) заполняет оболочка: домену он не нужен ни
 /// для одного инварианта.
@@ -29,6 +29,9 @@ type MeetupEvent =
     | MeetupCreated of id: MeetupId * author: PersonId
     | MeetupChanged of MeetupChange
     | MeetupPublished of at: DateTimeOffset
+    | MeetupUnpublished
+    | MeetupRepublished
+    | MeetupCancelled
 
 /// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
 /// является инвариантом перехода, и состояние в решении о нём не участвует. Само
@@ -126,6 +129,18 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    let private setVisibility visibility (meetup: Meetup) : Meetup =
+        { meetup with
+            Visibility = visibility
+            Version = meetup.Version + 1L
+        }
+
+    let private cancel (meetup: Meetup) : Meetup =
+        { meetup with
+            Lifecycle = Cancelled
+            Version = meetup.Version + 1L
+        }
+
     /// Применение события — единственный путь появления и изменения полей.
     /// Результат всегда существующая сходка: каждый повод оставляет её на месте.
     let apply (state: MeetupState) (event: MeetupEvent) : Meetup =
@@ -133,8 +148,14 @@ module Meetup =
         | Initial, MeetupCreated(id, author) -> create id author
         | Existing meetup, MeetupChanged changed -> change meetup changed
         | Existing meetup, MeetupPublished at -> publish meetup at
+        | Existing meetup, MeetupUnpublished -> setVisibility Hidden meetup
+        | Existing meetup, MeetupRepublished -> setVisibility Visible meetup
+        | Existing meetup, MeetupCancelled -> cancel meetup
         | Initial, MeetupChanged _
         | Initial, MeetupPublished _
+        | Initial, MeetupUnpublished
+        | Initial, MeetupRepublished
+        | Initial, MeetupCancelled
         | Existing _, MeetupCreated _ ->
             // Событие решено не из этого состояния. Ни одно решение такой пары не
             // возвращает, поэтому это нарушение внутреннего контракта оболочки, а не
@@ -210,11 +231,13 @@ module Meetup =
     let decideChangeAttributes (attributes: MeetupAttributes) (state: MeetupState) : Result<MeetupEvent, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
         | Existing _ -> Ok(MeetupChanged(AttributesChanged attributes))
 
     let decideSetSchedule (schedule: Schedule) (state: MeetupState) : Result<MeetupEvent, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
         | Existing _ -> Ok(MeetupChanged(ScheduleChanged schedule))
 
     /// Порядок проверок наблюдаем снаружи, поэтому он зафиксирован здесь, а не
@@ -249,4 +272,24 @@ module Meetup =
                     if String.IsNullOrWhiteSpace meetup.Title then
                         Error TitleRequiredForPublication
                     else
-                        Ok(Some(MeetupPublished now))
+                        match meetup.FirstPublishedAt with
+                        | None -> Ok(Some(MeetupPublished now))
+                        | Some _ -> Ok(Some MeetupRepublished)
+
+    let decideUnpublish (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match MeetupTransitions.visibility meetup.Visibility Hidden with
+            | TransitionOutcome.AlreadyThere -> Ok None
+            | TransitionOutcome.Allowed -> Ok(Some MeetupUnpublished)
+            | TransitionOutcome.Rejected -> Error TransitionNotAllowed
+
+    let decideCancel (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match MeetupTransitions.lifecycle meetup.Lifecycle Cancelled with
+            | TransitionOutcome.AlreadyThere -> Ok None
+            | TransitionOutcome.Allowed -> Ok(Some MeetupCancelled)
+            | TransitionOutcome.Rejected -> Error TransitionNotAllowed

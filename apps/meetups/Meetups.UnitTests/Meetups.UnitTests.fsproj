@@ -23,6 +23,7 @@
     <Compile Include="DomainTests/SetMeetupScheduleTests.fs" />
     <Compile Include="DomainTests/MeetupTransitionsTests.fs" />
     <Compile Include="DomainTests/PublishMeetupTests.fs" />
+    <Compile Include="DomainTests/MeetupStateCommandTests.fs" />
     <Compile Include="DomainTests/AccessTests.fs" />
     <Compile Include="DomainTests/MeetupApplyTests.fs" />
     <Compile Include="DomainTests/MeetupRehydrateTests.fs" />

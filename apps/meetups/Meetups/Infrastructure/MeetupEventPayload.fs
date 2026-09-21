@@ -19,6 +19,9 @@ let eventType (event: MeetupEvent) : string =
     | MeetupCreated _ -> "meetup_created"
     | MeetupChanged _ -> "meetup_changed"
     | MeetupPublished _ -> "meetup_published"
+    | MeetupUnpublished -> "meetup_unpublished"
+    | MeetupRepublished -> "meetup_republished"
+    | MeetupCancelled -> "meetup_cancelled"
 
 let private dateText (date: DateOnly) : string = date.ToString "yyyy-MM-dd"
 
