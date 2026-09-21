@@ -1,0 +1,186 @@
+syntax = "proto3";
+
+package notifications.v1;
+
+import "meetups/v1/meetups.proto";
+
+// The addressed notification fact: "this person is owed this notification".
+// Notifications publishes it and its responsibility ends there; delivery is the
+// channel's business. No rendered text and no chat id are carried: the channel
+// renders the message from the data below, and nothing is broadcast without a
+// recipient.
+message Notification {
+  // Canonical lowercase UUIDv7 with hyphens. Stable id of the fact; a channel
+  // uses it as its deduplication key, because exactly-once is not promised on
+  // this boundary.
+  string notification_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the
+  // recipient. A notification always has exactly one recipient.
+  string recipient_id = 2;
+
+  // RFC 3339 UTC instant at which the fact was created.
+  string created_at = 3;
+
+  // RFC 3339 UTC instant after which the notification is stale and a channel
+  // may drop it. Unset means no deadline: an empty string is not a value.
+  optional string not_after = 4;
+
+  // The fact that made this notification due. Exactly one reference is set.
+  Cause cause = 5;
+
+  // Exactly one type is set. Every branch carries the data a channel needs to
+  // render the message without calling other services: Notifications knows
+  // nothing about channels, and a channel has no replica of the meetup state.
+  //
+  // A consumer that meets a type it does not know cannot render a message from
+  // the envelope alone and must not deliver it silently.
+  oneof type {
+    // The meetup became visible for the first time. Sent to everyone with the
+    // global "new published meetup" category on: a subscription to the meetup
+    // is not required and cannot exist before publication.
+    MeetupPublished meetup_published = 6;
+
+    // Attributes or the state of the meetup changed. The source event carries a
+    // snapshot, and what changed is computed by comparison with the replica; an
+    // empty change is not a cause of a notification. A schedule move is a
+    // change like any other: it has no type of its own.
+    MeetupChanged meetup_changed = 7;
+
+    // A material appeared on the meetup. Its source is a Meetups event of the
+    // material dictionary, which is not designed yet.
+    MeetupMaterial meetup_material = 8;
+
+    // The day-before reminder fired for a meetup with a fixed start moment.
+    // A schedule without a start time produces no reminder.
+    MeetupReminder meetup_reminder = 9;
+
+    // A manual message from an organizer to the subscribers of the meetup.
+    OrganizerMessage organizer_message = 10;
+
+    // A manual message from an administrator to the whole community. It is not
+    // tied to any meetup.
+    CommunityAnnouncement community_announcement = 11;
+
+    // The meetup was taken out of publication. Addressed only to those whose
+    // subscription and change category are still on at send time.
+    MeetupUnpublished meetup_unpublished = 12;
+  }
+}
+
+// The reference to the fact that made the notification due. The triple (type,
+// source, recipient) is the deterministic cause key, so a repeated cause
+// produces no second fact for the same person.
+message Cause {
+  oneof ref {
+    // event_id of the consumed Meetups journal event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string meetup_event_id = 1;
+
+    // Identifier of the Notifications reminder task that fired.
+    string reminder_task_id = 2;
+
+    // Identifier of the manual broadcast command, supplied by the caller.
+    string command_request_id = 3;
+  }
+}
+
+// The subset of the meetup state a channel needs to render a notification
+// without calling Meetups. It is the value at the moment the cause occurred,
+// not a live view: the meetup may already be hidden or changed when the message
+// is composed, and this is what the tombstone is rendered from.
+message MeetupCard {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Empty string is the total value "unspecified". The field set covers every
+  // value MeetupAspect can name: an aspect whose value is absent here would
+  // force the channel to call Meetups to render what changed.
+  string title = 2;
+  string description = 3;
+  string venue = 4;
+  string kind = 5;
+  string calendar_link = 6;
+
+  // Local community schedule, without a timezone, exactly as Meetups publishes
+  // it. "No date" is the no_date form, not an absent field.
+  meetups.v1.Schedule schedule = 7;
+
+  meetups.v1.MeetupLifecycle lifecycle = 8;
+
+  // Visibility is carried because a return to publication arrives as a change
+  // of state: the aspect list says that visibility changed, not which way.
+  meetups.v1.MeetupVisibility visibility = 9;
+}
+
+// What changed in a meetup, as seen by the comparison of the snapshot with the
+// replica. The list is never empty: an empty change is not a cause.
+enum MeetupAspect {
+  MEETUP_ASPECT_UNSPECIFIED = 0;
+
+  MEETUP_ASPECT_TITLE = 1;
+  MEETUP_ASPECT_DESCRIPTION = 2;
+  MEETUP_ASPECT_VENUE = 3;
+  MEETUP_ASPECT_KIND = 4;
+  MEETUP_ASPECT_CALENDAR_LINK = 5;
+  MEETUP_ASPECT_SCHEDULE = 6;
+  MEETUP_ASPECT_LIFECYCLE = 7;
+  MEETUP_ASPECT_VISIBILITY = 8;
+}
+
+// The first publication of a meetup. The return of a meetup that was taken out
+// of publication is not this type: the mark of the first publication is already
+// set, so the return is a change of state.
+message MeetupPublished {
+  MeetupCard meetup = 1;
+}
+
+message MeetupChanged {
+  MeetupCard meetup = 1;
+
+  // Aspects whose value differs from the replica. Never empty. Old values are
+  // not carried: the message says what changed and the card carries the state
+  // that is true now.
+  repeated MeetupAspect changed_aspects = 2;
+}
+
+message MeetupMaterial {
+  MeetupCard meetup = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string material_id = 2;
+
+  // Empty string is the total value "unspecified".
+  string material_title = 3;
+}
+
+message MeetupReminder {
+  MeetupCard meetup = 1;
+}
+
+message OrganizerMessage {
+  MeetupCard meetup = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the sender.
+  // A human-readable name is not carried: it is not part of the identity
+  // contract, and naming stays the channel's business.
+  string sender_id = 2;
+
+  // Text written by the sender, verbatim. It is the source data of the message,
+  // not text rendered by Notifications: Notifications composes nothing.
+  string body = 3;
+}
+
+message CommunityAnnouncement {
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the sender.
+  // A human-readable name is not carried: it is not part of the identity
+  // contract, and naming stays the channel's business.
+  string sender_id = 1;
+
+  // Text written by the sender, verbatim.
+  string body = 2;
+}
+
+message MeetupUnpublished {
+  MeetupCard meetup = 1;
+}

@@ -7,9 +7,9 @@ import {
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   MeetupLifecycle,
-  MeetupsService,
   MeetupVisibility,
-} from "../../gen/meetups/v1/meetups_service_pb.js";
+} from "../../gen/meetups/v1/meetups_pb.js";
+import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {

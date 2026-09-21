@@ -43,8 +43,8 @@ Linear является источником правды для порядка 
 | Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, круги сообщества и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и девять gRPC-операций среза Meetups | Current |
-| `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
+| `contracts/proto` | Identity `ResolveIdentity` и шесть команд администратора с Go- и TypeScript-кодогенерацией, девять gRPC-операций среза Meetups, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`; у обеих схем `notifications/v1` потребителя ещё нет, и модуль целиком собирает джоба `contracts` | Current |
+| `nats-tester` | Python CLI; в реестре subjects одна запись — `events.notifications.notification_created` | Current tooling |
 | Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
 Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.

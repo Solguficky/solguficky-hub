@@ -84,9 +84,13 @@ let private InsertMeetupSql =
 /// чтением и записью строку мог изменить другой писатель, и только сама база может
 /// ответить, осталась ли версия той же. Ноль задетых строк и есть конфликт.
 ///
-/// `scheduled_publish_at` в списке SET отсутствует намеренно: момент отложенной
-/// публикации в снимок не входит, и перечисление колонки обнулило бы его при каждой
-/// команде, когда отложенная публикация появится.
+/// `scheduled_publish_at` в снимок не входит, и обычной колонкой в SET его
+/// перечислять нельзя: обнуление на каждой команде стёрло бы назначенный момент у
+/// скрытой сходки. Но у видимой момента не бывает — `meetups_scheduled_publish_only_when_hidden`
+/// отвергает такую строку, — поэтому запись, оставляющая сходку видимой, обнуляет
+/// колонку здесь же, тем же UPDATE. Отдельный запрос разошёлся бы со сменой
+/// видимости по транзакции, а пропущенное обнуление обернулось бы `23514` вместо
+/// доменного ответа публикации.
 [<Literal>]
 let private UpdateMeetupSql =
     """
@@ -99,6 +103,10 @@ let private UpdateMeetupSql =
         calendar_link = @calendar_link,
         lifecycle = @lifecycle,
         visibility = @visibility,
+        scheduled_publish_at = CASE
+            WHEN @visibility = 'visible' THEN NULL
+            ELSE scheduled_publish_at
+        END,
         first_published_at = @first_published_at,
         version = @version,
         schedule_form = @schedule_form,
