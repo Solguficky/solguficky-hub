@@ -11,16 +11,21 @@ contracts/proto/
 │   └── v1/
 │       ├── identity_service.proto
 │       └── roles.proto
-└── meetups/
+├── meetups/
+│   └── v1/
+│       └── meetups_service.proto
+└── notifications/
     └── v1/
-        └── meetups_service.proto
+        └── notifications_service.proto
 ```
 
-Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`, `meetups.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
+Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `identity.v1`, `meetups.v1`, `notifications.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
 
 Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Как потребитель указывает этот корень — в [стандарте Protobuf](../docs/standards/contracts/protobuf.md).
 
 Аукционные схемы удалены: аукцион не входит в MVP. NATS-события Identity и контракт Telegram Bot ещё не спроектированы.
+
+У `notifications/v1` потребителя пока нет: сервис не реализован, а генерация Identity и Telegram Bot сужает вход фильтром `paths`, тогда как `Meetups.Contracts` перечисляет файлы поимённо. Схему домена без потребителя не читает ни одна джоба сборки, поэтому компиляцию всего модуля держит отдельная проверка — `just contracts-build` и одноимённая джоба CI.
 
 ## Владение
 

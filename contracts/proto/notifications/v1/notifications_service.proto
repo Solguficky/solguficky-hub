@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package notifications.v1;
+
+// Manages a person's meetup subscriptions, their notification category
+// settings and the two manual broadcasts. The caller presents the internal
+// identity of the person; which interface the command came from is not part of
+// this contract. Outgoing notifications are not described here: this service
+// publishes them to the bus, and that dictionary is a separate contract.
+service NotificationsService {
+  // Following a meetup. Carries no category choice: "I follow this" and "what
+  // to send me" are separate, and neither is derived from the other.
+  rpc SubscribeToMeetup(SubscribeToMeetupRequest) returns (MeetupNotificationPreferences);
+  rpc UnsubscribeFromMeetup(UnsubscribeFromMeetupRequest) returns (MeetupNotificationPreferences);
+
+  // One category at a time, and one operation per scope: the two scopes answer
+  // with snapshots of different shape, so they do not share a request.
+  rpc SetGlobalCategoryPreference(SetGlobalCategoryPreferenceRequest) returns (GlobalNotificationPreferences);
+  rpc SetMeetupCategoryPreference(SetMeetupCategoryPreferenceRequest) returns (MeetupNotificationPreferences);
+
+  rpc GetGlobalNotificationPreferences(GetGlobalNotificationPreferencesRequest) returns (GlobalNotificationPreferences);
+  rpc GetMeetupNotificationPreferences(GetMeetupNotificationPreferencesRequest) returns (MeetupNotificationPreferences);
+
+  // Two separate operations rather than one with an optional meetup id. They
+  // share the acceptance message because one mechanism executes both.
+  rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
+  rpc BroadcastToCommunity(BroadcastToCommunityRequest) returns (BroadcastAccepted);
+}
+
+message SubscribeToMeetupRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The person whose own
+  // subscription changes. Platform roles are deliberately absent from every
+  // request in this file, and so is any ready-made permission.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+message UnsubscribeFromMeetupRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+message SetGlobalCategoryPreferenceRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Any category of the dictionary below.
+  NotificationCategory category = 2;
+
+  // Target state of this one category, never a toggle of the current value.
+  // There is no presence here: an unsent field and an explicit false are the
+  // same bytes, so false is the total value "off".
+  bool enabled = 3;
+}
+
+message SetMeetupCategoryPreferenceRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+
+  // A category that a meetup can carry. Which ones those are is a property of
+  // the category itself, stated in the enum below.
+  NotificationCategory category = 3;
+
+  // Target state of this one category for this one meetup, with the same
+  // absence of presence as in the global command. There is no third state on
+  // the wire: "inherit the global value" is not spellable here.
+  bool enabled = 4;
+}
+
+message GetGlobalNotificationPreferencesRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+message GetMeetupNotificationPreferencesRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+// Server-produced state. The list is total over every category of the
+// dictionary: a category the person never touched carries the product default,
+// not an absent entry.
+message GlobalNotificationPreferences {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  repeated CategoryPreference categories = 2;
+}
+
+// Server-produced state for one meetup. The two planes are reported side by
+// side and neither is derived from the other: category values stand whether or
+// not the person is currently subscribed.
+message MeetupNotificationPreferences {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+
+  // False both for a person who never subscribed and for one who unsubscribed:
+  // this message does not distinguish the two.
+  bool subscribed = 3;
+
+  // Only the categories a meetup can carry. Each entry holds the value in
+  // force: the override when one exists, the global value otherwise. Which of
+  // the two produced it is deliberately not reported.
+  repeated CategoryPreference categories = 4;
+}
+
+message CategoryPreference {
+  NotificationCategory category = 1;
+  bool enabled = 2;
+}
+
+message BroadcastToMeetupSubscribersRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author of the message.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 string with hyphens. This is
+  // both the broadcast id and the idempotency key. There is no separate
+  // idempotency field.
+  string id = 3;
+
+  // Author-written content. Not a rendered message: wording of the envelope,
+  // keyboard and links belong to the delivering channel. Unlike the meetup
+  // attributes, the empty string is not a total value here.
+  string body = 4;
+}
+
+message BroadcastToCommunityRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author of the
+  // announcement.
+  string identity_id = 1;
+
+  // Caller-generated canonical lowercase UUIDv7 string with hyphens. Both the
+  // broadcast id and the idempotency key, as above.
+  string id = 2;
+
+  // Author-written content, as in BroadcastToMeetupSubscribers.
+  string body = 3;
+
+  // The audience is deliberately absent. A community announcement is expanded
+  // to one fixed circle by this service, and the sender does not choose it:
+  // there is no "everyone" broadcast, and no recipient list travels here.
+}
+
+// Server-produced acknowledgement that the broadcast was accepted. Acceptance
+// is not delivery: this service publishes addressed facts and learns nothing
+// about their outcome, so no recipient count and no delivery mark appear here.
+message BroadcastAccepted {
+  // Echo of the caller-generated id.
+  string id = 1;
+
+  // RFC 3339 UTC instant at which the broadcast was first accepted.
+  string accepted_at = 2;
+
+  // False when this call matched an already-accepted id.
+  bool created = 3;
+}
+
+enum NotificationCategory {
+  // No value: the field is unset or the category is unknown to the consumer.
+  NOTIFICATION_CATEGORY_UNSPECIFIED = 0;
+
+  // Global scope only: it has no per-meetup form.
+  NOTIFICATION_CATEGORY_MEETUP_PUBLISHED = 1;
+
+  NOTIFICATION_CATEGORY_MEETUP_CHANGED = 2;
+
+  NOTIFICATION_CATEGORY_MEETUP_MATERIAL = 3;
+
+  NOTIFICATION_CATEGORY_MEETUP_REMINDER = 4;
+
+  NOTIFICATION_CATEGORY_ORGANIZER_MESSAGE = 5;
+
+  // Global scope only: it is bound to no meetup.
+  NOTIFICATION_CATEGORY_COMMUNITY_ANNOUNCEMENT = 6;
+}
