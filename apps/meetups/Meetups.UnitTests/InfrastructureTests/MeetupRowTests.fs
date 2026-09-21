@@ -151,6 +151,27 @@ let ``A moment finer than the state column is cut to its precision`` () =
 
     test <@ row.FirstPublishedAt = Nullable(Sample.fixedNow.AddTicks 10L) @>
 
+/// Момент отложенной публикации раскладывается по колонке по тем же правилам, что и
+/// отметка первой публикации: состояние и payload читают одну и ту же строку.
+[<Fact>]
+let ``The scheduled publication moment survives the round trip through the row`` () =
+    let snapshot = Meetup.toSnapshot Sample.scheduled
+    let row = MeetupRow.ofSnapshot snapshot
+
+    test <@ row.ScheduledPublishAt = Nullable Sample.later @>
+    test <@ MeetupRow.toSnapshot row = snapshot @>
+
+[<Fact>]
+let ``A scheduled moment finer than the state column is cut to its precision`` () =
+    let snapshot =
+        { Meetup.toSnapshot Sample.scheduled with
+            ScheduledPublishAt = Some(Sample.later.AddTicks 17L)
+        }
+
+    let row = MeetupRow.ofSnapshot snapshot
+
+    test <@ row.ScheduledPublishAt = Nullable(Sample.later.AddTicks 10L) @>
+
 /// Строку, которую схема одобрила, а домен прочитать не может, адаптер обязан
 /// ронять: подстановка значения по умолчанию превратила бы порчу в правдоподобную
 /// сходку и увела бы её дальше по системе.

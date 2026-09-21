@@ -53,6 +53,7 @@ let private SelectSql =
         lifecycle AS Lifecycle,
         visibility AS Visibility,
         first_published_at AS FirstPublishedAt,
+        scheduled_publish_at AS ScheduledPublishAt,
         version AS Version,
         schedule_form AS ScheduleForm,
         schedule_precision AS SchedulePrecision,
@@ -69,12 +70,12 @@ let private InsertMeetupSql =
     """
     INSERT INTO meetups (
         id, author, title, description, venue, kind, calendar_link, materials,
-        lifecycle, visibility, first_published_at, version,
+        lifecycle, visibility, first_published_at, scheduled_publish_at, version,
         schedule_form, schedule_precision,
         schedule_start_date, schedule_start_time, schedule_end_date, schedule_end_time
     ) VALUES (
         @id, @author, @title, @description, @venue, @kind, @calendar_link, CAST(@materials AS jsonb),
-        @lifecycle, @visibility, @first_published_at, @version,
+        @lifecycle, @visibility, @first_published_at, @scheduled_publish_at, @version,
         @schedule_form, @schedule_precision,
         @schedule_start_date, @schedule_start_time, @schedule_end_date, @schedule_end_time
     )
@@ -85,13 +86,13 @@ let private InsertMeetupSql =
 /// чтением и записью строку мог изменить другой писатель, и только сама база может
 /// ответить, осталась ли версия той же. Ноль задетых строк и есть конфликт.
 ///
-/// `scheduled_publish_at` в снимок не входит, и обычной колонкой в SET его
-/// перечислять нельзя: обнуление на каждой команде стёрло бы назначенный момент у
-/// скрытой сходки. Но у видимой момента не бывает — `meetups_scheduled_publish_only_when_hidden`
-/// отвергает такую строку, — поэтому запись, оставляющая сходку видимой, обнуляет
-/// колонку здесь же, тем же UPDATE. Отдельный запрос разошёлся бы со сменой
-/// видимости по транзакции, а пропущенное обнуление обернулось бы `23514` вместо
-/// доменного ответа публикации.
+/// `scheduled_publish_at` пишется обычной колонкой из снимка: момент — часть
+/// состояния, и когда его обнулять, решает домен (`MeetupPublished` и
+/// `MeetupCancelled` очищают поле применением события). Раньше обнуление стояло
+/// здесь условным выражением по видимости — это было верно, пока момента в снимке
+/// не было вовсе; с полем в состоянии такой CASE скрыл бы расхождение домена со
+/// схемой вместо того, чтобы дать `meetups_scheduled_publish_only_when_hidden`
+/// отвергнуть строку.
 [<Literal>]
 let private UpdateMeetupSql =
     """
@@ -105,10 +106,7 @@ let private UpdateMeetupSql =
         materials = CAST(@materials AS jsonb),
         lifecycle = @lifecycle,
         visibility = @visibility,
-        scheduled_publish_at = CASE
-            WHEN @visibility = 'visible' THEN NULL
-            ELSE scheduled_publish_at
-        END,
+        scheduled_publish_at = @scheduled_publish_at,
         first_published_at = @first_published_at,
         version = @version,
         schedule_form = @schedule_form,
@@ -144,6 +142,7 @@ let private stateParameters (row: MeetupRow.MeetupRow) =
         lifecycle = row.Lifecycle
         visibility = row.Visibility
         first_published_at = row.FirstPublishedAt
+        scheduled_publish_at = row.ScheduledPublishAt
         version = row.Version
         schedule_form = row.ScheduleForm
         schedule_precision = row.SchedulePrecision

@@ -38,6 +38,8 @@ type HiddenMeetupReadTests() =
                     "ChangeMeetupAttributes"
                     "SetMeetupSchedule"
                     "PublishMeetup"
+                    "ScheduleMeetupPublication"
+                    "CancelMeetupPublication"
                     "UnpublishMeetup"
                     "CancelMeetup"
                     "AttachMaterial"

@@ -64,6 +64,8 @@ let ``Service exposes exactly the thirteen slice operations`` () =
             "ChangeMeetupAttributes"
             "SetMeetupSchedule"
             "PublishMeetup"
+            "ScheduleMeetupPublication"
+            "CancelMeetupPublication"
             "UnpublishMeetup"
             "CancelMeetup"
             "AttachMaterial"
@@ -98,6 +100,31 @@ let ``Every human operation carries the viewer as field one`` () =
 [<Fact>]
 let ``Create draft takes the caller-generated id as its idempotency key`` () =
     let actual = fieldNames CreateMeetupDraftRequest.Descriptor
+
+    test <@ actual = set [ "viewer"; "id" ] @>
+
+/// Момент отложенной публикации приходит локальной парой «дата и время»: часовой
+/// пояс применяется при интерпретации, а не при разборе (ADR-031), поэтому в
+/// запросе его нет, а в состоянии и ответе лежит мгновение.
+[<Fact>]
+let ``Scheduling a publication sends the moment as a local date and time`` () =
+    let fields =
+        ScheduleMeetupPublicationRequest.Descriptor.Fields.InDeclarationOrder()
+        |> Seq.map (fun f -> f.Name, f.FieldType)
+        |> List.ofSeq
+
+    test
+        <@
+            fields = [
+                "viewer", FieldType.Message
+                "id", FieldType.String
+                "moment", FieldType.Message
+            ]
+        @>
+
+[<Fact>]
+let ``Cancelling a scheduled publication takes only the viewer and the id`` () =
+    let actual = fieldNames CancelMeetupPublicationRequest.Descriptor
 
     test <@ actual = set [ "viewer"; "id" ] @>
 
@@ -223,7 +250,7 @@ let ``Schema names no failure, so a hidden meetup is indistinguishable from a mi
     test <@ actual = [] @>
 
 [<Fact>]
-let ``The schema has exactly one absent state and it is first_published_at`` () =
+let ``The schema has exactly two absent states and they are the publication moments`` () =
     let actual =
         [
             for message in messages do
@@ -244,7 +271,13 @@ let ``The schema has exactly one absent state and it is first_published_at`` () 
                         $"{message.Name}.{f.Name}"
         ]
 
-    test <@ actual = [ "MeetupSnapshot.first_published_at" ] @>
+    test
+        <@
+            actual = [
+                "MeetupSnapshot.first_published_at"
+                "MeetupSnapshot.scheduled_publish_at"
+            ]
+        @>
 
 [<Fact>]
 let ``Schedule spells no date as a form rather than an absent field`` () =

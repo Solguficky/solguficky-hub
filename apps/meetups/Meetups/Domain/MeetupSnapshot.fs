@@ -36,5 +36,6 @@ type MeetupSnapshot =
         Lifecycle: MeetupLifecycle
         Visibility: MeetupVisibility
         FirstPublishedAt: DateTimeOffset option
+        ScheduledPublishAt: DateTimeOffset option
         Version: int64
     }

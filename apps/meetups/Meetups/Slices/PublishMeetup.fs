@@ -109,6 +109,10 @@ module Api =
         // запрос собран верно, но домен не позволяет переход.
         | PublishMeetupError.Domain TitleRequiredForPublication ->
             Status(StatusCode.FailedPrecondition, "a title is required before publication")
+        // Момент назначения публикация не решает: она его только забирает
+        // применением события, а отказ по времени ей не принадлежит.
+        | PublishMeetupError.Domain PublicationMomentInThePast ->
+            invalidOp "publishing does not decide a publication moment"
         // Тот же класс отказа, что и отсутствующий заголовок, и потому тот же код:
         // запрос собран верно, но домен не позволяет переход. Различие с отказом по
         // праву несёт код, различие с отсутствующим заголовком — деталь статуса.

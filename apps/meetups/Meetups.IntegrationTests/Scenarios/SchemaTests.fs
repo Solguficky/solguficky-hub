@@ -461,6 +461,36 @@ type SchemaTests() =
 
         test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
 
+    /// Отменённая сходка не оставляет назначенного момента: поле очищает применение
+    /// события, а ограничение держит то же свойство строки независимо от кода
+    /// (PER-204).
+    [<Fact>]
+    member _.``A cancelled meetup cannot keep a scheduled publication moment``() =
+        use db = SchemaSql.applyIsolated ()
+
+        let thrown =
+            try
+                SchemaSql.insertMeetupRow
+                    db.ConnectionString
+                    (Guid.Parse("0199c0de-0000-7000-8000-000000000025"))
+                    "cancelled"
+                    "hidden"
+                    1
+                    SchemaSql.absent
+                    (DateTimeOffset.Parse("2026-09-10T10:00:00Z"))
+                    "no_date"
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+                    SchemaSql.absent
+
+                None
+            with ex ->
+                Some ex
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
     [<Fact>]
     member _.``Due publication moments are selected without visible rows``() =
         use db = SchemaSql.applyIsolated ()

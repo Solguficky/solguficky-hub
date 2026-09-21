@@ -110,6 +110,8 @@ module Api =
         // внутреннего контракта, а не код отказа.
         | UnpublishMeetupError.Domain TitleRequiredForPublication ->
             invalidOp "unpublishing does not decide publication"
+        | UnpublishMeetupError.Domain PublicationMomentInThePast ->
+            invalidOp "unpublishing does not decide a publication moment"
         | UnpublishMeetupError.Domain TransitionNotAllowed ->
             Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot be unpublished")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место

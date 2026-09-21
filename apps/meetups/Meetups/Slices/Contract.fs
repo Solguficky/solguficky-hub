@@ -65,6 +65,48 @@ module Inbound =
         uuidV7 "material_id" value
         |> Result.map MaterialId
 
+    /// Разбор календарной даты и местного времени переехал сюда из среза расписания,
+    /// когда у него появился второй потребитель — назначение момента публикации.
+    /// Значения остаются локальными: часовой пояс применяется при интерпретации, а
+    /// не при разборе (ADR-031), поэтому ни одна из функций зоны не знает.
+    let calendarDate (field: string) (value: Meetups.V1.CalendarDate) : Result<DateOnly, InvalidRequest> =
+        if isNull (box value) then
+            Error(invalid field "is required")
+        else
+            try
+                Ok(DateOnly(value.Year, value.Month, value.Day))
+            with :? ArgumentOutOfRangeException ->
+                Error(invalid field "is not a calendar date")
+
+    let localTime (field: string) (value: Meetups.V1.LocalTime) : Result<LocalTime, InvalidRequest> =
+        if isNull (box value) then
+            Error(invalid field "is required")
+        elif
+            value.Hours < 0
+            || value.Hours > 23
+            || value.Minutes < 0
+            || value.Minutes > 59
+        then
+            Error(invalid field "must be a time of day at minute precision")
+        else
+            TimeOnly(value.Hours, value.Minutes)
+            |> LocalTime.create
+            |> Result.mapError (fun _ -> invalid field "must be a time of day at minute precision")
+
+    let localDateTime (field: string) (value: Meetups.V1.LocalDateTime) : Result<LocalDateTime, InvalidRequest> =
+        if isNull (box value) then
+            Error(invalid field "is required")
+        else
+            match calendarDate $"{field}.date" value.Date, localTime $"{field}.time" value.Time with
+            | Ok date, Ok time ->
+                Ok
+                    {
+                        Date = date
+                        Time = time
+                    }
+            | Error invalid, _
+            | _, Error invalid -> Error invalid
+
     /// Неизвестная роль отбрасывается, а не отвергается. Схема сама объявляет
     /// GLOBAL_ROLE_UNSPECIFIED значением «роль неизвестна потребителю», и неизвестная
     /// роль ничего не разрешает — отбрасывание остаётся fail-closed. Отказ по ней
@@ -192,6 +234,14 @@ module Outbound =
         // печатает смещение +00:00, а контракт требует RFC 3339 UTC с Z.
         match value.FirstPublishedAt with
         | Some at -> contract.FirstPublishedAt <- at.ToUniversalTime().UtcDateTime.ToString "o"
+        | None -> ()
+
+        // Момент отложенной публикации читается тем же правилом: назначенный момент
+        // уезжает мгновением, а в каком поясе его показать, решает вызывающая
+        // сторона. Локальная пара осталась во входе команды — там она и есть выбор
+        // человека.
+        match value.ScheduledPublishAt with
+        | Some at -> contract.ScheduledPublishAt <- at.ToUniversalTime().UtcDateTime.ToString "o"
         | None -> ()
 
         contract

@@ -845,3 +845,208 @@ let ``A successful held transition answers with a visible held snapshot`` () =
             answer.Lifecycle = Meetups.V1.MeetupLifecycle.Held
             && answer.Visibility = Meetups.V1.MeetupVisibility.Visible
         @>
+
+module private SchedulePublication =
+
+    let private at year month day hours minutes =
+        Meetups.V1.LocalDateTime(
+            Date = Meetups.V1.CalendarDate(Year = year, Month = month, Day = day),
+            Time = Meetups.V1.LocalTime(Hours = hours, Minutes = minutes)
+        )
+
+    let deps load commit : ScheduleMeetupPublication.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e7"
+            // Пояс проверяется отдельно, в тестах среза; на границе достаточно
+            // фиксированного, чтобы значение доходило до домена.
+            CommunityTimeZone = TimeZoneInfo.Utc
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer =
+        Meetups.V1.ScheduleMeetupPublicationRequest(Viewer = viewer, Id = meetupId, Moment = at 2026 10 5 16 0)
+
+    /// Момент заведомо раньше фиксированного «сейчас»: 16:00 предыдущего дня.
+    let requestPast viewer =
+        Meetups.V1.ScheduleMeetupPublicationRequest(Viewer = viewer, Id = meetupId, Moment = at 2026 9 6 16 0)
+
+module private CancelPublication =
+
+    let deps load commit : CancelMeetupPublication.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e8"
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer = Meetups.V1.CancelMeetupPublicationRequest(Viewer = viewer, Id = meetupId)
+
+[<Fact>]
+let ``Scheduling a publication is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () ->
+            ScheduleMeetupPublication.Api.handle
+                SchedulePublication.untouched
+                (SchedulePublication.request (ordinary ()))
+        )
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Scheduling a publication on a missing meetup answers NOT_FOUND`` () =
+    let missing =
+        SchedulePublication.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> ScheduleMeetupPublication.Api.handle missing (SchedulePublication.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+[<Fact>]
+let ``A request without a moment is refused as INVALID_ARGUMENT before the store`` () =
+    let request =
+        Meetups.V1.ScheduleMeetupPublicationRequest(Viewer = administrator (), Id = meetupId)
+
+    let actual =
+        codeOf (fun () -> ScheduleMeetupPublication.Api.handle SchedulePublication.untouched request)
+
+    test <@ actual = Some StatusCode.InvalidArgument @>
+
+[<Fact>]
+let ``A past moment and a published meetup are refused with different codes`` () =
+    let past =
+        SchedulePublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let published =
+        SchedulePublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let pastCode =
+        codeOf (fun () ->
+            ScheduleMeetupPublication.Api.handle past (SchedulePublication.requestPast (administrator ()))
+        )
+
+    let publishedCode =
+        codeOf (fun () ->
+            ScheduleMeetupPublication.Api.handle published (SchedulePublication.request (administrator ()))
+        )
+
+    // Значение запроса недопустимо — INVALID_ARGUMENT; состояние сходки не
+    // позволяет — FAILED_PRECONDITION. Различие объявлено в integration.md.
+    test <@ pastCode = Some StatusCode.InvalidArgument @>
+    test <@ publishedCode = Some StatusCode.FailedPrecondition @>
+
+[<Fact>]
+let ``Scheduling a publication on a cancelled meetup is refused as FAILED_PRECONDITION`` () =
+    let cancelled =
+        SchedulePublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () ->
+            ScheduleMeetupPublication.Api.handle cancelled (SchedulePublication.request (administrator ()))
+        )
+
+    test <@ actual = Some StatusCode.FailedPrecondition @>
+
+[<Fact>]
+let ``A version conflict while scheduling a publication is refused as ABORTED`` () =
+    let conflicting =
+        SchedulePublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () ->
+            ScheduleMeetupPublication.Api.handle conflicting (SchedulePublication.request (administrator ()))
+        )
+
+    test <@ actual = Some StatusCode.Aborted @>
+
+[<Fact>]
+let ``A successful scheduling answers with the moment as RFC 3339 UTC`` () =
+    let scheduled =
+        Meetup.apply (Existing Sample.titled) (MeetupPublicationScheduled Sample.later)
+        |> Meetup.toSnapshot
+
+    let deps =
+        SchedulePublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> Task.FromResult(Ok scheduled))
+
+    let answer =
+        (ScheduleMeetupPublication.Api.handle deps (SchedulePublication.request (administrator ())))
+            .GetAwaiter()
+            .GetResult()
+
+    test
+        <@
+            answer.HasScheduledPublishAt
+            && answer.ScheduledPublishAt.EndsWith "Z"
+        @>
+
+    test <@ DateTimeOffset.Parse answer.ScheduledPublishAt = Sample.later @>
+
+[<Fact>]
+let ``Cancelling a scheduled publication is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () ->
+            CancelMeetupPublication.Api.handle CancelPublication.untouched (CancelPublication.request (ordinary ()))
+        )
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Cancelling a scheduled publication on a missing meetup answers NOT_FOUND`` () =
+    let missing =
+        CancelPublication.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> CancelMeetupPublication.Api.handle missing (CancelPublication.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+/// У сходки без момента отменять нечего: команда целевая, и повтор не пишет строки
+/// журнала — Commit здесь падает при любом вызове.
+[<Fact>]
+let ``Cancelling an unscheduled meetup answers the snapshot without writing`` () =
+    let deps =
+        CancelPublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let answer =
+        (CancelMeetupPublication.Api.handle deps (CancelPublication.request (administrator ())))
+            .GetAwaiter()
+            .GetResult()
+
+    test
+        <@
+            answer.Id = meetupId
+            && not answer.HasScheduledPublishAt
+        @>
+
+[<Fact>]
+let ``A version conflict while cancelling a publication is refused as ABORTED`` () =
+    let conflicting =
+        CancelPublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.scheduled)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> CancelMeetupPublication.Api.handle conflicting (CancelPublication.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>

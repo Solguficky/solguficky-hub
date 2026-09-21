@@ -83,6 +83,41 @@ let ``Apply should raise the version by exactly one for a held transition`` () =
     test <@ (Meetup.toSnapshot held).Lifecycle = Held @>
 
 [<Fact>]
+let ``Apply should raise the version by exactly one for the publication moment`` () =
+    let scheduled =
+        Meetup.apply (Existing Sample.titled) (MeetupPublicationScheduled Sample.later)
+
+    let unscheduled = Meetup.apply (Existing scheduled) MeetupPublicationCancelled
+
+    test <@ version scheduled = version Sample.titled + 1L @>
+    test <@ version unscheduled = version scheduled + 1L @>
+
+[<Fact>]
+let ``Apply should store the scheduled publication moment in the state`` () =
+    test <@ (Meetup.toSnapshot Sample.titled).ScheduledPublishAt = None @>
+    test <@ (Meetup.toSnapshot Sample.scheduled).ScheduledPublishAt = Some Sample.later @>
+
+[<Fact>]
+let ``Apply should consume the scheduled publication moment on publication`` () =
+    // Момент забирает себе публикация: назначенное время наступило, и оставленное
+    // поле противоречило бы схеме и снимку. Раньше это обнуление стояло в SQL
+    // (PER-280), теперь оно принадлежит состоянию.
+    let published =
+        Meetup.apply (Existing Sample.scheduled) (MeetupPublished Sample.fixedNow)
+
+    test <@ (Meetup.toSnapshot published).ScheduledPublishAt = None @>
+    test <@ (Meetup.toSnapshot published).FirstPublishedAt = Some Sample.fixedNow @>
+
+[<Fact>]
+let ``Apply should clear the scheduled publication moment on cancellation`` () =
+    // Иначе отменённая сходка осталась бы с назначенной публикацией, а критерий
+    // PER-204 требует обратного.
+    let cancelled = Meetup.apply (Existing Sample.scheduled) MeetupCancelled
+
+    test <@ (Meetup.toSnapshot cancelled).ScheduledPublishAt = None @>
+    test <@ (Meetup.toSnapshot cancelled).Lifecycle = Cancelled @>
+
+[<Fact>]
 let ``Apply should leave the lifecycle planned`` () =
     // Оси независимы: публикация двигает видимость и жизненного цикла не касается.
     // Переходы обеих конечных стадий дают свои команды, и их собственный эффект
@@ -99,6 +134,8 @@ let ``Apply should reject an event decided from another state`` () =
     raises<InvalidOperationException> <@ Meetup.apply Initial change @>
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupUnpublished @>
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupRepublished @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupPublicationScheduled Sample.later) @>
+    raises<InvalidOperationException> <@ Meetup.apply Initial MeetupPublicationCancelled @>
     raises<InvalidOperationException> <@ Meetup.apply Initial MeetupCancelled @>
     raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupMaterialAttached Sample.material) @>
     raises<InvalidOperationException> <@ Meetup.apply Initial (MeetupMaterialRemoved Sample.materialId) @>

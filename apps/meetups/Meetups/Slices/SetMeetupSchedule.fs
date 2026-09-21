@@ -101,6 +101,8 @@ module Api =
         // внутреннего контракта, а не код отказа.
         | SetMeetupScheduleError.Domain TitleRequiredForPublication ->
             invalidOp "setting the schedule does not decide publication"
+        | SetMeetupScheduleError.Domain PublicationMomentInThePast ->
+            invalidOp "setting the schedule does not decide a publication moment"
         | SetMeetupScheduleError.Domain TransitionNotAllowed ->
             Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot be edited")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место
@@ -110,54 +112,9 @@ module Api =
     /// Разбор расписания живёт в срезе, а не в Contract: потребитель у него ровно
     /// один. Отказ сборки значения — INVALID_ARGUMENT, потому что несобранное
     /// расписание до агрегата не доходит и отклонённым переходом состояния не является.
+    /// Дату и местное время разбирает общий вход Contract: у них появился второй
+    /// потребитель — назначение момента публикации.
     module private Inbound =
-
-        let private calendarDate
-            (field: string)
-            (value: Meetups.V1.CalendarDate)
-            : Result<DateOnly, Contract.InvalidRequest> =
-            if isNull (box value) then
-                Error(Contract.invalid field "is required")
-            else
-                try
-                    Ok(DateOnly(value.Year, value.Month, value.Day))
-                with :? ArgumentOutOfRangeException ->
-                    Error(Contract.invalid field "is not a calendar date")
-
-        let private localTime
-            (field: string)
-            (value: Meetups.V1.LocalTime)
-            : Result<LocalTime, Contract.InvalidRequest> =
-            if isNull (box value) then
-                Error(Contract.invalid field "is required")
-            elif
-                value.Hours < 0
-                || value.Hours > 23
-                || value.Minutes < 0
-                || value.Minutes > 59
-            then
-                Error(Contract.invalid field "must be a time of day at minute precision")
-            else
-                TimeOnly(value.Hours, value.Minutes)
-                |> LocalTime.create
-                |> Result.mapError (fun _ -> Contract.invalid field "must be a time of day at minute precision")
-
-        let private localDateTime
-            (field: string)
-            (value: Meetups.V1.LocalDateTime)
-            : Result<LocalDateTime, Contract.InvalidRequest> =
-            if isNull (box value) then
-                Error(Contract.invalid field "is required")
-            else
-                match calendarDate $"{field}.date" value.Date, localTime $"{field}.time" value.Time with
-                | Ok date, Ok time ->
-                    Ok
-                        {
-                            Date = date
-                            Time = time
-                        }
-                | Error invalid, _
-                | _, Error invalid -> Error invalid
 
         let private dateValue
             (field: string)
@@ -165,15 +122,15 @@ module Api =
             : Result<DateValue, Contract.InvalidRequest> =
             match value.PrecisionCase with
             | Meetups.V1.DateValue.PrecisionOneofCase.Day ->
-                calendarDate $"{field}.day" value.Day
+                Contract.Inbound.calendarDate $"{field}.day" value.Day
                 |> Result.map Day
             | Meetups.V1.DateValue.PrecisionOneofCase.DayStart ->
-                localDateTime $"{field}.day_start" value.DayStart
+                Contract.Inbound.localDateTime $"{field}.day_start" value.DayStart
                 |> Result.map DayStart
             | Meetups.V1.DateValue.PrecisionOneofCase.Interval ->
                 match
-                    localDateTime $"{field}.interval.start" value.Interval.Start,
-                    localDateTime $"{field}.interval.end" value.Interval.End
+                    Contract.Inbound.localDateTime $"{field}.interval.start" value.Interval.Start,
+                    Contract.Inbound.localDateTime $"{field}.interval.end" value.Interval.End
                 with
                 | Ok start, Ok finish ->
                     // Перевёрнутый интервал в домене невыразим: смарт-конструктор
