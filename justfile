@@ -91,8 +91,8 @@ check-document-numbers:
     sh tools/docs/check-document-numbers.sh
     sh tools/docs/check-document-numbers-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools
@@ -203,6 +203,16 @@ community-site-api-e2e:
 # Статика docs/published плюс /api/notes — для ручного прогона страницы
 community-site-serve:
     cd apps/community-site-api && node e2e/server.mjs
+
+# --- Контракты (Protobuf) --------------------------------------------------
+#
+# Компиляция модуля целиком, без фильтров потребителей: их `buf generate`
+# парсит только свой срез, поэтому схема, не попавшая ни в один фильтр,
+# иначе не проверяется нигде. Схемы лежат в `contracts/proto/`.
+
+# Собрать все схемы contracts/proto и проверить импорты между ними
+contracts-build:
+    buf build contracts/proto
 
 # --- Meetups (F# / .NET) ---------------------------------------------------
 #

@@ -24,6 +24,7 @@ jobs:
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
+      contracts: ${{ steps.filter.outputs.contracts }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -67,6 +68,30 @@ jobs:
               - 'global.json'
               - '.editorconfig'
               - '.github/workflows/ci.yml'
+            contracts:
+              - 'contracts/proto/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+
+  # Компиляция buf-модуля целиком: `buf generate` каждого потребителя парсит
+  # только свой срез `paths`, поэтому схема, не попавшая ни в один фильтр,
+  # больше не проверяется нигде. Тот же гейт — рецепт `just contracts-build`.
+  contracts:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.contracts == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: buf build contracts/proto
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
   # уносить за собой зависимые, поэтому условие начинается с !cancelled().
