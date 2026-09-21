@@ -59,7 +59,7 @@ Subjects удалённой аукционной ветки перечислен
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `MeetupsService.CreateMeetupDraft` | `meetups.v1` в `contracts/proto/meetups/v1/meetups_service.proto` | Telegram Bot | Meetups |
+| `MeetupsService.CreateMeetupDraft` | `meetups.v1` в `contracts/proto/meetups/v1/meetups_service.proto`; типы значений — `contracts/proto/meetups/v1/meetups.proto` | Telegram Bot | Meetups |
 | `MeetupsService.ChangeMeetupAttributes` | то же | Telegram Bot | Meetups |
 | `MeetupsService.SetMeetupSchedule` | то же | Telegram Bot | Meetups |
 | `MeetupsService.PublishMeetup` | то же | Telegram Bot | Meetups |
@@ -189,6 +189,8 @@ Identity будет публиковать события о регистрац�
 Конверт сообщения: `notification_id` (UUIDv7, ключ дедупликации канала), `recipient_id` (внутренний идентификатор Identity; получатель всегда один, broadcast без получателя нет), `created_at`, `optional not_after` — момент, после которого доставлять не нужно, — и `cause`: типизированная ссылка на повод (идентификатор события Meetups или Identity, задания напоминания, команды ручной рассылки). Готового текста и `chat_id` в сообщении нет, обратных событий о доставке нет.
 
 Ветки несут данные, которых каналу хватает на отрисовку текста без вызовов в соседние сервисы и без собственной реплики: карточку сходки (идентификатор, заголовок, место, расписание, жизненный цикл, видимость), список изменившихся аспектов у изменения, идентификатор и заголовок материала, авторский текст у ручных рассылок. Реплика чужих фактов — у Notifications, а не у канала; карточка описывает состояние на момент повода, поэтому снятая с публикации сходка отрисовывается из самого сообщения. Человекочитаемого имени отправителя в контракте нет: ручные рассылки несут внутренний идентификатор, а имя — вопрос канала.
+
+Схема импортирует `meetups/v1/meetups.proto` — файл значений домена сходок, а не его сервис: карточке нужны `Schedule`, `MeetupLifecycle` и `MeetupVisibility`, и потребитель словаря уведомлений не должен получать в кодогенерацию `MeetupsService` с его запросами.
 
 Тип называет повод, а повод называет словарь Meetups или Identity: соответствие типов и поводов — таблица в [services/notifications.md](../services/notifications.md). Пустой diff поводом не является, повторная публикация не порождает второй факт «новая сходка», и словарь типов меняется через изменение контракта, а не правкой формулировок на стороне канала.
 

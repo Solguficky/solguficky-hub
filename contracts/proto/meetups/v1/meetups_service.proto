@@ -3,6 +3,7 @@ syntax = "proto3";
 package meetups.v1;
 
 import "identity/v1/roles.proto";
+import "meetups/v1/meetups.proto";
 
 service MeetupsService {
   rpc CreateMeetupDraft(CreateMeetupDraftRequest) returns (MeetupSnapshot);
@@ -149,60 +150,4 @@ message MeetupSummary {
   Schedule schedule = 4;
   MeetupLifecycle lifecycle = 5;
   MeetupVisibility visibility = 6;
-}
-
-message Schedule {
-  // Exactly one form is set. An empty oneof is not a second spelling of "no
-  // date": that is the no_date form.
-  oneof form {
-    NoDate no_date = 1;
-    DateValue tentative = 2;
-    DateValue fixed = 3;
-  }
-}
-
-message NoDate {}
-
-message DateValue {
-  oneof precision {
-    CalendarDate day = 1;
-    LocalDateTime day_start = 2;
-    LocalInterval interval = 3;
-  }
-}
-
-message CalendarDate {
-  // Local community calendar date, not a UTC instant. No timezone in this message.
-  int32 year = 1;
-  int32 month = 2;
-  int32 day = 3;
-}
-
-message LocalTime {
-  // Minute precision. Hours 0-23, minutes 0-59. Seconds are not represented.
-  int32 hours = 1;
-  int32 minutes = 2;
-}
-
-message LocalDateTime {
-  CalendarDate date = 1;
-  LocalTime time = 2;
-}
-
-message LocalInterval {
-  LocalDateTime start = 1;
-  LocalDateTime end = 2;
-}
-
-enum MeetupLifecycle {
-  MEETUP_LIFECYCLE_UNSPECIFIED = 0;
-  MEETUP_LIFECYCLE_PLANNED = 1;
-  MEETUP_LIFECYCLE_HELD = 2;
-  MEETUP_LIFECYCLE_CANCELLED = 3;
-}
-
-enum MeetupVisibility {
-  MEETUP_VISIBILITY_UNSPECIFIED = 0;
-  MEETUP_VISIBILITY_HIDDEN = 1;
-  MEETUP_VISIBILITY_VISIBLE = 2;
 }

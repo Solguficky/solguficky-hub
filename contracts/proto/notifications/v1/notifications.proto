@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package notifications.v1;
 
-import "meetups/v1/meetups_service.proto";
+import "meetups/v1/meetups.proto";
 
 // The addressed notification fact: "this person is owed this notification".
 // Notifications publishes it and its responsibility ends there; delivery is the
