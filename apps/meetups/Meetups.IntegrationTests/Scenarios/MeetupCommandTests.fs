@@ -17,6 +17,8 @@ type MeetupCommandTests() =
     let firstEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e1"
     let secondEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e2"
     let thirdEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e3"
+    let fourthEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e4"
+    let fifthEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e6"
 
     /// Успешный путь доказывает единство транзакции сам по себе: у обеих строк одна
     /// и та же `xmin`. Адаптер, разложенный на две транзакции, краснеет здесь, не
@@ -327,6 +329,88 @@ type MeetupCommandTests() =
         test <@ MeetupCommands.versionOf dsn meetupId = 2L @>
         test <@ MeetupCommands.eventsAheadOfState dsn meetupId = 0L @>
 
+    /// Цикл «опубликовать, снять, вернуть» против настоящей схемы. Миграция 004
+    /// добавила три повода в `meetup_events_type_check`, а
+    /// `meetups_visible_has_first_publication` держит пару «видима — отметка стоит»:
+    /// оба ограничения проверяет база, и строка с незнакомым поводом не запишется
+    /// вовсе. Отметка первой публикации обязана пережить весь цикл — задним числом
+    /// её не восстановить.
+    [<Fact>]
+    member _.``Unpublishing and returning a meetup keeps its first publication``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.unpublish source fourthEvent (MeetupId meetupId)
+        |> ignore
+
+        let returned = MeetupCommands.publish source fifthEvent (MeetupId meetupId)
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let axes =
+            stored
+            |> Option.map (fun snapshot -> snapshot.Visibility, snapshot.FirstPublishedAt)
+
+        let expected =
+            [
+                "meetup_created"
+                "meetup_changed"
+                "meetup_published"
+                "meetup_unpublished"
+                "meetup_republished"
+            ]
+
+        test <@ MeetupCommands.versionIn returned = Some 5L @>
+        test <@ axes = Some(Visible, Some MeetupCommands.now) @>
+        test <@ MeetupCommands.eventTypes dsn meetupId = expected @>
+
+    /// Оси независимы, и это свойство обязано пережить запись: отменённая строка
+    /// остаётся видимой. Проверяет его база — `meetups_lifecycle_check` принимает
+    /// `cancelled`, а видимость при этом не трогает ни одно ограничение, поэтому
+    /// реализация, прячущая отменённую сходку, прошла бы схему молча.
+    [<Fact>]
+    member _.``Cancelling a visible meetup leaves the stored row visible``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        let cancelled = MeetupCommands.cancel source fourthEvent (MeetupId meetupId)
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let axes =
+            stored
+            |> Option.map (fun snapshot -> snapshot.Lifecycle, snapshot.Visibility)
+
+        let types = MeetupCommands.eventTypes dsn meetupId
+
+        test <@ MeetupCommands.versionIn cancelled = Some 4L @>
+        test <@ axes = Some(Cancelled, Visible) @>
+        test <@ List.last types = "meetup_cancelled" @>
+
     /// Регистрация источника в composition root и сборка зависимостей среза: без
     /// этого теста они существуют только в расчёте на будущий диспетчер, и первая
     /// же опечатка в имени переменной окружения обнаружилась бы на живом сервисе.
@@ -357,3 +441,77 @@ type MeetupCommandTests() =
 
         test <@ MeetupCommands.versionIn created = Some 1L @>
         test <@ MeetupCommands.countEvents dsn meetupId = 1L @>
+
+    /// Редактирование после публикации (PER-196) проверяется на настоящей базе,
+    /// потому что рискует здесь не домен, а схема: UPDATE идёт по видимой строке
+    /// под `meetups_visible_has_first_publication`, и отметка первой публикации
+    /// обязана пережить обе команды изменения. Мок адаптера этого не опроверг бы.
+    [<Fact>]
+    member _.``Editing a published meetup keeps it visible and advances the version``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        // Атрибуты заменяются целиком и отличаются от опубликованных: повтор тех же
+        // значений проверял бы только запись, но не саму правку сведений.
+        let renamed: Meetups.Slices.ChangeMeetupAttributes.Command =
+            {
+                Id = MeetupId meetupId
+                Viewer = MeetupCommands.administrator
+                Attributes =
+                    { MeetupCommands.attributes with
+                        Title = "F# after hours, второй заход"
+                        Venue = "Тбилиси, Impact Hub"
+                    }
+            }
+
+        Meetups.Slices.ChangeMeetupAttributes.execute (MeetupCommands.changeDeps source fourthEvent) renamed
+        |> MeetupCommands.run
+        |> ignore
+
+        let rescheduled =
+            MeetupCommands.setSchedule source fifthEvent (MeetupId meetupId) (Fixed(Day(DateOnly(2026, 11, 14))))
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let actual =
+            stored
+            |> Option.map (fun snapshot ->
+                snapshot.Title, snapshot.Venue, snapshot.Schedule, snapshot.Visibility, snapshot.FirstPublishedAt
+            )
+
+        test
+            <@
+                actual = Some(
+                    "F# after hours, второй заход",
+                    "Тбилиси, Impact Hub",
+                    Fixed(Day(DateOnly(2026, 11, 14))),
+                    Visible,
+                    Some MeetupCommands.now
+                )
+            @>
+
+        test <@ MeetupCommands.versionIn rescheduled = Some 5L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 5L @>
+
+        test
+            <@
+                MeetupCommands.journalIds dsn meetupId = [
+                    firstEvent
+                    secondEvent
+                    thirdEvent
+                    fourthEvent
+                    fifthEvent
+                ]
+            @>

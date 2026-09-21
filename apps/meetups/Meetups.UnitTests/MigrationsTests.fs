@@ -38,6 +38,17 @@ let ``The second migration turns the journal into a dispatchable queue`` () =
         @>
 
 [<Fact>]
+let ``The fourth migration admits every state transition event`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 3).Sql
+
+    test
+        <@
+            sql.Contains("meetup_unpublished")
+            && sql.Contains("meetup_republished")
+            && sql.Contains("meetup_cancelled")
+        @>
+
+[<Fact>]
 let ``A postgres URI becomes a keyword connection string`` () =
     let cs =
         Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"

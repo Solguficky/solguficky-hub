@@ -38,6 +38,8 @@ type HiddenMeetupReadTests() =
                     "ChangeMeetupAttributes"
                     "SetMeetupSchedule"
                     "PublishMeetup"
+                    "UnpublishMeetup"
+                    "CancelMeetup"
                 ]
 
         let contractReadOperations =

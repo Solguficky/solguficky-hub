@@ -375,3 +375,177 @@ let ``An impossible calendar date is refused as INVALID_ARGUMENT`` () =
 
     test
         <@ codeOf (fun () -> SetMeetupSchedule.Api.handle Schedule.untouched request) = Some StatusCode.InvalidArgument @>
+
+/// Два среза переходов PER-197. Их отказы проверяются здесь, а не считаются такими
+/// же, как у публикации: таблица кодов у каждого среза своя, и совпадение сегодня —
+/// совпадение, а не абстракция. `TitleRequiredForPublication` в обоих недостижим и
+/// объявлен нарушением внутреннего контракта, поэтому кода у него нет и здесь.
+module private Unpublish =
+
+    let deps load commit : UnpublishMeetup.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e5"
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer = Meetups.V1.UnpublishMeetupRequest(Viewer = viewer, Id = meetupId)
+
+module private Cancel =
+
+    let deps load commit : CancelMeetup.Deps =
+        {
+            Load = load
+            Commit = commit
+            Now = fun () -> Sample.fixedNow
+            NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e6"
+        }
+
+    let untouched =
+        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+
+    let request viewer = Meetups.V1.CancelMeetupRequest(Viewer = viewer, Id = meetupId)
+
+[<Fact>]
+let ``Unpublishing is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () -> UnpublishMeetup.Api.handle Unpublish.untouched (Unpublish.request (ordinary ())))
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Unpublishing a missing meetup answers NOT_FOUND`` () =
+    let missing =
+        Unpublish.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> UnpublishMeetup.Api.handle missing (Unpublish.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+/// Отмена закрывает снятие: отменённую видимую сходку прятать нельзя, иначе
+/// извещение об отмене исчезало бы навсегда. Тест идёт через настоящий Api.handle,
+/// а не через decideUnpublish: неполный match в отображении остаётся предупреждением
+/// FS0025, и увидеть пропущенную ветку можно только здесь.
+[<Fact>]
+let ``Unpublishing a cancelled visible meetup is refused as FAILED_PRECONDITION`` () =
+    let cancelled =
+        Unpublish.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelledVisible)))
+            (fun _ _ _ -> unreachable "Commit")
+
+    let transition =
+        codeOf (fun () -> UnpublishMeetup.Api.handle cancelled (Unpublish.request (administrator ())))
+
+    let permission =
+        codeOf (fun () -> UnpublishMeetup.Api.handle Unpublish.untouched (Unpublish.request (ordinary ())))
+
+    test
+        <@
+            transition = Some StatusCode.FailedPrecondition
+            && permission = Some StatusCode.PermissionDenied
+        @>
+
+[<Fact>]
+let ``A version conflict while unpublishing is refused as ABORTED`` () =
+    let conflicting =
+        Unpublish.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> UnpublishMeetup.Api.handle conflicting (Unpublish.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>
+
+/// Снятая сходка отвечает скрытой, но с сохранённой отметкой: именно эта пара
+/// отличает возврат от первого показа, и наружу она видна только здесь.
+[<Fact>]
+let ``A successful unpublication answers with the hidden snapshot`` () =
+    let hidden =
+        Meetup.apply (Existing Sample.published) MeetupUnpublished
+        |> Meetup.toSnapshot
+
+    let deps =
+        Unpublish.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ -> Task.FromResult(Ok hidden))
+
+    let answer =
+        (UnpublishMeetup.Api.handle deps (Unpublish.request (administrator ()))).GetAwaiter().GetResult()
+
+    test
+        <@
+            answer.Visibility = Meetups.V1.MeetupVisibility.Hidden
+            && answer.HasFirstPublishedAt
+        @>
+
+[<Fact>]
+let ``Cancelling is refused for an ordinary viewer before the store`` () =
+    let actual =
+        codeOf (fun () -> CancelMeetup.Api.handle Cancel.untouched (Cancel.request (ordinary ())))
+
+    test <@ actual = Some StatusCode.PermissionDenied @>
+
+[<Fact>]
+let ``Cancelling a missing meetup answers NOT_FOUND`` () =
+    let missing =
+        Cancel.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> CancelMeetup.Api.handle missing (Cancel.request (administrator ())))
+
+    test <@ actual = Some StatusCode.NotFound @>
+
+/// Единственный отклонённый переход оси жизненного цикла: состоявшуюся сходку
+/// отменять уже поздно.
+[<Fact>]
+let ``Cancelling a meetup that already took place is refused as FAILED_PRECONDITION`` () =
+    let held =
+        Cancel.deps (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.held))) (fun _ _ _ -> unreachable "Commit")
+
+    let transition =
+        codeOf (fun () -> CancelMeetup.Api.handle held (Cancel.request (administrator ())))
+
+    let permission =
+        codeOf (fun () -> CancelMeetup.Api.handle Cancel.untouched (Cancel.request (ordinary ())))
+
+    test
+        <@
+            transition = Some StatusCode.FailedPrecondition
+            && permission = Some StatusCode.PermissionDenied
+        @>
+
+[<Fact>]
+let ``A version conflict while cancelling is refused as ABORTED`` () =
+    let conflicting =
+        Cancel.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> CancelMeetup.Api.handle conflicting (Cancel.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>
+
+/// Отменённая видимая сходка остаётся видимой и на границе: ось видимости отмена не
+/// трогает, и именно так сообщество узнаёт об отмене.
+[<Fact>]
+let ``A successful cancellation answers with a visible cancelled snapshot`` () =
+    let deps =
+        Cancel.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ -> Task.FromResult(Ok(Meetup.toSnapshot Sample.cancelledVisible)))
+
+    let answer =
+        (CancelMeetup.Api.handle deps (Cancel.request (administrator ()))).GetAwaiter().GetResult()
+
+    test
+        <@
+            answer.Lifecycle = Meetups.V1.MeetupLifecycle.Cancelled
+            && answer.Visibility = Meetups.V1.MeetupVisibility.Visible
+        @>

@@ -58,8 +58,8 @@ let ``When a cancelled meetup has no title expect the refusal to name the transi
 
 /// Отмена закрывает переход к видимости, а не команду как таковую: у уже видимой
 /// сходки переходить некуда, и I5 выигрывает. Тест закрепляет именно приоритет —
-/// без него порядок веток остался бы случайным, а поведение обнаружилось бы только
-/// после того, как соседний лист заведёт отмену, не скрывающую сходку.
+/// без него порядок веток остался бы случайным, а образец недостижимым: отменённая
+/// видимая сходка существует ровно потому, что отмена оси видимости не трогает.
 [<Fact>]
 let ``When a cancelled meetup is already visible expect no event rather than a refusal`` () =
     test <@ Meetup.decidePublish Sample.later (Existing Sample.cancelledVisible) = Ok None @>
@@ -87,3 +87,27 @@ let ``When the publication is applied twice expect the first publication mark to
         |> Meetup.toSnapshot
 
     test <@ republished.FirstPublishedAt = Some Sample.fixedNow @>
+
+/// Возврат после снятия — свой повод, а не второй `MeetupPublished`. Отметка первой
+/// публикации уже стоит, и событие обязано говорить, что сходка вернулась, а не что
+/// её показали впервые: потребитель журнала различает эти два факта.
+[<Fact>]
+let ``When an unpublished meetup is published again expect a MeetupRepublished event`` () =
+    let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
+
+    test <@ Meetup.decidePublish Sample.later (Existing hidden) = Ok(Some MeetupRepublished) @>
+
+/// I6: отметка первой публикации ставится один раз, и возврат её не переписывает.
+/// Иначе «когда сходку впервые показали сообществу» стало бы временем последнего
+/// возврата, а восстановить настоящее значение было бы неоткуда.
+[<Fact>]
+let ``When the return is applied expect the first publication mark to survive`` () =
+    let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
+
+    let snapshot =
+        Meetup.apply (Existing hidden) MeetupRepublished
+        |> Meetup.toSnapshot
+
+    let actual = snapshot.Visibility, snapshot.FirstPublishedAt
+
+    test <@ actual = (Visible, Some Sample.fixedNow) @>

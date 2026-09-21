@@ -48,3 +48,39 @@ let ``When the schedule is cleared to no date expect the change to be accepted``
         |> Meetup.toSnapshot
 
     test <@ cleared.Schedule = NoDate @>
+
+/// Отмена закрывает и вторую команду редактирования: расписание отменённой сходки
+/// больше ничего не описывает.
+[<Fact>]
+let ``When the meetup is cancelled expect the schedule change is refused`` () =
+    let decision = Meetup.decideSetSchedule NoDate (Existing Sample.cancelled)
+
+    test <@ decision = Error TransitionNotAllowed @>
+
+[<Fact>]
+let ``When a published meetup is rescheduled expect the change to be accepted`` () =
+    // Редактирование после публикации поддержано намеренно (PER-196), а не
+    // разрешено по недосмотру. Отказы этой команде даёт жизненный цикл — отмена
+    // закрывает обе команды редактирования, — а ось видимости в решении не
+    // участвует вовсе, поэтому видимая сходка правится так же, как черновик.
+    let decision =
+        Meetup.decideSetSchedule (Tentative Sample.day) (Existing Sample.published)
+
+    test <@ decision = Ok(MeetupChanged(ScheduleChanged(Tentative Sample.day))) @>
+
+[<Fact>]
+let ``When a published meetup is rescheduled expect both axes and the publication mark untouched`` () =
+    // Проверяется на опубликованной сходке с уже заданным расписанием: у скрытой
+    // видимость и отметка первой публикации совпадают со значениями по умолчанию,
+    // и тест зеленел бы на реализации, которая сбрасывает их при переносе.
+    let scheduled =
+        Meetup.apply (Existing Sample.published) (MeetupChanged(ScheduleChanged(Fixed Sample.day)))
+
+    let moved =
+        Meetup.apply (Existing scheduled) (MeetupChanged(ScheduleChanged(Tentative Sample.day)))
+        |> Meetup.toSnapshot
+
+    let actual =
+        moved.Schedule, moved.Visibility, moved.Lifecycle, moved.FirstPublishedAt
+
+    test <@ actual = (Tentative Sample.day, Visible, Planned, Some Sample.fixedNow) @>

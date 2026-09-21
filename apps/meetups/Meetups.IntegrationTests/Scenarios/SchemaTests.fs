@@ -604,7 +604,7 @@ type SchemaTests() =
         let secondPosition = secondTransaction.Insert(secondMeetup, secondEvent)
         secondTransaction.Commit()
 
-        let dispatched = DispatchScenario.markPendingDispatched dsn
+        let dispatched = DispatchScenario.simulateDispatch dsn
         firstTransaction.Commit()
 
         let missedByHighWater = DispatchScenario.eventsAfter dsn secondPosition
@@ -630,7 +630,7 @@ type SchemaTests() =
 
         let before = DispatchScenario.readRecord dsn eventId
         let markBefore = DispatchScenario.readDispatchMark dsn eventId
-        let dispatched = DispatchScenario.markPendingDispatched dsn
+        let dispatched = DispatchScenario.simulateDispatch dsn
         let after = DispatchScenario.readRecord dsn eventId
         let markAfter = DispatchScenario.readDispatchMark dsn eventId
 

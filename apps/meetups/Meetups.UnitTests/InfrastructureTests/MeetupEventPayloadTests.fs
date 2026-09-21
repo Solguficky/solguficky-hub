@@ -26,12 +26,18 @@ let ``The event type names the occasion the schema accepts`` () =
         MeetupEventPayload.eventType (MeetupChanged(AttributesChanged Sample.attributes))
 
     let published = MeetupEventPayload.eventType (MeetupPublished Sample.fixedNow)
+    let unpublished = MeetupEventPayload.eventType MeetupUnpublished
+    let republished = MeetupEventPayload.eventType MeetupRepublished
+    let cancelled = MeetupEventPayload.eventType MeetupCancelled
 
     test
         <@
             created = "meetup_created"
             && changed = "meetup_changed"
             && published = "meetup_published"
+            && unpublished = "meetup_unpublished"
+            && republished = "meetup_republished"
+            && cancelled = "meetup_cancelled"
         @>
 
 [<Fact>]
