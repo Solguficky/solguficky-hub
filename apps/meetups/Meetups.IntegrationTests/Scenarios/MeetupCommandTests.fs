@@ -17,6 +17,8 @@ type MeetupCommandTests() =
     let firstEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e1"
     let secondEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e2"
     let thirdEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e3"
+    let fourthEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e4"
+    let fifthEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e6"
 
     /// Успешный путь доказывает единство транзакции сам по себе: у обеих строк одна
     /// и та же `xmin`. Адаптер, разложенный на две транзакции, краснеет здесь, не
@@ -326,6 +328,88 @@ type MeetupCommandTests() =
 
         test <@ MeetupCommands.versionOf dsn meetupId = 2L @>
         test <@ MeetupCommands.eventsAheadOfState dsn meetupId = 0L @>
+
+    /// Цикл «опубликовать, снять, вернуть» против настоящей схемы. Миграция 004
+    /// добавила три повода в `meetup_events_type_check`, а
+    /// `meetups_visible_has_first_publication` держит пару «видима — отметка стоит»:
+    /// оба ограничения проверяет база, и строка с незнакомым поводом не запишется
+    /// вовсе. Отметка первой публикации обязана пережить весь цикл — задним числом
+    /// её не восстановить.
+    [<Fact>]
+    member _.``Unpublishing and returning a meetup keeps its first publication``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.unpublish source fourthEvent (MeetupId meetupId)
+        |> ignore
+
+        let returned = MeetupCommands.publish source fifthEvent (MeetupId meetupId)
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let axes =
+            stored
+            |> Option.map (fun snapshot -> snapshot.Visibility, snapshot.FirstPublishedAt)
+
+        let expected =
+            [
+                "meetup_created"
+                "meetup_changed"
+                "meetup_published"
+                "meetup_unpublished"
+                "meetup_republished"
+            ]
+
+        test <@ MeetupCommands.versionIn returned = Some 5L @>
+        test <@ axes = Some(Visible, Some MeetupCommands.now) @>
+        test <@ MeetupCommands.eventTypes dsn meetupId = expected @>
+
+    /// Оси независимы, и это свойство обязано пережить запись: отменённая строка
+    /// остаётся видимой. Проверяет его база — `meetups_lifecycle_check` принимает
+    /// `cancelled`, а видимость при этом не трогает ни одно ограничение, поэтому
+    /// реализация, прячущая отменённую сходку, прошла бы схему молча.
+    [<Fact>]
+    member _.``Cancelling a visible meetup leaves the stored row visible``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
+        MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        let cancelled = MeetupCommands.cancel source fourthEvent (MeetupId meetupId)
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let axes =
+            stored
+            |> Option.map (fun snapshot -> snapshot.Lifecycle, snapshot.Visibility)
+
+        let types = MeetupCommands.eventTypes dsn meetupId
+
+        test <@ MeetupCommands.versionIn cancelled = Some 4L @>
+        test <@ axes = Some(Cancelled, Visible) @>
+        test <@ List.last types = "meetup_cancelled" @>
 
     /// Регистрация источника в composition root и сборка зависимостей среза: без
     /// этого теста они существуют только в расчёте на будущий диспетчер, и первая

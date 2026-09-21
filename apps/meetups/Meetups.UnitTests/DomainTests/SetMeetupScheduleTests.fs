@@ -48,3 +48,11 @@ let ``When the schedule is cleared to no date expect the change to be accepted``
         |> Meetup.toSnapshot
 
     test <@ cleared.Schedule = NoDate @>
+
+/// Отмена закрывает и вторую команду редактирования: расписание отменённой сходки
+/// больше ничего не описывает.
+[<Fact>]
+let ``When the meetup is cancelled expect the schedule change is refused`` () =
+    let decision = Meetup.decideSetSchedule NoDate (Existing Sample.cancelled)
+
+    test <@ decision = Error TransitionNotAllowed @>
