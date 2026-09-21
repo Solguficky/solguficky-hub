@@ -29,13 +29,13 @@ Meetups/
   Slices/CreateMeetupDraft.fs         шесть сценариев записи: вход, отказы,
   Slices/ChangeMeetupAttributes.fs    зависимости, оркестрация, сборка зависимостей
   Slices/SetMeetupSchedule.fs         из контейнера и своя транспортная граница
-  Slices/PublishMeetup.fs            публикация и возврат после снятия
-  Slices/UnpublishMeetup.fs          снятие с публикации
-  Slices/CancelMeetup.fs             необратимая отмена
+  Slices/PublishMeetup.fs
+  Slices/UnpublishMeetup.fs
+  Slices/CancelMeetup.fs
   Slices/ListVisibleMeetups.fs        список через общий путь чтения
   Slices/GetMeetup.fs                 карточка через тот же путь чтения
   Observability/BoundaryLog.fs        интерцептор каркаса лога
-  Transport/MeetupsGrpcService.fs     диспетчер шести операций
+  Transport/MeetupsGrpcService.fs     диспетчер девяти операций
   Host.fs                             composition root
   Program.fs                          точка входа; применяет миграции
 ```
