@@ -13,6 +13,8 @@ type Command =
     {
         Id: MeetupId
         Viewer: Viewer
+        /// Версия показанного снимка, из которого принято решение (PER-78).
+        ExpectedVersion: int64
         Attributes: MeetupAttributes
     }
 
@@ -29,6 +31,7 @@ type Deps =
         Load: MeetupId -> Task<MeetupSnapshot option>
         Commit:
             MeetupStore.EventEnvelope
+                -> int64 option
                 -> MeetupState
                 -> MeetupEvent
                 -> Task<Result<MeetupSnapshot, MeetupStore.VersionConflict>>
@@ -59,9 +62,14 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Change
                         OccurredAt = deps.Now()
                     }
 
-                match! deps.Commit envelope state event with
+                match! deps.Commit envelope (Some command.ExpectedVersion) state event with
                 | Ok snapshot -> return Ok snapshot
-                | Error MeetupStore.VersionConflict -> return Error ChangeMeetupAttributesError.Conflict
+                // Расхождение версий ещё не конфликт: PER-78 велит перечитать
+                // состояние и различить безопасный повтор от настоящего конфликта.
+                | Error MeetupStore.VersionConflict ->
+                    match! SafeRetry.discriminate deps.Load event command.Id with
+                    | Some snapshot -> return Ok snapshot
+                    | None -> return Error ChangeMeetupAttributesError.Conflict
     }
 
 /// Composition root среза: здесь заканчивается DI. Ниже живут только функции и
@@ -119,12 +127,17 @@ module Api =
     let private toCommand
         (request: Meetups.V1.ChangeMeetupAttributesRequest)
         : Result<Command, Contract.InvalidRequest> =
-        match Contract.Inbound.viewer request.Viewer, Contract.Inbound.meetupId request.Id with
-        | Ok viewer, Ok id ->
+        match
+            Contract.Inbound.viewer request.Viewer,
+            Contract.Inbound.meetupId request.Id,
+            Contract.Inbound.expectedVersion request.ExpectedVersion
+        with
+        | Ok viewer, Ok id, Ok expectedVersion ->
             Ok
                 {
                     Id = id
                     Viewer = viewer
+                    ExpectedVersion = expectedVersion
                     Attributes =
                         {
                             Title = request.Title
@@ -134,8 +147,9 @@ module Api =
                             CalendarLink = request.CalendarLink
                         }
                 }
-        | Error invalid, _
-        | _, Error invalid -> Error invalid
+        | Error invalid, _, _
+        | _, Error invalid, _
+        | _, _, Error invalid -> Error invalid
 
     let handle (deps: Deps) (request: Meetups.V1.ChangeMeetupAttributesRequest) : Task<Meetups.V1.MeetupSnapshot> =
         task {

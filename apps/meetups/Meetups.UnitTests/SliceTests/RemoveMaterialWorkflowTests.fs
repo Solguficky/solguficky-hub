@@ -16,7 +16,7 @@ let private eventId = Guid.Parse "0199c0de-0000-7000-8000-0000000000e8"
 let private stub: Deps =
     {
         Load = fun _ -> failwith "Load is not expected in this test"
-        Commit = fun _ _ _ -> failwith "Commit is not expected in this test"
+        Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.later
         NewEventId = fun () -> eventId
     }
@@ -28,6 +28,7 @@ let private run (viewer: Viewer) (deps: Deps) =
             Id = Sample.meetupId
             MaterialId = Sample.materialId
             Viewer = viewer
+            ExpectedVersion = Sample.expectedVersion
         }
     |> Async.AwaitTask
     |> Async.RunSynchronously
@@ -40,8 +41,8 @@ let private loading (snapshot: MeetupSnapshot option) (deps: Deps) =
 let private recording (written: ResizeArray<_>) (deps: Deps) =
     { deps with
         Commit =
-            fun envelope state event ->
-                written.Add(envelope, state, event)
+            fun envelope expectedVersion state event ->
+                written.Add(envelope, expectedVersion, state, event)
 
                 Meetup.apply state event
                 |> Meetup.toSnapshot
@@ -59,7 +60,7 @@ let ``A material is removed and written as one event`` () =
         |> recording written
         |> run Sample.administrator
 
-    let envelope, state, event = written[0]
+    let envelope, _, state, event = written[0]
 
     test <@ written.Count = 1 @>
     test <@ state = Existing Sample.withMaterial @>
@@ -111,7 +112,7 @@ let ``A version conflict from the store becomes a rejected command`` () =
     let conflicting =
         { stub with
             Load = fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.withMaterial))
-            Commit = fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict)
+            Commit = fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict)
         }
 
     test <@ run Sample.administrator conflicting = Error RemoveMaterialError.Conflict @>

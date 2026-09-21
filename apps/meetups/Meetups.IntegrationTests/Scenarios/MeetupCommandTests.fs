@@ -1,6 +1,7 @@
 namespace Meetups.IntegrationTests.Scenarios
 
 open System
+open System.Threading
 open System.Threading.Tasks
 open Meetups.Domain
 open Meetups.Infrastructure
@@ -69,9 +70,10 @@ type MeetupCommandTests() =
         test <@ MeetupCommands.versionOf dsn meetupId = 1L @>
         test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
 
-    /// Две команды, принятые из одной и той же версии. Конкуренция здесь вызвана
-    /// устаревшим чтением, а не одновременностью по часам, поэтому тест полностью
-    /// последователен и не может замигать.
+    /// Две команды, принятые из одной и той же версии: первая записывает своё
+    /// изменение, вторая несёт ту же ожидаемую версию, но другое целевое состояние.
+    /// Конкуренция здесь вызвана устаревшей версией, а не одновременностью по часам,
+    /// поэтому тест полностью последователен и не может замигать.
     [<Fact>]
     member _.``Of two commands decided from one version the second is rejected``() =
         use db = SchemaSql.applyIsolated ()
@@ -81,35 +83,166 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
-        let stale =
-            MeetupStore.load source (MeetupId meetupId)
-            |> MeetupCommands.run
-
-        let staleDeps eventId : Meetups.Slices.ChangeMeetupAttributes.Deps =
-            { MeetupCommands.changeDeps source eventId with
-                Load = fun _ -> Task.FromResult stale
-            }
-
-        let command: Meetups.Slices.ChangeMeetupAttributes.Command =
+        let fromOneVersion (title: string) : Meetups.Slices.ChangeMeetupAttributes.Command =
             {
                 Id = MeetupId meetupId
                 Viewer = MeetupCommands.administrator
-                Attributes = MeetupCommands.attributes
+                ExpectedVersion = 1L
+                Attributes =
+                    { MeetupCommands.attributes with
+                        Title = title
+                    }
             }
 
         let winner =
-            Meetups.Slices.ChangeMeetupAttributes.execute (staleDeps secondEvent) command
+            Meetups.Slices.ChangeMeetupAttributes.execute
+                (MeetupCommands.changeDeps source secondEvent)
+                (fromOneVersion "F# после работы")
             |> MeetupCommands.run
 
         let loser =
-            Meetups.Slices.ChangeMeetupAttributes.execute (staleDeps thirdEvent) command
+            Meetups.Slices.ChangeMeetupAttributes.execute
+                (MeetupCommands.changeDeps source thirdEvent)
+                (fromOneVersion "F# по-тбилисски")
             |> MeetupCommands.run
 
         test <@ MeetupCommands.versionIn winner = Some 2L @>
         test <@ loser = Error Meetups.Slices.ChangeMeetupAttributes.ChangeMeetupAttributesError.Conflict @>
-        // Проигравшая команда не оставила следа: ни версии 3, ни третьего события.
+        // Проигравшая команда не оставила следа: ни версии 3, ни третьего события,
+        // ни своего целевого состояния в строке.
         test <@ MeetupCommands.versionOf dsn meetupId = 2L @>
         test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+            |> Option.map (fun snapshot -> snapshot.Title)
+
+        test <@ stored = Some "F# после работы" @>
+
+    /// Второй наблюдаемый сценарий PER-78: повтор уже применённого целевого
+    /// состояния со старой версией — безопасный повтор, а не ошибка. Событие не
+    /// пишется, а ответом уходит текущий снимок, поэтому потерянный успешный ответ
+    /// не превращается в отказ.
+    [<Fact>]
+    member _.``A repeat of the same target from a stale version is a safe retry``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        let sameTarget: Meetups.Slices.ChangeMeetupAttributes.Command =
+            {
+                Id = MeetupId meetupId
+                Viewer = MeetupCommands.administrator
+                ExpectedVersion = 1L
+                Attributes = MeetupCommands.attributes
+            }
+
+        let first =
+            Meetups.Slices.ChangeMeetupAttributes.execute (MeetupCommands.changeDeps source secondEvent) sameTarget
+            |> MeetupCommands.run
+
+        let repeat =
+            Meetups.Slices.ChangeMeetupAttributes.execute (MeetupCommands.changeDeps source thirdEvent) sameTarget
+            |> MeetupCommands.run
+
+        test <@ MeetupCommands.versionIn first = Some 2L @>
+        test <@ MeetupCommands.versionIn repeat = Some 2L @>
+        // Ни третьей версии, ни третьего события: повтор не записал ничего.
+        test <@ MeetupCommands.versionOf dsn meetupId = 2L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+
+    /// Два одновременных изменения одной сходки — настоящая гонка, а не устаревшее
+    /// чтение: барьер стоит между чтением и записью, и обе команды приходят в
+    /// предикат с одной версией, как два администратора в одну секунду. Исход не
+    /// зависит от того, кто первый, поэтому утверждения симметричны: ровно один
+    /// успех, ровно один конфликт, ровно одна записанная правка.
+    [<Fact>]
+    member _.``Two simultaneous changes leave one winner and one conflict``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        let barrier = new Barrier(2)
+
+        // Первое чтение каждой команды доходит до барьера, перечитывание после
+        // расхождения — нет: иначе проигравший ждал бы сигнала, которого не будет.
+        let depsAtTheBarrier (eventId: Guid) : Meetups.Slices.ChangeMeetupAttributes.Deps =
+            let deps = MeetupCommands.changeDeps source eventId
+            let mutable waiting = false
+
+            { deps with
+                Load =
+                    fun id ->
+                        task {
+                            let! loaded = deps.Load id
+
+                            if not waiting then
+                                waiting <- true
+                                barrier.SignalAndWait 15000 |> ignore
+
+                            return loaded
+                        }
+            }
+
+        let decidedFrom (title: string) : Meetups.Slices.ChangeMeetupAttributes.Command =
+            {
+                Id = MeetupId meetupId
+                Viewer = MeetupCommands.administrator
+                ExpectedVersion = 1L
+                Attributes =
+                    { MeetupCommands.attributes with
+                        Title = title
+                    }
+            }
+
+        let start (eventId: Guid) (title: string) =
+            Task.Run(fun () ->
+                Meetups.Slices.ChangeMeetupAttributes.execute (depsAtTheBarrier eventId) (decidedFrom title)
+                |> MeetupCommands.run
+            )
+
+        let first = start secondEvent "F# после работы"
+        let second = start thirdEvent "F# по-тбилисски"
+
+        first.Wait()
+        second.Wait()
+
+        let outcomes = [ first.Result; second.Result ]
+
+        let succeeded =
+            outcomes
+            |> List.filter (fun outcome -> outcome |> Result.isOk)
+
+        let conflicted =
+            outcomes
+            |> List.filter (fun outcome ->
+                outcome = Error Meetups.Slices.ChangeMeetupAttributes.ChangeMeetupAttributesError.Conflict
+            )
+
+        test <@ List.length succeeded = 1 @>
+        test <@ List.length conflicted = 1 @>
+        test <@ MeetupCommands.versionOf dsn meetupId = 2L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+
+        // В строке осталось намерение победителя, а проигравший получил отказ, а не
+        // тихую перезапись: состояние и журнал говорят об одной правке.
+        let stored =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+            |> Option.map (fun snapshot -> snapshot.Title)
+
+        test
+            <@
+                stored = Some "F# после работы"
+                || stored = Some "F# по-тбилисски"
+            @>
 
     [<Fact>]
     member _.``Repeating the create keeps one meetup and one event``() =
@@ -657,6 +790,7 @@ type MeetupCommandTests() =
             {
                 Id = MeetupId meetupId
                 Viewer = MeetupCommands.administrator
+                ExpectedVersion = MeetupCommands.expectedVersionOf source (MeetupId meetupId)
                 Attributes =
                     { MeetupCommands.attributes with
                         Title = "F# after hours, второй заход"

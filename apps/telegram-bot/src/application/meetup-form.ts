@@ -8,6 +8,7 @@ import type {
   ExecuteRequest,
   ExecuteResult,
   FormField,
+  MeetupStateAction,
   Person,
 } from "./types.js";
 
@@ -38,15 +39,11 @@ export function createMeetupForm(meetups: Meetups) {
       case "set-meetup-field":
       case "update-meetup-field": {
         const editing = request.intent === "update-meetup-field";
-        const current = await meetups.get(
-          request.identity,
-          request.meetupId,
-          rpcMeta(request),
-        );
-        if (current.kind === "not-found") {
-          return { kind: "dependency-rejected", reason: "unavailable" };
-        }
-        if (current.kind !== "ok") return failure(current);
+        // Решение принимается по снимку, прочитанному здесь же, и он же едет
+        // обратно как `expected_version`: команда, собранная по устаревшему
+        // снимку, получает отказ, а не тихую перезапись чужой правки (PER-78).
+        const current = await currentSnapshot(meetups, request);
+        if (current.kind === "rejected") return current.result;
         if (editing && current.meetup.lifecycle === "cancelled") {
           return {
             kind: "edit-unavailable",
@@ -67,7 +64,7 @@ export function createMeetupForm(meetups: Meetups) {
           }
           const scheduled = await meetups.setSchedule(
             request.identity,
-            request.meetupId,
+            current.meetup,
             schedule,
             rpcMeta(request),
           );
@@ -78,6 +75,13 @@ export function createMeetupForm(meetups: Meetups) {
               scheduled.message,
               editing,
             );
+          }
+          if (scheduled.kind === "conflict") {
+            return conflict(meetups, request, {
+              field: request.field,
+              input: request.value,
+              ...(editing ? { editing } : {}),
+            });
           }
           if (editing) {
             return scheduled.kind === "ok"
@@ -106,6 +110,13 @@ export function createMeetupForm(meetups: Meetups) {
             editing,
           );
         }
+        if (updated.kind === "conflict") {
+          return conflict(meetups, request, {
+            field: request.field,
+            input: request.value,
+            ...(editing ? { editing } : {}),
+          });
+        }
         if (editing) {
           return updated.kind === "ok"
             ? { kind: "meetup-updated", meetup: updated.meetup }
@@ -113,14 +124,19 @@ export function createMeetupForm(meetups: Meetups) {
         }
         return map(updated, next);
       }
-      case "publish-meetup":
-        return mapPublished(
-          await meetups.publish(
-            request.identity,
-            request.meetupId,
-            rpcMeta(request),
-          ),
+      case "publish-meetup": {
+        const current = await currentSnapshot(meetups, request);
+        if (current.kind === "rejected") return current.result;
+        const published = await meetups.publish(
+          request.identity,
+          current.meetup,
+          rpcMeta(request),
         );
+        if (published.kind === "conflict") {
+          return conflict(meetups, request);
+        }
+        return mapPublished(published);
+      }
       case "change-meetup-state": {
         const current = await meetups.get(
           request.identity,
@@ -146,18 +162,24 @@ export function createMeetupForm(meetups: Meetups) {
             meetup: current.meetup,
           };
         }
+        // Версия читается тем же снимком, что и решение о повторе выше: команда
+        // изменения состояния несёт `expected_version` наравне с остальными
+        // (PER-78), и конфликт с ней обрабатывается тем же путём, что и у формы.
         const changed =
           request.action === "unpublish"
             ? await meetups.unpublish(
                 request.identity,
-                request.meetupId,
+                current.meetup,
                 rpcMeta(request),
               )
             : await meetups.cancel(
                 request.identity,
-                request.meetupId,
+                current.meetup,
                 rpcMeta(request),
               );
+        if (changed.kind === "conflict") {
+          return conflict(meetups, request, { action: request.action });
+        }
         return changed.kind === "ok"
           ? {
               kind: "meetup-state-changed",
@@ -171,6 +193,63 @@ export function createMeetupForm(meetups: Meetups) {
         return { kind: "rejected", reason: String(_exhaustive) };
       }
     }
+  };
+}
+
+type FormRequest = Extract<
+  ExecuteRequest,
+  {
+    intent:
+      | "set-meetup-field"
+      | "update-meetup-field"
+      | "publish-meetup"
+      | "change-meetup-state";
+  }
+>;
+
+/// Снимок, по которому принимается решение, или готовый отказ. Чтение одно на
+/// команду: тем же снимком собирается целевое состояние и берётся версия.
+async function currentSnapshot(
+  meetups: Meetups,
+  request: FormRequest,
+): Promise<
+  | { kind: "meetup"; meetup: MeetupSnapshot }
+  | { kind: "rejected"; result: ExecuteResult }
+> {
+  const current = await meetups.get(
+    request.identity,
+    request.meetupId,
+    rpcMeta(request),
+  );
+  if (current.kind === "not-found") {
+    return {
+      kind: "rejected",
+      result: { kind: "dependency-rejected", reason: "unavailable" },
+    };
+  }
+  if (current.kind !== "ok") {
+    return { kind: "rejected", result: failure(current) };
+  }
+  return { kind: "meetup", meetup: current.meetup };
+}
+
+/// Конфликт версий: команда не применена, и человеку показывают текущее
+/// состояние рядом с сохранённым вводом. Сам ввод повторно не отправляется —
+/// его подтверждают заново по обновлённым данным (PER-78).
+async function conflict(
+  meetups: Meetups,
+  request: FormRequest,
+  saved?:
+    | { field: FormField; input: string; editing?: boolean }
+    | { action: MeetupStateAction },
+): Promise<ExecuteResult> {
+  const current = await currentSnapshot(meetups, request);
+  if (current.kind === "rejected") return current.result;
+
+  return {
+    kind: "conflict",
+    meetup: current.meetup,
+    ...(saved ?? {}),
   };
 }
 

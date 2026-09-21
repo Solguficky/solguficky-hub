@@ -24,17 +24,17 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18meetups/v1/meetups.proto\x12\nmeetups.v1\"\x8d\x01\n\x08Schedule\x12%\n\x07no_date\x18\x01 \x01(\x0b\x32\x12.meetups.v1.NoDateH\x00\x12*\n\ttentative\x18\x02 \x01(\x0b\x32\x15.meetups.v1.DateValueH\x00\x12&\n\x05\x66ixed\x18\x03 \x01(\x0b\x32\x15.meetups.v1.DateValueH\x00\x42\x06\n\x04\x66orm\"\x08\n\x06NoDate\"\xa0\x01\n\tDateValue\x12\'\n\x03\x64\x61y\x18\x01 \x01(\x0b\x32\x18.meetups.v1.CalendarDateH\x00\x12.\n\tday_start\x18\x02 \x01(\x0b\x32\x19.meetups.v1.LocalDateTimeH\x00\x12-\n\x08interval\x18\x03 \x01(\x0b\x32\x19.meetups.v1.LocalIntervalH\x00\x42\x0b\n\tprecision\"8\n\x0c\x43\x61lendarDate\x12\x0c\n\x04year\x18\x01 \x01(\x05\x12\r\n\x05month\x18\x02 \x01(\x05\x12\x0b\n\x03\x64\x61y\x18\x03 \x01(\x05\"+\n\tLocalTime\x12\r\n\x05hours\x18\x01 \x01(\x05\x12\x0f\n\x07minutes\x18\x02 \x01(\x05\"\\\n\rLocalDateTime\x12&\n\x04\x64\x61te\x18\x01 \x01(\x0b\x32\x18.meetups.v1.CalendarDate\x12#\n\x04time\x18\x02 \x01(\x0b\x32\x15.meetups.v1.LocalTime\"a\n\rLocalInterval\x12(\n\x05start\x18\x01 \x01(\x0b\x32\x19.meetups.v1.LocalDateTime\x12&\n\x03\x65nd\x18\x02 \x01(\x0b\x32\x19.meetups.v1.LocalDateTime*\x8c\x01\n\x0fMeetupLifecycle\x12 \n\x1cMEETUP_LIFECYCLE_UNSPECIFIED\x10\x00\x12\x1c\n\x18MEETUP_LIFECYCLE_PLANNED\x10\x01\x12\x19\n\x15MEETUP_LIFECYCLE_HELD\x10\x02\x12\x1e\n\x1aMEETUP_LIFECYCLE_CANCELLED\x10\x03*r\n\x10MeetupVisibility\x12!\n\x1dMEETUP_VISIBILITY_UNSPECIFIED\x10\x00\x12\x1c\n\x18MEETUP_VISIBILITY_HIDDEN\x10\x01\x12\x1d\n\x19MEETUP_VISIBILITY_VISIBLE\x10\x02\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18meetups/v1/meetups.proto\x12\nmeetups.v1\"\x8d\x01\n\x08Schedule\x12%\n\x07no_date\x18\x01 \x01(\x0b\x32\x12.meetups.v1.NoDateH\x00\x12*\n\ttentative\x18\x02 \x01(\x0b\x32\x15.meetups.v1.DateValueH\x00\x12&\n\x05\x66ixed\x18\x03 \x01(\x0b\x32\x15.meetups.v1.DateValueH\x00\x42\x06\n\x04\x66orm\"\x08\n\x06NoDate\"\xa0\x01\n\tDateValue\x12\'\n\x03\x64\x61y\x18\x01 \x01(\x0b\x32\x18.meetups.v1.CalendarDateH\x00\x12.\n\tday_start\x18\x02 \x01(\x0b\x32\x19.meetups.v1.LocalDateTimeH\x00\x12-\n\x08interval\x18\x03 \x01(\x0b\x32\x19.meetups.v1.LocalIntervalH\x00\x42\x0b\n\tprecision\"8\n\x0c\x43\x61lendarDate\x12\x0c\n\x04year\x18\x01 \x01(\x05\x12\r\n\x05month\x18\x02 \x01(\x05\x12\x0b\n\x03\x64\x61y\x18\x03 \x01(\x05\"+\n\tLocalTime\x12\r\n\x05hours\x18\x01 \x01(\x05\x12\x0f\n\x07minutes\x18\x02 \x01(\x05\"\\\n\rLocalDateTime\x12&\n\x04\x64\x61te\x18\x01 \x01(\x0b\x32\x18.meetups.v1.CalendarDate\x12#\n\x04time\x18\x02 \x01(\x0b\x32\x15.meetups.v1.LocalTime\"a\n\rLocalInterval\x12(\n\x05start\x18\x01 \x01(\x0b\x32\x19.meetups.v1.LocalDateTime\x12&\n\x03\x65nd\x18\x02 \x01(\x0b\x32\x19.meetups.v1.LocalDateTime\"]\n\x0eMeetupMaterial\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x30\n\x06source\x18\x03 \x01(\x0b\x32 .meetups.v1.MeetupMaterialSource\"K\n\x14MeetupMaterialSource\x12\x16\n\x0cmessage_link\x18\x01 \x01(\tH\x00\x12\x11\n\x07\x66ile_id\x18\x02 \x01(\tH\x00\x42\x08\n\x06source*\x8c\x01\n\x0fMeetupLifecycle\x12 \n\x1cMEETUP_LIFECYCLE_UNSPECIFIED\x10\x00\x12\x1c\n\x18MEETUP_LIFECYCLE_PLANNED\x10\x01\x12\x19\n\x15MEETUP_LIFECYCLE_HELD\x10\x02\x12\x1e\n\x1aMEETUP_LIFECYCLE_CANCELLED\x10\x03*r\n\x10MeetupVisibility\x12!\n\x1dMEETUP_VISIBILITY_UNSPECIFIED\x10\x00\x12\x1c\n\x18MEETUP_VISIBILITY_HIDDEN\x10\x01\x12\x1d\n\x19MEETUP_VISIBILITY_VISIBLE\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'meetups.v1.meetups_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MEETUPLIFECYCLE']._serialized_start=654
-  _globals['_MEETUPLIFECYCLE']._serialized_end=794
-  _globals['_MEETUPVISIBILITY']._serialized_start=796
-  _globals['_MEETUPVISIBILITY']._serialized_end=910
+  _globals['_MEETUPLIFECYCLE']._serialized_start=826
+  _globals['_MEETUPLIFECYCLE']._serialized_end=966
+  _globals['_MEETUPVISIBILITY']._serialized_start=968
+  _globals['_MEETUPVISIBILITY']._serialized_end=1082
   _globals['_SCHEDULE']._serialized_start=41
   _globals['_SCHEDULE']._serialized_end=182
   _globals['_NODATE']._serialized_start=184
@@ -49,4 +49,8 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_LOCALDATETIME']._serialized_end=552
   _globals['_LOCALINTERVAL']._serialized_start=554
   _globals['_LOCALINTERVAL']._serialized_end=651
+  _globals['_MEETUPMATERIAL']._serialized_start=653
+  _globals['_MEETUPMATERIAL']._serialized_end=746
+  _globals['_MEETUPMATERIALSOURCE']._serialized_start=748
+  _globals['_MEETUPMATERIALSOURCE']._serialized_end=823
 # @@protoc_insertion_point(module_scope)

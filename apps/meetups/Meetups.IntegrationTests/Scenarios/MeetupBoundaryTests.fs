@@ -39,19 +39,28 @@ type MeetupBoundaryTests() =
         =
         let key = id.ToString "D"
 
-        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
-        |> ignore
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
 
-        client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = admin, Id = key, Title = title))
-        |> ignore
+        let changed =
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(Viewer = admin, Id = key, ExpectedVersion = draft.Version, Title = title)
+            )
 
-        match schedule with
-        | Some value ->
-            client.SetMeetupSchedule(SetMeetupScheduleRequest(Viewer = admin, Id = key, Schedule = value))
-            |> ignore
-        | None -> ()
+        let scheduled =
+            match schedule with
+            | Some value ->
+                client.SetMeetupSchedule(
+                    SetMeetupScheduleRequest(
+                        Viewer = admin,
+                        Id = key,
+                        ExpectedVersion = changed.Version,
+                        Schedule = value
+                    )
+                )
+            | None -> changed
 
-        client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
+        client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key, ExpectedVersion = scheduled.Version))
 
     let fixedDay (date: DateOnly) =
         Schedule(Fixed = DateValue(Day = CalendarDate(Year = date.Year, Month = date.Month, Day = date.Day)))
@@ -89,6 +98,7 @@ type MeetupBoundaryTests() =
                 ChangeMeetupAttributesRequest(
                     Viewer = admin,
                     Id = key,
+                    ExpectedVersion = draft.Version,
                     Title = "F# after hours",
                     Description = "Вертикальные срезы на живом коде",
                     Venue = "Тбилиси, Fabrika",
@@ -102,11 +112,13 @@ type MeetupBoundaryTests() =
                 SetMeetupScheduleRequest(
                     Viewer = admin,
                     Id = key,
+                    ExpectedVersion = changed.Version,
                     Schedule = Schedule(Fixed = DateValue(Day = CalendarDate(Year = 2026, Month = 10, Day = 3)))
                 )
             )
 
-        let published = client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
+        let published =
+            client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key, ExpectedVersion = scheduled.Version))
 
         // Версия растёт на каждое записанное событие: это видно из ответов, а не
         // только из таблицы.
@@ -134,6 +146,68 @@ type MeetupBoundaryTests() =
                 && published.Visibility = MeetupVisibility.Visible
                 && published.HasFirstPublishedAt
             @>
+
+    /// Настоящий конфликт версий по проводу: оба администратора пришли с одним
+    /// показанным снимком, первый сохранил своё изменение, второй с той же версией и
+    /// другим целевым состоянием получает ABORTED. До этого среза отказ был
+    /// недостижим снаружи: expected_version во вход команд не входил (integration.md).
+    /// Повтор уже достигнутой цели с той же старой версией — успех без события.
+    [<Fact>]
+    member _.``A stale snapshot is refused as ABORTED over the wire``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let first = administrator ()
+        let second = otherAdministrator ()
+        let id = newId ()
+        let key = id.ToString "D"
+
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = first, Id = key))
+
+        client.ChangeMeetupAttributes(
+            ChangeMeetupAttributesRequest(Viewer = first, Id = key, ExpectedVersion = draft.Version, Title = "Первый")
+        )
+        |> ignore
+
+        let actual =
+            Rpc.codeOf (fun () ->
+                client.ChangeMeetupAttributes(
+                    ChangeMeetupAttributesRequest(
+                        Viewer = second,
+                        Id = key,
+                        ExpectedVersion = draft.Version,
+                        Title = "Второй"
+                    )
+                )
+                |> ignore
+            )
+
+        test <@ actual = Some StatusCode.Aborted @>
+
+        // Отказ по конфликту различим и в записи границы: своей парой «код
+        // транспорта — категория» он не сливается с отказом по праву.
+        let frame =
+            live.Records
+            |> List.tryFindBack (fun entry ->
+                entry.Fields.TryFind "operation" = Some "/meetups.v1.MeetupsService/ChangeMeetupAttributes"
+                && entry.Fields.TryFind "grpc_code" = Some "Aborted"
+            )
+            |> Option.map (fun entry -> entry.Fields.TryFind "error_category")
+
+        test <@ frame = Some(Some "invariant") @>
+
+        let repeat =
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(
+                    Viewer = second,
+                    Id = key,
+                    ExpectedVersion = draft.Version,
+                    Title = "Первый"
+                )
+            )
+
+        test <@ repeat.Version = 2L @>
+        test <@ MeetupCommands.countEvents live.ConnectionString id = 2L @>
 
     [<Fact>]
     member _.``Listing meetups from an empty database answers with an empty page``() =
@@ -315,7 +389,9 @@ type MeetupBoundaryTests() =
 
         let missing =
             Rpc.codeOf (fun () ->
-                client.PublishMeetup(PublishMeetupRequest(Viewer = administrator (), Id = (newId ()).ToString "D"))
+                client.PublishMeetup(
+                    PublishMeetupRequest(Viewer = administrator (), Id = (newId ()).ToString "D", ExpectedVersion = 1L)
+                )
                 |> ignore
             )
 
@@ -332,12 +408,12 @@ type MeetupBoundaryTests() =
         let admin = administrator ()
         let key = (newId ()).ToString "D"
 
-        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
-        |> ignore
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
 
         let actual =
             Rpc.codeOf (fun () ->
-                client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
+                client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key, ExpectedVersion = draft.Version))
                 |> ignore
             )
 
@@ -372,8 +448,8 @@ type MeetupBoundaryTests() =
         let id = newId ()
         let key = id.ToString "D"
 
-        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
-        |> ignore
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
 
         let scheduled =
             client.ScheduleMeetupPublication(
@@ -384,7 +460,8 @@ type MeetupBoundaryTests() =
                         LocalDateTime(
                             Date = CalendarDate(Year = 2026, Month = 10, Day = 5),
                             Time = LocalTime(Hours = 19, Minutes = 0)
-                        )
+                        ),
+                    ExpectedVersion = draft.Version
                 )
             )
 
@@ -413,7 +490,9 @@ type MeetupBoundaryTests() =
             @>
 
         let cancelled =
-            client.CancelMeetupPublication(CancelMeetupPublicationRequest(Viewer = admin, Id = key))
+            client.CancelMeetupPublication(
+                CancelMeetupPublicationRequest(Viewer = admin, Id = key, ExpectedVersion = scheduled.Version)
+            )
 
         test <@ not cancelled.HasScheduledPublishAt @>
 
@@ -428,8 +507,8 @@ type MeetupBoundaryTests() =
 
         let draftKey = (newId ()).ToString "D"
 
-        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = draftKey))
-        |> ignore
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = draftKey))
 
         let past =
             Rpc.codeOf (fun () ->
@@ -441,7 +520,8 @@ type MeetupBoundaryTests() =
                             LocalDateTime(
                                 Date = CalendarDate(Year = 2026, Month = 9, Day = 1),
                                 Time = LocalTime(Hours = 12, Minutes = 0)
-                            )
+                            ),
+                        ExpectedVersion = draft.Version
                     )
                 )
                 |> ignore
@@ -449,8 +529,7 @@ type MeetupBoundaryTests() =
 
         let publishedId = newId ()
 
-        createPublished client admin publishedId "Already visible" None
-        |> ignore
+        let published' = createPublished client admin publishedId "Already visible" None
 
         let published =
             Rpc.codeOf (fun () ->
@@ -462,7 +541,8 @@ type MeetupBoundaryTests() =
                             LocalDateTime(
                                 Date = CalendarDate(Year = 2026, Month = 10, Day = 5),
                                 Time = LocalTime(Hours = 19, Minutes = 0)
-                            )
+                            ),
+                        ExpectedVersion = published'.Version
                     )
                 )
                 |> ignore

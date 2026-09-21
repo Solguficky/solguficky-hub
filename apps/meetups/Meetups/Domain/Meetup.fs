@@ -504,3 +504,56 @@ module Meetup =
             | TransitionOutcome.AlreadyThere -> Ok None
             | TransitionOutcome.Allowed -> Ok(Some MeetupHeld)
             | TransitionOutcome.Rejected -> Error TransitionNotAllowed
+
+    /// Достигнуто ли целевое состояние события текущим состоянием. Вопрос задаёт
+    /// безопасный повтор: команда, принятая из показанного снимка, могла разойтись
+    /// с записанной версией, но её цель уже в силе — тогда PER-78 разрешает вернуть
+    /// текущий снимок успехом без события, а не отвечать конфликтом.
+    ///
+    /// Решением команды этот вопрос не выражается: у двух правок пустой diff —
+    /// всё равно событие (ADR-031), поэтому их цель сравнивается полями, а не
+    /// повторным вызовом `decide*`. Для переходов ответ совпадает с «уже там» из
+    /// таблиц осей, но берётся тем же сравнением состояния: различать нужно
+    /// состояние, а не повторное решение. Отмена, случившаяся между показанным
+    /// снимком и перечитыванием, для переходов уже учтена самими осями (I5
+    /// пропускает её на уже достигнутой видимости, как и `decidePublish`/
+    /// `decideUnpublish`), а для изменения атрибутов и расписания — нет: у этих
+    /// команд отмена отклоняет любое совпадение полей (`decideChangeAttributes`,
+    /// `decideSetSchedule`), поэтому и здесь она исключает «цель достигнута» —
+    /// иначе отменённая concurrently сходка получала бы тихий успех вместо
+    /// TransitionNotAllowed.
+    let targetReached (event: MeetupEvent) (state: MeetupState) : bool =
+        match state, event with
+        | Initial, _ -> false
+        | Existing meetup, MeetupCreated(_, author) -> meetup.Author = author
+        | Existing meetup, MeetupChanged(AttributesChanged attributes) ->
+            meetup.Lifecycle <> Cancelled
+            && meetup.Title = attributes.Title
+            && meetup.Description = attributes.Description
+            && meetup.Venue = attributes.Venue
+            && meetup.Kind = attributes.Kind
+            && meetup.CalendarLink = attributes.CalendarLink
+        | Existing meetup, MeetupChanged(ScheduleChanged schedule) ->
+            meetup.Lifecycle <> Cancelled
+            && meetup.Schedule = schedule
+        | Existing meetup, MeetupPublished _
+        | Existing meetup, MeetupRepublished -> meetup.Visibility = Visible
+        | Existing meetup, MeetupUnpublished -> meetup.Visibility = Hidden
+        | Existing meetup, MeetupCancelled -> meetup.Lifecycle = Cancelled
+        | Existing meetup, MeetupHeld -> meetup.Lifecycle = Held
+        | Existing meetup, MeetupPublicationScheduled at ->
+            meetup.Visibility = Hidden
+            && meetup.Lifecycle <> Cancelled
+            && meetup.ScheduledPublishAt = Some at
+        | Existing meetup, MeetupPublicationCancelled -> meetup.ScheduledPublishAt = None
+        // Материал уже целевого состояния — успех независимо от жизненного цикла
+        // (decideAttachMaterial/decideRemoveMaterial проверяют это первым, раньше
+        // Cancelled), поэтому здесь тоже нет проверки Lifecycle.
+        | Existing meetup, MeetupMaterialAttached material ->
+            meetup.Materials
+            |> List.exists (fun existing -> existing.Id = material.Id)
+        | Existing meetup, MeetupMaterialRemoved materialId ->
+            not (
+                meetup.Materials
+                |> List.exists (fun existing -> existing.Id = materialId)
+            )

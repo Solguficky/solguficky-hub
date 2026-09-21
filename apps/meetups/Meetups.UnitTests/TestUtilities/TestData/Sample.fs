@@ -32,6 +32,11 @@ let ordinary =
 let fixedNow = DateTimeOffset(2026, 9, 7, 18, 30, 0, TimeSpan.Zero)
 let later = fixedNow.AddDays 1.0
 
+/// Версия показанного снимка, из которой команда принимает решение. Оболочка среза
+/// её не сверяет — сверку держит предикат записи, — поэтому образцу достаточно
+/// одного положительного значения; тесты следят, что оно доходит до хранилища.
+let expectedVersion = 2L
+
 let attributes =
     {
         Title = "F# after hours"

@@ -32,7 +32,7 @@ let private localDateTime (date: DateOnly) (hours: int) (minutes: int) =
 let private stub: Deps =
     {
         Load = fun _ -> failwith "Load is not expected in this test"
-        Commit = fun _ _ _ -> failwith "Commit is not expected in this test"
+        Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.fixedNow
         NewEventId = fun () -> eventId
         CommunityTimeZone = moscow
@@ -45,6 +45,7 @@ let private run (moment: LocalDateTime) (deps: Deps) =
             Id = Sample.meetupId
             Viewer = Sample.administrator
             Moment = moment
+            ExpectedVersion = Sample.expectedVersion
         }
     |> Async.AwaitTask
     |> Async.RunSynchronously
@@ -57,8 +58,8 @@ let private loading (snapshot: MeetupSnapshot option) (deps: Deps) =
 let private recording (written: ResizeArray<_>) (deps: Deps) =
     { deps with
         Commit =
-            fun envelope state event ->
-                written.Add(envelope, state, event)
+            fun envelope expectedVersion state event ->
+                written.Add(envelope, expectedVersion, state, event)
 
                 Meetup.apply state event
                 |> Meetup.toSnapshot
@@ -79,7 +80,7 @@ let ``A local moment becomes an instant in the community timezone`` () =
     // 19:00 в Москве — 16:00 UTC; одно и то же мгновение лежит в состоянии, событии
     // и ответе команды.
     let at = DateTimeOffset(2026, 10, 5, 16, 0, 0, TimeSpan.Zero)
-    let envelope, _, event = written[0]
+    let envelope, _, _, event = written[0]
 
     test <@ written.Count = 1 @>
     test <@ envelope.OccurredAt = Sample.fixedNow @>
@@ -175,7 +176,7 @@ let ``A version conflict from the store becomes a rejected command`` () =
     let deps =
         { loaded with
             Commit =
-                fun _ _ _ ->
+                fun _ _ _ _ ->
                     Error MeetupStore.VersionConflict
                     |> Task.FromResult
         }

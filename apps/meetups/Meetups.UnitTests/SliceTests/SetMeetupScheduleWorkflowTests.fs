@@ -16,7 +16,7 @@ let private eventId = Guid.Parse "0199c0de-0000-7000-8000-00000000e003"
 let private stub: Deps =
     {
         Load = fun _ -> failwith "Load is not expected in this test"
-        Commit = fun _ _ _ -> failwith "Commit is not expected in this test"
+        Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.fixedNow
         NewEventId = fun () -> eventId
     }
@@ -27,6 +27,7 @@ let private run (deps: Deps) (schedule: Schedule) =
         {
             Id = Sample.meetupId
             Viewer = Sample.administrator
+            ExpectedVersion = Sample.expectedVersion
             Schedule = schedule
         }
     |> Async.AwaitTask
@@ -48,7 +49,7 @@ let ``A schedule is written as a change event carrying the new value`` () =
     let deps =
         { loaded with
             Commit =
-                fun envelope state event ->
+                fun envelope _ state event ->
                     written.Add(envelope, state, event)
 
                     Meetup.apply state event
@@ -90,7 +91,7 @@ let ``Clearing the date is a change like any other`` () =
     let deps =
         { loaded with
             Commit =
-                fun _ state event ->
+                fun _ _ state event ->
                     written.Add event
 
                     Meetup.apply state event
@@ -129,9 +130,28 @@ let ``A version conflict from the store becomes a rejected command`` () =
     let deps =
         { loaded with
             Commit =
-                fun _ _ _ ->
+                fun _ _ _ _ ->
                     Error MeetupStore.VersionConflict
                     |> Task.FromResult
         }
 
     test <@ run deps (Fixed Sample.day) = Error SetMeetupScheduleError.Conflict @>
+
+/// Расхождение версий ещё не отказ: PER-78 требует перечитать состояние и, если
+/// цель команды уже в силе, вернуть текущий снимок успехом без события. Второе
+/// чтение отдаёт сходку с уже записанным расписанием — её снимок и уходит ответом.
+[<Fact>]
+let ``A stale version with the target already in place is a safe retry`` () =
+    let stored =
+        { Meetup.toSnapshot Sample.titled with
+            Schedule = Fixed Sample.day
+        }
+
+    let loaded = stub |> loading (Some stored)
+
+    let deps =
+        { loaded with
+            Commit = fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict)
+        }
+
+    test <@ run deps (Fixed Sample.day) = Ok stored @>

@@ -72,6 +72,12 @@ message ChangeMeetupAttributesRequest {
   string venue = 5;
   string kind = 6;
   string calendar_link = 7;
+
+  // Aggregate version the caller's decision was based on. Required: this
+  // command is decided from a displayed snapshot, and the server compares the
+  // version in the atomic write predicate. 0 is not a valid version, so an
+  // absent field is refused rather than read as "the latest one".
+  int64 expected_version = 8;
 }
 
 message SetMeetupScheduleRequest {
@@ -83,6 +89,10 @@ message SetMeetupScheduleRequest {
   // Target schedule as a single value. Absence is not a value: "no date" is the
   // no_date form, not an omitted field.
   Schedule schedule = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
 }
 
 message PublishMeetupRequest {
@@ -90,6 +100,10 @@ message PublishMeetupRequest {
 
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
 }
 
 // The moment is a local community date and time; Meetups interprets it in the
@@ -103,21 +117,37 @@ message ScheduleMeetupPublicationRequest {
 
   // Local date and time in the community timezone, minute precision.
   LocalDateTime moment = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
 }
 
 message CancelMeetupPublicationRequest {
   Viewer viewer = 1;
   string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
 }
 
 message UnpublishMeetupRequest {
   Viewer viewer = 1;
   string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
 }
 
 message CancelMeetupRequest {
   Viewer viewer = 1;
   string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
 }
 
 message AttachMaterialRequest {
@@ -135,6 +165,10 @@ message AttachMaterialRequest {
   string title = 4;
 
   MeetupMaterialSource source = 5;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 6;
 }
 
 message RemoveMaterialRequest {
@@ -146,6 +180,10 @@ message RemoveMaterialRequest {
   // Canonical lowercase UUIDv7 with hyphens. The material is named by the same
   // caller-generated id the attachment used.
   string material_id = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
 }
 
 message MarkMeetupHeldRequest {
@@ -153,6 +191,10 @@ message MarkMeetupHeldRequest {
 
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
 }
 
 // Returns the visible meetups that are still actual: held, cancelled and past
