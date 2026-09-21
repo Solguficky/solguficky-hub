@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а шесть операций среза к Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схем и реализации ещё нет.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а восемь пользовательских операций бот → Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схем и реализации ещё нет.
 
 ## Источники правды
 
@@ -34,16 +34,16 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Продуктовое ядро сходок не реализовано: доменной логики нет ни у Meetups, ни у Notifications. Meetups поднят скелетом — gRPC-сервер отвечает на шесть операций контракта заглушкой. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
+Продуктовое ядро сходок реализовано у Meetups и отсутствует у Notifications. Meetups держит доменное ядро среза и отвечает на девять операций контракта своими срезами: шесть команд записи, два продуктовых запроса чтения со смотрящим и служебное перечисление состояний. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
 | Telegram Bot | Long polling, Identity на каждом продуктовом действии, форма создания и публикации, список видимых сходок и карточка с deep link `m_<uuid>`; карточка по умолчанию использует Rich Messages, плоский рендерер включается тоглом процесса | Единственный вход пользователя |
-| Meetups | Скелет gRPC-сервиса на F#: контракт среза, C#-кодогенерация, заглушечные ответы, health, каркас лога границы и миграции состояния и журнала событий с отметкой публикации; домена нет | Владелец данных о сходках |
+| Meetups | gRPC-сервис на F#: доменное ядро обеих осей состояния, девять операций контракта своими срезами, запись состояния и события одной транзакцией с отклонением конфликта по версии, чтение со смотрящим через единый reader с фильтром видимости ADR-022, health, каркас лога границы и миграции состояния и журнала событий с отметкой публикации | Владелец данных о сходках |
 | Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, круги сообщества и системные роли |
 | Notifications | Устройство и стек приняты; кода нет | Подписки и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и шесть gRPC-операций среза Meetups | Current |
+| `contracts/proto` | Identity `ResolveIdentity` с Go- и TypeScript-кодогенерацией и девять gRPC-операций среза Meetups | Current |
 | `nats-tester` | Python CLI; реестр subjects пуст | Current tooling |
 | Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
@@ -86,7 +86,7 @@ Telegram user
 → наблюдаемый ответ пользователю
 ```
 
-Это не roadmap. Transport шести операций бот → Meetups зафиксирован как gRPC ([integration.md](integration.md)). Срез проверяет реальные границы сервисов, authentication/authorization, persistence, failure semantics и локальную оркестрацию. Порядок исполнения ведётся в Linear.
+Это не roadmap. Transport восьми пользовательских операций бот → Meetups зафиксирован как gRPC ([integration.md](integration.md)). Срез проверяет реальные границы сервисов, authentication/authorization, persistence, failure semantics и локальную оркестрацию. Порядок исполнения ведётся в Linear.
 
 ## Сквозные ограничения
 
