@@ -1,4 +1,8 @@
-/// Срез «CancelMeetup». Команда задаёт целевое состояние; повтор успешен без события.
+/// Срез «отменить». Команда сформулирована как целевое состояние, поэтому повтор на
+/// уже отменённой сходке — успех без события (ADR-031, I5), а не отказ. Отмена
+/// терминальна и независимой оси видимости не трогает: видимая отменённая сходка
+/// остаётся видимой, потому что извещение об отмене и есть то, что сообществу нужно
+/// показать.
 module Meetups.Slices.CancelMeetup
 
 open System
@@ -43,23 +47,23 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Cancel
             let! existing = deps.Load command.Id
             let state = Meetup.restore existing
 
-            // Часы читаются один раз на команду: этот же момент становится отметкой
-            // первой публикации в состоянии и `occurred_at` в конверте события. Два
-            // чтения дали бы одному факту два времени.
-            let now = deps.Now()
-
             match Meetup.decideCancel state with
             | Error error -> return Error(CancelMeetupError.Domain error)
             | Ok None ->
+                // Повтор: домен сказал «уже отменена», а это решение принимается
+                // только из существующей сходки.
                 match existing with
                 | Some snapshot -> return Ok snapshot
-                | None -> return invalidOp "the domain reported a visible meetup without loading one"
+                | None -> return invalidOp "the domain reported a cancelled meetup without loading one"
             | Ok(Some event) ->
+                // Часы читаются один раз и только на записывающем пути: в состояние
+                // этот момент не попадает, его единственный потребитель —
+                // `occurred_at` конверта.
                 let envelope: MeetupStore.EventEnvelope =
                     {
                         EventId = deps.NewEventId()
                         PerformedBy = command.Viewer.IdentityId
-                        OccurredAt = now
+                        OccurredAt = deps.Now()
                     }
 
                 match! deps.Commit envelope state event with
@@ -103,16 +107,13 @@ module Api =
             Status(StatusCode.PermissionDenied, "an administrator role is required")
         | CancelMeetupError.Domain MeetupNotFound
         | CancelMeetupError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
-        // Единственный срез, который решает переход к публикации, поэтому единственный,
-        // где этот инвариант достижим. FAILED_PRECONDITION, а не INVALID_ARGUMENT:
-        // запрос собран верно, но домен не позволяет переход.
-        | CancelMeetupError.Domain TitleRequiredForPublication ->
-            Status(StatusCode.FailedPrecondition, "the requested transition does not require a title")
-        // Тот же класс отказа, что и отсутствующий заголовок, и потому тот же код:
-        // запрос собран верно, но домен не позволяет переход. Различие с отказом по
-        // праву несёт код, различие с отсутствующим заголовком — деталь статуса.
+        // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение
+        // внутреннего контракта, а не код отказа.
+        | CancelMeetupError.Domain TitleRequiredForPublication -> invalidOp "cancelling does not decide publication"
+        // Единственный отклонённый переход этой оси — «состоялась → отменена»:
+        // прошедшую сходку не отменяют, её отменять уже поздно.
         | CancelMeetupError.Domain TransitionNotAllowed ->
-            Status(StatusCode.FailedPrecondition, "the requested state transition is not allowed")
+            Status(StatusCode.FailedPrecondition, "a meetup that already took place cannot be cancelled")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место
         // среди описанных закрепляет PER-78 (integration.md).
         | CancelMeetupError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")
