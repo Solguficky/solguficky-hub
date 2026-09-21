@@ -195,6 +195,33 @@
         "SKILL.md": "sha256:85ee0d4d3cfadfec301e3a852c8ff959a1f366ac51b9c312cf463f050e427e72"
       }
     },
+    "orleans": {
+      "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
+      "type": "github-subdir",
+      "installed_at": "2026-09-21T23:36:19.4850821+03:00",
+      "repo_url": "https://github.com/managedcode/dotnet-skills.git",
+      "subdir": "catalog/Frameworks/Orleans/skills/orleans",
+      "version": "bcd48ab",
+      "tree_hash": "ee0c9cd2ac4479b3a2b4bbb8132d988db4268382",
+      "file_hashes": {
+        "SKILL.md": "sha256:b3200f6eb219cff34a8971b2c503120a443d07445e25c91c220fed22b7b114f2",
+        "manifest.json": "sha256:ed2f4615000329c4a52d0265bbdc20b42e9caef0f1c27df7b13193647cd72acf",
+        "references/anti-patterns.md": "sha256:f3e0b83973af5d920f1a58901210cecd509d53703da9034094566d38b0550ed9",
+        "references/configuration-api.md": "sha256:ad177ea9b2c1cc1a65bbc57d11b29987ccfd47a43f365039e770a3f5eceffb86",
+        "references/examples.md": "sha256:ba857547f9ff1e3a86401b0b20d12175e5e16ef1c80459e0678bcc8ffbdfd705",
+        "references/grain-api.md": "sha256:a78609d1f8ced2292233649a62e040ff2af93c2eb3b01c5438bca6cf330ffe40",
+        "references/grains.md": "sha256:fbd61a6dd37269eb3ee464573ae1ae31cc0acfac9859938133af0df7026f555f",
+        "references/hosting.md": "sha256:bd4b6d865d7d3c0a231ca7604b63f1b6f197ab944c45fa2a06f5a5ac0f360dd6",
+        "references/implementation.md": "sha256:25dad244af9c490d174af32b4d4a34ee7b2ff1f159f15e8a5f893557d3378e09",
+        "references/official-docs-index.md": "sha256:95d27afc1f2f180d7b74cf9f3e25d0b2438a62301e41ad74d811d00207ccabf3",
+        "references/patterns.md": "sha256:d7e5c11b0b3b7ebdc20641dc69f4f5ecacff32b0ac65066f14a753d50b2d10b7",
+        "references/persistence-api.md": "sha256:709dbaac3d308d82e84a6c8fcbee5afe909ed392c99250d75af5f909511e096a",
+        "references/scheduling-and-services.md": "sha256:4107b8751249e2fef5c199ef44312a261254e9f1320dc132070256a86717e19f",
+        "references/serialization-api.md": "sha256:c3c0410178ef9f2b7e1b7abf2ee79370594663e106a2e57c7367b91181ad9d10",
+        "references/streaming-api.md": "sha256:06905b79217f4eb5f69f39daf98a42a24d7142be3aa9b2f86e993e0571c0dab0",
+        "references/testing-patterns.md": "sha256:af4b8c4470c19606af4d1c3043b3fb6c080ee1417b08eb08570549cab0f49685"
+      }
+    },
     "playwright-cli": {
       "source": "github.com/microsoft/playwright-cli/skills/playwright-cli",
       "type": "github-subdir",
