@@ -75,7 +75,7 @@ sequenceDiagram
 
 ## Границы: минимальные данные и действия
 
-Ниже перечислено то, что пересекает границу в срезе. Шесть операций бот → Meetups идут синхронным gRPC; состав полей и коды отказов — в [integration.md](integration.md). Словарь домена утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md).
+Ниже перечислено то, что пересекает границу в срезе. Восемь пользовательских операций бот → Meetups идут синхронным gRPC; состав полей и коды отказов — в [integration.md](integration.md). Словарь домена утверждён [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md).
 
 ### Telegram → бот
 
@@ -175,7 +175,7 @@ sequenceDiagram
 
 Конверт публикации доменных событий, subject'ы и wire-формат журнала остаются открытыми: без уведомлений событий в шину не уходит.
 
-Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)); продуктовая карточка по умолчанию рисуется `sendRichMessage`, плоский текст остаётся за тоглом процесса ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)); шесть операций бот → Meetups — синхронный gRPC ([integration.md](integration.md)).
+Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)); продуктовая карточка по умолчанию рисуется `sendRichMessage`, плоский текст остаётся за тоглом процесса ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)); восемь пользовательских операций бот → Meetups — синхронный gRPC ([integration.md](integration.md)).
 
 ## Связанные документы
 
