@@ -1,6 +1,21 @@
 {
   "version": 1,
   "entries": {
+    "akka-streams": {
+      "source": "github.com/alexandru/skills/skills/akka-streams",
+      "type": "github-subdir",
+      "installed_at": "2026-09-22T00:15:17.5737574+03:00",
+      "repo_url": "https://github.com/alexandru/skills.git",
+      "subdir": "skills/akka-streams",
+      "version": "012aa17",
+      "tree_hash": "5441d11e688c3d1c54c9ec42e715357b37a4adca",
+      "file_hashes": {
+        "SKILL.md": "sha256:ff2323ac740e7e574c4591e02fb5ad6ac619b59ccf914c15eeba1d1200fdec91",
+        "references/akka-streams.md": "sha256:98495b566fc20e6744e6fa21402daca85a17770ab6be4fd835a08f9d5b456ccc",
+        "references/best-practices.md": "sha256:d432910d86d010d0234bec4e1e5189583ef6d01ab9ba2fbfe2e4fffc6dccbd45",
+        "references/testing.md": "sha256:6c467c1ba2dd517783ccc73bf4bbc381ef9805fcf9246614d655a2ef5f39172e"
+      }
+    },
     "aspire": {
       "source": "github.com/microsoft/aspire-skills/skills/aspire",
       "type": "github-subdir",

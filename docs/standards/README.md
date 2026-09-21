@@ -9,8 +9,9 @@ Standards — канонические нормативы для реализа�
 | [contracts/protobuf.md](contracts/protobuf.md) | Protobuf, совместимость схем и изменение потребителей |
 | [testing/testing-strategy.md](testing/testing-strategy.md) | выбор уровня и обязательные свойства тестов |
 | [testing/fsharp.md](testing/fsharp.md) | инструменты и проверяемые свойства F#-тестов |
-| [testing/naming.md](testing/naming.md) | форма имени теста, файла и группы в Go, TypeScript, F# и C# |
+| [testing/naming.md](testing/naming.md) | форма имени теста, файла и группы в Go, TypeScript, F#, C# и Scala |
 | [languages/fsharp.md](languages/fsharp.md) | типы, эффекты, ошибки, interop и порядок компиляции F# |
+| [languages/scala.md](languages/scala.md) | версии и сборка, типы, чистое ядро, ошибки, граница с Pekko и interop ScalaPB |
 | [data/postgresql.md](data/postgresql.md) | рекомендованный набор для PostgreSQL в .NET: DbUp, Dapper, база на сервис |
 | [architecture/functional-slices.md](architecture/functional-slices.md) | устройство F#-приложения из срезов: чистое ядро, зависимости, error flow, границы |
 | [observability/logging.md](observability/logging.md) | каркас полей структурной записи, correlation и privacy |
