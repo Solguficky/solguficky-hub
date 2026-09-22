@@ -55,9 +55,11 @@
     <Compile Include="SliceTests/GetMeetupTests.fs" />
     <Compile Include="SliceTests/ListMeetupStatesTests.fs" />
     <Compile Include="SliceTests/DispatchMeetupEventsTests.fs" />
+    <Compile Include="SliceTests/PublishDueMeetupsTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />
     <Compile Include="BoundaryLogTests.fs" />
     <Compile Include="OutboxDispatchLogTests.fs" />
+    <Compile Include="DuePublicationLogTests.fs" />
     <Compile Include="DispatchTelemetryTests.fs" />
     <Compile Include="OutboxDispatchWorkerTests.fs" />
     <Compile Include="MigrationsTests.fs" />

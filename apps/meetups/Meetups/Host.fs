@@ -86,12 +86,23 @@ let build (args: string array) : WebApplication =
     builder.Services.AddHostedService<OutboxDispatchWorker>()
     |> ignore
 
+    // Вторая фоновая граница: наступивший момент отложенной публикации (ADR-024, 4a).
+    // Варианта «не настроена» у неё нет — всё, что нужно тику, это та же база, в
+    // которую сервис уже пишет команды, поэтому цикл стартует безусловно. Хост при
+    // недоступной базе от этого не падает: тик глотает свой отказ и пишет о нём.
+    builder.Services.AddHostedService<DuePublicationWorker>()
+    |> ignore
+
     // Метр публикации экспортируется отсюда, а не из ServiceDefaults: там живёт
     // межсервисный `solguficky.failures` из норматива, а бэклог journal-outbox
     // принадлежит одному Meetups, и в общем проекте он раздал бы остальным сервисам
-    // метр, который они никогда не наполнят.
+    // метр, который они никогда не наполнят. Метр отложенной публикации — по той же
+    // причине и рядом.
     builder.Services.ConfigureOpenTelemetryMeterProvider(fun metrics ->
         metrics.AddMeter DispatchTelemetry.MeterName
+        |> ignore
+
+        metrics.AddMeter DuePublicationTelemetry.MeterName
         |> ignore
     )
     |> ignore

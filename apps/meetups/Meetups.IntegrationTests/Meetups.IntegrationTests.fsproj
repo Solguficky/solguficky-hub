@@ -24,6 +24,7 @@
     <Compile Include="Infrastructure/LiveMeetupsHost.fs" />
     <Compile Include="Infrastructure/DispatchScenario.fs" />
     <Compile Include="Infrastructure/DispatchReader.fs" />
+    <Compile Include="Infrastructure/DuePublicationReader.fs" />
     <Compile Include="Infrastructure/MeetupCommands.fs" />
     <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
     <Compile Include="Scenarios/SchemaTests.fs" />
@@ -33,6 +34,7 @@
     <Compile Include="Scenarios/HiddenMeetupReadTests.fs" />
     <Compile Include="Scenarios/ListMeetupStatesTests.fs" />
     <Compile Include="Scenarios/MeetupDispatchTests.fs" />
+    <Compile Include="Scenarios/MeetupDuePublicationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
