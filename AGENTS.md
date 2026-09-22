@@ -30,10 +30,12 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
+- `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL` внешнему потребителю, `Contour.Contracts` держит generated-only C#-клиента Identity. Рецепты `just contour-test`, `just contour-up` и `just contour-contracts-check`; в `verify` набор не входит и гоняется джобой `contour` в CI.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
 - `tools/skillshare/` — два скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первый вызывают `just check-agent-tools` и CI, второй — `just skillshare-install`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
+- `tools/contour/` — проверки сквозного контура. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта контура. Его вызывают `just contour-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
@@ -157,6 +159,14 @@ just auction-format
 just auction-run
 # Нужны JDK версии из apps/auction/.java-version и sbt; репозиторий их не ставит.
 # Кодогенерация входит в сборку: auction-proto нужен только отдельным шагом
+
+# Сквозной контур (L2) — дымовой прогон, среда наружу, гейт контрактов
+just contour-test
+just contour-up '--env-file .contour.env'
+just contour-contracts-check
+# Нужны Docker, go и buf в PATH: узел Identity сначала генерирует Go-код и
+# собирает бинарник. В verify набор не входит; в CI его гоняет джоба contour,
+# которая намеренно не числится в обязательных проверках ветки
 
 # .NET — из папки проекта
 dotnet build
