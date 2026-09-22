@@ -25,8 +25,9 @@ describe("callback parser", () => {
     });
   });
 
-  it("parses the hub navigation action", () => {
+  it("parses the hub and archive navigation actions", () => {
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
+    expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
   });
 
   it("parses meetup editing and confirmed state actions within the byte budget", () => {
@@ -40,6 +41,8 @@ describe("callback parser", () => {
       `v1:manage:confirm-unpublish:${token}`,
       `v1:manage:cancel:${token}`,
       `v1:manage:confirm-cancel:${token}`,
+      `v1:manage:hold:${token}`,
+      `v1:manage:confirm-hold:${token}`,
     ];
 
     for (const callback of callbacks) {
@@ -74,6 +77,14 @@ describe("callback parser", () => {
     });
     expect(parseCallback(callbacks[7])).toEqual({
       kind: "manage-confirm-cancel",
+      token,
+    });
+    expect(parseCallback(callbacks[8])).toEqual({
+      kind: "manage-hold",
+      token,
+    });
+    expect(parseCallback(callbacks[9])).toEqual({
+      kind: "manage-confirm-hold",
       token,
     });
   });

@@ -40,6 +40,13 @@ export type MeetupSummary = {
   schedule?: { year: number; month: number; day: number };
 };
 
+// Архив различает три исхода вручную (Archive.fs, PER-229): "held"/"cancelled"
+// приходят как есть, а "past" — это lifecycle "planned" внутри архивного
+// ответа, где само присутствие в списке уже означает, что дата прошла.
+export type ArchivedMeetupSummary = MeetupSummary & {
+  status: "held" | "cancelled" | "past";
+};
+
 export type MeetupFailure =
   | { kind: "forbidden" }
   | { kind: "invalid"; message: string }
@@ -55,6 +62,10 @@ export type MeetupGetResult = MeetupResult | { kind: "not-found" };
 
 export type MeetupListResult =
   | { kind: "ok"; meetups: readonly MeetupSummary[] }
+  | MeetupFailure;
+
+export type ArchivedMeetupListResult =
+  | { kind: "ok"; meetups: readonly ArchivedMeetupSummary[] }
   | MeetupFailure;
 
 export type AttachMaterialRequest = {
@@ -73,6 +84,10 @@ export type RemoveMaterialRequest = {
 
 export type Meetups = {
   listVisible(person: Person, meta?: RpcMetadata): Promise<MeetupListResult>;
+  listArchived(
+    person: Person,
+    meta?: RpcMetadata,
+  ): Promise<ArchivedMeetupListResult>;
   createDraft(
     person: Person,
     id: string,
@@ -101,6 +116,11 @@ export type Meetups = {
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
   cancel(
+    person: Person,
+    meetup: MeetupSnapshot,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  markHeld(
     person: Person,
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,
