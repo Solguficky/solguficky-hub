@@ -1,59 +1,22 @@
 """Main CLI interface for NATS testing tool."""
 
 import asyncio
-import importlib
 import json
 import subprocess
 import sys
-from pathlib import Path
-from typing import Optional, Type
+from typing import Optional
 
 import click
 from google.protobuf import json_format
-from google.protobuf.message import Message
 import nats
 
-from nats_tester.generated.meetups.v1 import meetups_events_pb2
-from nats_tester.generated.notifications.v1 import notifications_pb2
+from nats_tester import gate
+from nats_tester.registry import ALL_MESSAGE_TYPES, COMMAND_TYPES, EVENT_TYPES
 
 try:
     from uuid import uuid7  # Python 3.14+
 except ImportError:
     from uuid6 import uuid7
-
-
-# Реестр subjects: subject -> сгенерированный класс сообщения.
-#
-# В реестр попадает схема, у которой есть subject. Схемы gRPC — identity/v1,
-# meetups/v1/meetups_service.proto и notifications/v1/notifications_service.proto —
-# не попадают: subject у них не бывает.
-#
-# Запись добавляется вместе с принятием контракта, одновременно с
-# docs/architecture/integration.md.
-#
-# У Meetups subject называет повод, а сообщение на всех поводах одно: повод живёт
-# и в ветке oneof тоже, поэтому потребитель на `events.meetups.>` разбирает ветку,
-# а не строку subject'а. Имя subject'а — `events.meetups.` плюс то же значение,
-# которое уходит в колонку `event_type` журнала; соответствие держит тест
-# контрактной поверхности Meetups, а не этот список.
-EVENT_TYPES: dict[str, Type[Message]] = {
-    'events.notifications.notification_created': notifications_pb2.Notification,
-    'events.meetups.meetup_created': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_changed': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_published': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_unpublished': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_republished': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_publication_scheduled': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_publication_cancelled': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_cancelled': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_material_attached': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_material_removed': meetups_events_pb2.MeetupEvent,
-    'events.meetups.meetup_held': meetups_events_pb2.MeetupEvent,
-}
-
-COMMAND_TYPES: dict[str, Type[Message]] = {}
-
-ALL_MESSAGE_TYPES = {**EVENT_TYPES, **COMMAND_TYPES}
 
 
 @click.group()
@@ -301,7 +264,8 @@ async def _subscribe_async(nats_url: str, subject: str):
 def check():
     """Check if required tools are installed.
 
-    Verifies that nats CLI is available and protobuf classes are generated.
+    Verifies that nats CLI is available and that the generated classes pass
+    the gate checks: import, generation set and registry.
     """
     click.echo(click.style("🔍 Checking required tools", fg='cyan', bold=True))
     click.echo()
@@ -317,24 +281,18 @@ def check():
         click.echo("   Install: go install github.com/nats-io/natscli/nats@latest")
         all_ok = False
 
-    # Check generated protobuf files. Importing them, not just finding the directory:
-    # a cross-schema import that protoc wrote against the module root leaves the files
-    # in place and raises only when something actually loads them.
-    generated_dir = Path(__file__).parent / 'generated'
-    if not generated_dir.exists():
-        click.secho("❌ protobuf: generated classes not found", fg='red')
-        click.echo("   Run: python generate_proto.py")
+    # Проверки сгенерированных классов: импорт, состав генерации и согласие с
+    # реестром. Их же гоняет `just nats-tester-check` в `verify`: расхождение
+    # не должно существовать в двух версиях — ручной и машинной.
+    problems = gate.check()
+    if problems:
+        click.secho("❌ protobuf: generated classes are out of sync", fg='red')
+        for problem in problems:
+            click.echo(f"   {problem}")
+        click.echo("   See README, «Troubleshooting»")
         all_ok = False
     else:
-        broken = _import_generated_modules(generated_dir)
-        if broken:
-            click.secho("❌ protobuf: generated classes do not import", fg='red')
-            for module, error in broken:
-                click.echo(f"   {module}: {error}")
-            click.echo("   Run: python generate_proto.py")
-            all_ok = False
-        else:
-            click.secho("✅ protobuf: generated classes import", fg='green')
+        click.secho("✅ protobuf: generated classes import and match the bus schemas", fg='green')
 
     click.echo()
     if all_ok:
@@ -428,21 +386,7 @@ def list_types():
     total = len(EVENT_TYPES) + len(COMMAND_TYPES)
     click.echo(f"Total: {total} message type(s)")
     click.echo()
-    click.echo("To add new types, edit EVENT_TYPES or COMMAND_TYPES in cli.py")
-
-
-def _import_generated_modules(generated_dir: Path) -> list[tuple[str, str]]:
-    """Import every generated module; return (module, error) for the ones that fail."""
-    package = f"{__package__}.generated"
-    broken = []
-    for module_file in sorted(generated_dir.rglob('*_pb2.py')):
-        relative = module_file.relative_to(generated_dir).with_suffix('')
-        module = f"{package}.{'.'.join(relative.parts)}"
-        try:
-            importlib.import_module(module)
-        except Exception as error:
-            broken.append((module, f"{type(error).__name__}: {error}"))
-    return broken
+    click.echo("To add new types, edit EVENT_TYPES or COMMAND_TYPES in registry.py")
 
 
 def _check_tool(tool_name: str) -> bool:

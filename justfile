@@ -21,6 +21,16 @@ BUF_VERSION := "1.54.0"
 GOLANGCI_LINT_VERSION := "2.13.2"
 RULESYNC_VERSION := "16.24.1"
 
+# nats-tester: Python — рантайм инструмента, protoc — генератор закоммиченных
+# классов. Джоба nats-tester в CI читает оба значения отсюда; перегенерация
+# другим protoc даёт другой gencode, поэтому локальная регенерация идёт той же
+# версией, что и проверка в CI.
+PYTHON_VERSION := "3.12"
+PROTOC_VERSION := "33.0"
+# Контрольная сумма архива protoc для linux-x86_64: его скачивает и запускает
+# джоба nats-tester, и версия без суммы не отличает свой бинарник от чужого.
+PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad8f"
+
 # Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.
 # Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
 # и затёр бы редакторские настройки репозитория.
@@ -114,11 +124,11 @@ contracts-check:
     buf lint contracts/proto
     buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools
+tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -362,15 +372,31 @@ auction-run:
 auction-verify:
     cd apps/auction && sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
 
+# --- nats-tester (Python) --------------------------------------------------
+#
+# Инструмент ручной проверки шины. Классы сообщений коммитятся — установка без
+# protoc и есть смысл ручного инструмента, — поэтому протухшие классы ловит не
+# сборка, а проверка: состав генерации сверяется со схемами, а перегенерация в
+# CI идёт закреплённым protoc. Схемы для генерации — NATS_PROTO_FILES в
+# nats_tester/proto_sources.py, версии — PYTHON_VERSION и PROTOC_VERSION выше.
+
+# Зависимости инструмента; ходит в сеть, поэтому в `tools`, а не в `verify`
+nats-tester-tools:
+    cd tools/nats-tester && python -m pip install -e .
+
+# Перегенерация закоммиченных классов; нужен protoc закреплённой версии
+nats-tester-proto:
+    cd tools/nats-tester && python generate_proto.py
+
+# Классы импортируются, состав генерации совпадает со схемами, реестр не врёт
+nats-tester-check:
+    cd tools/nats-tester && python -m nats_tester.gate
+
 # --- Инструменты -----------------------------------------------------------
 
 # Локальные .NET-инструменты закреплённых версий из .config/dotnet-tools.json
 dotnet-tools:
     dotnet tool restore
-
-# Установка nats-tester в текущее окружение
-nats-tester-install:
-    cd tools/nats-tester && python generate_proto.py && pip install -e .
 
 # Исследовательский зонд Rich Messages; не входит в verify
 telegram-rich-probe:
