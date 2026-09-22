@@ -61,6 +61,10 @@ module Inbound =
 
     let meetupId (value: string) : Result<MeetupId, InvalidRequest> = uuidV7 "id" value |> Result.map MeetupId
 
+    let materialId (value: string) : Result<MaterialId, InvalidRequest> =
+        uuidV7 "material_id" value
+        |> Result.map MaterialId
+
     /// Неизвестная роль отбрасывается, а не отвергается. Схема сама объявляет
     /// GLOBAL_ROLE_UNSPECIFIED значением «роль неизвестна потребителю», и неизвестная
     /// роль ничего не разрешает — отбрасывание остаётся fail-closed. Отказ по ней
@@ -132,6 +136,19 @@ module Outbound =
         | Hidden -> Meetups.V1.MeetupVisibility.Hidden
         | Visible -> Meetups.V1.MeetupVisibility.Visible
 
+    let materialSource (value: MaterialSource) : Meetups.V1.MeetupMaterialSource =
+        match value with
+        | MessageLink link -> Meetups.V1.MeetupMaterialSource(MessageLink = link)
+        | FileId fileId -> Meetups.V1.MeetupMaterialSource(FileId = fileId)
+
+    /// Материал на проводе несёт только то, что видит потребитель: порядок
+    /// передаётся порядком repeated-поля, а авторство привязки остаётся внутренним —
+    /// это единственное поле материала, указывающее на человека (PER-200).
+    let material (value: MeetupMaterial) : Meetups.V1.MeetupMaterial =
+        let (MaterialId id) = value.Id
+
+        Meetups.V1.MeetupMaterial(Id = id.ToString "D", Title = value.Title, Source = materialSource value.Source)
+
     /// Краткие сведения списков. Живут здесь, а не в срезе: потребителей двое —
     /// актуальный список и архив, — и разошедшиеся копии отрисовки отличались бы
     /// только тем, какой из списков её забыл обновить.
@@ -167,6 +184,8 @@ module Outbound =
                 Visibility = visibility value.Visibility,
                 Version = value.Version
             )
+
+        contract.Materials.AddRange(value.Materials |> Seq.map material)
 
         // Единственное настоящее отсутствие в сообщении: unset означает «никогда не
         // публиковалась». UtcDateTime, а не сам DateTimeOffset: формат "o" у второго

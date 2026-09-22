@@ -180,3 +180,77 @@ let ``An interval missing its end is rejected instead of narrowing to a day star
         }
 
     raises<exn> <@ MeetupRow.toSnapshot row @>
+
+/// Материалы переживают круг через колонку целиком: оба вида источника, позиция,
+/// название и оба поля, указывающие на человека. Порядок коллекции — порядок
+/// массива, и он же возвращается чтением.
+[<Fact>]
+let ``Every material source survives the round trip through the row column`` () =
+    let materials =
+        [
+            Sample.material
+            {
+                Id = Sample.otherMaterialId
+                Position = 2
+                Title = "Афиша"
+                Source = FileId "AgACAgIAAxkBAAI"
+                BoundBy = Sample.otherAuthorId
+            }
+        ]
+
+    let snapshot =
+        { Meetup.toSnapshot Sample.titled with
+            Materials = materials
+        }
+
+    let restored =
+        snapshot
+        |> MeetupRow.ofSnapshot
+        |> MeetupRow.toSnapshot
+
+    test <@ restored.Materials = materials @>
+
+/// Строку с чужим видом источника адаптер обязан ронять, а не подставлять значение
+/// по умолчанию: порча не должна становиться правдоподобным материалом.
+[<Fact>]
+let ``An unknown material source kind is rejected instead of defaulting`` () =
+    let row =
+        { MeetupRow.ofSnapshot (Meetup.toSnapshot Sample.withMaterial) with
+            Materials =
+                """[{"id":"0199c0de-0000-7000-8000-0000000000a1","position":1,"title":"x","source":{"kind":"video_note","value":"y"},"bound_by":"0199c0de-0000-7000-8000-000000000001"}]"""
+        }
+
+    raises<exn> <@ MeetupRow.toSnapshot row @>
+
+[<Fact>]
+let ``Materials that are not an array are rejected instead of defaulting`` () =
+    let row =
+        { MeetupRow.ofSnapshot (Meetup.toSnapshot Sample.withMaterial) with
+            Materials = """{"id":"0199c0de-0000-7000-8000-0000000000a1"}"""
+        }
+
+    raises<exn> <@ MeetupRow.toSnapshot row @>
+
+/// Порча идентификатора внутри элемента — такая же «схема одобрила, домен не
+/// прочитал», как неизвестный вид источника, и обязана падать с идентификатором
+/// сходки: голое исключение разбора не отличить от сбоя вне строки.
+[<Fact>]
+let ``A material with a broken identifier is rejected with the meetup id`` () =
+    let row =
+        { MeetupRow.ofSnapshot (Meetup.toSnapshot Sample.withMaterial) with
+            Materials =
+                """[{"id":"not-a-uuid","position":1,"title":"x","source":{"kind":"file_id","value":"y"},"bound_by":"0199c0de-0000-7000-8000-000000000001"}]"""
+        }
+
+    let thrown =
+        try
+            MeetupRow.toSnapshot row |> ignore
+            None
+        with ex ->
+            Some ex.Message
+
+    test
+        <@
+            thrown
+            |> Option.exists (fun message -> message.Contains(string row.Id))
+        @>

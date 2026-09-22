@@ -43,6 +43,20 @@ let attributes =
 
 let day = Day(DateOnly(2026, 10, 3))
 
+/// Материал-ссылка: источник хранится тем, чем является, а авторство привязки —
+/// внутренним идентификатором прикрепившего, не Telegram-атрибутом.
+let materialId = MaterialId(Guid.Parse "0199c0de-0000-7000-8000-0000000000a1")
+let otherMaterialId = MaterialId(Guid.Parse "0199c0de-0000-7000-8000-0000000000a2")
+
+let material =
+    {
+        Id = materialId
+        Position = 1
+        Title = "Опрос о дате"
+        Source = MessageLink "https://t.me/solguficky/42"
+        BoundBy = authorId
+    }
+
 /// Свежесозданный черновик: пустые тексты, NoDate, Planned, Hidden, версия 1.
 let draft = Meetup.apply Initial (MeetupCreated(meetupId, authorId))
 
@@ -70,3 +84,11 @@ let cancelledVisible = Meetup.apply (Existing published) MeetupCancelled
 /// Состоявшаяся сходка: переход заведён PER-229, а публикацию он не закрывает —
 /// скрытую состоявшуюся показывают сообществу (PER-195).
 let held = Meetup.apply (Existing titled) MeetupHeld
+
+/// Черновик с одним материалом: состояние, на котором видно и повтор по
+/// идентификатору материала, и позицию следующего.
+let withMaterial = Meetup.apply (Existing titled) (MeetupMaterialAttached material)
+
+/// Отменённая сходка с материалом: на ней проверяется, что повтор прикрепления
+/// выигрывает у отмены, а новое прикрепление — нет.
+let cancelledWithMaterial = Meetup.apply (Existing withMaterial) MeetupCancelled

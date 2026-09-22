@@ -4,7 +4,7 @@ open Grpc.Core
 open Meetups.Slices
 open Meetups.V1
 
-/// Транспортная граница одиннадцати операций контракта.
+/// Транспортная граница тринадцати операций контракта.
 ///
 /// ASP.NET Core требует один класс-наследник сгенерированной базы со всеми
 /// операциями сервиса сразу, поэтому разложить его по срезам нельзя: это
@@ -46,6 +46,14 @@ type MeetupsGrpcService() =
     override _.CancelMeetup(request: CancelMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
         CancelMeetup.Api.handle (CancelMeetup.Composition.buildDeps services) request
+
+    override _.AttachMaterial(request: AttachMaterialRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        AttachMaterial.Api.handle (AttachMaterial.Composition.buildDeps services) request
+
+    override _.RemoveMaterial(request: RemoveMaterialRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+        RemoveMaterial.Api.handle (RemoveMaterial.Composition.buildDeps services) request
 
     override _.MarkMeetupHeld(request: MarkMeetupHeldRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices

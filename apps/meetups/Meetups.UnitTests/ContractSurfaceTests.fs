@@ -52,7 +52,7 @@ let ``The generated service lives under the meetups v1 package`` () =
     test <@ MeetupsService.Descriptor.FullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
-let ``Service exposes exactly the eleven slice operations`` () =
+let ``Service exposes exactly the thirteen slice operations`` () =
     let actual =
         MeetupsService.Descriptor.Methods
         |> Seq.map (fun m -> m.Name)
@@ -66,6 +66,8 @@ let ``Service exposes exactly the eleven slice operations`` () =
             "PublishMeetup"
             "UnpublishMeetup"
             "CancelMeetup"
+            "AttachMaterial"
+            "RemoveMaterial"
             "MarkMeetupHeld"
             "ListVisibleMeetups"
             "ListArchivedMeetups"
@@ -161,6 +163,8 @@ let ``The value types live apart from the service schema`` () =
             "LocalTime"
             "LocalDateTime"
             "LocalInterval"
+            "MeetupMaterial"
+            "MeetupMaterialSource"
         ]
         |> set
 
@@ -224,8 +228,19 @@ let ``The schema has exactly one absent state and it is first_published_at`` () 
         [
             for message in messages do
                 for f in message.Fields.InDeclarationOrder() do
-                    // Message fields and oneofs always carry presence; the contract gives it no meaning.
-                    if f.FieldType <> FieldType.Message && f.HasPresence then
+                    // Message fields and real oneof members always carry presence;
+                    // the contract gives it no meaning there. `optional` creates a
+                    // synthetic oneof, so oneof membership is checked by IsSynthetic
+                    // rather than by ContainingOneof alone.
+                    let inOneof =
+                        not (isNull (box f.ContainingOneof))
+                        && not f.ContainingOneof.IsSynthetic
+
+                    if
+                        f.FieldType <> FieldType.Message
+                        && f.HasPresence
+                        && not inOneof
+                    then
                         $"{message.Name}.{f.Name}"
         ]
 
@@ -269,3 +284,68 @@ let ``Every attribute the change command sets is readable back from the snapshot
         |> List.filter (fun attribute -> not (List.contains attribute snapshot))
 
     test <@ missing = [] @>
+
+/// Прикрепление принимает материал, а не готовую позицию: место в порядке
+/// назначает сервер, и поля position в запросе нет. Идентификатор материала
+/// приходит от вызывающей стороны — он же ключ идемпотентности.
+[<Fact>]
+let ``Attaching a material takes the caller-generated material id and no position`` () =
+    let actual = fieldNames AttachMaterialRequest.Descriptor
+
+    test
+        <@
+            actual = set
+                [
+                    "viewer"
+                    "id"
+                    "material_id"
+                    "title"
+                    "source"
+                ]
+        @>
+
+[<Fact>]
+let ``Removing a material names the material by the same caller-generated id`` () =
+    let actual = fieldNames RemoveMaterialRequest.Descriptor
+
+    test <@ actual = set [ "viewer"; "id"; "material_id" ] @>
+
+/// Материал в снимке — элемент repeated-поля: порядок коллекции несёт порядок
+/// поля, отдельного position в контракте нет, а авторство привязки остаётся
+/// внутренним. Источник — одно определение на запрос и снимок, поэтому он живёт
+/// отдельным сообщением, и пустой oneof значением не является.
+[<Fact>]
+let ``A material carries its id, its title and exactly one source`` () =
+    let material =
+        MeetupMaterial.Descriptor.Fields.InDeclarationOrder()
+        |> Seq.map (fun f -> f.Name, string f.FieldType)
+        |> List.ofSeq
+
+    let source =
+        MeetupMaterialSource.Descriptor.Oneofs
+        |> Seq.filter (fun o -> not o.IsSynthetic)
+        |> Seq.collect (fun o ->
+            o.Fields
+            |> Seq.map (fun f -> $"{o.Name}.{f.Name}")
+        )
+        |> List.ofSeq
+
+    let snapshotMaterials =
+        MeetupSnapshot.Descriptor.Fields.InDeclarationOrder()
+        |> Seq.filter (fun f -> f.Name = "materials")
+        |> Seq.map (fun f -> f.Name, f.FieldType, f.IsRepeated)
+        |> List.ofSeq
+
+    test
+        <@
+            material = [
+                "id", "String"
+                "title", "String"
+                "source", "Message"
+            ]
+            && source = [
+                "source.message_link"
+                "source.file_id"
+            ]
+            && snapshotMaterials = [ "materials", FieldType.Message, true ]
+        @>

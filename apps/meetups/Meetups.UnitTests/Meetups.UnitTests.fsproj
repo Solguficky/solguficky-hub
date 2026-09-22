@@ -25,6 +25,8 @@
     <Compile Include="DomainTests/PublishMeetupTests.fs" />
     <Compile Include="DomainTests/UnpublishMeetupTests.fs" />
     <Compile Include="DomainTests/CancelMeetupTests.fs" />
+    <Compile Include="DomainTests/AttachMaterialTests.fs" />
+    <Compile Include="DomainTests/RemoveMaterialTests.fs" />
     <Compile Include="DomainTests/MarkMeetupHeldTests.fs" />
     <Compile Include="DomainTests/ArchiveTests.fs" />
     <Compile Include="DomainTests/AccessTests.fs" />
@@ -39,6 +41,8 @@
     <Compile Include="SliceTests/PublishMeetupWorkflowTests.fs" />
     <Compile Include="SliceTests/UnpublishMeetupWorkflowTests.fs" />
     <Compile Include="SliceTests/CancelMeetupWorkflowTests.fs" />
+    <Compile Include="SliceTests/AttachMaterialWorkflowTests.fs" />
+    <Compile Include="SliceTests/RemoveMaterialWorkflowTests.fs" />
     <Compile Include="SliceTests/MarkMeetupHeldWorkflowTests.fs" />
     <Compile Include="SliceTests/CommandApiTests.fs" />
     <Compile Include="SliceTests/ListVisibleMeetupsTests.fs" />

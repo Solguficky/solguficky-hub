@@ -32,6 +32,8 @@ type MeetupEvent =
     | MeetupUnpublished
     | MeetupRepublished
     | MeetupCancelled
+    | MeetupMaterialAttached of material: MeetupMaterial
+    | MeetupMaterialRemoved of materialId: MaterialId
     | MeetupHeld
 
 /// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
@@ -68,6 +70,7 @@ type Meetup =
             Kind: string
             CalendarLink: string
             Schedule: Schedule
+            Materials: MeetupMaterial list
             Lifecycle: MeetupLifecycle
             Visibility: MeetupVisibility
             FirstPublishedAt: DateTimeOffset option
@@ -96,6 +99,7 @@ module Meetup =
             Kind = ""
             CalendarLink = ""
             Schedule = NoDate
+            Materials = []
             Lifecycle = Planned
             Visibility = Hidden
             FirstPublishedAt = None
@@ -142,6 +146,23 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    /// Материал входит в состояние только применением события: позицию и авторство
+    /// привязки приносит событие, а не команда записи. Остальные материалы удаление
+    /// не трогает — их позиции остаются теми же, и порядок от него не зависит.
+    let private attachMaterial (material: MeetupMaterial) (meetup: Meetup) : Meetup =
+        { meetup with
+            Materials = meetup.Materials @ [ material ]
+            Version = meetup.Version + 1L
+        }
+
+    let private removeMaterial (materialId: MaterialId) (meetup: Meetup) : Meetup =
+        { meetup with
+            Materials =
+                meetup.Materials
+                |> List.filter (fun material -> material.Id <> materialId)
+            Version = meetup.Version + 1L
+        }
+
     /// Жизненный цикл двигается на конечную стадию, независимая ось видимости не
     /// трогается: скрытая состоявшаяся остаётся скрытой, а видимая — видимой.
     let private hold (meetup: Meetup) : Meetup =
@@ -160,12 +181,16 @@ module Meetup =
         | Existing meetup, MeetupUnpublished -> setVisibility Hidden meetup
         | Existing meetup, MeetupRepublished -> setVisibility Visible meetup
         | Existing meetup, MeetupCancelled -> cancel meetup
+        | Existing meetup, MeetupMaterialAttached material -> attachMaterial material meetup
+        | Existing meetup, MeetupMaterialRemoved materialId -> removeMaterial materialId meetup
         | Existing meetup, MeetupHeld -> hold meetup
         | Initial, MeetupChanged _
         | Initial, MeetupPublished _
         | Initial, MeetupUnpublished
         | Initial, MeetupRepublished
         | Initial, MeetupCancelled
+        | Initial, MeetupMaterialAttached _
+        | Initial, MeetupMaterialRemoved _
         | Initial, MeetupHeld
         | Existing _, MeetupCreated _ ->
             // Событие решено не из этого состояния. Ни одно решение такой пары не
@@ -184,6 +209,7 @@ module Meetup =
             Kind = meetup.Kind
             CalendarLink = meetup.CalendarLink
             Schedule = meetup.Schedule
+            Materials = meetup.Materials
             Lifecycle = meetup.Lifecycle
             Visibility = meetup.Visibility
             FirstPublishedAt = meetup.FirstPublishedAt
@@ -206,6 +232,7 @@ module Meetup =
             Kind = snapshot.Kind
             CalendarLink = snapshot.CalendarLink
             Schedule = snapshot.Schedule
+            Materials = snapshot.Materials
             Lifecycle = snapshot.Lifecycle
             Visibility = snapshot.Visibility
             FirstPublishedAt = snapshot.FirstPublishedAt
@@ -318,6 +345,69 @@ module Meetup =
             | TransitionOutcome.AlreadyThere -> Ok None
             | TransitionOutcome.Allowed -> Ok(Some MeetupCancelled)
             | TransitionOutcome.Rejected -> Error TransitionNotAllowed
+
+    /// Порядок проверок тот же, что у публикации, и по той же причине: повтор с тем
+    /// же идентификатором материала идёт первым. Идентификатор материала — ключ
+    /// идемпотентности, как `id` у создания черновика: повтор возвращает текущий
+    /// снимок без события и не плодит второй материал. Уже прикреплённый материал
+    /// означает достигнутое целевое состояние независимо от жизненного цикла —
+    /// отмена его не отменяет, поэтому повтор успешен и на отменённой сходке.
+    ///
+    /// Позиция назначается решением, а не применением: она зависит от текущего
+    /// состояния. Новый материал встаёт в конец коллекции — вставку в середину
+    /// выразит отдельная команда порядка (RFC-004), в срез не входящая.
+    let decideAttachMaterial
+        (boundBy: PersonId)
+        (materialId: MaterialId)
+        (title: string)
+        (source: MaterialSource)
+        (state: MeetupState)
+        : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup when
+            meetup.Materials
+            |> List.exists (fun material -> material.Id = materialId)
+            ->
+            Ok None
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
+        | Existing meetup ->
+            let position =
+                meetup.Materials
+                |> List.fold (fun next material -> max next material.Position) 0
+                |> (+) 1
+
+            Ok(
+                Some(
+                    MeetupMaterialAttached
+                        {
+                            Id = materialId
+                            Position = position
+                            Title = title
+                            Source = source
+                            BoundBy = boundBy
+                        }
+                )
+            )
+
+    /// Команда сформулирована как целевое состояние, поэтому отсутствие материала —
+    /// успех без события, а не отказ: повтор после потерянного ответа безопасен.
+    /// Порядок проверок тот же, что у прикрепления: достигнутое целевое состояние
+    /// идёт первым, и только затем жизненный цикл. Отмена закрывает удаление так же,
+    /// как закрывает правку атрибутов (PER-197): материалы — обычное редактирование
+    /// сведений о сходке, а не способ её обойти.
+    let decideRemoveMaterial (materialId: MaterialId) (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup when
+            not (
+                meetup.Materials
+                |> List.exists (fun material -> material.Id = materialId)
+            )
+            ->
+            Ok None
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
+        | Existing _ -> Ok(Some(MeetupMaterialRemoved materialId))
 
     /// Перевод в «состоялась» — ручное действие администратора (ADR-022), повтор
     /// на уже состоявшейся сходке — успех без события. Отменённая не переводится:

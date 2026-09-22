@@ -54,6 +54,20 @@ let ``The fifth migration admits the held transition event`` () =
 
     test <@ sql.Contains("meetup_held") @>
 
+/// Материалы — колонка состояния, а не вторая таблица: порядок коллекции держит
+/// массив, а целостность элементов — домен. Журнал получает два новых повода.
+[<Fact>]
+let ``The sixth migration adds the material collection and its events`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 5).Sql
+
+    test
+        <@
+            sql.Contains("ADD COLUMN IF NOT EXISTS materials JSONB NOT NULL DEFAULT '[]'::jsonb")
+            && sql.Contains("meetups_materials_array")
+            && sql.Contains("meetup_material_attached")
+            && sql.Contains("meetup_material_removed")
+        @>
+
 [<Fact>]
 let ``A postgres URI becomes a keyword connection string`` () =
     let cs =

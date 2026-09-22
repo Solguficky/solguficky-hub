@@ -40,6 +40,8 @@ type HiddenMeetupReadTests() =
                     "PublishMeetup"
                     "UnpublishMeetup"
                     "CancelMeetup"
+                    "AttachMaterial"
+                    "RemoveMaterial"
                     "MarkMeetupHeld"
                 ]
 
@@ -72,6 +74,41 @@ type HiddenMeetupReadTests() =
             |> Set.ofSeq
 
         test <@ not (returnedIds.Contains hiddenId) @>
+
+    /// Материалы наследуют видимость сходки: скрытая сходка не отдаёт их обычному
+    /// смотрящему ни через карточку, ни через прямую ссылку, а администратору они
+    /// приходят вместе с ней. Правило держится общим путём чтения, а не отдельной
+    /// проверкой материалов.
+    [<Fact>]
+    member _.``Materials of a hidden meetup follow the visibility of the meetup``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let hiddenId = createDraft client
+
+        client.AttachMaterial(
+            AttachMaterialRequest(
+                Viewer = administrator (),
+                Id = hiddenId,
+                MaterialId = (Guid.CreateVersion7()).ToString "D",
+                Title = "Афиша",
+                Source = MeetupMaterialSource(FileId = "file-1")
+            )
+        )
+        |> ignore
+
+        let refused =
+            notFound (fun () ->
+                client.GetMeetup(GetMeetupRequest(Viewer = ordinary (), Id = hiddenId))
+                |> ignore
+            )
+
+        let visibleToAdministrator =
+            client.GetMeetup(GetMeetupRequest(Viewer = administrator (), Id = hiddenId)).Materials
+            |> Seq.map _.Title
+            |> List.ofSeq
+
+        test <@ refused = Some StatusCode.NotFound @>
+        test <@ visibleToAdministrator = [ "Афиша" ] @>
 
     /// Архив — новое человеческое чтение, и правило видимости у него то же: сходка не
     /// становится видимой оттого, что попала в архив. Скрытую состоявшуюся видит её

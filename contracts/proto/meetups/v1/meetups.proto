@@ -50,6 +50,33 @@ message LocalInterval {
   LocalDateTime end = 2;
 }
 
+// A material attached to a meetup: an element of one ordered collection. The
+// server-produced state carries what is stored about it and nothing else. The
+// order is the order of the repeated field; there is no position field, and
+// there is no authorship field on the wire.
+message MeetupMaterial {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Empty string is the total value "unspecified". Whose poster it is is
+  // expressed by the title, not by a separate flag.
+  string title = 2;
+
+  MeetupMaterialSource source = 3;
+}
+
+// The source is stored as what it is: a Telegram message link or a Bot API
+// file_id. An empty oneof is not a value: a material always has a source.
+message MeetupMaterialSource {
+  oneof source {
+    // Telegram message link, carried as the link itself.
+    string message_link = 1;
+
+    // Bot API file_id of the attached file, carried as the identifier itself.
+    string file_id = 2;
+  }
+}
+
 enum MeetupLifecycle {
   MEETUP_LIFECYCLE_UNSPECIFIED = 0;
   MEETUP_LIFECYCLE_PLANNED = 1;
