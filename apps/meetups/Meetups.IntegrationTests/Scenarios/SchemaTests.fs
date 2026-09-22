@@ -834,3 +834,38 @@ type SchemaTests() =
                 thrown
                 |> Option.exists SchemaSql.isForeignKeyViolation
             @>
+
+    /// Материалы — массив в колонке состояния: порядок коллекции держит порядок
+    /// элементов, а не отдельная таблица. Объект или скаляр в колонке — порча,
+    /// которую схема обязана отвергнуть сама.
+    [<Fact>]
+    member _.``A material collection cannot be anything but an array``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let id = Guid.Parse("0199c0de-0000-7000-8000-00000000007b")
+
+        SchemaSql.insertNoDate dsn id "hidden" SchemaSql.absent SchemaSql.absent
+
+        let thrown =
+            SchemaSql.attempt (fun () ->
+                SchemaSql.exec dsn "UPDATE meetups SET materials = '{}'::jsonb WHERE id = @id" [ "id", box id ]
+            )
+
+        test <@ thrown |> Option.exists SchemaSql.isCheckViolation @>
+
+    /// Миграция материалов расширяет перечисление поводов: строка с новым именем
+    /// записывается, а подтвердить это может только настоящая база.
+    [<Fact>]
+    member _.``The journal admits the material events``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let id = Guid.Parse("0199c0de-0000-7000-8000-00000000007c")
+
+        SchemaSql.insertNoDate dsn id "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn (Guid.Parse("0199c0de-0000-7000-8000-00000000007d")) id 1 "meetup_material_attached"
+        SchemaSql.insertEvent dsn (Guid.Parse("0199c0de-0000-7000-8000-00000000007e")) id 2 "meetup_material_removed"
+
+        let count =
+            SchemaSql.scalar<int64> dsn "SELECT COUNT(*) FROM meetup_events WHERE meetup_id = @id" [ "id", box id ]
+
+        test <@ count = 2L @>

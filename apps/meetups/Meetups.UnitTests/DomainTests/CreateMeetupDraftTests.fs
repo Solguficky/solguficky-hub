@@ -23,6 +23,7 @@ let ``When the draft is created expect an empty hidden meetup at version one`` (
             Kind = ""
             CalendarLink = ""
             Schedule = NoDate
+            Materials = []
             Lifecycle = Planned
             Visibility = Hidden
             FirstPublishedAt = None

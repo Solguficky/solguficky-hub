@@ -22,6 +22,8 @@ let eventType (event: MeetupEvent) : string =
     | MeetupUnpublished -> "meetup_unpublished"
     | MeetupRepublished -> "meetup_republished"
     | MeetupCancelled -> "meetup_cancelled"
+    | MeetupMaterialAttached _ -> "meetup_material_attached"
+    | MeetupMaterialRemoved _ -> "meetup_material_removed"
     | MeetupHeld -> "meetup_held"
 
 let private dateText (date: DateOnly) : string = date.ToString "yyyy-MM-dd"
@@ -68,6 +70,10 @@ let ofSnapshot (snapshot: MeetupSnapshot) : string =
     node["kind"] <- JsonValue.Create row.Kind
     node["calendar_link"] <- JsonValue.Create row.CalendarLink
     node["schedule"] <- scheduleNode snapshot.Schedule
+    // Материалы входят в снимок наравне с расписанием: тело события — что теперь
+    // правда, а коллекция материалов — часть этой правды. Потребитель выводит
+    // «материал добавлен» сравнением с собственной репликой (ADR-031).
+    node["materials"] <- MeetupRow.materialsNode snapshot.Materials
     node["lifecycle"] <- JsonValue.Create row.Lifecycle
     node["visibility"] <- JsonValue.Create row.Visibility
 
