@@ -247,6 +247,7 @@ MEETUPS_TEST_THRESHOLD := "533"
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
     @echo "meetups-test: пропуск теста роняет прогон, разрешённых пропусков нет"
+    @echo "meetups-test: минимум {{MEETUPS_TEST_THRESHOLD}} тестов — добавил тест, подними MEETUPS_TEST_THRESHOLD в этом рецепте тем же изменением"
     dotnet test --solution apps/meetups/Meetups.sln --fail-skips on --minimum-expected-tests {{MEETUPS_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
@@ -287,6 +288,7 @@ NOTIFICATIONS_TEST_THRESHOLD := "16"
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 notifications-test:
     @echo "notifications-test: пропуск теста роняет прогон, разрешённых пропусков нет"
+    @echo "notifications-test: минимум {{NOTIFICATIONS_TEST_THRESHOLD}} тестов — добавил тест, подними NOTIFICATIONS_TEST_THRESHOLD в этом рецепте тем же изменением"
     dotnet test --solution apps/notifications/Notifications.sln --fail-skips on --minimum-expected-tests {{NOTIFICATIONS_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: то же условие обратимости, что у Meetups
