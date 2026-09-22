@@ -10,6 +10,8 @@ service MeetupsService {
   rpc ChangeMeetupAttributes(ChangeMeetupAttributesRequest) returns (MeetupSnapshot);
   rpc SetMeetupSchedule(SetMeetupScheduleRequest) returns (MeetupSnapshot);
   rpc PublishMeetup(PublishMeetupRequest) returns (MeetupSnapshot);
+  rpc ScheduleMeetupPublication(ScheduleMeetupPublicationRequest) returns (MeetupSnapshot);
+  rpc CancelMeetupPublication(CancelMeetupPublicationRequest) returns (MeetupSnapshot);
   rpc UnpublishMeetup(UnpublishMeetupRequest) returns (MeetupSnapshot);
   rpc CancelMeetup(CancelMeetupRequest) returns (MeetupSnapshot);
   rpc AttachMaterial(AttachMaterialRequest) returns (MeetupSnapshot);
@@ -87,6 +89,24 @@ message PublishMeetupRequest {
   Viewer viewer = 1;
 
   // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+}
+
+// The moment is a local community date and time; Meetups interprets it in the
+// community timezone from its configuration and stores an instant. An instant in
+// the request would move the interpretation to every caller (ADR-031).
+message ScheduleMeetupPublicationRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Local date and time in the community timezone, minute precision.
+  LocalDateTime moment = 3;
+}
+
+message CancelMeetupPublicationRequest {
+  Viewer viewer = 1;
   string id = 2;
 }
 
@@ -193,6 +213,10 @@ message MeetupSnapshot {
   // One ordered collection of materials. The order of this field is the order
   // of the collection; an empty collection is not an absent state.
   repeated MeetupMaterial materials = 13;
+
+  // RFC 3339 UTC instant of the planned publication. Unset when no publication
+  // is scheduled; a visible meetup never carries a moment.
+  optional string scheduled_publish_at = 14;
 }
 
 // Server-produced state. Every field is set; there is no absent state here.

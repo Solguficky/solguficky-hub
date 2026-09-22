@@ -120,6 +120,8 @@ module Api =
         // нарушение внутреннего контракта, а не код отказа.
         | CreateMeetupDraftError.Domain TitleRequiredForPublication ->
             invalidOp "creating a draft does not decide publication"
+        | CreateMeetupDraftError.Domain PublicationMomentInThePast ->
+            invalidOp "creating a draft does not decide a publication moment"
         | CreateMeetupDraftError.Domain TransitionNotAllowed ->
             invalidOp "creating a draft does not decide a state transition"
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место

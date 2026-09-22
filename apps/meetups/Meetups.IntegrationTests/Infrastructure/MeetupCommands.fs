@@ -113,6 +113,35 @@ let markHeldDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Mar
         NewEventId = fun () -> eventId
     }
 
+/// Пояс сообщества — та же конфигурация, что подставляет AppHost: 19:00 в Москве
+/// становится 16:00 UTC, и сценарий проверяет интерпретацию, а не константу.
+let schedulePublicationDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.ScheduleMeetupPublication.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+        CommunityTimeZone = TimeZoneInfo.FindSystemTimeZoneById "Europe/Moscow"
+    }
+
+let cancelPublicationDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.CancelMeetupPublication.Deps =
+    {
+        Load = MeetupStore.load source
+        Commit = MeetupStore.commit source
+        Now = fun () -> now
+        NewEventId = fun () -> eventId
+    }
+
+/// Локальная пара для команды назначения: минута — предел точности, который несёт
+/// значение, поэтому секунды тесту недоступны по построению.
+let localMoment year month day hours minutes : LocalDateTime =
+    {
+        Date = DateOnly(year, month, day)
+        Time =
+            LocalTime.create (TimeOnly(hours, minutes))
+            |> Result.defaultWith (fun _ -> failwith "the test time is more precise than a minute")
+    }
+
 let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: Viewer) =
     Meetups.Slices.CreateMeetupDraft.execute
         (createDeps source eventId)
@@ -228,6 +257,25 @@ let markHeld (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         }
     |> run
 
+let schedulePublication (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (moment: LocalDateTime) =
+    Meetups.Slices.ScheduleMeetupPublication.execute
+        (schedulePublicationDeps source eventId)
+        {
+            Id = id
+            Viewer = administrator
+            Moment = moment
+        }
+    |> run
+
+let cancelPublication (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
+    Meetups.Slices.CancelMeetupPublication.execute
+        (cancelPublicationDeps source eventId)
+        {
+            Id = id
+            Viewer = administrator
+        }
+    |> run
+
 /// День сообщества: списки отделяют архив от актуального по нему, и сценарий,
 /// записанный фиксированной датой, позеленел бы сегодня и покраснел после неё.
 /// Пояс — тот же, что получает хост под тестом.
@@ -245,6 +293,21 @@ let transactionOf (dsn: string) (table: string) (column: string) (id: Guid) =
 let eventTransactionOf (dsn: string) (eventId: Guid) =
     scalar<string> dsn "SELECT xmin::text FROM meetup_events WHERE event_id = @id" [ "id", box eventId ]
 
+/// Транзакция последней записи журнала. Нужна командам, после которых у сходки
+/// накопились события: сравнить с состоянием можно только ту строку, которую
+/// записала та же команда.
+let lastEventTransactionOf (dsn: string) (id: Guid) =
+    scalar<string>
+        dsn
+        """
+        SELECT xmin::text
+        FROM meetup_events
+        WHERE meetup_id = @id
+        ORDER BY position DESC
+        LIMIT 1
+        """
+        [ "id", box id ]
+
 let countMeetups (dsn: string) (id: Guid) =
     scalar<int64> dsn "SELECT count(*) FROM meetups WHERE id = @id" [ "id", box id ]
 
@@ -256,10 +319,19 @@ let versionOf (dsn: string) (id: Guid) = scalar<int64> dsn "SELECT version FROM 
 let visibilityOf (dsn: string) (id: Guid) =
     scalar<string> dsn "SELECT visibility FROM meetups WHERE id = @id" [ "id", box id ]
 
-/// Заполнен ли момент отложенной публикации. В снимок поле не входит, поэтому
-/// наблюдать его обнуление можно только в самой строке состояния.
+/// Заполнен ли момент отложенной публикации в самой строке состояния. Снимок
+/// теперь несёт то же поле, но проверять его очистку уместно там, где живёт
+/// ограничение схемы: у видимой и у отменённой строки момента быть не может.
 let scheduledPublicationIsSet (dsn: string) (id: Guid) =
     scalar<bool> dsn "SELECT scheduled_publish_at IS NOT NULL FROM meetups WHERE id = @id" [ "id", box id ]
+
+/// Момент отложенной публикации как его видит база. Npgsql отдаёт timestamptz
+/// значением DateTime, поэтому вид UTC называется явно, а не угадывается.
+let scheduledPublicationAt (dsn: string) (id: Guid) =
+    let value =
+        read dsn "SELECT scheduled_publish_at FROM meetups WHERE id = @id" [ "id", box id ]
+
+    if isNull value then None else Some(DateTimeOffset(DateTime.SpecifyKind(unbox<DateTime> value, DateTimeKind.Utc)))
 
 /// Число событий, чья версия обогнала версию состояния. Ноль означает, что обе
 /// стороны транзакции говорят об одном и том же шаге агрегата.

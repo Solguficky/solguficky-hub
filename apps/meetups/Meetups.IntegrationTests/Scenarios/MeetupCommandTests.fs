@@ -174,11 +174,11 @@ type MeetupCommandTests() =
 
         test <@ MeetupCommands.journalIds dsn meetupId = [ firstEvent; secondEvent; thirdEvent ] @>
 
-    /// Момент отложенной публикации не входит в снимок, поэтому ни одна команда его
-    /// не касается — а публикация обязана обнулить его той же записью, что меняет
+    /// PER-280: публикация забирает назначенный момент той же записью, что меняет
     /// видимость: `meetups_scheduled_publish_only_when_hidden` не пропустит видимую
     /// строку с моментом, и публикация упала бы `23514` вместо доменного ответа.
-    /// Заполняется поле прямо в базе: команд назначения момента ещё нет (PER-203).
+    /// Команда назначения теперь есть (PER-203), поэтому момент ставит она, а не
+    /// прямой UPDATE: сценарий идёт тем же путём, что у человека.
     [<Fact>]
     member _.``Publishing clears the scheduled publication moment``() =
         use db = SchemaSql.applyIsolated ()
@@ -191,30 +191,176 @@ type MeetupCommandTests() =
         MeetupCommands.change source secondEvent (MeetupId meetupId)
         |> ignore
 
-        SchemaSql.exec
-            dsn
-            "UPDATE meetups SET scheduled_publish_at = @at WHERE id = @id"
-            [
-                "id", box meetupId
-                "at", box (DateTimeOffset(2026, 10, 1, 9, 0, 0, TimeSpan.Zero))
-            ]
+        MeetupCommands.schedulePublication
+            source
+            thirdEvent
+            (MeetupId meetupId)
+            (MeetupCommands.localMoment 2026 10 5 19 0)
+        |> ignore
 
         test <@ MeetupCommands.scheduledPublicationIsSet dsn meetupId @>
 
-        let published = MeetupCommands.publish source thirdEvent (MeetupId meetupId)
+        let stored = MeetupCommands.scheduledPublicationAt dsn meetupId
+        test <@ stored = Some(DateTimeOffset(2026, 10, 5, 16, 0, 0, TimeSpan.Zero)) @>
+
+        let published = MeetupCommands.publish source fourthEvent (MeetupId meetupId)
 
         // Обе колонки, которых касается CHECK: видимость сменилась, момент обнулён.
-        test <@ MeetupCommands.versionIn published = Some 3L @>
+        test <@ MeetupCommands.versionIn published = Some 4L @>
         test <@ MeetupCommands.visibilityOf dsn meetupId = "visible" @>
         test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
 
         // Повтор уже видимой сходки не пишет вовсе, поэтому момент, которого у неё
         // быть не может, остаётся пустым, а версия и журнал доказывают отсутствие
         // записи: сама пустота колонки у видимой строки держится ещё и CHECK.
-        let repeat = MeetupCommands.publish source fourthEvent (MeetupId meetupId)
+        let repeat = MeetupCommands.publish source fifthEvent (MeetupId meetupId)
 
-        test <@ MeetupCommands.versionIn repeat = Some 3L @>
-        test <@ MeetupCommands.countEvents dsn meetupId = 3L @>
+        test <@ MeetupCommands.versionIn repeat = Some 4L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 4L @>
+        test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
+
+    /// Назначение момента — обычная команда: состояние и событие пишутся одной
+    /// транзакцией (её доказывает совпадение `xmin`), момент виден в строке и
+    /// переживает перечитывание, а имя повода принимает CHECK журнала.
+    [<Fact>]
+    member _.``Scheduling a publication writes the moment and its event in one transaction``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        let scheduled =
+            MeetupCommands.schedulePublication
+                source
+                secondEvent
+                (MeetupId meetupId)
+                (MeetupCommands.localMoment 2026 10 5 19 0)
+
+        test <@ MeetupCommands.versionIn scheduled = Some 2L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+
+        test
+            <@
+                MeetupCommands.eventTypes dsn meetupId = [
+                    "meetup_created"
+                    "meetup_publication_scheduled"
+                ]
+            @>
+
+        let stored = MeetupCommands.scheduledPublicationAt dsn meetupId
+        test <@ stored = Some(DateTimeOffset(2026, 10, 5, 16, 0, 0, TimeSpan.Zero)) @>
+
+        let stateTransaction = MeetupCommands.transactionOf dsn "meetups" "id" meetupId
+        let eventTransaction = MeetupCommands.lastEventTransactionOf dsn meetupId
+        test <@ stateTransaction = eventTransaction @>
+
+        // Момент переживает перечитывание состояния: на это опирается воркер после
+        // рестарта сервиса (PER-204).
+        let reloaded =
+            MeetupStore.load source (MeetupId meetupId)
+            |> MeetupCommands.run
+
+        let reloadedMoment =
+            reloaded
+            |> Option.bind (fun snapshot -> snapshot.ScheduledPublishAt)
+
+        test <@ reloadedMoment = Some(DateTimeOffset(2026, 10, 5, 16, 0, 0, TimeSpan.Zero)) @>
+
+    /// Отмена запланированной публикации очищает поле и оставляет сходку скрытой:
+    /// публикации не случилось, и признак «запланирована» исчезает вместе с полем.
+    [<Fact>]
+    member _.``Cancelling a scheduled publication clears the moment and keeps the meetup hidden``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.schedulePublication
+            source
+            secondEvent
+            (MeetupId meetupId)
+            (MeetupCommands.localMoment 2026 10 5 19 0)
+        |> ignore
+
+        let cancelled =
+            MeetupCommands.cancelPublication source thirdEvent (MeetupId meetupId)
+
+        test <@ MeetupCommands.versionIn cancelled = Some 3L @>
+
+        test
+            <@
+                MeetupCommands.eventTypes dsn meetupId = [
+                    "meetup_created"
+                    "meetup_publication_scheduled"
+                    "meetup_publication_cancelled"
+                ]
+            @>
+
+        test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
+        test <@ MeetupCommands.visibilityOf dsn meetupId = "hidden" @>
+
+    /// Прошедший момент отвергается доменом до записи: у сходки остаётся только
+    /// событие создания.
+    [<Fact>]
+    member _.``A past publication moment is rejected without writing``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        // 19:00 предыдущего дня в Москве: «сейчас» сценария — 12:00 UTC седьмого.
+        let refused =
+            MeetupCommands.schedulePublication
+                source
+                secondEvent
+                (MeetupId meetupId)
+                (MeetupCommands.localMoment 2026 9 6 19 0)
+
+        let expected: Result<MeetupSnapshot, Meetups.Slices.ScheduleMeetupPublication.ScheduleMeetupPublicationError> =
+            Error(
+                Meetups.Slices.ScheduleMeetupPublication.ScheduleMeetupPublicationError.Domain
+                    PublicationMomentInThePast
+            )
+
+        test <@ refused = expected @>
+
+        test <@ MeetupCommands.countEvents dsn meetupId = 1L @>
+        test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
+
+    /// Отмена самой сходки очищает назначенный момент тем же переходом, что закрывает
+    /// команды: критерий PER-204 «отменённая не оставляет поле заполненным» держится
+    /// здесь, а не только в доменном тесте.
+    [<Fact>]
+    member _.``Cancelling the meetup clears the scheduled publication moment``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        MeetupCommands.schedulePublication
+            source
+            secondEvent
+            (MeetupId meetupId)
+            (MeetupCommands.localMoment 2026 10 5 19 0)
+        |> ignore
+
+        MeetupCommands.cancel source thirdEvent (MeetupId meetupId)
+        |> ignore
+
+        test
+            <@
+                MeetupCommands.eventTypes dsn meetupId
+                |> List.last = "meetup_cancelled"
+            @>
+
         test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
 
     /// Публикация ставит отметку первой публикации, и её принимает именно база: без

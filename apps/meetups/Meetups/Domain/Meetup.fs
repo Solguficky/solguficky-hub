@@ -31,6 +31,8 @@ type MeetupEvent =
     | MeetupPublished of at: DateTimeOffset
     | MeetupUnpublished
     | MeetupRepublished
+    | MeetupPublicationScheduled of at: DateTimeOffset
+    | MeetupPublicationCancelled
     | MeetupCancelled
     | MeetupMaterialAttached of material: MeetupMaterial
     | MeetupMaterialRemoved of materialId: MaterialId
@@ -55,6 +57,11 @@ type DomainError =
     | DraftBelongsToAnotherAuthor
     | TitleRequiredForPublication
     | TransitionNotAllowed
+    // Момент отложенной публикации уже прошёл: выбор человека неисполним по
+    // времени, а не запрещён состоянием сходки. От TransitionNotAllowed он
+    // отличается тем же, чем TitleRequiredForPublication: у человека на них
+    // разные действия — переспросить время или посмотреть состояние сходки.
+    | PublicationMomentInThePast
 
 /// Сходка (ADR-031). Представление приватно, поэтому запись копией вне этого файла
 /// не собирается: единственный путь появления и изменения полей — применение
@@ -74,6 +81,7 @@ type Meetup =
             Lifecycle: MeetupLifecycle
             Visibility: MeetupVisibility
             FirstPublishedAt: DateTimeOffset option
+            ScheduledPublishAt: DateTimeOffset option
             Version: int64
         }
 
@@ -103,6 +111,7 @@ module Meetup =
             Lifecycle = Planned
             Visibility = Hidden
             FirstPublishedAt = None
+            ScheduledPublishAt = None
             Version = 1L
         }
 
@@ -127,10 +136,16 @@ module Meetup =
         }
 
     /// I6: отметка первой публикации ставится один раз и после этого не меняется.
+    /// Момент отложенной публикации публикация забирает себе: назначенное время
+    /// наступило, и оставленное поле противоречило бы и снимку, и схеме
+    /// (`meetups_scheduled_publish_only_when_hidden`). Обнуление живёт здесь, а не в
+    /// SQL, потому что момент — часть состояния, и другой путь его изменения
+    /// запрещён (ADR-024).
     let private publish (meetup: Meetup) (at: DateTimeOffset) : Meetup =
         { meetup with
             Visibility = Visible
             FirstPublishedAt = meetup.FirstPublishedAt |> Option.orElse (Some at)
+            ScheduledPublishAt = None
             Version = meetup.Version + 1L
         }
 
@@ -140,9 +155,25 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    /// Момент отложенной публикации — признак, а не ось: состояния «запланирована
+    /// публикация» не существует, и отмена сходки очищает поле тем же переходом,
+    /// что закрывает обе команды редактирования (PER-204).
     let private cancel (meetup: Meetup) : Meetup =
         { meetup with
             Lifecycle = Cancelled
+            ScheduledPublishAt = None
+            Version = meetup.Version + 1L
+        }
+
+    let private schedulePublication (at: DateTimeOffset) (meetup: Meetup) : Meetup =
+        { meetup with
+            ScheduledPublishAt = Some at
+            Version = meetup.Version + 1L
+        }
+
+    let private cancelScheduledPublication (meetup: Meetup) : Meetup =
+        { meetup with
+            ScheduledPublishAt = None
             Version = meetup.Version + 1L
         }
 
@@ -180,6 +211,8 @@ module Meetup =
         | Existing meetup, MeetupPublished at -> publish meetup at
         | Existing meetup, MeetupUnpublished -> setVisibility Hidden meetup
         | Existing meetup, MeetupRepublished -> setVisibility Visible meetup
+        | Existing meetup, MeetupPublicationScheduled at -> schedulePublication at meetup
+        | Existing meetup, MeetupPublicationCancelled -> cancelScheduledPublication meetup
         | Existing meetup, MeetupCancelled -> cancel meetup
         | Existing meetup, MeetupMaterialAttached material -> attachMaterial material meetup
         | Existing meetup, MeetupMaterialRemoved materialId -> removeMaterial materialId meetup
@@ -188,6 +221,8 @@ module Meetup =
         | Initial, MeetupPublished _
         | Initial, MeetupUnpublished
         | Initial, MeetupRepublished
+        | Initial, MeetupPublicationScheduled _
+        | Initial, MeetupPublicationCancelled
         | Initial, MeetupCancelled
         | Initial, MeetupMaterialAttached _
         | Initial, MeetupMaterialRemoved _
@@ -213,6 +248,7 @@ module Meetup =
             Lifecycle = meetup.Lifecycle
             Visibility = meetup.Visibility
             FirstPublishedAt = meetup.FirstPublishedAt
+            ScheduledPublishAt = meetup.ScheduledPublishAt
             Version = meetup.Version
         }
 
@@ -236,6 +272,7 @@ module Meetup =
             Lifecycle = snapshot.Lifecycle
             Visibility = snapshot.Visibility
             FirstPublishedAt = snapshot.FirstPublishedAt
+            ScheduledPublishAt = snapshot.ScheduledPublishAt
             Version = snapshot.Version
         }
 
@@ -277,6 +314,51 @@ module Meetup =
         | Initial -> Error MeetupNotFound
         | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
         | Existing _ -> Ok(MeetupChanged(ScheduleChanged schedule))
+
+    /// I9: назначить момент можно только скрытой сходке, и только в будущем.
+    /// Порядок проверок наблюдаем снаружи и потому зафиксирован: сначала состояние
+    /// (видимая и отменённая закрывают команду), потом значение — тем же правилом,
+    /// по которому публикация проверяет переход раньше полноты заголовка. Иначе
+    /// назначение на прошедший момент отменённой сходке отвечало бы «время прошло»
+    /// и прятало настоящую причину отказа.
+    ///
+    /// Повтор того же момента — успех без события, как у целевых команд (I5):
+    /// кнопка, нажатая дважды, не пишет второй строки журнала. Другой момент
+    /// скрытой сходки — замена с событием, а не второй назначенный момент.
+    /// I5 проверяется раньше «момент прошёл»: иначе повтор уже истёкшего, но ещё
+    /// не забранного воркером момента отвечал бы отказом вместо повторного успеха.
+    let decideSchedulePublication
+        (now: DateTimeOffset)
+        (at: DateTimeOffset)
+        (state: MeetupState)
+        : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match meetup.Visibility with
+            | Visible -> Error TransitionNotAllowed
+            | Hidden ->
+                match meetup.Lifecycle with
+                | Cancelled -> Error TransitionNotAllowed
+                | Planned
+                | Held ->
+                    if meetup.ScheduledPublishAt = Some at then Ok None
+                    elif at <= now then Error PublicationMomentInThePast
+                    else Ok(Some(MeetupPublicationScheduled at))
+
+    /// Отмена сформулирована как целевое состояние «запланированной публикации
+    /// нет», поэтому отказ у неё ровно один — несуществующая сходка. Момент,
+    /// который уже прошёл, а воркер ещё не забрал, отменяется так же, как будущий:
+    /// человек передумал до того, как публикация случилась, а гонку с воркером
+    /// разрешает версия строки, а не проверка часов здесь. У видимой сходки
+    /// момента не бывает, поэтому её отмена — успех без события.
+    let decideCancelScheduledPublication (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+        match state with
+        | Initial -> Error MeetupNotFound
+        | Existing meetup ->
+            match meetup.ScheduledPublishAt with
+            | None -> Ok None
+            | Some _ -> Ok(Some MeetupPublicationCancelled)
 
     /// Порядок проверок наблюдаем снаружи, поэтому он зафиксирован здесь, а не
     /// выведен из удобства записи.

@@ -69,6 +69,17 @@ let ``The sixth migration adds the material collection and its events`` () =
         @>
 
 [<Fact>]
+let ``The seventh migration admits the publication moment events`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 6).Sql
+
+    test
+        <@
+            sql.Contains("meetup_publication_scheduled")
+            && sql.Contains("meetup_publication_cancelled")
+            && sql.Contains("meetups_scheduled_publish_not_cancelled")
+        @>
+
+[<Fact>]
 let ``A postgres URI becomes a keyword connection string`` () =
     let cs =
         Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"

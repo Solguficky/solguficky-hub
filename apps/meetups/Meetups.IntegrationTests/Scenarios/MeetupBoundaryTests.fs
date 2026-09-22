@@ -360,3 +360,113 @@ type MeetupBoundaryTests() =
         test <@ actual = Some StatusCode.PermissionDenied @>
         test <@ MeetupCommands.countMeetups live.ConnectionString id = 0L @>
         test <@ MeetupCommands.countEvents live.ConnectionString id = 0L @>
+
+    /// Момент отложенной публикации на проводе: локальная пара в запросе, мгновение
+    /// в ответе и чтении. Скрытую сходку с назначенным моментом по-прежнему видит
+    /// только автор и администратор — правило видимости ADR-022 момент не ослабляет.
+    [<Fact>]
+    member _.``A scheduled publication is returned to whoever sees the meetup``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let admin = administrator ()
+        let id = newId ()
+        let key = id.ToString "D"
+
+        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
+        |> ignore
+
+        let scheduled =
+            client.ScheduleMeetupPublication(
+                ScheduleMeetupPublicationRequest(
+                    Viewer = admin,
+                    Id = key,
+                    Moment =
+                        LocalDateTime(
+                            Date = CalendarDate(Year = 2026, Month = 10, Day = 5),
+                            Time = LocalTime(Hours = 19, Minutes = 0)
+                        )
+                )
+            )
+
+        // 19:00 в Москве — 16:00 UTC.
+        let expected = DateTimeOffset(2026, 10, 5, 16, 0, 0, TimeSpan.Zero)
+
+        test
+            <@
+                scheduled.HasScheduledPublishAt
+                && DateTimeOffset.Parse scheduled.ScheduledPublishAt = expected
+            @>
+
+        let read = client.GetMeetup(GetMeetupRequest(Viewer = admin, Id = key))
+
+        let concealed =
+            Rpc.codeOf (fun () ->
+                client.GetMeetup(GetMeetupRequest(Viewer = ordinary (), Id = key))
+                |> ignore
+            )
+
+        test
+            <@
+                read.HasScheduledPublishAt
+                && DateTimeOffset.Parse read.ScheduledPublishAt = expected
+                && concealed = Some StatusCode.NotFound
+            @>
+
+        let cancelled =
+            client.CancelMeetupPublication(CancelMeetupPublicationRequest(Viewer = admin, Id = key))
+
+        test <@ not cancelled.HasScheduledPublishAt @>
+
+    /// Два отказа назначения различимы клиенту по коду: прошедший момент —
+    /// INVALID_ARGUMENT (значение запроса), уже опубликованная сходка —
+    /// FAILED_PRECONDITION (состояние). Различие объявлено в integration.md.
+    [<Fact>]
+    member _.``A past moment and a published meetup are refused with different codes``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let admin = administrator ()
+
+        let draftKey = (newId ()).ToString "D"
+
+        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = draftKey))
+        |> ignore
+
+        let past =
+            Rpc.codeOf (fun () ->
+                client.ScheduleMeetupPublication(
+                    ScheduleMeetupPublicationRequest(
+                        Viewer = admin,
+                        Id = draftKey,
+                        Moment =
+                            LocalDateTime(
+                                Date = CalendarDate(Year = 2026, Month = 9, Day = 1),
+                                Time = LocalTime(Hours = 12, Minutes = 0)
+                            )
+                    )
+                )
+                |> ignore
+            )
+
+        let publishedId = newId ()
+
+        createPublished client admin publishedId "Already visible" None
+        |> ignore
+
+        let published =
+            Rpc.codeOf (fun () ->
+                client.ScheduleMeetupPublication(
+                    ScheduleMeetupPublicationRequest(
+                        Viewer = admin,
+                        Id = publishedId.ToString "D",
+                        Moment =
+                            LocalDateTime(
+                                Date = CalendarDate(Year = 2026, Month = 10, Day = 5),
+                                Time = LocalTime(Hours = 19, Minutes = 0)
+                            )
+                    )
+                )
+                |> ignore
+            )
+
+        test <@ past = Some StatusCode.InvalidArgument @>
+        test <@ published = Some StatusCode.FailedPrecondition @>

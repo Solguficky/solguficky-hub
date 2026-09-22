@@ -21,6 +21,8 @@ let eventType (event: MeetupEvent) : string =
     | MeetupPublished _ -> "meetup_published"
     | MeetupUnpublished -> "meetup_unpublished"
     | MeetupRepublished -> "meetup_republished"
+    | MeetupPublicationScheduled _ -> "meetup_publication_scheduled"
+    | MeetupPublicationCancelled -> "meetup_publication_cancelled"
     | MeetupCancelled -> "meetup_cancelled"
     | MeetupMaterialAttached _ -> "meetup_material_attached"
     | MeetupMaterialRemoved _ -> "meetup_material_removed"
@@ -89,6 +91,14 @@ let ofSnapshot (snapshot: MeetupSnapshot) : string =
     if row.FirstPublishedAt.HasValue then
         node["first_published_at"] <-
             JsonValue.Create(row.FirstPublishedAt.Value.ToString "yyyy-MM-ddTHH\:mm\:ss.ffffffZ")
+
+    // Момент отложенной публикации — такое же настоящее отсутствие: unset означает
+    // «публикация не назначена». Снимок журнала обязан нести его наравне с
+    // состоянием, иначе релей (PER-206) не восстановит по событию назначение, а
+    // форма записи разойдётся с первой публикацией.
+    if row.ScheduledPublishAt.HasValue then
+        node["scheduled_publish_at"] <-
+            JsonValue.Create(row.ScheduledPublishAt.Value.ToString "yyyy-MM-ddTHH\:mm\:ss.ffffffZ")
 
     node["version"] <- JsonValue.Create row.Version
 

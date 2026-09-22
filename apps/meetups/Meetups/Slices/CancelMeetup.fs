@@ -110,6 +110,8 @@ module Api =
         // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение
         // внутреннего контракта, а не код отказа.
         | CancelMeetupError.Domain TitleRequiredForPublication -> invalidOp "cancelling does not decide publication"
+        | CancelMeetupError.Domain PublicationMomentInThePast ->
+            invalidOp "cancelling does not decide a publication moment"
         // Единственный отклонённый переход этой оси — «состоялась → отменена»:
         // прошедшую сходку не отменяют, её отменять уже поздно.
         | CancelMeetupError.Domain TransitionNotAllowed ->

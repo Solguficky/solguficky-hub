@@ -30,6 +30,8 @@
     <Compile Include="Slices/ChangeMeetupAttributes.fs" />
     <Compile Include="Slices/SetMeetupSchedule.fs" />
     <Compile Include="Slices/PublishMeetup.fs" />
+    <Compile Include="Slices/ScheduleMeetupPublication.fs" />
+    <Compile Include="Slices/CancelMeetupPublication.fs" />
     <Compile Include="Slices/UnpublishMeetup.fs" />
     <Compile Include="Slices/CancelMeetup.fs" />
     <Compile Include="Slices/AttachMaterial.fs" />

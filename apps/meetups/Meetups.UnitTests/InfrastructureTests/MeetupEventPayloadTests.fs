@@ -28,6 +28,11 @@ let ``The event type names the occasion the schema accepts`` () =
     let published = MeetupEventPayload.eventType (MeetupPublished Sample.fixedNow)
     let unpublished = MeetupEventPayload.eventType MeetupUnpublished
     let republished = MeetupEventPayload.eventType MeetupRepublished
+
+    let scheduled =
+        MeetupEventPayload.eventType (MeetupPublicationScheduled Sample.later)
+
+    let unscheduled = MeetupEventPayload.eventType MeetupPublicationCancelled
     let cancelled = MeetupEventPayload.eventType MeetupCancelled
     let held = MeetupEventPayload.eventType MeetupHeld
 
@@ -44,6 +49,8 @@ let ``The event type names the occasion the schema accepts`` () =
             && published = "meetup_published"
             && unpublished = "meetup_unpublished"
             && republished = "meetup_republished"
+            && scheduled = "meetup_publication_scheduled"
+            && unscheduled = "meetup_publication_cancelled"
             && cancelled = "meetup_cancelled"
             && materialAttached = "meetup_material_attached"
             && materialRemoved = "meetup_material_removed"
@@ -97,6 +104,18 @@ let ``The first publication moment is written at the precision the state keeps``
             payload["first_published_at"].GetValue<string>() = "2026-09-07T18:30:00.001234Z"
             && row.FirstPublishedAt = Nullable(Sample.fixedNow.AddTicks 12340L)
         @>
+
+[<Fact>]
+let ``A meetup without a scheduled publication omits the moment field`` () =
+    let payload = parse (Meetup.toSnapshot Sample.titled)
+
+    test <@ not (payload.ContainsKey "scheduled_publish_at") @>
+
+[<Fact>]
+let ``A scheduled publication carries the moment in UTC`` () =
+    let payload = parse (Meetup.toSnapshot Sample.scheduled)
+
+    test <@ payload["scheduled_publish_at"].GetValue<string>() = "2026-09-08T18:30:00.000000Z" @>
 
 [<Fact>]
 let ``A meetup without a date carries the form and no boundaries`` () =

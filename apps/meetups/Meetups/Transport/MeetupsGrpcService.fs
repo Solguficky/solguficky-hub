@@ -39,6 +39,16 @@ type MeetupsGrpcService() =
         let services = context.GetHttpContext().RequestServices
         PublishMeetup.Api.handle (PublishMeetup.Composition.buildDeps services) request
 
+    override _.ScheduleMeetupPublication(request: ScheduleMeetupPublicationRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        ScheduleMeetupPublication.Api.handle (ScheduleMeetupPublication.Composition.buildDeps services) request
+
+    override _.CancelMeetupPublication(request: CancelMeetupPublicationRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        CancelMeetupPublication.Api.handle (CancelMeetupPublication.Composition.buildDeps services) request
+
     override _.UnpublishMeetup(request: UnpublishMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
         UnpublishMeetup.Api.handle (UnpublishMeetup.Composition.buildDeps services) request

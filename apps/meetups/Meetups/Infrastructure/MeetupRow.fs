@@ -31,6 +31,7 @@ type MeetupRow =
         Lifecycle: string
         Visibility: string
         FirstPublishedAt: Nullable<DateTimeOffset>
+        ScheduledPublishAt: Nullable<DateTimeOffset>
         Version: int64
         ScheduleForm: string
         SchedulePrecision: string
@@ -229,6 +230,7 @@ let toSnapshot (row: MeetupRow) : MeetupSnapshot =
         Lifecycle = lifecycleOf row.Id row.Lifecycle
         Visibility = visibilityOf row.Id row.Visibility
         FirstPublishedAt = if row.FirstPublishedAt.HasValue then Some row.FirstPublishedAt.Value else None
+        ScheduledPublishAt = if row.ScheduledPublishAt.HasValue then Some row.ScheduledPublishAt.Value else None
         Version = row.Version
     }
 
@@ -334,6 +336,10 @@ let ofSnapshot (snapshot: MeetupSnapshot) : MeetupRow =
         Visibility = visibilityText snapshot.Visibility
         FirstPublishedAt =
             match snapshot.FirstPublishedAt with
+            | Some at -> Nullable(storedMoment at)
+            | None -> Nullable()
+        ScheduledPublishAt =
+            match snapshot.ScheduledPublishAt with
             | Some at -> Nullable(storedMoment at)
             | None -> Nullable()
         Version = snapshot.Version

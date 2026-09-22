@@ -148,6 +148,50 @@ let ``Snapshot of a published meetup should carry the mark as RFC 3339 UTC`` () 
     test <@ DateTimeOffset.Parse contract.FirstPublishedAt = Sample.fixedNow @>
 
 [<Fact>]
+let ``Snapshot of a meetup with a scheduled publication should carry the moment as RFC 3339 UTC`` () =
+    // Момент уезжает мгновением: в каком поясе его показать, решает вызывающая
+    // сторона, а состояние хранит однозначное время.
+    let contract = Contract.Outbound.snapshot (Meetup.toSnapshot Sample.scheduled)
+
+    test
+        <@
+            contract.HasScheduledPublishAt
+            && contract.ScheduledPublishAt.EndsWith "Z"
+        @>
+
+    test <@ DateTimeOffset.Parse contract.ScheduledPublishAt = Sample.later @>
+
+[<Fact>]
+let ``Snapshot of a meetup without a scheduled publication should leave the moment unset`` () =
+    let contract = Contract.Outbound.snapshot (Meetup.toSnapshot Sample.titled)
+
+    test <@ not contract.HasScheduledPublishAt @>
+
+[<Fact>]
+let ``A local date and time should be parsed as the community local pair`` () =
+    let value =
+        Meetups.V1.LocalDateTime(
+            Date = Meetups.V1.CalendarDate(Year = 2026, Month = 10, Day = 3),
+            Time = Meetups.V1.LocalTime(Hours = 18, Minutes = 30)
+        )
+
+    let expected =
+        Ok
+            {
+                Date = DateOnly(2026, 10, 3)
+                Time = minute 18 30
+            }
+
+    test <@ Contract.Inbound.localDateTime "moment" value = expected @>
+
+[<Fact>]
+let ``A local date without a time should name the missing part`` () =
+    let value =
+        Meetups.V1.LocalDateTime(Date = Meetups.V1.CalendarDate(Year = 2026, Month = 10, Day = 3))
+
+    test <@ problem (Contract.Inbound.localDateTime "moment" value) = Some "moment.time" @>
+
+[<Fact>]
 let ``Snapshot should render identifiers in the same canonical form the border demands`` () =
     let contract = Contract.Outbound.snapshot (Meetup.toSnapshot Sample.published)
 

@@ -1,8 +1,9 @@
-/// Срез «изменить атрибуты». Команда несёт целевое состояние всех пяти
-/// информационных атрибутов целиком, поэтому совпадение с текущими значениями всё
-/// равно порождает событие (ADR-031): пустой diff — забота потребителя, а не
-/// причина промолчать.
-module Meetups.Slices.ChangeMeetupAttributes
+/// Срез «отменить запланированную публикацию». Команда сформулирована как целевое
+/// состояние «запланированной публикации нет», поэтому повтор и сходка без момента —
+/// успех без события (ADR-031, I5). Момент, который уже прошёл, а воркер ещё не
+/// забрал, отменяется так же, как будущий: человек передумал до публикации, а гонку
+/// с воркером разрешает версия строки, а не проверка часов здесь.
+module Meetups.Slices.CancelMeetupPublication
 
 open System
 open System.Threading.Tasks
@@ -13,11 +14,10 @@ type Command =
     {
         Id: MeetupId
         Viewer: Viewer
-        Attributes: MeetupAttributes
     }
 
 [<RequireQualifiedAccess; NoComparison>]
-type ChangeMeetupAttributesError =
+type CancelMeetupPublicationError =
     | Malformed of Contract.InvalidRequest
     | Forbidden of AccessDenied
     | Domain of DomainError
@@ -36,22 +36,29 @@ type Deps =
         NewEventId: unit -> Guid
     }
 
-let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, ChangeMeetupAttributesError>> =
+let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, CancelMeetupPublicationError>> =
     task {
         // Право спрашивается до загрузки: состояние в этом решении не участвует, а
         // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
         // того, существует ли сходка.
         match Access.forCommand command.Viewer with
-        | Error denied -> return Error(ChangeMeetupAttributesError.Forbidden denied)
+        | Error denied -> return Error(CancelMeetupPublicationError.Forbidden denied)
         | Ok() ->
             let! existing = deps.Load command.Id
             let state = Meetup.restore existing
 
-            // Решение этой команды события не опускает: единственный её отказ —
-            // несуществующая сходка, поэтому ветки «успех без события» здесь нет.
-            match Meetup.decideChangeAttributes command.Attributes state with
-            | Error error -> return Error(ChangeMeetupAttributesError.Domain error)
-            | Ok event ->
+            match Meetup.decideCancelScheduledPublication state with
+            | Error error -> return Error(CancelMeetupPublicationError.Domain error)
+            | Ok None ->
+                // Повтор: домен сказал «момента нет», а это решение принимается
+                // только из существующей сходки.
+                match existing with
+                | Some snapshot -> return Ok snapshot
+                | None -> return invalidOp "the domain reported an unscheduled meetup without loading one"
+            | Ok(Some event) ->
+                // Часы читаются один раз и только на записывающем пути: в состояние
+                // этот момент не попадает, его единственный потребитель —
+                // `occurred_at` конверта.
                 let envelope: MeetupStore.EventEnvelope =
                     {
                         EventId = deps.NewEventId()
@@ -61,7 +68,7 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Change
 
                 match! deps.Commit envelope state event with
                 | Ok snapshot -> return Ok snapshot
-                | Error MeetupStore.VersionConflict -> return Error ChangeMeetupAttributesError.Conflict
+                | Error MeetupStore.VersionConflict -> return Error CancelMeetupPublicationError.Conflict
     }
 
 /// Composition root среза: здесь заканчивается DI. Ниже живут только функции и
@@ -92,32 +99,30 @@ module Api =
 
     open Grpc.Core
 
-    let private toStatus (error: ChangeMeetupAttributesError) : Status =
+    let private toStatus (error: CancelMeetupPublicationError) : Status =
         match error with
-        | ChangeMeetupAttributesError.Malformed invalid ->
+        | CancelMeetupPublicationError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | ChangeMeetupAttributesError.Forbidden NotAnAdministrator ->
+        | CancelMeetupPublicationError.Forbidden NotAnAdministrator ->
             Status(StatusCode.PermissionDenied, "an administrator role is required")
-        | ChangeMeetupAttributesError.Domain MeetupNotFound
-        | ChangeMeetupAttributesError.Domain DraftBelongsToAnotherAuthor ->
+        | CancelMeetupPublicationError.Domain MeetupNotFound
+        | CancelMeetupPublicationError.Domain DraftBelongsToAnotherAuthor ->
             Status(StatusCode.NotFound, "meetup not found")
-        // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение
-        // внутреннего контракта, а не код отказа.
-        | ChangeMeetupAttributesError.Domain TitleRequiredForPublication ->
-            invalidOp "changing attributes does not decide publication"
-        | ChangeMeetupAttributesError.Domain PublicationMomentInThePast ->
-            invalidOp "changing attributes does not decide a publication moment"
-        | ChangeMeetupAttributesError.Domain TransitionNotAllowed ->
-            Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot be edited")
+        // Прочие инварианты решают соседние срезы: отмена запланированной
+        // публикации не публикует и не двигает переходы, поэтому каждая такая пара —
+        // нарушение внутреннего контракта, а не код отказа.
+        | CancelMeetupPublicationError.Domain TitleRequiredForPublication ->
+            invalidOp "cancelling a scheduled publication does not decide publication"
+        | CancelMeetupPublicationError.Domain TransitionNotAllowed ->
+            invalidOp "cancelling a scheduled publication does not move a transition"
+        | CancelMeetupPublicationError.Domain PublicationMomentInThePast ->
+            invalidOp "cancelling a scheduled publication does not decide a moment"
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место
         // среди описанных закрепляет PER-78 (integration.md).
-        | ChangeMeetupAttributesError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")
+        | CancelMeetupPublicationError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")
 
-    /// Атрибуты тотальны: пустая строка — легитимное значение «не указано», поэтому
-    /// отказа разбора у них нет и быть не может (ADR-031). Разбор живёт здесь, а не в
-    /// Contract: потребитель у него ровно один.
     let private toCommand
-        (request: Meetups.V1.ChangeMeetupAttributesRequest)
+        (request: Meetups.V1.CancelMeetupPublicationRequest)
         : Result<Command, Contract.InvalidRequest> =
         match Contract.Inbound.viewer request.Viewer, Contract.Inbound.meetupId request.Id with
         | Ok viewer, Ok id ->
@@ -125,22 +130,14 @@ module Api =
                 {
                     Id = id
                     Viewer = viewer
-                    Attributes =
-                        {
-                            Title = request.Title
-                            Description = request.Description
-                            Venue = request.Venue
-                            Kind = request.Kind
-                            CalendarLink = request.CalendarLink
-                        }
                 }
         | Error invalid, _
         | _, Error invalid -> Error invalid
 
-    let handle (deps: Deps) (request: Meetups.V1.ChangeMeetupAttributesRequest) : Task<Meetups.V1.MeetupSnapshot> =
+    let handle (deps: Deps) (request: Meetups.V1.CancelMeetupPublicationRequest) : Task<Meetups.V1.MeetupSnapshot> =
         task {
             match toCommand request with
-            | Error invalid -> return raise (RpcException(toStatus (ChangeMeetupAttributesError.Malformed invalid)))
+            | Error invalid -> return raise (RpcException(toStatus (CancelMeetupPublicationError.Malformed invalid)))
             | Ok command ->
                 match! execute deps command with
                 | Ok snapshot -> return Contract.Outbound.snapshot snapshot

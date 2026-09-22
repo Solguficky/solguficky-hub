@@ -71,6 +71,10 @@ let published = Meetup.apply (Existing titled) (MeetupPublished fixedNow)
 /// Схема допускала `cancelled` с первой миграции, а команду завёл PER-197.
 let cancelled = Meetup.apply (Existing titled) MeetupCancelled
 
+/// Сходка с назначенным моментом отложенной публикации: скрыта, момент в будущем.
+/// Состояния «запланирована публикация» не существует — признак выводится из поля.
+let scheduled = Meetup.apply (Existing titled) (MeetupPublicationScheduled later)
+
 /// Отменённая скрытая сходка без заголовка: на ней видно, что состояние проверяется
 /// раньше заголовка и настоящая причина отказа не подменяется.
 let cancelledDraft = Meetup.apply (Existing draft) MeetupCancelled
