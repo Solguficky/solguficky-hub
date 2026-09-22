@@ -19,7 +19,13 @@ public sealed class SiloUnderTest : IAsyncDisposable
 
     public IGrainFactory Grains => app.Services.GetRequiredService<IGrainFactory>();
 
-    public static async Task<SiloUnderTest> Start(string connectionString)
+    /// <param name="settings">
+    /// Дополнительные ключи конфигурации в форме <c>--Ключ=Значение</c>. Через
+    /// них тест задаёт период прохода sweeper'а и упреждение напоминания:
+    /// ждать штатные тридцать секунд и сутки в тесте нечем, а подменять часы
+    /// процесса ради этого не нужно — оба значения и так настройки.
+    /// </param>
+    public static async Task<SiloUnderTest> Start(string connectionString, params string[] settings)
     {
         // Порты силоса берутся свободные: иначе второй силос этого же теста и
         // соседнее рабочее дерево дерутся за штатные 11111 и 30000.
@@ -28,6 +34,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
                 "--urls=http://127.0.0.1:0",
                 $"--{NotificationsHost.SiloPortKey}={FreePort()}",
                 $"--{NotificationsHost.GatewayPortKey}={FreePort()}",
+                .. settings,
             ],
             connectionString);
 

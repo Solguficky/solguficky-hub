@@ -23,13 +23,35 @@ public class MigrationsTests
     }
 
     [Fact]
-    public void List_EmbeddedScripts_CarriesOrleansSchemaBeforeOwn()
+    public void List_EmbeddedScripts_CarriesOrleansQueryOwnerBeforeItsUsers()
     {
-        // Порядок здесь несущий: таблицы membership Orleans заводит тот же DbUp,
-        // и Main обязан идти до Clustering — второй ссылается на OrleansQuery.
+        // Порядок здесь несущий: таблицы Orleans заводит тот же DbUp, и
+        // orleans_main обязан идти до каждого скрипта, который пишет в
+        // OrleansQuery, — это и clustering, и reminders.
+        //
+        // Прежнее имя теста обещало «вендорное до своего», и это больше не
+        // верно: orleans_reminders приехал вместе с заданием напоминания и
+        // получил номер больше, чем у grain_activation. Номер применённой
+        // миграции не переписывают, а зависимости порядок не нарушает —
+        // reminders нужен только orleans_main.
+        //
+        // Список задан дословно намеренно: он ловит и потерянный
+        // EmbeddedResource, и чужой скрипт, приехавший в ту же папку. Цена —
+        // конфликт при слиянии с соседним срезом, который тоже добавит
+        // миграцию; такой конфликт лучше, чем молчаливое расхождение схемы.
         var names = Migrations.List().Select(migration => migration.Name).ToList();
 
-        names.ShouldBe(["orleans_main", "orleans_clustering", "grain_activation"]);
+        names.ShouldBe([
+            "orleans_main",
+            "orleans_clustering",
+            "grain_activation",
+            "orleans_reminders",
+            "reminder_task",
+        ]);
+
+        var main = names.IndexOf("orleans_main");
+        names.IndexOf("orleans_clustering").ShouldBeGreaterThan(main);
+        names.IndexOf("orleans_reminders").ShouldBeGreaterThan(main);
     }
 
     [Fact]

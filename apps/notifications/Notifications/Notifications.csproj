@@ -19,12 +19,17 @@
     <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.67.0" />
     <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.67.0" />
     <PackageReference Include="Microsoft.Orleans.Server" Version="10.3.1" />
-    <!-- Clustering — единственный провайдер Orleans, который берёт скелет.
-         Grain storage и reminders не регистрируются: источник истины остаётся в
-         PostgreSQL (ADR-029), а отсутствие провайдера делает это исполнимым
-         правилом — случайный [PersistentState] уронит старт силоса, а не
-         молча заведёт вторую модель состояния. -->
+    <!-- Grain storage не регистрируется: источник истины остаётся в PostgreSQL
+         (ADR-029), а отсутствие провайдера делает это исполнимым правилом —
+         случайный [PersistentState] уронит первую активацию грина, а не молча
+         заведёт вторую модель состояния. Пакета для него здесь нет вовсе.
+
+         Reminders, в отличие от него, нужны: они будят грин к моменту
+         срабатывания задания (PER-222). Хранилищем момента они не служат —
+         момент лежит строкой в reminder_task, — поэтому правило выше они не
+         ослабляют. -->
     <PackageReference Include="Microsoft.Orleans.Clustering.AdoNet" Version="10.3.1" />
+    <PackageReference Include="Microsoft.Orleans.Reminders.AdoNet" Version="10.3.1" />
     <PackageReference Include="Npgsql" Version="10.0.1" />
   </ItemGroup>
 
