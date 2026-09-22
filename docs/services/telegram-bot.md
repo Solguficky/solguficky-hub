@@ -185,7 +185,7 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 
 Логи структурные, без bot token, `initData` и полного JSON апдейта. Telegram user id — персональные данные и не ключ поиска: после разрешения личности в лог пишутся `identity_id` и `request_id`. Норматив — [logging.md](../standards/observability/logging.md).
 
-Оба обработчика update — сообщение и callback — заполняют каркас одной `writeBoundary`. `operation` называет обработчик, успех пишется уровнем `Debug`, отказ увеличивает `solguficky.failures` в том же месте, где рождается запись. Нечитаемый `callback_data` — `invariant` без stack; отказ Meetups по правам на публикации — `authorization`. Отказ по допуску к хабу — тоже `authorization`, но `error` называет `hub_access_pending` или `hub_access_blocked`; скрытая или отсутствующая сходка — `visibility` с `meetup_not_visible`; недоступность Identity остаётся `dependency_unavailable` или `timeout`.
+Оба обработчика update — сообщение и callback — заполняют каркас одной `writeBoundary`. `operation` называет обработчик, успех пишется уровнем `Debug`, отказ увеличивает `solguficky.failures` в том же месте, где рождается запись. Нечитаемый `callback_data` — `invariant` без stack; отказ Meetups по правам на публикации — `authorization`. Отказ по конфликту версий — `invariant` с `error: version_conflict`: человеку уходит текст решения [PER-78](https://linear.app/anticnvm/issue/per-78) и актуальный снимок, а не общий отказ зависимости. Отказ по допуску к хабу — тоже `authorization`, но `error` называет `hub_access_pending` или `hub_access_blocked`; скрытая или отсутствующая сходка — `visibility` с `meetup_not_visible`; недоступность Identity остаётся `dependency_unavailable` или `timeout`.
 
 ### Общий код с мини-приложением
 

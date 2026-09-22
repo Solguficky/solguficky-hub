@@ -26,6 +26,7 @@
     <Compile Include="Infrastructure/MeetupReading.fs" />
     <Compile Include="Infrastructure/DispatchStore.fs" />
     <Compile Include="Slices/Contract.fs" />
+    <Compile Include="Slices/SafeRetry.fs" />
     <Compile Include="Slices/CreateMeetupDraft.fs" />
     <Compile Include="Slices/ChangeMeetupAttributes.fs" />
     <Compile Include="Slices/SetMeetupSchedule.fs" />

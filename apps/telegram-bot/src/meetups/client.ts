@@ -80,6 +80,11 @@ export function createMeetupsAdapter(
       ) {
         return { kind: "invalid", message: cause.message };
       }
+      // ABORTED — настоящий конфликт версий, а не недоступность зависимости:
+      // команда собрана верно, но показанный снимок устарел (PER-78).
+      if (cause instanceof ConnectError && cause.code === Code.Aborted) {
+        return { kind: "conflict" };
+      }
       return { kind: "unavailable", cause };
     }
   };
@@ -166,6 +171,7 @@ export function createMeetupsAdapter(
             {
               viewer: viewer(person),
               id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
               title: meetup.title,
               description: meetup.description,
               venue: meetup.venue,
@@ -176,13 +182,14 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
-    setSchedule: (person, id, schedule, meta) =>
+    setSchedule: (person, meetup, schedule, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.setMeetupSchedule(
             {
               viewer: viewer(person),
-              id,
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
               schedule: {
                 form: {
                   case: "fixed",
@@ -209,28 +216,43 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
-    publish: (person, id, meta) =>
+    publish: (person, meetup, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.publishMeetup(
-            { viewer: viewer(person), id },
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+            },
             options(meta),
           ),
         ),
       ),
-    unpublish: (person, id, meta) =>
+    unpublish: (person, meetup, meta) =>
       call(async () =>
         toSnapshot(
           await rpc.unpublishMeetup(
-            { viewer: viewer(person), id },
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+            },
             options(meta),
           ),
         ),
       ),
-    cancel: (person, id, meta) =>
+    cancel: (person, meetup, meta) =>
       call(async () =>
         toSnapshot(
-          await rpc.cancelMeetup({ viewer: viewer(person), id }, options(meta)),
+          await rpc.cancelMeetup(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+            },
+            options(meta),
+          ),
         ),
       ),
   };
@@ -314,6 +336,7 @@ function toSnapshot(
     venue: value.venue,
     lifecycle: toLifecycle(value.lifecycle),
     visibility: toVisibility(value.visibility),
+    version: Number(value.version),
   };
   const fixed =
     value.schedule?.form.case === "fixed"

@@ -149,6 +149,7 @@ function publishedMeetup() {
     venue: "Циферблат",
     lifecycle: "planned" as const,
     visibility: "visible" as const,
+    version: 1,
   };
 }
 
@@ -296,6 +297,7 @@ describe("presentation adapter", () => {
         venue: "",
         lifecycle: "planned",
         visibility: "hidden",
+        version: 1,
       },
     });
     const { bot } = createHarness(resolvedIdentity(), { execute });
@@ -676,6 +678,7 @@ describe("presentation adapter", () => {
         venue: "",
         lifecycle: "planned",
         visibility: "hidden",
+        version: 1,
       },
     });
     const { bot, calls, records } = createHarness(identity, { execute });
@@ -918,6 +921,150 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
   });
 
+  /// Конфликт версий — не молчаливая перезапись и не общий сбой: человек видит
+  /// актуальные данные рядом со своим несохранённым вводом, а повторить правку
+  /// может, только отправив значение заново (PER-78).
+  it("shows the current meetup and the saved value on a version conflict", async () => {
+    const changed = { ...publishedMeetup(), title: "Чужая правка", version: 2 };
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValueOnce({
+        kind: "ask",
+        field: "title",
+        meetup: draftMeetup(),
+      })
+      .mockResolvedValueOnce({
+        kind: "conflict",
+        meetup: changed,
+        field: "title",
+        input: "Моя правка",
+      });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Моя правка",
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining(
+          "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.",
+        ),
+        reply_markup: { force_reply: true, selective: true },
+      },
+    });
+    expect(sendMessageText(calls.at(-1))).toContain("Сейчас: Чужая правка");
+    expect(sendMessageText(calls.at(-1))).toContain(
+      "Ваше значение: Моя правка",
+    );
+    expectBoundary(records.at(-1), {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      use_case: "create_meetup",
+    });
+    expect(records.at(-1)?.fields.error).toBe("version_conflict");
+  });
+
+  it("asks to confirm publication again after a version conflict", async () => {
+    const changed = { ...publishedMeetup(), version: 2 };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "conflict",
+      meetup: changed,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining(
+          "Проверь данные и подтверди публикацию ещё раз.",
+        ),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Опубликовать",
+                callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+          ],
+        },
+      },
+    });
+    expectBoundary(records.at(-1), {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
+  });
+
+  it("asks to confirm a cancellation again after a version conflict", async () => {
+    const meetup = publishedMeetup();
+    const changed = { ...meetup, version: 2 };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : { kind: "conflict", meetup: changed, action: "cancel" },
+    );
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:cancel:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining(
+          "Проверь данные и подтверди действие ещё раз.",
+        ),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Отменить сходку",
+                callback_data:
+                  "v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+          ],
+        },
+      },
+    });
+    expectBoundary(records.at(-1), {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "update_meetup",
+    });
+  });
+
   it("rebuilds an outdated callback from current Meetups state", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-list",
@@ -1111,6 +1258,7 @@ describe("presentation adapter", () => {
         venue: "Циферблат",
         lifecycle: "planned",
         visibility: "visible",
+        version: 1,
       },
     });
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
@@ -1531,6 +1679,7 @@ describe("presentation adapter", () => {
         venue: "",
         lifecycle: "planned",
         visibility: "hidden",
+        version: 1,
       },
     });
     const { bot, records } = createHarness(resolvedIdentity(), { execute });

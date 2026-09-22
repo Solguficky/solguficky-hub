@@ -40,6 +40,19 @@ export type BotRuntime = {
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
+
+const formPrompts: Record<FormField, string> = {
+  title: "Как называется сходка?",
+  schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
+  venue: "Где встречаемся?",
+  description: "Добавь короткое описание сходки.",
+};
+
+// Отказ по конфликту версий закреплён решением PER-78 и повторяется здесь
+// дословно: человеку нужно увидеть, что его ввод не сохранён, а не догадываться
+// об этом по общему тексту сбоя.
+const conflictText =
+  "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -362,6 +375,7 @@ async function handleMessage(
       case "meetup-state-changed":
       case "meetup-state-unchanged":
       case "edit-unavailable":
+      case "conflict":
       case "meetup-list":
         outcome = {
           level: "error",
@@ -1088,6 +1102,21 @@ async function renderStateResult(
     await renderMeetupCard(ctx, result, true, presentation, true);
     return;
   }
+  if (result.kind === "conflict") {
+    const token = uuidToToken(result.meetup.id);
+    const label =
+      result.action === "cancel" ? "Отменить сходку" : "Скрыть из списка";
+    const callback =
+      result.action === "cancel"
+        ? `v1:manage:confirm-cancel:${token}`
+        : `v1:manage:confirm-unpublish:${token}`;
+    await editScreen(
+      ctx,
+      `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
+      new InlineKeyboard().text(label, callback),
+    );
+    return;
+  }
   const text =
     result.kind === "dependency-rejected" && result.reason === "invalid"
       ? `Не получилось выполнить действие: ${result.message}`
@@ -1239,12 +1268,6 @@ async function renderFormResult(
   presentation: "rich" | "plain",
 ): Promise<void> {
   if (result.kind === "ask" || result.kind === "edit-ask") {
-    const prompts: Record<FormField, string> = {
-      title: "Как называется сходка?",
-      schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
-      venue: "Где встречаемся?",
-      description: "Добавь короткое описание сходки.",
-    };
     const currentValue =
       result.field === "schedule"
         ? formatSchedule(result.meetup)
@@ -1253,8 +1276,8 @@ async function renderFormResult(
           : result.meetup[result.field];
     const prompt =
       result.kind === "edit-ask"
-        ? `Сейчас: ${currentValue}\n${result.error ?? prompts[result.field]}`
-        : (result.error ?? prompts[result.field]);
+        ? `Сейчас: ${currentValue}\n${result.error ?? formPrompts[result.field]}`
+        : (result.error ?? formPrompts[result.field]);
     const text =
       result.kind === "edit-ask"
         ? editQuestionText(prompt, uuidToToken(result.meetup.id), result.field)
@@ -1267,6 +1290,58 @@ async function renderFormResult(
       mode: result.kind === "edit-ask" ? "edit" : "create",
       field: result.field,
       meetupId: result.meetup.id,
+      telegramUserId: ctx.from?.id ?? 0,
+      expiresAt: Date.now() + questionTtlMs,
+    });
+    evictOldestQuestions(questions);
+    return;
+  }
+  if (result.kind === "conflict") {
+    const stored = result.meetup;
+    const lines = [
+      conflictText,
+      "",
+      `Сейчас: ${stored.title}`,
+      formatSchedule(stored),
+      stored.venue,
+      stored.description,
+      ...(result.input === undefined
+        ? []
+        : ["", `Ваше значение: ${result.input}`]),
+    ];
+    // Публикация подтверждается повторно по обновлённым данным: кнопка снова
+    // несёт снимок, который человек только что видел.
+    if (result.field === undefined) {
+      await ctx.reply(
+        `${lines.join("\n")}\n\nПроверь данные и подтверди публикацию ещё раз.`,
+        {
+          reply_markup: new InlineKeyboard().text(
+            "Опубликовать",
+            `v1:manage:publish:${uuidToToken(stored.id)}`,
+          ),
+        },
+      );
+      return;
+    }
+    // Правка поля: сохранённый ввод показан, но повторно не отправляется — его
+    // вводят заново, уже по актуальным данным. Режим вопроса сохраняет ту же
+    // форму (создание или редактирование), в которой конфликт случился.
+    const text =
+      result.editing === true
+        ? editQuestionText(
+            `Сейчас: ${lines.join("\n")}\n\n${formPrompts[result.field]}`,
+            uuidToToken(stored.id),
+            result.field,
+          )
+        : `${lines.join("\n")}\n\n${formPrompts[result.field]}`;
+    const message = await ctx.reply(text, {
+      reply_markup: { force_reply: true, selective: true },
+    });
+    questions.set(questionKey(ctx.chat?.id, message.message_id), {
+      kind: "meetup",
+      mode: result.editing === true ? "edit" : "create",
+      field: result.field,
+      meetupId: stored.id,
       telegramUserId: ctx.from?.id ?? 0,
       expiresAt: Date.now() + questionTtlMs,
     });
@@ -1321,6 +1396,10 @@ async function renderFormResult(
   if (result.kind === "dependency-rejected") {
     if (result.reason === "invalid") {
       await ctx.reply(`Не получилось сохранить значение: ${result.message}`);
+      return;
+    }
+    if (result.reason === "conflict") {
+      await ctx.reply(conflictText);
       return;
     }
     await ctx.reply(
@@ -1459,6 +1538,20 @@ function screenBoundary(
       result: "ok",
       use_case: screen.useCase,
       ...meetup,
+    };
+  }
+  // Конфликт версий — не сбой зависимости и не неожиданность: запрос собран
+  // верно, но показанный снимок устарел. Человеку уходит текущая карточка, а в
+  // записи границы отказ отличим от отказа по праву собственным error.
+  if (result.kind === "conflict") {
+    return {
+      level: "warn",
+      message: screen.rejectedMessage,
+      result: "error",
+      use_case: screen.useCase,
+      ...meetup,
+      error_category: "invariant",
+      error: "version_conflict",
     };
   }
   if (result.kind === "dependency-rejected") {
@@ -1624,6 +1717,7 @@ function dependencyCategory(reason: string): FailureCategory {
     case "forbidden":
       return "authorization";
     case "invalid":
+    case "conflict":
       return "invariant";
     case "timeout":
       return "timeout";

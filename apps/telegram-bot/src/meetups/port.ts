@@ -17,6 +17,10 @@ export type MeetupSnapshot = {
   schedule?: MeetupSchedule;
   lifecycle: "planned" | "held" | "cancelled";
   visibility: "hidden" | "visible";
+  // Версия агрегата, из которой принято решение: команда изменения или перехода
+  // несёт её обратно как `expected_version`, и Meetups сравнивает её в предикате
+  // записи (PER-78).
+  version: number;
 };
 
 export type MeetupSummary = {
@@ -28,6 +32,7 @@ export type MeetupSummary = {
 export type MeetupFailure =
   | { kind: "forbidden" }
   | { kind: "invalid"; message: string }
+  | { kind: "conflict" }
   | { kind: "timeout"; cause: unknown }
   | { kind: "unavailable"; cause: unknown };
 
@@ -56,19 +61,23 @@ export type Meetups = {
   ): Promise<MeetupResult>;
   setSchedule(
     person: Person,
-    id: string,
+    meetup: MeetupSnapshot,
     schedule: MeetupSchedule,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
   publish(
     person: Person,
-    id: string,
+    meetup: MeetupSnapshot,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
   unpublish(
     person: Person,
-    id: string,
+    meetup: MeetupSnapshot,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
-  cancel(person: Person, id: string, meta?: RpcMetadata): Promise<MeetupResult>;
+  cancel(
+    person: Person,
+    meetup: MeetupSnapshot,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
 };

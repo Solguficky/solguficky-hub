@@ -119,6 +119,7 @@ let ``Scheduling a publication sends the moment as a local date and time`` () =
                 "viewer", FieldType.Message
                 "id", FieldType.String
                 "moment", FieldType.Message
+                "expected_version", FieldType.Int64
             ]
         @>
 
@@ -126,7 +127,7 @@ let ``Scheduling a publication sends the moment as a local date and time`` () =
 let ``Cancelling a scheduled publication takes only the viewer and the id`` () =
     let actual = fieldNames CancelMeetupPublicationRequest.Descriptor
 
-    test <@ actual = set [ "viewer"; "id" ] @>
+    test <@ actual = set [ "viewer"; "id"; "expected_version" ] @>
 
 /// Запрос сверяется целиком, а не «содержит page_token»: равенство множеств и
 /// есть утверждение о том, что viewer в служебной операции не появился.
@@ -154,11 +155,17 @@ let ``Service enumeration is paged and carries its consistency moment`` () =
 let ``Change attributes sends every informational field as target state`` () =
     let actual =
         ChangeMeetupAttributesRequest.Descriptor.Fields.InDeclarationOrder()
-        |> Seq.filter (fun f -> f.Name <> "viewer" && f.Name <> "id")
+        |> Seq.filter (fun f ->
+            f.Name <> "viewer"
+            && f.Name <> "id"
+            && f.Name <> "expected_version"
+        )
         |> Seq.map (fun f -> f.Name, string f.FieldType, f.HasPresence)
         |> List.ofSeq
 
     // No presence: an omitted attribute is not a distinct "leave unchanged" state.
+    // The expected version stays out of this set: it is not an attribute but the
+    // write predicate's input (PER-78).
     let expected =
         [
             "title"
@@ -170,6 +177,35 @@ let ``Change attributes sends every informational field as target state`` () =
         |> List.map (fun name -> name, "String", false)
 
     test <@ actual = expected @>
+
+/// Показанная версия есть в каждой команде изменения и перехода и везде скаляром:
+/// у int64 presence нет, поэтому отсутствие поля и ноль — одни и те же байты, и
+/// разбор отвергает оба одинаково (PER-78).
+[<Fact>]
+let ``Every command decided from a snapshot carries the expected version`` () =
+    let shape =
+        [
+            ChangeMeetupAttributesRequest.Descriptor
+            SetMeetupScheduleRequest.Descriptor
+            PublishMeetupRequest.Descriptor
+            UnpublishMeetupRequest.Descriptor
+            CancelMeetupRequest.Descriptor
+        ]
+        |> List.map (fun message ->
+            let field = message.FindFieldByName "expected_version"
+            message.Name, field.FieldType = FieldType.Int64, field.HasPresence
+        )
+
+    test
+        <@
+            shape = [
+                "ChangeMeetupAttributesRequest", true, false
+                "SetMeetupScheduleRequest", true, false
+                "PublishMeetupRequest", true, false
+                "UnpublishMeetupRequest", true, false
+                "CancelMeetupRequest", true, false
+            ]
+        @>
 
 /// Вынос значений — часть контракта, а не раскладка по вкусу: потребитель,
 /// которому нужно расписание или ось состояния, не обязан тянуть в кодогенерацию
@@ -308,7 +344,11 @@ let ``Every attribute the change command sets is readable back from the snapshot
 
     let sent =
         shape ChangeMeetupAttributesRequest.Descriptor
-        |> List.filter (fun (name, _) -> name <> "viewer" && name <> "id")
+        |> List.filter (fun (name, _) ->
+            name <> "viewer"
+            && name <> "id"
+            && name <> "expected_version"
+        )
 
     let snapshot = shape MeetupSnapshot.Descriptor
 
@@ -334,6 +374,7 @@ let ``Attaching a material takes the caller-generated material id and no positio
                     "material_id"
                     "title"
                     "source"
+                    "expected_version"
                 ]
         @>
 
@@ -341,7 +382,16 @@ let ``Attaching a material takes the caller-generated material id and no positio
 let ``Removing a material names the material by the same caller-generated id`` () =
     let actual = fieldNames RemoveMaterialRequest.Descriptor
 
-    test <@ actual = set [ "viewer"; "id"; "material_id" ] @>
+    test
+        <@
+            actual = set
+                [
+                    "viewer"
+                    "id"
+                    "material_id"
+                    "expected_version"
+                ]
+        @>
 
 /// Материал в снимке — элемент repeated-поля: порядок коллекции несёт порядок
 /// поля, отдельного position в контракте нет, а авторство привязки остаётся

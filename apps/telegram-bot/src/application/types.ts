@@ -103,8 +103,20 @@ export type ExecuteResult =
       meetup: MeetupSnapshot;
     }
   | {
+      // Версия показанного снимка разошлась: команда не применена, и человеку
+      // показывают текущее состояние рядом с его несохранённым вводом (PER-78).
+      // `action` заполнен для конфликта на смене состояния — там нет ни поля,
+      // ни ввода, а подтвердить нужно то же действие, а не публикацию.
+      kind: "conflict";
+      meetup: MeetupSnapshot;
+      field?: FormField;
+      input?: string;
+      editing?: boolean;
+      action?: MeetupStateAction;
+    }
+  | {
       kind: "dependency-rejected";
-      reason: "forbidden" | "timeout" | "unavailable";
+      reason: "forbidden" | "conflict" | "timeout" | "unavailable";
     }
   | { kind: "dependency-rejected"; reason: "invalid"; message: string }
   | { kind: "rejected"; reason: string };
