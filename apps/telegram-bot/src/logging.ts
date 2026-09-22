@@ -20,6 +20,7 @@ export type LogFields = {
   meetup_id?: string;
   signal?: string;
   timeout?: number;
+  telegram_environment?: string;
 };
 
 export type Logger = {
