@@ -1,6 +1,7 @@
 import type { Meetups } from "../meetups/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { createMeetupForm } from "./meetup-form.js";
+import { createMeetupMaterials } from "./meetup-materials.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult } from "./types.js";
 
@@ -10,6 +11,8 @@ export type Dispatcher = {
 
 export function createDispatcher(meetups?: Meetups): Dispatcher {
   const form = meetups === undefined ? undefined : createMeetupForm(meetups);
+  const materials =
+    meetups === undefined ? undefined : createMeetupMaterials(meetups);
   return {
     async execute(request) {
       switch (request.intent) {
@@ -60,6 +63,11 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : form(request);
+        case "attach-material":
+        case "remove-material":
+          return materials === undefined
+            ? { kind: "rejected", reason: "meetups-not-configured" }
+            : materials(request);
         default: {
           const _exhaustive: never = request;
           return { kind: "rejected", reason: String(_exhaustive) };

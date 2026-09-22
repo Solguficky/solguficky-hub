@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   MeetupLifecycle,
+  MeetupMaterialSchema,
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
 import {
@@ -25,6 +26,7 @@ function storedMeetup(version: number): MeetupSnapshot {
     lifecycle: "planned",
     visibility: "hidden",
     version,
+    materials: [],
   };
 }
 
@@ -41,6 +43,8 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
     publishMeetup: vi.fn(),
     unpublishMeetup: vi.fn(),
     cancelMeetup: vi.fn(),
+    attachMaterial: vi.fn(),
+    removeMaterial: vi.fn(),
     getMeetup: vi.fn(),
   };
 }
@@ -225,6 +229,103 @@ describe("Meetups client", () => {
     expect(rpc.setMeetupSchedule).toHaveBeenCalledWith(
       expect.objectContaining({ expectedVersion: 7n }),
       expect.anything(),
+    );
+  });
+
+  it("maps ordered message and file materials from a meetup snapshot", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.getMeetup.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        title: "Настолки",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.VISIBLE,
+        materials: [
+          create(MeetupMaterialSchema, {
+            id: "message-id",
+            title: "Опрос",
+            source: {
+              source: {
+                case: "messageLink",
+                value: "https://t.me/c/42/7",
+              },
+            },
+          }),
+          create(MeetupMaterialSchema, {
+            id: "file-id",
+            title: "Афиша",
+            source: { source: { case: "fileId", value: "bot-file-id" } },
+          }),
+        ],
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(meetups.get(person, "meetup-id")).resolves.toMatchObject({
+      kind: "ok",
+      meetup: {
+        materials: [
+          {
+            id: "message-id",
+            title: "Опрос",
+            source: {
+              kind: "message-link",
+              url: "https://t.me/c/42/7",
+            },
+          },
+          {
+            id: "file-id",
+            title: "Афиша",
+            source: { kind: "file", fileId: "bot-file-id" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("sends attach and remove material requests with caller ids", async () => {
+    const rpc = rpcWithList(vi.fn());
+    const response = create(MeetupSnapshotSchema, {
+      id: "meetup-id",
+      lifecycle: MeetupLifecycle.PLANNED,
+      visibility: MeetupVisibility.VISIBLE,
+    });
+    rpc.attachMaterial.mockResolvedValue(response);
+    rpc.removeMaterial.mockResolvedValue(response);
+    const meetups = createMeetupsAdapter(rpc);
+
+    await meetups.attachMaterial({
+      person,
+      meetupId: "meetup-id",
+      material: {
+        id: "material-id",
+        title: "Афиша",
+        source: { kind: "file", fileId: "bot-file-id" },
+      },
+    });
+    await meetups.removeMaterial({
+      person,
+      meetupId: "meetup-id",
+      materialId: "material-id",
+    });
+
+    expect(rpc.attachMaterial).toHaveBeenCalledWith(
+      {
+        viewer: { identityId: "viewer-id", globalRoles: [] },
+        id: "meetup-id",
+        materialId: "material-id",
+        title: "Афиша",
+        source: { source: { case: "fileId", value: "bot-file-id" } },
+      },
+      { timeoutMs: 3_000 },
+    );
+    expect(rpc.removeMaterial).toHaveBeenCalledWith(
+      {
+        viewer: { identityId: "viewer-id", globalRoles: [] },
+        id: "meetup-id",
+        materialId: "material-id",
+      },
+      { timeoutMs: 3_000 },
     );
   });
 });

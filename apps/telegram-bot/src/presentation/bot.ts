@@ -18,9 +18,19 @@ import {
   toResolveIdentityInput,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
-import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import type {
+  MeetupMaterial,
+  MeetupSnapshot,
+  MeetupSummary,
+} from "../meetups/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import { editQuestionText, parseEditQuestion } from "./edit-question.js";
+import {
+  type PendingMaterialSource as MaterialInputSource,
+  materialConfirmationText,
+  parseMaterialConfirmation,
+  parseMaterialInput,
+} from "./material-input.js";
 import {
   meetupStartLink,
   tokenToUuid,
@@ -63,7 +73,6 @@ export function parseTelegramEnvironment(
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
-
 const formPrompts: Record<FormField, string> = {
   title: "Как называется сходка?",
   schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
@@ -76,6 +85,7 @@ const formPrompts: Record<FormField, string> = {
 // об этом по общему тексту сбоя.
 const conflictText =
   "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.";
+const materialForbiddenText = "Это действие доступно организатору сходки.";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -84,6 +94,9 @@ type ProductUseCase =
   | "manage_community";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
+const materialPageSize = 8;
+const materialCardLimit = 20;
+const materialDisplayTitleLimit = 80;
 
 type PendingQuestion = {
   kind: "meetup";
@@ -98,7 +111,24 @@ type PendingUsername = {
   telegramUserId: number;
   expiresAt: number;
 };
-type PendingInput = PendingQuestion | PendingUsername;
+type PendingMaterialInput = {
+  kind: "material-source";
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+type PendingMaterialTitle = {
+  kind: "material-title";
+  meetupId: string;
+  source: MaterialInputSource;
+  telegramUserId: number;
+  expiresAt: number;
+};
+type PendingInput =
+  | PendingQuestion
+  | PendingUsername
+  | PendingMaterialInput
+  | PendingMaterialTitle;
 
 type UpdateContext = Context & {
   requestId?: string;
@@ -191,7 +221,117 @@ async function handleMessage(
           });
     if (
       replyId !== undefined &&
+      (pending?.kind === "material-source" ||
+        pending?.kind === "material-title")
+    ) {
+      useCase = "update_meetup";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "debug",
+          message: "foreign material answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!identity.person.globalRoles.includes("admin")) {
+        questions.delete(questionKey(ctx.chat?.id, replyId));
+        await ctx.reply(materialForbiddenText);
+        outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
+        return;
+      }
+      if (pending.kind === "material-source") {
+        const source = parseMaterialInput(ctx.message);
+        if (source === undefined) {
+          await ctx.reply(
+            "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли пересланное сообщение с доступным источником, фотографию или документ.",
+          );
+          outcome = {
+            level: "debug",
+            message: "material source rejected",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+            identity_id: identity.person.identityId,
+          };
+          return;
+        }
+        questions.delete(questionKey(ctx.chat?.id, replyId));
+        const prompt = await ctx.reply(
+          "Как назвать материал в карточке? Напиши короткое название.",
+          { reply_markup: { force_reply: true, selective: true } },
+        );
+        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+          kind: "material-title",
+          meetupId: pending.meetupId,
+          source,
+          telegramUserId: pending.telegramUserId,
+          expiresAt: Date.now() + questionTtlMs,
+        });
+        evictOldestQuestions(questions);
+        outcome = {
+          level: "debug",
+          message: "material title requested",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
+      const title = ctx.message?.text?.trim();
+      if (title === undefined || title === "" || title.length > 200) {
+        questions.delete(questionKey(ctx.chat?.id, replyId));
+        const prompt = await ctx.reply(
+          "Название должно быть текстом от 1 до 200 символов. Напиши короткое название.",
+          { reply_markup: { force_reply: true, selective: true } },
+        );
+        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+          ...pending,
+          expiresAt: Date.now() + questionTtlMs,
+        });
+        evictOldestQuestions(questions);
+        outcome = {
+          level: "debug",
+          message: "material title rejected",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
+      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await sendMaterialConfirmation(
+        ctx,
+        pending.meetupId,
+        title,
+        pending.source,
+      );
+      outcome = {
+        level: "debug",
+        message: "material confirmation sent",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: pending.meetupId,
+        identity_id: identity.person.identityId,
+      };
+      return;
+    }
+    if (
+      replyId !== undefined &&
       pending !== undefined &&
+      (pending.kind === "allowed-username" || pending.kind === "meetup") &&
       ctx.message?.text !== undefined
     ) {
       useCase =
@@ -403,6 +543,8 @@ async function handleMessage(
       case "meetup-state-unchanged":
       case "edit-unavailable":
       case "conflict":
+      case "material-attached":
+      case "material-removed":
       case "meetup-list":
         outcome = {
           level: "error",
@@ -480,6 +622,257 @@ async function handleCallback(
       return;
     }
     const person = identity.person;
+    if (action.kind === "open-material-file") {
+      const meetupId = tokenToUuid(action.token);
+      const materialId = tokenToUuid(action.materialToken);
+      const current = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-meetup",
+        meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      if (current.kind !== "meetup-card") {
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+        );
+        outcome = screenBoundary(current, {
+          ok: ["meetup-card"],
+          okMessage: "material file sent",
+          rejectedMessage: "material file rejected",
+          useCase,
+          meetupId,
+        });
+        return;
+      }
+      const material = current.meetup.materials.find(
+        (candidate) =>
+          candidate.id === materialId && candidate.source.kind === "file",
+      );
+      if (material === undefined || material.source.kind !== "file") {
+        await editScreen(
+          ctx,
+          "Материал больше не найден. Открой актуальную карточку сходки.",
+          new InlineKeyboard().text(
+            "Открыть сходку",
+            `v1:view:${action.token}`,
+          ),
+        );
+        outcome = {
+          level: "warn",
+          message: "material file missing",
+          result: "error",
+          use_case: useCase,
+          meetup_id: meetupId,
+          identity_id: person.identityId,
+          error_category: "visibility",
+          error: "material_not_visible",
+        };
+        return;
+      }
+      const delivery = await sendStoredMaterialFile(
+        ctx,
+        material.source.fileId,
+        material.title,
+      );
+      if (delivery.kind === "failed") {
+        await ctx.reply(
+          "Не получилось показать материал. Возможно, файл больше недоступен или Telegram временно не отвечает.",
+        );
+        outcome = unexpectedOutcome(
+          delivery.cause,
+          undefined,
+          useCase,
+          meetupId,
+          person.identityId,
+        );
+        return;
+      }
+      outcome = {
+        level: "debug",
+        message: "material file sent",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (action.kind === "confirm-attach-material") {
+      const meetupId = tokenToUuid(action.token);
+      const confirmation = parseMaterialConfirmation(
+        ctx.callbackQuery?.message,
+      );
+      if (confirmation === undefined) {
+        await editScreen(
+          ctx,
+          "Этот экран прикрепления устарел. Начни действие заново из карточки сходки.",
+          new InlineKeyboard().text(
+            "Открыть сходку",
+            `v1:view:${action.token}`,
+          ),
+        );
+        outcome = {
+          level: "warn",
+          message: "material confirmation malformed",
+          result: "error",
+          use_case: useCase,
+          meetup_id: meetupId,
+          identity_id: person.identityId,
+          error_category: "invariant",
+          error: "material confirmation failed validation",
+        };
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "attach-material",
+        meetupId,
+        material: {
+          id: tokenToUuid(action.materialToken),
+          title: confirmation.title,
+          source: confirmation.source,
+        },
+        ...rpcCall(ctx, useCase),
+      });
+      await renderMaterialResult(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["material-attached"],
+        okMessage: "material attached",
+        rejectedMessage: "material attach rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (action.kind === "confirm-remove-material") {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "remove-material",
+        meetupId,
+        materialId: tokenToUuid(action.materialToken),
+        ...rpcCall(ctx, useCase),
+      });
+      await renderMaterialResult(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["material-removed"],
+        okMessage: "material removed",
+        rejectedMessage: "material removal rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (
+      action.kind === "manage-materials" ||
+      action.kind === "begin-attach-material" ||
+      action.kind === "remove-material"
+    ) {
+      const meetupId = tokenToUuid(action.token);
+      const canManageMaterials = person.globalRoles.includes("admin");
+      if (action.kind !== "manage-materials" && !canManageMaterials) {
+        await editScreen(
+          ctx,
+          materialForbiddenText,
+          new InlineKeyboard().text(
+            "Открыть сходку",
+            `v1:view:${action.token}`,
+          ),
+        );
+        outcome = materialForbiddenOutcome(person, meetupId);
+        return;
+      }
+      const current = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-meetup",
+        meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      if (current.kind !== "meetup-card") {
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+          true,
+        );
+        outcome = screenBoundary(current, {
+          ok: ["meetup-card"],
+          okMessage: "material management opened",
+          rejectedMessage: "material management rejected",
+          useCase,
+          meetupId,
+        });
+        return;
+      }
+      if (
+        current.meetup.lifecycle === "cancelled" &&
+        action.kind !== "manage-materials"
+      ) {
+        await editScreen(
+          ctx,
+          "Сходка уже отменена. Изменять её материалы больше нельзя.",
+          new InlineKeyboard().text(
+            "Открыть сходку",
+            `v1:view:${action.token}`,
+          ),
+        );
+      } else if (action.kind === "manage-materials") {
+        await renderMaterialManagement(
+          ctx,
+          current.meetup,
+          canManageMaterials,
+          action.page ?? 0,
+        );
+      } else if (action.kind === "begin-attach-material") {
+        const prompt = await ctx.reply(
+          `Перешли сообщение или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
+          { reply_markup: { force_reply: true, selective: true } },
+        );
+        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+          kind: "material-source",
+          meetupId,
+          telegramUserId: ctx.from?.id ?? 0,
+          expiresAt: Date.now() + questionTtlMs,
+        });
+        evictOldestQuestions(questions);
+      } else {
+        const materialId = tokenToUuid(action.materialToken);
+        const material = current.meetup.materials.find(
+          (candidate) => candidate.id === materialId,
+        );
+        await editScreen(
+          ctx,
+          material === undefined
+            ? "Материал уже отсутствует. Оригинал в Telegram не изменён."
+            : `Убрать материал «${materialTitle(material, 1)}» из сходки? Оригинал в Telegram останется на месте.`,
+          material === undefined
+            ? new InlineKeyboard().text(
+                "К материалам",
+                `v1:mm:list:${action.token}`,
+              )
+            : new InlineKeyboard()
+                .text(
+                  "Да, убрать",
+                  `v1:mm:confirm-rm:${action.token}:${action.materialToken}`,
+                )
+                .row()
+                .text("Нет", `v1:mm:list:${action.token}`),
+        );
+      }
+      outcome = {
+        level: "debug",
+        message: "material management step sent",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+      };
+      return;
+    }
     if (action.kind === "community") {
       const result = await renderCommunity(ctx, runtime, person, true);
       outcome = adminOutcome(result, person.identityId);
@@ -833,6 +1226,165 @@ async function handleCallback(
   }
 }
 
+async function sendMaterialConfirmation(
+  ctx: UpdateContext,
+  meetupId: string,
+  title: string,
+  source: MaterialInputSource,
+): Promise<void> {
+  const meetupToken = uuidToToken(meetupId);
+  const materialToken = uuidToToken(createUuidV7());
+  const keyboard = new InlineKeyboard();
+  if (source.kind === "message-link") {
+    keyboard.url("Открыть источник", source.url).row();
+  }
+  keyboard
+    .text("Прикрепить", `v1:mm:confirm-add:${meetupToken}:${materialToken}`)
+    .text("Отмена", `v1:view:${meetupToken}`);
+  const text = materialConfirmationText(title);
+  if (source.kind === "message-link") {
+    await ctx.reply(text, { reply_markup: keyboard });
+  } else if (source.fileKind === "document") {
+    await ctx.replyWithDocument(source.fileId, {
+      caption: text,
+      reply_markup: keyboard,
+    });
+  } else {
+    await ctx.replyWithPhoto(source.fileId, {
+      caption: text,
+      reply_markup: keyboard,
+    });
+  }
+}
+
+async function sendStoredMaterialFile(
+  ctx: UpdateContext,
+  fileId: string,
+  title: string,
+): Promise<{ kind: "sent" } | { kind: "failed"; cause: unknown }> {
+  try {
+    await ctx.replyWithDocument(fileId, { caption: title });
+    return { kind: "sent" };
+  } catch (documentCause) {
+    try {
+      await ctx.replyWithPhoto(fileId, { caption: title });
+      return { kind: "sent" };
+    } catch (photoCause) {
+      return {
+        kind: "failed",
+        cause: new AggregateError(
+          [documentCause, photoCause],
+          "Telegram could not send the stored material file",
+        ),
+      };
+    }
+  }
+}
+
+async function renderMaterialManagement(
+  ctx: UpdateContext,
+  meetup: MeetupSnapshot,
+  canManage = true,
+  requestedPage = 0,
+): Promise<void> {
+  const meetupToken = uuidToToken(meetup.id);
+  const pageCount = Math.max(
+    1,
+    Math.ceil(meetup.materials.length / materialPageSize),
+  );
+  const page = Math.min(requestedPage, pageCount - 1);
+  const pageStart = page * materialPageSize;
+  const materials = meetup.materials.slice(
+    pageStart,
+    pageStart + materialPageSize,
+  );
+  const lines = [
+    "Материалы сходки",
+    meetup.title,
+    ...(pageCount === 1 ? [] : [`Страница ${page + 1} из ${pageCount}`]),
+    "",
+    meetup.materials.length === 0
+      ? "Пока ничего не прикреплено."
+      : materials
+          .map(
+            (material, index) =>
+              `${pageStart + index + 1}. ${displayMaterialTitle(material, pageStart + index + 1)}`,
+          )
+          .join("\n"),
+  ];
+  const keyboard = new InlineKeyboard();
+  for (const [index, material] of materials.entries()) {
+    const materialToken = uuidToToken(material.id);
+    const title = buttonText(
+      displayMaterialTitle(material, pageStart + index + 1),
+    );
+    if (material.source.kind === "message-link") {
+      keyboard.url(title, material.source.url);
+    } else {
+      keyboard.text(title, `v1:mm:file:${meetupToken}:${materialToken}`);
+    }
+    if (canManage) {
+      keyboard.text("Убрать", `v1:mm:rm:${meetupToken}:${materialToken}`);
+    }
+    keyboard.row();
+  }
+  if (pageCount > 1) {
+    if (page > 0) {
+      keyboard.text("←", `v1:mm:list:${meetupToken}:${page - 1}`);
+    }
+    if (page + 1 < pageCount) {
+      keyboard.text("→", `v1:mm:list:${meetupToken}:${page + 1}`);
+    }
+    keyboard.row();
+  }
+  if (canManage) {
+    keyboard.text("Прикрепить материал", `v1:mm:add:${meetupToken}`).row();
+  }
+  keyboard.text("К сходке", `v1:view:${meetupToken}`);
+  await editScreen(ctx, lines.join("\n"), keyboard);
+}
+
+async function renderMaterialResult(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+): Promise<void> {
+  if (result.kind === "material-attached") {
+    await renderMaterialManagement(ctx, result.meetup);
+    return;
+  }
+  if (result.kind === "material-removed") {
+    await renderMaterialManagement(ctx, result.meetup);
+    return;
+  }
+  const text =
+    result.kind === "dependency-rejected" && result.reason === "forbidden"
+      ? materialForbiddenText
+      : result.kind === "dependency-rejected" && result.reason === "invalid"
+        ? `Не получилось изменить материалы: ${result.message}`
+        : unavailableText;
+  await editScreen(
+    ctx,
+    text,
+    new InlineKeyboard().text("К списку", "v1:nav:hub"),
+  );
+}
+
+function materialForbiddenOutcome(
+  person: Person,
+  meetupId: string,
+): BoundaryOutcome {
+  return {
+    level: "warn",
+    message: "material management rejected",
+    result: "error",
+    use_case: "update_meetup",
+    meetup_id: meetupId,
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "material_action_forbidden",
+  };
+}
+
 async function renderCommunity(
   ctx: UpdateContext,
   runtime: BotRuntime,
@@ -978,12 +1530,29 @@ async function editScreen(
   keyboard: InlineKeyboard,
 ): Promise<void> {
   try {
-    await ctx.editMessageText(text, { reply_markup: keyboard });
+    const message = ctx.callbackQuery?.message;
+    if (
+      message !== undefined &&
+      ("document" in message || "photo" in message)
+    ) {
+      await ctx.editMessageCaption({ caption: text, reply_markup: keyboard });
+    } else {
+      await ctx.editMessageText(text, { reply_markup: keyboard });
+    }
   } catch (cause) {
     if (errorText(cause).includes("message is not modified")) {
       return;
     }
+    await clearCallbackKeyboard(ctx);
     await ctx.reply(text, { reply_markup: keyboard });
+  }
+}
+
+async function clearCallbackKeyboard(ctx: UpdateContext): Promise<void> {
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+  } catch {
+    // A replacement screen still gets sent below; this is best-effort cleanup.
   }
 }
 
@@ -1029,14 +1598,37 @@ async function renderMeetupCard(
     return;
   }
   if (result.kind === "meetup-card") {
-    const text = meetupCardText(result.meetup);
     const token = uuidToToken(result.meetup.id);
     const keyboard = new InlineKeyboard();
     if (manageable && result.meetup.lifecycle !== "cancelled") {
       keyboard
         .text("Изменить", `v1:manage:edit:${token}`)
         .text("Статус", `v1:manage:status:${token}`)
+        .row()
+        .text(
+          `Материалы (${result.meetup.materials.length})`,
+          `v1:mm:list:${token}`,
+        )
         .row();
+    } else if (result.meetup.materials.length > materialCardLimit) {
+      keyboard
+        .text(
+          `Все материалы (${result.meetup.materials.length})`,
+          `v1:mm:list:${token}`,
+        )
+        .row();
+    }
+    for (const [index, material] of result.meetup.materials
+      .slice(0, materialCardLimit)
+      .entries()) {
+      if (material.source.kind === "file") {
+        keyboard
+          .text(
+            buttonText(displayMaterialTitle(material, index + 1)),
+            `v1:mm:file:${token}:${uuidToToken(material.id)}`,
+          )
+          .row();
+      }
     }
     keyboard
       .text("Обновить", `v1:view:${token}`)
@@ -1058,6 +1650,7 @@ async function renderMeetupCard(
           );
         } catch (cause) {
           if (!errorText(cause).includes("message is not modified")) {
+            await clearCallbackKeyboard(ctx);
             await ctx.replyWithRichMessage(richMessage, {
               reply_markup: keyboard,
             });
@@ -1066,8 +1659,30 @@ async function renderMeetupCard(
       } else {
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }
-    } else if (edit) await editScreen(ctx, text, keyboard);
-    else await ctx.reply(text, { reply_markup: keyboard });
+    } else {
+      const html = meetupCardPlainHtml(result.meetup);
+      if (edit) {
+        try {
+          await ctx.editMessageText(html, {
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+          });
+        } catch (cause) {
+          if (!errorText(cause).includes("message is not modified")) {
+            await clearCallbackKeyboard(ctx);
+            await ctx.reply(html, {
+              parse_mode: "HTML",
+              reply_markup: keyboard,
+            });
+          }
+        }
+      } else {
+        await ctx.reply(html, {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        });
+      }
+    }
     return;
   }
   const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
@@ -1158,19 +1773,29 @@ async function renderStateResult(
 }
 
 function meetupCardHtml(meetup: MeetupSnapshot): string {
-  const lines = meetupCardText(meetup).split("\n");
+  const lines = meetupCardText(meetup, false).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
-  return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}</p>`;
+  return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
+}
+
+function meetupCardPlainHtml(meetup: MeetupSnapshot): string {
+  const lines = meetupCardText(meetup, false).split("\n");
+  const title = escapeHtml(lines.shift() ?? "");
+  return `<b>${title}</b>\n${lines.map(escapeHtml).join("\n")}${materialHtml(meetup, "\n")}`;
 }
 
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
-function meetupCardText(meetup: MeetupSnapshot): string {
+function meetupCardText(
+  meetup: MeetupSnapshot,
+  includeMaterials = true,
+): string {
   const lifecycle =
     meetup.lifecycle === "cancelled"
       ? "отменена"
@@ -1184,7 +1809,60 @@ function meetupCardText(meetup: MeetupSnapshot): string {
     meetup.description === ""
       ? "Описание пока не добавлено."
       : meetup.description;
-  return `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  if (!includeMaterials || meetup.materials.length === 0) return card;
+  const materials = meetup.materials
+    .slice(0, materialCardLimit)
+    .map(
+      (material, index) =>
+        `${index + 1}. ${displayMaterialTitle(material, index + 1)}`,
+    )
+    .join("\n");
+  return `${card}\n\nМатериалы:\n${materials}${materialOverflowText(meetup)}`;
+}
+
+function materialHtml(meetup: MeetupSnapshot, separator = "<br>"): string {
+  if (meetup.materials.length === 0) return "";
+  const materials = meetup.materials
+    .slice(0, materialCardLimit)
+    .map((material, index) => {
+      const label = escapeHtml(displayMaterialTitle(material, index + 1));
+      return material.source.kind === "message-link"
+        ? `${index + 1}. <a href="${escapeHtml(material.source.url)}">${label}</a>`
+        : `${index + 1}. ${label} (файл)`;
+    });
+  return `${separator}${separator}Материалы:${separator}${materials.join(separator)}${materialOverflowHtml(meetup, separator)}`;
+}
+
+function materialTitle(material: MeetupMaterial, index: number): string {
+  const title = material.title.trim();
+  return title === "" ? `Материал ${index}` : title;
+}
+
+function displayMaterialTitle(material: MeetupMaterial, index: number): string {
+  const title = materialTitle(material, index);
+  return title.length <= materialDisplayTitleLimit
+    ? title
+    : `${title.slice(0, materialDisplayTitleLimit - 1)}…`;
+}
+
+function materialOverflowText(meetup: MeetupSnapshot): string {
+  const hidden = meetup.materials.length - materialCardLimit;
+  return hidden > 0 ? `\n…и ещё ${hidden}. Открой раздел «Материалы».` : "";
+}
+
+function materialOverflowHtml(
+  meetup: MeetupSnapshot,
+  separator: string,
+): string {
+  const hidden = meetup.materials.length - materialCardLimit;
+  return hidden > 0
+    ? `${separator}…и ещё ${hidden}. Открой раздел «Материалы».`
+    : "";
+}
+
+function buttonText(value: string): string {
+  return value.length <= 64 ? value : `${value.slice(0, 61)}…`;
 }
 
 function meetupListLine(meetup: MeetupSummary): string {
@@ -1493,7 +2171,13 @@ function callbackUseCase(
     | "manage-unpublish"
     | "manage-confirm-unpublish"
     | "manage-cancel"
-    | "manage-confirm-cancel",
+    | "manage-confirm-cancel"
+    | "manage-materials"
+    | "begin-attach-material"
+    | "confirm-attach-material"
+    | "remove-material"
+    | "confirm-remove-material"
+    | "open-material-file",
 ): ProductUseCase {
   switch (kind) {
     case "view-meetup":
@@ -1510,7 +2194,14 @@ function callbackUseCase(
     case "manage-confirm-unpublish":
     case "manage-cancel":
     case "manage-confirm-cancel":
+    case "manage-materials":
+    case "begin-attach-material":
+    case "confirm-attach-material":
+    case "remove-material":
+    case "confirm-remove-material":
       return "update_meetup";
+    case "open-material-file":
+      return "view_meetup";
     case "community":
     case "ask-allowed-username":
     case "admit-member":
@@ -1655,6 +2346,8 @@ function unexpectedOutcome(
   cause: unknown,
   fallback?: unknown,
   useCase?: ProductUseCase,
+  meetupId?: string,
+  identityId?: string,
 ): BoundaryOutcome {
   const outcome: BoundaryOutcome = {
     level: "error",
@@ -1665,6 +2358,12 @@ function unexpectedOutcome(
   };
   if (useCase !== undefined) {
     outcome.use_case = useCase;
+  }
+  if (meetupId !== undefined) {
+    outcome.meetup_id = meetupId;
+  }
+  if (identityId !== undefined) {
+    outcome.identity_id = identityId;
   }
   const stack = errorStack(cause) ?? errorStack(fallback);
   if (stack !== undefined) {

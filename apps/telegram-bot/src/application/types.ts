@@ -1,4 +1,8 @@
-import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import type {
+  MeetupMaterial,
+  MeetupSnapshot,
+  MeetupSummary,
+} from "../meetups/port.js";
 
 export type Person = { identityId: string; globalRoles: readonly string[] };
 export type DeepLink =
@@ -61,6 +65,22 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "attach-material";
+      meetupId: string;
+      material: MeetupMaterial;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "remove-material";
+      meetupId: string;
+      materialId: string;
+      requestId?: string;
+      useCase?: string;
     };
 
 export function startExecuteRequest(
@@ -97,6 +117,8 @@ export type ExecuteResult =
       reason: "already-cancelled" | "already-hidden";
       meetup: MeetupSnapshot;
     }
+  | { kind: "material-attached"; meetup: MeetupSnapshot }
+  | { kind: "material-removed"; meetup: MeetupSnapshot }
   | {
       kind: "edit-unavailable";
       reason: "cancelled";

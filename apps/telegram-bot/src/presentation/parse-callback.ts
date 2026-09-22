@@ -29,6 +29,12 @@ export type CallbackAction =
   | { kind: "manage-confirm-unpublish"; token: string }
   | { kind: "manage-cancel"; token: string }
   | { kind: "manage-confirm-cancel"; token: string }
+  | { kind: "manage-materials"; token: string; page?: number }
+  | { kind: "begin-attach-material"; token: string }
+  | { kind: "confirm-attach-material"; token: string; materialToken: string }
+  | { kind: "remove-material"; token: string; materialToken: string }
+  | { kind: "confirm-remove-material"; token: string; materialToken: string }
+  | { kind: "open-material-file"; token: string; materialToken: string }
   | { kind: "view-meetup"; token: string }
   | { kind: "outdated" }
   | { kind: "malformed" };
@@ -48,6 +54,54 @@ export function parseCallback(raw: unknown): CallbackAction {
     return viewToken.success
       ? { kind: "view-meetup", token: viewToken.data }
       : { kind: "malformed" };
+  }
+  if (parts[1] === "mm") {
+    const meetupToken = TokenSchema.safeParse(parts[3]);
+    if (!meetupToken.success) return { kind: "malformed" };
+    if ((parts.length === 4 || parts.length === 5) && parts[2] === "list") {
+      if (parts[4] === undefined) {
+        return { kind: "manage-materials", token: meetupToken.data };
+      }
+      const page = z.coerce.number().int().nonnegative().safeParse(parts[4]);
+      return page.success
+        ? { kind: "manage-materials", token: meetupToken.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    if (parts.length === 4 && parts[2] === "add") {
+      return { kind: "begin-attach-material", token: meetupToken.data };
+    }
+    const materialToken = TokenSchema.safeParse(parts[4]);
+    if (!materialToken.success || parts.length !== 5) {
+      return { kind: "malformed" };
+    }
+    switch (parts[2]) {
+      case "confirm-add":
+        return {
+          kind: "confirm-attach-material",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      case "rm":
+        return {
+          kind: "remove-material",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      case "confirm-rm":
+        return {
+          kind: "confirm-remove-material",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      case "file":
+        return {
+          kind: "open-material-file",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      default:
+        return { kind: "malformed" };
+    }
   }
   if (parts.length === 4 && parts[1] === "community") {
     const username = parts[3] ?? "";
