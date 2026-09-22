@@ -29,6 +29,8 @@ public class SchemaTests
         tables.ShouldContain("orleansmembershiptable");
         tables.ShouldContain("orleansmembershipversiontable");
         tables.ShouldContain("grain_activation");
+        tables.ShouldContain("meetup_subscription");
+        tables.ShouldContain("notification_preference");
         tables.ShouldContain("notifications_schema_versions");
     }
 

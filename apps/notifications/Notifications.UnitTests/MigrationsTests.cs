@@ -29,7 +29,8 @@ public class MigrationsTests
         // и Main обязан идти до Clustering — второй ссылается на OrleansQuery.
         var names = Migrations.List().Select(migration => migration.Name).ToList();
 
-        names.ShouldBe(["orleans_main", "orleans_clustering", "grain_activation"]);
+        names.ShouldBe(
+            ["orleans_main", "orleans_clustering", "grain_activation", "notification_preferences"]);
     }
 
     [Fact]
