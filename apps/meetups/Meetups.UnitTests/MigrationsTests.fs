@@ -49,6 +49,12 @@ let ``The fourth migration admits every state transition event`` () =
         @>
 
 [<Fact>]
+let ``The fifth migration admits the held transition event`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 4).Sql
+
+    test <@ sql.Contains("meetup_held") @>
+
+[<Fact>]
 let ``A postgres URI becomes a keyword connection string`` () =
     let cs =
         Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"

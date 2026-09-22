@@ -6,7 +6,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `scala/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `scala/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -22,8 +22,9 @@
 |---|---|---|
 | [go/service-layout.md](go/service-layout.md) | модуль и пакеты, `internal`, горутины и `select`, ошибки, `tool`, `slog`, `go:embed`, goose, пул `database/sql` и лимит соединений, транзакция READ COMMITTED и `ErrTxDone`, пустой `RETURNING` как `ErrNoRows`, `uuid.NewV7` | вернуться |
 | [go/testing.md](go/testing.md) | раскладка тестов, белый и чёрный ящик, табличные тесты, `bufconn`, изолированные базы, `testdb`, `t.Helper`, `Fatal` только из горутины теста, инвариант вне ответа RPC, `-race` | вернуться |
-| [postgresql/schema.md](postgresql/schema.md) | CHECK и трёхзначная логика, сравнение кортежей, взаимоисключающие формы одной таблицей, IMMUTABLE только для индексов, частичный индекс и его предикат, предикат против HOT-update, триггер как граница перехода: `UPDATE OF`, порядок BEFORE и ограничений, слепота к TRUNCATE, `search_path` в функции, свой SQLSTATE, `jsonb_typeof` | вернуться |
+| [postgresql/schema.md](postgresql/schema.md) | `CREATE OR REPLACE FUNCTION` не меняет подпись, `%TYPE` как разовая подстановка, долларовое квотирование против чужих переменных, CHECK и трёхзначная логика, сравнение кортежей, взаимоисключающие формы одной таблицей, IMMUTABLE только для индексов, частичный индекс и его предикат, предикат против HOT-update, триггер как граница перехода: `UPDATE OF`, порядок BEFORE и ограничений, слепота к TRUNCATE, `search_path` в функции, свой SQLSTATE, `jsonb_typeof` | вернуться |
 | [postgresql/concurrency.md](postgresql/concurrency.md) | identity выдаёт номер до коммита и теряет строку под курсором, пропуски номеров, выборка по состоянию вместо курсора, advisory-блокировки: область — база, жизнь — сессия, реентерабельность, ожидающий против пробующего, `DROP DATABASE WITH (FORCE)` | вернуться |
+| [orleans/grains-and-cluster.md](orleans/grains-and-cluster.md) | грин как адрес и активация как кэш, порядок `OnActivateAsync` и первого сообщения, одно сообщение за раз, сборка по простою и `CollectionAgeLimit`, силос и два порта, membership на оптимистичной блокировке одной строки, `OrleansQuery` как данные, провайдеры opt-in и отказ `[PersistentState]` на активации, `[GenerateSerializer]` и номера полей | вернуться |
 | [grpc/unary-server.md](grpc/unary-server.md) | генерация из `.proto`, встраивание и поля рядом, статус-коды, интерцепторы как middleware, recovery, скупой `Internal` и `internalError`, health и reflection, `result` против `grpc_code` | вернуться |
 | [protobuf/enum-openness.md](protobuf/enum-openness.md) | число enum на проводе, открытый и закрытый enum на чтении, признак `open` в protobuf-es и unknown fields, repeated-enum в C#, отбрасывание неизвестного значения производителем и потребителем | вернуться |
 | [typescript/module-and-types.md](typescript/module-and-types.md) | ESM и `NodeNext`, расширение `.js` в импорте, TypeScript 7 и `"types": ["node"]`, strictness-флаги, Zod на `unknown`, discriminated union и `never`, Connect-клиент Identity | вернуться |

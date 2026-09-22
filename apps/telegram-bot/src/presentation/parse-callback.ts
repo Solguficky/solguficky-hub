@@ -1,7 +1,9 @@
 import { z } from "zod";
+import type { FormField } from "../application/types.js";
 
 const CallbackSchema = z.string().max(64);
 const TokenSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
+const FormFieldSchema = z.enum(["title", "schedule", "venue", "description"]);
 
 // Ник едет в `callback_data` как есть, и обратно он доезжает только в этом
 // алфавите и в этой длине: у Telegram на данные кнопки 64 байта, а длиннее 32
@@ -19,6 +21,14 @@ export type CallbackAction =
   | { kind: "remove-allowed-username"; username: string }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
+  | { kind: "manage-edit"; token: string }
+  | { kind: "manage-field"; token: string; field: FormField }
+  | { kind: "manage-status"; token: string }
+  | { kind: "manage-publish"; token: string }
+  | { kind: "manage-unpublish"; token: string }
+  | { kind: "manage-confirm-unpublish"; token: string }
+  | { kind: "manage-cancel"; token: string }
+  | { kind: "manage-confirm-cancel"; token: string }
   | { kind: "view-meetup"; token: string }
   | { kind: "outdated" }
   | { kind: "malformed" };
@@ -52,11 +62,32 @@ export function parseCallback(raw: unknown): CallbackAction {
       return { kind: "block-member", token: identityToken.data };
   }
   const token = TokenSchema.safeParse(parts[3]);
-  if (!token.success || parts.length !== 4 || parts[1] !== "manage") {
+  if (!token.success || parts[1] !== "manage") {
     return { kind: "malformed" };
   }
-  if (parts[2] === "new") return { kind: "create-meetup", token: token.data };
-  if (parts[2] === "publish")
+  if (parts.length === 4 && parts[2] === "new")
+    return { kind: "create-meetup", token: token.data };
+  if (parts.length === 4 && parts[2] === "publish")
     return { kind: "publish-meetup", token: token.data };
+  if (parts.length === 4 && parts[2] === "edit")
+    return { kind: "manage-edit", token: token.data };
+  if (parts.length === 5 && parts[2] === "field") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? { kind: "manage-field", token: token.data, field: field.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "status")
+    return { kind: "manage-status", token: token.data };
+  if (parts.length === 4 && parts[2] === "republish")
+    return { kind: "manage-publish", token: token.data };
+  if (parts.length === 4 && parts[2] === "unpublish")
+    return { kind: "manage-unpublish", token: token.data };
+  if (parts.length === 4 && parts[2] === "confirm-unpublish")
+    return { kind: "manage-confirm-unpublish", token: token.data };
+  if (parts.length === 4 && parts[2] === "cancel")
+    return { kind: "manage-cancel", token: token.data };
+  if (parts.length === 4 && parts[2] === "confirm-cancel")
+    return { kind: "manage-confirm-cancel", token: token.data };
   return { kind: "malformed" };
 }

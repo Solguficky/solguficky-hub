@@ -57,6 +57,8 @@ skills:
     source: github.com/microsoft/playwright-cli/skills/playwright-cli
   - name: akka-streams
     source: github.com/alexandru/skills/skills/akka-streams
+  - name: orleans
+    source: github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans
 ignore:
   - .DS_Store
   - .git/

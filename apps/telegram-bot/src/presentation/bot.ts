@@ -20,6 +20,7 @@ import {
 import type { LogFields, Logger } from "../logging.js";
 import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
+import { editQuestionText, parseEditQuestion } from "./edit-question.js";
 import {
   meetupStartLink,
   tokenToUuid,
@@ -41,6 +42,7 @@ const unavailableText = `Не получилось загрузить данны
 Попробуй ещё раз через минуту.`;
 type ProductUseCase =
   | "create_meetup"
+  | "update_meetup"
   | "find_meetup"
   | "view_meetup"
   | "manage_community";
@@ -49,6 +51,7 @@ const questionLimit = 1_000;
 
 type PendingQuestion = {
   kind: "meetup";
+  mode: "create" | "edit";
   field: FormField;
   meetupId: string;
   telegramUserId: number;
@@ -121,16 +124,42 @@ async function handleMessage(
   try {
     const replyId = ctx.message?.reply_to_message?.message_id;
     removeExpiredQuestions(questions, Date.now());
-    const pending =
+    const storedPending =
       replyId === undefined
         ? undefined
         : questions.get(questionKey(ctx.chat?.id, replyId));
+    const repliedMessage = ctx.message?.reply_to_message;
+    const repliedText =
+      repliedMessage !== undefined && "text" in repliedMessage
+        ? repliedMessage.text
+        : undefined;
+    const recoveredEdit =
+      storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
+        ? parseEditQuestion(repliedText)
+        : undefined;
+    const pending =
+      storedPending ??
+      (recoveredEdit === undefined
+        ? undefined
+        : {
+            kind: "meetup" as const,
+            mode: "edit" as const,
+            field: recoveredEdit.field,
+            meetupId: tokenToUuid(recoveredEdit.token),
+            telegramUserId: ctx.from?.id ?? 0,
+            expiresAt: Date.now() + questionTtlMs,
+          });
     if (
       replyId !== undefined &&
       pending !== undefined &&
       ctx.message?.text !== undefined
     ) {
-      useCase = "create_meetup";
+      useCase =
+        pending.kind === "allowed-username"
+          ? "manage_community"
+          : pending.mode === "edit"
+            ? "update_meetup"
+            : "create_meetup";
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
           level: "debug",
@@ -187,16 +216,29 @@ async function handleMessage(
       }
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
-        intent: "set-meetup-field",
+        intent:
+          pending.mode === "edit" ? "update-meetup-field" : "set-meetup-field",
         field: pending.field,
         value: ctx.message.text,
         meetupId: pending.meetupId,
-        ...rpcCall(ctx, "create_meetup"),
+        ...rpcCall(ctx, useCase),
       });
       questions.delete(questionKey(ctx.chat?.id, replyId));
-      await renderFormResult(ctx, result, questions);
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
       outcome = screenBoundary(result, {
-        ok: ["ask", "preview", "published"],
+        ok: [
+          "ask",
+          "edit-ask",
+          "preview",
+          "published",
+          "meetup-updated",
+          "edit-unavailable",
+        ],
         okMessage: "meetup form answer handled",
         rejectedMessage: "meetup form answer rejected",
         useCase,
@@ -287,6 +329,7 @@ async function handleMessage(
         result,
         false,
         runtime.presentation ?? "rich",
+        identity.globalRoles.includes("admin"),
       );
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
@@ -312,8 +355,13 @@ async function handleMessage(
         };
         return;
       case "ask":
+      case "edit-ask":
       case "preview":
       case "published":
+      case "meetup-updated":
+      case "meetup-state-changed":
+      case "meetup-state-unchanged":
+      case "edit-unavailable":
       case "meetup-list":
         outcome = {
           level: "error",
@@ -493,11 +541,171 @@ async function handleCallback(
         meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
+      await renderMeetupCard(
+        ctx,
+        result,
+        true,
+        runtime.presentation ?? "rich",
+        person.globalRoles.includes("admin"),
+      );
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
         okMessage: "meetup card sent",
         rejectedMessage: "meetup card rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (
+      action.kind === "manage-edit" ||
+      action.kind === "manage-field" ||
+      action.kind === "manage-status" ||
+      action.kind === "manage-unpublish" ||
+      action.kind === "manage-cancel" ||
+      action.kind === "manage-publish"
+    ) {
+      const meetupId = tokenToUuid(action.token);
+      const current = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-meetup",
+        meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      if (current.kind !== "meetup-card") {
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+          true,
+        );
+        outcome = screenBoundary(current, {
+          ok: ["meetup-card"],
+          okMessage: "meetup management opened",
+          rejectedMessage: "meetup management rejected",
+          useCase,
+          meetupId,
+        });
+        return;
+      }
+      const meetup = current.meetup;
+      const token = uuidToToken(meetup.id);
+      if (meetup.lifecycle === "cancelled") {
+        await editScreen(
+          ctx,
+          `Сходка «${meetup.title}» уже отменена. Изменять её больше нельзя.`,
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
+        outcome = {
+          level: "debug",
+          message: "cancelled meetup management handled",
+          result: "ok",
+          use_case: "update_meetup",
+          meetup_id: meetup.id,
+        };
+        return;
+      }
+      if (action.kind === "manage-edit") {
+        await editScreen(
+          ctx,
+          `Что изменить в сходке «${meetup.title}»?`,
+          new InlineKeyboard()
+            .text("Название", `v1:manage:field:${token}:title`)
+            .text("Дата и время", `v1:manage:field:${token}:schedule`)
+            .row()
+            .text("Место", `v1:manage:field:${token}:venue`)
+            .text("Описание", `v1:manage:field:${token}:description`)
+            .row()
+            .text("Назад", `v1:view:${token}`),
+        );
+      } else if (action.kind === "manage-field") {
+        await renderFormResult(
+          ctx,
+          {
+            kind: "edit-ask",
+            field: action.field,
+            meetup,
+          },
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      } else if (action.kind === "manage-status") {
+        await renderMeetupStatus(ctx, meetup);
+      } else if (
+        action.kind === "manage-cancel" &&
+        meetup.lifecycle === "held"
+      ) {
+        await editScreen(
+          ctx,
+          "Состоявшуюся сходку отменить нельзя.",
+          new InlineKeyboard().text("Назад", `v1:manage:status:${token}`),
+        );
+      } else if (action.kind === "manage-publish") {
+        // Публикация — единственное действие статуса, которое не перечитывает
+        // сходку в юзкейсе: устаревшую кнопку разбираем по снимку выше, иначе
+        // домен ответит FailedPrecondition и человек увидит кадр недоступности
+        // вместо причины отказа.
+        const result = await runtime.dispatcher.execute({
+          identity: person,
+          intent: "publish-meetup",
+          meetupId,
+          ...rpcCall(ctx, useCase),
+        });
+        await renderStateResult(ctx, result, runtime.presentation ?? "rich");
+        outcome = screenBoundary(result, {
+          ok: ["published"],
+          okMessage: "meetup published",
+          rejectedMessage: "meetup republish rejected",
+          useCase,
+          meetupId,
+        });
+        return;
+      } else {
+        const verb =
+          action.kind === "manage-unpublish"
+            ? "скрыть сходку из общего списка"
+            : "отменить сходку";
+        const confirm =
+          action.kind === "manage-unpublish"
+            ? `v1:manage:confirm-unpublish:${token}`
+            : `v1:manage:confirm-cancel:${token}`;
+        await editScreen(
+          ctx,
+          `Точно ${verb} «${meetup.title}»?`,
+          new InlineKeyboard()
+            .text("Да, продолжить", confirm)
+            .row()
+            .text("Нет", `v1:manage:status:${token}`),
+        );
+      }
+      outcome = {
+        level: "debug",
+        message: "meetup management step sent",
+        result: "ok",
+        use_case: "update_meetup",
+        meetup_id: meetup.id,
+      };
+      return;
+    }
+    if (
+      action.kind === "manage-confirm-unpublish" ||
+      action.kind === "manage-confirm-cancel"
+    ) {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "change-meetup-state",
+        action:
+          action.kind === "manage-confirm-unpublish" ? "unpublish" : "cancel",
+        meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      await renderStateResult(ctx, result, runtime.presentation ?? "rich");
+      outcome = screenBoundary(result, {
+        ok: ["meetup-state-changed", "meetup-state-unchanged"],
+        okMessage: "meetup state handled",
+        rejectedMessage: "meetup state rejected",
         useCase,
         meetupId,
       });
@@ -527,7 +735,12 @@ async function handleCallback(
         meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await renderFormResult(ctx, result, questions);
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
       outcome = screenBoundary(result, {
         ok: ["ask", "preview", "published"],
         okMessage: "meetup form step sent",
@@ -545,7 +758,12 @@ async function handleCallback(
         meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await renderFormResult(ctx, result, questions);
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
       outcome = screenBoundary(result, {
         ok: ["published"],
         okMessage: "meetup published",
@@ -760,6 +978,7 @@ async function renderMeetupCard(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   edit: boolean,
   presentation: "rich" | "plain",
+  manageable = false,
 ): Promise<void> {
   if (result.kind === "meetup-not-found") {
     const text = "Сходка не найдена или больше недоступна.";
@@ -770,8 +989,16 @@ async function renderMeetupCard(
   }
   if (result.kind === "meetup-card") {
     const text = meetupCardText(result.meetup);
-    const keyboard = new InlineKeyboard()
-      .text("Обновить", `v1:view:${uuidToToken(result.meetup.id)}`)
+    const token = uuidToToken(result.meetup.id);
+    const keyboard = new InlineKeyboard();
+    if (manageable && result.meetup.lifecycle !== "cancelled") {
+      keyboard
+        .text("Изменить", `v1:manage:edit:${token}`)
+        .text("Статус", `v1:manage:status:${token}`)
+        .row();
+    }
+    keyboard
+      .text("Обновить", `v1:view:${token}`)
       .row()
       .text("К списку", "v1:nav:hub");
     if (presentation === "rich") {
@@ -805,6 +1032,73 @@ async function renderMeetupCard(
   const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
   if (edit) await editScreen(ctx, unavailableText, keyboard);
   else await ctx.reply(unavailableText, { reply_markup: keyboard });
+}
+
+async function renderMeetupStatus(
+  ctx: UpdateContext,
+  meetup: MeetupSnapshot,
+): Promise<void> {
+  const token = uuidToToken(meetup.id);
+  const keyboard = new InlineKeyboard();
+  if (meetup.visibility === "visible") {
+    keyboard.text("Скрыть из списка", `v1:manage:unpublish:${token}`).row();
+  } else {
+    keyboard.text("Опубликовать", `v1:manage:republish:${token}`).row();
+  }
+  if (meetup.lifecycle === "planned") {
+    keyboard.text("Отменить сходку", `v1:manage:cancel:${token}`).row();
+  }
+  keyboard.text("Назад", `v1:view:${token}`);
+  await editScreen(
+    ctx,
+    `Управление статусом\n\n${meetupCardText(meetup)}`,
+    keyboard,
+  );
+}
+
+async function renderStateResult(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  presentation: "rich" | "plain",
+): Promise<void> {
+  if (result.kind === "published" || result.kind === "meetup-state-changed") {
+    await renderMeetupCard(
+      ctx,
+      { kind: "meetup-card", meetup: result.meetup },
+      true,
+      presentation,
+      true,
+    );
+    return;
+  }
+  if (result.kind === "meetup-state-unchanged") {
+    const token = uuidToToken(result.meetup.id);
+    const text =
+      result.reason === "already-cancelled"
+        ? "Сходка уже отменена. Повторно ничего не изменилось."
+        : "Сходка уже скрыта из общего списка.";
+    await editScreen(
+      ctx,
+      text,
+      new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+    );
+    return;
+  }
+  if (result.kind === "meetup-not-found") {
+    await renderMeetupCard(ctx, result, true, presentation, true);
+    return;
+  }
+  const text =
+    result.kind === "dependency-rejected" && result.reason === "invalid"
+      ? `Не получилось выполнить действие: ${result.message}`
+      : result.kind === "dependency-rejected" && result.reason === "forbidden"
+        ? "Meetups не разрешил это действие."
+        : unavailableText;
+  await editScreen(
+    ctx,
+    text,
+    new InlineKeyboard().text("К списку", "v1:nav:hub"),
+  );
 }
 
 function meetupCardHtml(meetup: MeetupSnapshot): string {
@@ -942,25 +1236,61 @@ async function renderFormResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   questions: Map<string, PendingInput>,
+  presentation: "rich" | "plain",
 ): Promise<void> {
-  if (result.kind === "ask") {
+  if (result.kind === "ask" || result.kind === "edit-ask") {
     const prompts: Record<FormField, string> = {
       title: "Как называется сходка?",
       schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
       venue: "Где встречаемся?",
       description: "Добавь короткое описание сходки.",
     };
-    const message = await ctx.reply(result.error ?? prompts[result.field], {
+    const currentValue =
+      result.field === "schedule"
+        ? formatSchedule(result.meetup)
+        : result.meetup[result.field] === ""
+          ? "не задано"
+          : result.meetup[result.field];
+    const prompt =
+      result.kind === "edit-ask"
+        ? `Сейчас: ${currentValue}\n${result.error ?? prompts[result.field]}`
+        : (result.error ?? prompts[result.field]);
+    const text =
+      result.kind === "edit-ask"
+        ? editQuestionText(prompt, uuidToToken(result.meetup.id), result.field)
+        : prompt;
+    const message = await ctx.reply(text, {
       reply_markup: { force_reply: true, selective: true },
     });
     questions.set(questionKey(ctx.chat?.id, message.message_id), {
       kind: "meetup",
+      mode: result.kind === "edit-ask" ? "edit" : "create",
       field: result.field,
       meetupId: result.meetup.id,
       telegramUserId: ctx.from?.id ?? 0,
       expiresAt: Date.now() + questionTtlMs,
     });
     evictOldestQuestions(questions);
+    return;
+  }
+  if (result.kind === "meetup-updated") {
+    await ctx.reply("Изменение сохранено.");
+    await renderMeetupCard(
+      ctx,
+      { kind: "meetup-card", meetup: result.meetup },
+      false,
+      presentation,
+      true,
+    );
+    return;
+  }
+  if (result.kind === "edit-unavailable") {
+    await ctx.reply("Сходка уже отменена. Изменять её больше нельзя.", {
+      reply_markup: new InlineKeyboard().text(
+        "Открыть сходку",
+        `v1:view:${uuidToToken(result.meetup.id)}`,
+      ),
+    });
     return;
   }
   if (result.kind === "preview") {
@@ -1049,7 +1379,15 @@ function callbackUseCase(
     | "block-member"
     | "remove-allowed-username"
     | "create-meetup"
-    | "publish-meetup",
+    | "publish-meetup"
+    | "manage-edit"
+    | "manage-field"
+    | "manage-status"
+    | "manage-publish"
+    | "manage-unpublish"
+    | "manage-confirm-unpublish"
+    | "manage-cancel"
+    | "manage-confirm-cancel",
 ): ProductUseCase {
   switch (kind) {
     case "view-meetup":
@@ -1058,6 +1396,15 @@ function callbackUseCase(
     case "publish-meetup":
     case "manage-menu":
       return "create_meetup";
+    case "manage-edit":
+    case "manage-field":
+    case "manage-status":
+    case "manage-publish":
+    case "manage-unpublish":
+    case "manage-confirm-unpublish":
+    case "manage-cancel":
+    case "manage-confirm-cancel":
+      return "update_meetup";
     case "community":
     case "ask-allowed-username":
     case "admit-member":

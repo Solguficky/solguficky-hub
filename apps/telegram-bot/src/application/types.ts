@@ -5,6 +5,7 @@ export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
+export type MeetupStateAction = "unpublish" | "cancel";
 
 export type ExecuteRequest =
   | { identity: Person; intent: "start"; deepLink?: DeepLink }
@@ -39,7 +40,24 @@ export type ExecuteRequest =
     }
   | {
       identity: Person;
+      intent: "update-meetup-field";
+      field: FormField;
+      value: string;
+      meetupId: string;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
       intent: "publish-meetup";
+      meetupId: string;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "change-meetup-state";
+      action: MeetupStateAction;
       meetupId: string;
       requestId?: string;
       useCase?: string;
@@ -60,8 +78,30 @@ export type ExecuteResult =
   | { kind: "meetup-card"; meetup: MeetupSnapshot }
   | { kind: "meetup-not-found" }
   | { kind: "ask"; field: FormField; meetup: MeetupSnapshot; error?: string }
+  | {
+      kind: "edit-ask";
+      field: FormField;
+      meetup: MeetupSnapshot;
+      error?: string;
+    }
   | { kind: "preview"; meetup: MeetupSnapshot }
   | { kind: "published"; meetup: MeetupSnapshot }
+  | { kind: "meetup-updated"; meetup: MeetupSnapshot }
+  | {
+      kind: "meetup-state-changed";
+      action: MeetupStateAction;
+      meetup: MeetupSnapshot;
+    }
+  | {
+      kind: "meetup-state-unchanged";
+      reason: "already-cancelled" | "already-hidden";
+      meetup: MeetupSnapshot;
+    }
+  | {
+      kind: "edit-unavailable";
+      reason: "cancelled";
+      meetup: MeetupSnapshot;
+    }
   | {
       kind: "dependency-rejected";
       reason: "forbidden" | "timeout" | "unavailable";

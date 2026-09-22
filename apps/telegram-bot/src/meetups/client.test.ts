@@ -21,6 +21,8 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
     changeMeetupAttributes: vi.fn(),
     setMeetupSchedule: vi.fn(),
     publishMeetup: vi.fn(),
+    unpublishMeetup: vi.fn(),
+    cancelMeetup: vi.fn(),
     getMeetup: vi.fn(),
   };
 }

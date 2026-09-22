@@ -53,19 +53,25 @@ type MeetupBoundaryTests() =
 
         client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
 
-    let fixedDay year month day = Schedule(Fixed = DateValue(Day = CalendarDate(Year = year, Month = month, Day = day)))
+    let fixedDay (date: DateOnly) =
+        Schedule(Fixed = DateValue(Day = CalendarDate(Year = date.Year, Month = date.Month, Day = date.Day)))
 
-    let fixedTime year month day hours minutes =
+    let fixedTime (date: DateOnly) hours minutes =
         Schedule(
             Fixed =
                 DateValue(
                     DayStart =
                         LocalDateTime(
-                            Date = CalendarDate(Year = year, Month = month, Day = day),
+                            Date = CalendarDate(Year = date.Year, Month = date.Month, Day = date.Day),
                             Time = LocalTime(Hours = hours, Minutes = minutes)
                         )
                 )
         )
+
+    /// Списки отделяют архив от актуального по дню сообщества, поэтому расписание в
+    /// сценариях считается от него: фиксированная дата позеленела бы сегодня и
+    /// покраснела после неё.
+    let today = MeetupCommands.communityToday ()
 
     [<Fact>]
     member _.``An administrator drives a meetup from draft to visible over gRPC``() =
@@ -148,13 +154,13 @@ type MeetupBoundaryTests() =
         createPublished client admin (newId ()) "No date" None
         |> ignore
 
-        createPublished client admin (newId ()) "Same day at 18:00" (Some(fixedTime 2026 10 3 18 0))
+        createPublished client admin (newId ()) "Same day at 18:00" (Some(fixedTime (today.AddDays 3) 18 0))
         |> ignore
 
-        createPublished client admin (newId ()) "Same day" (Some(fixedDay 2026 10 3))
+        createPublished client admin (newId ()) "Same day" (Some(fixedDay (today.AddDays 3)))
         |> ignore
 
-        createPublished client admin (newId ()) "Earlier" (Some(fixedTime 2026 10 2 21 0))
+        createPublished client admin (newId ()) "Earlier" (Some(fixedTime (today.AddDays 2) 21 0))
         |> ignore
 
         let actual =
@@ -178,8 +184,10 @@ type MeetupBoundaryTests() =
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
         let id = newId ()
         let expectedId = id.ToString "D"
+        let scheduled = today.AddDays 30
+        let expectedDay = scheduled.Day
 
-        createPublished client (administrator ()) id "Readable meetup" (Some(fixedDay 2026 10 3))
+        createPublished client (administrator ()) id "Readable meetup" (Some(fixedDay scheduled))
         |> ignore
 
         let snapshot =
@@ -190,7 +198,7 @@ type MeetupBoundaryTests() =
                 snapshot.Id = expectedId
                 && snapshot.Title = "Readable meetup"
                 && snapshot.Visibility = MeetupVisibility.Visible
-                && snapshot.Schedule.Fixed.Day.Day = 3
+                && snapshot.Schedule.Fixed.Day.Day = expectedDay
             @>
 
     [<Fact>]

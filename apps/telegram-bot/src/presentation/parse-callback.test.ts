@@ -29,6 +29,55 @@ describe("callback parser", () => {
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
   });
 
+  it("parses meetup editing and confirmed state actions within the byte budget", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const callbacks = [
+      `v1:manage:edit:${token}`,
+      `v1:manage:field:${token}:description`,
+      `v1:manage:status:${token}`,
+      `v1:manage:republish:${token}`,
+      `v1:manage:unpublish:${token}`,
+      `v1:manage:confirm-unpublish:${token}`,
+      `v1:manage:cancel:${token}`,
+      `v1:manage:confirm-cancel:${token}`,
+    ];
+
+    for (const callback of callbacks) {
+      expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
+    }
+
+    expect(parseCallback(callbacks[0])).toEqual({ kind: "manage-edit", token });
+    expect(parseCallback(callbacks[1])).toEqual({
+      kind: "manage-field",
+      token,
+      field: "description",
+    });
+    expect(parseCallback(callbacks[2])).toEqual({
+      kind: "manage-status",
+      token,
+    });
+    expect(parseCallback(callbacks[3])).toEqual({
+      kind: "manage-publish",
+      token,
+    });
+    expect(parseCallback(callbacks[4])).toEqual({
+      kind: "manage-unpublish",
+      token,
+    });
+    expect(parseCallback(callbacks[5])).toEqual({
+      kind: "manage-confirm-unpublish",
+      token,
+    });
+    expect(parseCallback(callbacks[6])).toEqual({
+      kind: "manage-cancel",
+      token,
+    });
+    expect(parseCallback(callbacks[7])).toEqual({
+      kind: "manage-confirm-cancel",
+      token,
+    });
+  });
+
   it("parses community administration actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     expect(parseCallback("v1:community:list")).toEqual({ kind: "community" });

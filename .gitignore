@@ -79,7 +79,7 @@ lefthook-local.yml
 .railway/
 
 # ===================================================================
-# .NET / C# / F# — infra/apphost, shared/dotnet, apps/meetups
+# .NET / C# / F# — infra/apphost, shared/dotnet, apps/meetups, apps/notifications
 # ===================================================================
 
 # Папки с бинарниками и временными файлами
