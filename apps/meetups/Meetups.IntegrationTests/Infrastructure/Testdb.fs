@@ -1,6 +1,7 @@
 namespace Meetups.IntegrationTests.Infrastructure
 
 open System
+open DotNet.Testcontainers.Builders
 open Npgsql
 open Testcontainers.PostgreSql
 open Xunit
@@ -17,22 +18,41 @@ module PostgresAdmin =
     /// Своей проверки демона здесь нет: Testcontainers сам знает и unix-socket,
     /// и named pipe Docker Desktop на Windows, а рукописная проверка сокета
     /// молча пропускала бы все тесты схемы на Windows при живом Docker.
+    ///
+    /// Отказ старта не гасится: причина сохраняется и попадает в сообщение
+    /// «базы нет», а «Docker недоступен» отличимо от поломки конфигурации.
     let private container =
         lazy
             (try
                 let postgres = PostgreSqlBuilder("postgres:16-alpine").Build()
                 postgres.StartAsync().GetAwaiter().GetResult()
-                Some postgres
-             with _ ->
-                 None)
 
-    let started () = container.Value |> Option.isSome
+                // Общий контейнер останавливается явно, а не только реапером Ryuk:
+                // реапер — страховка от падения процесса, а не штатная уборка.
+                AppDomain.CurrentDomain.ProcessExit.Add(fun _ ->
+                    postgres.DisposeAsync().AsTask().GetAwaiter().GetResult()
+                )
+
+                Ok postgres
+             with
+             | :? DockerUnavailableException as ex -> Error $"docker unavailable: {ex.Message}"
+             | ex -> Error $"testcontainers: {ex.GetType().Name}: {ex.Message}")
+
+    let started () = container.Value |> Result.isOk
+
+    /// Причина отказа контейнера. Нужна там, где прогон падает из-за отсутствия
+    /// базы: без неё настоящая причина — недоступный Docker или поломка
+    /// конфигурации — не видна.
+    let failure () =
+        match container.Value with
+        | Ok _ -> None
+        | Error reason -> Some reason
 
     let connectionString () =
         match container.Value with
-        | Some postgres -> postgres.GetConnectionString()
-        | None when (variable "GITHUB_ACTIONS").IsSome -> failwith "testcontainers postgres is required in CI"
-        | None ->
+        | Ok postgres -> postgres.GetConnectionString()
+        | Error _ when (variable "GITHUB_ACTIONS").IsSome -> failwith "testcontainers postgres is required in CI"
+        | Error _ ->
             match variable "MEETUPS_DATABASE_URL" with
             | None ->
                 Meetups.Migrations.connectionString
@@ -68,7 +88,18 @@ type IsolatedDatabase() =
                 || (PostgresAdmin.variable "MEETUPS_DATABASE_URL").IsSome
                 || (PostgresAdmin.variable "GITHUB_ACTIONS").IsSome
 
-            if forced then failwith $"postgres: {ex.Message}" else Assert.Skip $"postgres not available: {ex.Message}"
+            if forced then
+                failwith $"postgres: {ex.Message}"
+            else
+                // Причина отказа контейнера едет рядом с причиной отказа базы:
+                // «Docker недоступен» и «сломанная конфигурация» — разные поломки,
+                // и по одному «нет соединения» их не различить.
+                let containerReason =
+                    match PostgresAdmin.failure () with
+                    | None -> ""
+                    | Some reason -> $" (container: {reason})"
+
+                Assert.Skip $"postgres not available: {ex.Message}{containerReason}"
 
     member _.ConnectionString = isolatedCs
 
