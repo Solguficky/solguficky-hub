@@ -2,7 +2,7 @@ import { createDispatcher } from "./application/dispatcher.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
-import { createBot } from "./presentation/bot.js";
+import { createBot, parseTelegramEnvironment } from "./presentation/bot.js";
 import { createShutdown } from "./shutdown.js";
 import { startMetrics } from "./telemetry.js";
 
@@ -18,6 +18,13 @@ async function main(): Promise<number> {
   const token = readEnv("TELEGRAM_BOT_TOKEN");
   if (token === undefined || token === "") {
     logger.error("TELEGRAM_BOT_TOKEN is not set");
+    return 1;
+  }
+  const environment = parseTelegramEnvironment(
+    readEnv("TELEGRAM_BOT_ENVIRONMENT"),
+  );
+  if (environment === undefined) {
+    logger.error("TELEGRAM_BOT_ENVIRONMENT must be prod or test");
     return 1;
   }
   const identityUrl = readEnv("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051";
@@ -37,6 +44,7 @@ async function main(): Promise<number> {
     identity,
     logger,
     presentation: presentationRaw,
+    environment,
   });
   const shutdown = createShutdown({
     bot,
@@ -65,7 +73,10 @@ async function main(): Promise<number> {
     if (shutdown.requested) {
       return 0;
     }
-    logger.info("telegram-bot starting", { service: serviceName });
+    logger.info("telegram-bot starting", {
+      service: serviceName,
+      telegram_environment: environment,
+    });
     try {
       await bot.start({
         onStart: () => {

@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { BotError, Context, type Transformer } from "grammy";
+import { Api, BotError, Context, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Dispatcher } from "../application/dispatcher.js";
@@ -15,7 +15,11 @@ import type {
   IdentityResolver,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
-import { createBot } from "./bot.js";
+import {
+  createBot,
+  parseTelegramEnvironment,
+  type TelegramEnvironment,
+} from "./bot.js";
 
 const botInfo: UserFromGetMe = {
   id: 1,
@@ -1865,5 +1869,66 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.error).toBe("bare context");
     expect(records[0]?.fields.request_id).toBeUndefined();
     expect(records[0]?.fields.duration_us).toBeUndefined();
+  });
+});
+
+async function requestedUrl(
+  environment: TelegramEnvironment | undefined,
+): Promise<string | undefined> {
+  const { logger } = createCapturingLogger();
+  const runtime = {
+    token: "111:test-token",
+    dispatcher: createDispatcher(),
+    identity: resolvedIdentity(),
+    logger,
+  };
+  const bot = createBot(
+    environment === undefined ? runtime : { ...runtime, environment },
+  );
+  const urls: string[] = [];
+  // URL строит сам grammY из опций, которые ему отдал createBot: подменяется
+  // только транспорт. Иначе тест проверял бы собственную склейку строки, а не
+  // ту, по которой пойдут вызовы Bot API.
+  const api = new Api(bot.api.token, {
+    ...bot.api.options,
+    fetch: (input: Parameters<typeof fetch>[0]) => {
+      urls.push(String(input));
+      return Promise.resolve(Response.json({ ok: true, result: botInfo }));
+    },
+  });
+  await api.getMe();
+  return urls[0];
+}
+
+describe("telegram environment", () => {
+  it("reads an absent or empty variable as production", () => {
+    expect(parseTelegramEnvironment(undefined)).toBe("prod");
+    expect(parseTelegramEnvironment("")).toBe("prod");
+  });
+
+  it("accepts exactly the two known values", () => {
+    expect(parseTelegramEnvironment("prod")).toBe("prod");
+    expect(parseTelegramEnvironment("test")).toBe("test");
+  });
+
+  it("refuses an unknown value instead of falling back to production", () => {
+    expect(parseTelegramEnvironment("Test")).toBeUndefined();
+    expect(parseTelegramEnvironment("production")).toBeUndefined();
+    expect(parseTelegramEnvironment(" test")).toBeUndefined();
+  });
+
+  it("calls the test server when the test environment is chosen", async () => {
+    await expect(requestedUrl("test")).resolves.toBe(
+      "https://api.telegram.org/bot111:test-token/test/getMe",
+    );
+  });
+
+  it("calls production without the variable and with the production value", async () => {
+    await expect(requestedUrl(undefined)).resolves.toBe(
+      "https://api.telegram.org/bot111:test-token/getMe",
+    );
+    await expect(requestedUrl("prod")).resolves.toBe(
+      "https://api.telegram.org/bot111:test-token/getMe",
+    );
   });
 });
