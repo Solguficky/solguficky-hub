@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Testing" Version="13.5.3" />
+  </ItemGroup>
+
+  <!-- IsAspireProjectResource="false": AppHost — предмет прогона, а не ресурс
+       внутри чужого графа. Метаданное всё равно даёт тип Projects.AppHost. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\infra\apphost\AppHost.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>

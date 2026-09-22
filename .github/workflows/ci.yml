@@ -27,6 +27,7 @@ jobs:
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
       auction: ${{ steps.filter.outputs.auction }}
+      contour: ${{ steps.filter.outputs.contour }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -83,6 +84,25 @@ jobs:
               - 'shared/dotnet/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
+              - 'contracts/proto/**'
+              - 'justfile'
+              - 'global.json'
+              - '.editorconfig'
+              - '.github/workflows/ci.yml'
+            # Сквозной контур поднимает настоящую топологию, поэтому его
+            # участники — это все, чья правка способна её сломать: оба сервиса
+            # среза, граф AppHost и схема. Фильтр по своему каталогу оставил бы
+            # набор молчать ровно тогда, когда ломается то, что он проверяет.
+            # Notifications здесь потому, что AppHost на него ссылается и его
+            # поломка валит сборку, хотя профиль контура его не поднимает.
+            contour:
+              - 'tests/contour/**'
+              - 'tools/contour/**'
+              - 'infra/apphost/**'
+              - 'apps/identity/**'
+              - 'apps/meetups/**'
+              - 'apps/notifications/**'
+              - 'shared/dotnet/**'
               - 'contracts/proto/**'
               - 'justfile'
               - 'global.json'
@@ -381,6 +401,74 @@ jobs:
         run: just check-mcp
       - name: Published pages are addressable
         run: sh tools/community-site/check-published-pages.sh
+
+  # Уровень L2: среду поднимает AppHost через Aspire.Hosting.Testing, набор ею
+  # не владеет. Джоба намеренно НЕ входит в обязательные проверки ветки: по
+  # RFC-012 (вопрос О-5) сквозной уровень переводится туда после периода
+  # наблюдения за стабильностью, и основание перевода — наблюдаемая
+  # стабильность, а не истечение срока. Условие записано в PER-270.
+  #
+  # Тулинг тот же, что у джобы identity, и по той же причине: узел identity
+  # в графе сначала генерирует Go-код через buf, потом собирает бинарник.
+  # Без `go install tool` buf не найдёт плагины, и узел упадёт молча.
+  #
+  # PostgreSQL здесь не сервис джобы: базой владеет AppHost, он поднимает её
+  # контейнером сам. Второй Postgres на 5432 только мешал бы.
+  contour:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.contour == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/identity/go.mod
+          cache-dependency-path: apps/identity/go.sum
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      # setup_only: действие только ставит buf. Без него дефолты buf-action
+      # добавляют в джобу его lint, format, breaking и push.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: go install tool
+        working-directory: apps/identity
+      - uses: extractions/setup-just@v4
+      - name: Contour contracts stay generated-only
+        run: just contour-contracts-check
+      # Через рецепт, а не напрямую: иначе порог --minimum-expected-tests
+      # разошёлся бы с локальным прогоном молча.
+      #
+      # Вывод уходит в файл, потому что в нём и лежат логи ресурсов: категория
+      # AppHost.Resources.<имя> несёт stdout Identity, Meetups и контейнера
+      # PostgreSQL. Своего сбора у набора нет намеренно — ResourceLoggerService
+      # под тестовым builder'ом отдаёт ноль строк (проверено), и писать пустые
+      # файлы значит выдавать их за доказательство.
+      #
+      # pipefail обязателен: без него код возврата берётся от tee, и красный
+      # прогон стал бы зелёной джобой — ровно тот ложно-зелёный, против
+      # которого написано правило «пропуск не равен прохождению».
+      - name: Smoke the contour on a live topology
+        shell: bash
+        run: |
+          set -o pipefail
+          just contour-test 2>&1 | tee contour-run.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: contour-run-log
+          path: contour-run.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Без path-фильтра: коллизию номера вносит merge-результат pull request,
   # а не дифф ветки. На событии pull_request checkout уже содержит базу и
