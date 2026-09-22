@@ -107,6 +107,13 @@ module Inbound =
             | Error invalid, _
             | _, Error invalid -> Error invalid
 
+    /// Ожидаемая версия состояния, из которого принято решение (PER-78). Поле
+    /// обязательное: в proto3 скаляр без presence не отличает пропуск от нуля, но
+    /// нулевой версии у сходки не существует — версия начинается с единицы. Поэтому
+    /// отсутствие и ноль одинаково отвергаются, а не читаются как «последняя версия».
+    let expectedVersion (value: int64) : Result<int64, InvalidRequest> =
+        if value > 0L then Ok value else Error(invalid "expected_version" "must be a positive aggregate version")
+
     /// Неизвестная роль отбрасывается, а не отвергается. Схема сама объявляет
     /// GLOBAL_ROLE_UNSPECIFIED значением «роль неизвестна потребителю», и неизвестная
     /// роль ничего не разрешает — отбрасывание остаётся fail-closed. Отказ по ней

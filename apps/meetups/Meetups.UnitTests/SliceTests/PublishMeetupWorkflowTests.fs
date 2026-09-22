@@ -17,7 +17,7 @@ let private eventId = Guid.Parse "0199c0de-0000-7000-8000-00000000e002"
 let private stub: Deps =
     {
         Load = fun _ -> failwith "Load is not expected in this test"
-        Commit = fun _ _ _ -> failwith "Commit is not expected in this test"
+        Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.later
         NewEventId = fun () -> eventId
     }
@@ -28,6 +28,7 @@ let private run (deps: Deps) =
         {
             Id = Sample.meetupId
             Viewer = Sample.administrator
+            ExpectedVersion = Sample.expectedVersion
         }
     |> Async.AwaitTask
     |> Async.RunSynchronously
@@ -37,10 +38,22 @@ let private loading (snapshot: MeetupSnapshot option) (deps: Deps) =
         Load = fun _ -> Task.FromResult snapshot
     }
 
+/// Два чтения подряд: основное и перечитывание после расхождения версий. Дальше
+/// отдаётся второй снимок — тесту достаточно одной пары.
+let private loadingThen (first: MeetupSnapshot option) (second: MeetupSnapshot option) (deps: Deps) =
+    let mutable reads = 0
+
+    { deps with
+        Load =
+            fun _ ->
+                reads <- reads + 1
+                Task.FromResult(if reads = 1 then first else second)
+    }
+
 let private recording (written: ResizeArray<_>) (deps: Deps) =
     { deps with
         Commit =
-            fun envelope state event ->
+            fun envelope _ state event ->
                 written.Add(envelope, state, event)
 
                 Meetup.apply state event
@@ -123,9 +136,27 @@ let ``A version conflict from the store becomes a rejected command`` () =
     let deps =
         { loaded with
             Commit =
-                fun _ _ _ ->
+                fun _ _ _ _ ->
                     Error MeetupStore.VersionConflict
                     |> Task.FromResult
         }
 
     test <@ run deps = Error PublishMeetupError.Conflict @>
+
+/// Расхождение версий ещё не отказ: PER-78 требует перечитать состояние и, если
+/// цель команды уже в силе, вернуть текущий снимок успехом без события. Второе
+/// чтение отдаёт уже видимую сходку — её снимок и уходит ответом.
+[<Fact>]
+let ``A stale version with the target already in place is a safe retry`` () =
+    let stored = Meetup.toSnapshot Sample.published
+
+    let loaded =
+        stub
+        |> loadingThen (Some(Meetup.toSnapshot Sample.titled)) (Some stored)
+
+    let deps =
+        { loaded with
+            Commit = fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict)
+        }
+
+    test <@ run deps = Ok stored @>

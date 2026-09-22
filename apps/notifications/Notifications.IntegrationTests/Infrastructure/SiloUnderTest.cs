@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Notifications.IntegrationTests.Infrastructure;
@@ -18,6 +20,30 @@ public sealed class SiloUnderTest : IAsyncDisposable
     private SiloUnderTest(WebApplication app) => this.app = app;
 
     public IGrainFactory Grains => app.Services.GetRequiredService<IGrainFactory>();
+
+    /// <summary>
+    /// Служба сервиса как её собрал composition root. Нужна операциям, у которых
+    /// нет пути через контракт: снятие переопределения существует внутри
+    /// сервиса, но наружу не выставлено.
+    /// </summary>
+    /// <remarks>
+    /// Отдаётся по одной службе, а не целым <c>IServiceProvider</c>: контейнер
+    /// наружу — приглашение доставать из фикстуры что угодно, и следующий тест
+    /// начал бы собирать своё поведение из внутренностей хоста.
+    /// </remarks>
+    public TService Service<TService>()
+        where TService : notnull =>
+        app.Services.GetRequiredService<TService>();
+
+    /// <summary>
+    /// Адрес, который Kestrel занял по факту. Порт запрошен нулевым, поэтому
+    /// узнать его можно только после старта и только у самого сервера.
+    /// </summary>
+    public string Address =>
+        app.Services
+            .GetRequiredService<IServer>()
+            .Features.Get<IServerAddressesFeature>()!
+            .Addresses.First();
 
     /// <param name="settings">
     /// Дополнительные ключи конфигурации в форме <c>--Ключ=Значение</c>. Через

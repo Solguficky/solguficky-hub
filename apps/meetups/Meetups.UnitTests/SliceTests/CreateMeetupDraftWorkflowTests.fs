@@ -20,7 +20,7 @@ let private eventId = Guid.Parse "0199c0de-0000-7000-8000-00000000e001"
 let private stub: Deps =
     {
         Load = fun _ -> failwith "Load is not expected in this test"
-        Commit = fun _ _ _ -> failwith "Commit is not expected in this test"
+        Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.fixedNow
         NewEventId = fun () -> eventId
     }
@@ -48,8 +48,8 @@ let ``An absent meetup is created and written as its first event`` () =
     let deps =
         { loaded with
             Commit =
-                fun envelope state event ->
-                    written.Add(envelope, state, event)
+                fun envelope expectedVersion state event ->
+                    written.Add(envelope, expectedVersion, state, event)
 
                     Meetup.apply state event
                     |> Meetup.toSnapshot
@@ -58,9 +58,10 @@ let ``An absent meetup is created and written as its first event`` () =
         }
 
     let result = run deps
-    let envelope, state, event = written[0]
+    let envelope, expectedVersion, state, event = written[0]
 
     test <@ written.Count = 1 @>
+    test <@ expectedVersion = None @>
     test <@ state = Initial @>
     test <@ event = MeetupCreated(Sample.meetupId, Sample.authorId) @>
     test <@ envelope.EventId = eventId @>
@@ -98,7 +99,7 @@ let ``A version conflict from the store becomes a rejected command`` () =
     let deps =
         { loaded with
             Commit =
-                fun _ _ _ ->
+                fun _ _ _ _ ->
                     Error MeetupStore.VersionConflict
                     |> Task.FromResult
         }
@@ -120,7 +121,7 @@ let ``The event identifier is generated once per written event`` () =
                     generated.Value <- generated.Value + 1
                     eventId
             Commit =
-                fun _ state event ->
+                fun _ _ state event ->
                     Meetup.apply state event
                     |> Meetup.toSnapshot
                     |> Ok

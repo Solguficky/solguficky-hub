@@ -3,12 +3,30 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
+  MeetupLifecycle,
+  MeetupVisibility,
+} from "../../gen/meetups/v1/meetups_pb.js";
+import {
   ListVisibleMeetupsResponseSchema,
+  MeetupSnapshotSchema,
   MeetupSummarySchema,
 } from "../../gen/meetups/v1/meetups_service_pb.js";
 import { createMeetupsAdapter } from "./client.js";
+import type { MeetupSnapshot } from "./port.js";
 
 const person = { identityId: "viewer-id", globalRoles: [] };
+
+function storedMeetup(version: number): MeetupSnapshot {
+  return {
+    id: "meetup-id",
+    title: "Настолки",
+    description: "",
+    venue: "",
+    lifecycle: "planned",
+    visibility: "hidden",
+    version,
+  };
+}
 
 type ListVisibleMeetupsRpc = Parameters<
   typeof createMeetupsAdapter
@@ -163,5 +181,50 @@ describe("Meetups client", () => {
     await expect(meetups.get(person, "meetup-id")).resolves.toEqual({
       kind: "not-found",
     });
+  });
+
+  it("carries the aggregate version in both directions", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.changeMeetupAttributes.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        title: "Настолки",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.HIDDEN,
+        version: 8n,
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    const result = await meetups.changeAttributes(person, storedMeetup(7));
+
+    expect(rpc.changeMeetupAttributes).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "meetup-id", expectedVersion: 7n }),
+      expect.anything(),
+    );
+    expect(result).toMatchObject({ kind: "ok", meetup: { version: 8 } });
+  });
+
+  it("keeps a version conflict distinct from an unavailable response", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.setMeetupSchedule.mockRejectedValue(
+      new ConnectError("the meetup changed concurrently", Code.Aborted),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(
+      meetups.setSchedule(person, storedMeetup(7), {
+        year: 2026,
+        month: 10,
+        day: 3,
+        hours: 19,
+        minutes: 30,
+      }),
+    ).resolves.toEqual({ kind: "conflict" });
+
+    expect(rpc.setMeetupSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedVersion: 7n }),
+      expect.anything(),
+    );
   });
 });

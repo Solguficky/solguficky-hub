@@ -152,14 +152,6 @@ let private stateParameters (row: MeetupRow.MeetupRow) =
         schedule_end_time = row.ScheduleEndTime
     |}
 
-/// Версия, из которой принято решение. Читается из состояния, а не приходит
-/// параметром: `Meetup.apply` всегда даёт version + 1, и отдельный аргумент только
-/// добавил бы способ разойтись со снимком.
-let private expectedVersion (state: MeetupState) : int64 option =
-    match state with
-    | Initial -> None
-    | Existing meetup -> Some (Meetup.toSnapshot meetup).Version
-
 let load (source: NpgsqlDataSource) (MeetupId id) : Task<MeetupSnapshot option> =
     task {
         use! connection = source.OpenConnectionAsync()
@@ -178,9 +170,15 @@ let load (source: NpgsqlDataSource) (MeetupId id) : Task<MeetupSnapshot option> 
 /// Применение события и запись его результата — один неделимый шаг. Событие приходит
 /// значением, а не option: команда, решившая «события нет», до записи не доходит
 /// вовсе, и по типу видно, что успешный возврат означает записанную пару строк.
+///
+/// `expectedVersion` — версия, из которой принято решение, и приходит она с провода
+/// (PER-78): её сравнивает предикат, потому что только сама база отвечает, осталась
+/// ли строка той же. `None` бывает только у создания: там ключ идемпотентности —
+/// идентификатор, а показанного снимка, из которого принимают решение, ещё нет.
 let commit
     (source: NpgsqlDataSource)
     (envelope: EventEnvelope)
+    (expectedVersion: int64 option)
     (state: MeetupState)
     (event: MeetupEvent)
     : Task<Result<MeetupSnapshot, VersionConflict>> =
@@ -194,9 +192,9 @@ let commit
         use! transaction = connection.BeginTransactionAsync()
 
         let! affected =
-            match expectedVersion state with
-            | None -> connection.ExecuteAsync(InsertMeetupSql, stateParameters row, transaction)
-            | Some version ->
+            match state, expectedVersion with
+            | Initial, None -> connection.ExecuteAsync(InsertMeetupSql, stateParameters row, transaction)
+            | Existing _, Some version ->
                 connection.ExecuteAsync(
                     UpdateMeetupSql,
                     {| stateParameters row with
@@ -204,6 +202,11 @@ let commit
                     |},
                     transaction
                 )
+            // Версия предиката и состояние, из которого принято решение, — две
+            // стороны одного факта. Разойтись они могут только дефектом оболочки,
+            // поэтому исключение, а не отказ, который клиент должен читать.
+            | Initial, Some _
+            | Existing _, None -> invalidOp "the expected version does not match the state the event was decided from"
 
         if affected = 0 then
             // Строка не та, из которой принято решение: её либо уже изменил другой

@@ -22,10 +22,10 @@ type HiddenMeetupReadTests() =
     let createDraft (client: MeetupsService.MeetupsServiceClient) =
         let key = (Guid.CreateVersion7()).ToString "D"
 
-        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = administrator (), Id = key))
-        |> ignore
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = administrator (), Id = key))
 
-        key
+        key, draft.Version
 
     let notFound (action: unit -> unit) = Rpc.codeOf action
 
@@ -68,7 +68,7 @@ type HiddenMeetupReadTests() =
     member _.``The list does not expose a hidden meetup to an ordinary viewer``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId = createDraft client
+        let hiddenId, _ = createDraft client
 
         let returnedIds =
             client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ())).Meetups
@@ -85,7 +85,7 @@ type HiddenMeetupReadTests() =
     member _.``Materials of a hidden meetup follow the visibility of the meetup``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId = createDraft client
+        let hiddenId, hiddenVersion = createDraft client
 
         client.AttachMaterial(
             AttachMaterialRequest(
@@ -93,7 +93,8 @@ type HiddenMeetupReadTests() =
                 Id = hiddenId,
                 MaterialId = (Guid.CreateVersion7()).ToString "D",
                 Title = "Афиша",
-                Source = MeetupMaterialSource(FileId = "file-1")
+                Source = MeetupMaterialSource(FileId = "file-1"),
+                ExpectedVersion = hiddenVersion
             )
         )
         |> ignore
@@ -120,9 +121,11 @@ type HiddenMeetupReadTests() =
     member _.``The archive does not expose a hidden meetup to an ordinary viewer``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId = createDraft client
+        let hiddenId, hiddenVersion = createDraft client
 
-        client.MarkMeetupHeld(MarkMeetupHeldRequest(Viewer = administrator (), Id = hiddenId))
+        client.MarkMeetupHeld(
+            MarkMeetupHeldRequest(Viewer = administrator (), Id = hiddenId, ExpectedVersion = hiddenVersion)
+        )
         |> ignore
 
         let ordinaryIds =
@@ -145,7 +148,7 @@ type HiddenMeetupReadTests() =
     member _.``Reading by identifier does not expose a hidden meetup to an ordinary viewer``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId = createDraft client
+        let hiddenId, _ = createDraft client
 
         let actual =
             notFound (fun () ->
@@ -163,7 +166,7 @@ type HiddenMeetupReadTests() =
     member _.``A direct-link lookup answers like a lookup of a missing meetup``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId = createDraft client
+        let hiddenId, _ = createDraft client
 
         let lookup meetupId =
             try
@@ -192,7 +195,7 @@ type HiddenMeetupReadTests() =
     member _.``The service enumeration returns a hidden meetup by design``() =
         use live = new LiveMeetupsHost()
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId = createDraft client
+        let hiddenId, _ = createDraft client
 
         let returnedIds =
             client.ListMeetupStates(ListMeetupStatesRequest()).Meetups

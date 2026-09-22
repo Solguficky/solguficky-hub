@@ -33,6 +33,7 @@
     <Compile Include="DomainTests/ArchiveTests.fs" />
     <Compile Include="DomainTests/AccessTests.fs" />
     <Compile Include="DomainTests/MeetupApplyTests.fs" />
+    <Compile Include="DomainTests/MeetupTargetReachedTests.fs" />
     <Compile Include="DomainTests/MeetupRehydrateTests.fs" />
     <Compile Include="InfrastructureTests/MeetupRowTests.fs" />
     <Compile Include="InfrastructureTests/MeetupEventPayloadTests.fs" />

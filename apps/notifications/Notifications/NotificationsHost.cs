@@ -1,7 +1,9 @@
 using System.Net;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Notifications.Infrastructure;
+using Notifications.Preferences;
 using Notifications.Reminders;
+using Notifications.Transport;
 using Npgsql;
 using Orleans.Configuration;
 
@@ -138,8 +140,16 @@ public static class NotificationsHost
 
         builder.Services.AddHostedService<ReminderSweeper>();
 
-        // Сам gRPC-стек. Реализаций сервиса пока нет (PER-71), но без него не
-        // поднимаются ни проба, ни рефлексия: обе маппятся как gRPC-сервисы.
+        // Подписки и настройки категорий. Ни один из трёх типов не знает про
+        // Orleans: команды синхронны, а источник истины остаётся в PostgreSQL
+        // (ADR-029). Задание напоминания их тоже не трогает — аудитория
+        // разворачивается в момент срабатывания, а не при подписке.
+        builder.Services.AddSingleton<SubscriptionStore>();
+        builder.Services.AddSingleton<PreferenceStore>();
+        builder.Services.AddSingleton<PreferenceOperations>();
+
+        // Сам gRPC-стек. Без него не поднимаются ни проба, ни рефлексия: обе
+        // маппятся как gRPC-сервисы.
         builder.Services.AddGrpc();
 
         // Мост из health checks, зарегистрированных ServiceDefaults, в grpc.health.v1.
@@ -155,8 +165,11 @@ public static class NotificationsHost
         app.MapGrpcHealthChecksService();
         app.MapGrpcReflectionService();
 
-        // Реализаций gRPC-сервиса здесь нет: command plane — PER-71. Endpoint
-        // существует, чтобы проба готовности и рефлексия отвечали уже сейчас.
+        // Command plane подписок и настроек. Обе ручные рассылки контракта
+        // отвечают Unimplemented: они принадлежат блоку обращения к подписчикам
+        // и требуют синхронной проверки права у владельца ресурса.
+        app.MapGrpcService<NotificationsGrpcService>();
+
         return app;
     }
 }

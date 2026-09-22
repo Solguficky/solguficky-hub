@@ -13,6 +13,7 @@ const empty: MeetupSnapshot = {
   venue: "",
   lifecycle: "planned",
   visibility: "hidden",
+  version: 1,
 };
 
 function harness() {
@@ -28,8 +29,8 @@ function harness() {
       snapshot = meetup;
       return { kind: "ok" as const, meetup };
     }),
-    setSchedule: vi.fn(async (_person, _id, schedule) => {
-      snapshot = { ...snapshot, schedule };
+    setSchedule: vi.fn(async (_person, meetup, schedule) => {
+      snapshot = { ...meetup, schedule };
       return { kind: "ok" as const, meetup: snapshot };
     }),
     publish: vi.fn(async () => ({ kind: "ok" as const, meetup: snapshot })),
@@ -116,13 +117,13 @@ describe("meetup creation form", () => {
     expect(meetups.publish).toHaveBeenNthCalledWith(
       1,
       identity,
-      empty.id,
+      empty,
       undefined,
     );
     expect(meetups.publish).toHaveBeenNthCalledWith(
       2,
       identity,
-      empty.id,
+      empty,
       undefined,
     );
   });
@@ -273,5 +274,85 @@ describe("meetup creation form", () => {
       reason: "already-cancelled",
     });
     expect(meetups.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the typed value and shows the current snapshot on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.changeAttributes = vi.fn(async () => ({
+      kind: "conflict" as const,
+    }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "set-meetup-field",
+        field: "title",
+        value: "Моя правка",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      meetup: changed,
+      field: "title",
+      input: "Моя правка",
+    });
+  });
+
+  it("marks a version conflict from the edit flow so the retry stays an edit", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.changeAttributes = vi.fn(async () => ({
+      kind: "conflict" as const,
+    }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "title",
+        value: "Моя правка",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      meetup: changed,
+      field: "title",
+      input: "Моя правка",
+      editing: true,
+    });
+  });
+
+  it("asks to confirm publication again on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.publish = vi.fn(async () => ({ kind: "conflict" as const }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({ kind: "conflict", meetup: changed });
+  });
+
+  it("asks to confirm a state change again on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, lifecycle: "held" as const, version: 2 };
+    meetups.cancel = vi.fn(async () => ({ kind: "conflict" as const }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({ kind: "conflict", meetup: changed, action: "cancel" });
   });
 });

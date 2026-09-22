@@ -44,17 +44,24 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
                     |> ignore
                 )
                 Rpc.codeOf (fun () ->
-                    client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = viewer, Id = id))
-                    |> ignore
-                )
-                Rpc.codeOf (fun () ->
-                    client.SetMeetupSchedule(
-                        SetMeetupScheduleRequest(Viewer = viewer, Id = id, Schedule = Schedule(NoDate = NoDate()))
+                    client.ChangeMeetupAttributes(
+                        ChangeMeetupAttributesRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L)
                     )
                     |> ignore
                 )
                 Rpc.codeOf (fun () ->
-                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id))
+                    client.SetMeetupSchedule(
+                        SetMeetupScheduleRequest(
+                            Viewer = viewer,
+                            Id = id,
+                            ExpectedVersion = 1L,
+                            Schedule = Schedule(NoDate = NoDate())
+                        )
+                    )
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L))
                     |> ignore
                 )
             ]
@@ -78,7 +85,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
                     |> ignore
                 )
                 Rpc.codeOf (fun () ->
-                    client.PublishMeetup(PublishMeetupRequest(Viewer = newcomer, Id = id))
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = newcomer, Id = id, ExpectedVersion = 1L))
                     |> ignore
                 )
             ]
@@ -86,26 +93,36 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         test <@ actual = List.replicate 2 (Some StatusCode.PermissionDenied) @>
 
     /// Клиент собрал запрос неправильно — это INVALID_ARGUMENT, а не отказ домена.
-    /// Проверяются три разных дефекта сборки, потому что каждый разбирает своя
-    /// функция границы.
+    /// Проверяются разные дефекты сборки, потому что каждый разбирает своя функция
+    /// границы, а обязательность показанной версии — ещё и поле, которого раньше не
+    /// было в схеме.
     [<Fact>]
     member _.``A malformed request is refused with INVALID_ARGUMENT``() =
         let actual =
             [
                 // Смотрящего нет вовсе.
                 Rpc.codeOf (fun () ->
-                    client.PublishMeetup(PublishMeetupRequest(Id = id))
+                    client.PublishMeetup(PublishMeetupRequest(Id = id, ExpectedVersion = 1L))
                     |> ignore
                 )
                 // Идентификатор не в каноническом виде.
                 Rpc.codeOf (fun () ->
-                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id.ToUpperInvariant()))
+                    client.PublishMeetup(
+                        PublishMeetupRequest(Viewer = viewer, Id = id.ToUpperInvariant(), ExpectedVersion = 1L)
+                    )
+                    |> ignore
+                )
+                // Показанной версии нет: 0 — не версия сходки, а отсутствие поля.
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id))
                     |> ignore
                 )
                 // Пустой oneof расписания: «даты нет» — это форма no_date, а не
                 // отсутствие формы.
                 Rpc.codeOf (fun () ->
-                    client.SetMeetupSchedule(SetMeetupScheduleRequest(Viewer = viewer, Id = id, Schedule = Schedule()))
+                    client.SetMeetupSchedule(
+                        SetMeetupScheduleRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L, Schedule = Schedule())
+                    )
                     |> ignore
                 )
                 // Читающие срезы разбирают тот же viewer и id до открытия соединения.
@@ -123,7 +140,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
                 )
             ]
 
-        test <@ actual = List.replicate 6 (Some StatusCode.InvalidArgument) @>
+        test <@ actual = List.replicate 7 (Some StatusCode.InvalidArgument) @>
 
     [<Fact>]
     member _.``The service reports itself serving over grpc health v1``() =
@@ -139,7 +156,9 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
     [<Fact>]
     member _.``A declared refusal is recorded as a warning with its transport code``() =
         Rpc.codeOf (fun () ->
-            client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = viewer, Id = id))
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L)
+            )
             |> ignore
         )
         |> ignore

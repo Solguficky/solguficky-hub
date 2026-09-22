@@ -1,7 +1,7 @@
-/// Коды отказов командных операций. Уровень выбран по достижимости: через
-/// настоящий gRPC не воспроизвести конфликт версии — `expected_version` во вход
-/// команд не входит намеренно (ADR-031), поэтому снаружи он наблюдается только как
-/// гонка двух параллельных вызовов. Здесь весь набор достижим подстановкой Deps.
+/// Коды отказов командных операций. Уровень выбран по достижимости: настоящий
+/// конфликт версии случается только в гонке двух вызовов, а весь набор кодов
+/// достижим подстановкой Deps — включая безопасный повтор, где основное чтение и
+/// перечитывание после расхождения возвращают разные состояния.
 ///
 /// Тест идёт настоящим путём `Api.handle` и ловит RpcException, а не заглядывает в
 /// приватное отображение: проверяется то, что увидит клиент.
@@ -43,7 +43,7 @@ module private Create =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer = Meetups.V1.CreateMeetupDraftRequest(Viewer = viewer, Id = meetupId)
 
@@ -58,9 +58,10 @@ module private Publish =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
-    let request viewer = Meetups.V1.PublishMeetupRequest(Viewer = viewer, Id = meetupId)
+    let request viewer =
+        Meetups.V1.PublishMeetupRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
 
 [<Fact>]
 let ``A request without a viewer is refused as INVALID_ARGUMENT before the store`` () =
@@ -99,7 +100,7 @@ let ``A draft of another author answers not found`` () =
         |> Meetup.toSnapshot
 
     let deniedByOwner =
-        Create.deps (fun _ -> Task.FromResult(Some foreign)) (fun _ _ _ -> unreachable "Commit")
+        Create.deps (fun _ -> Task.FromResult(Some foreign)) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> CreateMeetupDraft.Api.handle deniedByOwner (Create.request (administrator ())))
@@ -109,7 +110,7 @@ let ``A draft of another author answers not found`` () =
 [<Fact>]
 let ``A command on a missing meetup answers not found`` () =
     let missing =
-        Publish.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Publish.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> PublishMeetup.Api.handle missing (Publish.request (administrator ())))
@@ -123,7 +124,7 @@ let ``Publishing without a title is refused as FAILED_PRECONDITION`` () =
     let titleless =
         Publish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.draft)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> PublishMeetup.Api.handle titleless (Publish.request (administrator ())))
@@ -136,12 +137,50 @@ let ``A version conflict is refused as ABORTED`` () =
     let conflicting =
         Publish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> PublishMeetup.Api.handle conflicting (Publish.request (administrator ())))
 
     test <@ actual = Some StatusCode.Aborted @>
+
+/// Обязательность поля: без показанной версии решать не из чего, и отказ приходит
+/// до хранилища — наблюдаемое доказательство тот же `untouched`, что и у отказа по
+/// праву.
+[<Fact>]
+let ``A command without an expected version is refused as INVALID_ARGUMENT before the store`` () =
+    let request =
+        Meetups.V1.PublishMeetupRequest(Viewer = administrator (), Id = meetupId)
+
+    test <@ codeOf (fun () -> PublishMeetup.Api.handle Publish.untouched request) = Some StatusCode.InvalidArgument @>
+
+/// Безопасный повтор: расхождение версий ещё не отказ, если цель команды уже в
+/// силе. Повторное чтение возвращает уже видимую сходку — её снимок и уходит
+/// ответом, хотя основное чтение видело скрытую и версия разошлась.
+[<Fact>]
+let ``A stale version with the target already in place is a safe retry`` () =
+    let stored = Meetup.toSnapshot Sample.published
+
+    let rechecking =
+        let mutable first = true
+
+        fun _ ->
+            let snapshot = if first then Some(Meetup.toSnapshot Sample.titled) else Some stored
+
+            first <- false
+            Task.FromResult snapshot
+
+    let deps =
+        Publish.deps rechecking (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let answer =
+        (PublishMeetup.Api.handle deps (Publish.request (administrator ()))).GetAwaiter().GetResult()
+
+    test
+        <@
+            answer.Version = stored.Version
+            && answer.Visibility = Meetups.V1.MeetupVisibility.Visible
+        @>
 
 /// Критерий PER-195. Отдельным тестом, а не четвёртым элементом сторожа ниже: тот
 /// требует попарно разные коды, а отказ по переходу делит FAILED_PRECONDITION с
@@ -157,7 +196,7 @@ let ``A refused transition is told apart from a refused permission`` () =
     let cancelled =
         Publish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let transition =
         codeOf (fun () -> PublishMeetup.Api.handle cancelled (Publish.request (administrator ())))
@@ -182,7 +221,7 @@ let ``Permission, invariant and version conflict are told apart by code`` () =
         let titleless =
             Publish.deps
                 (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.draft)))
-                (fun _ _ _ -> unreachable "Commit")
+                (fun _ _ _ _ -> unreachable "Commit")
 
         codeOf (fun () -> PublishMeetup.Api.handle titleless (Publish.request (administrator ())))
 
@@ -190,7 +229,7 @@ let ``Permission, invariant and version conflict are told apart by code`` () =
         let conflicting =
             Publish.deps
                 (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-                (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+                (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
         codeOf (fun () -> PublishMeetup.Api.handle conflicting (Publish.request (administrator ())))
 
@@ -207,7 +246,7 @@ let ``A successful publication answers with the rendered snapshot`` () =
     let deps =
         Publish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Ok(Meetup.toSnapshot Sample.published)))
+            (fun _ _ _ _ -> Task.FromResult(Ok(Meetup.toSnapshot Sample.published)))
 
     let answer =
         (PublishMeetup.Api.handle deps (Publish.request (administrator ()))).GetAwaiter().GetResult()
@@ -234,10 +273,15 @@ module private Change =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
-        Meetups.V1.ChangeMeetupAttributesRequest(Viewer = viewer, Id = meetupId, Title = "F# after hours")
+        Meetups.V1.ChangeMeetupAttributesRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            ExpectedVersion = Sample.expectedVersion,
+            Title = "F# after hours"
+        )
 
 module private Schedule =
 
@@ -250,13 +294,27 @@ module private Schedule =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.SetMeetupScheduleRequest(
             Viewer = viewer,
             Id = meetupId,
+            ExpectedVersion = Sample.expectedVersion,
             Schedule = Meetups.V1.Schedule(NoDate = Meetups.V1.NoDate())
+        )
+
+    /// Расписание, отличающееся от любого загруженного образца: расхождение версий
+    /// на нём остаётся настоящим конфликтом, а не становится безопасным повтором.
+    let changingRequest viewer =
+        Meetups.V1.SetMeetupScheduleRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            ExpectedVersion = Sample.expectedVersion,
+            Schedule =
+                Meetups.V1.Schedule(
+                    Fixed = Meetups.V1.DateValue(Day = Meetups.V1.CalendarDate(Year = 2026, Month = 10, Day = 3))
+                )
         )
 
 [<Fact>]
@@ -269,19 +327,61 @@ let ``Changing attributes is refused for an ordinary viewer before the store`` (
 [<Fact>]
 let ``Changing attributes of a missing meetup answers NOT_FOUND`` () =
     let missing =
-        Change.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Change.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> ChangeMeetupAttributes.Api.handle missing (Change.request (administrator ())))
 
     test <@ actual = Some StatusCode.NotFound @>
 
+/// Обнаруженный при ревью дефект: конкурентная отмена не должна прятаться за
+/// совпадением полей. Основное чтение видит сходку ещё не отменённой, а
+/// перечитывание после расхождения версий — уже отменённой, но с теми же
+/// атрибутами, что и в команде. Совпадение полей раньше маскировало это под
+/// безопасный повтор; конкурентная отмена обязана остаться настоящим конфликтом.
+[<Fact>]
+let ``A concurrent cancellation while changing attributes is a real conflict, not a silent success`` () =
+    let requestAttributes =
+        {
+            Title = "F# after hours"
+            Description = ""
+            Venue = ""
+            Kind = ""
+            CalendarLink = ""
+        }
+
+    let cancelledWithMatchingAttributes =
+        let applied =
+            Meetup.apply (Existing Sample.draft) (MeetupChanged(AttributesChanged requestAttributes))
+
+        { Meetup.toSnapshot applied with
+            Lifecycle = Cancelled
+        }
+
+    let rechecking =
+        let mutable first = true
+
+        fun _ ->
+            let snapshot =
+                if first then Some(Meetup.toSnapshot Sample.titled) else Some cancelledWithMatchingAttributes
+
+            first <- false
+            Task.FromResult snapshot
+
+    let deps =
+        Change.deps rechecking (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+
+    let actual =
+        codeOf (fun () -> ChangeMeetupAttributes.Api.handle deps (Change.request (administrator ())))
+
+    test <@ actual = Some StatusCode.Aborted @>
+
 [<Fact>]
 let ``A version conflict while changing attributes is refused as ABORTED`` () =
     let conflicting =
         Change.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.draft)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> ChangeMeetupAttributes.Api.handle conflicting (Change.request (administrator ())))
@@ -298,7 +398,7 @@ let ``Setting a schedule is refused for an ordinary viewer before the store`` ()
 [<Fact>]
 let ``Setting a schedule on a missing meetup answers NOT_FOUND`` () =
     let missing =
-        Schedule.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Schedule.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> SetMeetupSchedule.Api.handle missing (Schedule.request (administrator ())))
@@ -310,10 +410,10 @@ let ``A version conflict while setting a schedule is refused as ABORTED`` () =
     let conflicting =
         Schedule.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.draft)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
-        codeOf (fun () -> SetMeetupSchedule.Api.handle conflicting (Schedule.request (administrator ())))
+        codeOf (fun () -> SetMeetupSchedule.Api.handle conflicting (Schedule.changingRequest (administrator ())))
 
     test <@ actual = Some StatusCode.Aborted @>
 
@@ -392,9 +492,10 @@ module private Unpublish =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
-    let request viewer = Meetups.V1.UnpublishMeetupRequest(Viewer = viewer, Id = meetupId)
+    let request viewer =
+        Meetups.V1.UnpublishMeetupRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
 
 module private Cancel =
 
@@ -407,9 +508,10 @@ module private Cancel =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
-    let request viewer = Meetups.V1.CancelMeetupRequest(Viewer = viewer, Id = meetupId)
+    let request viewer =
+        Meetups.V1.CancelMeetupRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
 
 module private Held =
 
@@ -422,9 +524,10 @@ module private Held =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
-    let request viewer = Meetups.V1.MarkMeetupHeldRequest(Viewer = viewer, Id = meetupId)
+    let request viewer =
+        Meetups.V1.MarkMeetupHeldRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
 
 [<Fact>]
 let ``Unpublishing is refused for an ordinary viewer before the store`` () =
@@ -436,7 +539,7 @@ let ``Unpublishing is refused for an ordinary viewer before the store`` () =
 [<Fact>]
 let ``Unpublishing a missing meetup answers NOT_FOUND`` () =
     let missing =
-        Unpublish.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Unpublish.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> UnpublishMeetup.Api.handle missing (Unpublish.request (administrator ())))
@@ -452,7 +555,7 @@ let ``Unpublishing a cancelled visible meetup is refused as FAILED_PRECONDITION`
     let cancelled =
         Unpublish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelledVisible)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let transition =
         codeOf (fun () -> UnpublishMeetup.Api.handle cancelled (Unpublish.request (administrator ())))
@@ -471,7 +574,7 @@ let ``A version conflict while unpublishing is refused as ABORTED`` () =
     let conflicting =
         Unpublish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> UnpublishMeetup.Api.handle conflicting (Unpublish.request (administrator ())))
@@ -489,7 +592,7 @@ let ``A successful unpublication answers with the hidden snapshot`` () =
     let deps =
         Unpublish.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
-            (fun _ _ _ -> Task.FromResult(Ok hidden))
+            (fun _ _ _ _ -> Task.FromResult(Ok hidden))
 
     let answer =
         (UnpublishMeetup.Api.handle deps (Unpublish.request (administrator ()))).GetAwaiter().GetResult()
@@ -510,7 +613,7 @@ let ``Cancelling is refused for an ordinary viewer before the store`` () =
 [<Fact>]
 let ``Cancelling a missing meetup answers NOT_FOUND`` () =
     let missing =
-        Cancel.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Cancel.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> CancelMeetup.Api.handle missing (Cancel.request (administrator ())))
@@ -522,7 +625,9 @@ let ``Cancelling a missing meetup answers NOT_FOUND`` () =
 [<Fact>]
 let ``Cancelling a meetup that already took place is refused as FAILED_PRECONDITION`` () =
     let held =
-        Cancel.deps (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.held))) (fun _ _ _ -> unreachable "Commit")
+        Cancel.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.held)))
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let transition =
         codeOf (fun () -> CancelMeetup.Api.handle held (Cancel.request (administrator ())))
@@ -541,7 +646,7 @@ let ``A version conflict while cancelling is refused as ABORTED`` () =
     let conflicting =
         Cancel.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> CancelMeetup.Api.handle conflicting (Cancel.request (administrator ())))
@@ -555,7 +660,7 @@ let ``A successful cancellation answers with a visible cancelled snapshot`` () =
     let deps =
         Cancel.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
-            (fun _ _ _ -> Task.FromResult(Ok(Meetup.toSnapshot Sample.cancelledVisible)))
+            (fun _ _ _ _ -> Task.FromResult(Ok(Meetup.toSnapshot Sample.cancelledVisible)))
 
     let answer =
         (CancelMeetup.Api.handle deps (Cancel.request (administrator ()))).GetAwaiter().GetResult()
@@ -580,7 +685,7 @@ module private Attach =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.AttachMaterialRequest(
@@ -588,7 +693,8 @@ module private Attach =
             Id = meetupId,
             MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
             Title = "Афиша",
-            Source = Meetups.V1.MeetupMaterialSource(MessageLink = "https://t.me/solguficky/42")
+            Source = Meetups.V1.MeetupMaterialSource(MessageLink = "https://t.me/solguficky/42"),
+            ExpectedVersion = Sample.expectedVersion
         )
 
 module private Remove =
@@ -602,13 +708,14 @@ module private Remove =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.RemoveMaterialRequest(
             Viewer = viewer,
             Id = meetupId,
-            MaterialId = "0199c0de-0000-7000-8000-0000000000a1"
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
+            ExpectedVersion = Sample.expectedVersion
         )
 
 [<Fact>]
@@ -628,7 +735,7 @@ let ``Marking as held is refused for an ordinary viewer before the store`` () =
 [<Fact>]
 let ``Attaching a material to a missing meetup answers NOT_FOUND`` () =
     let missing =
-        Attach.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Attach.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> AttachMaterial.Api.handle missing (Attach.request (administrator ())))
@@ -642,7 +749,7 @@ let ``Attaching a material to a cancelled meetup answers FAILED_PRECONDITION`` (
     let cancelled =
         Attach.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> AttachMaterial.Api.handle cancelled (Attach.request (administrator ())))
@@ -654,7 +761,7 @@ let ``A version conflict while attaching a material is refused as ABORTED`` () =
     let conflicting =
         Attach.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> AttachMaterial.Api.handle conflicting (Attach.request (administrator ())))
@@ -713,7 +820,7 @@ let ``A successful attachment answers with the material in the snapshot`` () =
     let deps =
         Attach.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Ok attached))
+            (fun _ _ _ _ -> Task.FromResult(Ok attached))
 
     let answer =
         (AttachMaterial.Api.handle deps (Attach.request (administrator ()))).GetAwaiter().GetResult()
@@ -737,7 +844,7 @@ let ``Removing a material is refused for an ordinary viewer before the store`` (
 [<Fact>]
 let ``Removing a material from a missing meetup answers NOT_FOUND`` () =
     let missing =
-        Remove.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Remove.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> RemoveMaterial.Api.handle missing (Remove.request (administrator ())))
@@ -749,7 +856,7 @@ let ``Removing a material from a cancelled meetup answers FAILED_PRECONDITION`` 
     let cancelled =
         Remove.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelledWithMaterial)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> RemoveMaterial.Api.handle cancelled (Remove.request (administrator ())))
@@ -761,7 +868,7 @@ let ``A version conflict while removing a material is refused as ABORTED`` () =
     let conflicting =
         Remove.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.withMaterial)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> RemoveMaterial.Api.handle conflicting (Remove.request (administrator ())))
@@ -775,7 +882,7 @@ let ``A repeated removal answers with the snapshot without the material`` () =
     let deps =
         Remove.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let answer =
         (RemoveMaterial.Api.handle deps (Remove.request (administrator ()))).GetAwaiter().GetResult()
@@ -785,7 +892,7 @@ let ``A repeated removal answers with the snapshot without the material`` () =
 [<Fact>]
 let ``Marking a missing meetup as held answers NOT_FOUND`` () =
     let missing =
-        Held.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        Held.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> MarkMeetupHeld.Api.handle missing (Held.request (administrator ())))
@@ -798,7 +905,7 @@ let ``Marking a cancelled meetup as held is refused as FAILED_PRECONDITION`` () 
     let cancelled =
         Held.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let transition =
         codeOf (fun () -> MarkMeetupHeld.Api.handle cancelled (Held.request (administrator ())))
@@ -817,7 +924,7 @@ let ``A version conflict while marking as held is refused as ABORTED`` () =
     let conflicting =
         Held.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> MarkMeetupHeld.Api.handle conflicting (Held.request (administrator ())))
@@ -835,7 +942,7 @@ let ``A successful held transition answers with a visible held snapshot`` () =
     let deps =
         Held.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
-            (fun _ _ _ -> Task.FromResult(Ok heldVisible))
+            (fun _ _ _ _ -> Task.FromResult(Ok heldVisible))
 
     let answer =
         (MarkMeetupHeld.Api.handle deps (Held.request (administrator ()))).GetAwaiter().GetResult()
@@ -866,14 +973,24 @@ module private SchedulePublication =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
-        Meetups.V1.ScheduleMeetupPublicationRequest(Viewer = viewer, Id = meetupId, Moment = at 2026 10 5 16 0)
+        Meetups.V1.ScheduleMeetupPublicationRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            Moment = at 2026 10 5 16 0,
+            ExpectedVersion = Sample.expectedVersion
+        )
 
     /// Момент заведомо раньше фиксированного «сейчас»: 16:00 предыдущего дня.
     let requestPast viewer =
-        Meetups.V1.ScheduleMeetupPublicationRequest(Viewer = viewer, Id = meetupId, Moment = at 2026 9 6 16 0)
+        Meetups.V1.ScheduleMeetupPublicationRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            Moment = at 2026 9 6 16 0,
+            ExpectedVersion = Sample.expectedVersion
+        )
 
 module private CancelPublication =
 
@@ -886,9 +1003,14 @@ module private CancelPublication =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ -> unreachable "Commit")
+        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
 
-    let request viewer = Meetups.V1.CancelMeetupPublicationRequest(Viewer = viewer, Id = meetupId)
+    let request viewer =
+        Meetups.V1.CancelMeetupPublicationRequest(
+            Viewer = viewer,
+            Id = meetupId,
+            ExpectedVersion = Sample.expectedVersion
+        )
 
 [<Fact>]
 let ``Scheduling a publication is refused for an ordinary viewer before the store`` () =
@@ -904,7 +1026,7 @@ let ``Scheduling a publication is refused for an ordinary viewer before the stor
 [<Fact>]
 let ``Scheduling a publication on a missing meetup answers NOT_FOUND`` () =
     let missing =
-        SchedulePublication.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        SchedulePublication.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> ScheduleMeetupPublication.Api.handle missing (SchedulePublication.request (administrator ())))
@@ -926,12 +1048,12 @@ let ``A past moment and a published meetup are refused with different codes`` ()
     let past =
         SchedulePublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let published =
         SchedulePublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.published)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let pastCode =
         codeOf (fun () ->
@@ -953,7 +1075,7 @@ let ``Scheduling a publication on a cancelled meetup is refused as FAILED_PRECON
     let cancelled =
         SchedulePublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.cancelled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () ->
@@ -967,7 +1089,7 @@ let ``A version conflict while scheduling a publication is refused as ABORTED`` 
     let conflicting =
         SchedulePublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () ->
@@ -985,7 +1107,7 @@ let ``A successful scheduling answers with the moment as RFC 3339 UTC`` () =
     let deps =
         SchedulePublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> Task.FromResult(Ok scheduled))
+            (fun _ _ _ _ -> Task.FromResult(Ok scheduled))
 
     let answer =
         (ScheduleMeetupPublication.Api.handle deps (SchedulePublication.request (administrator ())))
@@ -1012,7 +1134,7 @@ let ``Cancelling a scheduled publication is refused for an ordinary viewer befor
 [<Fact>]
 let ``Cancelling a scheduled publication on a missing meetup answers NOT_FOUND`` () =
     let missing =
-        CancelPublication.deps (fun _ -> Task.FromResult None) (fun _ _ _ -> unreachable "Commit")
+        CancelPublication.deps (fun _ -> Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let actual =
         codeOf (fun () -> CancelMeetupPublication.Api.handle missing (CancelPublication.request (administrator ())))
@@ -1026,7 +1148,7 @@ let ``Cancelling an unscheduled meetup answers the snapshot without writing`` ()
     let deps =
         CancelPublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
-            (fun _ _ _ -> unreachable "Commit")
+            (fun _ _ _ _ -> unreachable "Commit")
 
     let answer =
         (CancelMeetupPublication.Api.handle deps (CancelPublication.request (administrator ())))
@@ -1044,7 +1166,7 @@ let ``A version conflict while cancelling a publication is refused as ABORTED`` 
     let conflicting =
         CancelPublication.deps
             (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.scheduled)))
-            (fun _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
+            (fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict))
 
     let actual =
         codeOf (fun () -> CancelMeetupPublication.Api.handle conflicting (CancelPublication.request (administrator ())))

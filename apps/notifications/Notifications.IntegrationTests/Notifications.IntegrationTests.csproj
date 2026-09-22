@@ -14,6 +14,11 @@
     <PackageReference Include="xunit.v3" Version="4.0.0" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="Dapper" Version="2.1.66" />
+    <!-- Клиент нужен, чтобы команды шли через настоящий Kestrel и h2c, а не в
+         обход транспорта: коды отказов контракта — свойство границы, и проверять
+         их вызовом C#-метода значило бы проверять не то. Тот же пакет и версия,
+         что у Meetups.IntegrationTests. -->
+    <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
     <PackageReference Include="Npgsql" Version="10.0.1" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
   </ItemGroup>

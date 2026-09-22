@@ -37,6 +37,7 @@ type Deps =
         Load: MeetupId -> Task<MeetupSnapshot option>
         Commit:
             MeetupStore.EventEnvelope
+                -> int64 option
                 -> MeetupState
                 -> MeetupEvent
                 -> Task<Result<MeetupSnapshot, MeetupStore.VersionConflict>>
@@ -71,7 +72,10 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Create
                         OccurredAt = deps.Now()
                     }
 
-                match! deps.Commit envelope state event with
+                // У создания версия предиката не приходит с провода: ключ
+                // идемпотентности здесь — идентификатор, а показанного снимка, из
+                // которого принимают решение, ещё нет.
+                match! deps.Commit envelope None state event with
                 | Ok snapshot -> return Ok snapshot
                 | Error MeetupStore.VersionConflict -> return Error CreateMeetupDraftError.Conflict
     }

@@ -31,20 +31,28 @@ type MeetupArchiveTests() =
         =
         let key = keyOf id
 
-        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
-        |> ignore
+        let draft =
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
 
-        client.ChangeMeetupAttributes(ChangeMeetupAttributesRequest(Viewer = admin, Id = key, Title = title))
-        |> ignore
+        let titled =
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(Viewer = admin, Id = key, Title = title, ExpectedVersion = draft.Version)
+            )
 
-        match schedule with
-        | Some value ->
-            client.SetMeetupSchedule(SetMeetupScheduleRequest(Viewer = admin, Id = key, Schedule = value))
-            |> ignore
-        | None -> ()
+        let scheduled =
+            match schedule with
+            | Some value ->
+                client.SetMeetupSchedule(
+                    SetMeetupScheduleRequest(
+                        Viewer = admin,
+                        Id = key,
+                        Schedule = value,
+                        ExpectedVersion = titled.Version
+                    )
+                )
+            | None -> titled
 
-        client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key))
-        |> ignore
+        client.PublishMeetup(PublishMeetupRequest(Viewer = admin, Id = key, ExpectedVersion = scheduled.Version))
 
     let fixedDay (date: DateOnly) =
         Schedule(Fixed = DateValue(Day = CalendarDate(Year = date.Year, Month = date.Month, Day = date.Day)))
@@ -67,9 +75,10 @@ type MeetupArchiveTests() =
         let admin = administrator ()
         let id = newId ()
 
-        createPublished client admin id "Held" (Some(fixedDay (today.AddDays 30)))
+        let published =
+            createPublished client admin id "Held" (Some(fixedDay (today.AddDays 30)))
 
-        client.MarkMeetupHeld(MarkMeetupHeldRequest(Viewer = admin, Id = keyOf id))
+        client.MarkMeetupHeld(MarkMeetupHeldRequest(Viewer = admin, Id = keyOf id, ExpectedVersion = published.Version))
         |> ignore
 
         let key = keyOf id
@@ -92,9 +101,10 @@ type MeetupArchiveTests() =
         let admin = administrator ()
         let id = newId ()
 
-        createPublished client admin id "Cancelled" (Some(fixedDay (today.AddDays 30)))
+        let published =
+            createPublished client admin id "Cancelled" (Some(fixedDay (today.AddDays 30)))
 
-        client.CancelMeetup(CancelMeetupRequest(Viewer = admin, Id = keyOf id))
+        client.CancelMeetup(CancelMeetupRequest(Viewer = admin, Id = keyOf id, ExpectedVersion = published.Version))
         |> ignore
 
         let key = keyOf id
@@ -120,6 +130,7 @@ type MeetupArchiveTests() =
         let id = newId ()
 
         createPublished client admin id "Past" (Some(fixedDay (today.AddDays -1)))
+        |> ignore
 
         let eventsBefore = MeetupCommands.countEvents live.ConnectionString id
         let key = keyOf id
@@ -147,24 +158,36 @@ type MeetupArchiveTests() =
         let admin = administrator ()
 
         let newest = newId ()
-        createPublished client admin newest "Newest" (Some(fixedDay (today.AddDays 20)))
 
-        client.MarkMeetupHeld(MarkMeetupHeldRequest(Viewer = admin, Id = keyOf newest))
+        let publishedNewest =
+            createPublished client admin newest "Newest" (Some(fixedDay (today.AddDays 20)))
+
+        client.MarkMeetupHeld(
+            MarkMeetupHeldRequest(Viewer = admin, Id = keyOf newest, ExpectedVersion = publishedNewest.Version)
+        )
         |> ignore
 
         let middle = newId ()
-        createPublished client admin middle "Middle" (Some(fixedDay (today.AddDays 10)))
 
-        client.CancelMeetup(CancelMeetupRequest(Viewer = admin, Id = keyOf middle))
+        let publishedMiddle =
+            createPublished client admin middle "Middle" (Some(fixedDay (today.AddDays 10)))
+
+        client.CancelMeetup(
+            CancelMeetupRequest(Viewer = admin, Id = keyOf middle, ExpectedVersion = publishedMiddle.Version)
+        )
         |> ignore
 
         let oldest = newId ()
+
         createPublished client admin oldest "Oldest" (Some(fixedDay (today.AddDays -1)))
+        |> ignore
 
         let undated = newId ()
-        createPublished client admin undated "Undated" None
+        let publishedUndated = createPublished client admin undated "Undated" None
 
-        client.MarkMeetupHeld(MarkMeetupHeldRequest(Viewer = admin, Id = keyOf undated))
+        client.MarkMeetupHeld(
+            MarkMeetupHeldRequest(Viewer = admin, Id = keyOf undated, ExpectedVersion = publishedUndated.Version)
+        )
         |> ignore
 
         let titles = archived client (ordinary ()) |> List.map _.Title

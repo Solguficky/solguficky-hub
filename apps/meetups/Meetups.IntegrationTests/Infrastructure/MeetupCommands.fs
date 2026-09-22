@@ -41,6 +41,15 @@ let source (dsn: string) = NpgsqlDataSource.Create dsn
 
 let run (work: Task<'a>) = work |> Async.AwaitTask |> Async.RunSynchronously
 
+/// Версия, из которой клиент принимает решение: помощник читает её из базы перед
+/// вызовом — так же, как это делает бот, показывающий человеку снимок. Сценарий,
+/// который проверяет само расхождение версий, собирает команду сам и называет
+/// ожидаемую версию явно.
+let expectedVersionOf (source: NpgsqlDataSource) (id: MeetupId) =
+    match MeetupStore.load source id |> run with
+    | Some snapshot -> snapshot.Version
+    | None -> 1L
+
 let private read (dsn: string) (sql: string) (parameters: (string * obj) list) =
     use connection = new NpgsqlConnection(dsn)
     connection.Open()
@@ -157,6 +166,7 @@ let change (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
             Attributes = attributes
         }
     |> run
@@ -167,6 +177,7 @@ let setSchedule (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (sched
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
             Schedule = schedule
         }
     |> run
@@ -177,6 +188,7 @@ let publish (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -186,6 +198,7 @@ let unpublish (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -195,6 +208,7 @@ let cancel (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -235,6 +249,7 @@ let attach
             Title = title
             Source = materialSource
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -245,6 +260,7 @@ let remove (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (material: 
             Id = id
             MaterialId = material
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -254,6 +270,7 @@ let markHeld (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -264,6 +281,7 @@ let schedulePublication (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId
             Id = id
             Viewer = administrator
             Moment = moment
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
@@ -273,6 +291,7 @@ let cancelPublication (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) 
         {
             Id = id
             Viewer = administrator
+            ExpectedVersion = expectedVersionOf source id
         }
     |> run
 
