@@ -1,6 +1,8 @@
 import type { Meetups } from "../meetups/port.js";
+import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { createMeetupForm } from "./meetup-form.js";
+import { createNotificationSettings } from "./notification-settings.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult } from "./types.js";
 
@@ -8,8 +10,17 @@ export type Dispatcher = {
   execute(request: ExecuteRequest): ExecuteResult | Promise<ExecuteResult>;
 };
 
-export function createDispatcher(meetups?: Meetups): Dispatcher {
+export function createDispatcher(
+  meetups?: Meetups,
+  notifications?: Notifications,
+): Dispatcher {
   const form = meetups === undefined ? undefined : createMeetupForm(meetups);
+  // Кадры уведомлений читают и сходку тоже: заголовок кадра берётся из Meetups,
+  // а значения категорий — из Notifications.
+  const settings =
+    meetups === undefined || notifications === undefined
+      ? undefined
+      : createNotificationSettings(meetups, notifications);
   return {
     async execute(request) {
       switch (request.intent) {
@@ -41,8 +52,25 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
             request.meetupId,
             rpcMeta(request),
           );
-          if (result.kind === "ok")
-            return { kind: "meetup-card", meetup: result.meetup };
+          if (result.kind === "ok") {
+            const card: ExecuteResult = {
+              kind: "meetup-card",
+              meetup: result.meetup,
+            };
+            if (notifications === undefined) return card;
+            // Отказ Notifications карточку не роняет: сходка читается из
+            // Meetups и остаётся верной. Состояние подписки при этом не
+            // показывается, и кнопки подписки в кадре не будет — вместо
+            // выдуманного «выключены» человек видит отсутствие выбора.
+            const preferences = await notifications.getMeetupPreferences(
+              request.identity.identityId,
+              request.meetupId,
+              rpcMeta(request),
+            );
+            return preferences.kind === "ok"
+              ? { ...card, subscribed: preferences.preferences.subscribed }
+              : card;
+          }
           if (result.kind === "not-found") return { kind: "meetup-not-found" };
           return result.kind === "invalid"
             ? {
@@ -60,6 +88,14 @@ export function createDispatcher(meetups?: Meetups): Dispatcher {
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : form(request);
+        case "view-global-notifications":
+        case "set-global-category":
+        case "view-meetup-notifications":
+        case "set-meetup-subscription":
+        case "set-meetup-category":
+          return settings === undefined
+            ? { kind: "rejected", reason: "notifications-not-configured" }
+            : settings(request);
         default: {
           const _exhaustive: never = request;
           return { kind: "rejected", reason: String(_exhaustive) };

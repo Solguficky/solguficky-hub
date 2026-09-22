@@ -20,7 +20,7 @@ just telegram-bot-run
 
 `just telegram-bot-tools` ставит зависимости через `npm ci`. Без него кодогенерация не находит `protoc-gen-es`.
 
-Токен бота — `TELEGRAM_BOT_TOKEN` (обязателен для процесса). Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`. Уровень лога — `TELEGRAM_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`).
+Токен бота — `TELEGRAM_BOT_TOKEN` (обязателен для процесса). Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`; адрес Notifications — `NOTIFICATIONS_GRPC_URL`, по умолчанию `http://127.0.0.1:50053`. Уровень лога — `TELEGRAM_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`).
 
 Среда Telegram — `TELEGRAM_BOT_ENVIRONMENT`: без переменной процесс работает против продакшна, значение `test` уводит вызовы Bot API в [выделенную тестовую среду](../../docs/decisions/ADR-046-telegram-test-contour.md) на `https://api.telegram.org/bot<token>/test/`. Допустимые значения — `prod` и `test`; любое другое останавливает процесс, а не откатывает его к продакшну. Токен тестового бота выдаёт тестовый BotFather и с продакшн-токеном не взаимозаменяем.
 

@@ -1,4 +1,9 @@
 import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import type {
+  CategoryState,
+  MeetupCategory,
+  NotificationCategory,
+} from "../notifications/port.js";
 
 export type Person = { identityId: string; globalRoles: readonly string[] };
 export type DeepLink =
@@ -61,7 +66,60 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+    }
+  | NotificationRequest;
+
+// Подписка и категории — две независимые плоскости, и намерения их не смешивают:
+// «слежу за этой сходкой» не выводится из набора категорий и не выводит его.
+export type NotificationRequest =
+  | {
+      identity: Person;
+      intent: "view-global-notifications";
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "set-global-category";
+      category: NotificationCategory;
+      enabled: boolean;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "view-meetup-notifications";
+      meetupId: string;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "set-meetup-subscription";
+      meetupId: string;
+      subscribed: boolean;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "set-meetup-category";
+      meetupId: string;
+      category: MeetupCategory;
+      enabled: boolean;
+      requestId?: string;
+      useCase?: string;
     };
+
+// Значение расходится с общей настройкой. Про существование переопределения это
+// не говорит: `MeetupNotificationPreferences` намеренно не сообщает, чем
+// получено значение, поэтому совпадающее переопределение неотличимо от
+// наследования (docs/architecture/integration.md).
+export type NotificationCategoryView = {
+  category: MeetupCategory;
+  enabled: boolean;
+  differsFromGlobal: boolean;
+};
 
 export function startExecuteRequest(
   identity: Person,
@@ -75,7 +133,20 @@ export function startExecuteRequest(
 export type ExecuteResult =
   | { kind: "message"; text: string }
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
-  | { kind: "meetup-card"; meetup: MeetupSnapshot }
+  // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
+  // состояние подписки тогда не показывается вовсе, а не подставляется
+  // устаревшим или выдуманным значением.
+  | { kind: "meetup-card"; meetup: MeetupSnapshot; subscribed?: boolean }
+  | {
+      kind: "meetup-notification-settings";
+      meetup: MeetupSnapshot;
+      subscribed: boolean;
+      categories: readonly NotificationCategoryView[];
+    }
+  | {
+      kind: "global-notification-settings";
+      categories: readonly CategoryState<NotificationCategory>[];
+    }
   | { kind: "meetup-not-found" }
   | { kind: "ask"; field: FormField; meetup: MeetupSnapshot; error?: string }
   | {

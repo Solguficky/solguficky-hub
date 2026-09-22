@@ -19,6 +19,7 @@ import {
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import type { NotificationCategory } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import { editQuestionText, parseEditQuestion } from "./edit-question.js";
 import {
@@ -81,7 +82,8 @@ type ProductUseCase =
   | "update_meetup"
   | "find_meetup"
   | "view_meetup"
-  | "manage_community";
+  | "manage_community"
+  | "manage_notifications";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 
@@ -404,6 +406,8 @@ async function handleMessage(
       case "edit-unavailable":
       case "conflict":
       case "meetup-list":
+      case "meetup-notification-settings":
+      case "global-notification-settings":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -814,6 +818,114 @@ async function handleCallback(
       });
       return;
     }
+    if (
+      action.kind === "notify-global" ||
+      action.kind === "notify-set-global"
+    ) {
+      const result = await runtime.dispatcher.execute(
+        action.kind === "notify-global"
+          ? {
+              identity: person,
+              intent: "view-global-notifications",
+              ...rpcCall(ctx, useCase),
+            }
+          : {
+              identity: person,
+              intent: "set-global-category",
+              category: action.category,
+              enabled: action.enabled,
+              ...rpcCall(ctx, useCase),
+            },
+      );
+      await renderNotificationSettings(ctx, result, "v1:notify:global");
+      outcome = screenBoundary(result, {
+        ok: ["global-notification-settings"],
+        okMessage: "global notification settings sent",
+        rejectedMessage: "global notification settings rejected",
+        useCase,
+      });
+      return;
+    }
+    // Подписка меняет карточку, а не открывает кадр настроек: действие живёт в
+    // P-04, и человек обязан остаться там же с обновлённой кнопкой.
+    if (action.kind === "notify-subscription") {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "set-meetup-subscription",
+        meetupId,
+        subscribed: action.subscribed,
+        ...rpcCall(ctx, useCase),
+      });
+      if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+        await renderMeetupCard(
+          ctx,
+          result,
+          true,
+          runtime.presentation ?? "rich",
+          person.globalRoles.includes("admin"),
+        );
+      } else {
+        await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
+      }
+      outcome = screenBoundary(result, {
+        ok: ["meetup-card"],
+        okMessage: "meetup subscription changed",
+        rejectedMessage: "meetup subscription rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (
+      action.kind === "notify-settings" ||
+      action.kind === "notify-set-meetup"
+    ) {
+      const meetupId = tokenToUuid(action.token);
+      const call = { ...rpcCall(ctx, useCase) };
+      const result = await runtime.dispatcher.execute(
+        action.kind === "notify-settings"
+          ? {
+              identity: person,
+              intent: "view-meetup-notifications",
+              meetupId,
+              ...call,
+            }
+          : {
+              identity: person,
+              intent: "set-meetup-category",
+              meetupId,
+              category: action.category,
+              enabled: action.enabled,
+              ...call,
+            },
+      );
+      // Сходка могла исчезнуть между отрисовкой кнопки и нажатием: кадр
+      // настроек читает её ради заголовка и отвечает тем же «не найдено», что и
+      // карточка, а не пустым списком категорий.
+      if (result.kind === "meetup-not-found") {
+        await renderMeetupCard(
+          ctx,
+          result,
+          true,
+          runtime.presentation ?? "rich",
+        );
+      } else {
+        await renderNotificationSettings(
+          ctx,
+          result,
+          `v1:notify:settings:${action.token}`,
+        );
+      }
+      outcome = screenBoundary(result, {
+        ok: ["meetup-notification-settings"],
+        okMessage: "meetup notification settings sent",
+        rejectedMessage: "meetup notification settings rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
     const _exhaustive: never = action;
     outcome = unexpectedOutcome(
       `unhandled callback ${_exhaustive}`,
@@ -1011,7 +1123,26 @@ function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
   for (const meetup of meetups) {
     keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
   }
-  return keyboard.text("Обновить", "v1:nav:hub");
+  return keyboard
+    .text("Обновить", "v1:nav:hub")
+    .row()
+    .text("Уведомления", "v1:notify:global");
+}
+
+// Ярлыки повторяют строки макета P-07 дословно: экран настроек обязан называть
+// категории теми же словами, что и продуктовая таблица, иначе «изменения»
+// придётся сопоставлять по догадке.
+const categoryLabels: Record<NotificationCategory, string> = {
+  published: "Новые сходки",
+  changes: "Изменения данных и статуса",
+  material: "Новые связанные сообщения",
+  reminder: "Напоминание перед началом",
+  organizer: "Сообщения организатора",
+  announcement: "Объявления сообщества",
+};
+
+function checkbox(label: string, enabled: boolean): string {
+  return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
 
 async function renderMeetupCard(
@@ -1038,6 +1169,17 @@ async function renderMeetupCard(
         .text("Статус", `v1:manage:status:${token}`)
         .row();
     }
+    // Кнопка подписки рисуется только тогда, когда Notifications ответил:
+    // состояние на ней — факт, а не заглушка, и выдуманное «выключены» человек
+    // от настоящего не отличит. Вход в кадр настроек от этого не зависит и
+    // остаётся всегда: иначе один моргнувший ответ отрезает экран целиком.
+    if (result.subscribed !== undefined) {
+      keyboard.text(
+        result.subscribed ? "Отписаться" : "Подписаться",
+        `v1:notify:sub:${token}:${result.subscribed ? "0" : "1"}`,
+      );
+    }
+    keyboard.text("Уведомления", `v1:notify:settings:${token}`).row();
     keyboard
       .text("Обновить", `v1:view:${token}`)
       .row()
@@ -1073,6 +1215,115 @@ async function renderMeetupCard(
   const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
   if (edit) await editScreen(ctx, unavailableText, keyboard);
   else await ctx.reply(unavailableText, { reply_markup: keyboard });
+}
+
+// Оба кадра настроек живут в одном рендере: у них одна механика — список
+// отметок, переключение на месте, `answerCallbackQuery` уже отправлен выше — и
+// различаются только словарём категорий, заголовком и кнопкой возврата.
+async function renderNotificationSettings(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  retry: string,
+): Promise<void> {
+  if (result.kind === "global-notification-settings") {
+    const keyboard = new InlineKeyboard();
+    for (const entry of result.categories) {
+      keyboard
+        .text(
+          checkbox(categoryLabels[entry.category], entry.enabled),
+          `v1:notify:gset:${entry.category}:${entry.enabled ? "0" : "1"}`,
+        )
+        .row();
+    }
+    keyboard.text("К списку", "v1:nav:hub");
+    await editScreen(
+      ctx,
+      `Уведомления: общие настройки
+
+Отметь, о чём присылать. Настройка действует для всех сходок, включая будущие.`,
+      keyboard,
+    );
+    return;
+  }
+  if (result.kind === "meetup-notification-settings") {
+    const token = uuidToToken(result.meetup.id);
+    const keyboard = new InlineKeyboard();
+    for (const entry of result.categories) {
+      const label = checkbox(categoryLabels[entry.category], entry.enabled);
+      keyboard
+        .text(
+          entry.differsFromGlobal ? `${label} · отличается` : label,
+          `v1:notify:set:${token}:${entry.category}:${entry.enabled ? "0" : "1"}`,
+        )
+        .row();
+    }
+    // Подписки здесь нет намеренно: действие живёт в карточке P-04, и макет
+    // этого экрана его не показывает. Состояние подписки кадр называет
+    // текстом, чтобы отметки категорий не читались как «придёт всё это».
+    keyboard.text("Назад", `v1:view:${token}`);
+    const lines = [
+      `Уведомления: ${result.meetup.title}`,
+      "",
+      result.subscribed
+        ? "Ты следишь за этой сходкой."
+        : "Ты за этой сходкой не следишь: придут только те уведомления, которым подписка не нужна. Подписаться можно из карточки.",
+      "",
+      "Отметь, о чём присылать. Настройка действует только для этой сходки.",
+      // Следствие принятого контракта, названное человеку до нажатия, а не
+      // после: операции снятия переопределения на проводе нет, и вернуть
+      // «как везде» изнутри кадра будет уже нельзя.
+      "Переключение здесь закрепляет значение за этой сходкой: общая настройка его больше не меняет.",
+    ];
+    if (result.categories.some((entry) => entry.differsFromGlobal)) {
+      lines.push(
+        "Отметка «отличается» значит, что значение не совпадает с общей настройкой.",
+      );
+    }
+    await editScreen(ctx, lines.join("\n"), keyboard);
+    return;
+  }
+  await renderNotificationFailure(ctx, result, retry);
+}
+
+// Отказ Notifications отвечает кадром по природе отказа, а не одним «сбой на
+// моей стороне»: бриф компонента обещает разные кадры, и «Повторить» на отказе
+// по праву или на устаревшем экране не лечит ничего.
+async function renderNotificationFailure(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  retry: string,
+): Promise<void> {
+  if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
+    await editScreen(
+      ctx,
+      "Notifications не разрешил это действие.",
+      new InlineKeyboard().text("К списку", "v1:nav:hub"),
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "invalid") {
+    // Кнопка, которую сервис не принял, построена по устаревшему экрану:
+    // перерисовка по текущему состоянию, а не повтор того же нажатия.
+    await editScreen(
+      ctx,
+      "Этот экран устарел. Открой настройки заново.",
+      new InlineKeyboard().text("Обновить", retry),
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "conflict") {
+    await editScreen(
+      ctx,
+      "Это уже сделано. Ничего не изменилось.",
+      new InlineKeyboard().text("Обновить", retry),
+    );
+    return;
+  }
+  await editScreen(
+    ctx,
+    unavailableText,
+    new InlineKeyboard().text("Повторить", retry),
+  );
 }
 
 async function renderMeetupStatus(
@@ -1493,7 +1744,12 @@ function callbackUseCase(
     | "manage-unpublish"
     | "manage-confirm-unpublish"
     | "manage-cancel"
-    | "manage-confirm-cancel",
+    | "manage-confirm-cancel"
+    | "notify-global"
+    | "notify-set-global"
+    | "notify-settings"
+    | "notify-subscription"
+    | "notify-set-meetup",
 ): ProductUseCase {
   switch (kind) {
     case "view-meetup":
@@ -1517,6 +1773,12 @@ function callbackUseCase(
     case "block-member":
     case "remove-allowed-username":
       return "manage_community";
+    case "notify-global":
+    case "notify-set-global":
+    case "notify-settings":
+    case "notify-subscription":
+    case "notify-set-meetup":
+      return "manage_notifications";
     case "hub":
     case "outdated":
       return "find_meetup";
