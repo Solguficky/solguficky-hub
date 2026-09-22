@@ -43,8 +43,8 @@ Linear является источником правды для порядка 
 | Identity | gRPC-сервер: `ResolveIdentity` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, круги сообщества и системные роли |
 | Notifications | Скелет: силос Orleans, своя база, миграции при старте, грин на сходку | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Identity `ResolveIdentity` и шесть команд администратора с Go- и TypeScript-кодогенерацией, пятнадцать gRPC-операций среза Meetups, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`; обе схемы `notifications/v1` потребляет контрактный проект Notifications, и модуль целиком собирает джоба `contracts` | Current |
-| `nats-tester` | Python CLI; в реестре subjects одна запись — `events.notifications.notification_created` | Current tooling |
+| `contracts/proto` | Identity `ResolveIdentity` и шесть команд администратора с Go- и TypeScript-кодогенерацией, пятнадцать gRPC-операций среза Meetups и словарь их исходящих событий `meetups.v1.MeetupEvent`, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`; обе схемы `notifications/v1` потребляет контрактный проект Notifications, и модуль целиком собирает джоба `contracts` | Current |
+| `nats-tester` | Python CLI; в реестре subjects двенадцать записей — `events.notifications.notification_created` и одиннадцать поводов журнала Meetups | Current tooling |
 | Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
 
 Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
@@ -60,7 +60,7 @@ Linear является источником правды для порядка 
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
 | Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-039 |
-| Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks ещё нет |
+| Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks и `buf lint` введены, Schema Registry остаётся открытым |
 
 Основной архитектурный поток строится вокруг сходок.
 

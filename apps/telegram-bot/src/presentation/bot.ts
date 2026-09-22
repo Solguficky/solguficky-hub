@@ -29,13 +29,36 @@ import {
 import { parseCallback, removableUsernamePattern } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
+// Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
+// инфраструктуру (ADR-046). Значения совпадают с опцией grammY, чтобы между
+// переменной окружения и клиентом не появилось второго словаря.
+export type TelegramEnvironment = "prod" | "test";
+
 export type BotRuntime = {
   token: string;
   dispatcher: Dispatcher;
   identity: IdentityResolver & Partial<CommunityAdministrator>;
   logger: Logger;
   presentation?: "rich" | "plain";
+  environment?: TelegramEnvironment;
 };
+
+export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
+
+/**
+ * Разбирает значение `TELEGRAM_BOT_ENVIRONMENT`. Отсутствие переменной — это
+ * продакшн; любое неизвестное значение — `undefined`, а не молчаливый откат к
+ * умолчанию: опечатка в переменной должна останавливать процесс, а не уводить
+ * его в другую среду.
+ */
+export function parseTelegramEnvironment(
+  raw: string | undefined,
+): TelegramEnvironment | undefined {
+  if (raw === undefined || raw === "") {
+    return defaultTelegramEnvironment;
+  }
+  return raw === "prod" || raw === "test" ? raw : undefined;
+}
 
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
@@ -106,7 +129,11 @@ type BoundaryOutcome =
     };
 
 export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
-  const bot = new Bot<UpdateContext>(runtime.token);
+  // Среда передаётся всегда, а не только для `test`: умолчание живёт в одном
+  // месте, и отсутствие поля не читается как «grammY решит сам».
+  const bot = new Bot<UpdateContext>(runtime.token, {
+    client: { environment: runtime.environment ?? defaultTelegramEnvironment },
+  });
   const questions = new Map<string, PendingInput>();
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();

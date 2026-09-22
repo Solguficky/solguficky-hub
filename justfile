@@ -102,12 +102,20 @@ check-document-numbers:
 # Весь модуль contracts/proto компилируется, включая схемы, которых не читает
 # ни один потребитель. Потребители сужают вход фильтром paths и поимённым
 # списком Protobuf, поэтому домен без потребителя иначе не проверяется нигде
-# и ломается молча. Стилевых мнений не вносит: buf lint и buf breaking — PER-268.
+# и ломается молча.
 contracts-build:
     cd contracts/proto && buf build
 
+# Стиль схем и совместимость с origin/develop: набор правил и исключения —
+# в contracts/proto/buf.yaml. База — удалённая ветка, поэтому перед прогоном
+# нужен `git fetch`: на отставшей от origin/develop ветке чужие мержи читаются
+# как обратная правка схемы.
+contracts-check:
+    buf lint contracts/proto
+    buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
+
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools
@@ -346,3 +354,45 @@ nats-tester-install:
 # Исследовательский зонд Rich Messages; не входит в verify
 telegram-rich-probe:
     node tools/telegram-rich-probe/probe.mjs
+
+# Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
+# AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —
+# стандарт держит в механическом гейте только L0. Агрегатор всех уровней
+# (`test-all`) заводит PER-269 и дописывает туда `contour-test` одной строкой.
+#
+# Нужны Docker, `go` и `buf` в PATH: узел Identity в графе сначала генерирует
+# Go-код и собирает бинарник. Недоступность среды даёт отказ с именем
+# инструмента, а не пропуск; порог --minimum-expected-tests ловит и случай,
+# когда набор не обнаружил ни одного теста.
+#
+# Порог задаётся руками и поднимается вместе с набором: выведенный из
+# текущего прогона сравнивал бы набор сам с собой. Он ловит и случай, когда
+# тестов не обнаружено вовсе, — прогон с порогом 2 на одном тесте даёт код 9.
+#
+# `dotnet run`, а не `dotnet test --project`, ради вывода. Оба варианта гоняют
+# тест и оба соблюдают порог, но `dotnet test` глотает stdout: измерено на
+# зелёном прогоне — ни баннера с seed и адресами, ни одной строки
+# `AppHost.Resources.*`, и `--output Detailed` этого не меняет. Под `dotnet run`
+# в том же прогоне баннер на месте и строк ресурсов 146. Именно они и есть
+# логи Identity, Meetups и PostgreSQL: своего сбора у набора нет, потому что
+# ResourceLoggerService под тестовым builder'ом отдаёт ноль строк.
+#
+# Дымовой прогон сквозного контура; в verify не входит
+contour-test:
+    dotnet run --project tests/contour/Contour.E2ETests/Contour.E2ETests.csproj -- --minimum-expected-tests 1
+
+# Адреса уходят в окружение дочерней команды и, если указан путь, в
+# dotenv-файл. Этим входом пользуется набор провода бота (PER-271), который
+# средой не владеет.
+#
+#   just contour-up                             держит среду до Ctrl+C
+#   just contour-up '--env-file .contour.env'
+#   just contour-up '-- npm test'
+#
+# Поднять контур и отдать IDENTITY_GRPC_URL и MEETUPS_GRPC_URL наружу
+contour-up *args="":
+    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- {{args}}
+
+# Контрактный проект контура остаётся generated-only (ADR-025)
+contour-contracts-check:
+    sh tools/contour/check-contracts-generated.sh

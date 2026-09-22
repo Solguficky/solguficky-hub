@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Notifications.IntegrationTests.Infrastructure;
@@ -19,7 +21,37 @@ public sealed class SiloUnderTest : IAsyncDisposable
 
     public IGrainFactory Grains => app.Services.GetRequiredService<IGrainFactory>();
 
-    public static async Task<SiloUnderTest> Start(string connectionString)
+    /// <summary>
+    /// Служба сервиса как её собрал composition root. Нужна операциям, у которых
+    /// нет пути через контракт: снятие переопределения существует внутри
+    /// сервиса, но наружу не выставлено.
+    /// </summary>
+    /// <remarks>
+    /// Отдаётся по одной службе, а не целым <c>IServiceProvider</c>: контейнер
+    /// наружу — приглашение доставать из фикстуры что угодно, и следующий тест
+    /// начал бы собирать своё поведение из внутренностей хоста.
+    /// </remarks>
+    public TService Service<TService>()
+        where TService : notnull =>
+        app.Services.GetRequiredService<TService>();
+
+    /// <summary>
+    /// Адрес, который Kestrel занял по факту. Порт запрошен нулевым, поэтому
+    /// узнать его можно только после старта и только у самого сервера.
+    /// </summary>
+    public string Address =>
+        app.Services
+            .GetRequiredService<IServer>()
+            .Features.Get<IServerAddressesFeature>()!
+            .Addresses.First();
+
+    /// <param name="settings">
+    /// Дополнительные ключи конфигурации в форме <c>--Ключ=Значение</c>. Через
+    /// них тест задаёт период прохода sweeper'а и упреждение напоминания:
+    /// ждать штатные тридцать секунд и сутки в тесте нечем, а подменять часы
+    /// процесса ради этого не нужно — оба значения и так настройки.
+    /// </param>
+    public static async Task<SiloUnderTest> Start(string connectionString, params string[] settings)
     {
         // Порты силоса берутся свободные: иначе второй силос этого же теста и
         // соседнее рабочее дерево дерутся за штатные 11111 и 30000.
@@ -28,6 +60,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
                 "--urls=http://127.0.0.1:0",
                 $"--{NotificationsHost.SiloPortKey}={FreePort()}",
                 $"--{NotificationsHost.GatewayPortKey}={FreePort()}",
+                .. settings,
             ],
             connectionString);
 

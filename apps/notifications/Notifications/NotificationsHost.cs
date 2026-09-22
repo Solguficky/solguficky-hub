@@ -1,6 +1,9 @@
 using System.Net;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Notifications.Infrastructure;
+using Notifications.Preferences;
+using Notifications.Reminders;
+using Notifications.Transport;
 using Npgsql;
 using Orleans.Configuration;
 
@@ -45,11 +48,17 @@ public static class NotificationsHost
         builder.WebHost.ConfigureKestrel(options =>
             options.ConfigureEndpointDefaults(endpoint => endpoint.Protocols = HttpProtocols.Http2));
 
-        // Единственный провайдер Orleans, который берёт скелет. Grain storage и
-        // reminders сознательно не регистрируются: источник истины остаётся в
-        // PostgreSQL (ADR-029), напоминания и sweeper — PER-222. Отсутствие
-        // grain storage работает гейтом: [PersistentState] роняет первую активацию
-        // грина, а не старт силоса, поэтому ловит его тест, а не проба готовности.
+        // Grain storage по-прежнему сознательно не регистрируется: источник
+        // истины остаётся в PostgreSQL (ADR-029), а отсутствие провайдера
+        // работает гейтом — [PersistentState] роняет первую активацию грина, а
+        // не старт силоса, поэтому ловит его тест, а не проба готовности.
+        //
+        // Reminders, в отличие от него, зарегистрированы (PER-222), и это не
+        // ослабление того же правила. Reminder хранит определение напоминания,
+        // а не его срабатывание: момент лежит строкой в reminder_task, а
+        // рантайм только будит грин к этому моменту. Пропущенный за время
+        // простоя тик Orleans не догоняет, поэтому корректность держит sweeper
+        // по таблице, а не этот провайдер.
         builder.UseOrleans(silo =>
         {
             silo.Configure<ClusterOptions>(options =>
@@ -57,6 +66,23 @@ public static class NotificationsHost
                 options.ClusterId = ClusterId;
                 options.ServiceId = ServiceId;
             });
+
+            // Восстановление после неснятого падения держится на том, что
+            // поднявшийся силос занимает тот же адрес, что и умерший.
+            //
+            // Orleans при входе в кластер пингует все записи в состоянии Active
+            // и без ответа не входит, а запись убитого силоса остаётся Active —
+            // закрыть её было некому. Записи того же логического силоса (тот же
+            // адрес, другое поколение) проверка пропускает, поэтому рестарт на
+            // прежнем порту проходит, а на новом — нет: новый порт делает силос
+            // другим логическим силосом, и он пять минут ждёт ответа от
+            // покойника, после чего падает с OrleansClusterConnectivityCheckFailed.
+            //
+            // Отключить проверку в Orleans 10 нечем: флага ValidateInitialConnectivity
+            // здесь больше нет. Порты и так берутся из конфигурации со штатными
+            // умолчаниями — Aspire их не переопределяет, — поэтому рестарт
+            // развёртывания попадает на прежний адрес сам собой. Переопределяет
+            // их только тот, кто поднимает второй силос на той же машине.
 
             // Силос слушает петлю: Aspire запускает сервис локальным процессом,
             // а адрес из membership переживает рестарт и указывал бы на чужой
@@ -81,6 +107,15 @@ public static class NotificationsHost
                 options.Invariant = AdoNetInvariant;
                 options.ConnectionString = connectionString;
             });
+
+            // Таблицы reminder'ов заводит тот же DbUp, что и membership:
+            // standards/data/postgresql.md запрещает два журнала на одну схему,
+            // поэтому вендорный скрипт лежит рядом с остальными миграциями.
+            silo.UseAdoNetReminderService(options =>
+            {
+                options.Invariant = AdoNetInvariant;
+                options.ConnectionString = connectionString;
+            });
         });
 
         // В отличие от Meetups хост НЕ поднимается без базы, и это не упущение:
@@ -93,9 +128,28 @@ public static class NotificationsHost
         // пулом соединений. Meetups регистрирует свой источник тем же способом.
         builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
         builder.Services.AddSingleton<GrainActivationStore>();
+        builder.Services.AddSingleton<ReminderTaskStore>();
 
-        // Сам gRPC-стек. Реализаций сервиса пока нет (PER-71), но без него не
-        // поднимаются ни проба, ни рефлексия: обе маппятся как gRPC-сервисы.
+        // Часы — зависимость, а не вызов DateTimeOffset.UtcNow по коду:
+        // standards/testing/testing-strategy.md требует, чтобы тест не зависел
+        // от часов машины, а период прохода sweeper'а иначе нечем двигать.
+        builder.Services.AddSingleton(TimeProvider.System);
+
+        builder.Services.Configure<MeetupReminderOptions>(
+            builder.Configuration.GetSection(MeetupReminderOptions.SectionName));
+
+        builder.Services.AddHostedService<ReminderSweeper>();
+
+        // Подписки и настройки категорий. Ни один из трёх типов не знает про
+        // Orleans: команды синхронны, а источник истины остаётся в PostgreSQL
+        // (ADR-029). Задание напоминания их тоже не трогает — аудитория
+        // разворачивается в момент срабатывания, а не при подписке.
+        builder.Services.AddSingleton<SubscriptionStore>();
+        builder.Services.AddSingleton<PreferenceStore>();
+        builder.Services.AddSingleton<PreferenceOperations>();
+
+        // Сам gRPC-стек. Без него не поднимаются ни проба, ни рефлексия: обе
+        // маппятся как gRPC-сервисы.
         builder.Services.AddGrpc();
 
         // Мост из health checks, зарегистрированных ServiceDefaults, в grpc.health.v1.
@@ -111,8 +165,11 @@ public static class NotificationsHost
         app.MapGrpcHealthChecksService();
         app.MapGrpcReflectionService();
 
-        // Реализаций gRPC-сервиса здесь нет: command plane — PER-71. Endpoint
-        // существует, чтобы проба готовности и рефлексия отвечали уже сейчас.
+        // Command plane подписок и настроек. Обе ручные рассылки контракта
+        // отвечают Unimplemented: они принадлежат блоку обращения к подписчикам
+        // и требуют синхронной проверки права у владельца ресурса.
+        app.MapGrpcService<NotificationsGrpcService>();
+
         return app;
     }
 }
