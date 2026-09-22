@@ -1,16 +1,27 @@
 module Meetups.ContractSurfaceTests
 
+open FSharp.Reflection
 open Google.Protobuf.Reflection
+open Meetups.Infrastructure
+open Meetups.TestData
 open Meetups.V1
 open Swensen.Unquote
 open Xunit
 
-/// Поверхность контракта лежит в двух файлах: значения домена — в meetups.proto,
-/// сам сервис и его запросы — в meetups_service.proto. Проверки ниже смотрят на
-/// обе схемы, иначе вынос типа в соседний файл гасил бы утверждение молча.
+// `Meetups.Domain` намеренно не открыт: ветки повода на проводе названы именами
+// случаев доменного юниона, поэтому `MeetupCreated` и ещё десять имён есть в обоих
+// пространствах. Совпадение имён и есть то, что проверяют два последних теста, а
+// разрешать его молча последним `open` — значит проверять не то, что написано.
+
+/// Поверхность контракта лежит в трёх файлах: значения домена — в meetups.proto,
+/// сам сервис и его запросы — в meetups_service.proto, исходящие факты журнала — в
+/// meetups_events.proto. Проверки ниже смотрят на все три схемы, иначе вынос типа в
+/// соседний файл гасил бы утверждение молча.
 let private valueTypes = MeetupsReflection.Descriptor
 
 let private schema = MeetupsServiceReflection.Descriptor
+
+let private events = MeetupsEventsReflection.Descriptor
 
 let private requestTypes =
     MeetupsService.Descriptor.Methods
@@ -25,11 +36,22 @@ let rec private withNested (message: MessageDescriptor) =
     }
 
 let private messages =
-    Seq.append valueTypes.MessageTypes schema.MessageTypes
+    [
+        valueTypes.MessageTypes
+        schema.MessageTypes
+        events.MessageTypes
+    ]
+    |> Seq.concat
     |> Seq.collect withNested
     |> List.ofSeq
 
-let private fileEnums = Seq.append valueTypes.EnumTypes schema.EnumTypes
+let private fileEnums =
+    [
+        valueTypes.EnumTypes
+        schema.EnumTypes
+        events.EnumTypes
+    ]
+    |> Seq.concat
 
 let private enums =
     Seq.append fileEnums (messages |> Seq.collect (fun m -> m.EnumTypes))
@@ -281,12 +303,22 @@ let ``Schema names no failure, so a hidden meetup is indistinguishable from a mi
                 for f in m.Fields.InDeclarationOrder() do
                     if names f.Name then
                         $"field {m.FullName}.{f.Name}"
+
+                // Имя самого oneof полем не является, поэтому обход выше его не
+                // видит. Повод события — первый oneof, который мог бы назваться
+                // `reason`, и здесь это слово означало бы отказ.
+                for o in m.Oneofs do
+                    if not o.IsSynthetic && names o.Name then
+                        $"oneof {m.FullName}.{o.Name}"
         ]
 
     test <@ actual = [] @>
 
+/// Обе схемы состояния объявляют одни и те же два отсутствия, и утверждение
+/// перечисляет их вместе: расхождение между снимком чтения и снимком события —
+/// ровно то, что раздельные определения обязаны делать заметным.
 [<Fact>]
-let ``The schema has exactly two absent states and they are the publication moments`` () =
+let ``The schema has exactly four absent states and they are the publication moments`` () =
     let actual =
         [
             for message in messages do
@@ -312,6 +344,8 @@ let ``The schema has exactly two absent states and they are the publication mome
             actual = [
                 "MeetupSnapshot.first_published_at"
                 "MeetupSnapshot.scheduled_publish_at"
+                "MeetupState.first_published_at"
+                "MeetupState.scheduled_publish_at"
             ]
         @>
 
@@ -432,3 +466,63 @@ let ``A material carries its id, its title and exactly one source`` () =
             ]
             && snapshotMaterials = [ "materials", FieldType.Message, true ]
         @>
+
+/// Словарь поводов живёт в четырёх местах: юнион `MeetupEvent` в домене, строки
+/// `MeetupEventPayload.eventType`, CHECK-ограничение миграции 007 и ветки повода на
+/// проводе. Два теста ниже связывают из них три; четвёртое держит сама база, потому
+/// что `eventType` пишет в колонку под ограничением.
+///
+/// Без этой пары «каждое событие словаря имеет сообщение» проверялось бы сверкой
+/// списков глазами, а новый повод доезжал бы до шины молча — юнион исчерпывается
+/// компилятором, а схема о нём не знает.
+///
+/// Сравниваются множества, а не списки: номера полей заставляют дописывать новую
+/// ветку в конец схемы, а случай юниона вставляется где угодно, и порядок разошёлся
+/// бы на первом же верном изменении. Утверждается состав словаря, а не его порядок.
+let private occasionOneof =
+    MeetupEvent.Descriptor.Oneofs
+    |> Seq.filter (fun o -> not o.IsSynthetic)
+    |> Seq.exactlyOne
+
+[<Fact>]
+let ``Every occasion of the domain dictionary has its own message on the wire`` () =
+    let domain =
+        FSharpType.GetUnionCases typeof<Meetups.Domain.MeetupEvent>
+        |> Seq.map (fun case -> case.Name)
+        |> Set.ofSeq
+
+    let wire =
+        occasionOneof.Fields
+        |> Seq.map (fun field -> field.MessageType.Name)
+        |> Set.ofSeq
+
+    test <@ wire = domain @>
+
+/// Имя ветки на проводе — то же имя, которое уходит в колонку `event_type`, поэтому
+/// subject публикации получается приписыванием домена к нему, а не второй таблицей
+/// соответствия (integration.md).
+[<Fact>]
+let ``The name of each occasion on the wire is the name the journal writes`` () =
+    let journal =
+        [
+            Meetups.Domain.MeetupCreated(Sample.meetupId, Sample.authorId)
+            Meetups.Domain.MeetupChanged(Meetups.Domain.AttributesChanged Sample.attributes)
+            Meetups.Domain.MeetupPublished Sample.fixedNow
+            Meetups.Domain.MeetupUnpublished
+            Meetups.Domain.MeetupRepublished
+            Meetups.Domain.MeetupPublicationScheduled Sample.later
+            Meetups.Domain.MeetupPublicationCancelled
+            Meetups.Domain.MeetupCancelled
+            Meetups.Domain.MeetupMaterialAttached Sample.material
+            Meetups.Domain.MeetupMaterialRemoved Sample.materialId
+            Meetups.Domain.MeetupHeld
+        ]
+        |> List.map MeetupEventPayload.eventType
+        |> Set.ofList
+
+    let wire =
+        occasionOneof.Fields
+        |> Seq.map (fun field -> field.Name)
+        |> Set.ofSeq
+
+    test <@ wire = journal @>

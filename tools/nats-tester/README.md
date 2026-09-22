@@ -4,9 +4,9 @@ CLI для ручной проверки сообщений на шине: пу�
 
 ## Текущее состояние
 
-Реестр знает один subject: `events.notifications.notification_created` — адресный факт уведомления по схеме `notifications/v1`. Это первый принятый NATS-контракт.
+Реестр знает двенадцать subjects. Первый — `events.notifications.notification_created`, адресный факт уведомления по схеме `notifications/v1`. Остальные одиннадцать — поводы журнала сходок, `events.meetups.<повод>` по схеме `meetups/v1/meetups_events.proto`; сообщение у всех одиннадцати одно, `meetups.v1.MeetupEvent`, а повод называют и subject, и ветка `oneof` внутри него.
 
-Схемы `identity/v1`, `meetups/v1` и `notifications/v1/notifications_service.proto` обслуживают gRPC: subject у них не бывает, в реестр они не попадают. Генерируются они потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
+Схемы `identity/v1`, `meetups/v1/meetups_service.proto` и `notifications/v1/notifications_service.proto` обслуживают gRPC: subject у них не бывает, в реестр они не попадают. Генерируются они потому, что раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
 
 Новый тип сообщения добавляется по шагам ниже: схема в `contracts/proto/`, регенерация классов и запись в реестр — см. «Добавление типа сообщения».
 

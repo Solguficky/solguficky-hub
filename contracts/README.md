@@ -14,6 +14,7 @@ contracts/proto/
 ├── meetups/
 │   └── v1/
 │       ├── meetups.proto
+│       ├── meetups_events.proto
 │       └── meetups_service.proto
 └── notifications/
     └── v1/
@@ -25,9 +26,9 @@ contracts/proto/
 
 Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Как потребитель указывает этот корень — в [стандарте Protobuf](../docs/standards/contracts/protobuf.md).
 
-Аукционные схемы удалены: аукцион не входит в MVP. Первый NATS-контракт — `notifications/v1/notifications.proto`: адресный факт уведомления, который Notifications публикует каналам. NATS-события Meetups и Identity и контракт Telegram Bot ещё не спроектированы.
+Аукционные схемы удалены: аукцион не входит в MVP. Первый NATS-контракт — `notifications/v1/notifications.proto`: адресный факт уведомления, который Notifications публикует каналам. Второй — `meetups/v1/meetups_events.proto`: исходящие факты журнала сходок. NATS-события Identity и контракт Telegram Bot ещё не спроектированы.
 
-Файл домена делится по признаку «сервис или значения», а не по транспорту: `meetups/v1/meetups.proto` и `identity/v1/roles.proto` несут только типы значений, а `*_service.proto` — сам сервис и его запросы. Импорт через границу домена целится в файл значений: так `notifications/v1/notifications.proto` берёт расписание, жизненный цикл и видимость сходки, не зная `MeetupsService`.
+Файл домена делится по признаку «сервис, значения или исходящие факты», а не по транспорту: `meetups/v1/meetups.proto` и `identity/v1/roles.proto` несут только типы значений, `*_service.proto` — сам сервис и его запросы, а `meetups/v1/meetups_events.proto` — то, что домен публикует наружу. Последний вынесен по той же причине, по которой вынесены значения: потребителю событий не нужен `MeetupsService` с его запросами. Импорт через границу домена целится в файл значений: так `notifications/v1/notifications.proto` берёт расписание, жизненный цикл и видимость сходки, не зная `MeetupsService`.
 
 Потребителя это не освобождает от импортированного файла — фильтр `paths` отбирает, что генерируется, а не что резолвится, и срез из одного каталога `contracts/proto/notifications` даёт код с импортом на несгенерированный `meetups/v1/meetups_pb`. Но расширяется такой фильтр одним файлом значений, а не чужим сервисом с десятком его запросов и клиентской заглушкой.
 

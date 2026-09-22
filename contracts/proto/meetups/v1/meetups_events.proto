@@ -1,0 +1,159 @@
+syntax = "proto3";
+
+package meetups.v1;
+
+import "meetups/v1/meetups.proto";
+
+// Outgoing facts of the meetup journal. They live apart from meetups_service.proto
+// for the same reason the value types do: a consumer of the events must not drag
+// MeetupsService and its request messages into its codegen.
+//
+// Subjects, delivery semantics and the rules a consumer follows when it applies
+// these facts are not repeated here: they live in docs/architecture/integration.md,
+// section "Meetups NATS".
+
+// A recorded fact about one meetup: why it changed and what is true about it now.
+message MeetupEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the row of the journal and
+  // is the same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The meetup this fact belongs to. It
+  // repeats state.id so that the envelope alone identifies the subject of the fact.
+  string meetup_id = 2;
+
+  // Aggregate version after the event was applied. Monotonic within one meetup and
+  // starting at 1, so 0 is not a valid value.
+  //
+  // The position of the row in the journal is deliberately absent: it is the
+  // producer's own read cursor and is not a value of this contract.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the one moment the command was decided from and
+  // committed with. It is neither the moment of publication nor the moment of
+  // delivery, both of which happen later and are not carried at all.
+  string occurred_at = 4;
+
+  // The state of the meetup after the event was applied. Always set: the body of
+  // every event is a whole snapshot, never a delta.
+  MeetupState state = 5;
+
+  // Why the state changed - the occasion. Exactly one is set, and an empty oneof is
+  // not a value.
+  //
+  // A schedule move has no occasion of its own, and which of the two kinds of change
+  // happened is not carried at all.
+  oneof occasion {
+    MeetupCreated meetup_created = 6;
+    MeetupChanged meetup_changed = 7;
+    MeetupPublished meetup_published = 8;
+    MeetupUnpublished meetup_unpublished = 9;
+    MeetupRepublished meetup_republished = 10;
+    MeetupPublicationScheduled meetup_publication_scheduled = 11;
+    MeetupPublicationCancelled meetup_publication_cancelled = 12;
+    MeetupCancelled meetup_cancelled = 13;
+    MeetupMaterialAttached meetup_material_attached = 14;
+    MeetupMaterialRemoved meetup_material_removed = 15;
+    MeetupHeld meetup_held = 16;
+  }
+}
+
+// The state of a meetup after an event.
+//
+// It is defined here and does not reuse the state of the service contract. The
+// fields coincide today, but separate definitions keep a change of the read API
+// from silently becoming a change of this contract. Field numbers match
+// meetups.v1.MeetupSnapshot so that the two stay readable side by side.
+message MeetupState {
+  // The aggregate version is a value of the envelope and is not repeated here: two
+  // copies of one number can disagree. The number MeetupSnapshot spends on it stays
+  // reserved so the two definitions keep lining up.
+  reserved 12;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the internal Identity id of the author,
+  // set at creation and never changed. Who performed the command that produced this
+  // event is not carried at all.
+  string author = 2;
+
+  // Empty string is the total value "unspecified", not a missing field. There is no
+  // "clear" operation for any of the five informational attributes.
+  string title = 3;
+  string description = 4;
+  string venue = 5;
+  string kind = 6;
+  string calendar_link = 7;
+
+  // Local community schedule without a timezone. "No date" is the no_date form of
+  // Schedule, not an absent field.
+  Schedule schedule = 8;
+
+  MeetupLifecycle lifecycle = 9;
+  MeetupVisibility visibility = 10;
+
+  // RFC 3339 instant in UTC. Unset when the meetup has never been published; it is
+  // set once and is not reset by unpublishing.
+  optional string first_published_at = 11;
+
+  // One ordered collection: the order of this field is the order of the collection.
+  // An empty collection is not an absent state, and a material carries neither its
+  // position nor who attached it.
+  repeated MeetupMaterial materials = 13;
+
+  // RFC 3339 instant in UTC of the planned publication. Unset when no publication is
+  // scheduled; publishing takes it, and cancelling the meetup clears it.
+  optional string scheduled_publish_at = 14;
+}
+
+// The meetup was created as a draft. The author is state.author.
+message MeetupCreated {}
+
+// Informational attributes or the schedule changed. Which of the two is not carried,
+// and neither is the difference: the state says only what is true now.
+message MeetupChanged {}
+
+// The meetup became visible for the first time. The mark of it is
+// state.first_published_at. A publication that fired from a scheduled moment carries
+// this same occasion: there is no separate one for it.
+message MeetupPublished {}
+
+// The meetup was taken out of publication. The mark of the first publication is not
+// reset, so this is distinguishable from a meetup that was never published.
+message MeetupUnpublished {}
+
+// The meetup returned to publication after being taken out. It is not a second first
+// publication, which is why it is not meetup_published.
+message MeetupRepublished {}
+
+// A moment of deferred publication was set. The moment itself is
+// state.scheduled_publish_at. There is no "publication scheduled" state: the fact is
+// the non-empty field.
+message MeetupPublicationScheduled {}
+
+// A scheduled publication was cancelled before it fired. The moment is unset in the
+// state.
+message MeetupPublicationCancelled {}
+
+// The meetup was cancelled.
+message MeetupCancelled {}
+
+// The meetup was marked as held.
+message MeetupHeld {}
+
+// A material was attached to the collection. The material itself is in
+// state.materials; the id names which element of the collection is the new one, so a
+// consumer without a replica need not guess.
+message MeetupMaterialAttached {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string material_id = 1;
+}
+
+// A material was removed from the collection. The id is carried because the removed
+// material is no longer in the state: this is the only fact of the dictionary that
+// the snapshot cannot express by itself.
+message MeetupMaterialRemoved {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string material_id = 1;
+}

@@ -173,7 +173,7 @@ sequenceDiagram
 
 ## Что срез не решает
 
-Конверт публикации доменных событий, subject'ы и wire-формат журнала остаются открытыми: без уведомлений событий в шину не уходит.
+Конверт публикации доменных событий, subject'ы и wire-формат журнала срез оставил открытыми: без уведомлений событий в шину не уходило. Приняты они позже — [PER-206](https://linear.app/anticnvm/issue/per-206), раздел «Meetups NATS» в [integration.md](integration.md).
 
 Закрыто после составления среза: язык Identity — Go ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); проверка личности синхронна на каждом действии, а при недоступности Identity операция завершается fail-closed ([ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md)); состояние экрана и ключ создания живут в самом сообщении, собственного хранилища у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)); продуктовая карточка по умолчанию рисуется `sendRichMessage`, плоский текст остаётся за тоглом процесса ([ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)); восемь пользовательских операций бот → Meetups — синхронный gRPC ([integration.md](integration.md)).
 
