@@ -109,11 +109,13 @@ jobs:
               - '.editorconfig'
               - '.github/workflows/ci.yml'
 
-  # Компиляция всего модуля contracts/proto. Джобы потребителей сужают вход
-  # фильтром paths и поимённым списком Protobuf, поэтому схема домена, у
-  # которого потребителя ещё нет, не читается ни одной из них: без этой джобы
-  # она ломается молча при зелёном CI. Стилевых правил не проверяет — buf lint
-  # и buf breaking вводит PER-268.
+  # Компиляция, стиль и совместимость модуля contracts/proto. Джобы
+  # потребителей сужают вход фильтром paths и поимённым списком Protobuf,
+  # поэтому схема домена, у которого потребителя ещё нет, не читается ни одной
+  # из них: без этой джобы она ломается молча при зелёном CI. Стиль и
+  # совместимость джоба проверяет сама, не дожидаясь тестов потребителей: те
+  # wire-разрыв не ловят — оба конца, пересобранные из одной сломанной схемы,
+  # договорятся между собой. Тот же гейт локально — `just contracts-check`.
   contracts:
     needs: changes
     if: >-
@@ -124,7 +126,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      # fetch-depth: 0 — база сравнения для buf breaking. По умолчанию checkout
+      # приносит только сам коммит, и ветки origin/develop в клоне нет.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - id: tools
         run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       # setup_only: действие только ставит buf. Без него дефолты buf-action
@@ -136,6 +142,10 @@ jobs:
           github_token: ${{ github.token }}
       - run: buf build
         working-directory: contracts/proto
+      - run: buf lint contracts/proto
+      # subdir называет корень модуля внутри git-дерева базы: без него база
+      # читается от корня репозитория, и импорты между схемами не резолвятся.
+      - run: buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
   # уносить за собой зависимые, поэтому условие начинается с !cancelled().

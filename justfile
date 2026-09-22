@@ -102,12 +102,20 @@ check-document-numbers:
 # Весь модуль contracts/proto компилируется, включая схемы, которых не читает
 # ни один потребитель. Потребители сужают вход фильтром paths и поимённым
 # списком Protobuf, поэтому домен без потребителя иначе не проверяется нигде
-# и ломается молча. Стилевых мнений не вносит: buf lint и buf breaking — PER-268.
+# и ломается молча.
 contracts-build:
     cd contracts/proto && buf build
 
+# Стиль схем и совместимость с origin/develop: набор правил и исключения —
+# в contracts/proto/buf.yaml. База — удалённая ветка, поэтому перед прогоном
+# нужен `git fetch`: на отставшей от origin/develop ветке чужие мержи читаются
+# как обратная правка схемы.
+contracts-check:
+    buf lint contracts/proto
+    buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
+
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools

@@ -26,7 +26,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, команды записи и запросы чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а продуктовые запросы идут через единый viewer-aware reader.
 - `apps/notifications/` — Notifications на C# и Orleans. Силос co-hosted с gRPC-сервером, своя база PostgreSQL, миграции при старте одним DbUp — им же применяются вендорные скрипты кластеризации и reminders Orleans, — грин на сходку, материализованное задание напоминания со sweeper'ом и тестовые проекты `Notifications.UnitTests` и `Notifications.IntegrationTests`. Grain storage не зарегистрирован намеренно: источник истины остаётся в PostgreSQL, и отсутствие провайдера делает это правило исполнимым, а не пунктом на review. Reminders, наоборот, зарегистрированы, и правила они не ослабляют: reminder будит грин к моменту срабатывания, но момент лежит строкой в `reminder_task`, а пропущенный за время простоя тик подбирает sweeper по той же таблице. Подписки и gRPC — PER-71, реплика чужих фактов — PER-215, потребление шины и доставка — PER-72.
 - `apps/auction/` — Auction на Scala 3 и Apache Pekko: пока языковой контур, а не сервис. Сборка sbt, кодогенерация ScalaPB из `contracts/proto` внутри `compile`, HTTP-граница с health на Pekko HTTP и тесты ScalaTest. Торгов, persistence и узла в графе Aspire в нём нет.
-- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке.
+- `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке, стиль и совместимость схем держат `buf lint` и `buf breaking` в CI.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
@@ -93,6 +93,9 @@ just check-document-numbers
 
 # Весь модуль contracts/proto компилируется, включая домен без потребителя
 just contracts-build
+
+# Стиль схем и совместимость с origin/develop: buf lint и buf breaking
+just contracts-check
 
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
 just verify

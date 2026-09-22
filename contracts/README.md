@@ -56,7 +56,7 @@ contracts/proto/
 
 ## Текущее управление схемами
 
-Git остаётся источником схем. ADR-014 описывает текущий Protobuf-in-Git подход, но не запрещает навсегда compatibility tooling или Schema Registry. Их необходимость и роль остаются открытым архитектурным вопросом.
+Git остаётся источником схем. ADR-014 описывает текущий Protobuf-in-Git подход. Проверка совместимости в CI введена — `just contracts-check` и джоба `contracts` ([Protobuf standard](../docs/standards/contracts/protobuf.md)). Schema Registry остаётся открытым архитектурным вопросом: его необходимость и роль не решены.
 
 ## Ссылки
 
