@@ -28,6 +28,7 @@ jobs:
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
+      nats-tester: ${{ steps.filter.outputs.nats-tester }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -107,6 +108,11 @@ jobs:
               - 'justfile'
               - 'global.json'
               - '.editorconfig'
+              - '.github/workflows/ci.yml'
+            nats-tester:
+              - 'contracts/proto/**'
+              - 'tools/nats-tester/**'
+              - 'justfile'
               - '.github/workflows/ci.yml'
 
   # Компиляция, стиль и совместимость модуля contracts/proto. Джобы
@@ -394,6 +400,61 @@ jobs:
       - name: Scala format, build and tests
         run: sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
         working-directory: apps/auction
+
+  # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
+  # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со
+  # схемой. Джоба проверяет импорт, состав генерации и реестр, а затем
+  # перегенерирует классы закреплённым protoc и падает на расхождении —
+  # расхождение видно здесь, а не при ручной отладке шины.
+  nats-tester:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.nats-tester == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Токен не нужен: права сужены до чтения, а джоба запускает скачанный
+      # бинарник protoc — checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Версии читаются из justfile, а не дублируются здесь: тем же способом
+      # джобы identity и telegram-bot берут BUF_VERSION.
+      - id: tools
+        run: |
+          echo "python=$(grep '^PYTHON_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "protoc=$(grep '^PROTOC_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "protoc_sha=$(grep '^PROTOC_SHA256' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ steps.tools.outputs.python }}
+      - uses: extractions/setup-just@v4
+      # Установка не только для проверки: она же подтверждает, что пакет
+      # собирается из pyproject и ставится.
+      - run: python -m pip install -e tools/nats-tester
+      - run: just nats-tester-check
+      # protoc ставится из релиза, а не пакетом дистрибутива: gencode
+      # закоммиченных классов проверяет версию рантайма на импорте, и protoc
+      # другой линии даёт другой gencode. Сумма — чтобы скачанный бинарник
+      # совпадал с закреплённой версией, а не просто запускался.
+      - name: Install pinned protoc
+        env:
+          PROTOC_VERSION: ${{ steps.tools.outputs.protoc }}
+          PROTOC_SHA256: ${{ steps.tools.outputs.protoc_sha }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          echo "${PROTOC_SHA256}  $RUNNER_TEMP/protoc.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+      - run: protoc --version
+      - run: just nats-tester-proto
+      # Пусто — классы соответствуют схемам; иначе стат показывает, что
+      # разошлось, и в логе видно, какая схема это сделала.
+      - run: git diff --exit-code --stat -- tools/nats-tester/nats_tester/generated
 
   repo-hygiene:
     runs-on: ubuntu-latest
