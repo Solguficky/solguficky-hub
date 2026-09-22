@@ -59,6 +59,8 @@ describe("dispatcher", () => {
       publish: notUsed,
       unpublish: notUsed,
       cancel: notUsed,
+      attachMaterial: notUsed,
+      removeMaterial: notUsed,
     };
     const dispatcher = createDispatcher(meetups);
 
@@ -95,6 +97,8 @@ describe("dispatcher", () => {
         publish: notUsed,
         unpublish: notUsed,
         cancel: notUsed,
+        attachMaterial: notUsed,
+        removeMaterial: notUsed,
       };
       await expect(
         createDispatcher(meetups).execute({
@@ -122,6 +126,8 @@ describe("dispatcher", () => {
       publish: notUsed,
       unpublish: notUsed,
       cancel: notUsed,
+      attachMaterial: notUsed,
+      removeMaterial: notUsed,
     };
     await expect(
       createDispatcher(meetups).execute({

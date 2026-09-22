@@ -14,6 +14,7 @@ const empty: MeetupSnapshot = {
   lifecycle: "planned",
   visibility: "hidden",
   version: 1,
+  materials: [],
 };
 
 function harness() {
@@ -42,6 +43,14 @@ function harness() {
       snapshot = { ...snapshot, lifecycle: "cancelled" };
       return { kind: "ok" as const, meetup: snapshot };
     }),
+    attachMaterial: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
+    removeMaterial: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
   };
   return { meetups, dispatcher: createDispatcher(meetups) };
 }

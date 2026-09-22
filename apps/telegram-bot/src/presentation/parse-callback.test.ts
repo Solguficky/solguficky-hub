@@ -78,6 +78,32 @@ describe("callback parser", () => {
     });
   });
 
+  it("parses material actions within the callback byte budget", () => {
+    const meetup = "AZLzpLXGfY6fChssPU5fYA";
+    const material = "AZnA3gAAAAAAAABfP4Lqmw";
+    const cases = [
+      [`v1:mm:list:${meetup}`, "manage-materials"],
+      [`v1:mm:add:${meetup}`, "begin-attach-material"],
+      [`v1:mm:confirm-add:${meetup}:${material}`, "confirm-attach-material"],
+      [`v1:mm:rm:${meetup}:${material}`, "remove-material"],
+      [`v1:mm:confirm-rm:${meetup}:${material}`, "confirm-remove-material"],
+      [`v1:mm:file:${meetup}:${material}`, "open-material-file"],
+    ] as const;
+    for (const [data, kind] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toMatchObject({ kind });
+    }
+  });
+
+  it("parses a material list page", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:mm:list:${token}:3`)).toEqual({
+      kind: "manage-materials",
+      token,
+      page: 3,
+    });
+  });
+
   it("parses community administration actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     expect(parseCallback("v1:community:list")).toEqual({ kind: "community" });

@@ -14,6 +14,8 @@ import type { Person } from "../application/types.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
   MeetupListResult,
+  MeetupMaterial,
+  MeetupMaterialSource,
   MeetupResult,
   MeetupSnapshot,
   MeetupSummary,
@@ -28,6 +30,8 @@ type MeetupsRpc = Pick<
   | "publishMeetup"
   | "unpublishMeetup"
   | "cancelMeetup"
+  | "attachMaterial"
+  | "removeMaterial"
   | "getMeetup"
   | "listVisibleMeetups"
 >;
@@ -255,7 +259,37 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
+    attachMaterial: ({ person, meetupId, material, meta }) =>
+      call(async () =>
+        toSnapshot(
+          await rpc.attachMaterial(
+            {
+              viewer: viewer(person),
+              id: meetupId,
+              materialId: material.id,
+              title: material.title,
+              source: fromMaterialSource(material.source),
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    removeMaterial: ({ person, meetupId, materialId, meta }) =>
+      call(async () =>
+        toSnapshot(
+          await rpc.removeMaterial(
+            { viewer: viewer(person), id: meetupId, materialId },
+            options(meta),
+          ),
+        ),
+      ),
   };
+}
+
+function fromMaterialSource(source: MeetupMaterialSource) {
+  return source.kind === "message-link"
+    ? { source: { case: "messageLink" as const, value: source.url } }
+    : { source: { case: "fileId" as const, value: source.fileId } };
 }
 
 function toSummary(
@@ -337,6 +371,7 @@ function toSnapshot(
     lifecycle: toLifecycle(value.lifecycle),
     visibility: toVisibility(value.visibility),
     version: Number(value.version),
+    materials: value.materials.map(toMaterial),
   };
   const fixed =
     value.schedule?.form.case === "fixed"
@@ -350,6 +385,27 @@ function toSnapshot(
     snapshot.schedule = { ...fixed.value.date, ...fixed.value.time };
   }
   return snapshot;
+}
+
+function toMaterial(
+  value: Awaited<ReturnType<MeetupsRpc["getMeetup"]>>["materials"][number],
+): MeetupMaterial {
+  const source = value.source?.source;
+  if (source?.case === "messageLink") {
+    return {
+      id: value.id,
+      title: value.title,
+      source: { kind: "message-link", url: source.value },
+    };
+  }
+  if (source?.case === "fileId") {
+    return {
+      id: value.id,
+      title: value.title,
+      source: { kind: "file", fileId: source.value },
+    };
+  }
+  throw new Error(`Meetups returned material ${value.id} without a source`);
 }
 
 function toLifecycle(

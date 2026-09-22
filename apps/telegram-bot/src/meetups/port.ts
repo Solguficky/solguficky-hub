@@ -9,6 +9,16 @@ export type MeetupSchedule = {
   minutes: number;
 };
 
+export type MeetupMaterialSource =
+  | { kind: "message-link"; url: string }
+  | { kind: "file"; fileId: string };
+
+export type MeetupMaterial = {
+  id: string;
+  title: string;
+  source: MeetupMaterialSource;
+};
+
 export type MeetupSnapshot = {
   id: string;
   title: string;
@@ -21,6 +31,7 @@ export type MeetupSnapshot = {
   // несёт её обратно как `expected_version`, и Meetups сравнивает её в предикате
   // записи (PER-78).
   version: number;
+  materials: readonly MeetupMaterial[];
 };
 
 export type MeetupSummary = {
@@ -45,6 +56,20 @@ export type MeetupGetResult = MeetupResult | { kind: "not-found" };
 export type MeetupListResult =
   | { kind: "ok"; meetups: readonly MeetupSummary[] }
   | MeetupFailure;
+
+export type AttachMaterialRequest = {
+  person: Person;
+  meetupId: string;
+  material: MeetupMaterial;
+  meta?: RpcMetadata;
+};
+
+export type RemoveMaterialRequest = {
+  person: Person;
+  meetupId: string;
+  materialId: string;
+  meta?: RpcMetadata;
+};
 
 export type Meetups = {
   listVisible(person: Person, meta?: RpcMetadata): Promise<MeetupListResult>;
@@ -80,4 +105,6 @@ export type Meetups = {
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
+  attachMaterial(request: AttachMaterialRequest): Promise<MeetupResult>;
+  removeMaterial(request: RemoveMaterialRequest): Promise<MeetupResult>;
 };
