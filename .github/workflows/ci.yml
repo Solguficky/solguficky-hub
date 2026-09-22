@@ -298,8 +298,16 @@ jobs:
       && (needs.changes.outputs.auction == 'true'
       || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
+      # Джоба собирает дерево и запускает его тесты. Токен ей не нужен: права
+      # сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      # Для сборки на sbt это весомее, чем для остальных джоб: build.sbt —
+      # исполняемый Scala-код, и он выполняется из проверяемой ветки.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # Версию JDK держит файл компонента — тем же способом, каким identity
       # держит её в go.mod, а meetups в global.json. Отдельного значения
       # в workflow нет: оно разошлось бы с локальной сборкой молча.
