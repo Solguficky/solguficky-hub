@@ -28,7 +28,7 @@
 |---|---|
 | TypeScript + grammY | Accepted для Telegram Bot ([ADR-030](../decisions/ADR-030-telegram-bot.md)) и для будущего Auction Bot ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) |
 | F#, C#, Kotlin, Go | F# принят для Meetups ([ADR-025](../decisions/ADR-025-meetups-fsharp-stack.md)); Go принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)) |
-| Scala + Apache Pekko | Accepted для аукциона ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)) |
+| Scala + Apache Pekko | Accepted для аукциона ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)); сборка sbt и кодогенерация ScalaPB — [ADR-048](../decisions/ADR-048-auction-sbt-and-scalapb-build.md) |
 | Elixir + Phoenix | Кандидат для будущего realtime gateway при появлении подтверждённых сценариев с постоянными соединениями, presence или массовым fan-out; не входит в MVP |
 | Kotlin | Остаётся в пуле как интерес; за конкретным сервисом не закреплён |
 | Go | Принят для Identity ([ADR-027](../decisions/ADR-027-identity-go-stack.md)); отдельного Scheduler-сервиса не предполагается |

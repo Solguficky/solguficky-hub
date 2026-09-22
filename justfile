@@ -106,11 +106,11 @@ check-document-numbers:
 contracts-build:
     cd contracts/proto && buf build
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, формат F# и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools
+tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -277,6 +277,61 @@ notifications-contracts-check:
 # Локальный запуск вне Aspire; адрес — ASPNETCORE_URLS, база — NOTIFICATIONS_DATABASE_URL
 notifications-run:
     dotnet run --project apps/notifications/Notifications
+
+# --- Auction (Scala / Pekko) -----------------------------------------------
+#
+# Кодогенерация Scala — часть `sbt compile`: sbt-protoc вызывает ScalaPB на
+# схемах contracts/proto, как Grpc.Tools вызывает protoc внутри dotnet build
+# у Meetups. Buf в этой сборке не участвует — обоснование в ADR-048.
+# Версии Scala и библиотек закреплены в apps/auction/build.sbt.
+# Сервис — HTTP-граница на Pekko HTTP; торговой логики в нём пока нет.
+
+# Одного `update` мало: бинарник protoc тянет protocbridge на первой генерации,
+# а scalafmt-core подтягивается при первой проверке формата. Без обоих шагов
+# `just verify` в свежем дереве без сети падает, хотя `tools` уже отработал.
+#
+# Зависимости и бинарники сборки. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
+auction-tools:
+    cd apps/auction && sbt -batch "update; Compile/protocGenerate; scalafmtCheckAll"
+
+# Кодогенерация Protobuf отдельным шагом; `auction-build` выполняет её сам
+auction-proto:
+    cd apps/auction && sbt -batch Compile/protocGenerate
+
+# Сборка сервиса и тестов; кодогенерация входит в compile
+auction-build:
+    cd apps/auction && sbt -batch Test/compile
+
+# Прогон ScalaTest, включая property-проверку каркаса лога
+auction-test:
+    cd apps/auction && sbt -batch test
+
+# scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
+# отдельная задача — иначе build.sbt остаётся единственным неформатируемым
+# файлом компонента.
+#
+# Гейт форматирования Scala по apps/auction/.scalafmt.conf
+auction-lint:
+    cd apps/auction && sbt -batch "scalafmtCheckAll; scalafmtSbtCheck"
+
+# Форматирование Scala вместе с файлами сборки
+auction-format:
+    cd apps/auction && sbt -batch "scalafmtAll; scalafmtSbt"
+
+# Останавливать через сам sbt: forked JVM переживает убитого родителя и
+# оставляет блокировку сервера sbt.
+#
+# Локальный запуск вне Aspire; адрес — AUCTION_HTTP_HOST и AUCTION_HTTP_PORT
+auction-run:
+    cd apps/auction && sbt -batch run
+
+# В `verify` входит именно этот рецепт, а не три отдельных: каждый вызов sbt
+# поднимает свою JVM, и три холодных старта добавили бы к гейту около двух
+# минут на пустом месте.
+#
+# Формат, сборка и тесты Scala одной сессией sbt
+auction-verify:
+    cd apps/auction && sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
 
 # --- Инструменты -----------------------------------------------------------
 
