@@ -1,3 +1,4 @@
+using DotNet.Testcontainers.Builders;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -22,26 +23,45 @@ public static class PostgresAdmin
     /// Своей проверки демона здесь нет: Testcontainers сам знает и unix-socket,
     /// и named pipe Docker Desktop на Windows, а рукописная проверка сокета
     /// молча пропускала бы все тесты схемы на Windows при живом Docker.
+    /// Отказ старта не гасится: причина сохраняется и попадает в сообщение
+    /// «базы нет», а «Docker недоступен» отличимо от поломки конфигурации.
     /// </remarks>
-    private static readonly Lazy<PostgreSqlContainer?> Container = new(() =>
+    private static readonly Lazy<(PostgreSqlContainer? Container, string? Failure)> Container = new(() =>
     {
         try
         {
             var postgres = new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
             postgres.StartAsync().GetAwaiter().GetResult();
-            return postgres;
+
+            // Общий контейнер останавливается явно, а не только реапером Ryuk:
+            // реапер — страховка от падения процесса, а не штатная уборка.
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+                postgres.DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+            return (postgres, null);
         }
-        catch
+        catch (DockerUnavailableException ex)
         {
-            return null;
+            return (null, $"docker unavailable: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return (null, $"testcontainers: {ex.GetType().Name}: {ex.Message}");
         }
     });
 
-    public static bool Started() => Container.Value is not null;
+    public static bool Started() => Container.Value.Container is not null;
+
+    /// <summary>
+    /// Причина отказа контейнера. Нужна там, где прогон падает из-за отсутствия
+    /// базы: без неё настоящая причина — недоступный Docker или поломка
+    /// конфигурации — не видна.
+    /// </summary>
+    public static string? Failure() => Container.Value.Failure;
 
     public static string ConnectionString()
     {
-        if (Container.Value is { } postgres)
+        if (Container.Value.Container is { } postgres)
         {
             return postgres.GetConnectionString();
         }
@@ -92,7 +112,14 @@ public sealed class IsolatedDatabase : IDisposable
                 throw new InvalidOperationException($"postgres: {ex.Message}", ex);
             }
 
-            Assert.Skip($"postgres not available: {ex.Message}");
+            // Причина отказа контейнера едет рядом с причиной отказа базы:
+            // «Docker недоступен» и «сломанная конфигурация» — разные поломки,
+            // и по одному «нет соединения» их не различить.
+            var containerReason = PostgresAdmin.Failure() is { } failure
+                ? $" (container: {failure})"
+                : string.Empty;
+
+            Assert.Skip($"postgres not available: {ex.Message}{containerReason}");
         }
     }
 

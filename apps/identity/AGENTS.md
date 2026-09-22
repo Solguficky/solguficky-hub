@@ -8,5 +8,5 @@ Go + gRPC. Устройство — [ADR-026](../../docs/decisions/ADR-026-ident
 - `gen/` пишет `buf generate` по `buf.gen.yaml`; каталог в `.gitignore`, руками не редактируется. Изменение контракта идёт через `proj-change-contract`.
 - `.golangci.yml` работает в режиме `default: none` — линтер включается явным пунктом списка. Подавление правится в конфиге, а не `//nolint`: `nolintlint` требует и причину, и конкретный линтер.
 - `paralleltest` включён, поэтому у нового теста должен быть `t.Parallel()`.
-- Тест с базой берёт её через `internal/testdb`, а не поднимает свою. Локально без PostgreSQL он пропускается, в CI отсутствие базы — ошибка; это ветка по `GITHUB_ACTIONS` в `testdb`, а не забытый skip.
+- Тест с базой берёт её через `internal/testdb`, а не поднимает свою. Без доступного PostgreSQL прогон падает и локально, и в CI — `testdb` пропуска не даёт: пропуск неотличим от прохождения ([PER-241](https://linear.app/anticnvm/issue/per-241)).
 - Команды — `just identity-*`. Переменные окружения, ручной запуск и проверка через `grpcurl` — [README](README.md).

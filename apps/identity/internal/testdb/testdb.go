@@ -74,21 +74,27 @@ func postgresDSN(t *testing.T) string {
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		skipOrFatal(t, err)
+		requirePostgres(t, err)
 	}
 	defer func() { _ = db.Close() }()
 	if err := db.PingContext(t.Context()); err != nil {
-		skipOrFatal(t, err)
+		requirePostgres(t, err)
 	}
 	return dsn
 }
 
-func skipOrFatal(t *testing.T, err error) {
+// requirePostgres роняет прогон, когда базы нет, и называет, откуда взялся DSN.
+// Пропуска здесь нет намеренно: неполная среда обязана быть видимой ошибкой,
+// иначе зелёный прогон на пропущенных тестах выглядит как проверка
+// (правило «пропуск не равен прохождению», justfile: identity-test).
+func requirePostgres(t *testing.T, err error) {
 	t.Helper()
-	if os.Getenv("IDENTITY_DATABASE_URL") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-		t.Fatalf("postgres: %v", err)
+
+	if os.Getenv("IDENTITY_DATABASE_URL") == "" {
+		t.Fatalf("postgres: %v (IDENTITY_DATABASE_URL не задан, умолчание — 127.0.0.1:5432)", err)
 	}
-	t.Skipf("postgres not available: %v", err)
+
+	t.Fatalf("postgres: %v (IDENTITY_DATABASE_URL задан)", err)
 }
 
 func uniqueDBName(t *testing.T) string {

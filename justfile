@@ -149,8 +149,11 @@ identity-proto:
 identity-build: identity-proto
     cd apps/identity && go build ./...
 
-# Проверка контракта, схемы и разрешения Identity
+# Проверка контракта, схемы и разрешения Identity. База обязательна: без
+# доступного PostgreSQL тесты падают, а не пропускаются — иначе неполная среда
+# даёт зелёный прогон (правило «пропуск не равен прохождению»).
 identity-test: identity-proto
+    @echo "identity-test: база обязательна, недоступный PostgreSQL роняет прогон"
     cd apps/identity && go test ./...
 
 # Линт Identity закреплённой версией; чужая версия читает тот же
@@ -229,12 +232,22 @@ community-site-serve:
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
+# Порог числа тестов: 533 = 429 unit + 104 integration. Поднимается вручную
+# вместе с набором — добавил тест, обнови число здесь тем же изменением.
+# Порог держит исчезновение тестов из набора; частичный пропуск ловит
+# --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
+# выполненным.
+MEETUPS_TEST_THRESHOLD := "533"
+
 # Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
 # Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
-# схемы применяют миграции к PostgreSQL. Без доступной базы они пропускаются.
+# схемы применяют миграции к PostgreSQL. Пропуск теста роняет прогон: неполная
+# среда видна отказом, а не зелёным результатом. Разрешённых пропусков внутри
+# уровня нет — уровень выбирается отдельным рецептом, это вводит PER-269.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
-    dotnet test --solution apps/meetups/Meetups.sln
+    @echo "meetups-test: пропуск теста роняет прогон, разрешённых пропусков нет"
+    dotnet test --solution apps/meetups/Meetups.sln --fail-skips on --minimum-expected-tests {{MEETUPS_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
 meetups-contracts-check:
@@ -263,12 +276,18 @@ meetups-format-check: dotnet-tools
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers
-# и без доступного Docker пропускаются — но не в CI: там отсутствие контейнера
-# красит джобу, иначе зелёный прогон на пропущенных тестах выглядит как проверка.
+# Порог числа тестов Notifications: 16 = unit + integration. Поднимается вручную
+# вместе с набором — добавил тест, обнови число здесь тем же изменением. Порог
+# держит исчезновение тестов из набора; частичный пропуск ловит --fail-skips.
+NOTIFICATIONS_TEST_THRESHOLD := "16"
+
+# Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers;
+# пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри
+# уровня нет, а зелёный прогон на пропущенных тестах выглядит как проверка.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 notifications-test:
-    dotnet test --solution apps/notifications/Notifications.sln
+    @echo "notifications-test: пропуск теста роняет прогон, разрешённых пропусков нет"
+    dotnet test --solution apps/notifications/Notifications.sln --fail-skips on --minimum-expected-tests {{NOTIFICATIONS_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: то же условие обратимости, что у Meetups
 notifications-contracts-check:
