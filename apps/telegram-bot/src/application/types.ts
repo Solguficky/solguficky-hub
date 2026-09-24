@@ -15,7 +15,12 @@ export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
-export type MeetupStateAction = "unpublish" | "cancel" | "hold";
+// `unschedule` снимает назначенную публикацию: это не ось видимости, но
+// механика та же — отдельное действие с подтверждением и повтором по версии.
+export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
+// Почему вопрос о моменте публикации задан снова: ввод не разобран (E-02),
+// момент уже прошёл (E-02 с отдельным текстом) или сходку успели изменить.
+export type PublishMomentRetry = "unparsed" | "past" | "conflict";
 
 export type ExecuteRequest =
   | { identity: Person; intent: "start"; deepLink?: DeepLink }
@@ -66,6 +71,16 @@ export type ExecuteRequest =
   | {
       identity: Person;
       intent: "publish-meetup";
+      meetupId: string;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      // Момент приходит строкой, как его написал человек: разбор принадлежит
+      // юзкейсу, чтобы отказ разбора и отказ домена жили в одном месте.
+      identity: Person;
+      intent: "schedule-publication";
+      value: string;
       meetupId: string;
       requestId?: string;
       useCase?: string;
@@ -185,6 +200,15 @@ export type ExecuteResult =
     }
   | { kind: "preview"; meetup: MeetupSnapshot }
   | { kind: "published"; meetup: MeetupSnapshot }
+  | {
+      kind: "ask-publish-moment";
+      meetup: MeetupSnapshot;
+      retry?: PublishMomentRetry;
+    }
+  | { kind: "publication-scheduled"; meetup: MeetupSnapshot }
+  // Назначить публикацию нельзя в текущем состоянии сходки: она уже
+  // опубликована или отменена (FAILED_PRECONDITION). Снимок — перечитанный.
+  | { kind: "publication-unavailable"; meetup: MeetupSnapshot }
   | { kind: "meetup-updated"; meetup: MeetupSnapshot }
   | {
       kind: "meetup-state-changed";
@@ -193,7 +217,7 @@ export type ExecuteResult =
     }
   | {
       kind: "meetup-state-unchanged";
-      reason: "already-cancelled" | "already-hidden";
+      reason: "already-cancelled" | "already-hidden" | "not-scheduled";
       meetup: MeetupSnapshot;
     }
   | { kind: "material-attached"; meetup: MeetupSnapshot }

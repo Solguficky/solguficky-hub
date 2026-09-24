@@ -61,6 +61,8 @@ describe("dispatcher", () => {
       unpublish: notUsed,
       cancel: notUsed,
       markHeld: notUsed,
+      schedulePublication: notUsed,
+      cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
     };
@@ -110,6 +112,8 @@ describe("dispatcher", () => {
       unpublish: notUsed,
       cancel: notUsed,
       markHeld: notUsed,
+      schedulePublication: notUsed,
+      cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
     };
@@ -151,6 +155,8 @@ describe("dispatcher", () => {
         unpublish: notUsed,
         cancel: notUsed,
         markHeld: notUsed,
+        schedulePublication: notUsed,
+        cancelPublication: notUsed,
         attachMaterial: notUsed,
         removeMaterial: notUsed,
       };
@@ -182,6 +188,8 @@ describe("dispatcher", () => {
       unpublish: notUsed,
       cancel: notUsed,
       markHeld: notUsed,
+      schedulePublication: notUsed,
+      cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
     };

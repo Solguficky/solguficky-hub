@@ -89,6 +89,23 @@ describe("callback parser", () => {
     });
   });
 
+  it("parses deferred publication actions within the byte budget", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const expected = {
+      [`v1:manage:publish-later:${token}`]: "manage-publish-later",
+      [`v1:manage:unschedule:${token}`]: "manage-unschedule",
+      [`v1:manage:confirm-unschedule:${token}`]: "manage-confirm-unschedule",
+    };
+
+    for (const [callback, kind] of Object.entries(expected)) {
+      expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
+      expect(parseCallback(callback)).toEqual({ kind, token });
+    }
+    expect(parseCallback(`v1:manage:unschedule:${token}:1`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses material actions within the callback byte budget", () => {
     const meetup = "AZLzpLXGfY6fChssPU5fYA";
     const material = "AZnA3gAAAAAAAABfP4Lqmw";

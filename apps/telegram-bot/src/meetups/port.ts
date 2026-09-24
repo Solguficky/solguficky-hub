@@ -32,6 +32,11 @@ export type MeetupSnapshot = {
   // записи (PER-78).
   version: number;
   materials: readonly MeetupMaterial[];
+  // Назначенный момент отложенной публикации в часовом поясе сообщества.
+  // Meetups отдаёт мгновение UTC, а адаптер переводит его в местное время
+  // сообщества: человек вводит момент в этом поясе и должен увидеть его тем же,
+  // а не сдвинутым на разницу поясов. Отсутствие — «публикация не назначена».
+  publishAt?: MeetupSchedule;
 };
 
 export type MeetupSummary = {
@@ -49,7 +54,11 @@ export type ArchivedMeetupSummary = MeetupSummary & {
 
 export type MeetupFailure =
   | { kind: "forbidden" }
-  | { kind: "invalid"; message: string }
+  // `precondition` отмечает FAILED_PRECONDITION: запрос корректен, но домен
+  // не позволяет действие в текущем состоянии сходки. Без флага это
+  // INVALID_ARGUMENT — неисполнимо само значение. Коды разведены контрактом
+  // намеренно (integration.md), и кадр отказа выбирается по ним, а не по тексту.
+  | { kind: "invalid"; message: string; precondition?: true }
   | { kind: "conflict" }
   | { kind: "timeout"; cause: unknown }
   | { kind: "unavailable"; cause: unknown };
@@ -121,6 +130,18 @@ export type Meetups = {
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
   markHeld(
+    person: Person,
+    meetup: MeetupSnapshot,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  // Момент — местная дата и время сообщества; в мгновение его переводит Meetups.
+  schedulePublication(
+    person: Person,
+    meetup: MeetupSnapshot,
+    moment: MeetupSchedule,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  cancelPublication(
     person: Person,
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,

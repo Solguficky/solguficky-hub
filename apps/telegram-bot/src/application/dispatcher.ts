@@ -105,6 +105,7 @@ export function createDispatcher(
         case "set-meetup-field":
         case "update-meetup-field":
         case "publish-meetup":
+        case "schedule-publication":
         case "change-meetup-state":
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }

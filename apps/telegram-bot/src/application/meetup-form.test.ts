@@ -48,6 +48,15 @@ function harness() {
       snapshot = { ...snapshot, lifecycle: "held" };
       return { kind: "ok" as const, meetup: snapshot };
     }),
+    schedulePublication: vi.fn(async (_person, meetup, moment) => {
+      snapshot = { ...meetup, publishAt: moment };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    cancelPublication: vi.fn(async (_person, meetup) => {
+      const { publishAt: _cleared, ...rest } = meetup;
+      snapshot = rest;
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
     attachMaterial: vi.fn(async () => ({
       kind: "ok" as const,
       meetup: snapshot,
@@ -386,5 +395,138 @@ describe("meetup creation form", () => {
         meetupId: empty.id,
       }),
     ).resolves.toEqual({ kind: "conflict", meetup: changed, action: "cancel" });
+  });
+});
+
+describe("deferred publication", () => {
+  const moment = { year: 2026, month: 10, day: 1, hours: 19, minutes: 30 };
+
+  it("schedules the typed local moment against the read version", async () => {
+    const { meetups, dispatcher } = harness();
+
+    const result = await dispatcher.execute({
+      identity,
+      intent: "schedule-publication",
+      value: "01.10.2026 19:30",
+      meetupId: empty.id,
+    });
+
+    expect(meetups.schedulePublication).toHaveBeenCalledWith(
+      identity,
+      empty,
+      moment,
+      undefined,
+    );
+    expect(result).toEqual({
+      kind: "publication-scheduled",
+      meetup: { ...empty, publishAt: moment },
+    });
+  });
+
+  it("repeats the question without calling Meetups on unparsed input", async () => {
+    const { meetups, dispatcher } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "schedule-publication",
+        value: "завтра вечером",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "ask-publish-moment",
+      meetup: empty,
+      retry: "unparsed",
+    });
+    expect(meetups.schedulePublication).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a past moment from a meetup that is already published", async () => {
+    const { meetups, dispatcher } = harness();
+    const published = { ...empty, visibility: "visible" as const, version: 2 };
+    meetups.schedulePublication = vi
+      .fn<Meetups["schedulePublication"]>()
+      .mockResolvedValueOnce({ kind: "invalid", message: "in the past" })
+      .mockResolvedValueOnce({
+        kind: "invalid",
+        message: "already published",
+        precondition: true,
+      });
+    const request = {
+      identity,
+      intent: "schedule-publication" as const,
+      value: "01.10.2026 19:30",
+      meetupId: empty.id,
+    };
+
+    await expect(dispatcher.execute(request)).resolves.toEqual({
+      kind: "ask-publish-moment",
+      meetup: empty,
+      retry: "past",
+    });
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: published,
+    }));
+    await expect(dispatcher.execute(request)).resolves.toEqual({
+      kind: "publication-unavailable",
+      meetup: published,
+    });
+  });
+
+  it("asks for the moment again over the fresh snapshot on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.schedulePublication = vi.fn(async () => ({
+      kind: "conflict" as const,
+    }));
+    meetups.get = vi
+      .fn<Meetups["get"]>()
+      .mockResolvedValueOnce({ kind: "ok", meetup: empty })
+      .mockResolvedValueOnce({ kind: "ok", meetup: changed });
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "schedule-publication",
+        value: "01.10.2026 19:30",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "ask-publish-moment",
+      meetup: changed,
+      retry: "conflict",
+    });
+  });
+
+  it("cancels a scheduled publication once and reports a repeat as done", async () => {
+    const { meetups, dispatcher } = harness();
+    await dispatcher.execute({
+      identity,
+      intent: "schedule-publication",
+      value: "01.10.2026 19:30",
+      meetupId: empty.id,
+    });
+    const cancel = {
+      identity,
+      intent: "change-meetup-state" as const,
+      action: "unschedule" as const,
+      meetupId: empty.id,
+    };
+
+    const first = await dispatcher.execute(cancel);
+    const repeated = await dispatcher.execute(cancel);
+
+    expect(first).toEqual({
+      kind: "meetup-state-changed",
+      action: "unschedule",
+      meetup: empty,
+    });
+    expect(repeated).toEqual({
+      kind: "meetup-state-unchanged",
+      reason: "not-scheduled",
+      meetup: empty,
+    });
+    expect(meetups.cancelPublication).toHaveBeenCalledOnce();
   });
 });

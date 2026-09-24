@@ -1,4 +1,5 @@
 import { createDispatcher } from "./application/dispatcher.js";
+import { parseTimeZone } from "./community-time.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
@@ -37,7 +38,19 @@ async function main(): Promise<number> {
     logger.error("TELEGRAM_BOT_PRESENTATION must be rich or plain");
     return 1;
   }
-  const meetups = createMeetupsClient(meetupsUrl);
+  // Пояс проверяется на старте, как у Meetups: без него карточка не может
+  // показать назначенный момент публикации, а опечатка в имени пояса иначе
+  // всплыла бы только на первом черновике с назначенной публикацией.
+  const communityTimeZone = parseTimeZone(
+    readEnv("TELEGRAM_BOT_COMMUNITY_TIME_ZONE"),
+  );
+  if (communityTimeZone === undefined) {
+    logger.error(
+      "TELEGRAM_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
+    );
+    return 1;
+  }
+  const meetups = createMeetupsClient(meetupsUrl, communityTimeZone);
   const notifications = createNotificationsClient(notificationsUrl);
   const metrics = startMetrics();
   const dispatcher = createDispatcher(meetups, notifications);

@@ -11,6 +11,7 @@ import {
 } from "../../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
+import { communityLocalTime } from "../community-time.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
   ArchivedMeetupListResult,
@@ -35,6 +36,8 @@ type MeetupsRpc = Pick<
   | "attachMaterial"
   | "removeMaterial"
   | "markMeetupHeld"
+  | "scheduleMeetupPublication"
+  | "cancelMeetupPublication"
   | "getMeetup"
   | "listVisibleMeetups"
   | "listArchivedMeetups"
@@ -44,6 +47,7 @@ export type MeetupsClient = Meetups & { close(): void };
 
 export function createMeetupsClient(
   baseUrl: string,
+  communityTimeZone: string,
   timeoutMs = 3_000,
 ): MeetupsClient {
   const sessionManager = new Http2SessionManager(baseUrl);
@@ -55,14 +59,20 @@ export function createMeetupsClient(
       sessionManager,
     }),
   );
-  const client = createMeetupsAdapter(rpc, timeoutMs);
+  const client = createMeetupsAdapter(rpc, timeoutMs, communityTimeZone);
   return { ...client, close: () => sessionManager.abort() };
 }
 
+// Пояс по умолчанию нужен только тестам адаптера, которые не читают момент
+// публикации: процесс собирает клиент через `createMeetupsClient`, а там пояс
+// обязателен и проверен на старте (main.ts).
 export function createMeetupsAdapter(
   rpc: MeetupsRpc,
   timeoutMs = 3_000,
+  communityTimeZone = "UTC",
 ): Meetups {
+  const snapshot = (value: Parameters<typeof toSnapshot>[0]) =>
+    toSnapshot(value, communityTimeZone);
   const call = async (
     operation: () => Promise<MeetupSnapshot>,
   ): Promise<MeetupResult> => {
@@ -83,10 +93,15 @@ export function createMeetupsAdapter(
       }
       if (
         cause instanceof ConnectError &&
-        (cause.code === Code.InvalidArgument ||
-          cause.code === Code.FailedPrecondition)
+        cause.code === Code.InvalidArgument
       ) {
         return { kind: "invalid", message: cause.message };
+      }
+      if (
+        cause instanceof ConnectError &&
+        cause.code === Code.FailedPrecondition
+      ) {
+        return { kind: "invalid", message: cause.message, precondition: true };
       }
       // ABORTED — настоящий конфликт версий, а не недоступность зависимости:
       // команда собрана верно, но показанный снимок устарел (PER-78).
@@ -161,7 +176,7 @@ export function createMeetupsAdapter(
     },
     createDraft: (person, id, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.createMeetupDraft(
             { viewer: viewer(person), id },
             options(meta),
@@ -172,7 +187,7 @@ export function createMeetupsAdapter(
       try {
         return {
           kind: "ok",
-          meetup: toSnapshot(
+          meetup: snapshot(
             await rpc.getMeetup({ viewer: viewer(person), id }, options(meta)),
           ),
         };
@@ -203,7 +218,7 @@ export function createMeetupsAdapter(
     },
     changeAttributes: (person, meetup, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.changeMeetupAttributes(
             {
               viewer: viewer(person),
@@ -221,7 +236,7 @@ export function createMeetupsAdapter(
       ),
     setSchedule: (person, meetup, schedule, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.setMeetupSchedule(
             {
               viewer: viewer(person),
@@ -255,7 +270,7 @@ export function createMeetupsAdapter(
       ),
     publish: (person, meetup, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.publishMeetup(
             {
               viewer: viewer(person),
@@ -268,7 +283,7 @@ export function createMeetupsAdapter(
       ),
     unpublish: (person, meetup, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.unpublishMeetup(
             {
               viewer: viewer(person),
@@ -281,7 +296,7 @@ export function createMeetupsAdapter(
       ),
     cancel: (person, meetup, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.cancelMeetup(
             {
               viewer: viewer(person),
@@ -294,8 +309,42 @@ export function createMeetupsAdapter(
       ),
     markHeld: (person, meetup, meta) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.markMeetupHeld(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    schedulePublication: (person, meetup, moment, meta) =>
+      call(async () =>
+        snapshot(
+          await rpc.scheduleMeetupPublication(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+              moment: {
+                date: {
+                  year: moment.year,
+                  month: moment.month,
+                  day: moment.day,
+                },
+                time: { hours: moment.hours, minutes: moment.minutes },
+              },
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    cancelPublication: (person, meetup, meta) =>
+      call(async () =>
+        snapshot(
+          await rpc.cancelMeetupPublication(
             {
               viewer: viewer(person),
               id: meetup.id,
@@ -307,7 +356,7 @@ export function createMeetupsAdapter(
       ),
     attachMaterial: ({ person, meetupId, material, meta }) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.attachMaterial(
             {
               viewer: viewer(person),
@@ -322,7 +371,7 @@ export function createMeetupsAdapter(
       ),
     removeMaterial: ({ person, meetupId, materialId, meta }) =>
       call(async () =>
-        toSnapshot(
+        snapshot(
           await rpc.removeMaterial(
             { viewer: viewer(person), id: meetupId, materialId },
             options(meta),
@@ -426,6 +475,7 @@ function roleValue(role: string): GlobalRole {
 
 function toSnapshot(
   value: Awaited<ReturnType<MeetupsRpc["createMeetupDraft"]>>,
+  communityTimeZone: string,
 ): MeetupSnapshot {
   const snapshot: MeetupSnapshot = {
     id: value.id,
@@ -447,6 +497,12 @@ function toSnapshot(
     fixed.value.time !== undefined
   ) {
     snapshot.schedule = { ...fixed.value.date, ...fixed.value.time };
+  }
+  if (value.scheduledPublishAt !== undefined) {
+    snapshot.publishAt = communityLocalTime(
+      value.scheduledPublishAt,
+      communityTimeZone,
+    );
   }
   return snapshot;
 }

@@ -7,12 +7,16 @@ import {
   hubAccessErrors,
   hubAccessTexts,
 } from "../application/hub-access.js";
-import { formatSchedule } from "../application/meetup-form.js";
+import {
+  formatLocalMoment,
+  formatSchedule,
+} from "../application/meetup-form.js";
 import type {
   ExecuteResult,
   FormField,
   MeetupStateAction,
   Person,
+  PublishMomentRetry,
 } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
@@ -31,7 +35,12 @@ import type {
 } from "../meetups/port.js";
 import type { NotificationCategory } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
-import { editQuestionText, parseEditQuestion } from "./edit-question.js";
+import {
+  editQuestionText,
+  parseEditQuestion,
+  parsePublishMomentQuestion,
+  publishMomentQuestionText,
+} from "./edit-question.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationText,
@@ -43,7 +52,11 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
-import { parseCallback, removableUsernamePattern } from "./parse-callback.js";
+import {
+  type CallbackAction,
+  parseCallback,
+  removableUsernamePattern,
+} from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
@@ -126,6 +139,40 @@ const stateActionCopy: Record<
     label: "Отметить состоявшейся",
     confirmAction: "confirm-hold",
   },
+  unschedule: {
+    verb: "отменить отложенную публикацию сходки",
+    label: "Отменить отложенную публикацию",
+    confirmAction: "confirm-unschedule",
+  },
+};
+
+const publishMomentPrompt =
+  "Когда опубликовать сходку? Напиши дату и время по времени сообщества: ДД.ММ.ГГГГ ЧЧ:ММ";
+// Прошедший момент — отдельный отказ со своим текстом, а не «не разобрал
+// дату»: ввод понят, но время уже наступило (E-02, открытый вопрос раскадровки).
+const publishMomentRetryText: Record<PublishMomentRetry, string> = {
+  unparsed: "Не получилось разобрать дату. Напиши, например: 21.09.2026 19:30",
+  past: "Это время уже прошло или его нельзя назначить по времени сообщества. Назначь публикацию на момент в будущем: ДД.ММ.ГГГГ ЧЧ:ММ",
+  conflict: `${conflictText}\n\n${publishMomentPrompt}`,
+};
+
+// Одна таблица «кнопка → действие» для шага вопроса и шага подтверждения:
+// новое действие смены состояния добавляется строкой, а не двумя цепочками.
+const stateActionByCallback: Record<
+  Extract<
+    CallbackAction["kind"],
+    `manage-${"" | "confirm-"}${"unpublish" | "cancel" | "hold" | "unschedule"}`
+  >,
+  MeetupStateAction
+> = {
+  "manage-unpublish": "unpublish",
+  "manage-confirm-unpublish": "unpublish",
+  "manage-cancel": "cancel",
+  "manage-confirm-cancel": "cancel",
+  "manage-hold": "hold",
+  "manage-confirm-hold": "hold",
+  "manage-unschedule": "unschedule",
+  "manage-confirm-unschedule": "unschedule",
 };
 
 function confirmStateCallback(
@@ -162,8 +209,15 @@ type PendingMaterialTitle = {
   telegramUserId: number;
   expiresAt: number;
 };
+type PendingPublishMoment = {
+  kind: "publish-moment";
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput =
   | PendingQuestion
+  | PendingPublishMoment
   | PendingUsername
   | PendingMaterialInput
   | PendingMaterialTitle;
@@ -245,18 +299,81 @@ async function handleMessage(
       storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
         ? parseEditQuestion(repliedText)
         : undefined;
-    const pending =
+    const recoveredMoment =
+      storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
+        ? parsePublishMomentQuestion(repliedText)
+        : undefined;
+    const pending: PendingInput | undefined =
       storedPending ??
-      (recoveredEdit === undefined
-        ? undefined
-        : {
+      (recoveredEdit !== undefined
+        ? {
             kind: "meetup" as const,
             mode: "edit" as const,
             field: recoveredEdit.field,
             meetupId: tokenToUuid(recoveredEdit.token),
             telegramUserId: ctx.from?.id ?? 0,
             expiresAt: Date.now() + questionTtlMs,
-          });
+          }
+        : recoveredMoment !== undefined
+          ? {
+              kind: "publish-moment" as const,
+              meetupId: tokenToUuid(recoveredMoment.token),
+              telegramUserId: ctx.from?.id ?? 0,
+              expiresAt: Date.now() + questionTtlMs,
+            }
+          : undefined);
+    if (
+      replyId !== undefined &&
+      pending?.kind === "publish-moment" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "update_meetup";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "debug",
+          message: "foreign publish moment answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "schedule-publication",
+        value: ctx.message.text,
+        meetupId: pending.meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
+      outcome = screenBoundary(result, {
+        ok: [
+          "ask-publish-moment",
+          "publication-scheduled",
+          "publication-unavailable",
+        ],
+        okMessage: "publish moment answer handled",
+        rejectedMessage: "publish moment answer rejected",
+        useCase,
+        meetupId: pending.meetupId,
+      });
+      return;
+    }
     if (
       replyId !== undefined &&
       (pending?.kind === "material-source" ||
@@ -577,6 +694,9 @@ async function handleMessage(
       case "edit-ask":
       case "preview":
       case "published":
+      case "ask-publish-moment":
+      case "publication-scheduled":
+      case "publication-unavailable":
       case "meetup-updated":
       case "meetup-state-changed":
       case "meetup-state-unchanged":
@@ -1055,7 +1175,9 @@ async function handleCallback(
       action.kind === "manage-unpublish" ||
       action.kind === "manage-cancel" ||
       action.kind === "manage-hold" ||
-      action.kind === "manage-publish"
+      action.kind === "manage-publish" ||
+      action.kind === "manage-publish-later" ||
+      action.kind === "manage-unschedule"
     ) {
       const meetupId = tokenToUuid(action.token);
       const current = await runtime.dispatcher.execute({
@@ -1142,6 +1264,33 @@ async function handleCallback(
           "Сходка уже отмечена состоявшейся.",
           new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
         );
+      } else if (
+        action.kind === "manage-publish-later" &&
+        meetup.visibility === "visible"
+      ) {
+        // Устаревшая кнопка (E-04): сходку уже опубликовали — вручную или по
+        // расписанию. Вопрос о моменте здесь закончился бы отказом домена.
+        await editScreen(
+          ctx,
+          "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
+      } else if (action.kind === "manage-publish-later") {
+        await renderFormResult(
+          ctx,
+          { kind: "ask-publish-moment", meetup },
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      } else if (
+        action.kind === "manage-unschedule" &&
+        meetup.publishAt === undefined
+      ) {
+        await editScreen(
+          ctx,
+          "Отложенной публикации у сходки уже нет.",
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
       } else if (action.kind === "manage-publish") {
         // Публикация — единственное действие статуса, которое не перечитывает
         // сходку в юзкейсе: устаревшую кнопку разбираем по снимку выше, иначе
@@ -1163,12 +1312,7 @@ async function handleCallback(
         });
         return;
       } else {
-        const stateAction: MeetupStateAction =
-          action.kind === "manage-unpublish"
-            ? "unpublish"
-            : action.kind === "manage-hold"
-              ? "hold"
-              : "cancel";
+        const stateAction = stateActionByCallback[action.kind];
         // «Отметить состоявшейся» открывается с карточки напрямую, а не через
         // подменю статуса (PER-230), поэтому и отказ возвращает туда же.
         const back =
@@ -1196,18 +1340,14 @@ async function handleCallback(
     if (
       action.kind === "manage-confirm-unpublish" ||
       action.kind === "manage-confirm-cancel" ||
-      action.kind === "manage-confirm-hold"
+      action.kind === "manage-confirm-hold" ||
+      action.kind === "manage-confirm-unschedule"
     ) {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
         intent: "change-meetup-state",
-        action:
-          action.kind === "manage-confirm-unpublish"
-            ? "unpublish"
-            : action.kind === "manage-confirm-hold"
-              ? "hold"
-              : "cancel",
+        action: stateActionByCallback[action.kind],
         meetupId,
         ...rpcCall(ctx, useCase),
       });
@@ -2090,6 +2230,22 @@ async function renderMeetupStatus(
     keyboard.text("Скрыть из списка", `v1:manage:unpublish:${token}`).row();
   } else {
     keyboard.text("Опубликовать", `v1:manage:republish:${token}`).row();
+    // Отложенность — выбор момента внутри публикации, а не отдельный
+    // сценарий (ADR-024): кнопка стоит рядом с «Опубликовать», а назначенный
+    // момент меняется тем же вопросом.
+    keyboard
+      .text(
+        meetup.publishAt === undefined
+          ? "Опубликовать позже"
+          : "Перенести публикацию",
+        `v1:manage:publish-later:${token}`,
+      )
+      .row();
+    if (meetup.publishAt !== undefined) {
+      keyboard
+        .text(stateActionCopy.unschedule.label, `v1:manage:unschedule:${token}`)
+        .row();
+    }
   }
   if (meetup.lifecycle === "planned") {
     keyboard.text("Отменить сходку", `v1:manage:cancel:${token}`).row();
@@ -2122,7 +2278,9 @@ async function renderStateResult(
     const text =
       result.reason === "already-cancelled"
         ? "Сходка уже отменена. Повторно ничего не изменилось."
-        : "Сходка уже скрыта из общего списка.";
+        : result.reason === "not-scheduled"
+          ? "Отложенной публикации у сходки уже нет."
+          : "Сходка уже скрыта из общего списка.";
     await editScreen(
       ctx,
       text,
@@ -2197,7 +2355,13 @@ function meetupCardText(
     meetup.description === ""
       ? "Описание пока не добавлено."
       : meetup.description;
-  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  // Назначенный момент стоит сразу под статусом: «скрыта» без него читается
+  // как «черновик забыт», а с ним — как «ждёт публикации».
+  const pending =
+    meetup.publishAt === undefined
+      ? ""
+      : `\nПубликация назначена на ${formatLocalMoment(meetup.publishAt)}`;
+  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
   if (!includeMaterials || meetup.materials.length === 0) return card;
   const materials = meetup.materials
     .slice(0, materialCardLimit)
@@ -2473,11 +2637,70 @@ async function renderFormResult(
     await ctx.reply(
       `Проверь сходку\n\n${meetup.title}\n${formatSchedule(meetup)}\n${meetup.venue}\n\n${meetup.description}`,
       {
-        reply_markup: new InlineKeyboard().text(
-          "Опубликовать",
-          `v1:manage:publish:${uuidToToken(meetup.id)}`,
-        ),
+        reply_markup: new InlineKeyboard()
+          .text("Опубликовать", `v1:manage:publish:${uuidToToken(meetup.id)}`)
+          .row()
+          .text(
+            "Опубликовать позже",
+            `v1:manage:publish-later:${uuidToToken(meetup.id)}`,
+          ),
       },
+    );
+    return;
+  }
+  if (result.kind === "ask-publish-moment") {
+    const token = uuidToToken(result.meetup.id);
+    const current =
+      result.meetup.publishAt === undefined
+        ? ""
+        : `Сейчас назначено: ${formatLocalMoment(result.meetup.publishAt)}\n`;
+    const prompt =
+      result.retry === undefined
+        ? publishMomentPrompt
+        : publishMomentRetryText[result.retry];
+    const message = await ctx.reply(
+      publishMomentQuestionText(`${current}${prompt}`, token),
+      { reply_markup: { force_reply: true, selective: true } },
+    );
+    questions.set(questionKey(ctx.chat?.id, message.message_id), {
+      kind: "publish-moment",
+      meetupId: result.meetup.id,
+      telegramUserId: ctx.from?.id ?? 0,
+      expiresAt: Date.now() + questionTtlMs,
+    });
+    evictOldestQuestions(questions);
+    return;
+  }
+  if (result.kind === "publication-scheduled") {
+    // О самом срабатывании бот не рассказывает: уведомление о публикации —
+    // блок Notifications. Здесь только подтверждение назначения.
+    await ctx.reply(
+      result.meetup.publishAt === undefined
+        ? "Публикация назначена."
+        : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`,
+    );
+    await renderMeetupCard(
+      ctx,
+      { kind: "meetup-card", meetup: result.meetup },
+      false,
+      presentation,
+      true,
+    );
+    return;
+  }
+  if (result.kind === "publication-unavailable") {
+    // E-04: ответ по текущему состоянию, а не по экрану, с которого пришёл ввод.
+    const text =
+      result.meetup.lifecycle === "cancelled"
+        ? "Сходка отменена. Назначить ей публикацию нельзя."
+        : "Сходка уже опубликована. Назначать публикацию больше не нужно.";
+    await ctx.reply(text);
+    await renderMeetupCard(
+      ctx,
+      { kind: "meetup-card", meetup: result.meetup },
+      false,
+      presentation,
+      true,
     );
     return;
   }
@@ -2575,6 +2798,9 @@ function callbackUseCase(
     | "notify-set-meetup"
     | "manage-hold"
     | "manage-confirm-hold"
+    | "manage-publish-later"
+    | "manage-unschedule"
+    | "manage-confirm-unschedule"
     | "manage-materials"
     | "begin-attach-material"
     | "confirm-attach-material"
@@ -2599,6 +2825,9 @@ function callbackUseCase(
     case "manage-confirm-cancel":
     case "manage-hold":
     case "manage-confirm-hold":
+    case "manage-publish-later":
+    case "manage-unschedule":
+    case "manage-confirm-unschedule":
     case "manage-materials":
     case "begin-attach-material":
     case "confirm-attach-material":
