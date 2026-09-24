@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Notifications.Grains;
 using Notifications.Infrastructure;
@@ -25,6 +27,7 @@ public sealed class ReminderSweeper(
     IOptions<MeetupReminderOptions> options,
     TimeProvider clock,
     IHostApplicationLifetime lifetime,
+    ReminderTelemetry telemetry,
     ILogger<ReminderSweeper> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -84,6 +87,10 @@ public sealed class ReminderSweeper(
 
     private async Task Sweep(CancellationToken stoppingToken)
     {
+        var startedAt = Stopwatch.GetTimestamp();
+        var requestId = Guid.NewGuid().ToString("N");
+        using var scope = logger.BeginScope(new Dictionary<string, object> { ["request_id"] = requestId });
+        telemetry.Tick();
         IReadOnlyList<DueReminderTask> due;
 
         try
@@ -101,15 +108,12 @@ public sealed class ReminderSweeper(
             // выборку, а молча остановившийся sweeper — это ровно тот молчащий
             // reminder, наблюдаемость которого заводит PER-223.
             logger.LogError(ex, "Reminder sweep failed to read due tasks");
+            LogSnapshot("failed", 0, 1, null, "dependency_unavailable", requestId, startedAt);
             return;
         }
 
-        if (due.Count == 0)
-        {
-            return;
-        }
-
-        logger.LogInformation("Reminder sweep found {due_count} due tasks", due.Count);
+        var failed = 0;
+        string? errorCategory = null;
 
         foreach (var task in due)
         {
@@ -133,8 +137,76 @@ public sealed class ReminderSweeper(
             }
             catch (Exception ex)
             {
+                failed++;
+                errorCategory = "unexpected";
                 logger.LogError(ex, "Reminder task {task_id} {meetup_id} failed to fire", task.TaskId, task.MeetupId);
             }
         }
+
+        double? oldestDueAge = null;
+        try
+        {
+            var now = clock.GetUtcNow();
+            oldestDueAge = await tasks.OldestDueAgeSeconds(now, stoppingToken);
+            telemetry.ObserveOldestDue(oldestDueAge.Value);
+
+            if (failed == 0)
+            {
+                telemetry.Complete(now);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            failed++;
+            errorCategory ??= "dependency_unavailable";
+            logger.LogError(ex, "Reminder sweep failed to read oldest due task");
+        }
+
+        LogSnapshot(failed == 0 ? "success" : "partial", due.Count, failed, oldestDueAge, errorCategory, requestId, startedAt);
+    }
+
+    private void LogSnapshot(
+        string status,
+        int dueCount,
+        int failedCount,
+        double? oldestDueAgeSeconds,
+        string? errorCategory,
+        string requestId,
+        long startedAt)
+    {
+        // JSON в теле строки даёт LogQL числовые поля без привязки к тому,
+        // как OTLP разложит атрибуты ILogger по structured metadata Loki.
+        var fields = new Dictionary<string, object>
+        {
+            ["service"] = NotificationsHost.ServiceId,
+            ["operation"] = "reminder_sweep",
+            ["result"] = status == "success" ? "ok" : "error",
+            ["request_id"] = requestId,
+            ["sweep_status"] = status,
+            ["duration_us"] = (long)Stopwatch.GetElapsedTime(startedAt).TotalMicroseconds,
+            ["sweep_at_unix_seconds"] = clock.GetUtcNow().ToUnixTimeSeconds(),
+            ["last_successful_sweep_unix_seconds"] = telemetry.LastSuccessfulSweepUnixSeconds,
+            ["due_count"] = dueCount,
+            ["failed_count"] = failedCount,
+            ["fired_total"] = telemetry.FiredTotal,
+            ["removed_total"] = telemetry.RemovedTotal,
+        };
+
+        if (oldestDueAgeSeconds is not null)
+        {
+            fields["oldest_due_age_seconds"] = oldestDueAgeSeconds.Value;
+        }
+
+        if (errorCategory is not null)
+        {
+            fields["error_category"] = errorCategory;
+            fields["error"] = "Reminder sweep incomplete";
+        }
+
+        logger.LogInformation("{reminder_sweep_snapshot}", JsonSerializer.Serialize(fields));
     }
 }
