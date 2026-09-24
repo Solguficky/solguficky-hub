@@ -1,4 +1,5 @@
 import type {
+  ArchivedMeetupSummary,
   MeetupMaterial,
   MeetupSnapshot,
   MeetupSummary,
@@ -9,13 +10,19 @@ export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
-export type MeetupStateAction = "unpublish" | "cancel";
+export type MeetupStateAction = "unpublish" | "cancel" | "hold";
 
 export type ExecuteRequest =
   | { identity: Person; intent: "start"; deepLink?: DeepLink }
   | {
       identity: Person;
       intent: "list-visible-meetups";
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "list-archived-meetups";
       requestId?: string;
       useCase?: string;
     }
@@ -95,6 +102,7 @@ export function startExecuteRequest(
 export type ExecuteResult =
   | { kind: "message"; text: string }
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
+  | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   | { kind: "meetup-card"; meetup: MeetupSnapshot }
   | { kind: "meetup-not-found" }
   | { kind: "ask"; field: FormField; meetup: MeetupSnapshot; error?: string }

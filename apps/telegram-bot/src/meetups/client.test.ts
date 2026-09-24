@@ -8,6 +8,7 @@ import {
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
 import {
+  ListArchivedMeetupsResponseSchema,
   ListVisibleMeetupsResponseSchema,
   MeetupSnapshotSchema,
   MeetupSummarySchema,
@@ -45,7 +46,9 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
     cancelMeetup: vi.fn(),
     attachMaterial: vi.fn(),
     removeMaterial: vi.fn(),
+    markMeetupHeld: vi.fn(),
     getMeetup: vi.fn(),
+    listArchivedMeetups: vi.fn(),
   };
 }
 
@@ -324,6 +327,70 @@ describe("Meetups client", () => {
         viewer: { identityId: "viewer-id", globalRoles: [] },
         id: "meetup-id",
         materialId: "material-id",
+      },
+      { timeoutMs: 3_000 },
+    );
+  });
+
+  it("maps archived meetups to their human-distinguishable status", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.listArchivedMeetups.mockResolvedValue(
+      create(ListArchivedMeetupsResponseSchema, {
+        meetups: [
+          create(MeetupSummarySchema, {
+            id: "held-meetup",
+            title: "Состоявшаяся",
+            lifecycle: MeetupLifecycle.HELD,
+          }),
+          create(MeetupSummarySchema, {
+            id: "cancelled-meetup",
+            title: "Отменённая",
+            lifecycle: MeetupLifecycle.CANCELLED,
+          }),
+          create(MeetupSummarySchema, {
+            id: "past-meetup",
+            title: "Прошедшая",
+            lifecycle: MeetupLifecycle.PLANNED,
+          }),
+        ],
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(meetups.listArchived(person)).resolves.toEqual({
+      kind: "ok",
+      meetups: [
+        { id: "held-meetup", title: "Состоявшаяся", status: "held" },
+        { id: "cancelled-meetup", title: "Отменённая", status: "cancelled" },
+        { id: "past-meetup", title: "Прошедшая", status: "past" },
+      ],
+    });
+    expect(rpc.listArchivedMeetups).toHaveBeenCalledWith(
+      { viewer: { identityId: "viewer-id", globalRoles: [] } },
+      { timeoutMs: 3_000 },
+    );
+  });
+
+  it("sends a mark-held request carrying the caller's expected version", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.markMeetupHeld.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        lifecycle: MeetupLifecycle.HELD,
+        visibility: MeetupVisibility.VISIBLE,
+        version: 3n,
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(
+      meetups.markHeld(person, storedMeetup(2)),
+    ).resolves.toMatchObject({ kind: "ok", meetup: { lifecycle: "held" } });
+    expect(rpc.markMeetupHeld).toHaveBeenCalledWith(
+      {
+        viewer: { identityId: "viewer-id", globalRoles: [] },
+        id: "meetup-id",
+        expectedVersion: 2n,
       },
       { timeoutMs: 3_000 },
     );

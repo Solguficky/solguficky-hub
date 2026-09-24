@@ -13,6 +13,7 @@ export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
 export type CallbackAction =
   | { kind: "hub" }
+  | { kind: "archive" }
   | { kind: "manage-menu" }
   | { kind: "community" }
   | { kind: "ask-allowed-username" }
@@ -29,6 +30,8 @@ export type CallbackAction =
   | { kind: "manage-confirm-unpublish"; token: string }
   | { kind: "manage-cancel"; token: string }
   | { kind: "manage-confirm-cancel"; token: string }
+  | { kind: "manage-hold"; token: string }
+  | { kind: "manage-confirm-hold"; token: string }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
   | { kind: "confirm-attach-material"; token: string; materialToken: string }
@@ -49,6 +52,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
+  if (parsed.data === "v1:nav:archive") return { kind: "archive" };
   if (parts.length === 3 && parts[1] === "view") {
     const viewToken = TokenSchema.safeParse(parts[2]);
     return viewToken.success
@@ -143,5 +147,9 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "manage-cancel", token: token.data };
   if (parts.length === 4 && parts[2] === "confirm-cancel")
     return { kind: "manage-confirm-cancel", token: token.data };
+  if (parts.length === 4 && parts[2] === "hold")
+    return { kind: "manage-hold", token: token.data };
+  if (parts.length === 4 && parts[2] === "confirm-hold")
+    return { kind: "manage-confirm-hold", token: token.data };
   return { kind: "malformed" };
 }

@@ -645,7 +645,10 @@ describe("presentation adapter", () => {
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Ближайшие сходки", callback_data: "v1:nav:hub" }],
+          [
+            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+            { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
           [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
         ],
       },
@@ -848,7 +851,10 @@ describe("presentation adapter", () => {
         text: expect.stringContaining("ни одной запланированной сходки"),
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+            [
+              { text: "Обновить", callback_data: "v1:nav:hub" },
+              { text: "Архив", callback_data: "v1:nav:archive" },
+            ],
           ],
         },
       },
@@ -893,11 +899,139 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
               },
             ],
-            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+            [
+              { text: "Обновить", callback_data: "v1:nav:hub" },
+              { text: "Архив", callback_data: "v1:nav:archive" },
+            ],
           ],
         },
       },
     });
+  });
+
+  it("renders an empty archive as an empty state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "archived-meetup-list",
+      meetups: [],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:archive"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "list-archived-meetups" }),
+    );
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("Архив пока пуст") },
+    });
+  });
+
+  it("distinguishes held, cancelled and past meetups in the archive", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "archived-meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Состоялась",
+          status: "held" as const,
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Отменена",
+          status: "cancelled" as const,
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          title: "Прошла",
+          status: "past" as const,
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:archive"));
+    const text = (calls[1] as { payload: { text: string } } | undefined)
+      ?.payload.text;
+    expect(text).toContain("Состоялась (состоялась)");
+    expect(text).toContain("Отменена (отменена)");
+    expect(text).toContain("Прошла (прошла)");
+  });
+
+  it("shows a hold confirmation and executes only after confirming", async () => {
+    const meetup = publishedMeetup();
+    const held = { ...meetup, lifecycle: "held" as const };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : { kind: "meetup-state-changed", action: "hold", meetup: held },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Точно отметить сходку состоявшейся"),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Да, продолжить",
+                callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+          ],
+        },
+      },
+    });
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: ["admin"],
+      },
+      intent: "change-meetup-state",
+      action: "hold",
+      meetupId: meetup.id,
+      requestId: expect.any(String),
+      useCase: "update_meetup",
+    });
+  });
+
+  it("answers a stale hold button on an already held meetup without confirming", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), lifecycle: "held" },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("уже отмечена состоявшейся") },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("renders Meetups unavailability as E-05 instead of an empty list", async () => {

@@ -13,6 +13,8 @@ import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
+  ArchivedMeetupListResult,
+  ArchivedMeetupSummary,
   MeetupListResult,
   MeetupMaterial,
   MeetupMaterialSource,
@@ -32,8 +34,10 @@ type MeetupsRpc = Pick<
   | "cancelMeetup"
   | "attachMaterial"
   | "removeMaterial"
+  | "markMeetupHeld"
   | "getMeetup"
   | "listVisibleMeetups"
+  | "listArchivedMeetups"
 >;
 
 export type MeetupsClient = Meetups & { close(): void };
@@ -104,6 +108,35 @@ export function createMeetupsAdapter(
           options(meta),
         );
         return { kind: "ok", meetups: response.meetups.map(toSummary) };
+      } catch (cause) {
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.DeadlineExceeded
+        ) {
+          return { kind: "timeout", cause };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.PermissionDenied
+        ) {
+          return { kind: "forbidden" };
+        }
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.InvalidArgument
+        ) {
+          return { kind: "invalid", message: cause.message };
+        }
+        return { kind: "unavailable", cause };
+      }
+    },
+    listArchived: async (person, meta): Promise<ArchivedMeetupListResult> => {
+      try {
+        const response = await rpc.listArchivedMeetups(
+          { viewer: viewer(person) },
+          options(meta),
+        );
+        return { kind: "ok", meetups: response.meetups.map(toArchivedSummary) };
       } catch (cause) {
         if (
           cause instanceof ConnectError &&
@@ -259,6 +292,19 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
+    markHeld: (person, meetup, meta) =>
+      call(async () =>
+        toSnapshot(
+          await rpc.markMeetupHeld(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+            },
+            options(meta),
+          ),
+        ),
+      ),
     attachMaterial: ({ person, meetupId, material, meta }) =>
       call(async () =>
         toSnapshot(
@@ -300,6 +346,24 @@ function toSummary(
   const summary: MeetupSummary = { id: value.id, title: value.title };
   const date = scheduleDate(value.schedule);
   return date === undefined ? summary : { ...summary, schedule: date };
+}
+
+function toArchivedSummary(
+  value: Awaited<
+    ReturnType<MeetupsRpc["listArchivedMeetups"]>
+  >["meetups"][number],
+): ArchivedMeetupSummary {
+  const summary = toSummary(value);
+  // Meetups отдаёт в архив только held, cancelled и просроченную planned
+  // (Archive.fs); внутри архивного ответа planned однозначно значит «прошедшая
+  // и не отмечена состоявшейся» — отдельного статуса на это в контракте нет.
+  const status =
+    value.lifecycle === MeetupLifecycle.HELD
+      ? "held"
+      : value.lifecycle === MeetupLifecycle.CANCELLED
+        ? "cancelled"
+        : "past";
+  return { ...summary, status };
 }
 
 function scheduleDate(

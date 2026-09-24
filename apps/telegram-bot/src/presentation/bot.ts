@@ -8,7 +8,12 @@ import {
   hubAccessTexts,
 } from "../application/hub-access.js";
 import { formatSchedule } from "../application/meetup-form.js";
-import type { ExecuteResult, FormField, Person } from "../application/types.js";
+import type {
+  ExecuteResult,
+  FormField,
+  MeetupStateAction,
+  Person,
+} from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
@@ -19,6 +24,7 @@ import {
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import type {
+  ArchivedMeetupSummary,
   MeetupMaterial,
   MeetupSnapshot,
   MeetupSummary,
@@ -96,6 +102,36 @@ const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 const materialPageSize = 8;
 const materialCardLimit = 20;
+
+// Общая форма для трёх действий смены состояния: кадр подтверждения и повтор
+// после конфликта версий говорят об одном и том же действии одними словами.
+const stateActionCopy: Record<
+  MeetupStateAction,
+  { verb: string; label: string; confirmAction: string }
+> = {
+  unpublish: {
+    verb: "скрыть сходку из общего списка",
+    label: "Скрыть из списка",
+    confirmAction: "confirm-unpublish",
+  },
+  cancel: {
+    verb: "отменить сходку",
+    label: "Отменить сходку",
+    confirmAction: "confirm-cancel",
+  },
+  hold: {
+    verb: "отметить сходку состоявшейся",
+    label: "Отметить состоявшейся",
+    confirmAction: "confirm-hold",
+  },
+};
+
+function confirmStateCallback(
+  action: MeetupStateAction,
+  token: string,
+): string {
+  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}`;
+}
 const materialDisplayTitleLimit = 80;
 
 type PendingQuestion = {
@@ -524,6 +560,7 @@ async function handleMessage(
         await ctx.reply(result.text, {
           reply_markup: new InlineKeyboard()
             .text("Ближайшие сходки", "v1:nav:hub")
+            .text("Архив", "v1:nav:archive")
             .row()
             .text("Управление сходками", "v1:manage:menu"),
         });
@@ -546,6 +583,7 @@ async function handleMessage(
       case "material-attached":
       case "material-removed":
       case "meetup-list":
+      case "archived-meetup-list":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -967,6 +1005,21 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "archive") {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-archived-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderArchiveList(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["archived-meetup-list"],
+        okMessage: "archive list sent",
+        rejectedMessage: "archive list rejected",
+        useCase,
+      });
+      return;
+    }
     if (action.kind === "view-meetup") {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
@@ -997,6 +1050,7 @@ async function handleCallback(
       action.kind === "manage-status" ||
       action.kind === "manage-unpublish" ||
       action.kind === "manage-cancel" ||
+      action.kind === "manage-hold" ||
       action.kind === "manage-publish"
     ) {
       const meetupId = tokenToUuid(action.token);
@@ -1075,6 +1129,15 @@ async function handleCallback(
           "Состоявшуюся сходку отменить нельзя.",
           new InlineKeyboard().text("Назад", `v1:manage:status:${token}`),
         );
+      } else if (action.kind === "manage-hold" && meetup.lifecycle === "held") {
+        // Устаревшая кнопка: кто-то уже отметил сходку состоявшейся. Confirm
+        // здесь был бы подтверждением действия, которое уже не изменит
+        // состояние, — то же обращение со stale-кнопкой, что и у отмены выше.
+        await editScreen(
+          ctx,
+          "Сходка уже отмечена состоявшейся.",
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
       } else if (action.kind === "manage-publish") {
         // Публикация — единственное действие статуса, которое не перечитывает
         // сходку в юзкейсе: устаревшую кнопку разбираем по снимку выше, иначе
@@ -1096,21 +1159,25 @@ async function handleCallback(
         });
         return;
       } else {
-        const verb =
+        const stateAction: MeetupStateAction =
           action.kind === "manage-unpublish"
-            ? "скрыть сходку из общего списка"
-            : "отменить сходку";
-        const confirm =
-          action.kind === "manage-unpublish"
-            ? `v1:manage:confirm-unpublish:${token}`
-            : `v1:manage:confirm-cancel:${token}`;
+            ? "unpublish"
+            : action.kind === "manage-hold"
+              ? "hold"
+              : "cancel";
+        // «Отметить состоявшейся» открывается с карточки напрямую, а не через
+        // подменю статуса (PER-230), поэтому и отказ возвращает туда же.
+        const back =
+          action.kind === "manage-hold"
+            ? `v1:view:${token}`
+            : `v1:manage:status:${token}`;
         await editScreen(
           ctx,
-          `Точно ${verb} «${meetup.title}»?`,
+          `Точно ${stateActionCopy[stateAction].verb} «${meetup.title}»?`,
           new InlineKeyboard()
-            .text("Да, продолжить", confirm)
+            .text("Да, продолжить", confirmStateCallback(stateAction, token))
             .row()
-            .text("Нет", `v1:manage:status:${token}`),
+            .text("Нет", back),
         );
       }
       outcome = {
@@ -1124,14 +1191,19 @@ async function handleCallback(
     }
     if (
       action.kind === "manage-confirm-unpublish" ||
-      action.kind === "manage-confirm-cancel"
+      action.kind === "manage-confirm-cancel" ||
+      action.kind === "manage-confirm-hold"
     ) {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
         intent: "change-meetup-state",
         action:
-          action.kind === "manage-confirm-unpublish" ? "unpublish" : "cancel",
+          action.kind === "manage-confirm-unpublish"
+            ? "unpublish"
+            : action.kind === "manage-confirm-hold"
+              ? "hold"
+              : "cancel",
         meetupId,
         ...rpcCall(ctx, useCase),
       });
@@ -1524,6 +1596,28 @@ async function renderMeetupList(
   }
 }
 
+async function renderArchiveList(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+): Promise<void> {
+  if (result.kind === "archived-meetup-list") {
+    const keyboard = archiveListKeyboard(result.meetups);
+    const text =
+      result.meetups.length === 0
+        ? `Архив пока пуст.\n\nСюда попадают отменённые, состоявшиеся и прошедшие сходки.`
+        : archiveListText(result.meetups);
+    await editScreen(ctx, text, keyboard);
+    return;
+  }
+  if (result.kind === "dependency-rejected" || result.kind === "rejected") {
+    await editScreen(
+      ctx,
+      `Не получилось загрузить архив. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
+      new InlineKeyboard().text("Повторить", "v1:nav:archive"),
+    );
+  }
+}
+
 async function editScreen(
   ctx: UpdateContext,
   text: string,
@@ -1580,7 +1674,49 @@ function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
   for (const meetup of meetups) {
     keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
   }
-  return keyboard.text("Обновить", "v1:nav:hub");
+  return keyboard
+    .text("Обновить", "v1:nav:hub")
+    .text("Архив", "v1:nav:archive");
+}
+
+// Порядок задаёт Meetups (ListArchivedMeetups: новейшая дата первой, без даты —
+// последними), поэтому список не группируется и не пересортировывается, в
+// отличие от meetupListText.
+function archiveListText(meetups: readonly ArchivedMeetupSummary[]): string {
+  return ["Архив сходок", meetups.map(archivedMeetupListLine).join("\n")].join(
+    "\n\n",
+  );
+}
+
+function archivedMeetupListLine(meetup: ArchivedMeetupSummary): string {
+  const label = scheduleLabel(meetup.schedule);
+  const status = archiveStatusLabel(meetup.status);
+  return label === undefined
+    ? `• ${meetup.title} (${status})`
+    : `• ${label} — ${meetup.title} (${status})`;
+}
+
+function archiveStatusLabel(status: ArchivedMeetupSummary["status"]): string {
+  switch (status) {
+    case "held":
+      return "состоялась";
+    case "cancelled":
+      return "отменена";
+    case "past":
+      return "прошла";
+  }
+}
+
+function archiveListKeyboard(
+  meetups: readonly ArchivedMeetupSummary[],
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const meetup of meetups) {
+    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+  }
+  return keyboard
+    .text("Обновить", "v1:nav:archive")
+    .text("Ближайшие сходки", "v1:nav:hub");
 }
 
 async function renderMeetupCard(
@@ -1604,7 +1740,11 @@ async function renderMeetupCard(
       keyboard
         .text("Изменить", `v1:manage:edit:${token}`)
         .text("Статус", `v1:manage:status:${token}`)
-        .row()
+        .row();
+      if (result.meetup.lifecycle === "planned") {
+        keyboard.text("Отметить состоявшейся", `v1:manage:hold:${token}`).row();
+      }
+      keyboard
         .text(
           `Материалы (${result.meetup.materials.length})`,
           `v1:mm:list:${token}`,
@@ -1744,18 +1884,16 @@ async function renderStateResult(
     await renderMeetupCard(ctx, result, true, presentation, true);
     return;
   }
-  if (result.kind === "conflict") {
+  if (result.kind === "conflict" && result.action !== undefined) {
     const token = uuidToToken(result.meetup.id);
-    const label =
-      result.action === "cancel" ? "Отменить сходку" : "Скрыть из списка";
-    const callback =
-      result.action === "cancel"
-        ? `v1:manage:confirm-cancel:${token}`
-        : `v1:manage:confirm-unpublish:${token}`;
+    const copy = stateActionCopy[result.action];
     await editScreen(
       ctx,
       `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
-      new InlineKeyboard().text(label, callback),
+      new InlineKeyboard().text(
+        copy.label,
+        confirmStateCallback(result.action, token),
+      ),
     );
     return;
   }
@@ -1866,10 +2004,17 @@ function buttonText(value: string): string {
 }
 
 function meetupListLine(meetup: MeetupSummary): string {
-  if (meetup.schedule === undefined) {
-    return `• ${meetup.title}`;
-  }
-  const { year, month, day } = meetup.schedule;
+  const label = scheduleLabel(meetup.schedule);
+  return label === undefined
+    ? `• ${meetup.title}`
+    : `• ${label} — ${meetup.title}`;
+}
+
+function scheduleLabel(
+  schedule: MeetupSummary["schedule"],
+): string | undefined {
+  if (schedule === undefined) return undefined;
+  const { year, month, day } = schedule;
   const date = new Date(Date.UTC(year, month - 1, day));
   const monthLabel = new Intl.DateTimeFormat("ru-RU", {
     month: "short",
@@ -1883,7 +2028,7 @@ function meetupListLine(meetup: MeetupSummary): string {
   })
     .format(date)
     .replaceAll(".", "");
-  return `• ${day} ${monthLabel}, ${weekdayLabel} — ${meetup.title}`;
+  return `${day} ${monthLabel}, ${weekdayLabel}`;
 }
 
 async function denyHubAccessIfNeeded(
@@ -2154,6 +2299,7 @@ function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
 function callbackUseCase(
   kind:
     | "hub"
+    | "archive"
     | "outdated"
     | "view-meetup"
     | "manage-menu"
@@ -2172,6 +2318,8 @@ function callbackUseCase(
     | "manage-confirm-unpublish"
     | "manage-cancel"
     | "manage-confirm-cancel"
+    | "manage-hold"
+    | "manage-confirm-hold"
     | "manage-materials"
     | "begin-attach-material"
     | "confirm-attach-material"
@@ -2194,6 +2342,8 @@ function callbackUseCase(
     case "manage-confirm-unpublish":
     case "manage-cancel":
     case "manage-confirm-cancel":
+    case "manage-hold":
+    case "manage-confirm-hold":
     case "manage-materials":
     case "begin-attach-material":
     case "confirm-attach-material":
@@ -2209,6 +2359,7 @@ function callbackUseCase(
     case "remove-allowed-username":
       return "manage_community";
     case "hub":
+    case "archive":
     case "outdated":
       return "find_meetup";
     default: {
