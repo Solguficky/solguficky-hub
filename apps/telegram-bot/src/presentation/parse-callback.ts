@@ -1,9 +1,35 @@
 import { z } from "zod";
 import type { FormField } from "../application/types.js";
+import type {
+  MeetupCategory,
+  NotificationCategory,
+} from "../notifications/port.js";
 
 const CallbackSchema = z.string().max(64);
 const TokenSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
 const FormFieldSchema = z.enum(["title", "schedule", "venue", "description"]);
+
+// Псевдонимы категорий, а не имена из сгенерированного enum: на данные кнопки
+// у Telegram 64 байта, и `NOTIFICATION_CATEGORY_COMMUNITY_ANNOUNCEMENT` рядом с
+// токеном сходки в них не помещается. Бриф зафиксировал `changes`, остальные
+// собраны тем же правилом.
+const MeetupCategorySchema = z.enum([
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+]);
+const GlobalCategorySchema = z.enum([
+  "published",
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+  "announcement",
+]);
+// Кнопка несёт целевое состояние, а не переворот: у двух человек, нажавших на
+// одну отрисовку, результат обязан совпасть.
+const TargetStateSchema = z.enum(["0", "1"]);
 
 // Ник едет в `callback_data` как есть, и обратно он доезжает только в этом
 // алфавите и в этой длине: у Telegram на данные кнопки 64 байта, а длиннее 32
@@ -39,6 +65,20 @@ export type CallbackAction =
   | { kind: "confirm-remove-material"; token: string; materialToken: string }
   | { kind: "open-material-file"; token: string; materialToken: string }
   | { kind: "view-meetup"; token: string }
+  | { kind: "notify-global" }
+  | {
+      kind: "notify-set-global";
+      category: NotificationCategory;
+      enabled: boolean;
+    }
+  | { kind: "notify-settings"; token: string }
+  | { kind: "notify-subscription"; token: string; subscribed: boolean }
+  | {
+      kind: "notify-set-meetup";
+      token: string;
+      category: MeetupCategory;
+      enabled: boolean;
+    }
   | { kind: "outdated" }
   | { kind: "malformed" };
 
@@ -52,6 +92,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
+  if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };
   if (parts.length === 3 && parts[1] === "view") {
     const viewToken = TokenSchema.safeParse(parts[2]);
@@ -119,6 +160,11 @@ export function parseCallback(raw: unknown): CallbackAction {
     if (parts[2] === "block")
       return { kind: "block-member", token: identityToken.data };
   }
+  // Домен `notify` разбирается до общей проверки ниже: она требует токен в
+  // `parts[3]` и домен `manage`, а глобальный кадр токена не несёт вовсе.
+  if (parts[1] === "notify") {
+    return parseNotify(parts);
+  }
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success || parts[1] !== "manage") {
     return { kind: "malformed" };
@@ -151,5 +197,49 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "manage-hold", token: token.data };
   if (parts.length === 4 && parts[2] === "confirm-hold")
     return { kind: "manage-confirm-hold", token: token.data };
+  return { kind: "malformed" };
+}
+
+function parseNotify(parts: readonly string[]): CallbackAction {
+  if (parts.length === 5 && parts[2] === "gset") {
+    const category = GlobalCategorySchema.safeParse(parts[3]);
+    const state = TargetStateSchema.safeParse(parts[4]);
+    return category.success && state.success
+      ? {
+          kind: "notify-set-global",
+          category: category.data,
+          enabled: state.data === "1",
+        }
+      : { kind: "malformed" };
+  }
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "settings") {
+    return { kind: "notify-settings", token: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "sub") {
+    const state = TargetStateSchema.safeParse(parts[4]);
+    return state.success
+      ? {
+          kind: "notify-subscription",
+          token: token.data,
+          subscribed: state.data === "1",
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 6 && parts[2] === "set") {
+    // Только категории, которые сходка может нести: `published` и
+    // `announcement` сюда не проходят, и `INVALID_ARGUMENT` за них не платится.
+    const category = MeetupCategorySchema.safeParse(parts[4]);
+    const state = TargetStateSchema.safeParse(parts[5]);
+    return category.success && state.success
+      ? {
+          kind: "notify-set-meetup",
+          token: token.data,
+          category: category.data,
+          enabled: state.data === "1",
+        }
+      : { kind: "malformed" };
+  }
   return { kind: "malformed" };
 }

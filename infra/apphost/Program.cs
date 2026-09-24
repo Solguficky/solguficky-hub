@@ -15,7 +15,7 @@ topology.AddInfrastructure(R.Nats, NatsSetup.Configure);
 topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure);
 topology.AddService(R.Meetups, [R.Postgres], MeetupsSetup.Configure);
 topology.AddService(R.Notifications, [R.Postgres], NotificationsSetup.Configure);
-topology.AddService(R.TelegramBot, [R.Identity, R.Meetups], TelegramBotSetup.Configure);
+topology.AddService(R.TelegramBot, [R.Identity, R.Meetups, R.Notifications], TelegramBotSetup.Configure);
 
 topology.Build();
 builder.Build().Run();

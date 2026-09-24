@@ -23,6 +23,7 @@ internal static class TelegramBotSetup
             .WithEnvironment("TELEGRAM_BOT_TOKEN", token)
             .WithEnvironment("TELEGRAM_BOT_ENVIRONMENT", environment.Value)
             .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL")
-            .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL");
+            .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL")
+            .BindEndpoint(context, AppHostNames.Resources.Notifications, "grpc", "NOTIFICATIONS_GRPC_URL");
     }
 }

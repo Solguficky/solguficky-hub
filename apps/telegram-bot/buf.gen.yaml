@@ -16,3 +16,4 @@ inputs:
     paths:
       - contracts/proto/identity
       - contracts/proto/meetups
+      - contracts/proto/notifications

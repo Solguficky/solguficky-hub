@@ -855,6 +855,7 @@ describe("presentation adapter", () => {
               { text: "Обновить", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
+            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
           ],
         },
       },
@@ -903,6 +904,7 @@ describe("presentation adapter", () => {
               { text: "Обновить", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
+            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
           ],
         },
       },
@@ -2378,5 +2380,225 @@ describe("telegram environment", () => {
     await expect(requestedUrl("prod")).resolves.toBe(
       "https://api.telegram.org/bot111:test-token/getMe",
     );
+  });
+});
+
+type RenderedScreen = {
+  text?: string;
+  reply_markup?: {
+    inline_keyboard: { text: string; callback_data: string }[][];
+  };
+};
+
+// `ApiPayload` размечен методом Bot API, и обращение к полю кадра из union не
+// проходит по типам. Сужение стоит одной функцией, а не приведением в каждом
+// ожидании.
+function screen(call: RecordedCall | undefined): RenderedScreen {
+  return (call?.payload ?? {}) as RenderedScreen;
+}
+
+describe("notification frames", () => {
+  const token = "AZjypHwefTqbIU-OEqs0zw";
+  const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf";
+  const meetup = {
+    id: meetupId,
+    title: "Настолки у Лёши",
+    description: "",
+    venue: "",
+    lifecycle: "planned" as const,
+    visibility: "visible" as const,
+    version: 1,
+    materials: [],
+  };
+
+  it("offers subscribing from the card and carries the target state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+      subscribed: false,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
+    const keyboard = screen(calls[1]).reply_markup;
+    expect(keyboard?.inline_keyboard[0]).toEqual([
+      { text: "Подписаться", callback_data: `v1:notify:sub:${token}:1` },
+      { text: "Уведомления", callback_data: `v1:notify:settings:${token}` },
+    ]);
+  });
+
+  it("offers unsubscribing when the person already follows the meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+      subscribed: true,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
+    const keyboard = screen(calls[1]).reply_markup;
+    expect(keyboard?.inline_keyboard[0]?.[0]).toEqual({
+      text: "Отписаться",
+      callback_data: `v1:notify:sub:${token}:0`,
+    });
+  });
+
+  // Notifications не ответил: состояние подписки не показывается вовсе, а не
+  // подставляется выдуманным «выключены». Вход в кадр настроек при этом
+  // остаётся — он от состояния подписки не зависит.
+  it("hides only the subscription button when the subscription state is unknown", async () => {
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
+    const data = (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(data).toContain(`v1:notify:settings:${token}`);
+    expect(data.some((value) => value.startsWith("v1:notify:sub:"))).toBe(
+      false,
+    );
+  });
+
+  // Подписку нажали в карточке — карточка и возвращается, с обновлённой
+  // кнопкой, а не подменяется кадром настроек.
+  it("answers a subscription press with the card, not the settings frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+      subscribed: true,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:notify:sub:${token}:1`));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "set-meetup-subscription",
+        subscribed: true,
+      }),
+    );
+    const data = (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(data).toContain(`v1:notify:sub:${token}:0`);
+    expect(data).toContain(`v1:view:${token}`);
+  });
+
+  // Кадр настроек кнопки подписки не несёт: действие живёт в карточке, и макет
+  // этого экрана его не показывает.
+  it("keeps the subscription action out of the settings frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-notification-settings",
+      meetup,
+      subscribed: false,
+      categories: [
+        { category: "changes", enabled: true, differsFromGlobal: false },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:notify:settings:${token}`));
+    const data = (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(data.some((value) => value.startsWith("v1:notify:sub:"))).toBe(
+      false,
+    );
+    expect(data).toContain(`v1:view:${token}`);
+  });
+
+  // Отказ по природе, а не один «сбой на моей стороне»: «Повторить» на отказе
+  // по праву и на устаревшем экране не лечит ничего.
+  it.each([
+    ["forbidden", "Notifications не разрешил это действие.", "v1:nav:hub"],
+    ["invalid", "Этот экран устарел.", "v1:notify:global"],
+    ["conflict", "Это уже сделано.", "v1:notify:global"],
+  ])(
+    "renders a %s refusal as its own frame",
+    async (reason, expected, retry) => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(
+        reason === "invalid"
+          ? { kind: "dependency-rejected", reason, message: "bad category" }
+          : {
+              kind: "dependency-rejected",
+              reason: reason as "forbidden" | "conflict",
+            },
+      );
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+      const rendered = screen(calls[1]);
+      expect(rendered.text).toContain(expected);
+      const data = (rendered.reply_markup?.inline_keyboard ?? [])
+        .flat()
+        .map((button) => button.callback_data);
+      expect(data).toContain(retry);
+    },
+  );
+
+  it("renders the meetup frame with checkboxes, the divergence mark and the pinning warning", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-notification-settings",
+      meetup,
+      subscribed: true,
+      categories: [
+        { category: "changes", enabled: true, differsFromGlobal: false },
+        { category: "reminder", enabled: true, differsFromGlobal: true },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:notify:settings:${token}`));
+    const payload = screen(calls[1]);
+    expect(payload.text).toContain("Уведомления: Настолки у Лёши");
+    expect(payload.text).toContain(
+      "Переключение здесь закрепляет значение за этой сходкой",
+    );
+    expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
+      text: "[x] Изменения данных и статуса",
+      callback_data: `v1:notify:set:${token}:changes:0`,
+    });
+    expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
+      text: "[x] Напоминание перед началом · отличается",
+      callback_data: `v1:notify:set:${token}:reminder:0`,
+    });
+  });
+
+  it("renders the global frame over the whole dictionary", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "global-notification-settings",
+      categories: [
+        { category: "published", enabled: true },
+        { category: "announcement", enabled: false },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+    const payload = screen(calls[1]);
+    expect(payload.text).toContain("Настройка действует для всех сходок");
+    expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
+      text: "[x] Новые сходки",
+      callback_data: "v1:notify:gset:published:0",
+    });
+    expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
+      text: "[ ] Объявления сообщества",
+      callback_data: "v1:notify:gset:announcement:1",
+    });
+  });
+
+  // E-05: отказ Notifications приходит кадром о сбое, а не пустым списком
+  // категорий, который человек прочитал бы как «всё выключено».
+  it("renders a Notifications refusal as E-05 instead of an empty frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+    expect(screen(calls[1]).text).toContain("Это на моей стороне");
   });
 });
