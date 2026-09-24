@@ -2,7 +2,7 @@
 
 > **Статус:** Accepted  
 > **Автор:** владелец  
-> **Дата:** 2026-09-14; принят 2026-09-21, словарь зафиксирован [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); дополнен 2026-09-24 под формат Ф-4 ([PER-291](https://linear.app/anticnvm/issue/per-291)): удержание лота для финала, машина состояний сессии и правило живой ставки ([ADR-049](../decisions/ADR-049-auction-live-bid-rule.md))
+> **Дата:** 2026-09-14; принят 2026-09-21, словарь зафиксирован [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); дополнен 2026-09-24 под формат Ф-4 ([PER-291](https://linear.app/anticnvm/issue/per-291)): удержание лота для финала, машина состояний сессии и правило живой ставки ([ADR-049](../decisions/ADR-049-auction-live-bid-rule.md)); в тот же день дописан словарь планирования лота и состав событий сессии ([PER-301](https://linear.app/anticnvm/issue/per-301))
 
 ## Кратко
 
@@ -10,7 +10,7 @@
 
 Документ предлагает такой словарь и семь осей, по которым он может быть собран иначе. Все семь получили решение владельца 14.09.2026, четыре остававшихся открытых вопроса — 21.09.2026. Тогда же RFC принят, а словарь и форма события зафиксированы отдельным [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); с этого момента записанное здесь является принятым решением.
 
-24.09.2026 документ дополнен под выбранный формат Ф-4: восьмая ось H — удержание отобранного лота через общий дедлайн, машина состояний сессии и правило живой ставки финала. Дополнения помечены датой на месте; отменённое правило не переписано, а помечено со ссылкой на новое.
+24.09.2026 документ дополнен под выбранный формат Ф-4: восьмая ось H — удержание отобранного лота через общий дедлайн, машина состояний сессии и правило живой ставки финала. Дополнения помечены датой на месте; отменённое правило не переписано, а помечено со ссылкой на новое. Вторым дополнением того же дня ([PER-301](https://linear.app/anticnvm/issue/per-301)) закрыт вход лота в `Draft` и `Scheduled`, реестр лотов сессии и payload каждого события сессии: при описании контрактов оказалось, что лоту до торгов и сессии нечем наполнить схему. Разбор — раздел «Словарь планирования и сессии».
 
 Порядок «домен раньше хранилища» взят из [RFC-004](RFC-004-meetups-domain-events-persistence.md), который прямо ставит словарь событий перед выбором event store. Контракты остаются за границей по той же причине: контракт появляется после словаря, а не до.
 
@@ -129,6 +129,8 @@ floor(s)    = max(s.currentPrice, s.ask)           // нижняя границ�
 
 Sale        = { winner : ParticipantId; price : Money; bidId : BidId; at : Instant }
 
+Schedule    = { startingPrice : Money; config : LotConfig }   // из LotScheduled; дедлайна нет, см. ниже
+
 LotConfig   =
   { currency     : CurrencyCode
     stepPolicy   : StepPolicy                      // см. П-03
@@ -148,12 +150,18 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 
 `Draft` и `Scheduled` отделены от `Trading` намеренно. В прежней реализации отдельного состояния «аукцион создан, торги не начаты» не существовало: `StartAuction` персистил два события подряд, и момент «каталог готов, торги ещё нет» был непредставим (§1.2 архива). Заморозка настроек лота перед входом в торги — продуктовое требование freeze-окна — без такого состояния не выразима.
 
+**Как лот попадает в `Draft` и `Scheduled`** (24.09.2026, [PER-301](https://linear.app/anticnvm/issue/per-301)). `Draft` — состояние после `LotDrafted`: лот существует и принадлежит сессии из конверта, но условий торгов у него ещё нет. `Scheduled of Schedule` — состояние после `LotScheduled`; событие повторяется при каждой правке до `LotOpened` и несёт `Schedule` целиком — снимок, а не дельту. `Schedule` — это ровно та часть payload `LotOpened`, которую знает сам лот; вторую часть, `deadline?`, лот получает во входе `OpenLot` от сессии, которой принадлежит общий дедлайн (см. «Формат как конфигурация»). Так каждое поле `LotOpened` выводится из состояния модели: из `Schedule` лота и `SessionConfig` сессии. Название, описание и изображение лота в `Schedule` не входят: это каталожные атрибуты, и после старта торгов их правка разрешена, а условия торгов заморожены (И-10).
+
+`Scheduled` содержит только проверенный `Schedule`: `ScheduleLot` отклоняется `StepPolicyInvalid`, если `stepPolicy` нарушает И-15, и `CurrencyMismatch`, если валюта стартовой цены расходится с `config.currency`. Поэтому И-15 на входе в `Trading` выполняется по построению, а у `OpenLot` не появляется отказа, которого прежде не было, — симметрично `Scheduled` сессии, где конфигурация тоже проверена до перехода.
+
 `Held`, `phase` и `markedForFinal` добавлены 24.09.2026 под Ф-4 ([PER-291](https://linear.app/anticnvm/issue/per-291)); решение и отвергнутые варианты — в «Оси H». Все три — **состояние, а не конфигурация**: `config` после входа в `Trading` не меняется (И-10), а отбор в финал делается по статистике недели, то есть после `LotOpened`, и записать его в конфигурацию было бы уже некуда. `Held` вынесен отдельным значением суммы, а не флагом внутри `Trading`, по той же причине, по которой отделены `Draft` и `Scheduled`: ставка в удержанном лоте непредставима по форме, а не запрещена проверкой.
 
 ### Команды и события
 
 | Команда | Кто отправляет | Событие при успехе | Именованные отказы |
 |---|---|---|---|
+| `DraftLot` | сессия после `LotAdded` | `LotDrafted` | `LotAlreadyExists` |
+| `ScheduleLot` | организатор через сессию | `LotScheduled` | `SchedulingClosed`, `StepPolicyInvalid`, `CurrencyMismatch` |
 | `OpenLot` | планировщик сессии или аукционист | `LotOpened` | `LotNotScheduled`, `AnotherLotActive` |
 | `PlaceBid` | участник (бот), аукционист (зал) | `BidPlaced` | `LotNotOpen`, `LotOnHold`, `BidBelowMinimum`, `BidNotAtNextPrice`, `BidderIsLeader`, `CurrencyMismatch` |
 | `SetProxyLimit` | участник | `ProxyLimitSet` (+ производный `BidPlaced`) | `LotNotOpen`, `ProxyBelowCurrentPrice`, `ProxyDisabledForLot`, `CurrencyMismatch` |
@@ -164,7 +172,7 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 | `MarkForFinal` | сессия по команде организатора | `LotMarkedForFinal` | `LotNotOpen`, `NotInOnlinePhase`, `DeadlinePassed`, `AlreadyMarkedForFinal` |
 | `ResumeLot` | сессия по команде ведущего | `LotResumed` | `LotNotHeld` |
 
-`MarkForFinal`, `ResumeLot`, `LotMarkedForFinal`, `LotHeldForFinal`, `LotResumed` и отказы `LotOnHold`, `BidNotAtNextPrice`, `DeadlinePassed`, `NotInOnlinePhase`, `AlreadyMarkedForFinal`, `LotNotHeld` добавлены 24.09.2026 ([PER-291](https://linear.app/anticnvm/issue/per-291)). Команды сессии — в разделе «Машина состояний сессии».
+`MarkForFinal`, `ResumeLot`, `LotMarkedForFinal`, `LotHeldForFinal`, `LotResumed` и отказы `LotOnHold`, `BidNotAtNextPrice`, `DeadlinePassed`, `NotInOnlinePhase`, `AlreadyMarkedForFinal`, `LotNotHeld` добавлены 24.09.2026 ([PER-291](https://linear.app/anticnvm/issue/per-291)). `DraftLot`, `ScheduleLot`, их события и отказы `LotAlreadyExists`, `SchedulingClosed`, `StepPolicyInvalid` добавлены в тот же день ([PER-301](https://linear.app/anticnvm/issue/per-301)). `SchedulingClosed` — ответ на `ScheduleLot` в любом состоянии, кроме `Draft` и `Scheduled`: условия торгов после `LotOpened` не правятся, а снятый лот не планируется. `ScheduleLot` проходит через сессию, потому что незаполненные поля она берёт из `lotDefaults` своей конфигурации; в `LotScheduled` попадает уже итоговый `Schedule`, и лот о значениях по умолчанию не знает. Значения подставляются в момент `ScheduleLot`: повторный `ScheduleSession` с другими `lotDefaults` уже спланированные лоты не переписывает — их `Schedule` снимок, и поменять его можно только новым `ScheduleLot`. После `PrebiddingStarted` сессия `ScheduleLot` не пропускает (`LotsFrozen`): иначе лот, не открытый в начале недели из-за `LotNotScheduled`, мог бы дойти до `Scheduled` и застрять там, потому что второго `OpenLot` сессия не шлёт. До `LotDrafted` лота нет: любая команда к нему, кроме `DraftLot`, получает тот же ответ, что и команда к неизвестному `lot_id`. Команды сессии — в разделе «Машина состояний сессии».
 
 Производное событие одно: `DeadlineExtended` (следствие П-04). Собственной команды у него нет — событие без команды честнее, чем команда, которую никто не отправляет. Отдельного `LeaderChanged` в журнале нет намеренно: смена лидера выводится из `BidPlaced`, который несёт и нового лидера, и прежнего, а дублирующее событие пришлось бы держать согласованным с породившим его. Прежняя реализация держала обратное: `FinalPhaseEnded` было объявлено, применялось при восстановлении и **не персистилось ни одной командой** (§1.2 архива), то есть переход существовал только на бумаге.
 
@@ -176,7 +184,9 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 
 | Команда | Вход | Ключ идемпотентности | Выход при успехе |
 |---|---|---|---|
-| `OpenLot` | `lot_id`, `op_id`, `actor` | `op_id` | `LotOpened` |
+| `DraftLot` | `lot_id`, `op_id`, `actor` | `op_id` | `LotDrafted` |
+| `ScheduleLot` | `lot_id`, `startingPrice: Money`, `config: LotConfig`, `op_id`, `actor` | `op_id` | `LotScheduled` |
+| `OpenLot` | `lot_id`, `deadline?`, `op_id`, `actor` | `op_id` | `LotOpened` |
 | `PlaceBid` | `lot_id`, `participant_id`, `amount: Money`, `op_id`, `source: Bot \| Floor` | `op_id` | `BidPlaced` с `bid_id` |
 | `SetProxyLimit` | `lot_id`, `participant_id`, `max: Money`, `op_id` | `op_id` | `ProxyLimitSet` |
 | `WithdrawProxyLimit` | `lot_id`, `participant_id`, `op_id` | `op_id` | `ProxyLimitWithdrawn` |
@@ -185,6 +195,8 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 | `WithdrawLot` | `lot_id`, `op_id`, `reason: WithdrawnReason`, `actor` | `op_id` | `LotWithdrawn` |
 | `MarkForFinal` | `lot_id`, `op_id`, `actor` | `op_id` | `LotMarkedForFinal` |
 | `ResumeLot` | `lot_id`, `op_id`, `actor` | `op_id` | `LotResumed` |
+
+`deadline?` во входе `OpenLot` добавлен 24.09.2026 ([PER-301](https://linear.app/anticnvm/issue/per-301)): сессия передаёт `closesAt` своего онлайн-этапа, если `closesLots = true`, и не передаёт ничего, если лот закроет человек. Форма `LotOpened` от этого не меняется — поле `deadline?` в нём было с принятия.
 
 `op_id` генерируется отправителем как UUIDv7 и проверяется обработчиком до применения правила. Повтор возвращает **исходный** ответ и не порождает второго события. Прежде `op_id` генерировался гейтвеем, попадал в Protobuf и не читался сервисом вовсе (§5.10) — поле создавало иллюзию идемпотентности при её полном отсутствии. Дедупликация на краю от этого не спасает и сама по себе ненадёжна: прежний `IdempotencyCache` содержал четыре независимых дефекта в тридцати строках (§5.11), и [ADR-030](../decisions/ADR-030-telegram-bot.md) уже отказался от неё в пользу ключа, разрешаемого доменом.
 
@@ -216,6 +228,8 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 
 | Событие | Payload | Что без него не восстановится |
 |---|---|---|
+| `LotDrafted` | — | существование лота; сессия — в конверте |
+| `LotScheduled` | `startingPrice`, `stepPolicy`, `antiSnipe {N, M, K}`, `proxyEnabled`, `currency` | `Schedule`, из которого `OpenLot` строит `LotOpened` |
 | `LotOpened` | `startingPrice`, `stepPolicy`, `deadline?`, `antiSnipe {N, M, K}`, `proxyEnabled`, `currency` | вся конфигурация торгов — ровно дефект 5.3 |
 | `BidPlaced` | `bid_id`, `participant_id`, `amount`, `previousLeaderId?`, `origin: Manual \| Proxy`, `source: Bot \| Floor` | цена, лидер и происхождение ставки |
 | `ProxyLimitSet` | `participant_id`, `max` | карта лимитов |
@@ -229,7 +243,7 @@ WithdrawnReason = ByOrganizer | ByAuthor | Duplicate
 | `LotHeldForFinal` | `at` | состояние `Held`; цена, лидер и лимиты уже восстановлены предыдущими событиями |
 | `LotResumed` | — | возврат в `Trading` с `phase = Live` |
 
-Форма уже существующих событий не меняется: ни одному payload не добавлено поле, `LotOpened` не несёт `phase` — его значение `Online` выводится из самого факта открытия. Три новых события расширяют перечень, а не переписывают его.
+Форма уже существующих событий не меняется: ни одному payload не добавлено поле, `LotOpened` не несёт `phase` — его значение `Online` выводится из самого факта открытия. Три новых события расширяют перечень, а не переписывают его. То же верно для `LotDrafted` и `LotScheduled` ([PER-301](https://linear.app/anticnvm/issue/per-301)): payload `LotScheduled` — подмножество `LotOpened` без `deadline?`, и поля названы так же.
 
 `previousLeaderId` — необязательное поле и при первой ставке **отсутствует**, а не равно нулю (см. П-01). `setSeq` прокси-лимита в payload не входит: он берётся из конверта того же события.
 
@@ -440,9 +454,11 @@ decide(Held h, SetProxyLimit c)  → как в Trading, но без resolve:    
 Добавлена 24.09.2026 ([PER-291](https://linear.app/anticnvm/issue/per-291)): до этого состояние сессии упоминалось двумя обмолвками, а у «состав финала заморожен» не было носителя. Решение владельца от 22.09.2026 — фазы разделяются полноценными состояниями с событиями перехода.
 
 ```text
-SessionState = Draft
-             | Scheduled    of SessionConfig                 // конфигурация проверена (Т-19)
+SessionState = Draft        of { lots : Set<LotId> }         // начальное состояние: события нет
+             | Scheduled    of { config : SessionConfig; lots }   // конфигурация проверена (Т-19, Т-44)
              | Prebidding   of { finalists : Map<LotId, Pending | Confirmed> }
+                                                             // config и lots переходят во все
+                                                             // последующие состояния; реестр заморожен
              | Settling     of { awaiting : Set<LotId>; finalists }
              | Break        of { finalists : Set<LotId> }    // только Confirmed и удержанные
              | LineupFrozen of { order : LotId list }
@@ -452,7 +468,9 @@ SessionState = Draft
 
 | Команда сессии | Кто отправляет | Событие при успехе | Переход | Именованные отказы |
 |---|---|---|---|---|
-| `ScheduleSession` | организатор | `SessionScheduled` | `Draft → Scheduled` | `ConfigInvalid` |
+| `AddLot` | организатор | `LotAdded(lot_id)`, затем лоту — `DraftLot` | — | `LotsFrozen` |
+| `RemoveLot` | организатор | `LotRemoved(lot_id)`, затем лоту — `WithdrawLot(ByOrganizer)` | — | `LotsFrozen`, `LotNotInSession` |
+| `ScheduleSession` | организатор | `SessionScheduled` | `Draft → Scheduled`; повторно — `Scheduled → Scheduled` | `ConfigInvalid`, `SessionAlreadyStarted` |
 | `StartPrebidding` | планировщик | `PrebiddingStarted` | `Scheduled → Prebidding` | `SessionNotScheduled` |
 | `SelectForFinal` | организатор | `FinalistConfirmed` после ответа лота на `MarkForFinal` | — | `NotInPrebidding`, `AlreadySelected`, `SelectionNotApplicable` |
 | `EndPrebidding` | планировщик в момент общего дедлайна | `PrebiddingDeadlineReached` | `Prebidding → Settling` | `NotInPrebidding`, `DeadlineNotReached` |
@@ -472,7 +490,33 @@ SessionState = Draft
 
 **Протокол с лотами — тот же, что И-14.** Финалист считается подтверждённым только после ответа лота на `MarkForFinal`; лот считается активным в финале только после ответа на `ResumeLot`. Отказ лота (`DeadlinePassed`, `LotNotOpen`) сессия не превращает в финалиста, а после рестарта переспрашивает лоты так же, как Т-27: запрашивает **состояние** лота, а не повторяет команду с новым `op_id`. Отмеченный лот в `Trading` и удержанный в `Held` оба считаются подтверждённым финалистом.
 
-**Длина перерыва не параметр.** `Break` и `LineupFrozen` длятся до команды человека, а не до таймера: в финале дедлайнов нет, всем управляет ведущий. Параметром остаётся только момент общего дедлайна, и он уже есть в данных лотов.
+**Длина перерыва не параметр.** `Break` и `LineupFrozen` длятся до команды человека, а не до таймера: в финале дедлайнов нет, всем управляет ведущий. Параметром остаётся только момент общего дедлайна. **Уточнено 24.09.2026** ([PER-301](https://linear.app/anticnvm/issue/per-301)): он лежит не в данных лотов, а в `SessionConfig` — `onlinePhase.closesAt`, и лот получает его во входе `OpenLot`.
+
+**Реестр лотов** (24.09.2026, [PER-301](https://linear.app/anticnvm/issue/per-301)). Состав лотов сессии — её собственные события `LotAdded` и `LotRemoved`, а не поле `SessionConfig`: лоты заводятся по одному до дедлайна приёма, и повторять всю конфигурацию ради каждого лота значило бы смешать два независимых изменения. Реестр открыт в `Draft` и `Scheduled` и замораживается `PrebiddingStarted`; дальше `AddLot` и `RemoveLot` отклоняются `LotsFrozen`. Лот, снятый после старта, снимается командой лота `WithdrawLot`, а сессия узнаёт об этом тем же переспросом, что и о любом терминальном исходе. Реестр — источник правды о принадлежности: сессия записывает `LotAdded` и только затем шлёт лоту `DraftLot`, поэтому лот без записи в реестре не появляется. Неподтверждённый `DraftLot` сессия после рестарта переотправляет с тем же `op_id`, и повтор получает исходный ответ (П-06). Собирать состав по `session_id` из журналов лотов нельзя: это обращение наружу, И-07.
+
+**`ScheduleSession` повторяется до старта.** В `Scheduled` команда заменяет конфигурацию целиком и снова проходит проверку; после `PrebiddingStarted` — `SessionAlreadyStarted`. У сессии, в отличие от лота, события перехода в `Draft` нет: `Draft` — начальное состояние свёртки, и первым событием сессии может быть как `LotAdded`, так и `SessionScheduled`. Лоту `LotDrafted` нужен потому, что его рождает чужая команда: сессия должна получить подтверждение, что лот существует, до того как планировать его, а подтвердить можно только записанным событием.
+
+#### Состав событий сессии
+
+Добавлен 24.09.2026 ([PER-301](https://linear.app/anticnvm/issue/per-301)). Тот же критерий, что у событий лота: payload несёт то, без чего состояние сессии не восстановится из её журнала, и ничего сверх этого.
+
+| Событие | Payload | Откуда значение |
+|---|---|---|
+| `LotAdded` | `lot_id` | команда `AddLot`; `lot_id` выдаёт сессия |
+| `LotRemoved` | `lot_id` | команда `RemoveLot` |
+| `SessionScheduled` | `SessionConfig` целиком | команда `ScheduleSession` после проверки |
+| `PrebiddingStarted` | — | переход; реестр и дедлайн уже в состоянии |
+| `FinalistConfirmed` | `lot_id` | ответ лота на `MarkForFinal` |
+| `PrebiddingDeadlineReached` | — | переход; момент — `closesAt` из состояния |
+| `PrebiddingEnded` | — | финалисты уже в состоянии: подтверждённые минус выбывшие |
+| `FinalistDropped` | `lot_id` | терминальный ответ финалиста в перерыве |
+| `FinalLineupFrozen` | `order` | команда `FreezeFinalLineup` |
+| `FinalStarted` | — | переход |
+| `FinalLotActivated` | `lot_id` | ответ лота на `ResumeLot` |
+| `FinalLotCompleted` | `lot_id` | терминальный ответ активного лота; исход продажи — в журнале лота |
+| `SessionFinished` | — | переход |
+
+**Чего сессия в журнал не пишет.** Ответы лотов на `OpenLot` и их терминальные исходы в пребиддинге событиями сессии не становятся: `awaiting` и отметки `Pending` после рестарта восстанавливаются переспросом лотов — тем же, что требуют Т-27 и Т-50 и описывает [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md). Иначе журнал сессии дублировал бы сотни фактов лотов, а дублирующее событие пришлось бы держать согласованным с породившим — тот же довод, по которому в модели нет `LeaderChanged`. Исключение — `FinalistConfirmed`, `FinalistDropped`, `FinalLotActivated` и `FinalLotCompleted`: они фиксируют не факт лота, а изменение состава и очереди финала, то есть решение самой сессии.
 
 ### Инварианты
 
@@ -499,13 +543,14 @@ SessionState = Draft
 | И-12 | `DeadlineExtended` следует только за `BidPlaced` того же лота |
 | И-13 | Каждое `BidPlaced` с `origin = Proxy` ссылается на `ProxyLimitSet`, действующий на момент ставки |
 | И-14 | Сессия отмечает лот активным только после подтверждения от лота; неподтверждённый `OpenLot` активным лот не делает |
-| И-15 | Вход в `Trading` возможен только с непротиворечивой `config.stepPolicy`: `Tiered` непуст, отсортирован по возрастанию границы, первая граница равна нулю, все шаги положительны |
+| И-15 | Вход в `Trading` возможен только с непротиворечивой `config.stepPolicy`: `Tiered` непуст, отсортирован по возрастанию границы, первая граница равна нулю, все шаги положительны. **Уточнено 24.09.2026:** проверяется уже на `ScheduleLot` (`StepPolicyInvalid`), поэтому `Scheduled` непротиворечивой политики не содержит, и на входе в `Trading` инвариант выполняется по построению |
 | И-16 | `LotMarkedForFinal` следует только за состоянием `Trading` с `phase = Online`, при `now < deadline`; `LotHeldForFinal` — только за `CloseLot(DeadlineReached)` по отмеченному лоту |
 | И-17 | В `Held` не появляется ни `BidPlaced`, ни `DeadlineExtended`; из `Held` лот выходит только в `Trading` с `phase = Live` (`LotResumed`) или в терминальное состояние (`CloseLot(ByAuctioneer)` либо `WithdrawLot`) |
 | И-18 | В фазе `Live` сумма каждого `BidPlaced` — точка сетки от `floor` на момент ставки: ручная ставка равна `minRequired`, производная округлена вниз до сетки |
 | И-19 | Сессия входит в `Break` только после терминального или удержанного состояния каждого лота каталога; `FinalStarted` следует только за `FinalLineupFrozen`, состав которого равен множеству подтверждённых удержанных финалистов |
+| И-20 | `LotAdded` и `LotRemoved` следуют только за состоянием сессии `Draft` или `Scheduled`: после `PrebiddingStarted` реестр лотов не меняется |
 
-И-16…И-19 добавлены 24.09.2026. Проверка затронутых ранее принятых: **И-06** и **И-12** не задеты — удержание не пишет `DeadlineExtended` и не трогает `extensionsUsed`, поэтому ни лимит продлений, ни «продление только за ставкой» обходить не приходится; именно на них споткнулась бы попытка выразить перенос продлением. **И-10** уточнён на месте. **И-14** распространён на две новые пары «команда — подтверждение»: `MarkForFinal` и `ResumeLot`. **И-15** не изменён, но стал несущим для И-18: сетка финала строится той же функцией `step`, и противоречивая политика шага сломала бы её так же, как онлайн-торги.
+И-20 добавлен 24.09.2026 ([PER-301](https://linear.app/anticnvm/issue/per-301)); И-15 уточнён тогда же. И-16…И-19 добавлены 24.09.2026. Проверка затронутых ранее принятых: **И-06** и **И-12** не задеты — удержание не пишет `DeadlineExtended` и не трогает `extensionsUsed`, поэтому ни лимит продлений, ни «продление только за ставкой» обходить не приходится; именно на них споткнулась бы попытка выразить перенос продлением. **И-10** уточнён на месте. **И-14** распространён на две новые пары «команда — подтверждение»: `MarkForFinal` и `ResumeLot`. **И-15** не изменён, но стал несущим для И-18: сетка финала строится той же функцией `step`, и противоречивая политика шага сломала бы её так же, как онлайн-торги.
 
 ### Глоссарий
 
@@ -532,27 +577,37 @@ SessionState = Draft
 ```text
 SessionConfig =
   { onlinePhase   : OnlinePhase           // None ⇒ формата без онлайн-этапа
-    finalBlocks   : FinalBlock list       // одна запись ⇒ Ф-1
+    finalBlocks   : int                   // 0 ⇒ без финала, 1 ⇒ один финал; уточнено 24.09.2026
     closingPolicy : ClosingPolicy
     lotDefaults   : LotDefaults }         // шаг, анти-снайп N/M/K, прокси вкл/выкл
 
-OnlinePhase   = None | Enabled of { duration : Duration; closesLots : bool }
+OnlinePhase   = None
+              | Enabled of { opensAt    : Instant
+                             closesAt   : Instant option   // конец онлайн-этапа и общий дедлайн лотов
+                             closesLots : bool }
 ClosingPolicy = ByAuctioneer | ByDeadline | Mixed of { onlineByDeadline : bool }
+LotDefaults   = { stepPolicy : StepPolicy; antiSnipe : { N; M; K }; proxyEnabled : bool; currency : CurrencyCode }
 ```
+
+**Уточнено 24.09.2026** ([PER-301](https://linear.app/anticnvm/issue/per-301)). Длительность онлайн-этапа заменена двумя моментами: планировщику сессии нужны точки на шкале времени, чтобы отправить `StartPrebidding` и `EndPrebidding`, а длительность их не даёт. «7 дней» в таблице ниже — разность `closesAt` и `opensAt`. `closesAt` — единственный источник дедлайна лота: сессия передаёт его во входе `OpenLot`, если `closesLots = true`, а у лота в `Schedule` собственного дедлайна нет. Дедлайны по лотам — волны Ф-3 — понадобятся переопределением в `Schedule`, и это совместимое добавление поля, а не смена формы.
+
+`FinalBlock` как запись не определяется: модели хватает количества блоков. Машина состояний сессии знает ровно один финал — перерыв между блоками Ф-2 в ней не выражен, — поэтому `finalBlocks > 1` отклоняется `ConfigInvalid`, а не принимается молча. Поля блока, которые напрашивались, — время начала и вместимость — модель не использует: финал начинает ведущий командой, а предел состава в 7–8 лотов правилом не назван. Завести их значило бы завести поля «на будущее».
 
 Три формата [RFC-007](RFC-007-auction-scope-and-format-options.md#варианты-формата) выражаются значениями, а не ветками:
 
 | Формат | `onlinePhase` | `finalBlocks` | `closingPolicy` |
 |---|---|---|---|
 | Ф-1 Один стрим | `Enabled { 7 дней; closesLots = false }` | один блок | `ByAuctioneer` |
-| Ф-2 Разделённый день | то же | два-три блока с паузами | `ByAuctioneer` |
+| Ф-2 Разделённый день | то же | два-три блока с паузами; с 24.09.2026 машиной сессии не выражен | `ByAuctioneer` |
 | Ф-3 Волны | `Enabled { 7 дней; closesLots = true }` | один короткий блок топ-лотов | `Mixed { onlineByDeadline = true }` |
 
 Выбранный 22.09.2026 **Ф-4** ([RFC-007](RFC-007-auction-scope-and-format-options.md#ф-4-неделя-параллельных-торгов-с-отобранным-финалом)) занимает ту же строку, что Ф-3: `closesLots = true`, один короткий блок топ-лотов, `Mixed`. Отличие живёт в данных лотов — один общий дедлайн вместо расписания волн. Одного понятия таблице всё же не хватило: лот, отобранный в финал, обязан пережить общий дедлайн, и `SessionConfig` этого не выражает — [PER-291](https://linear.app/anticnvm/issue/per-291). **Закрыто 24.09.2026** не новым полем конфигурации, а состоянием: отбор делается после наблюдения, и выразить его можно только событием — П-09 и «Машина состояний сессии».
 
-**Что при этом не меняется никогда.** Правила П-01…П-09, состояние лота, набор событий и все девятнадцать инвариантов от формата не зависят. Лот не знает, в каком формате он торгуется; он знает свой дедлайн — или знает, что дедлайна нет и его закроет человек. С 24.09.2026 он знает ещё свою фазу (`Online` или `Live`) и отметку финала, но обе приходят событиями, а не из конфигурации: формат решает, будут ли эти события отправлены, а не как лот на них отвечает.
+**Что при этом не меняется никогда.** Правила П-01…П-09, состояние лота, набор событий и все двадцать инвариантов от формата не зависят. Лот не знает, в каком формате он торгуется; он знает свой дедлайн — или знает, что дедлайна нет и его закроет человек. С 24.09.2026 он знает ещё свою фазу (`Online` или `Live`) и отметку финала, но обе приходят событиями, а не из конфигурации: формат решает, будут ли эти события отправлены, а не как лот на них отвечает.
 
 **Валидация конфигурации под Ф-4.** Переход сессии в `Scheduled` отклоняется `ConfigInvalid`, если `onlinePhase.closesLots = true`, а у лота сессии нет дедлайна: такой лот не закрылся бы в конце недели и тихо остался бы в `Settling`. `SelectForFinal` отклоняется `SelectionNotApplicable`, если `closesLots = false` (лоты Ф-1 и так идут в финал без дедлайна) или `finalBlocks` пуст (отбирать некуда). Обе проверки — предмет тестов Т-44 и Т-45, как Т-19 для `ByDeadline` без дедлайна.
+
+**Уточнено 24.09.2026** ([PER-301](https://linear.app/anticnvm/issue/per-301)): **`ConfigInvalid` выводится из payload `SessionScheduled` целиком, без обращения к лотам.** Дедлайн лота теперь приходит из `closesAt`, поэтому «лот без дедлайна при `closesLots = true`» сводится к «`closesLots = true` при `closesAt = None`», а Т-19 — к «`ByDeadline` при `closesAt = None`». Полный список `ConfigInvalid`: `closesLots` или `ByDeadline` без `closesAt`; `closesAt ≤ opensAt`; `finalBlocks` вне `0..1`; `lotDefaults.stepPolicy` против И-15. `SelectionNotApplicable` при пустом финале читается как `finalBlocks = 0`. Проверка остаётся в сессии и не расходится с лотами, потому что копии данных лотов в сессии нет — есть один источник дедлайна.
 
 **Чем за это заплачено.** Разница форматов не исчезает, а переезжает в конфигурацию и в тесты. Конфигурация, выразимая как данные, выразима и неверно: `ClosingPolicy = ByDeadline` при `deadline = None` — противоречие, которое ветвление кода сделало бы непредставимым. Отсюда обязательная валидация конфигурации при переходе сессии в активное состояние, и она сама становится предметом теста. Вторая цена: пауза между блоками Ф-2 — состояние сессии, а не лота, и переходы между блоками остаются тем местом, где прошлые реализации ломались.
 
@@ -600,6 +655,20 @@ ClosingPolicy = ByAuctioneer | ByDeadline | Mixed of { onlineByDeadline : bool }
 | **H5** | Отметка `MarkForFinal`, состояние `Held`, возврат `LotResumed` с `phase = Live` | удержанный лот непредставим как торгуемый; лот торгуется до своего дедлайна, как хотел админ; гонку с планировщиком судит лот | три новых события и пять отказов в словаре (`LotOnHold`, `DeadlinePassed`, `NotInOnlinePhase`, `AlreadyMarkedForFinal`, `LotNotHeld`); лот начинает знать свою фазу |
 
 **Решение: H5.** Владелец выбрал состояние `Held` из вариантов H2, H3 и H5 в исходной форме «удержать сразу при отборе». Форма уточнена при записи до отметки с удержанием по дедлайну: немедленное удержание останавливало бы торги отобранного лота раньше остального каталога, а админ назвал в финал «последнюю цену до 00:00». **Форма существующих событий не меняется**: ни одно поле payload не добавлено и не изменено, добавлены три события и две команды. **Правка [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md) нужна**: он перечисляет команды, события и инварианты исчерпывающе, и перечень дополнен разделом «Дополнение 2026-09-24» в самом ADR-047 — по выбору владельца, без переписывания исходного текста.
+
+### Словарь планирования и сессии — решён 24.09.2026
+
+При описании контрактов ([PER-149](https://linear.app/anticnvm/issue/per-149)) сработал сигнал пересмотра [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md): лоту до торгов и сессии понадобились поля, которых нет ни в одном payload. Пять развилок решены владельцем в [PER-301](https://linear.app/anticnvm/issue/per-301); правила П-01…П-09 и форма принятых событий лота не переоткрывались.
+
+| Развилка | Выбрано | Отвергнуто и почему |
+|---|---|---|
+| Р-1. Вход лота в `Draft` и `Scheduled` | **1C**: `LotDrafted` без payload и повторяемый `LotScheduled` со снимком `Schedule` | 1A — `Draft` без события: у лота нет факта существования, на который сессия могла бы получить подтверждение; 1B — частичная форма в домене: состояние пошагового ввода бота переезжает в домен торгов |
+| Р-2. Кто владеет дедлайном | **2B**: `closesAt` в `SessionConfig`, лоту — во входе `OpenLot` | 2A — дедлайн в `Schedule` лота: Т-44 требует данных чужого агрегата, и сессии пришлось бы держать копию дедлайнов, которая устаревает при правке лота |
+| Р-3. Состав лотов сессии | **3B**: события `LotAdded` и `LotRemoved`, реестр заморожен `PrebiddingStarted` | 3A — поле `lots` в `SessionConfig`: каждый новый лот повторяет всю конфигурацию; 3C — состав по `session_id` из журналов лотов: обращение наружу, И-07 |
+| Р-4. `FinalBlock` | **4A**: `finalBlocks : int`, допустимо `0..1` | 4B — запись `{ startsAt; capacity }`: `capacity` вводит правило, которого продукт не назвал, `startsAt` модель не читает |
+| Р-5. Ответы лотов в журнале сессии | **5A**: не пишутся, восстанавливаются переспросом | 5B — `LotOpenConfirmed` и `LotSettled` на каждый лот: сотни событий, дублирующих журнал лотов |
+
+**Цена выбора.** Вход команды `OpenLot` получил `deadline?` — форма события при этом не изменилась. Дедлайн ушёл из карточки лота ([PER-318](https://linear.app/anticnvm/issue/per-318) планировала его там), а Ф-2 перестал выражаться конфигурацией и остаётся за машиной сессии, которую пришлось бы дописывать. Журнал сессии не самодостаточен для `awaiting`: без переспроса лотов после рестарта сессия его не восстановит, и это уже принятая обязанность из ADR-045, а не новая.
 
 ### Связь осей
 
@@ -662,7 +731,7 @@ ClosingPolicy = ByAuctioneer | ByDeadline | Mixed of { onlineByDeadline : bool }
 | Т-16 | И-07 | рестарт в разгар торгов | цена, лидер, лимиты, дедлайн, счётчик восстановлены | лот |
 | Т-17 | И-05 | ставка после `LotSold` | `LotNotOpen`, журнал не пополнился | лот |
 | Т-18 | П-02 | равные максимумы 200: лидер записал свой лимит **раньше** соперника | цена 200, лидер **не** меняется | лот |
-| Т-19 | конфиг | `ClosingPolicy = ByDeadline` при `deadline = None` | сессия не переходит в активное состояние | сессия |
+| Т-19 | конфиг | `ClosingPolicy = ByDeadline` при `closesAt = None` (до 24.09.2026 — `deadline = None`) | `ConfigInvalid`, сессия не переходит в `Scheduled` | сессия |
 | Т-20 | И-10 | правка настроек лота после входа в `Trading` | отказ, настройки заморожены | лот |
 | Т-21 | И-14 | `OpenLot` отклонён лотом | сессия не отмечает лот активным и не остаётся заблокированной | граница |
 | Т-22 | П-02 | ручной лидер по 110, шаг 10, прокси `max=115` | `BidPlaced` на 115, ниже `minRequired=120` | лот |
@@ -687,15 +756,20 @@ ClosingPolicy = ByAuctioneer | ByDeadline | Mixed of { onlineByDeadline : bool }
 | Т-41 | П-01 | `Live`, цена 1000, шаг 100, две ставки по 1100 подряд от **разных** участников | первая — `BidPlaced`; вторая — `BidNotAtNextPrice(1200)` | лот |
 | Т-42 | П-02 | `Live`, ручной лидер по 110, шаг 10, прокси `max=115` | производной ставки нет (обратное Т-22) | лот |
 | Т-43 | П-01 | `Online`, цена 100, шаг 10, ставка 137 | `BidPlaced`, цена 137: онлайн-правило не изменилось | лот |
-| Т-44 | конфиг | `closesLots = true`, лот без дедлайна | `ConfigInvalid`, сессия остаётся в `Draft` | сессия |
+| Т-44 | конфиг | `closesLots = true` при `closesAt = None` (до 24.09.2026 — лот без дедлайна) | `ConfigInvalid`, сессия остаётся в `Draft` | сессия |
 | Т-45 | конфиг | `SelectForFinal` при `closesLots = false` | `SelectionNotApplicable` | сессия |
 | Т-46 | И-19 | `StartFinal` без `FinalLineupFrozen` | `LineupNotFrozen`, сессия остаётся в перерыве | сессия |
 | Т-47 | И-19 | `FreezeFinalLineup` с лотом, не подтвердившим удержание | `LineupMismatch` | сессия |
 | Т-48 | И-19 | общий дедлайн 00:00, лот продлён анти-снайпом до 00:04 | сессия в `Settling` до закрытия лота; `PrebiddingEnded` — после | граница |
 | Т-49 | П-05 | `CloseLot(DeadlineReached)` по лоту в `Held` | `DeadlineNotReached` | лот |
 | Т-50 | И-14 | сессия перезапущена между `MarkForFinal` и подтверждением | сессия переспрашивает лот и приходит к его фактической отметке | граница |
+| Т-51 | И-15 | `ScheduleLot` с `Tiered=[(100,10)]` | `StepPolicyInvalid`, лот остаётся в `Draft` | лот |
+| Т-52 | И-10 | `ScheduleLot` после `LotOpened` | `SchedulingClosed`, `config` не изменился | лот |
+| Т-53 | И-20 | `AddLot` после `PrebiddingStarted` | `LotsFrozen`, реестр не изменился | сессия |
+| Т-54 | конфиг | `finalBlocks = 2` | `ConfigInvalid` | сессия |
+| Т-55 | П-06 | сессия перезапущена между `LotAdded` и подтверждением `DraftLot` | повтор `DraftLot` с тем же `op_id` получает исходный `LotDrafted`, второго лота нет | граница |
 
-Т-34…Т-50 добавлены 24.09.2026 ([PER-291](https://linear.app/anticnvm/issue/per-291)). Т-22 после этого описывает только фазу `Online`; в `Live` его противоположность — Т-42.
+Т-34…Т-50 добавлены 24.09.2026 ([PER-291](https://linear.app/anticnvm/issue/per-291)); Т-51…Т-55 — тогда же ([PER-301](https://linear.app/anticnvm/issue/per-301)). Т-22 после этого описывает только фазу `Online`; в `Live` его противоположность — Т-42.
 
 Т-06а стоит особняком: проекция журнала — не агрегат, и её offset модель не описывает (М1, 5.5). Кейс записан здесь, чтобы ПП-3 не потерялся между этим документом и выбором хранилища.
 
@@ -771,6 +845,7 @@ ClosingPolicy = ByAuctioneer | ByDeadline | Mixed of { onlineByDeadline : bool }
 
 - **ADR: оформлен.** Словарь домена и форма события зафиксированы отдельным [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md) по образцу [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), скиллом `proj-record-decision`. Ссылаться как на решение следует на него: RFC хранит разбор вариантов и их цену, ADR — исход.
 - **Дополнение под Ф-4 (24.09.2026, [PER-291](https://linear.app/anticnvm/issue/per-291)).** Правило живой ставки оформлено отдельным [ADR-049](../decisions/ADR-049-auction-live-bid-rule.md): оно отменяет для финала решение, осознанно сохранённое этим RFC, и у него своя цена и свой сигнал пересмотра. Удержание лота и словарь сессии дописаны в [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md) датированным дополнением по выбору владельца.
+- **Словарь планирования и сессии (24.09.2026, [PER-301](https://linear.app/anticnvm/issue/per-301)).** Исход записан вторым датированным дополнением в [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md). Схемы сессии и лота до торгов в `auction/v1` — [PER-339](https://linear.app/anticnvm/issue/per-339).
 - **Standard: не нужен.** Повторяемого правила на весь репозиторий документ не вводит: пара `decide`/`apply` уже закреплена [стандартом функциональных срезов](../standards/architecture/functional-slices.md), а правила торгов — решение по одному сервису.
 - **Контракты: разблокированы.** Protobuf-сообщения пишет [PER-149](https://linear.app/anticnvm/issue/per-149) через skill `proj-change-contract`. Со стороны словаря задача больше не заблокирована; остаётся её зависимость от языкового контура Scala ([PER-143](https://linear.app/anticnvm/issue/per-143)).
 - **Задачи Linear: заведены.** Дизайн — [PER-144](https://linear.app/anticnvm/issue/per-144) (этот документ), [PER-145](https://linear.app/anticnvm/issue/per-145) (стек), [PER-149](https://linear.app/anticnvm/issue/per-149) (контракты); исполнение — [PER-151](https://linear.app/anticnvm/issue/per-151) (ядро приёма ставки и прокси) и [PER-152](https://linear.app/anticnvm/issue/per-152) (событие продажи лота).
