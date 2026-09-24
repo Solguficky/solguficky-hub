@@ -115,6 +115,25 @@ assert_fails \
     'docs/rfcs/RFC-002-orphan.md' \
     "$missing"
 
+# The gate runs before the commit, so a freshly numbered document is untracked
+# when the check matters. A tracked-only file list passed both cases green.
+untracked=$(mktemp -d)
+trap 'rm -rf "$work" "$dup" "$missing" "$untracked"' EXIT
+
+cp -a "$work/." "$untracked"
+printf '# RFC-001: Fresh clash\n' > "$untracked/docs/rfcs/RFC-001-fresh.md"
+assert_fails \
+    'untracked duplicate number' \
+    'docs/rfcs/RFC-001-fresh.md' \
+    "$untracked"
+
+rm "$untracked/docs/rfcs/RFC-001-fresh.md"
+printf '# ADR-002: Fresh orphan\n' > "$untracked/docs/decisions/ADR-002-fresh.md"
+assert_fails \
+    'untracked file missing from the catalog index' \
+    'docs/decisions/ADR-002-fresh.md' \
+    "$untracked"
+
 if [ "$failed" -ne 0 ]; then
     exit 1
 fi
