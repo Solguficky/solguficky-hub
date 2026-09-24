@@ -166,3 +166,24 @@
 - Standards: [функциональные срезы](../standards/architecture/functional-slices.md) — пара `decide` / `apply`; [Protobuf](../standards/contracts/protobuf.md) — раскладка и совместимость схем
 - Другие ADR: [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md) — стек и хранение; [ADR-031](ADR-031-meetups-domain-vocabulary-and-event-form.md) — образец словаря и формы события; [ADR-020](ADR-020-uuidv7-identifiers.md) — идентификаторы; [ADR-040](ADR-040-auction-screen-sse.md) — экран зала; [ADR-044](ADR-044-two-telegram-bots-and-shared-auction-screens.md) — два бота и общие экраны
 - Архив: [разбор прежней реализации](../archive/services/auction-domain-and-lessons.md) — каталог дефектов, на который отвечает словарь
+
+## Дополнение 2026-09-24
+
+Раздел дописан после принятия и текст выше не меняет. Причина — выбор формата Ф-4 ([RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md#ф-4-неделя-параллельных-торгов-с-отобранным-финалом)): 7-8 лотов, отобранных вручную по статистике недели, обязаны пережить общий дедлайн каталога, а у сессии не было ни одной команды и ни одного события. Решение владельца принято в [PER-291](https://linear.app/anticnvm/issue/per-291); разбор вариантов — ось H и раздел «Машина состояний сессии» [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md). Дописать раздел, а не завести отдельный ADR, выбрал владелец.
+
+**Лот.** Состояние `Held` — отобранный лот между общим дедлайном и своей очередью в финале, без дедлайна и без ask. В `Trading` добавлены два поля состояния, не конфигурации: `phase : Online | Live` и `markedForFinal`.
+
+| Команда | Вход сверх `op_id` | Событие при успехе | Именованные отказы |
+|---|---|---|---|
+| `MarkForFinal` | `lot_id`, `actor` | `LotMarkedForFinal` | `LotNotOpen`, `NotInOnlinePhase`, `DeadlinePassed`, `AlreadyMarkedForFinal` |
+| `ResumeLot` | `lot_id`, `actor` | `LotResumed` и производный `BidPlaced` прокси по сетке | `LotNotHeld` |
+| `CloseLot` | без изменений | по отмеченному лоту и `DeadlineReached` — `LotHeldForFinal` вместо продажи | без изменений |
+| `PlaceBid` | без изменений | без изменений | добавлены `LotOnHold` и `BidNotAtNextPrice(expected)` — последний по [ADR-049](ADR-049-auction-live-bid-rule.md) |
+
+Новые события: `LotMarkedForFinal` (без payload), `LotHeldForFinal` (`at`), `LotResumed` (без payload). **Форма существующих событий не меняется**: ни одному payload не добавлено поле, конверт тот же. Команд лота становится девять, событий — двенадцать с производным `DeadlineExtended`.
+
+**Сессия.** Состояния `Draft → Scheduled → Prebidding → Settling → Break → LineupFrozen → Final → Finished`. Команды `ScheduleSession`, `StartPrebidding`, `SelectForFinal`, `EndPrebidding`, `FreezeFinalLineup`, `StartFinal`, `StartNextLot`; события `SessionScheduled`, `PrebiddingStarted`, `FinalistConfirmed`, `PrebiddingDeadlineReached`, `PrebiddingEnded`, `FinalistDropped`, `FinalLineupFrozen(order)`, `FinalStarted`, `FinalLotActivated`, `FinalLotCompleted`, `SessionFinished`. Заморозку состава финала несёт `FinalLineupFrozen`. Отказы и переходы — таблица RFC-011; здесь не дублируются.
+
+**Инварианты.** Добавлены И-16…И-19; И-10 уточнён: повторный вход в `Trading` — только из `Held` событием `LotResumed`, `config` при этом не меняется. И-06 и И-12 не задеты: удержание не пишет `DeadlineExtended`. Правило живой ставки финала — отдельное решение, [ADR-049](ADR-049-auction-live-bid-rule.md).
+
+**Сигнал пересмотра дополнения.** Отбор в финал становится автоматическим правилом («самые дорогие» или «самые популярные», ОВ-4 [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md#осталось-открытым-на-22092026)) и известен до старта — тогда удержание выразимо конфигурацией, и отметка `MarkForFinal` становится лишней.
