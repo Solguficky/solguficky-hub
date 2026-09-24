@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Профили `infra`, `identity`, `meetups`, `notifications` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль `hub` с Telegram Bot и production-like публикация не проверены.
+> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль `hub` с Telegram Bot и production-like публикация не проверены.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -35,15 +35,23 @@ AppHost объявляет граф узлов и их связи, а профи
 
 | Профиль | Инфраструктура | Компоненты |
 |---|---|---|
-| `infra` | PostgreSQL | нет |
+| `infra` | PostgreSQL, NATS | нет |
 | `identity` | PostgreSQL | Identity |
 | `meetups` | PostgreSQL | Meetups |
 | `notifications` | PostgreSQL | Notifications |
-| `hub` | PostgreSQL | Identity, Meetups, Notifications, Telegram Bot |
+| `hub` | PostgreSQL, NATS | Identity, Meetups, Notifications, Telegram Bot |
+
+Список `Infrastructure` — это backing stores того контура, который профиль изображает: `infra` показывает инфраструктуру целиком без компонентов, профиль одного сервиса — только те хранилища, которые связывает этот сервис, `hub` — полный локальный контур платформы. Поэтому NATS стоит в `infra` и `hub` и не стоит в трёх одиночных профилях: ни один сервис шину пока не читает, и в одиночном прогоне контейнер был бы мёртвым грузом.
+
+В `hub` шина сегодня и есть узел без потребителя среди сервисов: `depends` её не содержит, переменной `NATS_URL` ни один компонент не читает, а Meetups держит порт публикации `Port.Unconfigured`. Прогон доказывает, что брокер и JetStream поднимаются, а не что шина работает; первого потребителя приносят [PER-71](https://linear.app/anticnvm/issue/per-71) и [PER-72](https://linear.app/anticnvm/issue/per-72) вместе с `depends` и bind. В `infra` потребитель есть уже сегодня, но это не сервис, а `tools/nats-tester`.
+
+Зарегистрированный узел обязан быть назван хотя бы одним профилем: узел без владельца не материализуется ни в одном запуске, и симптома у этого нет — сборка зелёная, запуск успешный, ресурса просто нет. Поэтому `ServiceGraph.Validate()` отвергает такой граф до старта ресурсов, и регистрация узла едет одним изменением с профилем, который им владеет.
 
 Профиль `meetups` поднимает PostgreSQL: сервис применяет миграции при старте и без строки подключения не слушает. Смотрящий по-прежнему приходит в запросе, шины в профиле нет.
 
 Профиль `notifications` устроен так же, но зависимость от базы у него жёстче: в его базе лежат не только доменные таблицы, но и membership силоса Orleans, поэтому без строки подключения сервис не просто не слушает — он не поднимает силос вовсе. Миграции применяет тот же DbUp, и он же заводит таблицы Orleans. Порты силоса штатные и берутся из конфигурации: два профиля с Notifications одновременно на одной машине за них подерутся.
+
+Узел `nats` поднимается образом `nats:2.10-alpine` с включённым JetStream и защищён паролем из параметра `nats-password`. Две вещи ломают ожидания и стоят отдельной строки. Порт клиента назначает Aspire, а не 4222: `tools/nats-tester` по умолчанию идёт в `nats://localhost:4222`, поэтому адрес и учётные данные берутся из дашборда и передаются флагом `--nats-url`. Тома у шины нет, и JetStream держит store в `/tmp/nats/jetstream` внутри контейнера — сам сервер пишет об этом `Temporary storage directory used, data could be lost`. Для локального инструмента этого достаточно; durable consumers потребуют тома и решаются вместе с первым потребителем.
 
 **В рабочем дереве `aspire run` запускают с `--apphost`.** Деревья лежат в `.claude/worktrees/` внутри основного клона, поэтому поиск AppHost вверх по дереву каталогов находит `infra/apphost` родителя, а не свой. Симптом обманчив: запуск падает на `Unknown topology profile` с перечнем профилей основного клона, и выглядит это как ошибка в своей правке `appsettings.json`. Правильная форма — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile <name>`.
 
@@ -106,21 +114,33 @@ just aspire hub -- --skip-services telegram-bot
 3. Профиль, перечисляющий незарегистрированный узел, падает до построения графа.
 4. `--run-services telegram-bot` оставляет в запуске только бота, а баннер называет `identity` как объявленную, но не принадлежащую профилю зависимость.
 5. Неизвестное имя среды Telegram останавливает запуск профиля с ботом до старта ресурсов: `--profile hub --telegram-environment nope` падает с `Unknown Telegram environment 'nope'` и перечнем допустимых значений.
+6. Зарегистрированный узел, которого не назвал ни один профиль, роняет запуск до старта ресурсов. Проверено удалением `nats` из обоих профилей: `Node 'nats' is registered in the graph, but no profile owns it, so it is never materialized`.
 
-Живой прогон на Aspire 13.5.3 с Docker Desktop:
+Каждый пункт ниже — наблюдение одного прогона, а не свойство системы вообще: он говорит, что названная команда в названной среде дала названный результат, и не обещает того же для профиля, которого в пункте нет. Среда всех прогонов PER-228: Aspire CLI 13.5.3, .NET SDK 10, Docker 28.5.1, Windows 11.
 
-6. Профиль `infra` поднимает здоровые PostgreSQL, NATS и базы `identity` и `meetups`, и ни одного компонента.
-7. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0, поднимает здоровый PostgreSQL и доводит Identity до `Healthy`; NATS в этом профиле не поднимается.
-8. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт.
-9. `IdentityService/ResolveIdentity` через proxy endpoint Aspire возвращает UUIDv7.
-10. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, и процесса `identity.exe` в системе не остаётся.
-11. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Через назначенный Aspire proxy endpoint `ListVisibleMeetups` со смотрящим отвечает пустым списком на чистой базе, а `GetMeetup` по отсутствующему UUID — `NOT_FOUND`; оба вызова выполнены `grpcurl` без Telegram. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-12. На зафиксированном до PER-58 прогоне срез `hub` без Telegram Bot (`aspire run -- --skip-services telegram-bot`) держал Identity и Meetups здоровыми одновременно с PostgreSQL, и оба отвечали через свои proxy endpoint. Схемы были разведены по базам одного сервера: goose вёл `identity`, DbUp — `meetups`; на сервере не было базы, которую писали бы оба сервиса.
-13. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications. В логах сервиса видно применение трёх миграций DbUp — двух вендорных скриптов Orleans и своей схемы — до подъёма силоса, затем `Orleans Silo started.`; проба `grpc.health.v1.Health/Check` отвечает `SERVING` и через назначенный Aspire proxy endpoint, и напрямую, а `aspire describe` показывает узел `Healthy`. После `aspire stop` AppHost останавливается штатно.
+Прогон PER-228 от 2026-09-22 — профили с NATS, полный состав без бота, срез и повтор:
+
+7. Профиль `infra` поднимает здоровые PostgreSQL, три базы (`identity-db`, `meetups-db`, `notifications-db`) и NATS, и ни одного компонента. JetStream включён фактически, а не только в коде: в логе контейнера видно `Starting JetStream` и баннер JETSTREAM у nats-server 2.10.29. Своей пробы шине не добавляли — узел доходит до `Healthy` встроенной пробой `AddNats`.
+8. Профиль `hub` со срезом `--skip-services telegram-bot` поднимает за один заход PostgreSQL, NATS, три базы и три компонента: `identity-proto` и `identity-build` завершаются кодом 0, а `identity`, `meetups` и `notifications` доходят до `Healthy`. Баннер топологии называет `nats` и `postgres` владением профиля.
+9. Миграции применяются при старте у всех трёх сервисов и до того, как сервис начинает слушать: Identity пишет `migrations applied` перед `identity listening`, DbUp Meetups и Notifications выполняет свои скрипты, и у Notifications за ними идёт подъём силоса Orleans.
+10. Повторный запуск того же среза на сохранившемся томе `solguficky-postgres-data` ничего не ломает: DbUp обоих .NET-сервисов отвечает `No new scripts need to be executed`, все узлы снова `Healthy`. Этим же подтверждено переподключение тома после перезапуска AppHost.
+11. Живые пути чтения отвечают через назначенные Aspire proxy endpoint, вызовы сделаны `grpcurl` без Telegram: `IdentityService/ResolveIdentity` возвращает UUIDv7, `ListVisibleMeetups` со смотрящим — пустой список, `GetMeetup` по отсутствующему UUID — `NOT_FOUND`, проба Notifications `grpc.health.v1.Health/Check` — `SERVING`.
+12. Срез по одному сервису поднимается по-прежнему: `--profile hub --run-services identity` оставляет среди компонентов только Identity. Инфраструктуру срез не режет, поэтому NATS поднимается и в нём — это цена владения шиной в профиле `hub`, а не сбой.
+13. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, контейнеров `postgres` и `nats` в системе не остаётся.
+
+Более ранние прогоны, которые этот заход не повторял и не отменяет:
+
+14. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
+15. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+16. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
 
-После замены заглушек чтения в PER-58 срез `hub` через Aspire ещё нужно повторить с живыми `ListVisibleMeetups` и `GetMeetup`; предыдущий прогон подтверждает только более раннюю совместную топологию Identity и Meetups. Профиль с Telegram Bot ни разу не прогонялся ни с продакшн-токеном, ни с токеном тестовой среды: проверка среды `test` доходит только до отказа графа на неизвестном имени, а `/start` из клиента тестового дата-центра до ответа бота ещё не проходили. Не проверено и повторное подключение тома `solguficky-postgres-data` после перезапуска AppHost. NATS не входит в текущие профили, пока его использование в приложениях не настроено. Пригодность `aspire publish` для production-like k3s и сама production-топология также не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+Профиль `hub` целиком, с Telegram Bot, ни разу не прогонялся: проверка среды `test` доходит только до отказа графа на неизвестном имени, а `/start` из клиента тестового дата-центра до ответа бота ещё не проходил. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test`, и она требует токена тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)). Прогон с продакшн-токеном способом проверки не является и в gate не входит: живой бот сообщества начал бы отвечать реальным людям, а второй polling-экземпляр получает от Telegram `409 Conflict` и способен уронить работающего бота.
+
+У самого узла бота понятия готовности в терминах AppHost нет: он не слушает порт, а ходит наружу long polling, поэтому пробы у него не будет и `WaitFor` на него не ставит никто. Его готовность читается собственной строкой лога, и «узел `Running`» подтверждением работы в Telegram не является.
+
+Шина поднимается, но не используется: ни один компонент в NATS не пишет и из него не читает, поэтому зелёный узел `nats` на дашборде означает работающий брокер, а не работающую интеграцию. Пригодность `aspire publish` для production-like k3s и сама production-топология не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
 
 ## Повторная проверка
 
@@ -130,6 +150,6 @@ just aspire hub -- --skip-services telegram-bot
 just verify
 ```
 
-Живой gate требует отдельных запусков профилей `infra`, `identity` и `meetups` плюс среза `hub` без Telegram Bot, а после появления токена — и полного `hub`, где первым берётся `--telegram-environment test`, потому что продакшн-токен для живого прогона больше не нужен. Порядок в каждом запуске один: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи, затем вызвать `IdentityService/ResolveIdentity` и любую операцию `MeetupsService` через найденные в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
+Живой gate требует отдельных запусков профилей `infra`, `identity`, `meetups` и `notifications`, среза `hub` без Telegram Bot и его повтора на том же томе, среза по одному сервису, а после появления токена — и полного `hub` с `--telegram-environment test`. Продакшн-токен способом проверки не является ни на одном шаге. Порядок в каждом запуске один: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи, затем вызвать `IdentityService/ResolveIdentity` и любую операцию `MeetupsService` через найденные в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
 
 Работа и её прогресс должны быть заведены в Linear; этот документ хранит только устойчивые правила и проверяемый gap.

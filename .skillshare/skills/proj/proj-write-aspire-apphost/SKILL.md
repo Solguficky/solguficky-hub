@@ -80,21 +80,23 @@ builder.Build().Run();
 
 ```json
 "Topology": {
-  "Profile": "core",
+  "Profile": "hub",
   "Profiles": {
     "infra": { "Infrastructure": [ "postgres", "nats" ] },
-    "core":  { "Services": [ "identity", "telegram-bot" ], "Infrastructure": [ "postgres" ] }
+    "hub":   { "Services": [ "identity", "meetups", "notifications", "telegram-bot" ], "Infrastructure": [ "postgres", "nats" ] }
   }
 }
 ```
 
-Имя активного профиля: `--profile <name>` перекрывает `Topology:Profile` (env `TOPOLOGY__PROFILE`). Неизвестный профиль, ссылка на незарегистрированный узел и цикл в `depends` падают до построения графа, с перечнем допустимых значений.
+Имя активного профиля: `--profile <name>` перекрывает `Topology:Profile` (env `TOPOLOGY__PROFILE`). Неизвестный профиль, ссылка на незарегистрированный узел и цикл в `depends` падают до построения графа, с перечнем допустимых значений. Туда же падает зарегистрированный узел, которого не назвал ни один профиль: без владельца он не материализуется никогда, а симптома у этого нет — сборка зелёная, запуск успешный, ресурса просто нет.
+
+Список `Infrastructure` — backing stores того контура, который профиль изображает: `infra` показывает инфраструктуру целиком без компонентов, профиль одного сервиса — только связываемые им хранилища, `hub` — полный локальный контур. Срез `--run-services` и `--skip-services` режет только `Services`: инфраструктура материализуется потому, что её назвал профиль, а не потому, что её кто-то требует.
 
 ## Полиглот
 
-В репозитории нет ни одного .NET-сервиса: Identity — Go через `AddExecutable`, Telegram Bot — Node через `AddJavaScriptApp`. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
+Граф полиглотный: Identity — Go через `AddExecutable`, Telegram Bot — Node через `AddJavaScriptApp`, Meetups (F#) и Notifications (C# с Orleans) — обычным `AddProject`. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
 
-Появится F#-сервис (Meetups) или Orleans (Notifications) — он придёт обычным `AddProject` в тот же граф, без изменения модели.
+Модель это выдержала без правок: .NET-сервисы пришли в тот же граф тем же `AddService`, и обобщение по `T` оказалось не запасом на будущее, а тем, что позволило не переписывать реестр.
 
 ## Workflow
 
@@ -126,8 +128,11 @@ Lifecycle — через `aspire-orchestration`, состояние и логи 
 Механика:
 
 1. `dotnet build` для `infra/apphost`.
-2. Неизвестный профиль, незарегистрированный узел в профиле и битый `depends` дают понятный отказ до старта ресурсов.
-3. `just verify` зелёный.
+2. Неизвестный профиль, незарегистрированный узел в профиле, битый `depends` и зарегистрированный узел без владеющего профиля дают понятный отказ до старта ресурсов.
+3. `just apphost-test` зелёный — набор в `infra/AppHost.UnitTests/` держит эти четыре ветки отказа и семантику среза; Docker ему не нужен. Добавил тест — подними порог `APPHOST_TEST_THRESHOLD` тем же изменением.
+4. `just verify` зелёный.
+
+Тест строит свой `IDistributedApplicationBuilder` и **очищает источники конфигурации** перед тем, как подложить свои профили: ссылка на AppHost кладёт его настоящий `appsettings.json` в выходной каталог теста, и без очистки продовые профили накладываются поверх тестовых, а не заменяются — узел, оставленный без владельца, оказывается назван реальным профилем, и ветка отказа молча не срабатывает.
 
 Живой gate: запусти точный AppHost через agent-safe lifecycle из `aspire-orchestration`, дождись ресурсов через `aspire wait`, сверь граф и health через `aspire describe`, проверь баннер топологии и логи через `aspire-monitoring`, возьми endpoint из Aspire и выполни тот же протокольный вызов, что при ручном запуске. Профили проверяются отдельными запусками, после каждого AppHost останавливается штатно.
 

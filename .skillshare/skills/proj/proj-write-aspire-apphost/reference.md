@@ -183,8 +183,8 @@ identity.WithHealthCheck(HealthCheck);
 
 ```bash
 just aspire identity
-just aspire core -- --run-services identity
-just aspire core -- --skip-services telegram-bot
+just aspire hub -- --run-services identity
+just aspire hub -- --skip-services telegram-bot
 TOPOLOGY__PROFILE=infra aspire run
 ```
 

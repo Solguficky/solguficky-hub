@@ -82,6 +82,7 @@ jobs:
               - '.github/workflows/ci.yml'
             apphost:
               - 'infra/apphost/**'
+              - 'infra/AppHost.UnitTests/**'
               - 'shared/dotnet/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
@@ -361,7 +362,12 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
+      - uses: extractions/setup-just@v4
       - run: dotnet build infra/apphost/AppHost.csproj --nologo
+      # Docker джобе не нужен: тесты проверяют валидацию графа и материализацию
+      # модели, а они отрабатывают до старта ресурсов. Через `just`, а не прямым
+      # dotnet run, чтобы порог числа тестов остался в одном месте.
+      - run: just apphost-test
 
   auction:
     needs: changes

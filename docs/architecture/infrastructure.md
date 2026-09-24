@@ -12,7 +12,7 @@
 - логи, health и traces;
 - возможность не включать компонент в профиль и запустить его из IDE.
 
-Профили `infra` и `identity` подтверждены живым прогоном на Aspire 13.5.3: первый поднимает PostgreSQL и NATS без компонентов, второй доводит Identity до `Healthy` и отвечает на `ResolveIdentity` через proxy endpoint Aspire. Telegram Bot входит в `core` и `full`, но живой прогон профиля с ботом требует токен и ещё не выполнялся. Повторяемый gate описан в [руководстве по локальной разработке](../development/local-development.md). Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
+Состав подтверждённого живым прогоном ведёт [руководство по локальной разработке](../development/local-development.md), там же повторяемый gate; здесь он не дублируется. Telegram Bot входит в профиль `hub`, и живой прогон профиля с ботом требует токен тестовой среды, поэтому ещё не выполнялся. Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
 
 ## Production-like integration
 
@@ -32,11 +32,12 @@ Production deployment не обязан быть первым milestone; пор�
 
 ## Current-ограничения
 
-- AppHost поднимает PostgreSQL, NATS, Identity и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
-- Identity ждёт свою базу `identity`, применяет миграции при старте и получает PostgreSQL URI и динамический gRPC-порт от AppHost;
-- Telegram Bot ждёт здоровый Identity и получает его proxy endpoint через `IDENTITY_GRPC_URL`;
+- AppHost поднимает PostgreSQL, NATS, Identity, Meetups, Notifications и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
+- Identity, Meetups и Notifications ждут свою базу, применяют миграции при старте и получают строку подключения и динамический gRPC-порт от AppHost;
+- Telegram Bot ждёт здоровые Identity и Meetups и получает их proxy endpoints через `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
-- живой прогон профилей `infra` и `identity` подтверждён, но профиль с Telegram Bot, `aspire publish` и production-топология не проверены;
+- NATS поднимается в профилях `infra` и `hub`, но потребителя среди компонентов у шины пока нет: зелёный узел означает работающий брокер, а не работающую интеграцию;
+- профиль с Telegram Bot, `aspire publish` и production-топология не проверены; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения

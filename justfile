@@ -125,7 +125,7 @@ contracts-check:
     buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
 
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -141,6 +141,21 @@ aspire profile="hub" *args="":
 # Сборка Aspire AppHost
 apphost-build:
     cd infra/apphost && dotnet build --nologo
+
+# Порог поднимается руками вместе с набором: выведенный из текущего прогона
+# сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
+APPHOST_TEST_THRESHOLD := "15"
+
+# Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
+# материализация модели отрабатывают до старта ресурсов, поэтому единственная
+# ветка отказа, у которой нет симптома, — «узел без владеющего профиля» —
+# проверяется здесь, а не живым прогоном.
+#
+# `dotnet run`, а не `dotnet test`: solution-файла у AppHost нет, а runner
+# Microsoft.Testing.Platform требует `--solution`. Форма та же, что у contour-test.
+apphost-test:
+    @echo "apphost-test: минимум {{APPHOST_TEST_THRESHOLD}} тестов — добавил тест, подними APPHOST_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet run --project infra/AppHost.UnitTests/AppHost.UnitTests.csproj -- --fail-skips on --minimum-expected-tests {{APPHOST_TEST_THRESHOLD}}
 
 # --- Identity (Go) ---------------------------------------------------------
 #

@@ -45,7 +45,7 @@ Linear является источником правды для порядка 
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `contracts/proto` | Identity `ResolveIdentity` и шесть команд администратора с Go- и TypeScript-кодогенерацией, пятнадцать gRPC-операций среза Meetups и словарь их исходящих событий `meetups.v1.MeetupEvent`, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`; обе схемы `notifications/v1` потребляет контрактный проект Notifications, и модуль целиком собирает джоба `contracts` | Current |
 | `nats-tester` | Python CLI; в реестре subjects двенадцать записей — `events.notifications.notification_created` и одиннадцать поводов журнала Meetups | Current tooling |
-| Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
+| Aspire AppHost | Граф узлов и профили-данные; состав подтверждённого живым прогоном ведёт [руководство по локальной разработке](../development/local-development.md), непроверенным остаётся профиль с Telegram Bot | Current, partially verified |
 
 Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
 
