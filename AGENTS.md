@@ -29,6 +29,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке, стиль и совместимость схем держат `buf lint` и `buf breaking` в CI.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire.
+- `infra/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Лежит соседним каталогом, а не внутри `infra/apphost/`: SDK-проект глобит `.cs` рекурсивно и втянул бы тесты в сам AppHost. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL` внешнему потребителю, `Contour.Contracts` держит generated-only C#-клиента Identity. Рецепты `just contour-test`, `just contour-up` и `just contour-contracts-check`; в `verify` набор не входит и гоняется джобой `contour` в CI.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
@@ -110,6 +111,10 @@ aspire run -- --profile hub
 # Срез внутри профиля
 aspire run -- --profile hub --run-services identity
 
+# AppHost — сборка и тесты графа и профилей; Docker не нужен
+just apphost-build
+just apphost-test
+
 # Identity — инструменты, кодогенерация, сборка, тесты и линт
 just identity-tools
 just identity-proto
@@ -184,7 +189,7 @@ cd tools/nats-tester && nats-tester --help
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp && just sync-commands` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
 
-Профили `infra`, `identity`, `meetups`, `notifications` и срез `hub` без Telegram Bot подтверждены живым прогоном на Aspire 13.5.3, включая Meetups и Notifications с PostgreSQL и применением миграций при старте; профиль `hub` с Telegram Bot после объединения графов ещё не проверен. В рабочем дереве `aspire run` запускают с `--apphost`: иначе он находит AppHost основного клона. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны в [руководстве](docs/development/local-development.md).
+Что именно подтверждено живым прогоном Aspire — в [руководстве](docs/development/local-development.md); оно единственный владелец этого факта, и перечень профилей сюда не копируется. Полный `hub` с Telegram Bot прогнан отдельным локальным ботом в продакшн-среде Telegram; непроверенной остаётся тестовая среда Telegram. Токен бота сообщества способом проверки не является — живой бот начал бы отвечать реальным людям, и второй polling-экземпляр получает `409 Conflict`. Профиль владеет узлом, и зарегистрированный узел обязан быть назван хотя бы одним профилем: граф отвергает запуск до старта ресурсов, если владельца нет, поэтому регистрация узла едет одним изменением с профилем. В рабочем дереве `aspire run` запускают с `--apphost`: иначе он находит AppHost основного клона. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны там же.
 
 CodeRabbit не ревьюит pull request автоматически; запуск — комментарием `@coderabbitai review`. Активную конфигурацию показывает `@coderabbitai configuration`. Его находки помогают владельцу при ревью, но не становятся гейтом мержа.
 

@@ -45,9 +45,9 @@ Linear является источником правды для порядка 
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
 | `contracts/proto` | Identity `ResolveIdentity`, шесть команд администратора и обратное разрешение `ResolveTelegramUserId` с Go- и TypeScript-кодогенерацией, словарь исходящих событий доступа `identity.v1.IdentityEvent`, пятнадцать gRPC-операций среза Meetups и словарь их исходящих событий `meetups.v1.MeetupEvent`, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`; обе схемы `notifications/v1` потребляет контрактный проект Notifications, и модуль целиком собирает джоба `contracts` | Current |
 | `nats-tester` | Python CLI; в реестре subjects семнадцать записей — `events.notifications.notification_created`, одиннадцать поводов журнала Meetups и пять поводов доступа Identity; гейт выводит имена subjects из схемы и сверяет конверт событий обоих доменов с одной спецификацией | Current tooling |
-| Aspire AppHost | Граф узлов и профили-данные; профили `infra`, `identity`, `meetups` и срез `hub` без Telegram Bot подтверждены живым прогоном, профиль с Telegram Bot — нет | Current, partially verified |
+| Aspire AppHost | Граф узлов и профили-данные; состав подтверждённого живым прогоном ведёт [руководство по локальной разработке](../development/local-development.md), непроверенной остаётся тестовая среда Telegram | Current, partially verified |
 
-Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни профиль Aspire с Telegram Bot, ни end-to-end через живого Telegram-бота, ни production deployment.
+Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни тестовая среда Telegram, ни end-to-end через живого Telegram-бота до отрисовки ответа, ни production deployment.
 
 ## MVP
 
