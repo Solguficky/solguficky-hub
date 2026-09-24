@@ -191,9 +191,13 @@ identity-test: identity-proto
 
 # Линт Identity закреплённой версией; чужая версия читает тот же
 # .golangci.yml иначе, поэтому расхождение — ошибка, а не предупреждение
+# --allow-parallel-runners: без флага golangci-lint берёт блокировку в каталоге
+# временных файлов пользователя, а не рабочего дерева, и параллельный прогон в
+# соседнем дереве ронял гейт кодом 3 без единой находки. Кэш флаг не портит:
+# два одновременных прогона на холодном кэше дают тот же результат.
 identity-lint: identity-proto
     @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
-    cd apps/identity && golangci-lint run ./...
+    cd apps/identity && golangci-lint run --allow-parallel-runners ./...
 
 # Локальный запуск; адрес — IDENTITY_GRPC_ADDR, база — IDENTITY_DATABASE_URL
 identity-run: identity-proto
