@@ -8,6 +8,7 @@ from typing import Optional
 
 import click
 from google.protobuf import json_format
+from google.protobuf.message import DecodeError
 import nats
 
 from nats_tester import gate
@@ -144,7 +145,9 @@ def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[st
         # JetStream отбрасывает повтор внутри окна дедупликации стрима. Флаг
         # --no-msg-id снимает заголовок, чтобы повтор дошёл до потребителя и
         # проверялась уже его дедупликация.
-        header_id = None if no_msg_id else (msg_id or data.get('event_id'))
+        # Из разобранного сообщения, а не из JSON: json_format принимает и
+        # event_id, и eventId, и ключ файла не обязан совпадать с именем поля.
+        header_id = None if no_msg_id else (msg_id or getattr(event, 'event_id', None))
         command = ['nats', 'pub', subject, '--server', nats_url, '--force-stdin']
         if header_id:
             command += ['--header', f'Nats-Msg-Id:{header_id}']
@@ -297,7 +300,10 @@ def consume(nats_url: str, stream: str, durable: str, drain: bool):
         nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events
         nats-tester consume --stream IDENTITY_EVENTS --durable nats-tester-identity-events --drain
     """
-    asyncio.run(_consume_async(nats_url, stream, durable, drain))
+    try:
+        asyncio.run(_consume_async(nats_url, stream, durable, drain))
+    except KeyboardInterrupt:
+        pass
 
 
 async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
@@ -307,6 +313,7 @@ async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
     seen: set[str] = set()
     applied = 0
     duplicates = 0
+    rejected = 0
 
     try:
         nc = await nats.connect(nats_url)
@@ -322,8 +329,16 @@ async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
                 continue
 
             for msg in messages:
-                event_id = _event_id(msg.subject, msg.data)
                 sequence = msg.metadata.sequence.stream
+                try:
+                    event_id = _event_id(msg.subject, msg.data)
+                except DecodeError as e:
+                    # term, а не ack и не выход: без него сервер возвращал бы
+                    # сообщение после AckWait бесконечно, и durable застревал.
+                    rejected += 1
+                    click.secho(f"⛔ #{sequence} {msg.subject} undecodable, terminated: {e}", fg='red')
+                    await msg.term()
+                    continue
                 if event_id is not None and event_id in seen:
                     duplicates += 1
                     click.secho(f"🔁 #{sequence} {msg.subject} event_id={event_id} DUPLICATE, skipped", fg='yellow')
@@ -336,7 +351,7 @@ async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
                 # сервер вернул бы его снова после AckWait.
                 await msg.ack()
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     except Exception as e:
         click.secho(f"❌ Error: {e}", fg='red')
@@ -345,7 +360,7 @@ async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
         if 'nc' in locals():
             await nc.close()
 
-    click.echo(f"Applied {applied}, duplicates {duplicates}.")
+    click.echo(f"Applied {applied}, duplicates {duplicates}, undecodable {rejected}.")
 
 
 def _event_id(subject: str, data: bytes) -> Optional[str]:

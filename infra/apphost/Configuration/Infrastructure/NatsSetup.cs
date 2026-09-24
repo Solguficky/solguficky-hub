@@ -18,7 +18,8 @@ internal static class NatsSetup
             .WithDataVolume("solguficky-nats-data")
             // WaitFor(nats) ждёт не только Healthy, но и завершения обработчиков
             // ResourceReadyEvent: потребитель стартует, когда топология уже есть,
-            // а упавшее применение роняет его ожидание, а не проходит молча.
+            // а упавшее применение роняет его ожидание. Пока ни один узел nats не
+            // ждёт, сбой виден только в логе самого узла — поэтому он там пишется.
             .OnResourceReady(ApplyTopologyAsync);
 
     private static async Task ApplyTopologyAsync(
@@ -31,7 +32,18 @@ internal static class NatsSetup
             ?? throw new InvalidOperationException($"Aspire assigned no connection string to '{nats.Name}'.");
 
         await using var connection = new NatsConnection(new NatsOpts { Url = url });
-        await JetStreamTopology.ApplyAsync(new NatsJSContext(connection), cancellationToken);
+        try
+        {
+            await JetStreamTopology.ApplyAsync(new NatsJSContext(connection), cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogError(
+                exception,
+                "JetStream topology was not applied. A change JetStream refuses on a live stream or consumer " +
+                "needs the volume 'solguficky-nats-data' removed.");
+            throw;
+        }
 
         logger.LogInformation(
             "JetStream topology applied: streams {Streams}; durable consumers {Durables}.",
