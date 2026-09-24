@@ -20,11 +20,11 @@ public class JetStreamTopologyTests
     /// без проверки ошибка всплыла бы только на старте AppHost.
     /// </summary>
     [Fact]
-    public void Streams_SubjectsDoNotRepeat() =>
+    public void Streams_AllDomains_SubjectsDoNotOverlap() =>
         JetStreamTopology.Streams.Select(stream => stream.Subject).ShouldBeUnique();
 
     [Fact]
-    public void Durables_EveryConsumerHasOneDurablePerStream()
+    public void Durables_EveryConsumerAndStream_HaveExactlyOneDurable()
     {
         var durables = JetStreamTopology.Durables.ToList();
 
@@ -33,7 +33,7 @@ public class JetStreamTopologyTests
     }
 
     [Fact]
-    public void Durables_FilterSubjectMatchesItsStream()
+    public void Durables_AnyDurable_FiltersItsStreamSubject()
     {
         var subjects = JetStreamTopology.Streams.ToDictionary(stream => stream.Name, stream => stream.Subject);
 
@@ -48,7 +48,7 @@ public class JetStreamTopologyTests
     /// имя становится токеном subject'а API JetStream.
     /// </summary>
     [Fact]
-    public void Durables_NamesAreValidJetStreamTokens()
+    public void Durables_AnyDurable_NameIsValidJetStreamToken()
     {
         foreach (var durable in JetStreamTopology.Durables)
         {
@@ -57,7 +57,7 @@ public class JetStreamTopologyTests
     }
 
     [Fact]
-    public void StreamConfig_KeepsByLimitsOnDiskForSevenDays()
+    public void ToConfig_Stream_KeepsByLimitsOnDiskForSevenDays()
     {
         var config = JetStreamTopology.ToConfig(JetStreamTopology.Streams[0]);
 
@@ -75,7 +75,7 @@ public class JetStreamTopologyTests
     /// то, что пришло до его первого старта.
     /// </summary>
     [Fact]
-    public void ConsumerConfig_IsDurableWithExplicitAckFromStart()
+    public void ToConfig_Durable_AcksExplicitlyFromStreamStart()
     {
         var durable = JetStreamTopology.Durables.First();
         var config = JetStreamTopology.ToConfig(durable);
