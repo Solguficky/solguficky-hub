@@ -28,6 +28,7 @@ lazy val contractsRoot = Def.setting {
 }
 
 lazy val auction = (project in file("."))
+  .enablePlugins(PekkoGrpcPlugin)
   .settings(
     name := "auction",
     // Версия JDK читается из того же .java-version, что и в CI, а не
@@ -45,6 +46,10 @@ lazy val auction = (project in file("."))
       "org.apache.pekko" %% "pekko-stream" % pekkoVersion,
       "org.apache.pekko" %% "pekko-slf4j" % pekkoVersion,
       "org.apache.pekko" %% "pekko-http" % pekkoHttpVersion,
+      // pekko-grpc-runtime тянет pekko-discovery своей, более старой версии, а
+      // Pekko на старте ActorSystem отказывается работать со смешанными
+      // версиями своих модулей. Модуль поднимается до общей версии явно.
+      "org.apache.pekko" %% "pekko-discovery" % pekkoVersion,
       "ch.qos.logback" % "logback-classic" % logbackVersion,
       "net.logstash.logback" % "logstash-logback-encoder" % logstashEncoderVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
@@ -68,19 +73,26 @@ lazy val auction = (project in file("."))
     // Проверка isFile обязательна: обход отдаёт фильтру и каталоги, а каталог,
     // принятый за вход, доезжает до protoc и валит его сообщением
     // «Input file is a directory».
-    Compile / PB.generate / includeFilter := new SimpleFileFilter(schema =>
-      schema.isFile
-        && schema.getName.endsWith(".proto")
-        && schema.getPath.replace('\\', '/').contains("/proto/identity/")
-    ),
-    // Только сообщения: стабы клиента и сервера тянут io.grpc, а сервис ещё
-    // ни одного RPC не вызывает и не обслуживает. Это тот же явный выбор, что
-    // GrpcServices у элементов Protobuf в контрактном проекте Meetups. Стабы
-    // вводит PER-149 вместе с контрактами аукциона — по ADR-048 их даёт
-    // sbt-pekko-grpc, а не этот генератор.
-    Compile / PB.targets := Seq(
-      scalapb.gen(grpc = false) -> (Compile / sourceManaged).value / "protobuf"
-    ),
+    //
+    // Из identity берётся только файл значений: его импортирует схема сервиса
+    // аукциона. Весь каталог дал бы ещё и серверный трейт IdentityService —
+    // сервиса, которого аукцион не обслуживает.
+    Compile / PB.generate / includeFilter := new SimpleFileFilter(schema => {
+      val path = schema.getPath.replace('\\', '/')
+      schema.isFile &&
+      schema.getName.endsWith(".proto") &&
+      (path.contains("/proto/auction/") || path.endsWith("/proto/identity/v1/roles.proto"))
+    }),
+    // Только серверная сторона: аукцион обслуживает AuctionService и ни одного
+    // чужого RPC не вызывает. Клиент появится вместе с первым исходящим
+    // вызовом — тот же явный выбор, что GrpcServices у элементов Protobuf в
+    // контрактном проекте Meetups. Цели ScalaPB задаёт сам плагин pekko-grpc.
+    pekkoGrpcGeneratedLanguages := Seq(PekkoGrpc.Scala),
+    pekkoGrpcGeneratedSources := Seq(PekkoGrpc.Server),
+    // Плагин по умолчанию включает flat_package, и identity/v1/roles.proto
+    // переезжает из identity.v1.roles в identity.v1. Без флага Scala-пакет
+    // выводится из файла так же, как до стабов и как записано в protobuf.md.
+    pekkoGrpcCodeGeneratorSettings -= "flat_package",
     // Prefix в имени процесса не нужен: `just auction-run` запускает ровно
     // один main, и sbt не должен спрашивать, какой именно.
     Compile / mainClass := Some("auction.Main"),

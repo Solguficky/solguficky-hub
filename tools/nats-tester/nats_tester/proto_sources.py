@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 NATS_PROTO_FILES: tuple[str, ...] = (
+    "auction/v1/auction_events.proto",
     "identity/v1/identity_events.proto",
     "meetups/v1/meetups_events.proto",
     "notifications/v1/notifications.proto",

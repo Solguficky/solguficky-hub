@@ -26,7 +26,7 @@
 
 ## Стек и хранение
 
-Инструмент сборки и кодогенерация приняты в [ADR-048](../decisions/ADR-048-auction-sbt-and-scalapb-build.md): sbt, ScalaPB через `sbt-protoc` внутри `compile` и scalafmt. Команды — `just auction-*`, локальные правила — [apps/auction/AGENTS.md](../../apps/auction/AGENTS.md). Узла в графе Aspire у сервиса пока нет: его вводит [PER-290](https://linear.app/anticnvm/issue/per-290).
+Инструмент сборки и кодогенерация приняты в [ADR-048](../decisions/ADR-048-auction-sbt-and-scalapb-build.md): sbt, ScalaPB через `sbt-protoc` внутри `compile` и scalafmt. Контракт `auction/v1` — команды участника, чтение состояния торгов и публичные факты журнала лота — описан в [integration.md](../architecture/integration.md#auction-grpc); серверный трейт `AuctionService` генерирует `sbt-pekko-grpc`, реализации у него пока нет. Сессии и лота до торгов в контракте нет: словарь их не дописан ([PER-301](https://linear.app/anticnvm/issue/per-301)). Команды — `just auction-*`, локальные правила — [apps/auction/AGENTS.md](../../apps/auction/AGENTS.md). Узла в графе Aspire у сервиса пока нет: его вводит [PER-290](https://linear.app/anticnvm/issue/per-290).
 
 Стек и хранение приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md): Scala 3, Apache Pekko Typed и полный Event Sourcing через Pekko Persistence JDBC в отдельной PostgreSQL-базе сервиса. Это добавляет JVM/Scala operational-контур и привязывает схему журнала к плагину, но не вводит отдельную СУБД. Собственная append-only таблица дублировала бы persistence-слой, KurrentDB не окупает отдельную эксплуатацию на ожидаемом масштабе, Marten исключён вместе с .NET.
 

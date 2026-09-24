@@ -1,0 +1,169 @@
+syntax = "proto3";
+
+package auction.v1;
+
+// Domain value types of the trading core, shared by the service contract and by
+// the consumers that carry a lot state without calling the service. They live
+// apart from auction_service.proto so that a consumer of the events does not drag
+// AuctionService and its requests into its codegen.
+//
+// Catalog attributes of a lot - title, description, pictures - are not part of
+// this domain and appear in none of these messages: the trading core does not
+// know them.
+
+// An amount of money. Floating point appears nowhere in this contract.
+message Money {
+  // Whole number of minor units of the currency, e.g. kopecks for RUB.
+  int64 minor_units = 1;
+
+  // ISO 4217 alphabetic code, upper case, e.g. "RUB". Carried by every amount
+  // even though the platform has one currency, so that an amount is readable
+  // without the configuration of its lot.
+  string currency = 2;
+}
+
+// Trading configuration of a lot. It is set when the lot enters trading and does
+// not change afterwards.
+message LotConfig {
+  // ISO 4217 alphabetic code shared by every amount of the lot.
+  string currency = 1;
+
+  StepPolicy step_policy = 2;
+  AntiSnipe anti_snipe = 3;
+
+  // false is a real value: proxy limits are disabled for the lot.
+  bool proxy_enabled = 4;
+}
+
+// How the minimum raise is computed from a price. Exactly one policy is set, and
+// an empty oneof is not a value.
+message StepPolicy {
+  oneof policy {
+    // One step at every price.
+    Money fixed = 1;
+
+    // Step by price tiers.
+    TieredSteps tiered = 2;
+  }
+}
+
+message TieredSteps {
+  // Sorted by lower_bound ascending, never empty, the first lower bound is zero.
+  // The step at a price is the step of the last tier whose lower bound does not
+  // exceed that price, so the last tier is open upwards.
+  repeated StepTier tiers = 1;
+}
+
+message StepTier {
+  // The lowest price this tier applies to - a lower bound, not an upper one.
+  Money lower_bound = 1;
+
+  // Strictly positive.
+  Money step = 2;
+}
+
+// Anti-sniping: a bid placed close to the deadline extends it a bounded number of
+// times. Durations are whole seconds.
+message AntiSnipe {
+  // A bid extends the deadline when it lands within this many seconds before it.
+  int64 window_seconds = 1;
+
+  // How many seconds one extension adds to the deadline.
+  int64 extension_seconds = 2;
+
+  // How many extensions the lot may use in total. 0 is a real value: never extend.
+  int32 max_extensions = 3;
+}
+
+// A lot in trading: bids are accepted.
+message LotTrading {
+  // The last accepted price; before the first bid it is the starting price.
+  Money current_price = 1;
+
+  // The price the auctioneer announced. Unset when no ask was announced; it is
+  // then not zero, it is absent.
+  Money ask = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the leading
+  // participant. Unset before the first bid.
+  optional string leader_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the bid that holds the lead. Set
+  // exactly when leader_id is set.
+  optional string leading_bid_id = 4;
+
+  // RFC 3339 instant in UTC. Unset when the lot is led by a person and closes on
+  // their command rather than by time.
+  optional string deadline = 5;
+
+  // Anti-sniping extensions used so far. 0 is a real value.
+  int32 extensions_used = 6;
+
+  LotPhase phase = 7;
+}
+
+// A lot selected for the live final, held between the common deadline and its
+// turn in the final. It has neither a deadline nor an ask, and it accepts no bids.
+message LotHeld {
+  // The price the lot had when it was held.
+  Money current_price = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Unset when the lot was held without
+  // a bid.
+  optional string leader_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens. Set exactly when leader_id is set.
+  optional string leading_bid_id = 3;
+
+  int32 extensions_used = 4;
+}
+
+// A sold lot. Terminal.
+message LotSale {
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the winner.
+  string winner_id = 1;
+
+  Money price = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the winning bid.
+  string bid_id = 3;
+
+  // RFC 3339 instant in UTC: the server time the sale was decided.
+  string sold_at = 4;
+}
+
+// Phase of a lot in trading. The format of the session is not visible here: the
+// lot learns its phase from its own events.
+enum LotPhase {
+  LOT_PHASE_UNSPECIFIED = 0;
+
+  // Online trading with a deadline or led by a person; any amount above the
+  // minimum is accepted.
+  LOT_PHASE_ONLINE = 1;
+
+  // Live final: a bid is accepted only at the next price.
+  LOT_PHASE_LIVE = 2;
+}
+
+enum UnsoldReason {
+  UNSOLD_REASON_UNSPECIFIED = 0;
+  UNSOLD_REASON_NO_BIDS = 1;
+}
+
+enum WithdrawnReason {
+  WITHDRAWN_REASON_UNSPECIFIED = 0;
+  WITHDRAWN_REASON_BY_ORGANIZER = 1;
+  WITHDRAWN_REASON_BY_AUTHOR = 2;
+  WITHDRAWN_REASON_DUPLICATE = 3;
+}
+
+// Channel a manual bid came through.
+enum BidSource {
+  BID_SOURCE_UNSPECIFIED = 0;
+
+  // A participant bid from the bot.
+  BID_SOURCE_BOT = 1;
+
+  // A bid from the room, entered on behalf of a participant.
+  BID_SOURCE_FLOOR = 2;
+}
