@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -536,6 +537,54 @@ func TestUnaryLoggingOmitsIdentityIDWhenResolveFails(t *testing.T) {
 	rec := logs.sole(t)
 	assertNoAttr(t, rec, "identity_id")
 	assertNoAttr(t, rec, "telegram_user_id")
+}
+
+func TestUnaryLoggingNamesProfileOfTelegramLookupWithoutTelegramID(t *testing.T) {
+	t.Parallel()
+
+	const telegramUserID = 616161
+	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/ResolveTelegramUserId"}
+	for name, tc := range map[string]struct {
+		resp any
+		err  error
+	}{
+		"success": {resp: &identityv1.ResolveTelegramUserIdResponse{TelegramUserId: telegramUserID}},
+		"blocked": {err: status.Error(codes.FailedPrecondition, "identity is blocked")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			logs := &capture{}
+			_, _ = unaryLogging(slog.New(logs))(t.Context(),
+				&identityv1.ResolveTelegramUserIdRequest{IdentityId: resolvedIdentityID}, info,
+				func(context.Context, any) (any, error) { return tc.resp, tc.err })
+
+			rec := logs.sole(t)
+			if got := attrValue(t, rec, "identity_id").String(); got != resolvedIdentityID {
+				t.Fatalf("identity_id: got %q want %q", got, resolvedIdentityID)
+			}
+			assertNoAttr(t, rec, "telegram_user_id")
+			rec.Attrs(func(a slog.Attr) bool {
+				if a.Value.Kind() == slog.KindString && strings.Contains(a.Value.String(), strconv.Itoa(telegramUserID)) {
+					t.Fatalf("attribute %q carries the telegram user id: %q", a.Key, a.Value.String())
+				}
+				return true
+			})
+		})
+	}
+}
+
+func TestUnaryLoggingOmitsNonCanonicalIdentityIDOfTelegramLookup(t *testing.T) {
+	t.Parallel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/ResolveTelegramUserId"}
+	_, _ = unaryLogging(slog.New(logs))(t.Context(),
+		&identityv1.ResolveTelegramUserIdRequest{IdentityId: "caller supplied text"}, info,
+		func(context.Context, any) (any, error) {
+			return nil, status.Error(codes.InvalidArgument, "identity_id must be a canonical UUID")
+		})
+
+	assertNoAttr(t, logs.sole(t), "identity_id")
 }
 
 func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {
