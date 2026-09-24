@@ -36,6 +36,9 @@ def cli():
 
         # Watch everything on the bus
         nats-tester subscribe
+
+        # Read a durable JetStream consumer, flagging repeats by event_id
+        nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events
     """
     pass
 
@@ -48,7 +51,12 @@ def cli():
               help='NATS subject to publish to')
 @click.option('--event-type',
               help='Message type (auto-detected from subject if not specified)')
-def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[str]):
+@click.option('--msg-id',
+              help='Nats-Msg-Id header; defaults to event_id from the JSON')
+@click.option('--no-msg-id', is_flag=True,
+              help='Publish without Nats-Msg-Id, bypassing JetStream server-side dedup')
+def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[str],
+            msg_id: Optional[str], no_msg_id: bool):
     """Publish event from JSON file to NATS.
 
     Reads JSON file, encodes it to Protobuf, and publishes to NATS.
@@ -132,12 +140,18 @@ def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[st
     try:
         click.echo("✓ Publishing to NATS...")
 
+        # Nats-Msg-Id = event_id — то же правило, что у адаптеров публикации:
+        # JetStream отбрасывает повтор внутри окна дедупликации стрима. Флаг
+        # --no-msg-id снимает заголовок, чтобы повтор дошёл до потребителя и
+        # проверялась уже его дедупликация.
+        header_id = None if no_msg_id else (msg_id or data.get('event_id'))
+        command = ['nats', 'pub', subject, '--server', nats_url, '--force-stdin']
+        if header_id:
+            command += ['--header', f'Nats-Msg-Id:{header_id}']
+            click.echo(f"✓ Nats-Msg-Id: {header_id}")
+
         result = subprocess.run(
-            [
-                'nats', 'pub', subject,
-                '--server', nats_url,
-                '--force-stdin'
-            ],
+            command,
             input=protobuf_data,
             check=True,
             capture_output=True
@@ -254,6 +268,129 @@ async def _subscribe_async(nats_url: str, subject: str):
         click.secho(f"❌ Error: {e}", fg='red')
         if 'connection refused' in str(e).lower():
             click.echo(f"   Make sure NATS server is running at {nats_url}")
+        sys.exit(1)
+    finally:
+        if 'nc' in locals():
+            await nc.close()
+
+
+@cli.command()
+@click.option('--nats-url', default='nats://localhost:4222',
+              help='NATS server URL')
+@click.option('--stream', required=True,
+              help='JetStream stream, e.g. MEETUPS_EVENTS')
+@click.option('--durable', required=True,
+              help='Existing durable consumer, e.g. nats-tester-meetups-events')
+@click.option('--drain', is_flag=True,
+              help='Exit once the durable has nothing pending instead of waiting')
+def consume(nats_url: str, stream: str, durable: str, drain: bool):
+    """Read a durable JetStream consumer, ack and flag repeats by event_id.
+
+    Binds to a durable declared by the AppHost topology, not a new one: the
+    position lives on the server, so a restart continues after the last acked
+    message. A second message with an already seen event_id is reported as a
+    duplicate and acked without being applied — the consumer-side dedup rule.
+    Seen ids live in memory for this run only.
+
+    \b
+    Examples:
+        nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events
+        nats-tester consume --stream IDENTITY_EVENTS --durable nats-tester-identity-events --drain
+    """
+    asyncio.run(_consume_async(nats_url, stream, durable, drain))
+
+
+async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
+    """Async implementation of consume."""
+    click.echo(click.style(f"📥 Consuming {stream} as durable {durable}", fg='cyan', bold=True))
+
+    seen: set[str] = set()
+    applied = 0
+    duplicates = 0
+
+    try:
+        nc = await nats.connect(nats_url)
+        js = nc.jetstream()
+        sub = await js.pull_subscribe_bind(durable=durable, stream=stream)
+
+        while True:
+            try:
+                messages = await sub.fetch(10, timeout=1)
+            except nats.errors.TimeoutError:
+                if drain:
+                    break
+                continue
+
+            for msg in messages:
+                event_id = _event_id(msg.subject, msg.data)
+                sequence = msg.metadata.sequence.stream
+                if event_id is not None and event_id in seen:
+                    duplicates += 1
+                    click.secho(f"🔁 #{sequence} {msg.subject} event_id={event_id} DUPLICATE, skipped", fg='yellow')
+                else:
+                    applied += 1
+                    if event_id is not None:
+                        seen.add(event_id)
+                    click.secho(f"✅ #{sequence} {msg.subject} event_id={event_id} applied", fg='green')
+                # Ack и у повтора: он обработан — распознан и пропущен. Без ack
+                # сервер вернул бы его снова после AckWait.
+                await msg.ack()
+
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        click.secho(f"❌ Error: {e}", fg='red')
+        sys.exit(1)
+    finally:
+        if 'nc' in locals():
+            await nc.close()
+
+    click.echo(f"Applied {applied}, duplicates {duplicates}.")
+
+
+def _event_id(subject: str, data: bytes) -> Optional[str]:
+    """event_id конверта, если subject известен реестру и сообщение его несёт."""
+    message_class = ALL_MESSAGE_TYPES.get(subject)
+    if message_class is None:
+        return None
+    message = message_class()
+    message.ParseFromString(data)
+    return getattr(message, 'event_id', None) or None
+
+
+@cli.command()
+@click.option('--nats-url', default='nats://localhost:4222',
+              help='NATS server URL')
+def streams(nats_url: str):
+    """Show JetStream streams and their durable consumers.
+
+    Confirms that the AppHost applied the topology: stream subjects, retention,
+    max age and, per durable, how many messages are pending and unacked.
+    """
+    asyncio.run(_streams_async(nats_url))
+
+
+async def _streams_async(nats_url: str):
+    """Async implementation of streams."""
+    try:
+        nc = await nats.connect(nats_url)
+        js = nc.jetstream()
+        for info in await js.streams_info():
+            config = info.config
+            click.secho(f"{config.name}", fg='cyan', bold=True)
+            click.echo(f"   subjects:  {', '.join(config.subjects or [])}")
+            # nats-py отдаёт retention и storage то enum'ом, то строкой — по версии.
+            retention = getattr(config.retention, 'value', config.retention)
+            storage = getattr(config.storage, 'value', config.storage)
+            click.echo(f"   retention: {retention}, storage: {storage}, "
+                       f"max_age: {config.max_age}s, duplicate_window: {config.duplicate_window}s")
+            click.echo(f"   messages:  {info.state.messages}")
+            for consumer in await js.consumers_info(config.name):
+                ack_floor = consumer.ack_floor.stream_seq if consumer.ack_floor else 0
+                click.echo(f"   durable {consumer.name}: pending {consumer.num_pending}, "
+                           f"unacked {consumer.num_ack_pending}, ack floor {ack_floor}")
+    except Exception as e:
+        click.secho(f"❌ Error: {e}", fg='red')
         sys.exit(1)
     finally:
         if 'nc' in locals():

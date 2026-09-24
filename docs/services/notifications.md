@@ -247,7 +247,7 @@ JetStream участвует в первой границе, но не заме�
 
 - физическая схема подписок, настроек и реплики; схема заданий решена PER-222 — `reminder_task` и `notification_occasion`;
 - допустимая задержка срабатывания; период прохода sweeper'а задан настройкой `Notifications:Reminders:SweepPeriod` и по умолчанию равен тридцати секундам;
-- конфигурация streams и durable consumers, форма ключа дедупликации;
+- хранилище обработанных `event_id`, политика повторов и dead-letter; streams, durable consumers и ключ дедупликации уже заданы — [integration.md](../architecture/integration.md#jetstream), [ADR-draft](../decisions/ADR-draft-jetstream-topology-owned-by-platform.md);
 - версионирование словаря типов уведомлений;
 - наблюдаемость прохода и задания реализована PER-223; alerting и on-call остаются вне этого среза (PER-80).
 

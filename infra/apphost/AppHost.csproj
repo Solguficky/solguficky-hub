@@ -19,6 +19,10 @@
     <PackageReference Include="Aspire.Hosting.JavaScript" Version="13.5.3" />
     <PackageReference Include="Grpc.HealthCheck" Version="2.80.0" />
     <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
+    <!-- Клиент, которым AppHost применяет топологию JetStream. Та же версия уже
+         приходит транзитивно от health check Aspire.Hosting.Nats; явная ссылка
+         держит её, если Aspire при обновлении сменит свою зависимость. -->
+    <PackageReference Include="NATS.Client.JetStream" Version="2.8.0" />
   </ItemGroup>
 
   <!-- Ссылка на сервис даёт типизованный Projects.Meetups: опечатка в пути падает
