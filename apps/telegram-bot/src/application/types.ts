@@ -1,4 +1,9 @@
-import type { MeetupSnapshot, MeetupSummary } from "../meetups/port.js";
+import type {
+  ArchivedMeetupSummary,
+  MeetupMaterial,
+  MeetupSnapshot,
+  MeetupSummary,
+} from "../meetups/port.js";
 import type {
   CategoryState,
   MeetupCategory,
@@ -10,13 +15,19 @@ export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
-export type MeetupStateAction = "unpublish" | "cancel";
+export type MeetupStateAction = "unpublish" | "cancel" | "hold";
 
 export type ExecuteRequest =
   | { identity: Person; intent: "start"; deepLink?: DeepLink }
   | {
       identity: Person;
       intent: "list-visible-meetups";
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "list-archived-meetups";
       requestId?: string;
       useCase?: string;
     }
@@ -64,6 +75,22 @@ export type ExecuteRequest =
       intent: "change-meetup-state";
       action: MeetupStateAction;
       meetupId: string;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "attach-material";
+      meetupId: string;
+      material: MeetupMaterial;
+      requestId?: string;
+      useCase?: string;
+    }
+  | {
+      identity: Person;
+      intent: "remove-material";
+      meetupId: string;
+      materialId: string;
       requestId?: string;
       useCase?: string;
     }
@@ -133,6 +160,7 @@ export function startExecuteRequest(
 export type ExecuteResult =
   | { kind: "message"; text: string }
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
+  | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
   // состояние подписки тогда не показывается вовсе, а не подставляется
   // устаревшим или выдуманным значением.
@@ -168,6 +196,8 @@ export type ExecuteResult =
       reason: "already-cancelled" | "already-hidden";
       meetup: MeetupSnapshot;
     }
+  | { kind: "material-attached"; meetup: MeetupSnapshot }
+  | { kind: "material-removed"; meetup: MeetupSnapshot }
   | {
       kind: "edit-unavailable";
       reason: "cancelled";

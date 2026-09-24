@@ -40,7 +40,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
 - `.rulesync/` — источник правды по MCP-серверам и командам агента: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из `.rulesync/mcp.jsonc`, а `.claude/commands/` и `.opencode/commands/` — из `.rulesync/commands/`.
-- `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений.
+- `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений; единственный сервис репозитория с закоммиченными сгенерированными классами. Проверку держит `python -m nats_tester.gate`: импорт классов, состав генерации против схем, согласие реестра. Её вызывают `just nats-tester-check` и джоба `nats-tester` в CI; джоба дополнительно перегенерирует классы закреплённым `protoc` и падает на расхождении со схемой.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты, свою проверку в `verify` и установку своего тулинга в `tools` в том же коммите, что и сборку.
 
 ## Команды
@@ -97,7 +97,7 @@ just contracts-build
 # Стиль схем и совместимость с origin/develop: buf lint и buf breaking
 just contracts-check
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
 just verify
 
 # Локальная оркестрация — из infra/apphost/
@@ -175,10 +175,11 @@ just contour-contracts-check
 dotnet build
 dotnet test
 
-# nats-tester — из tools/nats-tester/
-python generate_proto.py
-pip install -e .
-nats-tester --help
+# nats-tester — зависимости, регенерация закоммиченных классов, гейт и запуск
+just nats-tester-tools
+just nats-tester-proto
+just nats-tester-check
+cd tools/nats-tester && nats-tester --help
 ```
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp && just sync-commands` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify` перед сдачей нужен в любом случае.
@@ -202,7 +203,7 @@ CodeRabbit не ревьюит pull request автоматически; запу
 - Остановился на вопросе, а ответ в этой сессии не дойдёт — не жди на незакоммиченной правке: зафиксируй остановку переносимо по разделу «Как фиксируется остановка».
 - Сообщение коммита — одна строка Conventional Commits с заглавной буквы после двоеточия; норматив и workflow — [commit-messages.md](docs/standards/git/commit-messages.md) и skill `proj-write-commit`.
 - Заголовок PR задачи — `[PER-N] Название задачи из Linear` дословно: без перевода, без своей формулировки, без типа впереди и без `(PER-N)` в хвосте. PR без задачи берёт форму коммита `type: Subject` на английском. Тело — на русском и ровно три раздела: `## Что и зачем`, `## Отклонения от плана`, `## Осталось открытым`. Встроенный шаблон инструмента (`Motivation`, `Description`, `Testing`) их не заменяет, и послабление для имён чужих веток на PR не распространяется. Формат и примеры — [branching.md](docs/standards/git/branching.md).
-- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, MCP, команд, публикуемых страниц, номеров ADR/RFC, компиляции контрактов, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, Notifications, форматирования F#, Auction, форматирования Scala и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
+- Перед сдачей прогоняй `just verify`: механический гейт из agent tooling, MCP, команд, публикуемых страниц, номеров ADR/RFC, компиляции контрактов, Identity, Telegram Bot, API сайта сообщества, AppHost, Meetups, Notifications, форматирования F#, Auction, форматирования Scala, nats-tester и тестов. Скилл `verify-this` решает другую задачу — проверяет отдельное утверждение экспериментом и гейт не заменяет.
 - Формат сообщения проверяет локальный хук `commit-msg` (lefthook); скрипт проверки — в `tools/git-hooks/`. В CI формат не проверяется намеренно.
 - Стандарт сообщений распространяется на обычные коммиты. Заголовки PR, merge- и squash-коммиты под него не подпадают и в CI не проверяются.
 - NATS и gRPC используют Protobuf. JSON в шине запрещён.

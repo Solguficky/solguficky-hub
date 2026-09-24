@@ -93,6 +93,54 @@ function callbackUpdate(data: string, fromId = 42): Update {
   };
 }
 
+function callbackMessageUpdate(
+  data: string,
+  message: Record<string, unknown>,
+  fromId = 42,
+): Update {
+  const update = callbackUpdate(data, fromId);
+  if (update.callback_query === undefined) return update;
+  return {
+    ...update,
+    callback_query: {
+      ...update.callback_query,
+      message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        ...message,
+      },
+    },
+  };
+}
+
+function forwardedReplyUpdate(replyMessageId: number): Update {
+  return {
+    update_id: 5,
+    message: {
+      message_id: 11,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 42, is_bot: false, first_name: "tester" },
+      forward_origin: {
+        type: "channel",
+        date: 0,
+        chat: { id: -1001234567890, type: "channel", title: "Сообщество" },
+        message_id: 77,
+      },
+      reply_to_message: {
+        message_id: replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 1, is_bot: true, first_name: "stub" },
+        text: "Пришли материал",
+        // grammY's ReplyMessage intersects Message with a required `undefined`
+        // property, which is uninhabitable under exactOptionalPropertyTypes.
+      } as never,
+    },
+  };
+}
+
 function replyUpdate(options: {
   text: string;
   fromId: number;
@@ -154,6 +202,7 @@ function publishedMeetup() {
     lifecycle: "planned" as const,
     visibility: "visible" as const,
     version: 1,
+    materials: [],
   };
 }
 
@@ -274,6 +323,267 @@ afterEach(() => {
 });
 
 describe("presentation adapter", () => {
+  it("renders materials in collection order and gives files an open action", async () => {
+    const meetup = {
+      ...publishedMeetup(),
+      materials: [
+        {
+          id: "0199c0de-0000-7000-8000-000000000001",
+          title: "Опрос: кто идёт",
+          source: {
+            kind: "message-link" as const,
+            url: "https://t.me/c/1234567890/77",
+          },
+        },
+        {
+          id: "0199c0de-0000-7000-8000-000000000002",
+          title: "Афиша",
+          source: { kind: "file" as const, fileId: "bot-file-id" },
+        },
+      ],
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+
+    const rich = calls.find((call) => call.method === "editMessageText");
+    const serialized = JSON.stringify(rich?.payload);
+    expect(serialized).toContain(
+      '1. <a href=\\"https://t.me/c/1234567890/77\\">Опрос: кто идёт</a>',
+    );
+    expect(serialized).toContain("2. Афиша (файл)");
+    expect(serialized.indexOf("Опрос: кто идёт")).toBeLessThan(
+      serialized.indexOf("Афиша"),
+    );
+    expect(serialized).toContain("v1:mm:file:");
+  });
+
+  it("paginates a long material collection for every meetup viewer", async () => {
+    const materials = Array.from({ length: 25 }, (_, index) => ({
+      id: `0199c0de-0000-7000-8000-${(index + 1).toString(16).padStart(12, "0")}`,
+      title: `Материал ${index + 1} ${"подробности ".repeat(12)}`,
+      source: {
+        kind: "message-link" as const,
+        url: `https://t.me/community/${index + 1}`,
+      },
+    }));
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), materials },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["member"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+
+    const card = calls.find((call) => call.method === "editMessageText");
+    const cardPayload = JSON.stringify(card?.payload);
+    expect(cardPayload.length).toBeLessThan(4_096);
+    expect(cardPayload).toContain("…и ещё 5");
+    expect(cardPayload).toContain("v1:mm:list:");
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:list:AZLzpLXGfY6fChssPU5fYA"));
+
+    const page = calls
+      .filter((call) => call.method === "editMessageText")
+      .at(-1);
+    expect(page).toMatchObject({
+      payload: { text: expect.stringContaining("Страница 1 из 4") },
+    });
+    expect(JSON.stringify(page?.payload)).toContain(
+      "v1:mm:list:AZLzpLXGfY6fChssPU5fYA:1",
+    );
+  });
+
+  it("does not open material attachment for a non-admin", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"]),
+      {
+        execute,
+      },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: "Это действие доступно организатору сходки." },
+    });
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "update_meetup",
+    });
+  });
+
+  it("attaches a forwarded message only after title and confirmation", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+      if (request.intent === "view-meetup") {
+        return { kind: "meetup-card", meetup };
+      }
+      if (request.intent === "attach-material") {
+        return {
+          kind: "material-attached",
+          meetup: { ...meetup, materials: [request.material] },
+        };
+      }
+      return { kind: "rejected", reason: "unexpected" };
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(forwardedReplyUpdate(102));
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Опрос: кто идёт",
+        fromId: 42,
+        replyMessageId: 103,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(
+      execute.mock.calls.some(
+        ([request]) => request.intent === "attach-material",
+      ),
+    ).toBe(false);
+    const confirmation = calls.at(-1);
+    expect(confirmation?.method).toBe("sendMessage");
+    if (
+      confirmation?.method !== "sendMessage" ||
+      !("reply_markup" in confirmation.payload) ||
+      !("text" in confirmation.payload)
+    )
+      return;
+    const keyboard = confirmation.payload.reply_markup;
+    const callbackData = JSON.stringify(keyboard).match(
+      /v1:mm:confirm-add:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/,
+    )?.[0];
+    expect(callbackData).toBeDefined();
+    if (callbackData === undefined) return;
+    await bot.handleUpdate(
+      callbackMessageUpdate(callbackData, {
+        text: confirmation.payload.text,
+        reply_markup: keyboard,
+      }),
+    );
+
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "attach-material",
+        meetupId: meetup.id,
+        material: expect.objectContaining({
+          title: "Опрос: кто идёт",
+          source: {
+            kind: "message-link",
+            url: "https://t.me/c/1234567890/77",
+          },
+        }),
+      }),
+    );
+  });
+
+  it("passes a confirmed file id to Meetups", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "material-attached",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
+        {
+          caption: "Прикрепить материал?\n\nНазвание: Афиша",
+          document: {
+            file_id: "bot-file-id",
+            file_unique_id: "unique",
+            file_name: "poster.pdf",
+          },
+        },
+      ),
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "attach-material",
+        material: expect.objectContaining({
+          title: "Афиша",
+          source: { kind: "file", fileId: "bot-file-id" },
+        }),
+      }),
+    );
+    expect(calls.some((call) => call.method === "editMessageCaption")).toBe(
+      true,
+    );
+  });
+
+  it("removes a material only after confirming that the original stays", async () => {
+    const material = {
+      id: "0199c0de-0000-7000-8000-00000000009a",
+      title: "Уточнение по времени",
+      source: {
+        kind: "message-link" as const,
+        url: "https://t.me/c/1234567890/78",
+      },
+    };
+    const meetup = { ...publishedMeetup(), materials: [material] };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : { kind: "material-removed", meetup: publishedMeetup() },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    const data = "v1:mm:rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg";
+
+    await bot.handleUpdate(callbackUpdate(data));
+
+    expect(
+      execute.mock.calls.some(
+        ([request]) => request.intent === "remove-material",
+      ),
+    ).toBe(false);
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Оригинал в Telegram останется на месте"),
+      },
+    });
+    await bot.handleUpdate(
+      callbackUpdate(data.replace("v1:mm:rm:", "v1:mm:confirm-rm:")),
+    );
+
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "remove-material",
+        meetupId: meetup.id,
+        materialId: material.id,
+      }),
+    );
+  });
   it("does not treat a command replying to a user as a stale form answer", async () => {
     const { bot, calls } = createHarness(resolvedIdentity());
     await bot.init();
@@ -302,6 +612,7 @@ describe("presentation adapter", () => {
         lifecycle: "planned",
         visibility: "hidden",
         version: 1,
+        materials: [],
       },
     });
     const { bot } = createHarness(resolvedIdentity(), { execute });
@@ -334,7 +645,10 @@ describe("presentation adapter", () => {
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Ближайшие сходки", callback_data: "v1:nav:hub" }],
+          [
+            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+            { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
           [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
         ],
       },
@@ -537,7 +851,10 @@ describe("presentation adapter", () => {
         text: expect.stringContaining("ни одной запланированной сходки"),
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+            [
+              { text: "Обновить", callback_data: "v1:nav:hub" },
+              { text: "Архив", callback_data: "v1:nav:archive" },
+            ],
             [{ text: "Уведомления", callback_data: "v1:notify:global" }],
           ],
         },
@@ -583,12 +900,140 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
               },
             ],
-            [{ text: "Обновить", callback_data: "v1:nav:hub" }],
+            [
+              { text: "Обновить", callback_data: "v1:nav:hub" },
+              { text: "Архив", callback_data: "v1:nav:archive" },
+            ],
             [{ text: "Уведомления", callback_data: "v1:notify:global" }],
           ],
         },
       },
     });
+  });
+
+  it("renders an empty archive as an empty state", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "archived-meetup-list",
+      meetups: [],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:archive"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "list-archived-meetups" }),
+    );
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("Архив пока пуст") },
+    });
+  });
+
+  it("distinguishes held, cancelled and past meetups in the archive", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "archived-meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Состоялась",
+          status: "held" as const,
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Отменена",
+          status: "cancelled" as const,
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          title: "Прошла",
+          status: "past" as const,
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:archive"));
+    const text = (calls[1] as { payload: { text: string } } | undefined)
+      ?.payload.text;
+    expect(text).toContain("Состоялась (состоялась)");
+    expect(text).toContain("Отменена (отменена)");
+    expect(text).toContain("Прошла (прошла)");
+  });
+
+  it("shows a hold confirmation and executes only after confirming", async () => {
+    const meetup = publishedMeetup();
+    const held = { ...meetup, lifecycle: "held" as const };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : { kind: "meetup-state-changed", action: "hold", meetup: held },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Точно отметить сходку состоявшейся"),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Да, продолжить",
+                callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+          ],
+        },
+      },
+    });
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: ["admin"],
+      },
+      intent: "change-meetup-state",
+      action: "hold",
+      meetupId: meetup.id,
+      requestId: expect.any(String),
+      useCase: "update_meetup",
+    });
+  });
+
+  it("answers a stale hold button on an already held meetup without confirming", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), lifecycle: "held" },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("уже отмечена состоявшейся") },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("renders Meetups unavailability as E-05 instead of an empty list", async () => {
@@ -685,6 +1130,7 @@ describe("presentation adapter", () => {
         lifecycle: "planned",
         visibility: "hidden",
         version: 1,
+        materials: [],
       },
     });
     const { bot, calls, records } = createHarness(identity, { execute });
@@ -1265,6 +1711,7 @@ describe("presentation adapter", () => {
         lifecycle: "planned",
         visibility: "visible",
         version: 1,
+        materials: [],
       },
     });
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
@@ -1686,6 +2133,7 @@ describe("presentation adapter", () => {
         lifecycle: "planned",
         visibility: "hidden",
         version: 1,
+        materials: [],
       },
     });
     const { bot, records } = createHarness(resolvedIdentity(), { execute });
@@ -1960,6 +2408,7 @@ describe("notification frames", () => {
     lifecycle: "planned" as const,
     visibility: "visible" as const,
     version: 1,
+    materials: [],
   };
 
   it("offers subscribing from the card and carries the target state", async () => {

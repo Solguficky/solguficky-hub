@@ -2,6 +2,7 @@ import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { createMeetupForm } from "./meetup-form.js";
+import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult } from "./types.js";
@@ -21,6 +22,8 @@ export function createDispatcher(
     meetups === undefined || notifications === undefined
       ? undefined
       : createNotificationSettings(meetups, notifications);
+  const materials =
+    meetups === undefined ? undefined : createMeetupMaterials(meetups);
   return {
     async execute(request) {
       switch (request.intent) {
@@ -36,6 +39,24 @@ export function createDispatcher(
           );
           return result.kind === "ok"
             ? { kind: "meetup-list", meetups: result.meetups }
+            : result.kind === "invalid"
+              ? {
+                  kind: "dependency-rejected",
+                  reason: "invalid",
+                  message: result.message,
+                }
+              : { kind: "dependency-rejected", reason: result.kind };
+        }
+        case "list-archived-meetups": {
+          if (meetups === undefined) {
+            return { kind: "rejected", reason: "meetups-not-configured" };
+          }
+          const result = await meetups.listArchived(
+            request.identity,
+            rpcMeta(request),
+          );
+          return result.kind === "ok"
+            ? { kind: "archived-meetup-list", meetups: result.meetups }
             : result.kind === "invalid"
               ? {
                   kind: "dependency-rejected",
@@ -96,6 +117,11 @@ export function createDispatcher(
           return settings === undefined
             ? { kind: "rejected", reason: "notifications-not-configured" }
             : settings(request);
+        case "attach-material":
+        case "remove-material":
+          return materials === undefined
+            ? { kind: "rejected", reason: "meetups-not-configured" }
+            : materials(request);
         default: {
           const _exhaustive: never = request;
           return { kind: "rejected", reason: String(_exhaustive) };

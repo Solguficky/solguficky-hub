@@ -25,8 +25,9 @@ describe("callback parser", () => {
     });
   });
 
-  it("parses the hub navigation action", () => {
+  it("parses the hub and archive navigation actions", () => {
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
+    expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
   });
 
   it("parses meetup editing and confirmed state actions within the byte budget", () => {
@@ -40,6 +41,8 @@ describe("callback parser", () => {
       `v1:manage:confirm-unpublish:${token}`,
       `v1:manage:cancel:${token}`,
       `v1:manage:confirm-cancel:${token}`,
+      `v1:manage:hold:${token}`,
+      `v1:manage:confirm-hold:${token}`,
     ];
 
     for (const callback of callbacks) {
@@ -75,6 +78,40 @@ describe("callback parser", () => {
     expect(parseCallback(callbacks[7])).toEqual({
       kind: "manage-confirm-cancel",
       token,
+    });
+    expect(parseCallback(callbacks[8])).toEqual({
+      kind: "manage-hold",
+      token,
+    });
+    expect(parseCallback(callbacks[9])).toEqual({
+      kind: "manage-confirm-hold",
+      token,
+    });
+  });
+
+  it("parses material actions within the callback byte budget", () => {
+    const meetup = "AZLzpLXGfY6fChssPU5fYA";
+    const material = "AZnA3gAAAAAAAABfP4Lqmw";
+    const cases = [
+      [`v1:mm:list:${meetup}`, "manage-materials"],
+      [`v1:mm:add:${meetup}`, "begin-attach-material"],
+      [`v1:mm:confirm-add:${meetup}:${material}`, "confirm-attach-material"],
+      [`v1:mm:rm:${meetup}:${material}`, "remove-material"],
+      [`v1:mm:confirm-rm:${meetup}:${material}`, "confirm-remove-material"],
+      [`v1:mm:file:${meetup}:${material}`, "open-material-file"],
+    ] as const;
+    for (const [data, kind] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toMatchObject({ kind });
+    }
+  });
+
+  it("parses a material list page", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:mm:list:${token}:3`)).toEqual({
+      kind: "manage-materials",
+      token,
+      page: 3,
     });
   });
 

@@ -155,6 +155,27 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    /// Возврат публикации забирает назначенный момент тем же переходом, что и первая
+    /// публикация, и по той же причине: строка «видна и момент назначен» нарушает
+    /// `meetups_scheduled_publish_only_when_hidden`.
+    ///
+    /// Отдельная функция, а не `setVisibility Visible`, потому что обнуление
+    /// принадлежит переходу к видимости, а `setVisibility` обслуживает обе стороны
+    /// оси. У снятия публикации момента не бывает вовсе — видимая сходка с
+    /// назначенным моментом невыразима, — поэтому общая функция не столько чинила бы
+    /// вторую сторону, сколько утверждала бы про неё то, чего там не бывает.
+    ///
+    /// До PER-204 путь был достижим и без воркера: опубликовать, снять, назначить
+    /// момент, опубликовать снова — `decideSchedulePublication` смотрит на видимость и
+    /// жизненный цикл, а отметку первой публикации не смотрит. PER-280 унёс обнуление
+    /// из SQL в применение события и закрыл им `publish`; этот повод остался открытым.
+    let private republish (meetup: Meetup) : Meetup =
+        { meetup with
+            Visibility = Visible
+            ScheduledPublishAt = None
+            Version = meetup.Version + 1L
+        }
+
     /// Момент отложенной публикации — признак, а не ось: состояния «запланирована
     /// публикация» не существует, и отмена сходки очищает поле тем же переходом,
     /// что закрывает обе команды редактирования (PER-204).
@@ -210,7 +231,7 @@ module Meetup =
         | Existing meetup, MeetupChanged changed -> change meetup changed
         | Existing meetup, MeetupPublished at -> publish meetup at
         | Existing meetup, MeetupUnpublished -> setVisibility Hidden meetup
-        | Existing meetup, MeetupRepublished -> setVisibility Visible meetup
+        | Existing meetup, MeetupRepublished -> republish meetup
         | Existing meetup, MeetupPublicationScheduled at -> schedulePublication at meetup
         | Existing meetup, MeetupPublicationCancelled -> cancelScheduledPublication meetup
         | Existing meetup, MeetupCancelled -> cancel meetup

@@ -9,6 +9,16 @@ export type MeetupSchedule = {
   minutes: number;
 };
 
+export type MeetupMaterialSource =
+  | { kind: "message-link"; url: string }
+  | { kind: "file"; fileId: string };
+
+export type MeetupMaterial = {
+  id: string;
+  title: string;
+  source: MeetupMaterialSource;
+};
+
 export type MeetupSnapshot = {
   id: string;
   title: string;
@@ -21,12 +31,20 @@ export type MeetupSnapshot = {
   // несёт её обратно как `expected_version`, и Meetups сравнивает её в предикате
   // записи (PER-78).
   version: number;
+  materials: readonly MeetupMaterial[];
 };
 
 export type MeetupSummary = {
   id: string;
   title: string;
   schedule?: { year: number; month: number; day: number };
+};
+
+// Архив различает три исхода вручную (Archive.fs, PER-229): "held"/"cancelled"
+// приходят как есть, а "past" — это lifecycle "planned" внутри архивного
+// ответа, где само присутствие в списке уже означает, что дата прошла.
+export type ArchivedMeetupSummary = MeetupSummary & {
+  status: "held" | "cancelled" | "past";
 };
 
 export type MeetupFailure =
@@ -46,8 +64,30 @@ export type MeetupListResult =
   | { kind: "ok"; meetups: readonly MeetupSummary[] }
   | MeetupFailure;
 
+export type ArchivedMeetupListResult =
+  | { kind: "ok"; meetups: readonly ArchivedMeetupSummary[] }
+  | MeetupFailure;
+
+export type AttachMaterialRequest = {
+  person: Person;
+  meetupId: string;
+  material: MeetupMaterial;
+  meta?: RpcMetadata;
+};
+
+export type RemoveMaterialRequest = {
+  person: Person;
+  meetupId: string;
+  materialId: string;
+  meta?: RpcMetadata;
+};
+
 export type Meetups = {
   listVisible(person: Person, meta?: RpcMetadata): Promise<MeetupListResult>;
+  listArchived(
+    person: Person,
+    meta?: RpcMetadata,
+  ): Promise<ArchivedMeetupListResult>;
   createDraft(
     person: Person,
     id: string,
@@ -80,4 +120,11 @@ export type Meetups = {
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
+  markHeld(
+    person: Person,
+    meetup: MeetupSnapshot,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  attachMaterial(request: AttachMaterialRequest): Promise<MeetupResult>;
+  removeMaterial(request: RemoveMaterialRequest): Promise<MeetupResult>;
 };

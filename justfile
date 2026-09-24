@@ -21,6 +21,16 @@ BUF_VERSION := "1.54.0"
 GOLANGCI_LINT_VERSION := "2.13.2"
 RULESYNC_VERSION := "16.24.1"
 
+# nats-tester: Python — рантайм инструмента, protoc — генератор закоммиченных
+# классов. Джоба nats-tester в CI читает оба значения отсюда; перегенерация
+# другим protoc даёт другой gencode, поэтому локальная регенерация идёт той же
+# версией, что и проверка в CI.
+PYTHON_VERSION := "3.12"
+PROTOC_VERSION := "33.0"
+# Контрольная сумма архива protoc для linux-x86_64: его скачивает и запускает
+# джоба nats-tester, и версия без суммы не отличает свой бинарник от чужого.
+PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad8f"
+
 # Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.
 # Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
 # и затёр бы редакторские настройки репозитория.
@@ -114,11 +124,11 @@ contracts-check:
     buf lint contracts/proto
     buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools
+tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -157,8 +167,11 @@ identity-proto:
 identity-build: identity-proto
     cd apps/identity && go build ./...
 
-# Проверка контракта, схемы и разрешения Identity
+# Проверка контракта, схемы и разрешения Identity. База обязательна: без
+# доступного PostgreSQL тесты падают, а не пропускаются — иначе неполная среда
+# даёт зелёный прогон (правило «пропуск не равен прохождению»).
 identity-test: identity-proto
+    @echo "identity-test: база обязательна, недоступный PostgreSQL роняет прогон"
     cd apps/identity && go test ./...
 
 # Линт Identity закреплённой версией; чужая версия читает тот же
@@ -237,12 +250,23 @@ community-site-serve:
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
+# Порог числа тестов: 533 = 429 unit + 104 integration. Поднимается вручную
+# вместе с набором — добавил тест, обнови число здесь тем же изменением.
+# Порог держит исчезновение тестов из набора; частичный пропуск ловит
+# --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
+# выполненным.
+MEETUPS_TEST_THRESHOLD := "533"
+
 # Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
 # Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
-# схемы применяют миграции к PostgreSQL. Без доступной базы они пропускаются.
+# схемы применяют миграции к PostgreSQL. Пропуск теста роняет прогон: неполная
+# среда видна отказом, а не зелёным результатом. Разрешённых пропусков внутри
+# уровня нет — уровень выбирается отдельным рецептом, это вводит PER-269.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 meetups-test:
-    dotnet test --solution apps/meetups/Meetups.sln
+    @echo "meetups-test: пропуск теста роняет прогон, разрешённых пропусков нет"
+    @echo "meetups-test: минимум {{MEETUPS_TEST_THRESHOLD}} тестов — добавил тест, подними MEETUPS_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet test --solution apps/meetups/Meetups.sln --fail-skips on --minimum-expected-tests {{MEETUPS_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
 meetups-contracts-check:
@@ -271,12 +295,19 @@ meetups-format-check: dotnet-tools
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers
-# и без доступного Docker пропускаются — но не в CI: там отсутствие контейнера
-# красит джобу, иначе зелёный прогон на пропущенных тестах выглядит как проверка.
+# Порог числа тестов Notifications: 16 = unit + integration. Поднимается вручную
+# вместе с набором — добавил тест, обнови число здесь тем же изменением. Порог
+# держит исчезновение тестов из набора; частичный пропуск ловит --fail-skips.
+NOTIFICATIONS_TEST_THRESHOLD := "16"
+
+# Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers;
+# пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри
+# уровня нет, а зелёный прогон на пропущенных тестах выглядит как проверка.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
 notifications-test:
-    dotnet test --solution apps/notifications/Notifications.sln
+    @echo "notifications-test: пропуск теста роняет прогон, разрешённых пропусков нет"
+    @echo "notifications-test: минимум {{NOTIFICATIONS_TEST_THRESHOLD}} тестов — добавил тест, подними NOTIFICATIONS_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet test --solution apps/notifications/Notifications.sln --fail-skips on --minimum-expected-tests {{NOTIFICATIONS_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: то же условие обратимости, что у Meetups
 notifications-contracts-check:
@@ -341,15 +372,31 @@ auction-run:
 auction-verify:
     cd apps/auction && sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
 
+# --- nats-tester (Python) --------------------------------------------------
+#
+# Инструмент ручной проверки шины. Классы сообщений коммитятся — установка без
+# protoc и есть смысл ручного инструмента, — поэтому протухшие классы ловит не
+# сборка, а проверка: состав генерации сверяется со схемами, а перегенерация в
+# CI идёт закреплённым protoc. Схемы для генерации — NATS_PROTO_FILES в
+# nats_tester/proto_sources.py, версии — PYTHON_VERSION и PROTOC_VERSION выше.
+
+# Зависимости инструмента; ходит в сеть, поэтому в `tools`, а не в `verify`
+nats-tester-tools:
+    cd tools/nats-tester && python -m pip install -e .
+
+# Перегенерация закоммиченных классов; нужен protoc закреплённой версии
+nats-tester-proto:
+    cd tools/nats-tester && python generate_proto.py
+
+# Классы импортируются, состав генерации совпадает со схемами, реестр не врёт
+nats-tester-check:
+    cd tools/nats-tester && python -m nats_tester.gate
+
 # --- Инструменты -----------------------------------------------------------
 
 # Локальные .NET-инструменты закреплённых версий из .config/dotnet-tools.json
 dotnet-tools:
     dotnet tool restore
-
-# Установка nats-tester в текущее окружение
-nats-tester-install:
-    cd tools/nats-tester && python generate_proto.py && pip install -e .
 
 # Исследовательский зонд Rich Messages; не входит в verify
 telegram-rich-probe:

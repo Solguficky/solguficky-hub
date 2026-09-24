@@ -15,6 +15,7 @@ const meetup: MeetupSnapshot = {
   lifecycle: "planned",
   visibility: "visible",
   version: 1,
+  materials: [],
 };
 
 function meetupsStub(

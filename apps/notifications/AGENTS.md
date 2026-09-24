@@ -30,7 +30,7 @@
 
 Стек задан [standards/testing/testing-strategy.md](../../docs/standards/testing/testing-strategy.md): xUnit v3 на Microsoft.Testing.Platform, Shouldly, Moq. Форма имени — [standards/testing/naming.md](../../docs/standards/testing/naming.md).
 
-Интеграционные тесты поднимают PostgreSQL через Testcontainers и без Docker пропускаются — **кроме CI**, где отсутствие контейнера красит джобу. Не превращай этот отказ в пропуск: зелёный прогон на пропущенных тестах хуже отсутствия тестов.
+Интеграционные тесты поднимают PostgreSQL через Testcontainers и без Docker роняют прогон — и локально, и в CI ([PER-241](https://linear.app/anticnvm/issue/per-241)). Не превращай этот отказ в пропуск: зелёный прогон на пропущенных тестах хуже отсутствия тестов.
 
 `Orleans.TestingHost` не используется: он строит свой кластер со своими провайдерами и проверял бы фикстуру вместо конфигурации сервиса. Тесты поднимают тот же composition root, что и запуск.
 

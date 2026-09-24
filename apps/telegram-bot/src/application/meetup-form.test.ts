@@ -14,12 +14,14 @@ const empty: MeetupSnapshot = {
   lifecycle: "planned",
   visibility: "hidden",
   version: 1,
+  materials: [],
 };
 
 function harness() {
   let snapshot = empty;
   const meetups: Meetups = {
     listVisible: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
+    listArchived: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
     createDraft: vi.fn(async (_person, id) => ({
       kind: "ok" as const,
       meetup: { ...snapshot, id },
@@ -42,6 +44,18 @@ function harness() {
       snapshot = { ...snapshot, lifecycle: "cancelled" };
       return { kind: "ok" as const, meetup: snapshot };
     }),
+    markHeld: vi.fn(async () => {
+      snapshot = { ...snapshot, lifecycle: "held" };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    attachMaterial: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
+    removeMaterial: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
   };
   return { meetups, dispatcher: createDispatcher(meetups) };
 }
@@ -274,6 +288,24 @@ describe("meetup creation form", () => {
       reason: "already-cancelled",
     });
     expect(meetups.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("marks a meetup held without the shared already-cancelled precheck", async () => {
+    const { dispatcher, meetups } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "hold",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-changed",
+      action: "hold",
+      meetup: { lifecycle: "held" },
+    });
+    expect(meetups.markHeld).toHaveBeenCalledOnce();
   });
 
   it("keeps the typed value and shows the current snapshot on a version conflict", async () => {

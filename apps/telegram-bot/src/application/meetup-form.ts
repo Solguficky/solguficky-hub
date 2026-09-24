@@ -145,6 +145,25 @@ export function createMeetupForm(meetups: Meetups) {
         );
         if (current.kind === "not-found") return { kind: "meetup-not-found" };
         if (current.kind !== "ok") return failure(current);
+        if (request.action === "hold") {
+          // Повтор — успех без события (домен, MarkMeetupHeld); отдельного
+          // ветвления «уже состоялась» не заводим и отдаём как есть.
+          const changed = await meetups.markHeld(
+            request.identity,
+            current.meetup,
+            rpcMeta(request),
+          );
+          if (changed.kind === "conflict") {
+            return conflict(meetups, request, { action: request.action });
+          }
+          return changed.kind === "ok"
+            ? {
+                kind: "meetup-state-changed",
+                action: request.action,
+                meetup: changed.meetup,
+              }
+            : failure(changed);
+        }
         if (current.meetup.lifecycle === "cancelled") {
           return {
             kind: "meetup-state-unchanged",
