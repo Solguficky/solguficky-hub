@@ -140,15 +140,24 @@ just aspire hub -- --skip-services telegram-bot
 12. Срез по одному сервису поднимается по-прежнему: `--profile hub --run-services identity` оставляет среди компонентов только Identity. Инфраструктуру срез не режет, поэтому NATS поднимается и в нём — это цена владения шиной в профиле `hub`, а не сбой.
 13. После `aspire stop` команда `aspire ps --format Json` возвращает пустой список, контейнеров `postgres` и `nats` в системе не остаётся.
 
+Прогон PER-228 от 2026-09-24 — полный `hub` с Telegram Bot, после слияния с `develop`:
+
+14. Профиль `hub` без среза поднимает за один заход PostgreSQL, три базы, NATS и все четыре компонента: `identity`, `meetups` и `notifications` доходят до `Healthy`, `telegram-bot` — до `Running`, узлы сборки и установки завершаются. Бот пишет `telegram-bot starting` с `telegram_environment: prod` и `long polling started`, ни `401`, ни `409 Conflict` в логе нет.
+15. `/start` от владельца доходит до бота и дальше: апдейт приходит через long polling, бот разрешает отправителя через Identity в новую личность и получает отказ проверки допуска `hub_access_pending` — ожидаемый исход для нового человека на чистой базе, допуск выдаёт администратор. Отправку ответа бот в лог не пишет, поэтому этот пункт подтверждает путь от Telegram до Identity, а не отрисовку ответа.
+
+Запуск шёл в продакшн-среде Telegram, но **не токеном бота сообщества**: под `Parameters:telegram-bot-token` на машине владельца лежит токен отдельного локального бота, созданного для разработки. Поэтому второго polling-экземпляра у бота сообщества не появилось, а писать такому боту некому, кроме самого разработчика. Это не тестовый контур [ADR-046](../decisions/ADR-046-telegram-test-contour.md): аккаунты в продакшн-среде настоящие.
+
 Более ранние прогоны, которые этот заход не повторял и не отменяет:
 
-14. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
-15. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-16. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
+16. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
+17. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+18. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
 
-Профиль `hub` целиком, с Telegram Bot, ни разу не прогонялся: проверка среды `test` доходит только до отказа графа на неизвестном имени, а `/start` из клиента тестового дата-центра до ответа бота ещё не проходил. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test`, и она требует токена тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)). Прогон с продакшн-токеном способом проверки не является и в gate не входит: живой бот сообщества начал бы отвечать реальным людям, а второй polling-экземпляр получает от Telegram `409 Conflict` и способен уронить работающего бота.
+Тестовая среда Telegram живым прогоном не проверена: полный `hub` прогнан в продакшн-среде отдельным локальным ботом, а с `--telegram-environment test` проверка доходит только до отказа графа на неизвестном имени. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test` с токеном тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)); регулярный прогон тестового контура ведёт [PER-9](https://linear.app/anticnvm/issue/per-9). Отрисовка ответа бота в клиенте логом тоже не подтверждена — пункт 15 заканчивается на Identity.
+
+Токен бота сообщества способом проверки не является ни в какой среде: живой бот начал бы отвечать реальным людям, а второй polling-экземпляр получает от Telegram `409 Conflict` и способен уронить работающего бота. AppHost различает среду, а не бота, поэтому под `telegram-bot-token` на машине разработчика лежит токен отдельного локального бота, а не бота сообщества.
 
 У самого узла бота понятия готовности в терминах AppHost нет: он не слушает порт, а ходит наружу long polling, поэтому пробы у него не будет и `WaitFor` на него не ставит никто. Его готовность читается собственной строкой лога, и «узел `Running`» подтверждением работы в Telegram не является.
 
@@ -162,6 +171,6 @@ just aspire hub -- --skip-services telegram-bot
 just verify
 ```
 
-Живой gate требует отдельных запусков профилей `infra`, `identity`, `meetups` и `notifications`, среза `hub` без Telegram Bot и его повтора на том же томе, среза по одному сервису, а после появления токена — и полного `hub` с `--telegram-environment test`. Продакшн-токен способом проверки не является ни на одном шаге. Порядок в каждом запуске один: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи, затем вызвать `IdentityService/ResolveIdentity` и любую операцию `MeetupsService` через найденные в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
+Живой gate требует отдельных запусков профилей `infra`, `identity`, `meetups` и `notifications`, среза `hub` без Telegram Bot и его повтора на том же томе, среза по одному сервису, полного `hub` с отдельным локальным ботом и `/start` к нему, а после появления тестового токена — и полного `hub` с `--telegram-environment test`. Токен бота сообщества способом проверки не является ни на одном шаге. Порядок в каждом запуске один: дождаться каждого ожидаемого ресурса через `aspire wait`, сверить граф и health через `aspire describe`, проверить баннер топологии и логи, затем вызвать `IdentityService/ResolveIdentity` и любую операцию `MeetupsService` через найденные в Aspire proxy endpoint и после каждого запуска штатно остановить AppHost. Не используй фиксированный порт: endpoint назначает Aspire.
 
 Работа и её прогресс должны быть заведены в Linear; этот документ хранит только устойчивые правила и проверяемый gap.

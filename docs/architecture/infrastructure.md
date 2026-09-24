@@ -37,7 +37,7 @@ Production deployment не обязан быть первым milestone; пор�
 - Telegram Bot ждёт здоровые Identity и Meetups и получает их proxy endpoints через `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - NATS поднимается в профилях `infra` и `hub`, но потребителя среди компонентов у шины пока нет: зелёный узел означает работающий брокер, а не работающую интеграцию;
-- профиль с Telegram Bot, `aspire publish` и production-топология не проверены; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);
+- тестовая среда Telegram, `aspire publish` и production-топология не проверены; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения
