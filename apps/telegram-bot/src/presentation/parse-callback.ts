@@ -58,6 +58,9 @@ export type CallbackAction =
   | { kind: "manage-confirm-cancel"; token: string }
   | { kind: "manage-hold"; token: string }
   | { kind: "manage-confirm-hold"; token: string }
+  | { kind: "manage-publish-later"; token: string }
+  | { kind: "manage-unschedule"; token: string }
+  | { kind: "manage-confirm-unschedule"; token: string }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
   | { kind: "confirm-attach-material"; token: string; materialToken: string }
@@ -197,6 +200,12 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "manage-hold", token: token.data };
   if (parts.length === 4 && parts[2] === "confirm-hold")
     return { kind: "manage-confirm-hold", token: token.data };
+  if (parts.length === 4 && parts[2] === "publish-later")
+    return { kind: "manage-publish-later", token: token.data };
+  if (parts.length === 4 && parts[2] === "unschedule")
+    return { kind: "manage-unschedule", token: token.data };
+  if (parts.length === 4 && parts[2] === "confirm-unschedule")
+    return { kind: "manage-confirm-unschedule", token: token.data };
   return { kind: "malformed" };
 }
 

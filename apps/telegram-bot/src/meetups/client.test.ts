@@ -47,6 +47,8 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
     attachMaterial: vi.fn(),
     removeMaterial: vi.fn(),
     markMeetupHeld: vi.fn(),
+    scheduleMeetupPublication: vi.fn(),
+    cancelMeetupPublication: vi.fn(),
     getMeetup: vi.fn(),
     listArchivedMeetups: vi.fn(),
   };
@@ -233,6 +235,98 @@ describe("Meetups client", () => {
       expect.objectContaining({ expectedVersion: 7n }),
       expect.anything(),
     );
+  });
+
+  it("sends the publication moment as local community time with the version", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.scheduleMeetupPublication.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.HIDDEN,
+        version: 8n,
+        scheduledPublishAt: "2026-10-01T16:30:00Z",
+      }),
+    );
+    rpc.cancelMeetupPublication.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.HIDDEN,
+        version: 9n,
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc, 3_000, "Europe/Moscow");
+
+    const scheduled = await meetups.schedulePublication(
+      person,
+      storedMeetup(7),
+      { year: 2026, month: 10, day: 1, hours: 19, minutes: 30 },
+    );
+    const cancelled = await meetups.cancelPublication(person, storedMeetup(8));
+
+    expect(rpc.scheduleMeetupPublication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "meetup-id",
+        expectedVersion: 7n,
+        moment: {
+          date: { year: 2026, month: 10, day: 1 },
+          time: { hours: 19, minutes: 30 },
+        },
+      }),
+      expect.anything(),
+    );
+    expect(scheduled).toMatchObject({
+      kind: "ok",
+      meetup: {
+        version: 8,
+        publishAt: { year: 2026, month: 10, day: 1, hours: 19, minutes: 30 },
+      },
+    });
+    expect(rpc.cancelMeetupPublication).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "meetup-id", expectedVersion: 8n }),
+      expect.anything(),
+    );
+    expect(cancelled.kind === "ok" && cancelled.meetup.publishAt).toBe(
+      undefined,
+    );
+  });
+
+  // Контракт разводит коды намеренно (integration.md): прошедший момент и
+  // опубликованная сходка ведут на разные кадры, и различие не должно
+  // теряться в адаптере.
+  it("keeps a past moment apart from a meetup that cannot be scheduled", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.scheduleMeetupPublication
+      .mockRejectedValueOnce(
+        new ConnectError("moment in the past", Code.InvalidArgument),
+      )
+      .mockRejectedValueOnce(
+        new ConnectError("already published", Code.FailedPrecondition),
+      );
+    const meetups = createMeetupsAdapter(rpc);
+    const moment = { year: 2026, month: 1, day: 1, hours: 10, minutes: 0 };
+
+    const past = await meetups.schedulePublication(
+      person,
+      storedMeetup(7),
+      moment,
+    );
+    const published = await meetups.schedulePublication(
+      person,
+      storedMeetup(7),
+      moment,
+    );
+
+    expect(past).toEqual({
+      kind: "invalid",
+      message: expect.stringContaining("moment in the past"),
+    });
+    expect(published).toEqual({
+      kind: "invalid",
+      message: expect.stringContaining("already published"),
+      precondition: true,
+    });
   });
 
   it("maps ordered message and file materials from a meetup snapshot", async () => {
