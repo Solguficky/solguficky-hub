@@ -39,11 +39,23 @@ AppHost объявляет граф узлов и их связи, а профи
 | `identity` | PostgreSQL | Identity |
 | `meetups` | PostgreSQL | Meetups |
 | `notifications` | PostgreSQL | Notifications |
+| `notifications-observability` | PostgreSQL, Loki, Grafana | Notifications |
 | `hub` | PostgreSQL | Identity, Meetups, Notifications, Telegram Bot |
 
 Профиль `meetups` поднимает PostgreSQL: сервис применяет миграции при старте и без строки подключения не слушает. Смотрящий по-прежнему приходит в запросе, шины в профиле нет.
 
 Профиль `notifications` устроен так же, но зависимость от базы у него жёстче: в его базе лежат не только доменные таблицы, но и membership силоса Orleans, поэтому без строки подключения сервис не просто не слушает — он не поднимает силос вовсе. Миграции применяет тот же DbUp, и он же заводит таблицы Orleans. Порты силоса штатные и берутся из конфигурации: два профиля с Notifications одновременно на одной машине за них подерутся.
+
+`notifications-observability` — отдельный локальный профиль для разбора молчащего reminder'а: Aspire поднимает Loki 3.7.0 и Grafana 13.1.6 вместе с Notifications, а сервис отправляет логи одновременно в Aspire Dashboard и Loki через OTLP/HTTP. Обычные профили этих контейнеров не поднимают. Адрес Grafana выдаёт Aspire (`aspire describe --format Json`), панель **Notifications reminders** и источник Loki загружаются автоматически из `infra/observability/`. Для агента в рабочем дереве:
+
+```powershell
+aspire start --isolated --non-interactive --apphost infra/apphost/AppHost.csproj -- --profile notifications-observability
+aspire wait notifications --apphost infra/apphost/AppHost.csproj --non-interactive
+aspire wait grafana --apphost infra/apphost/AppHost.csproj --non-interactive
+aspire stop --apphost infra/apphost/AppHost.csproj --non-interactive
+```
+
+Встроенный вход Grafana для локального контейнера — `admin/admin`; профиль не предназначен для публикации в сеть. Запросы и толкование признаков описаны в [Notifications](../services/notifications.md#как-заметить-молчащее-напоминание). Остановленный сервис не выдаёт heartbeat; пустую панель при самом первом запуске следует отличать от здорового нуля после первого тика.
 
 **В рабочем дереве `aspire run` запускают с `--apphost`.** Деревья лежат в `.claude/worktrees/` внутри основного клона, поэтому поиск AppHost вверх по дереву каталогов находит `infra/apphost` родителя, а не свой. Симптом обманчив: запуск падает на `Unknown topology profile` с перечнем профилей основного клона, и выглядит это как ошибка в своей правке `appsettings.json`. Правильная форма — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile <name>`.
 

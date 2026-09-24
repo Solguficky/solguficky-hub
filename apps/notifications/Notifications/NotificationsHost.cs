@@ -5,6 +5,9 @@ using Notifications.Preferences;
 using Notifications.Reminders;
 using Notifications.Transport;
 using Npgsql;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using Orleans.Configuration;
 
 namespace Notifications;
@@ -41,6 +44,22 @@ public static class NotificationsHost
         var connectionString = Migrations.ConnectionString(databaseUrl);
 
         builder.AddServiceDefaults();
+        builder.Services.AddSingleton<ReminderTelemetry>();
+        builder.Services.AddOpenTelemetry()
+            .WithMetrics(metrics => metrics.AddMeter(ReminderTelemetry.MeterName));
+
+        // Локальный diagnostics-профиль пишет те же логи в Loki через OTLP.
+        // Обычные профили продолжают экспортировать их только в Aspire.
+        var lokiEndpoint = builder.Configuration["NOTIFICATIONS_LOKI_OTLP_ENDPOINT"];
+        if (!string.IsNullOrWhiteSpace(lokiEndpoint))
+        {
+            builder.Services.Configure<OpenTelemetryLoggerOptions>(logging =>
+                logging.AddOtlpExporter(exporter =>
+                {
+                    exporter.Endpoint = new Uri(new Uri(lokiEndpoint.TrimEnd('/') + "/"), "otlp/v1/logs");
+                    exporter.Protocol = OtlpExportProtocol.HttpProtobuf;
+                }));
+        }
 
         // h2c: gRPC без TLS требует HTTP/2, а plaintext-endpoint без ALPN не умеет
         // договариваться о версии. Протокол задан кодом, а не appsettings.json,

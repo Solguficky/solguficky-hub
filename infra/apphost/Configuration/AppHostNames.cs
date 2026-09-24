@@ -21,6 +21,8 @@ public static class AppHostNames
         public const string NotificationsDbName = "notifications";
 
         public const string Nats = "nats";
+        public const string Loki = "loki";
+        public const string Grafana = "grafana";
 
         public const string Identity = "identity";
         public const string Meetups = "meetups";
@@ -35,5 +37,6 @@ public static class AppHostNames
     public static class Endpoints
     {
         public const string Grpc = "grpc";
+        public const string Http = "http";
     }
 }
