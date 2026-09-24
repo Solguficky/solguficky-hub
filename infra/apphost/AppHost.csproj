@@ -32,4 +32,11 @@
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Реестр графа и резолвер профиля намеренно internal: снаружи AppHost ими
+       никто не пользуется, и публичными их делает только тест. Открываем тестам
+       вместо расширения видимости самих типов. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="AppHost.UnitTests" />
+  </ItemGroup>
+
 </Project>

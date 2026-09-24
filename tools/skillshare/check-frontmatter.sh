@@ -27,21 +27,42 @@ is_ignored() {
     [ -f "$SKILLIGNORE" ] && grep -Fxq "$1" "$SKILLIGNORE"
 }
 
+# The tree is walked with shell globs, not `find`. Called from PowerShell, `sh`
+# resolves an unqualified `find` to C:\Windows\system32\find.exe, which prints
+# usage errors and finds nothing, so the check failed on an empty file list
+# without looking at a single skill. Globs need no external binary at all.
+#
+# POSIX sh has no `local`, so the recursion shares `entry` with its caller; that
+# is safe only because nothing reads `entry` after the recursive call returns.
+found=''
+collect() {
+    for entry in "$1"/* "$1"/.[!.]*; do
+        [ -e "$entry" ] || continue
+        case ${entry##*/} in .git) continue ;; esac
+        if [ -d "$entry" ]; then
+            collect "$entry"
+        elif [ "${entry##*/}" = SKILL.md ]; then
+            found="$found$entry
+"
+        fi
+    done
+}
+
+for root in "$SKILLS_ROOT" "$CLAUDE_SKILLS" "$UNIVERSAL_SKILLS"; do
+    [ -d "$root" ] && collect "$root"
+done
+
 # Disabled skills are never synced to a target, so an upstream frontmatter this
 # repository cannot fix is not a reason to fail the check.
 set --
 IFS='
 '
-for root in "$SKILLS_ROOT" "$CLAUDE_SKILLS" "$UNIVERSAL_SKILLS"; do
-    [ -d "$root" ] || continue
-    for skill_file in $(find "$root" -name SKILL.md | sort); do
-        [ -f "$skill_file" ] || continue
-        name=$(basename "$(dirname "$skill_file")")
-        if is_ignored "$name"; then
-            continue
-        fi
-        set -- "$@" "$skill_file"
-    done
+for skill_file in $found; do
+    name=$(basename "$(dirname "$skill_file")")
+    if is_ignored "$name"; then
+        continue
+    fi
+    set -- "$@" "$skill_file"
 done
 unset IFS
 

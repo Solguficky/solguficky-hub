@@ -181,8 +181,14 @@ def subject_problems() -> list[str]:
     """
     from nats_tester import registry
 
+    descriptors = _bus_event_descriptors()
+    if not descriptors:
+        # Пустой вход неотличим от «всё в порядке»: без этой строки схема,
+        # переименовавшая `oneof occasion`, выключила бы проверку молча.
+        return [f"no bus schema declares oneof {OCCASION_ONEOF}: nothing to check"]
+
     problems = []
-    for descriptor in _bus_event_descriptors():
+    for descriptor in descriptors:
         domain = descriptor.file.package.split(".")[0]
         occasion = descriptor.oneofs_by_name[OCCASION_ONEOF]
         expected = {f"events.{domain}.{field.name}" for field in occasion.fields}
@@ -258,6 +264,41 @@ def envelope_problems() -> list[str]:
     return problems
 
 
+def selftest_problems() -> list[str]:
+    """Проверка subjects краснеет, когда домена в реестре нет совсем.
+
+    Первая версия проверки брала домены из реестра и на этой мутации молчала,
+    а мутационный прогон автора её не содержал: он портил предмет проверки,
+    но не убирал его. Самопроверка по очереди вычёркивает из реестра каждый
+    домен фактов целиком и требует, чтобы проверка это назвала.
+
+    Реестр подменяется атрибутом модуля, а не аргументом: мутация обязана
+    дойти до любого места гейта, которое реестр читает. Аргумент видела бы
+    только сверка subjects, а исходный дефект сидел в том, откуда берётся
+    список доменов, и через аргумент самопроверка его не ловила.
+    """
+    from nats_tester import registry
+
+    original = registry.ALL_MESSAGE_TYPES
+    problems = []
+    for descriptor in _bus_event_descriptors():
+        registry.ALL_MESSAGE_TYPES = {
+            subject: message
+            for subject, message in original.items()
+            if message.DESCRIPTOR.full_name != descriptor.full_name
+        }
+        try:
+            mutant_problems = subject_problems()
+        finally:
+            registry.ALL_MESSAGE_TYPES = original
+        if not mutant_problems:
+            problems.append(
+                f"selftest: subject check stays green with every subject of "
+                f"{descriptor.full_name} removed from the registry"
+            )
+    return problems
+
+
 def check() -> list[str]:
     """Пустой список — инструмент согласован; иначе строки для отчёта."""
     problems = broken_imports()
@@ -269,14 +310,15 @@ def check() -> list[str]:
         return problems
 
     # Каждая проверка идёт в своей обёртке и под своим именем: отказ одной не
-    # должен ни выдавать себя за отказ соседней, ни отменять её прогон. Две из
-    # трёх читают реестр, поэтому упавший импорт назовут обе — это дешевле,
+    # должен ни выдавать себя за отказ соседней, ни отменять её прогон. Три из
+    # четырёх читают реестр, поэтому упавший импорт назовут все три — это дешевле,
     # чем потерять находку из-за чужого падения; сверка конверта реестра не
     # читает и переживает его падение.
     for name, problem_source in (
         ("registry", registry_problems),
         ("subjects", subject_problems),
         ("envelope", envelope_problems),
+        ("selftest", selftest_problems),
     ):
         try:
             problems += problem_source()

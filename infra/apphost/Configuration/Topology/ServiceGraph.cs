@@ -71,7 +71,10 @@ internal sealed class ServiceGraph(IDistributedApplicationBuilder builder, Profi
 
     /// <summary>
     /// Опечатка в имени и зависимость на незарегистрированный узел падают на
-    /// старте, а не превращаются в тихо неподключённый ресурс.
+    /// старте, а не превращаются в тихо неподключённый ресурс. Проверка
+    /// двусторонняя: профиль не вправе назвать незарегистрированный узел, а
+    /// зарегистрированный узел не вправе остаться без профиля — иначе он не
+    /// материализуется ни в одном запуске, и заметить это нечем.
     /// </summary>
     private void Validate()
     {
@@ -98,6 +101,22 @@ internal sealed class ServiceGraph(IDistributedApplicationBuilder builder, Profi
         {
             throw new InvalidOperationException(
                 $"Profile '{profile.Name}' lists infrastructure '{name}', which is not registered in the graph.");
+        }
+
+        // Обратная сторона: узел, которого нет ни в одном профиле, не поднимется
+        // никогда. Отказ здесь стоит потому, что симптома у такого узла нет —
+        // сборка зелёная, запуск успешный, а ресурса просто нет в дашборде.
+        // Поэтому регистрация узла и появление его владельца обязаны ехать одним
+        // изменением.
+        var declared = ProfileResolver.DeclaredNames(builder.Configuration);
+
+        foreach (var name in registered
+            .Where(name => !declared.Contains(name))
+            .Order(StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Node '{name}' is registered in the graph, but no profile owns it, so it is never materialized. " +
+                "List it in a profile under 'Topology:Profiles', or register it together with the change that brings its first consumer.");
         }
     }
 

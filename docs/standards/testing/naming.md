@@ -47,7 +47,7 @@
 
 ## C#
 
-C#-тестов в репозитории пока нет; раздел рекомендован заранее, чтобы первый тест не выбирал форму заново. Стек — [testing-strategy.md](testing-strategy.md).
+Раздел написан до первого C#-теста, и первые наборы его подтвердили: unit-тесты Notifications и AppHost называются по форме метода (`Resolve_OverridePresent_WinsOverGlobal`), интеграционные тесты Notifications и сквозной `Contour.E2ETests` — по форме стимула (`When_MeetupOverrideSet_Expect_ItWinsOverTheGlobalSetting`). Стек — [testing-strategy.md](testing-strategy.md).
 
 - `<Метод>_<Сценарий>_<ОжидаемоеПоведение>` — форма по умолчанию для unit-теста, где виден конкретный метод SUT: `Map_RequestHasNoDrivers_MapsToUnlimitedDrivers`. Имя метода первым даёт группировку и поиск по SUT.
 - `When_<условие>_Expect_<ожидание>` — форма для поведенческого и E2E-теста, где метод SUT не выделяется: `When_MeetupPublished_Expect_SubscribersNotified`. `Expect` вместо распространённого в C# `Should` выбран сознательно: стимул и исход называются во всех стеках репозитория одним словом.

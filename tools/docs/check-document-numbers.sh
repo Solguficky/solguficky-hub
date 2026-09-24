@@ -11,8 +11,11 @@
 # tree and asks two questions that need no judgment: each number occurs once,
 # and each numbered file is linked from the catalog README.
 #
-# The file set comes from Git: an untracked scratch file is the author's
-# business, a committed one is the defect this check exists for. The catalog
+# The file set is the working tree minus what .gitignore hides: tracked files
+# plus untracked, non-ignored ones. Tracked alone is not enough - the gate runs
+# before the commit, so the document the author has just numbered is untracked
+# at exactly the moment this check exists for, and a tracked-only list reported
+# green without ever seeing it. A tracked file deleted on disk is dropped. The catalog
 # text is read from the working tree, same as check-published-pages.sh: the
 # index row must be a table line that links the basename. README.md and
 # template.md have no number and are ignored. docs/learning/ and
@@ -36,21 +39,26 @@ check_catalog() {
     dir=$2
     index="$dir/README.md"
 
-    tracked=$(git -c core.quotePath=false ls-files -- "$dir")
+    present=$(
+        git -c core.quotePath=false ls-files --cached --others --exclude-standard -- "$dir" |
+            while IFS= read -r path; do
+                [ -f "$path" ] && printf '%s\n' "$path"
+            done
+    )
 
-    if [ -z "$tracked" ]; then
-        echo "No tracked files under $dir: the catalog is missing." >&2
+    if [ -z "$present" ]; then
+        echo "No files under $dir: the catalog is missing." >&2
         failed=1
         return
     fi
 
-    if ! printf '%s\n' "$tracked" | grep -q -x -F "$index"; then
-        echo "$index is not tracked: numbered files have no catalog to appear in." >&2
+    if ! printf '%s\n' "$present" | grep -q -x -F "$index"; then
+        echo "$index is missing: numbered files have no catalog to appear in." >&2
         failed=1
         return
     fi
 
-    files=$(printf '%s\n' "$tracked" | grep -E "^${dir}/${prefix}-[0-9]{3}-[^/]+\\.md$" || true)
+    files=$(printf '%s\n' "$present" | grep -E "^${dir}/${prefix}-[0-9]{3}-[^/]+\\.md$" || true)
 
     if [ -z "$files" ]; then
         echo "No numbered ${prefix} files under $dir." >&2

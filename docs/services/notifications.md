@@ -229,7 +229,7 @@ JetStream участвует в первой границе, но не заме�
 | Identity | метод разрешения внутреннего идентификатора в Telegram id |
 | Telegram Bot | роль потребителя уведомлений: собственный durable consumer, резолвинг получателя, рендеринг текста, retry и журнал попыток. Устройство этого входа решается вместе с эпиками уведомлений, а не в [ADR-030](../decisions/ADR-030-telegram-bot.md) |
 
-Метод разрешения внутреннего идентификатора в Telegram id нужен каналу, а не Notifications: в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь. Он принят отдельным вызовом `IdentityService.ResolveTelegramUserId` ([integration.md](../architecture/integration.md)); реализация — [PER-231](https://linear.app/anticnvm/issue/per-231).
+Метод разрешения внутреннего идентификатора в Telegram id нужен каналу, а не Notifications: в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь. Он принят отдельным вызовом `IdentityService.ResolveTelegramUserId` ([integration.md](../architecture/integration.md)), реализован в [PER-231](https://linear.app/anticnvm/issue/per-231).
 
 ## Что решено и что осталось
 

@@ -40,6 +40,31 @@ internal static class ProfileResolver
         return profile;
     }
 
+    /// <summary>
+    /// Имена, которыми владеет хотя бы один профиль. Активный профиль здесь ни при
+    /// чём: вопрос не «что поднимается сейчас», а «у какого узла вообще есть
+    /// владелец». Срез `--run-services` на ответ не влияет — он меняет запуск, а не
+    /// объявленные профили.
+    /// </summary>
+    public static IReadOnlySet<string> DeclaredNames(IConfiguration configuration)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var child in configuration.GetSection(ProfilesSection).GetChildren())
+        {
+            var profile = child.Get<ProfileConfig>();
+            if (profile is null)
+            {
+                continue;
+            }
+
+            names.UnionWith(profile.Services);
+            names.UnionWith(profile.Infrastructure);
+        }
+
+        return names;
+    }
+
     private static void ApplyServiceOverrides(IConfiguration configuration, ProfileConfig profile)
     {
         var run = configuration["run-services"];

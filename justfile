@@ -137,7 +137,7 @@ contracts-codegen-buf:
     buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template contracts/buf.gen.codegen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
 
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -153,6 +153,21 @@ aspire profile="hub" *args="":
 # Сборка Aspire AppHost
 apphost-build:
     cd infra/apphost && dotnet build --nologo
+
+# Порог поднимается руками вместе с набором: выведенный из текущего прогона
+# сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
+APPHOST_TEST_THRESHOLD := "15"
+
+# Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
+# материализация модели отрабатывают до старта ресурсов, поэтому единственная
+# ветка отказа, у которой нет симптома, — «узел без владеющего профиля» —
+# проверяется здесь, а не живым прогоном.
+#
+# `dotnet run`, а не `dotnet test`: solution-файла у AppHost нет, а runner
+# Microsoft.Testing.Platform требует `--solution`. Форма та же, что у contour-test.
+apphost-test:
+    @echo "apphost-test: минимум {{APPHOST_TEST_THRESHOLD}} тестов — добавил тест, подними APPHOST_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet run --project infra/AppHost.UnitTests/AppHost.UnitTests.csproj -- --fail-skips on --minimum-expected-tests {{APPHOST_TEST_THRESHOLD}}
 
 # --- Identity (Go) ---------------------------------------------------------
 #
@@ -188,9 +203,13 @@ identity-test: identity-proto
 
 # Линт Identity закреплённой версией; чужая версия читает тот же
 # .golangci.yml иначе, поэтому расхождение — ошибка, а не предупреждение
+# --allow-parallel-runners: без флага golangci-lint берёт блокировку в каталоге
+# временных файлов пользователя, а не рабочего дерева, и параллельный прогон в
+# соседнем дереве ронял гейт кодом 3 без единой находки. Кэш флаг не портит:
+# два одновременных прогона на холодном кэше дают тот же результат.
 identity-lint: identity-proto
     @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
-    cd apps/identity && golangci-lint run ./...
+    cd apps/identity && golangci-lint run --allow-parallel-runners ./...
 
 # Локальный запуск; адрес — IDENTITY_GRPC_ADDR, база — IDENTITY_DATABASE_URL
 identity-run: identity-proto
