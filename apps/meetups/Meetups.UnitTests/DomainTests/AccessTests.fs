@@ -6,11 +6,11 @@ open Swensen.Unquote
 open Xunit
 
 [<Fact>]
-let ``Command should be allowed for an administrator`` () = test <@ Access.forCommand Sample.administrator = Ok() @>
+let ``Command should be allowed for an administrator`` () = test <@ Access.actOnBehalf Sample.administrator = Ok() @>
 
 [<Fact>]
 let ``Command should be refused for a viewer without roles`` () =
-    test <@ Access.forCommand Sample.ordinary = Error NotAnAdministrator @>
+    test <@ Access.actOnBehalf Sample.ordinary = Error NotAnAdministrator @>
 
 /// ADR-031: автор не является отдельным правом — в срезе он всегда администратор.
 /// Без этой проверки правило легко испортить обратно, сверив личность со сходкой.
@@ -21,7 +21,7 @@ let ``Command should be refused for the author who lost the administrator role``
     test
         <@
             author = Sample.ordinary.IdentityId
-            && Access.forCommand Sample.ordinary = Error NotAnAdministrator
+            && Access.actOnBehalf Sample.ordinary = Error NotAnAdministrator
         @>
 
 [<Fact>]
@@ -53,7 +53,7 @@ let ``Command should be refused for a viewer holding only a new role`` () =
                         Roles = Set.singleton role
                     }
 
-                Access.forCommand viewer = Error NotAnAdministrator
+                Access.actOnBehalf viewer = Error NotAnAdministrator
             )
         @>
 

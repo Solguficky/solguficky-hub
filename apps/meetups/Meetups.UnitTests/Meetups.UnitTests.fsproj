@@ -54,6 +54,7 @@
     <Compile Include="SliceTests/ListArchivedMeetupsTests.fs" />
     <Compile Include="SliceTests/GetMeetupTests.fs" />
     <Compile Include="SliceTests/ListMeetupStatesTests.fs" />
+    <Compile Include="SliceTests/CheckMeetupAuthorityTests.fs" />
     <Compile Include="SliceTests/DispatchMeetupEventsTests.fs" />
     <Compile Include="SliceTests/PublishDueMeetupsTests.fs" />
     <Compile Include="ContractSurfaceTests.fs" />

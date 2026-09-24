@@ -50,7 +50,7 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Create
         // Право спрашивается до загрузки: состояние в этом решении не участвует, а
         // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
         // того, существует ли сходка, то есть способом узнать про чужой черновик.
-        match Access.forCommand command.Viewer with
+        match Access.actOnBehalf command.Viewer with
         | Error denied -> return Error(CreateMeetupDraftError.Forbidden denied)
         | Ok() ->
             let! existing = deps.Load command.Id

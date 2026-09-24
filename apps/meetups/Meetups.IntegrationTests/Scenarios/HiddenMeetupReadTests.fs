@@ -60,6 +60,7 @@ type HiddenMeetupReadTests() =
                     "ListArchivedMeetups"
                     "GetMeetup"
                     "ListMeetupStates"
+                    "CheckMeetupAuthority"
                 ]
 
         test <@ contractReadOperations = operationsCoveredByThisSuite @>
@@ -203,3 +204,39 @@ type HiddenMeetupReadTests() =
             |> Set.ofSeq
 
         test <@ returnedIds.Contains hiddenId @>
+
+    /// Проверка права — тоже вопрос о сходке, и ответ на него не должен выдавать
+    /// скрытую: посторонний получает один и тот же отказ для скрытой и отсутствующей,
+    /// а администратор — право и на свою, и на заведённую другим (PER-224).
+    [<Fact>]
+    member _.``The authority check neither exposes a hidden meetup nor withholds it from administrators``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let hiddenId, _ = createDraft client
+        let missingId = (Guid.CreateVersion7()).ToString "D"
+
+        let anotherAdministrator =
+            Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000d")
+
+        anotherAdministrator.GlobalRoles.Add Identity.V1.GlobalRole.Admin
+
+        let check viewer meetupId =
+            try
+                client.CheckMeetupAuthority(CheckMeetupAuthorityRequest(Viewer = viewer, Id = meetupId))
+                |> ignore
+
+                None
+            with :? RpcException as refused ->
+                Some refused.Status
+
+        let outsiderOnHidden = check (ordinary ()) hiddenId
+        let outsiderOnMissing = check (ordinary ()) missingId
+
+        test
+            <@
+                outsiderOnHidden = outsiderOnMissing
+                && outsiderOnMissing = Some(Status(StatusCode.PermissionDenied, "an administrator role is required"))
+                && check (administrator ()) hiddenId = None
+                && check anotherAdministrator hiddenId = None
+                && check anotherAdministrator missingId = Some(Status(StatusCode.NotFound, "meetup not found"))
+            @>

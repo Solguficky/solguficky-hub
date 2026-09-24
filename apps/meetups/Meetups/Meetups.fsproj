@@ -43,6 +43,7 @@
     <Compile Include="Slices/ListArchivedMeetups.fs" />
     <Compile Include="Slices/GetMeetup.fs" />
     <Compile Include="Slices/ListMeetupStates.fs" />
+    <Compile Include="Slices/CheckMeetupAuthority.fs" />
     <Compile Include="Slices/DispatchMeetupEvents.fs" />
     <Compile Include="Slices/PublishDueMeetups.fs" />
     <Compile Include="Observability/Failures.fs" />

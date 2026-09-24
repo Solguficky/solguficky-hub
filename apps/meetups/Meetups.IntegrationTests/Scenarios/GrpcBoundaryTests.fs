@@ -68,6 +68,19 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         test <@ actual = List.replicate 4 (Some StatusCode.PermissionDenied) @>
 
+    /// Проверка права отвечает постороннему тем же правилом и в той же точке, что
+    /// команды: до соединения с хранилищем, которого у этого хоста и нет. Ответ
+    /// поэтому не может зависеть от того, существует ли сходка (PER-224).
+    [<Fact>]
+    member _.``The authority check refuses an ordinary viewer before touching storage``() =
+        let actual =
+            Rpc.codeOf (fun () ->
+                client.CheckMeetupAuthority(CheckMeetupAuthorityRequest(Viewer = viewer, Id = id))
+                |> ignore
+            )
+
+        test <@ actual = Some StatusCode.PermissionDenied @>
+
     /// Новые роли контракта и значение вне словаря не отвергают запрос по разбору:
     /// перевод в домен их отбрасывает, а отказ приходит от правила по праву.
     [<Fact>]
