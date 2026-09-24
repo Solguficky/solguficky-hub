@@ -7,6 +7,11 @@ import "identity/v1/roles.proto";
 // Resolves Telegram identities and exposes authenticated maintainer operations.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+  // Resolves an internal id back to the Telegram user id of that profile. It is
+  // a separate operation and not a mode of ResolveIdentity: that one establishes
+  // an identity and creates the profile at first contact, while this one must
+  // answer NOT_FOUND for an id it does not know.
+  rpc ResolveTelegramUserId(ResolveTelegramUserIdRequest) returns (ResolveTelegramUserIdResponse);
   // Grants the global admin role to an existing identity. Requires maintainer authentication.
   rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
   // Revokes the active global admin role. Requires maintainer authentication.
@@ -71,6 +76,19 @@ message ResolveIdentityResponse {
   // derived from global_roles: blocking revokes active roles, so an empty set
   // alone does not distinguish a blocked profile from one that never started.
   bool blocked = 3;
+}
+
+message ResolveTelegramUserIdRequest {
+  // Canonical lowercase UUIDv7 string with hyphens: the internal id a consumer
+  // of the bus received in an event or in a notification.
+  string identity_id = 1;
+}
+
+message ResolveTelegramUserIdResponse {
+  // Telegram user id of that profile. An unknown identity_id is NOT_FOUND, not
+  // a zero here, so a channel cannot mistake "no such person" for a delivery
+  // target.
+  int64 telegram_user_id = 1;
 }
 
 message GrantAdminRoleRequest {
