@@ -1,0 +1,42 @@
+# Проверочная кодогенерация всего модуля contracts/proto на Go и TypeScript.
+#
+# Это не потребитель: код пишется в игнорируемый tmp/ и нигде не собирается.
+# Шаблон отвечает на один вопрос — генерируется ли каждая схема модуля
+# плагинами тех языков, на которых её будут читать, включая домен, у которого
+# на этом языке потребителя ещё нет. Identity и Telegram Bot сужают свои
+# buf.gen.yaml до потребляемых доменов и чужой код в свои gen/ не тянут.
+#
+# Плагины и их версии — те же, что у потребителей: protoc-gen-go и
+# protoc-gen-go-grpc закреплены в apps/identity/go.mod и ставятся
+# `just identity-proto-tools`, protoc-gen-es — в apps/telegram-bot/package.json
+# и ставится `just telegram-bot-tools`. Второго закрепления здесь нет.
+# Scala генерирует свой sbt: `just contracts-codegen` зовёт его рядом.
+version: v2
+clean: true
+managed:
+  enabled: true
+  override:
+    # Модуля с таким путём нет: код не компилируется, а managed mode без
+    # префикса не выводит go_package и отказывает до генерации.
+    - file_option: go_package_prefix
+      value: github.com/Solguficky/solguficky-hub/tmp/contracts-codegen/go
+plugins:
+  - local: protoc-gen-go
+    out: tmp/contracts-codegen/go
+    opt:
+      - paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: tmp/contracts-codegen/go
+    opt:
+      - paths=source_relative
+  # Через node, а не шим из node_modules/.bin — та же причина, что в
+  # apps/telegram-bot/buf.gen.yaml: шим без расширения на Windows не исполняется.
+  - local:
+      - node
+      - apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es
+    out: tmp/contracts-codegen/ts
+    opt:
+      - target=ts
+      - import_extension=.js
+inputs:
+  - directory: contracts/proto

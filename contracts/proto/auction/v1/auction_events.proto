@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package auction.v1;
+
+import "auction/v1/auction.proto";
+
+// Outgoing facts of the lot journal. They live apart from auction_service.proto for
+// the same reason the value types do: a consumer of the events must not drag
+// AuctionService and its requests into its codegen.
+//
+// This is not the journal row. The row also carries the aggregate type, the
+// operation id, the transaction id, the actor and the schema version; none of them
+// leaves the service. Subjects, delivery semantics and what is deliberately absent
+// are documented in docs/architecture/integration.md, section "Auction NATS".
+//
+// Only public facts are published. Proxy limits are private to their owner, and
+// the selection of a lot for the final stays a working choice of the organizer
+// until the lineup is frozen, so ProxyLimitSet, ProxyLimitWithdrawn and
+// LotMarkedForFinal have no occasion here, and the state carries neither limits
+// nor the final mark.
+
+// A recorded public fact about one lot: why it changed and what is true about it now.
+message LotEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the row of the journal and
+  // is the same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The lot this fact belongs to. It
+  // repeats state.id so that the envelope alone identifies the subject of the fact.
+  string lot_id = 2;
+
+  // Position of the event in the journal of the lot, starting at 1, so 0 is not a
+  // valid value. Monotonic within one lot but not contiguous on the bus: private
+  // facts take positions too and are not published, so a gap is not a lost event.
+  // Delivery order is not promised: a redelivered event may arrive after a newer one.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the server time the command was decided at. Several
+  // facts of one command share it. It is neither the moment of publication nor
+  // the moment of delivery, and it does not order events - version does.
+  string occurred_at = 4;
+
+  // The public state of the lot after the event was applied. Always set: the body
+  // of every event is a whole snapshot, never a delta.
+  LotState state = 5;
+
+  // Why the state changed - the occasion. Exactly one is set, and an empty oneof is
+  // not a value.
+  oneof occasion {
+    LotOpened lot_opened = 6;
+    BidPlaced bid_placed = 7;
+    AskAdvanced ask_advanced = 8;
+    DeadlineExtended deadline_extended = 9;
+    LotSold lot_sold = 10;
+    LotUnsold lot_unsold = 11;
+    LotWithdrawn lot_withdrawn = 12;
+    LotHeldForFinal lot_held_for_final = 13;
+    LotResumed lot_resumed = 14;
+  }
+}
+
+// The public state of a lot after an event.
+//
+// It is defined here and does not reuse the state of the service contract. The
+// fields coincide today, but separate definitions keep a change of the read API
+// from silently becoming a change of this contract. Field numbers match
+// auction.v1.LotSnapshot so that the two stay readable side by side.
+message LotState {
+  // The version is a value of the envelope and is not repeated here: two copies
+  // of one number can disagree. The other two numbers carry values LotSnapshot
+  // computes for one viewer or by a rule, which a fact on the bus does not carry.
+  reserved 4, 5, 6;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the trading session the lot belongs
+  // to. Always set: the link belongs to the fact, not to a guess of the reader.
+  string session_id = 2;
+
+  // Set from the moment the lot enters trading and never changed after it. Unset
+  // only on a lot withdrawn before it was opened.
+  LotConfig config = 3;
+
+  // Where the lot is. Exactly one is set.
+  oneof status {
+    LotTrading trading = 10;
+    LotHeld held = 11;
+    LotSale sold = 12;
+    UnsoldReason unsold = 13;
+    WithdrawnReason withdrawn = 14;
+  }
+}
+
+// The lot entered trading. The configuration and the starting price are in the
+// state: the starting price is state.trading.current_price.
+message LotOpened {}
+
+// A bid was accepted. The bidder is now the leader and the amount is the current
+// price, both in the state; the bid id is state.trading.leading_bid_id.
+//
+// A chain of proxy bids is folded into one fact with the final price: the
+// intermediate amounts are steps of a computation, not facts of the trading.
+message BidPlaced {
+  // Canonical lowercase UUIDv7 with hyphens: the participant who led before this
+  // bid. Absent on the first bid of the lot - absent, not an empty string.
+  //
+  // Present does not mean outbid: when the leader's own proxy answers a rival
+  // limit and raises the price without losing the lead, this equals the new
+  // state.trading.leader_id. Someone was outbid only when the two differ.
+  optional string previous_leader_id = 1;
+
+  // How the bid was placed. Exactly one is set.
+  oneof origin {
+    ManualBid manual = 2;
+    ProxyBid proxy = 3;
+  }
+}
+
+// A bid a participant placed by hand.
+message ManualBid {
+  BidSource source = 1;
+}
+
+// A bid the system placed within the bidder's proxy limit. It has no source: no
+// channel placed it. The limit itself is not carried.
+message ProxyBid {}
+
+// The auctioneer announced the next price; it is state.trading.ask. Who announced
+// it is not carried.
+message AskAdvanced {}
+
+// Anti-sniping extended the deadline. The new deadline and the count of used
+// extensions are in the state.
+message DeadlineExtended {}
+
+// The lot was sold. The sale is state.sold.
+message LotSold {}
+
+// The lot closed without a sale. The reason is state.unsold.
+message LotUnsold {}
+
+// The lot was withdrawn from trading. The reason is state.withdrawn; who withdrew
+// it is not carried.
+message LotWithdrawn {}
+
+// The lot was selected for the live final and survived the common deadline: it is
+// held with the price and leader it had. The moment is occurred_at.
+message LotHeldForFinal {}
+
+// A held lot returned to trading in the live final. The state has the phase set to
+// live, and neither a deadline nor an ask.
+message LotResumed {}

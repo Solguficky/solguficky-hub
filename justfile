@@ -124,8 +124,20 @@ contracts-check:
     buf lint contracts/proto
     buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Весь модуль contracts/proto генерируется на Go, TypeScript и Scala одной
+# командой. Go и TypeScript пишутся в игнорируемый tmp/ плагинами потребителей,
+# Scala генерирует своя сборка. Сборка схемы (`contracts-build`) не ловит
+# отказ конкретного генератора: имя, которое один язык принимает, другой может
+# отвергнуть, — это и проверяется здесь.
+contracts-codegen: contracts-codegen-buf auction-proto
+
+# Go и TypeScript отдельно: в `verify` Scala уже генерирует auction-verify, и
+# второй холодный старт sbt гейту не нужен
+contracts-codegen-buf:
+    buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template contracts/buf.gen.codegen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
+
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools

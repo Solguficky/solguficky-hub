@@ -1,0 +1,229 @@
+syntax = "proto3";
+
+package auction.v1;
+
+import "auction/v1/auction.proto";
+import "identity/v1/roles.proto";
+
+// Commands of a participant and reads of the trading state.
+//
+// A named refusal of the trading domain is a value of the response, not a gRPC
+// status: a command response carries exactly one of accepted or refused, and a
+// refusal carries the values a caller needs to show it. When refusals are final,
+// how op_id is replayed and which conditions still answer with a status are
+// documented in docs/architecture/integration.md, section "Auction gRPC".
+//
+// Commands of the auctioneer, of the organizer and of the session are
+// deliberately absent.
+service AuctionService {
+  rpc PlaceBid(PlaceBidRequest) returns (PlaceBidResponse);
+  rpc SetProxyLimit(SetProxyLimitRequest) returns (SetProxyLimitResponse);
+  rpc WithdrawProxyLimit(WithdrawProxyLimitRequest) returns (WithdrawProxyLimitResponse);
+  rpc GetLot(GetLotRequest) returns (LotSnapshot);
+  rpc ListSessionLots(ListSessionLotsRequest) returns (ListSessionLotsResponse);
+}
+
+message Viewer {
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity from Identity.
+  // It is the participant of a command; there is no separate participant field,
+  // so a request cannot act for someone else.
+  string identity_id = 1;
+
+  // Platform-wide roles from Identity. Domain permissions are not precomputed
+  // here; Auction applies them as the owner of the resource. An empty set means
+  // an ordinary user. The block mark is deliberately absent, as in meetups.v1.Viewer.
+  repeated identity.v1.GlobalRole global_roles = 2;
+}
+
+message PlaceBidRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+
+  // In the live final this is the expected next price: any other amount, higher
+  // or lower, is refused with the actual next price.
+  Money amount = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens: the idempotency key,
+  // checked by the domain.
+  string op_id = 4;
+}
+
+message PlaceBidResponse {
+  // Exactly one is set.
+  oneof outcome {
+    BidAccepted accepted = 1;
+    PlaceBidRefusal refused = 2;
+  }
+}
+
+message BidAccepted {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string bid_id = 1;
+}
+
+message PlaceBidRefusal {
+  // Exactly one is set.
+  oneof reason {
+    LotNotOpen lot_not_open = 1;
+    LotOnHold lot_on_hold = 2;
+    BidBelowMinimum bid_below_minimum = 3;
+    BidNotAtNextPrice bid_not_at_next_price = 4;
+    BidderIsLeader bidder_is_leader = 5;
+    CurrencyMismatch currency_mismatch = 6;
+  }
+}
+
+message SetProxyLimitRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+
+  // The new limit. It replaces the viewer's current limit on the lot, if any.
+  Money max = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message SetProxyLimitResponse {
+  // Exactly one is set. Whether the limit also produced a bid is not carried here;
+  // it is visible in the state of the lot.
+  oneof outcome {
+    ProxyLimitAccepted accepted = 1;
+    SetProxyLimitRefusal refused = 2;
+  }
+}
+
+message ProxyLimitAccepted {}
+
+message SetProxyLimitRefusal {
+  // Exactly one is set.
+  oneof reason {
+    LotNotOpen lot_not_open = 1;
+    ProxyBelowCurrentPrice proxy_below_current_price = 2;
+    ProxyDisabledForLot proxy_disabled_for_lot = 3;
+    CurrencyMismatch currency_mismatch = 4;
+  }
+}
+
+message WithdrawProxyLimitRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message WithdrawProxyLimitResponse {
+  // Exactly one is set.
+  oneof outcome {
+    ProxyLimitWithdrawalAccepted accepted = 1;
+    WithdrawProxyLimitRefusal refused = 2;
+  }
+}
+
+message ProxyLimitWithdrawalAccepted {}
+
+message WithdrawProxyLimitRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NoActiveProxyLimit no_active_proxy_limit = 1;
+  }
+}
+
+// The lot is not trading: not opened yet, or already closed.
+message LotNotOpen {}
+
+// The lot is held for the live final and accepts no bids until it is resumed.
+message LotOnHold {}
+
+message BidBelowMinimum {
+  // The lowest amount the lot accepts now.
+  Money min_required = 1;
+}
+
+// Live final only: a bid is accepted exactly at the next price.
+message BidNotAtNextPrice {
+  // The next price at the moment the bid was decided.
+  Money expected = 1;
+}
+
+// The bidder already leads the lot.
+message BidderIsLeader {}
+
+// The currency of the amount differs from the currency of the lot.
+message CurrencyMismatch {}
+
+// The limit does not exceed the current price of the lot.
+message ProxyBelowCurrentPrice {}
+
+message ProxyDisabledForLot {}
+
+message NoActiveProxyLimit {}
+
+message GetLotRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+}
+
+message ListSessionLotsRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string session_id = 2;
+
+  // Opaque token returned as next_page_token. Empty starts an enumeration.
+  string page_token = 3;
+
+  // 0 selects the server default.
+  int32 page_size = 4;
+}
+
+message ListSessionLotsResponse {
+  repeated LotSnapshot lots = 1;
+
+  // Opaque continuation token. Empty means that the enumeration is complete.
+  string next_page_token = 2;
+}
+
+// The trading state of a lot as one viewer sees it. Catalog attributes are not
+// here: the trading core does not know them.
+message LotSnapshot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string session_id = 2;
+
+  // Unset until the lot enters trading.
+  LotConfig config = 3;
+
+  // Position of the last event in the journal of the lot. 0 only for a lot that
+  // has not entered trading and has no event yet.
+  int64 version = 4;
+
+  // The lowest amount a bid is accepted at now; in the live final the only amount.
+  // Set only while the lot is trading, so a caller does not repeat the step rule.
+  Money next_price = 5;
+
+  // The viewer's own proxy limit on the lot. Unset when the viewer has none.
+  // Limits of other participants are never shown.
+  Money viewer_proxy_limit = 6;
+
+  // Where the lot is. Unset while the lot has not entered trading yet; otherwise
+  // exactly one is set.
+  oneof status {
+    LotTrading trading = 10;
+    LotHeld held = 11;
+    LotSale sold = 12;
+    UnsoldReason unsold = 13;
+    WithdrawnReason withdrawn = 14;
+  }
+}

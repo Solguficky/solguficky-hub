@@ -36,7 +36,10 @@ jobs:
         with:
           filters: |
             contracts:
-              - 'contracts/proto/**'
+              - 'contracts/**'
+              - 'apps/identity/go.mod'
+              - 'apps/telegram-bot/package.json'
+              - 'apps/telegram-bot/package-lock.json'
               - 'justfile'
               - '.github/workflows/ci.yml'
             identity:
@@ -153,6 +156,24 @@ jobs:
       # subdir называет корень модуля внутри git-дерева базы: без него база
       # читается от корня репозитория, и импорты между схемами не резолвятся.
       - run: buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
+      # Кодогенерация всего модуля на Go и TypeScript плагинами потребителей —
+      # та же команда, что `just contracts-codegen-buf`. Версии плагинов
+      # читаются из go.mod Identity и package.json бота, своих здесь нет.
+      # Scala генерирует джоба auction внутри своей сборки.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/identity/go.mod
+          cache-dependency-path: apps/identity/go.sum
+      - run: go install tool
+        working-directory: apps/identity
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/telegram-bot/package-lock.json
+      - run: npm ci
+        working-directory: apps/telegram-bot
+      - run: buf generate --template contracts/buf.gen.codegen.yaml
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
   # уносить за собой зависимые, поэтому условие начинается с !cancelled().

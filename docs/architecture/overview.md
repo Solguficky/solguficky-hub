@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а четырнадцать пользовательских операций бот → Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схем и реализации ещё нет.
+Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а четырнадцать пользовательских операций бот → Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схемы `auction/v1` описаны ([integration.md](integration.md)), реализации ещё нет.
 
 ## Источники правды
 
@@ -43,8 +43,8 @@ Linear является источником правды для порядка 
 | Identity | gRPC-сервер: `ResolveIdentity` и обратное `ResolveTelegramUserId` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, круги сообщества и системные роли |
 | Notifications | Скелет: силос Orleans, своя база, миграции при старте, грин на сходку | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Отсутствует | Вне MVP, см. [service brief](../services/mini-app.md) |
-| `contracts/proto` | Identity `ResolveIdentity`, шесть команд администратора и обратное разрешение `ResolveTelegramUserId` с Go- и TypeScript-кодогенерацией, словарь исходящих событий доступа `identity.v1.IdentityEvent`, пятнадцать gRPC-операций среза Meetups и словарь их исходящих событий `meetups.v1.MeetupEvent`, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`; обе схемы `notifications/v1` потребляет контрактный проект Notifications, и модуль целиком собирает джоба `contracts` | Current |
-| `nats-tester` | Python CLI; в реестре subjects семнадцать записей — `events.notifications.notification_created`, одиннадцать поводов журнала Meetups и пять поводов доступа Identity; гейт выводит имена subjects из схемы и сверяет конверт событий обоих доменов с одной спецификацией | Current tooling |
+| `contracts/proto` | Identity `ResolveIdentity`, шесть команд администратора и обратное разрешение `ResolveTelegramUserId` с Go- и TypeScript-кодогенерацией, словарь исходящих событий доступа `identity.v1.IdentityEvent`, пятнадцать gRPC-операций среза Meetups и словарь их исходящих событий `meetups.v1.MeetupEvent`, восемь операций command plane Notifications и словарь публикуемых уведомлений `notifications.v1.Notification`, три команды участника и два запроса чтения торгов `auction.v1.AuctionService` и словарь публичных фактов лота `auction.v1.LotEvent`; обе схемы `notifications/v1` потребляет контрактный проект Notifications, схемы `auction/v1` — сборка Auction с серверными стабами, модуль целиком собирает и генерирует на Go и TypeScript джоба `contracts` | Current |
+| `nats-tester` | Python CLI; в реестре subjects двадцать шесть записей — `events.notifications.notification_created`, одиннадцать поводов журнала Meetups, пять поводов доступа Identity и девять публичных поводов журнала лота аукциона; гейт выводит имена subjects из схемы и сверяет конверт событий всех трёх доменов фактов с одной спецификацией | Current tooling |
 | Aspire AppHost | Граф узлов и профили-данные; состав подтверждённого живым прогоном ведёт [руководство по локальной разработке](../development/local-development.md), непроверенной остаётся тестовая среда Telegram | Current, partially verified |
 
 Наличие принятого решения не означает наличия кода, а наличие кода не означает production readiness. В частности, не подтверждены живым прогоном ни тестовая среда Telegram, ни end-to-end через живого Telegram-бота до отрисовки ответа, ни production deployment.
@@ -60,7 +60,7 @@ Linear является источником правды для порядка 
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
 | Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-039 |
-| Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET и TypeScript codegen приняты; CI breaking checks и `buf lint` введены, Schema Registry остаётся открытым |
+| Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET, TypeScript и Scala codegen приняты; CI breaking checks и `buf lint` введены, Schema Registry остаётся открытым |
 
 Основной архитектурный поток строится вокруг сходок.
 

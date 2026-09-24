@@ -98,6 +98,9 @@ just contracts-build
 # Стиль схем и совместимость с origin/develop: buf lint и buf breaking
 just contracts-check
 
+# Весь модуль contracts/proto генерируется на Go, TypeScript и Scala
+just contracts-codegen
+
 # Механический гейт перед сдачей; состав — комментарий над рецептом `verify` в justfile
 just verify
 
