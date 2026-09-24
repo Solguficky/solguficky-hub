@@ -22,6 +22,7 @@ export function createMeetupForm(meetups: Meetups) {
           | "set-meetup-field"
           | "update-meetup-field"
           | "publish-meetup"
+          | "schedule-publication"
           | "change-meetup-state";
       }
     >,
@@ -137,6 +138,53 @@ export function createMeetupForm(meetups: Meetups) {
         }
         return mapPublished(published);
       }
+      case "schedule-publication": {
+        const current = await currentSnapshot(meetups, request);
+        if (current.kind === "rejected") return current.result;
+        const moment = parseSchedule(request.value);
+        if (moment === undefined) {
+          return {
+            kind: "ask-publish-moment",
+            meetup: current.meetup,
+            retry: "unparsed",
+          };
+        }
+        // Прошедший момент бот не отсекает по своим часам: решает Meetups в
+        // поясе сообщества, и отказ приходит INVALID_ARGUMENT. Тот же код
+        // означает момент, который пояс не представляет (переход на летнее
+        // время, дата за пределами календаря сервиса), поэтому текст кадра
+        // называет обе причины, а не только прошедшее время.
+        const scheduled = await meetups.schedulePublication(
+          request.identity,
+          current.meetup,
+          moment,
+          rpcMeta(request),
+        );
+        if (scheduled.kind === "ok") {
+          return { kind: "publication-scheduled", meetup: scheduled.meetup };
+        }
+        if (scheduled.kind === "invalid" && scheduled.precondition !== true) {
+          return {
+            kind: "ask-publish-moment",
+            meetup: current.meetup,
+            retry: "past",
+          };
+        }
+        if (scheduled.kind === "invalid" || scheduled.kind === "conflict") {
+          // Отказ по состоянию сходки и конфликт версий отвечают по
+          // перечитанному снимку: показанный человеку экран устарел (E-04).
+          const fresh = await currentSnapshot(meetups, request);
+          if (fresh.kind === "rejected") return fresh.result;
+          return scheduled.kind === "invalid"
+            ? { kind: "publication-unavailable", meetup: fresh.meetup }
+            : {
+                kind: "ask-publish-moment",
+                meetup: fresh.meetup,
+                retry: "conflict",
+              };
+        }
+        return failure(scheduled);
+      }
       case "change-meetup-state": {
         const current = await meetups.get(
           request.identity,
@@ -145,10 +193,39 @@ export function createMeetupForm(meetups: Meetups) {
         );
         if (current.kind === "not-found") return { kind: "meetup-not-found" };
         if (current.kind !== "ok") return failure(current);
+        if (request.action === "hold") {
+          // Повтор — успех без события (домен, MarkMeetupHeld); отдельного
+          // ветвления «уже состоялась» не заводим и отдаём как есть.
+          const changed = await meetups.markHeld(
+            request.identity,
+            current.meetup,
+            rpcMeta(request),
+          );
+          if (changed.kind === "conflict") {
+            return conflict(meetups, request, { action: request.action });
+          }
+          return changed.kind === "ok"
+            ? {
+                kind: "meetup-state-changed",
+                action: request.action,
+                meetup: changed.meetup,
+              }
+            : failure(changed);
+        }
         if (current.meetup.lifecycle === "cancelled") {
           return {
             kind: "meetup-state-unchanged",
             reason: "already-cancelled",
+            meetup: current.meetup,
+          };
+        }
+        if (
+          request.action === "unschedule" &&
+          current.meetup.publishAt === undefined
+        ) {
+          return {
+            kind: "meetup-state-unchanged",
+            reason: "not-scheduled",
             meetup: current.meetup,
           };
         }
@@ -172,11 +249,17 @@ export function createMeetupForm(meetups: Meetups) {
                 current.meetup,
                 rpcMeta(request),
               )
-            : await meetups.cancel(
-                request.identity,
-                current.meetup,
-                rpcMeta(request),
-              );
+            : request.action === "unschedule"
+              ? await meetups.cancelPublication(
+                  request.identity,
+                  current.meetup,
+                  rpcMeta(request),
+                )
+              : await meetups.cancel(
+                  request.identity,
+                  current.meetup,
+                  rpcMeta(request),
+                );
         if (changed.kind === "conflict") {
           return conflict(meetups, request, { action: request.action });
         }
@@ -203,6 +286,7 @@ type FormRequest = Extract<
       | "set-meetup-field"
       | "update-meetup-field"
       | "publish-meetup"
+      | "schedule-publication"
       | "change-meetup-state";
   }
 >;
@@ -332,6 +416,12 @@ function invalidField(
 export function formatSchedule(meetup: MeetupSnapshot): string {
   const value = meetup.schedule;
   if (value === undefined) return "дата не задана";
+  return formatLocalMoment(value);
+}
+
+/// Местные дата и время в виде `ДД.ММ.ГГГГ ЧЧ:ММ` — тот же вид, в котором их
+/// вводят: расписание сходки и момент публикации читаются одинаково.
+export function formatLocalMoment(value: MeetupSchedule): string {
   const pad = (part: number) => String(part).padStart(2, "0");
   return `${pad(value.day)}.${pad(value.month)}.${value.year} ${pad(value.hours)}:${pad(value.minutes)}`;
 }

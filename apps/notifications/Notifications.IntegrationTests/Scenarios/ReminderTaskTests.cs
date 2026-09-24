@@ -1,4 +1,7 @@
+using Notifications.Infrastructure;
 using Notifications.IntegrationTests.Infrastructure;
+using Notifications.Reminders;
+using Npgsql;
 using Shouldly;
 using Xunit;
 
@@ -36,6 +39,22 @@ public class ReminderTaskTests
 
     /// <summary>Момент начала ближе упреждения: напоминание по нему уже просрочено.</summary>
     private static DateTimeOffset WithinLead => DateTimeOffset.UtcNow.AddMinutes(10);
+
+    [Fact]
+    public async Task When_ScheduledTaskBecomesOverdue_Expect_OldestDueAgeFromDatabase()
+    {
+        await using var scenario = await ReminderScenario.Start(Settings);
+        var startsAt = Ahead;
+        await scenario.Meetup.ApplySchedule(startsAt);
+
+        await using var source = NpgsqlDataSource.Create(scenario.ConnectionString);
+        var store = new ReminderTaskStore(source, new ReminderTelemetry());
+        var dueAt = startsAt - Lead;
+
+        (await store.OldestDueAgeSeconds(dueAt.AddSeconds(-1), TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await store.OldestDueAgeSeconds(dueAt.AddMinutes(9), TestContext.Current.CancellationToken))
+            .ShouldBe(9 * 60, tolerance: 0.01);
+    }
 
     [Fact]
     public async Task When_ScheduleHasStartTime_Expect_TaskScheduledOneLeadEarlier()

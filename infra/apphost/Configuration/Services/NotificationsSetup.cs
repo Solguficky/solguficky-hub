@@ -26,6 +26,11 @@ internal static class NotificationsSetup
                 AppHostNames.Resources.NotificationsDb,
                 "NOTIFICATIONS_DATABASE_URL",
                 database => ReferenceExpression.Create(
-                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"));
+                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"))
+            .BindEndpoint(
+                context,
+                AppHostNames.Resources.Loki,
+                AppHostNames.Endpoints.Http,
+                "NOTIFICATIONS_LOKI_OTLP_ENDPOINT");
     }
 }

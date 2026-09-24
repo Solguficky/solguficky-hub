@@ -28,12 +28,10 @@ internal static class MeetupsSetup
                 "MEETUPS_DATABASE_URL",
                 database => ReferenceExpression.Create(
                     $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"))
-            // Часовой пояс сообщества — продуктовое значение, а не секрет, и в MVP
-            // он один: сходки сообщества живут по московскому времени. По нему
-            // решается, когда сходка переходит в архив, и в этом поясе
-            // интерпретируется момент назначенной публикации; без него
-            // `Host.build` падает на старте, а не на первом запросе. Локальному
-            // прогону значение даёт AppHost; production-топология назовёт своё.
-            .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", "Europe/Moscow");
+            // По поясу сообщества решается, когда сходка переходит в архив, и в
+            // нём интерпретируется момент назначенной публикации; без него
+            // `Host.build` падает на старте, а не на первом запросе. Значение
+            // общее с ботом (CommunityTime).
+            .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", CommunityTime.Zone);
     }
 }

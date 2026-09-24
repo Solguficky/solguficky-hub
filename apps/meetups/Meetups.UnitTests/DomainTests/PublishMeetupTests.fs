@@ -111,3 +111,25 @@ let ``When the return is applied expect the first publication mark to survive`` 
     let actual = snapshot.Visibility, snapshot.FirstPublishedAt
 
     test <@ actual = (Visible, Some Sample.fixedNow) @>
+
+/// Возврат публикации забирает назначенный момент, как и первая публикация.
+///
+/// Путь достижим без воркера: опубликовать, снять, назначить момент, опубликовать
+/// снова — назначение смотрит на видимость и жизненный цикл, а отметку первой
+/// публикации не смотрит. До PER-204 `MeetupRepublished` оставлял поле заполненным, и
+/// строка «видна и момент назначен» упиралась в
+/// `meetups_scheduled_publish_only_when_hidden` мимо доменного ответа.
+[<Fact>]
+let ``When the return is applied expect the scheduled publication moment to be taken`` () =
+    let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
+
+    let rescheduled =
+        Meetup.apply (Existing hidden) (MeetupPublicationScheduled Sample.later)
+
+    let snapshot =
+        Meetup.apply (Existing rescheduled) MeetupRepublished
+        |> Meetup.toSnapshot
+
+    let actual = snapshot.Visibility, snapshot.ScheduledPublishAt
+
+    test <@ actual = (Visible, None) @>

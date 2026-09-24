@@ -3,28 +3,35 @@
 Запись добавляется вместе с принятием контракта — одновременно с
 `docs/architecture/integration.md` и `NATS_PROTO_FILES` в `proto_sources.py`.
 
-Схемы identity/v1, meetups/v1/meetups_service.proto и
-notifications/v1/notifications_service.proto обслуживают gRPC и в реестр не
-попадают: subject у них не бывает. Классы `meetups/v1/meetups.proto`
-собираются как payload: их импортирует схема событий Meetups, и без них она
-не импортируется.
+Схемы `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto`
+и `notifications/v1/notifications_service.proto` обслуживают gRPC и в реестр
+не попадают: subject у них не бывает. Классы `meetups/v1/meetups.proto` и
+`identity/v1/roles.proto` собираются как payload: их импортируют схемы
+событий своих доменов, и без них те не импортируются.
 
-У Meetups subject называет повод, а сообщение на всех поводах одно: повод
-живёт и в ветке `oneof` тоже, поэтому потребитель на `events.meetups.>`
-разбирает ветку, а не строку subject'а. Имя subject'а — `events.meetups.`
-плюс то же значение, которое уходит в колонку `event_type` журнала;
-соответствие держит тест контрактной поверхности Meetups, а не этот список.
+У Meetups и Identity subject называет повод, а сообщение на всех поводах
+домена одно: повод живёт и в ветке `oneof` тоже, поэтому потребитель на
+`events.meetups.>` или `events.identity.>` разбирает ветку, а не строку
+subject'а. Имя subject'а — префикс домена плюс имя ветки `oneof occasion`, и
+это соответствие проверяет `gate.subject_problems()`: до него оно держалось
+на слове в этом комментарии.
 """
 
 from typing import Type
 
 from google.protobuf.message import Message
 
+from nats_tester.generated.identity.v1 import identity_events_pb2
 from nats_tester.generated.meetups.v1 import meetups_events_pb2
 from nats_tester.generated.notifications.v1 import notifications_pb2
 
 EVENT_TYPES: dict[str, Type[Message]] = {
     'events.notifications.notification_created': notifications_pb2.Notification,
+    'events.identity.profile_registered': identity_events_pb2.IdentityEvent,
+    'events.identity.role_granted': identity_events_pb2.IdentityEvent,
+    'events.identity.role_revoked': identity_events_pb2.IdentityEvent,
+    'events.identity.profile_blocked': identity_events_pb2.IdentityEvent,
+    'events.identity.profile_unblocked': identity_events_pb2.IdentityEvent,
     'events.meetups.meetup_created': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_changed': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_published': meetups_events_pb2.MeetupEvent,

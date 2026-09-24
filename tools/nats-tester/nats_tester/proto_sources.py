@@ -6,8 +6,8 @@ Subject живёт в реестре (`registry.py`), а схема объявл
 
 Замыкание по импортам обязательно: `protoc` пишет в сгенерированный модуль
 импорт зависимости, и без её класса модуль не импортируется. Так
-`notifications.proto` тянет `meetups.proto` — файл значений домена, а не
-вторую шинную схему.
+`notifications.proto` тянет `meetups.proto`, а `identity_events.proto` —
+`roles.proto`: оба раза это файл значений домена, а не вторая шинная схема.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 NATS_PROTO_FILES: tuple[str, ...] = (
+    "identity/v1/identity_events.proto",
     "meetups/v1/meetups_events.proto",
     "notifications/v1/notifications.proto",
 )

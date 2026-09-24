@@ -52,6 +52,7 @@ describe("dispatcher", () => {
     };
     const meetups: Meetups = {
       listVisible,
+      listArchived: notUsed,
       createDraft: notUsed,
       get: notUsed,
       changeAttributes: notUsed,
@@ -59,6 +60,9 @@ describe("dispatcher", () => {
       publish: notUsed,
       unpublish: notUsed,
       cancel: notUsed,
+      markHeld: notUsed,
+      schedulePublication: notUsed,
+      cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
     };
@@ -83,6 +87,58 @@ describe("dispatcher", () => {
     });
   });
 
+  it("returns exactly the archived list supplied by Meetups", async () => {
+    const notUsed = async (): Promise<never> => {
+      throw new Error("not used");
+    };
+    const listArchived = async () => ({
+      kind: "ok" as const,
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Настолки",
+          status: "past" as const,
+        },
+      ],
+    });
+    const meetups: Meetups = {
+      listVisible: notUsed,
+      listArchived,
+      createDraft: notUsed,
+      get: notUsed,
+      changeAttributes: notUsed,
+      setSchedule: notUsed,
+      publish: notUsed,
+      unpublish: notUsed,
+      cancel: notUsed,
+      markHeld: notUsed,
+      schedulePublication: notUsed,
+      cancelPublication: notUsed,
+      attachMaterial: notUsed,
+      removeMaterial: notUsed,
+    };
+    const dispatcher = createDispatcher(meetups);
+
+    await expect(
+      dispatcher.execute({
+        identity: {
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          globalRoles: [],
+        },
+        intent: "list-archived-meetups",
+      }),
+    ).resolves.toEqual({
+      kind: "archived-meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Настолки",
+          status: "past",
+        },
+      ],
+    });
+  });
+
   it("does not disclose a meetup hidden by the read path", async () => {
     const notUsed = async (): Promise<never> => {
       throw new Error("not used");
@@ -90,6 +146,7 @@ describe("dispatcher", () => {
     for (const failure of [{ kind: "not-found" }] as const) {
       const meetups: Meetups = {
         listVisible: notUsed,
+        listArchived: notUsed,
         createDraft: notUsed,
         get: async () => failure,
         changeAttributes: notUsed,
@@ -97,6 +154,9 @@ describe("dispatcher", () => {
         publish: notUsed,
         unpublish: notUsed,
         cancel: notUsed,
+        markHeld: notUsed,
+        schedulePublication: notUsed,
+        cancelPublication: notUsed,
         attachMaterial: notUsed,
         removeMaterial: notUsed,
       };
@@ -119,6 +179,7 @@ describe("dispatcher", () => {
     };
     const meetups: Meetups = {
       listVisible: notUsed,
+      listArchived: notUsed,
       createDraft: notUsed,
       get: async () => ({ kind: "forbidden" }),
       changeAttributes: notUsed,
@@ -126,6 +187,9 @@ describe("dispatcher", () => {
       publish: notUsed,
       unpublish: notUsed,
       cancel: notUsed,
+      markHeld: notUsed,
+      schedulePublication: notUsed,
+      cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
     };

@@ -459,3 +459,23 @@ let versionIn (result: Result<MeetupSnapshot, 'e>) =
     match result with
     | Ok snapshot -> Some snapshot.Version
     | Error _ -> None
+
+/// Исполнители записей журнала в порядке записи. Публикация, начатую часами, человека
+/// не имеет, и утверждать это можно только по самой колонке: наружу `performed_by` не
+/// выходит (contracts/proto/meetups/v1/meetups_events.proto).
+let performers (dsn: string) (id: Guid) =
+    use connection = new NpgsqlConnection(dsn)
+    connection.Open()
+
+    use command =
+        new NpgsqlCommand("SELECT performed_by FROM meetup_events WHERE meetup_id = @id ORDER BY position", connection)
+
+    command.Parameters.AddWithValue("id", id)
+    |> ignore
+
+    use reader = command.ExecuteReader()
+
+    [
+        while reader.Read() do
+            reader.GetGuid 0
+    ]

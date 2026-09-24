@@ -7,8 +7,17 @@ import {
   hubAccessErrors,
   hubAccessTexts,
 } from "../application/hub-access.js";
-import { formatSchedule } from "../application/meetup-form.js";
-import type { ExecuteResult, FormField, Person } from "../application/types.js";
+import {
+  formatLocalMoment,
+  formatSchedule,
+} from "../application/meetup-form.js";
+import type {
+  ExecuteResult,
+  FormField,
+  MeetupStateAction,
+  Person,
+  PublishMomentRetry,
+} from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
@@ -19,12 +28,19 @@ import {
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import type {
+  ArchivedMeetupSummary,
   MeetupMaterial,
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
+import type { NotificationCategory } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
-import { editQuestionText, parseEditQuestion } from "./edit-question.js";
+import {
+  editQuestionText,
+  parseEditQuestion,
+  parsePublishMomentQuestion,
+  publishMomentQuestionText,
+} from "./edit-question.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationText,
@@ -36,7 +52,11 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
-import { parseCallback, removableUsernamePattern } from "./parse-callback.js";
+import {
+  type CallbackAction,
+  parseCallback,
+  removableUsernamePattern,
+} from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
@@ -91,11 +111,76 @@ type ProductUseCase =
   | "update_meetup"
   | "find_meetup"
   | "view_meetup"
-  | "manage_community";
+  | "manage_community"
+  | "manage_notifications";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 const materialPageSize = 8;
 const materialCardLimit = 20;
+
+// Общая форма для трёх действий смены состояния: кадр подтверждения и повтор
+// после конфликта версий говорят об одном и том же действии одними словами.
+const stateActionCopy: Record<
+  MeetupStateAction,
+  { verb: string; label: string; confirmAction: string }
+> = {
+  unpublish: {
+    verb: "скрыть сходку из общего списка",
+    label: "Скрыть из списка",
+    confirmAction: "confirm-unpublish",
+  },
+  cancel: {
+    verb: "отменить сходку",
+    label: "Отменить сходку",
+    confirmAction: "confirm-cancel",
+  },
+  hold: {
+    verb: "отметить сходку состоявшейся",
+    label: "Отметить состоявшейся",
+    confirmAction: "confirm-hold",
+  },
+  unschedule: {
+    verb: "отменить отложенную публикацию сходки",
+    label: "Отменить отложенную публикацию",
+    confirmAction: "confirm-unschedule",
+  },
+};
+
+const publishMomentPrompt =
+  "Когда опубликовать сходку? Напиши дату и время по времени сообщества: ДД.ММ.ГГГГ ЧЧ:ММ";
+// Прошедший момент — отдельный отказ со своим текстом, а не «не разобрал
+// дату»: ввод понят, но время уже наступило (E-02, открытый вопрос раскадровки).
+const publishMomentRetryText: Record<PublishMomentRetry, string> = {
+  unparsed: "Не получилось разобрать дату. Напиши, например: 21.09.2026 19:30",
+  past: "Это время уже прошло или его нельзя назначить по времени сообщества. Назначь публикацию на момент в будущем: ДД.ММ.ГГГГ ЧЧ:ММ",
+  conflict: `${conflictText}\n\n${publishMomentPrompt}`,
+};
+
+// Одна таблица «кнопка → действие» для шага вопроса и шага подтверждения:
+// новое действие смены состояния добавляется строкой, а не двумя цепочками.
+const stateActionByCallback: Record<
+  Extract<
+    CallbackAction["kind"],
+    `manage-${"" | "confirm-"}${"unpublish" | "cancel" | "hold" | "unschedule"}`
+  >,
+  MeetupStateAction
+> = {
+  "manage-unpublish": "unpublish",
+  "manage-confirm-unpublish": "unpublish",
+  "manage-cancel": "cancel",
+  "manage-confirm-cancel": "cancel",
+  "manage-hold": "hold",
+  "manage-confirm-hold": "hold",
+  "manage-unschedule": "unschedule",
+  "manage-confirm-unschedule": "unschedule",
+};
+
+function confirmStateCallback(
+  action: MeetupStateAction,
+  token: string,
+): string {
+  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}`;
+}
 const materialDisplayTitleLimit = 80;
 
 type PendingQuestion = {
@@ -124,8 +209,15 @@ type PendingMaterialTitle = {
   telegramUserId: number;
   expiresAt: number;
 };
+type PendingPublishMoment = {
+  kind: "publish-moment";
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput =
   | PendingQuestion
+  | PendingPublishMoment
   | PendingUsername
   | PendingMaterialInput
   | PendingMaterialTitle;
@@ -207,18 +299,81 @@ async function handleMessage(
       storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
         ? parseEditQuestion(repliedText)
         : undefined;
-    const pending =
+    const recoveredMoment =
+      storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
+        ? parsePublishMomentQuestion(repliedText)
+        : undefined;
+    const pending: PendingInput | undefined =
       storedPending ??
-      (recoveredEdit === undefined
-        ? undefined
-        : {
+      (recoveredEdit !== undefined
+        ? {
             kind: "meetup" as const,
             mode: "edit" as const,
             field: recoveredEdit.field,
             meetupId: tokenToUuid(recoveredEdit.token),
             telegramUserId: ctx.from?.id ?? 0,
             expiresAt: Date.now() + questionTtlMs,
-          });
+          }
+        : recoveredMoment !== undefined
+          ? {
+              kind: "publish-moment" as const,
+              meetupId: tokenToUuid(recoveredMoment.token),
+              telegramUserId: ctx.from?.id ?? 0,
+              expiresAt: Date.now() + questionTtlMs,
+            }
+          : undefined);
+    if (
+      replyId !== undefined &&
+      pending?.kind === "publish-moment" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "update_meetup";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "debug",
+          message: "foreign publish moment answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "schedule-publication",
+        value: ctx.message.text,
+        meetupId: pending.meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
+      outcome = screenBoundary(result, {
+        ok: [
+          "ask-publish-moment",
+          "publication-scheduled",
+          "publication-unavailable",
+        ],
+        okMessage: "publish moment answer handled",
+        rejectedMessage: "publish moment answer rejected",
+        useCase,
+        meetupId: pending.meetupId,
+      });
+      return;
+    }
     if (
       replyId !== undefined &&
       (pending?.kind === "material-source" ||
@@ -524,6 +679,7 @@ async function handleMessage(
         await ctx.reply(result.text, {
           reply_markup: new InlineKeyboard()
             .text("Ближайшие сходки", "v1:nav:hub")
+            .text("Архив", "v1:nav:archive")
             .row()
             .text("Управление сходками", "v1:manage:menu"),
         });
@@ -538,6 +694,9 @@ async function handleMessage(
       case "edit-ask":
       case "preview":
       case "published":
+      case "ask-publish-moment":
+      case "publication-scheduled":
+      case "publication-unavailable":
       case "meetup-updated":
       case "meetup-state-changed":
       case "meetup-state-unchanged":
@@ -546,6 +705,9 @@ async function handleMessage(
       case "material-attached":
       case "material-removed":
       case "meetup-list":
+      case "meetup-notification-settings":
+      case "global-notification-settings":
+      case "archived-meetup-list":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -967,6 +1129,21 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "archive") {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-archived-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderArchiveList(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["archived-meetup-list"],
+        okMessage: "archive list sent",
+        rejectedMessage: "archive list rejected",
+        useCase,
+      });
+      return;
+    }
     if (action.kind === "view-meetup") {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
@@ -997,7 +1174,10 @@ async function handleCallback(
       action.kind === "manage-status" ||
       action.kind === "manage-unpublish" ||
       action.kind === "manage-cancel" ||
-      action.kind === "manage-publish"
+      action.kind === "manage-hold" ||
+      action.kind === "manage-publish" ||
+      action.kind === "manage-publish-later" ||
+      action.kind === "manage-unschedule"
     ) {
       const meetupId = tokenToUuid(action.token);
       const current = await runtime.dispatcher.execute({
@@ -1075,6 +1255,42 @@ async function handleCallback(
           "Состоявшуюся сходку отменить нельзя.",
           new InlineKeyboard().text("Назад", `v1:manage:status:${token}`),
         );
+      } else if (action.kind === "manage-hold" && meetup.lifecycle === "held") {
+        // Устаревшая кнопка: кто-то уже отметил сходку состоявшейся. Confirm
+        // здесь был бы подтверждением действия, которое уже не изменит
+        // состояние, — то же обращение со stale-кнопкой, что и у отмены выше.
+        await editScreen(
+          ctx,
+          "Сходка уже отмечена состоявшейся.",
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
+      } else if (
+        action.kind === "manage-publish-later" &&
+        meetup.visibility === "visible"
+      ) {
+        // Устаревшая кнопка (E-04): сходку уже опубликовали — вручную или по
+        // расписанию. Вопрос о моменте здесь закончился бы отказом домена.
+        await editScreen(
+          ctx,
+          "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
+      } else if (action.kind === "manage-publish-later") {
+        await renderFormResult(
+          ctx,
+          { kind: "ask-publish-moment", meetup },
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      } else if (
+        action.kind === "manage-unschedule" &&
+        meetup.publishAt === undefined
+      ) {
+        await editScreen(
+          ctx,
+          "Отложенной публикации у сходки уже нет.",
+          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+        );
       } else if (action.kind === "manage-publish") {
         // Публикация — единственное действие статуса, которое не перечитывает
         // сходку в юзкейсе: устаревшую кнопку разбираем по снимку выше, иначе
@@ -1096,21 +1312,20 @@ async function handleCallback(
         });
         return;
       } else {
-        const verb =
-          action.kind === "manage-unpublish"
-            ? "скрыть сходку из общего списка"
-            : "отменить сходку";
-        const confirm =
-          action.kind === "manage-unpublish"
-            ? `v1:manage:confirm-unpublish:${token}`
-            : `v1:manage:confirm-cancel:${token}`;
+        const stateAction = stateActionByCallback[action.kind];
+        // «Отметить состоявшейся» открывается с карточки напрямую, а не через
+        // подменю статуса (PER-230), поэтому и отказ возвращает туда же.
+        const back =
+          action.kind === "manage-hold"
+            ? `v1:view:${token}`
+            : `v1:manage:status:${token}`;
         await editScreen(
           ctx,
-          `Точно ${verb} «${meetup.title}»?`,
+          `Точно ${stateActionCopy[stateAction].verb} «${meetup.title}»?`,
           new InlineKeyboard()
-            .text("Да, продолжить", confirm)
+            .text("Да, продолжить", confirmStateCallback(stateAction, token))
             .row()
-            .text("Нет", `v1:manage:status:${token}`),
+            .text("Нет", back),
         );
       }
       outcome = {
@@ -1124,14 +1339,15 @@ async function handleCallback(
     }
     if (
       action.kind === "manage-confirm-unpublish" ||
-      action.kind === "manage-confirm-cancel"
+      action.kind === "manage-confirm-cancel" ||
+      action.kind === "manage-confirm-hold" ||
+      action.kind === "manage-confirm-unschedule"
     ) {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
         intent: "change-meetup-state",
-        action:
-          action.kind === "manage-confirm-unpublish" ? "unpublish" : "cancel",
+        action: stateActionByCallback[action.kind],
         meetupId,
         ...rpcCall(ctx, useCase),
       });
@@ -1202,6 +1418,114 @@ async function handleCallback(
         ok: ["published"],
         okMessage: "meetup published",
         rejectedMessage: "meetup publish rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (
+      action.kind === "notify-global" ||
+      action.kind === "notify-set-global"
+    ) {
+      const result = await runtime.dispatcher.execute(
+        action.kind === "notify-global"
+          ? {
+              identity: person,
+              intent: "view-global-notifications",
+              ...rpcCall(ctx, useCase),
+            }
+          : {
+              identity: person,
+              intent: "set-global-category",
+              category: action.category,
+              enabled: action.enabled,
+              ...rpcCall(ctx, useCase),
+            },
+      );
+      await renderNotificationSettings(ctx, result, "v1:notify:global");
+      outcome = screenBoundary(result, {
+        ok: ["global-notification-settings"],
+        okMessage: "global notification settings sent",
+        rejectedMessage: "global notification settings rejected",
+        useCase,
+      });
+      return;
+    }
+    // Подписка меняет карточку, а не открывает кадр настроек: действие живёт в
+    // P-04, и человек обязан остаться там же с обновлённой кнопкой.
+    if (action.kind === "notify-subscription") {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "set-meetup-subscription",
+        meetupId,
+        subscribed: action.subscribed,
+        ...rpcCall(ctx, useCase),
+      });
+      if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+        await renderMeetupCard(
+          ctx,
+          result,
+          true,
+          runtime.presentation ?? "rich",
+          person.globalRoles.includes("admin"),
+        );
+      } else {
+        await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
+      }
+      outcome = screenBoundary(result, {
+        ok: ["meetup-card"],
+        okMessage: "meetup subscription changed",
+        rejectedMessage: "meetup subscription rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (
+      action.kind === "notify-settings" ||
+      action.kind === "notify-set-meetup"
+    ) {
+      const meetupId = tokenToUuid(action.token);
+      const call = { ...rpcCall(ctx, useCase) };
+      const result = await runtime.dispatcher.execute(
+        action.kind === "notify-settings"
+          ? {
+              identity: person,
+              intent: "view-meetup-notifications",
+              meetupId,
+              ...call,
+            }
+          : {
+              identity: person,
+              intent: "set-meetup-category",
+              meetupId,
+              category: action.category,
+              enabled: action.enabled,
+              ...call,
+            },
+      );
+      // Сходка могла исчезнуть между отрисовкой кнопки и нажатием: кадр
+      // настроек читает её ради заголовка и отвечает тем же «не найдено», что и
+      // карточка, а не пустым списком категорий.
+      if (result.kind === "meetup-not-found") {
+        await renderMeetupCard(
+          ctx,
+          result,
+          true,
+          runtime.presentation ?? "rich",
+        );
+      } else {
+        await renderNotificationSettings(
+          ctx,
+          result,
+          `v1:notify:settings:${action.token}`,
+        );
+      }
+      outcome = screenBoundary(result, {
+        ok: ["meetup-notification-settings"],
+        okMessage: "meetup notification settings sent",
+        rejectedMessage: "meetup notification settings rejected",
         useCase,
         meetupId,
       });
@@ -1524,6 +1848,28 @@ async function renderMeetupList(
   }
 }
 
+async function renderArchiveList(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+): Promise<void> {
+  if (result.kind === "archived-meetup-list") {
+    const keyboard = archiveListKeyboard(result.meetups);
+    const text =
+      result.meetups.length === 0
+        ? `Архив пока пуст.\n\nСюда попадают отменённые, состоявшиеся и прошедшие сходки.`
+        : archiveListText(result.meetups);
+    await editScreen(ctx, text, keyboard);
+    return;
+  }
+  if (result.kind === "dependency-rejected" || result.kind === "rejected") {
+    await editScreen(
+      ctx,
+      `Не получилось загрузить архив. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
+      new InlineKeyboard().text("Повторить", "v1:nav:archive"),
+    );
+  }
+}
+
 async function editScreen(
   ctx: UpdateContext,
   text: string,
@@ -1580,7 +1926,67 @@ function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
   for (const meetup of meetups) {
     keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
   }
-  return keyboard.text("Обновить", "v1:nav:hub");
+  return keyboard
+    .text("Обновить", "v1:nav:hub")
+    .text("Архив", "v1:nav:archive")
+    .row()
+    .text("Уведомления", "v1:notify:global");
+}
+
+// Порядок задаёт Meetups (ListArchivedMeetups: новейшая дата первой, без даты —
+// последними), поэтому список не группируется и не пересортировывается, в
+// отличие от meetupListText.
+function archiveListText(meetups: readonly ArchivedMeetupSummary[]): string {
+  return ["Архив сходок", meetups.map(archivedMeetupListLine).join("\n")].join(
+    "\n\n",
+  );
+}
+
+function archivedMeetupListLine(meetup: ArchivedMeetupSummary): string {
+  const label = scheduleLabel(meetup.schedule);
+  const status = archiveStatusLabel(meetup.status);
+  return label === undefined
+    ? `• ${meetup.title} (${status})`
+    : `• ${label} — ${meetup.title} (${status})`;
+}
+
+function archiveStatusLabel(status: ArchivedMeetupSummary["status"]): string {
+  switch (status) {
+    case "held":
+      return "состоялась";
+    case "cancelled":
+      return "отменена";
+    case "past":
+      return "прошла";
+  }
+}
+
+function archiveListKeyboard(
+  meetups: readonly ArchivedMeetupSummary[],
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const meetup of meetups) {
+    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+  }
+  return keyboard
+    .text("Обновить", "v1:nav:archive")
+    .text("Ближайшие сходки", "v1:nav:hub");
+}
+
+// Ярлыки повторяют строки макета P-07 дословно: экран настроек обязан называть
+// категории теми же словами, что и продуктовая таблица, иначе «изменения»
+// придётся сопоставлять по догадке.
+const categoryLabels: Record<NotificationCategory, string> = {
+  published: "Новые сходки",
+  changes: "Изменения данных и статуса",
+  material: "Новые связанные сообщения",
+  reminder: "Напоминание перед началом",
+  organizer: "Сообщения организатора",
+  announcement: "Объявления сообщества",
+};
+
+function checkbox(label: string, enabled: boolean): string {
+  return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
 
 async function renderMeetupCard(
@@ -1604,7 +2010,11 @@ async function renderMeetupCard(
       keyboard
         .text("Изменить", `v1:manage:edit:${token}`)
         .text("Статус", `v1:manage:status:${token}`)
-        .row()
+        .row();
+      if (result.meetup.lifecycle === "planned") {
+        keyboard.text("Отметить состоявшейся", `v1:manage:hold:${token}`).row();
+      }
+      keyboard
         .text(
           `Материалы (${result.meetup.materials.length})`,
           `v1:mm:list:${token}`,
@@ -1630,6 +2040,17 @@ async function renderMeetupCard(
           .row();
       }
     }
+    // Кнопка подписки рисуется только тогда, когда Notifications ответил:
+    // состояние на ней — факт, а не заглушка, и выдуманное «выключены» человек
+    // от настоящего не отличит. Вход в кадр настроек от этого не зависит и
+    // остаётся всегда: иначе один моргнувший ответ отрезает экран целиком.
+    if (result.subscribed !== undefined) {
+      keyboard.text(
+        result.subscribed ? "Отписаться" : "Подписаться",
+        `v1:notify:sub:${token}:${result.subscribed ? "0" : "1"}`,
+      );
+    }
+    keyboard.text("Уведомления", `v1:notify:settings:${token}`).row();
     keyboard
       .text("Обновить", `v1:view:${token}`)
       .row()
@@ -1690,6 +2111,115 @@ async function renderMeetupCard(
   else await ctx.reply(unavailableText, { reply_markup: keyboard });
 }
 
+// Оба кадра настроек живут в одном рендере: у них одна механика — список
+// отметок, переключение на месте, `answerCallbackQuery` уже отправлен выше — и
+// различаются только словарём категорий, заголовком и кнопкой возврата.
+async function renderNotificationSettings(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  retry: string,
+): Promise<void> {
+  if (result.kind === "global-notification-settings") {
+    const keyboard = new InlineKeyboard();
+    for (const entry of result.categories) {
+      keyboard
+        .text(
+          checkbox(categoryLabels[entry.category], entry.enabled),
+          `v1:notify:gset:${entry.category}:${entry.enabled ? "0" : "1"}`,
+        )
+        .row();
+    }
+    keyboard.text("К списку", "v1:nav:hub");
+    await editScreen(
+      ctx,
+      `Уведомления: общие настройки
+
+Отметь, о чём присылать. Настройка действует для всех сходок, включая будущие.`,
+      keyboard,
+    );
+    return;
+  }
+  if (result.kind === "meetup-notification-settings") {
+    const token = uuidToToken(result.meetup.id);
+    const keyboard = new InlineKeyboard();
+    for (const entry of result.categories) {
+      const label = checkbox(categoryLabels[entry.category], entry.enabled);
+      keyboard
+        .text(
+          entry.differsFromGlobal ? `${label} · отличается` : label,
+          `v1:notify:set:${token}:${entry.category}:${entry.enabled ? "0" : "1"}`,
+        )
+        .row();
+    }
+    // Подписки здесь нет намеренно: действие живёт в карточке P-04, и макет
+    // этого экрана его не показывает. Состояние подписки кадр называет
+    // текстом, чтобы отметки категорий не читались как «придёт всё это».
+    keyboard.text("Назад", `v1:view:${token}`);
+    const lines = [
+      `Уведомления: ${result.meetup.title}`,
+      "",
+      result.subscribed
+        ? "Ты следишь за этой сходкой."
+        : "Ты за этой сходкой не следишь: придут только те уведомления, которым подписка не нужна. Подписаться можно из карточки.",
+      "",
+      "Отметь, о чём присылать. Настройка действует только для этой сходки.",
+      // Следствие принятого контракта, названное человеку до нажатия, а не
+      // после: операции снятия переопределения на проводе нет, и вернуть
+      // «как везде» изнутри кадра будет уже нельзя.
+      "Переключение здесь закрепляет значение за этой сходкой: общая настройка его больше не меняет.",
+    ];
+    if (result.categories.some((entry) => entry.differsFromGlobal)) {
+      lines.push(
+        "Отметка «отличается» значит, что значение не совпадает с общей настройкой.",
+      );
+    }
+    await editScreen(ctx, lines.join("\n"), keyboard);
+    return;
+  }
+  await renderNotificationFailure(ctx, result, retry);
+}
+
+// Отказ Notifications отвечает кадром по природе отказа, а не одним «сбой на
+// моей стороне»: бриф компонента обещает разные кадры, и «Повторить» на отказе
+// по праву или на устаревшем экране не лечит ничего.
+async function renderNotificationFailure(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  retry: string,
+): Promise<void> {
+  if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
+    await editScreen(
+      ctx,
+      "Notifications не разрешил это действие.",
+      new InlineKeyboard().text("К списку", "v1:nav:hub"),
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "invalid") {
+    // Кнопка, которую сервис не принял, построена по устаревшему экрану:
+    // перерисовка по текущему состоянию, а не повтор того же нажатия.
+    await editScreen(
+      ctx,
+      "Этот экран устарел. Открой настройки заново.",
+      new InlineKeyboard().text("Обновить", retry),
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "conflict") {
+    await editScreen(
+      ctx,
+      "Это уже сделано. Ничего не изменилось.",
+      new InlineKeyboard().text("Обновить", retry),
+    );
+    return;
+  }
+  await editScreen(
+    ctx,
+    unavailableText,
+    new InlineKeyboard().text("Повторить", retry),
+  );
+}
+
 async function renderMeetupStatus(
   ctx: UpdateContext,
   meetup: MeetupSnapshot,
@@ -1700,6 +2230,22 @@ async function renderMeetupStatus(
     keyboard.text("Скрыть из списка", `v1:manage:unpublish:${token}`).row();
   } else {
     keyboard.text("Опубликовать", `v1:manage:republish:${token}`).row();
+    // Отложенность — выбор момента внутри публикации, а не отдельный
+    // сценарий (ADR-024): кнопка стоит рядом с «Опубликовать», а назначенный
+    // момент меняется тем же вопросом.
+    keyboard
+      .text(
+        meetup.publishAt === undefined
+          ? "Опубликовать позже"
+          : "Перенести публикацию",
+        `v1:manage:publish-later:${token}`,
+      )
+      .row();
+    if (meetup.publishAt !== undefined) {
+      keyboard
+        .text(stateActionCopy.unschedule.label, `v1:manage:unschedule:${token}`)
+        .row();
+    }
   }
   if (meetup.lifecycle === "planned") {
     keyboard.text("Отменить сходку", `v1:manage:cancel:${token}`).row();
@@ -1732,7 +2278,9 @@ async function renderStateResult(
     const text =
       result.reason === "already-cancelled"
         ? "Сходка уже отменена. Повторно ничего не изменилось."
-        : "Сходка уже скрыта из общего списка.";
+        : result.reason === "not-scheduled"
+          ? "Отложенной публикации у сходки уже нет."
+          : "Сходка уже скрыта из общего списка.";
     await editScreen(
       ctx,
       text,
@@ -1744,18 +2292,16 @@ async function renderStateResult(
     await renderMeetupCard(ctx, result, true, presentation, true);
     return;
   }
-  if (result.kind === "conflict") {
+  if (result.kind === "conflict" && result.action !== undefined) {
     const token = uuidToToken(result.meetup.id);
-    const label =
-      result.action === "cancel" ? "Отменить сходку" : "Скрыть из списка";
-    const callback =
-      result.action === "cancel"
-        ? `v1:manage:confirm-cancel:${token}`
-        : `v1:manage:confirm-unpublish:${token}`;
+    const copy = stateActionCopy[result.action];
     await editScreen(
       ctx,
       `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
-      new InlineKeyboard().text(label, callback),
+      new InlineKeyboard().text(
+        copy.label,
+        confirmStateCallback(result.action, token),
+      ),
     );
     return;
   }
@@ -1809,7 +2355,13 @@ function meetupCardText(
     meetup.description === ""
       ? "Описание пока не добавлено."
       : meetup.description;
-  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  // Назначенный момент стоит сразу под статусом: «скрыта» без него читается
+  // как «черновик забыт», а с ним — как «ждёт публикации».
+  const pending =
+    meetup.publishAt === undefined
+      ? ""
+      : `\nПубликация назначена на ${formatLocalMoment(meetup.publishAt)}`;
+  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
   if (!includeMaterials || meetup.materials.length === 0) return card;
   const materials = meetup.materials
     .slice(0, materialCardLimit)
@@ -1866,10 +2418,17 @@ function buttonText(value: string): string {
 }
 
 function meetupListLine(meetup: MeetupSummary): string {
-  if (meetup.schedule === undefined) {
-    return `• ${meetup.title}`;
-  }
-  const { year, month, day } = meetup.schedule;
+  const label = scheduleLabel(meetup.schedule);
+  return label === undefined
+    ? `• ${meetup.title}`
+    : `• ${label} — ${meetup.title}`;
+}
+
+function scheduleLabel(
+  schedule: MeetupSummary["schedule"],
+): string | undefined {
+  if (schedule === undefined) return undefined;
+  const { year, month, day } = schedule;
   const date = new Date(Date.UTC(year, month - 1, day));
   const monthLabel = new Intl.DateTimeFormat("ru-RU", {
     month: "short",
@@ -1883,7 +2442,7 @@ function meetupListLine(meetup: MeetupSummary): string {
   })
     .format(date)
     .replaceAll(".", "");
-  return `• ${day} ${monthLabel}, ${weekdayLabel} — ${meetup.title}`;
+  return `${day} ${monthLabel}, ${weekdayLabel}`;
 }
 
 async function denyHubAccessIfNeeded(
@@ -2078,11 +2637,70 @@ async function renderFormResult(
     await ctx.reply(
       `Проверь сходку\n\n${meetup.title}\n${formatSchedule(meetup)}\n${meetup.venue}\n\n${meetup.description}`,
       {
-        reply_markup: new InlineKeyboard().text(
-          "Опубликовать",
-          `v1:manage:publish:${uuidToToken(meetup.id)}`,
-        ),
+        reply_markup: new InlineKeyboard()
+          .text("Опубликовать", `v1:manage:publish:${uuidToToken(meetup.id)}`)
+          .row()
+          .text(
+            "Опубликовать позже",
+            `v1:manage:publish-later:${uuidToToken(meetup.id)}`,
+          ),
       },
+    );
+    return;
+  }
+  if (result.kind === "ask-publish-moment") {
+    const token = uuidToToken(result.meetup.id);
+    const current =
+      result.meetup.publishAt === undefined
+        ? ""
+        : `Сейчас назначено: ${formatLocalMoment(result.meetup.publishAt)}\n`;
+    const prompt =
+      result.retry === undefined
+        ? publishMomentPrompt
+        : publishMomentRetryText[result.retry];
+    const message = await ctx.reply(
+      publishMomentQuestionText(`${current}${prompt}`, token),
+      { reply_markup: { force_reply: true, selective: true } },
+    );
+    questions.set(questionKey(ctx.chat?.id, message.message_id), {
+      kind: "publish-moment",
+      meetupId: result.meetup.id,
+      telegramUserId: ctx.from?.id ?? 0,
+      expiresAt: Date.now() + questionTtlMs,
+    });
+    evictOldestQuestions(questions);
+    return;
+  }
+  if (result.kind === "publication-scheduled") {
+    // О самом срабатывании бот не рассказывает: уведомление о публикации —
+    // блок Notifications. Здесь только подтверждение назначения.
+    await ctx.reply(
+      result.meetup.publishAt === undefined
+        ? "Публикация назначена."
+        : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`,
+    );
+    await renderMeetupCard(
+      ctx,
+      { kind: "meetup-card", meetup: result.meetup },
+      false,
+      presentation,
+      true,
+    );
+    return;
+  }
+  if (result.kind === "publication-unavailable") {
+    // E-04: ответ по текущему состоянию, а не по экрану, с которого пришёл ввод.
+    const text =
+      result.meetup.lifecycle === "cancelled"
+        ? "Сходка отменена. Назначить ей публикацию нельзя."
+        : "Сходка уже опубликована. Назначать публикацию больше не нужно.";
+    await ctx.reply(text);
+    await renderMeetupCard(
+      ctx,
+      { kind: "meetup-card", meetup: result.meetup },
+      false,
+      presentation,
+      true,
     );
     return;
   }
@@ -2154,6 +2772,7 @@ function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
 function callbackUseCase(
   kind:
     | "hub"
+    | "archive"
     | "outdated"
     | "view-meetup"
     | "manage-menu"
@@ -2172,6 +2791,16 @@ function callbackUseCase(
     | "manage-confirm-unpublish"
     | "manage-cancel"
     | "manage-confirm-cancel"
+    | "notify-global"
+    | "notify-set-global"
+    | "notify-settings"
+    | "notify-subscription"
+    | "notify-set-meetup"
+    | "manage-hold"
+    | "manage-confirm-hold"
+    | "manage-publish-later"
+    | "manage-unschedule"
+    | "manage-confirm-unschedule"
     | "manage-materials"
     | "begin-attach-material"
     | "confirm-attach-material"
@@ -2194,6 +2823,11 @@ function callbackUseCase(
     case "manage-confirm-unpublish":
     case "manage-cancel":
     case "manage-confirm-cancel":
+    case "manage-hold":
+    case "manage-confirm-hold":
+    case "manage-publish-later":
+    case "manage-unschedule":
+    case "manage-confirm-unschedule":
     case "manage-materials":
     case "begin-attach-material":
     case "confirm-attach-material":
@@ -2208,7 +2842,14 @@ function callbackUseCase(
     case "block-member":
     case "remove-allowed-username":
       return "manage_community";
+    case "notify-global":
+    case "notify-set-global":
+    case "notify-settings":
+    case "notify-subscription":
+    case "notify-set-meetup":
+      return "manage_notifications";
     case "hub":
+    case "archive":
     case "outdated":
       return "find_meetup";
     default: {

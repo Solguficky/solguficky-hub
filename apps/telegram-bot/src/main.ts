@@ -1,7 +1,9 @@
 import { createDispatcher } from "./application/dispatcher.js";
+import { parseTimeZone } from "./community-time.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
+import { createNotificationsClient } from "./notifications/client.js";
 import { createBot, parseTelegramEnvironment } from "./presentation/bot.js";
 import { createShutdown } from "./shutdown.js";
 import { startMetrics } from "./telemetry.js";
@@ -29,14 +31,29 @@ async function main(): Promise<number> {
   }
   const identityUrl = readEnv("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051";
   const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
+  const notificationsUrl =
+    readEnv("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053";
   const presentationRaw = readEnv("TELEGRAM_BOT_PRESENTATION") ?? "rich";
   if (presentationRaw !== "rich" && presentationRaw !== "plain") {
     logger.error("TELEGRAM_BOT_PRESENTATION must be rich or plain");
     return 1;
   }
-  const meetups = createMeetupsClient(meetupsUrl);
+  // Пояс проверяется на старте, как у Meetups: без него карточка не может
+  // показать назначенный момент публикации, а опечатка в имени пояса иначе
+  // всплыла бы только на первом черновике с назначенной публикацией.
+  const communityTimeZone = parseTimeZone(
+    readEnv("TELEGRAM_BOT_COMMUNITY_TIME_ZONE"),
+  );
+  if (communityTimeZone === undefined) {
+    logger.error(
+      "TELEGRAM_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
+    );
+    return 1;
+  }
+  const meetups = createMeetupsClient(meetupsUrl, communityTimeZone);
+  const notifications = createNotificationsClient(notificationsUrl);
   const metrics = startMetrics();
-  const dispatcher = createDispatcher(meetups);
+  const dispatcher = createDispatcher(meetups, notifications);
   const identity = createIdentityClient(identityUrl);
   const bot = createBot({
     token,
@@ -52,6 +69,7 @@ async function main(): Promise<number> {
       async close() {
         identity.close();
         meetups.close();
+        notifications.close();
         await metrics.shutdown();
       },
     },

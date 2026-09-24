@@ -1,5 +1,6 @@
 using Dapper;
 using Npgsql;
+using Notifications.Reminders;
 
 namespace Notifications.Infrastructure;
 
@@ -18,7 +19,7 @@ public sealed record DueReminderTask(Guid TaskId, string MeetupId);
 /// Здесь нет ни одного решения о том, нужно ли задание: их принимает
 /// <c>ReminderPlan</c>. Этот класс только пишет и читает строки.
 /// </remarks>
-public sealed class ReminderTaskStore(NpgsqlDataSource source)
+public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry telemetry)
 {
     private const string LiveSql = """
         SELECT task_id, starts_at, due_at
@@ -56,6 +57,12 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source)
         WHERE state = 'scheduled' AND due_at <= @Now
         ORDER BY due_at
         LIMIT @Limit;
+        """;
+
+    private const string OldestDueSql = """
+        SELECT MIN(due_at)
+        FROM reminder_task
+        WHERE state = 'scheduled' AND due_at <= @Now;
         """;
 
     private const string FireSql = """
@@ -153,7 +160,7 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source)
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        await connection.ExecuteAsync(
+        var removed = await connection.ExecuteAsync(
             new CommandDefinition(
                 SupersedeSql,
                 new { TaskId = liveTaskId, NewTaskId = taskId, Reason = reason },
@@ -175,6 +182,7 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source)
                 cancellationToken: cancellationToken));
 
         await transaction.CommitAsync(cancellationToken);
+        telemetry.Remove(removed, "superseded");
 
         return taskId;
     }
@@ -184,11 +192,14 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
 
-        return await connection.ExecuteAsync(
+        var removed = await connection.ExecuteAsync(
             new CommandDefinition(
                 CancelSql,
                 new { MeetupId = meetupId, Reason = reason },
                 cancellationToken: cancellationToken));
+
+        telemetry.Remove(removed, "cancelled");
+        return removed;
     }
 
     /// <summary>Наступившие задания среди живых.</summary>
@@ -206,6 +217,20 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source)
                 cancellationToken: cancellationToken));
 
         return rows.Select(row => new DueReminderTask(row.task_id, row.meetup_id)).ToList();
+    }
+
+    /// <summary>Возраст самого старого наступившего, но ещё живого задания.</summary>
+    public async Task<double> OldestDueAgeSeconds(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+
+        var oldest = await connection.ExecuteScalarAsync<DateTime?>(
+            new CommandDefinition(
+                OldestDueSql,
+                new { Now = now.UtcDateTime },
+                cancellationToken: cancellationToken));
+
+        return oldest is null ? 0 : Math.Max(0, (now.UtcDateTime - oldest.Value.ToUniversalTime()).TotalSeconds);
     }
 
     /// <summary>
@@ -247,6 +272,7 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source)
                 cancellationToken: cancellationToken));
 
         await transaction.CommitAsync(cancellationToken);
+        telemetry.Fire();
         return true;
     }
 

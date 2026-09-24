@@ -25,8 +25,9 @@ describe("callback parser", () => {
     });
   });
 
-  it("parses the hub navigation action", () => {
+  it("parses the hub and archive navigation actions", () => {
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
+    expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
   });
 
   it("parses meetup editing and confirmed state actions within the byte budget", () => {
@@ -40,6 +41,8 @@ describe("callback parser", () => {
       `v1:manage:confirm-unpublish:${token}`,
       `v1:manage:cancel:${token}`,
       `v1:manage:confirm-cancel:${token}`,
+      `v1:manage:hold:${token}`,
+      `v1:manage:confirm-hold:${token}`,
     ];
 
     for (const callback of callbacks) {
@@ -75,6 +78,31 @@ describe("callback parser", () => {
     expect(parseCallback(callbacks[7])).toEqual({
       kind: "manage-confirm-cancel",
       token,
+    });
+    expect(parseCallback(callbacks[8])).toEqual({
+      kind: "manage-hold",
+      token,
+    });
+    expect(parseCallback(callbacks[9])).toEqual({
+      kind: "manage-confirm-hold",
+      token,
+    });
+  });
+
+  it("parses deferred publication actions within the byte budget", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const expected = {
+      [`v1:manage:publish-later:${token}`]: "manage-publish-later",
+      [`v1:manage:unschedule:${token}`]: "manage-unschedule",
+      [`v1:manage:confirm-unschedule:${token}`]: "manage-confirm-unschedule",
+    };
+
+    for (const [callback, kind] of Object.entries(expected)) {
+      expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
+      expect(parseCallback(callback)).toEqual({ kind, token });
+    }
+    expect(parseCallback(`v1:manage:unschedule:${token}:1`)).toEqual({
+      kind: "malformed",
     });
   });
 
@@ -125,5 +153,98 @@ describe("callback parser", () => {
     expect(
       Buffer.byteLength(`v1:community:block:${token}`),
     ).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("notification callbacks", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+
+  it("parses the global settings frame and its toggles", () => {
+    expect(parseCallback("v1:notify:global")).toEqual({
+      kind: "notify-global",
+    });
+    expect(parseCallback("v1:notify:gset:announcement:1")).toEqual({
+      kind: "notify-set-global",
+      category: "announcement",
+      enabled: true,
+    });
+    expect(parseCallback("v1:notify:gset:published:0")).toEqual({
+      kind: "notify-set-global",
+      category: "published",
+      enabled: false,
+    });
+  });
+
+  it("parses meetup notification actions matching the brief", () => {
+    expect(parseCallback(`v1:notify:settings:${token}`)).toEqual({
+      kind: "notify-settings",
+      token,
+    });
+    expect(parseCallback(`v1:notify:set:${token}:changes:1`)).toEqual({
+      kind: "notify-set-meetup",
+      token,
+      category: "changes",
+      enabled: true,
+    });
+    expect(parseCallback(`v1:notify:sub:${token}:0`)).toEqual({
+      kind: "notify-subscription",
+      token,
+      subscribed: false,
+    });
+  });
+
+  // Категория, настраиваемая только глобально, у сходки не разбирается вовсе:
+  // до `INVALID_ARGUMENT` от Notifications такая кнопка не доезжает.
+  it("refuses a global-only category in the meetup scope", () => {
+    expect(parseCallback(`v1:notify:set:${token}:published:1`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:notify:set:${token}:announcement:1`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  it("refuses malformed notification callbacks", () => {
+    expect(parseCallback(`v1:notify:set:${token}:changes:2`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback("v1:notify:set:not-a-token:changes:1")).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:notify:sub:${token}:yes`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback("v1:notify:gset:unknown:1")).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:notify:unknown:${token}`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  // Проверяется самая длинная комбинация, а не литерал из брифа: лимит ломает
+  // та категория, которой в таблице примеров нет.
+  it("keeps every notification callback within the Telegram byte budget", () => {
+    const categories = [
+      "published",
+      "changes",
+      "material",
+      "reminder",
+      "organizer",
+      "announcement",
+    ];
+    const callbacks = [
+      "v1:notify:global",
+      `v1:notify:settings:${token}`,
+      `v1:notify:sub:${token}:1`,
+      ...categories.map((category) => `v1:notify:gset:${category}:1`),
+      ...["changes", "material", "reminder", "organizer"].map(
+        (category) => `v1:notify:set:${token}:${category}:1`,
+      ),
+    ];
+    for (const data of callbacks) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data).kind).not.toBe("malformed");
+    }
   });
 });

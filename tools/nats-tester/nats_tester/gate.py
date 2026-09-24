@@ -1,4 +1,5 @@
-"""Проверки инструмента: импорт классов, состав генерации, согласие с реестром.
+"""Проверки инструмента: импорт классов, состав генерации, согласие с реестром,
+имена subjects и общая форма конверта.
 
 Их гоняет `just nats-tester-check` в `just verify` и джоба `nats-tester` в CI.
 Команда `nats-tester check` зовёт их же: ручная и машинная проверка не должны
@@ -13,7 +14,10 @@
 from __future__ import annotations
 
 import importlib
+import re
 from pathlib import Path
+
+from google.protobuf.descriptor import FieldDescriptor
 
 from nats_tester.proto_sources import (
     bus_schema_files,
@@ -23,6 +27,47 @@ from nats_tester.proto_sources import (
 
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
 PROTO_DIR = Path(__file__).resolve().parents[3] / "contracts" / "proto"
+
+# Сообщение с этим `oneof` — доменный факт, повод которого называет subject.
+# Имя выбрано не здесь: так его назвали оба принятых контракта фактов, и оно
+# отличает их от продуктового словаря, у которого ветвление называется иначе
+# (`oneof type` у уведомления). Поэтому списка доменов-исключений у проверок
+# ниже нет: соглашение называет себя само, а список пришлось бы сопровождать
+# руками при каждом новом контракте.
+OCCASION_ONEOF = "occasion"
+
+# Конверт факта: пять полей, одинаковых у всех доменов по номеру, типу и
+# смыслу. `None` у второго поля значит «имя выводится», а не «имя не
+# проверяется»: конверт обязан называть субъект факта, и называет он агрегат,
+# а не домен. Домен для вывода не годится — пакет `meetups.v1` во
+# множественном числе, а поле `meetup_id` в единственном. Имя берётся из типа
+# снимка: `MeetupState` даёт `meetup_id`, `IdentityState` — `identity_id`.
+# Тип снимка у каждого домена свой, и проверяется только то, что это
+# сообщение с таким именем.
+ENVELOPE: tuple[tuple[int, str | None, int], ...] = (
+    (1, "event_id", FieldDescriptor.TYPE_STRING),
+    (2, None, FieldDescriptor.TYPE_STRING),
+    (3, "version", FieldDescriptor.TYPE_INT64),
+    (4, "occurred_at", FieldDescriptor.TYPE_STRING),
+    (5, "state", FieldDescriptor.TYPE_MESSAGE),
+)
+
+_SNAPSHOT_SUFFIX = "State"
+_CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
+
+# Номер снимка выводится из таблицы выше один раз, на импорте: правка ENVELOPE,
+# которая оставит конверт без снимка, обязана упасть здесь и сразу, а не
+# превратиться в StopIteration внутри отдельной проверки, где её проглотит
+# обработчик и выдаст за расхождение реестра.
+_SNAPSHOT_NUMBER = next(number for number, name, _ in ENVELOPE if name == "state")
+
+# Номер типа поля читается человеком, который правит схему, а не protobuf:
+# «type 5, not 3» заставляет его искать таблицу, «int32, not int64» — нет.
+_TYPE_NAMES = {
+    value: name[len("TYPE_") :].lower()
+    for name, value in vars(FieldDescriptor).items()
+    if name.startswith("TYPE_")
+}
 
 
 def broken_imports() -> list[str]:
@@ -77,6 +122,142 @@ def registry_problems() -> list[str]:
     ]
 
 
+def _bus_event_descriptors() -> list:
+    """Сообщения-факты, найденные по схемам шины, а не по реестру.
+
+    Источник здесь решающий. Реестр для этого не годится: домен, у которого в
+    нём нет ни одной записи, через него не находится вовсе — и контракт,
+    забытый целиком, проезжает зелёным вместе с непроверенным конвертом. Это
+    ровно тот случай, ради которого обе проверки ниже и заводились, поэтому
+    список доменов берётся из `NATS_PROTO_FILES`, где забытую схему видно.
+    """
+    descriptors = []
+    for schema in sorted(bus_schema_files()):
+        relative = Path(schema).with_suffix("")
+        module = importlib.import_module(
+            f"{__package__}.generated.{'.'.join(relative.parts)}_pb2"
+        )
+        descriptors += [
+            message
+            for message in module.DESCRIPTOR.message_types_by_name.values()
+            if any(oneof.name == OCCASION_ONEOF for oneof in message.oneofs)
+        ]
+    return descriptors
+
+
+def _subject_field_name(descriptor, by_number) -> tuple[str | None, str | None]:
+    """Имя поля-субъекта, выведенное из типа снимка, и отказ вывода.
+
+    Конверт называет агрегат, а не домен, поэтому имя берётся из снимка, а не
+    из пакета. Вывести его нельзя ровно тогда, когда снимка нет или он назван
+    не по соглашению, — и это само по себе расхождение конверта.
+    """
+    field = by_number.get(_SNAPSHOT_NUMBER)
+    if field is None or field.type != FieldDescriptor.TYPE_MESSAGE:
+        return None, (
+            f"{descriptor.full_name}: field {_SNAPSHOT_NUMBER} is not the snapshot "
+            f"message the envelope spends it on"
+        )
+
+    name = field.message_type.name
+    if not name.endswith(_SNAPSHOT_SUFFIX) or name == _SNAPSHOT_SUFFIX:
+        return None, (
+            f"{descriptor.full_name}: snapshot type {name} is not named "
+            f"<Aggregate>{_SNAPSHOT_SUFFIX}, so the subject field cannot be derived"
+        )
+
+    aggregate = name[: -len(_SNAPSHOT_SUFFIX)]
+    return f"{_CAMEL_BOUNDARY.sub('_', aggregate).lower()}_id", None
+
+
+def subject_problems() -> list[str]:
+    """Subjects домена фактов выводятся из веток `oneof occasion`.
+
+    До этой проверки реестр сверялся в одну сторону: лишняя запись падала,
+    отсутствующая нет, а строка subject'а не сверялась ни с чем — принятый
+    контракт мог уехать с опечаткой в имени или вовсе без записи. Соответствие
+    «subject = `events.<домен>.` плюс имя ветки» было обещано комментарием
+    реестра и каталогом интеграций, но не проверялось ничем.
+    """
+    from nats_tester import registry
+
+    problems = []
+    for descriptor in _bus_event_descriptors():
+        domain = descriptor.file.package.split(".")[0]
+        occasion = descriptor.oneofs_by_name[OCCASION_ONEOF]
+        expected = {f"events.{domain}.{field.name}" for field in occasion.fields}
+        subjects = {
+            subject
+            for subject, message in registry.ALL_MESSAGE_TYPES.items()
+            if message.DESCRIPTOR.full_name == descriptor.full_name
+        }
+
+        problems += [
+            f"{descriptor.full_name}: occasion "
+            f"{subject.rsplit('.', 1)[-1]} has no registered subject {subject}"
+            for subject in sorted(expected - subjects)
+        ]
+        problems += [
+            f"{descriptor.full_name}: subject {subject} names no occasion of the message"
+            for subject in sorted(subjects - expected)
+        ]
+    return problems
+
+
+def envelope_problems() -> list[str]:
+    """Конверт факта одинаков во всех доменах.
+
+    Два принятых контракта фактов обязаны совпадать конвертом, но живут в
+    разных пакетах и раздельных определениях — ни `buf lint`, ни `buf
+    breaking`, ни сборка потребителя не видят их одновременно. Расхождение
+    ловилось только глазами на ревью; здесь оно ловится прогоном.
+    """
+    problems = []
+    for descriptor in _bus_event_descriptors():
+        by_number = {field.number: field for field in descriptor.fields}
+        subject_name, snapshot_problem = _subject_field_name(descriptor, by_number)
+        if snapshot_problem is not None:
+            problems.append(snapshot_problem)
+
+        for number, name, field_type in ENVELOPE:
+            expected_name = subject_name if name is None else name
+            field = by_number.get(number)
+
+            if expected_name is None:
+                continue
+            if field is None:
+                problems.append(
+                    f"{descriptor.full_name}: the envelope spends field {number} "
+                    f"on {expected_name}, and the message has no such field"
+                )
+                continue
+            if field.name != expected_name:
+                problems.append(
+                    f"{descriptor.full_name}: field {number} is {field.name}, "
+                    f"and the envelope spends it on {expected_name}"
+                )
+            if field.type != field_type:
+                problems.append(
+                    f"{descriptor.full_name}: envelope field {field.name} is "
+                    f"{_TYPE_NAMES.get(field.type, field.type)}, not "
+                    f"{_TYPE_NAMES.get(field_type, field_type)}"
+                )
+            if field.containing_oneof is not None:
+                problems.append(
+                    f"{descriptor.full_name}: envelope field {field.name} is "
+                    f"inside oneof {field.containing_oneof.name}"
+                )
+
+        envelope_numbers = {number for number, _, _ in ENVELOPE}
+        problems += [
+            f"{descriptor.full_name}: field {field.name} is outside "
+            f"oneof {OCCASION_ONEOF} and is not part of the envelope"
+            for field in descriptor.fields
+            if field.containing_oneof is None and field.number not in envelope_numbers
+        ]
+    return problems
+
+
 def check() -> list[str]:
     """Пустой список — инструмент согласован; иначе строки для отчёта."""
     problems = broken_imports()
@@ -87,10 +268,20 @@ def check() -> list[str]:
         problems.append(str(error))
         return problems
 
-    try:
-        problems += registry_problems()
-    except Exception as error:
-        problems.append(f"registry: {type(error).__name__}: {error}")
+    # Каждая проверка идёт в своей обёртке и под своим именем: отказ одной не
+    # должен ни выдавать себя за отказ соседней, ни отменять её прогон. Две из
+    # трёх читают реестр, поэтому упавший импорт назовут обе — это дешевле,
+    # чем потерять находку из-за чужого падения; сверка конверта реестра не
+    # читает и переживает его падение.
+    for name, problem_source in (
+        ("registry", registry_problems),
+        ("subjects", subject_problems),
+        ("envelope", envelope_problems),
+    ):
+        try:
+            problems += problem_source()
+        except Exception as error:
+            problems.append(f"{name}: {type(error).__name__}: {error}")
 
     return problems
 

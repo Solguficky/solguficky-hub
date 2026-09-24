@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package identity.v1;
+
+import "identity/v1/roles.proto";
+
+// Outgoing facts about one person's access. They live apart from
+// identity_service.proto for the same reason the role values do: a consumer of
+// the events must not drag IdentityService and its nine operations into its
+// codegen.
+//
+// Subjects, delivery semantics and the rules a consumer follows when it applies
+// these facts are not repeated here: they live in docs/architecture/integration.md,
+// section "Identity NATS".
+
+// A recorded fact about one person: why their access changed and what is true
+// about it now.
+message IdentityEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the outbox row and is
+  // the same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The person this fact belongs to.
+  // It repeats state.id so that the envelope alone identifies the subject of
+  // the fact.
+  string identity_id = 2;
+
+  // Profile version after the event was applied. Monotonic within one profile
+  // and starting at 1, so 0 is not a valid value.
+  //
+  // It counts every change of the snapshot below, roles included, and not only
+  // the changes of the profile itself: a consumer compares it against the
+  // version it already holds for this person.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the one moment the change was decided from and
+  // committed with. It is neither the moment of publication nor the moment of
+  // delivery, both of which happen later and are not carried at all.
+  string occurred_at = 4;
+
+  // The access state of the person after the event was applied. Always set: the
+  // body of every event is a whole snapshot, never a delta.
+  IdentityState state = 5;
+
+  // Why the state changed - the occasion. Exactly one is set, and an empty oneof
+  // is not a value.
+  oneof occasion {
+    ProfileRegistered profile_registered = 6;
+    RoleGranted role_granted = 7;
+    RoleRevoked role_revoked = 8;
+    ProfileBlocked profile_blocked = 9;
+    ProfileUnblocked profile_unblocked = 10;
+  }
+}
+
+// The access state of a person after an event.
+//
+// It is defined here and does not reuse ResolveIdentityResponse from the service
+// contract. The fields coincide today, but separate definitions keep a change of
+// the resolve API from silently becoming a change of this contract. Field numbers
+// match identity.v1.ResolveIdentityResponse so that the two stay readable side by
+// side.
+//
+// The profile version is a value of the envelope and is not repeated here: two
+// copies of one number can disagree. ResolveIdentityResponse spends no number on
+// it, so there is nothing to reserve.
+message IdentityState {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Active platform-wide roles, in no promised order. An empty set is a state,
+  // not an absent field: it is what a person has before they are admitted and
+  // what a blocked person is left with.
+  repeated GlobalRole global_roles = 2;
+
+  // True when the profile's block mark is on. It is not a role and is never
+  // derived from global_roles: blocking revokes active roles, so an empty set
+  // alone does not distinguish a blocked profile from one that never started.
+  bool blocked = 3;
+
+  // The Telegram user id and the username cache are deliberately absent: they are
+  // personal data, and no consumer of these events may hold them. A delivery
+  // channel that needs the Telegram user id asks IdentityService for it by the
+  // internal id instead.
+  //
+  // The moment of registration is absent too. No declared consumer asks for it,
+  // and adding a field later is compatible while removing one is not.
+}
+
+// The profile was created at the person's first contact.
+//
+// The snapshot is not promised to be empty. Admission from the allowed-username
+// list is decided in the same transaction that creates the profile, so a
+// registration can already carry roles, and a consumer that assumed an empty
+// set here would be wrong about exactly those people.
+message ProfileRegistered {}
+
+// A platform-wide role became active. The whole set after the grant is in
+// state.global_roles; the role names which one is the new one, so a consumer
+// without a replica need not diff.
+message RoleGranted {
+  GlobalRole role = 1;
+}
+
+// A platform-wide role stopped being active. The role is carried because the
+// revoked role is no longer in the state: together with blocking, this is the
+// only fact of the dictionary that the snapshot cannot express by itself.
+//
+// A transition into the blocked state revokes every active role and is reported
+// as profile_blocked alone, not as a revocation per role. A revocation with no
+// such transition is this occasion like any other, whatever the block mark
+// already was.
+message RoleRevoked {
+  GlobalRole role = 1;
+}
+
+// The person entered the blocked state. The mark is state.blocked, and
+// state.global_roles is empty: the same transaction revokes every active role.
+message ProfileBlocked {}
+
+// The block was lifted. Lifting it restores no role, so whatever set the person
+// had while blocked is the set they have after: this occasion never adds one.
+message ProfileUnblocked {}

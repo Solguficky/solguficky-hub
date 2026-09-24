@@ -20,9 +20,11 @@ just telegram-bot-run
 
 `just telegram-bot-tools` ставит зависимости через `npm ci`. Без него кодогенерация не находит `protoc-gen-es`.
 
-Токен бота — `TELEGRAM_BOT_TOKEN` (обязателен для процесса). Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`. Уровень лога — `TELEGRAM_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`).
+Токен бота — `TELEGRAM_BOT_TOKEN` (обязателен для процесса). Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`; адрес Notifications — `NOTIFICATIONS_GRPC_URL`, по умолчанию `http://127.0.0.1:50053`. Уровень лога — `TELEGRAM_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`).
 
 Среда Telegram — `TELEGRAM_BOT_ENVIRONMENT`: без переменной процесс работает против продакшна, значение `test` уводит вызовы Bot API в [выделенную тестовую среду](../../docs/decisions/ADR-046-telegram-test-contour.md) на `https://api.telegram.org/bot<token>/test/`. Допустимые значения — `prod` и `test`; любое другое останавливает процесс, а не откатывает его к продакшну. Токен тестового бота выдаёт тестовый BotFather и с продакшн-токеном не взаимозаменяем.
+
+Часовой пояс сообщества — `TELEGRAM_BOT_COMMUNITY_TIME_ZONE`, имя IANA вроде `Europe/Moscow`, обязательно. В нём карточка показывает назначенный момент публикации, который Meetups отдаёт мгновением UTC. Значение должно совпадать с `MEETUPS_COMMUNITY_TIME_ZONE`: AppHost задаёт обоим одной константой. Пустое или неизвестное имя останавливает процесс на старте.
 
 Карточка по умолчанию отправляется Rich Message. Для операторского отката весь процесс переключается на плоский текст через `TELEGRAM_BOT_PRESENTATION=plain`; допустимые значения — `rich` и `plain`.
 

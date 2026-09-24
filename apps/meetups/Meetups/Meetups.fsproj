@@ -24,6 +24,7 @@
     <Compile Include="Infrastructure/MeetupEventPayload.fs" />
     <Compile Include="Infrastructure/MeetupStore.fs" />
     <Compile Include="Infrastructure/MeetupReading.fs" />
+    <Compile Include="Infrastructure/DuePublicationStore.fs" />
     <Compile Include="Infrastructure/DispatchStore.fs" />
     <Compile Include="Slices/Contract.fs" />
     <Compile Include="Slices/SafeRetry.fs" />
@@ -43,11 +44,14 @@
     <Compile Include="Slices/GetMeetup.fs" />
     <Compile Include="Slices/ListMeetupStates.fs" />
     <Compile Include="Slices/DispatchMeetupEvents.fs" />
+    <Compile Include="Slices/PublishDueMeetups.fs" />
     <Compile Include="Observability/Failures.fs" />
     <Compile Include="Observability/DispatchTelemetry.fs" />
+    <Compile Include="Observability/DuePublicationTelemetry.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
     <Compile Include="Transport/OutboxDispatchWorker.fs" />
+    <Compile Include="Transport/DuePublicationWorker.fs" />
     <Compile Include="Host.fs" />
     <Compile Include="Program.fs" />
     <EmbeddedResource Include="Migrations/*.sql" />
