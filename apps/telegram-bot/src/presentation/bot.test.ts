@@ -21,6 +21,7 @@ import {
   parseTelegramEnvironment,
   type TelegramEnvironment,
 } from "./bot.js";
+import { publishMomentQuestion } from "./edit-question.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
 
 const botInfo: UserFromGetMe = {
@@ -149,6 +150,7 @@ function replyUpdate(options: {
   replyMessageId: number;
   replyFromId: number;
   replyText?: string | undefined;
+  replyEntities?: unknown;
 }): Update {
   return {
     update_id: 4,
@@ -168,6 +170,7 @@ function replyUpdate(options: {
           first_name: "sender",
         },
         text: options.replyText,
+        entities: options.replyEntities,
       } as never,
     },
   };
@@ -261,6 +264,11 @@ function createHarness(
   };
   bot.api.config.use(recorder);
   return { bot, calls, records };
+}
+
+function sendMessageEntities(call: RecordedCall | undefined): unknown {
+  if (call === undefined || call.method !== "sendMessage") return undefined;
+  return "entities" in call.payload ? call.payload.entities : undefined;
 }
 
 function sendMessageText(call: RecordedCall | undefined): string | undefined {
@@ -1218,9 +1226,11 @@ describe("presentation adapter", () => {
     const question = first.calls.find((call) => call.method === "sendMessage");
     const questionText = sendMessageText(question);
     expect(questionText).toContain("Сейчас: Циферблат");
-    expect(questionText).toContain(
-      "Шаг: v1:manage:field:AZLzpLXGfY6fChssPU5fYA:venue",
-    );
+    expect(questionText).not.toContain("Шаг:");
+    expect(questionText).not.toContain("v1:manage");
+    expect(question?.payload).toMatchObject({
+      link_preview_options: { is_disabled: true },
+    });
 
     const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
     await restarted.bot.init();
@@ -1231,6 +1241,7 @@ describe("presentation adapter", () => {
         replyMessageId: 102,
         replyFromId: 1,
         replyText: questionText,
+        replyEntities: sendMessageEntities(question),
       }),
     );
 
@@ -2818,8 +2829,10 @@ describe("deferred publication frames", () => {
     await first.bot.handleUpdate(
       callbackUpdate(`v1:manage:publish-later:${token}`),
     );
-    const questionText = sendMessageText(first.calls.at(-1));
-    expect(questionText).toContain(`Шаг: v1:manage:publish-later:${token}`);
+    const question = first.calls.at(-1);
+    const questionText = sendMessageText(question);
+    expect(questionText).not.toContain("Шаг:");
+    expect(questionText).not.toContain("v1:manage");
 
     const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
     await restarted.bot.init();
@@ -2830,6 +2843,7 @@ describe("deferred publication frames", () => {
         replyMessageId: 102,
         replyFromId: 1,
         replyText: questionText,
+        replyEntities: sendMessageEntities(question),
       }),
     );
 
@@ -2857,7 +2871,11 @@ describe("deferred publication frames", () => {
       execute,
     });
     await bot.init();
-    const question = `Когда опубликовать?\n\nШаг: v1:manage:publish-later:${token}`;
+    const question = publishMomentQuestion({
+      prompt: "Когда опубликовать?",
+      botUsername: botInfo.username,
+      token,
+    });
     const answer = () =>
       bot.handleUpdate(
         replyUpdate({
@@ -2865,7 +2883,8 @@ describe("deferred publication frames", () => {
           fromId: 42,
           replyMessageId: 7,
           replyFromId: 1,
-          replyText: question,
+          replyText: question.text,
+          replyEntities: question.entities,
         }),
       );
 
