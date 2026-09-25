@@ -20,6 +20,7 @@ let private stub: Deps =
         Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.later
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let private run (viewer: Viewer) (materialId: MaterialId) (deps: Deps) =

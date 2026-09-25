@@ -1,6 +1,7 @@
 namespace Meetups.Transport
 
 open Grpc.Core
+open Meetups.Observability
 open Meetups.Slices
 open Meetups.V1
 
@@ -17,57 +18,90 @@ open Meetups.V1
 /// проверка инвариантов и вызов инфраструктуры в этом файле означают, что граница
 /// поехала.
 ///
-/// ServerCallContext глубже диспетчера не проходит: наружу из него берётся только
-/// RequestServices, и срез о существовании контекста не знает.
+/// ServerCallContext глубже диспетчера не проходит: наружу из него берутся только
+/// RequestServices и значения сквозных заголовков, и срез о существовании контекста
+/// не знает. `request_id` команде нужен для строки журнала (PER-227), и передаётся он
+/// значением в composition root среза — видимой зависимостью, а не состоянием запроса.
 ///
 type MeetupsGrpcService() =
     inherit MeetupsService.MeetupsServiceBase()
 
     override _.CreateMeetupDraft(request: CreateMeetupDraftRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        CreateMeetupDraft.Api.handle (CreateMeetupDraft.Composition.buildDeps services) request
+
+        CreateMeetupDraft.Api.handle
+            (CreateMeetupDraft.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.ChangeMeetupAttributes(request: ChangeMeetupAttributesRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        ChangeMeetupAttributes.Api.handle (ChangeMeetupAttributes.Composition.buildDeps services) request
+
+        ChangeMeetupAttributes.Api.handle
+            (ChangeMeetupAttributes.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.SetMeetupSchedule(request: SetMeetupScheduleRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        SetMeetupSchedule.Api.handle (SetMeetupSchedule.Composition.buildDeps services) request
+
+        SetMeetupSchedule.Api.handle
+            (SetMeetupSchedule.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.PublishMeetup(request: PublishMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        PublishMeetup.Api.handle (PublishMeetup.Composition.buildDeps services) request
+
+        PublishMeetup.Api.handle
+            (PublishMeetup.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.ScheduleMeetupPublication(request: ScheduleMeetupPublicationRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
 
-        ScheduleMeetupPublication.Api.handle (ScheduleMeetupPublication.Composition.buildDeps services) request
+        ScheduleMeetupPublication.Api.handle
+            (ScheduleMeetupPublication.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.CancelMeetupPublication(request: CancelMeetupPublicationRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
 
-        CancelMeetupPublication.Api.handle (CancelMeetupPublication.Composition.buildDeps services) request
+        CancelMeetupPublication.Api.handle
+            (CancelMeetupPublication.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.UnpublishMeetup(request: UnpublishMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        UnpublishMeetup.Api.handle (UnpublishMeetup.Composition.buildDeps services) request
+
+        UnpublishMeetup.Api.handle
+            (UnpublishMeetup.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.CancelMeetup(request: CancelMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        CancelMeetup.Api.handle (CancelMeetup.Composition.buildDeps services) request
+
+        CancelMeetup.Api.handle
+            (CancelMeetup.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.AttachMaterial(request: AttachMaterialRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        AttachMaterial.Api.handle (AttachMaterial.Composition.buildDeps services) request
+
+        AttachMaterial.Api.handle
+            (AttachMaterial.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.RemoveMaterial(request: RemoveMaterialRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        RemoveMaterial.Api.handle (RemoveMaterial.Composition.buildDeps services) request
+
+        RemoveMaterial.Api.handle
+            (RemoveMaterial.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.MarkMeetupHeld(request: MarkMeetupHeldRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        MarkMeetupHeld.Api.handle (MarkMeetupHeld.Composition.buildDeps services) request
+
+        MarkMeetupHeld.Api.handle
+            (MarkMeetupHeld.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
 
     override _.GetMeetup(request: GetMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices

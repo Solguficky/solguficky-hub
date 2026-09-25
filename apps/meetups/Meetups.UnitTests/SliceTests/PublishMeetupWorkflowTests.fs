@@ -7,6 +7,7 @@ open System
 open System.Threading.Tasks
 open Swensen.Unquote
 open Xunit
+open Meetups
 open Meetups.Domain
 open Meetups.Infrastructure
 open Meetups.Slices.PublishMeetup
@@ -20,6 +21,7 @@ let private stub: Deps =
         Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.later
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let private run (deps: Deps) =
@@ -160,3 +162,36 @@ let ``A stale version with the target already in place is a safe retry`` () =
         }
 
     test <@ run deps = Ok stored @>
+
+/// PER-227: запрос, начавший команду, ложится в конверт события значением из
+/// зависимостей, а отсутствие остаётся отсутствием, а не выдуманным id.
+[<Fact>]
+let ``The request that started the command is written with the event`` () =
+    let written = ResizeArray()
+    let requestId = RequestId.create "req-bot-frame"
+
+    { stub with
+        RequestId = requestId
+    }
+    |> loading (Some(Meetup.toSnapshot Sample.titled))
+    |> recording written
+    |> run
+    |> ignore
+
+    let envelope, _, _ = written[0]
+
+    test <@ envelope.RequestId = requestId @>
+
+[<Fact>]
+let ``A command without a request id writes none`` () =
+    let written = ResizeArray()
+
+    stub
+    |> loading (Some(Meetup.toSnapshot Sample.titled))
+    |> recording written
+    |> run
+    |> ignore
+
+    let envelope, _, _ = written[0]
+
+    test <@ envelope.RequestId = None @>

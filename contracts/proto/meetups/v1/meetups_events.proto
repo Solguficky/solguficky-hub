@@ -56,6 +56,18 @@ message MeetupEvent {
     MeetupMaterialRemoved meetup_material_removed = 15;
     MeetupHeld meetup_held = 16;
   }
+
+  // Opaque end-to-end id of the request that produced this fact: 1 to 128
+  // characters, compared as is and never parsed. It is stored with the journal
+  // row, so it is the same value on every publication of that row.
+  //
+  // A fact decided by the producer's own scheduled work carries an id of its
+  // own. Unset means the producer received no id: a call without one, or a row
+  // recorded before the field existed. An empty string is not a value.
+  //
+  // A consumer carries this value into its logs and into the facts it derives
+  // from this one, and never mints a replacement for it.
+  optional string request_id = 17;
 }
 
 // The state of a meetup after an event.

@@ -17,6 +17,7 @@
     <Compile Include="Domain/Access.fs" />
     <Compile Include="Domain/Archive.fs" />
     <Compile Include="Domain/Meetup.fs" />
+    <Compile Include="RequestId.fs" />
     <Compile Include="Migrations.fs" />
     <Compile Include="Infrastructure/Db.fs" />
     <Compile Include="Infrastructure/CommunityTime.fs" />
@@ -49,6 +50,7 @@
     <Compile Include="Observability/Failures.fs" />
     <Compile Include="Observability/DispatchTelemetry.fs" />
     <Compile Include="Observability/DuePublicationTelemetry.fs" />
+    <Compile Include="Observability/IncomingMetadata.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
     <Compile Include="Transport/OutboxDispatchWorker.fs" />

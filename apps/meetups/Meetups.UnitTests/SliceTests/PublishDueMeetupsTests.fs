@@ -9,6 +9,7 @@ module Meetups.SliceTests.PublishDueMeetupsTests
 open System
 open System.Threading
 open System.Threading.Tasks
+open Meetups
 open Meetups.Domain
 open Meetups.Infrastructure
 open Meetups.Slices.PublishDueMeetups
@@ -65,6 +66,7 @@ let private deps =
         Commit = fun _ _ _ _ -> notReached "Commit"
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        NewRequestId = fun () -> (RequestId.create "due-fixed").Value
         BatchSize = 10
     }
 
@@ -394,3 +396,33 @@ module ConfigurationTests =
             |> Composition.batchSize
 
         test <@ clamped = 1000 @>
+
+/// Выдаёт `due-1`, `due-2`, … по порядку вызовов: по номеру видно, какой сходке какой
+/// id достался.
+let private sequentialRequestIds () =
+    let issued = ref 0
+
+    fun () ->
+        issued.Value <- issued.Value + 1
+        (RequestId.create $"due-{issued.Value}").Value
+
+/// PER-227: у повода по расписанию собственный id, по одному на сходку, и он уходит в
+/// конверт события — рядом с событием в журнале.
+[<Fact>]
+let ``Every published meetup starts a chain of its own`` () =
+    let commit, calls = recordingCommit ()
+
+    run
+        { reading [ due 1; due 2 ] with
+            Commit = commit
+            NewRequestId = sequentialRequestIds ()
+        }
+        CancellationToken.None
+    |> ignore
+
+    let written =
+        calls
+        |> Seq.map (fun (envelope, _, _) -> envelope.RequestId |> Option.map RequestId.value)
+        |> List.ofSeq
+
+    test <@ written = [ Some "due-1"; Some "due-2" ] @>

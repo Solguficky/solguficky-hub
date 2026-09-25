@@ -8,6 +8,7 @@ open System
 open System.Threading.Tasks
 open Dapper
 open Npgsql
+open Meetups
 open Meetups.Domain
 
 /// Единственный ожидаемый отказ записи: версия строки разошлась с той, из которой
@@ -27,12 +28,17 @@ do Db.ensureTypeHandlers ()
 /// Конверт строки журнала (ADR-031). Домену он не нужен ни для одного инварианта,
 /// поэтому заполняется оболочкой: `event_id` рождается до транзакции и дальше
 /// неизменяем, `occurred_at` — тот же момент, из которого принято решение.
+///
+/// `RequestId` — запрос, породивший событие (PER-227). Он ложится в строку, а не
+/// только в лог границы: релей публикует позже и узнаёт значение только из
+/// журнала. `None` — граница значения не получила.
 [<NoComparison>]
 type EventEnvelope =
     {
         EventId: Guid
         PerformedBy: PersonId
         OccurredAt: DateTimeOffset
+        RequestId: RequestId option
     }
 
 /// Алиасы приводят снейк-кейс колонок к именам полей записи. Явно, а не глобальным
@@ -123,9 +129,10 @@ let private UpdateMeetupSql =
 let private InsertEventSql =
     """
     INSERT INTO meetup_events (
-        event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
+        event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id
     ) VALUES (
-        @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at
+        @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at,
+        @request_id
     )
     """
 
@@ -226,6 +233,12 @@ let commit
                         payload = MeetupEventPayload.ofSnapshot snapshot
                         performed_by = performedBy
                         occurred_at = envelope.OccurredAt
+                        // Явный NULL, а не отсутствие параметра: Dapper не отличает
+                        // `None` от значения и передал бы F#-option как объект.
+                        request_id =
+                            envelope.RequestId
+                            |> Option.map RequestId.value
+                            |> Option.toObj
                     |},
                     transaction
                 )

@@ -17,6 +17,7 @@
   <ItemGroup>
     <Compile Include="TestUtilities/TestData/Sample.fs" />
     <Compile Include="TestUtilities/TestRpc.fs" />
+    <Compile Include="RequestIdTests.fs" />
     <Compile Include="DomainTests/ScheduleTests.fs" />
     <Compile Include="DomainTests/CreateMeetupDraftTests.fs" />
     <Compile Include="DomainTests/ChangeMeetupAttributesTests.fs" />

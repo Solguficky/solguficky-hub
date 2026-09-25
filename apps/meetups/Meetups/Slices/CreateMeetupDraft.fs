@@ -10,6 +10,7 @@ module Meetups.Slices.CreateMeetupDraft
 
 open System
 open System.Threading.Tasks
+open Meetups
 open Meetups.Domain
 open Meetups.Infrastructure
 
@@ -43,6 +44,8 @@ type Deps =
                 -> Task<Result<MeetupSnapshot, MeetupStore.VersionConflict>>
         Now: unit -> DateTimeOffset
         NewEventId: unit -> Guid
+        /// Запрос, начавший команду (PER-227). `None` — граница его не получила.
+        RequestId: RequestId option
     }
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, CreateMeetupDraftError>> =
@@ -70,6 +73,7 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Create
                         EventId = deps.NewEventId()
                         PerformedBy = command.Viewer.IdentityId
                         OccurredAt = deps.Now()
+                        RequestId = deps.RequestId
                     }
 
                 // У создания версия предиката не приходит с провода: ключ
@@ -89,7 +93,7 @@ module Composition =
     open Microsoft.Extensions.DependencyInjection
     open Npgsql
 
-    let buildDeps (services: IServiceProvider) : Deps =
+    let buildDeps (services: IServiceProvider) (requestId: RequestId option) : Deps =
         let source = services.GetRequiredService<NpgsqlDataSource>()
 
         {
@@ -99,6 +103,7 @@ module Composition =
             // смещением, и локальное время упало бы уже в рантайме.
             Now = fun () -> DateTimeOffset.UtcNow
             NewEventId = Guid.CreateVersion7
+            RequestId = requestId
         }
 
 /// Транспортная граница среза: разбор запроса и отображение отказов в коды.

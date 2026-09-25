@@ -4,6 +4,9 @@
 module Meetups.OutboxDispatchLogTests
 
 open System
+open System.Threading
+open System.Threading.Tasks
+open Meetups
 open Meetups.Slices.DispatchMeetupEvents
 open Meetups.Transport
 open Microsoft.Extensions.Logging
@@ -35,6 +38,7 @@ let private decline =
         {
             EventId = eventId
             MeetupId = meetupId
+            RequestId = RequestId.create "req-declined"
             Reason = "nats is unreachable"
         }
 
@@ -166,3 +170,86 @@ let ``An unexpected failure carries its category and its stack`` () =
     test <@ fields.TryFind "error_category" = Some "unexpected" @>
     test <@ fields.TryFind "error" = Some "the port broke" @>
     test <@ fields.ContainsKey "stack" @>
+
+let private pending (requestId: RequestId option) =
+    {
+        EventId = eventId
+        MeetupId = meetupId
+        Version = 1L
+        EventType = "meetup_created"
+        Payload = "{}"
+        PerformedBy = Guid.Empty
+        OccurredAt = DateTimeOffset(2026, 9, 7, 12, 0, 0, TimeSpan.Zero)
+        RequestId = requestId
+    }
+
+let private relayedFields (event: PendingEvent) =
+    OutboxDispatchLog.relayed duration event
+    |> List.map (fun (name, value) -> name, string value)
+    |> Map.ofList
+
+/// Критерий PER-227 «по идентификатору из кадра бота находится доменное событие»:
+/// поиск по `request_id` находит запись о публикации, и она называет событие.
+[<Fact>]
+let ``A relayed event carries the request id of the chain it continues`` () =
+    let fields = relayedFields (pending (RequestId.create "req-bot-frame"))
+
+    test <@ fields.TryFind "request_id" = Some "req-bot-frame" @>
+    test <@ fields.TryFind "event_id" = Some(string eventId) @>
+    test <@ fields.TryFind "meetup_id" = Some(string meetupId) @>
+    test <@ fields.TryFind "operation" = Some OutboxDispatchLog.Operation @>
+    test <@ fields.TryFind "result" = Some "ok" @>
+    test <@ fields.ContainsKey "duration_us" @>
+
+/// Событие без id (вызов без заголовка, строка старше миграции 008) пишется без поля,
+/// а не с пустой строкой и не с придуманным значением.
+[<Fact>]
+let ``A relayed event without a request id omits the field`` () =
+    let fields = relayedFields (pending None)
+
+    test <@ fields.ContainsKey "request_id" = false @>
+
+[<Fact>]
+let ``A declined publication names the chain it stalled`` () =
+    let _, fields = described (TickOutcome.Ran(report 1L None 0 decline false))
+
+    test <@ fields.TryFind "request_id" = Some "req-declined" @>
+
+/// Порт, обёрнутый границей, вместе с записями, которые он оставил.
+let private announced (answer: PublishOutcome) =
+    let written = ResizeArray<(string * obj) list>()
+
+    let publish =
+        OutboxDispatchLog.announcing written.Add (fun _ _ -> Task.FromResult answer)
+
+    let outcome =
+        publish CancellationToken.None (pending (RequestId.create "req-bot-frame"))
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
+    outcome, List.ofSeq written
+
+/// Запись пишется в момент подтверждения, а не из отчёта тика: отказ на следующем
+/// событии уносит отчёт, а уже опубликованное событие без записи не нашлось бы.
+[<Fact>]
+let ``A confirmed publication is recorded the moment it is confirmed`` () =
+    let outcome, written = announced PublishOutcome.Confirmed
+
+    test <@ outcome = PublishOutcome.Confirmed @>
+
+    test
+        <@
+            written
+            |> List.map (
+                Map.ofList
+                >> Map.tryFind "request_id"
+                >> Option.map string
+            ) = [ Some "req-bot-frame" ]
+        @>
+
+[<Fact>]
+let ``A declined publication leaves no relayed record`` () =
+    let outcome, written = announced (PublishOutcome.Declined "nats is unreachable")
+
+    test <@ outcome = PublishOutcome.Declined "nats is unreachable" @>
+    test <@ written = [] @>

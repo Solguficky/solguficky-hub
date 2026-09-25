@@ -7,6 +7,7 @@ module Meetups.Slices.AttachMaterial
 
 open System
 open System.Threading.Tasks
+open Meetups
 open Meetups.Domain
 open Meetups.Infrastructure
 
@@ -40,6 +41,8 @@ type Deps =
                 -> Task<Result<MeetupSnapshot, MeetupStore.VersionConflict>>
         Now: unit -> DateTimeOffset
         NewEventId: unit -> Guid
+        /// Запрос, начавший команду (PER-227). `None` — граница его не получила.
+        RequestId: RequestId option
     }
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, AttachMaterialError>> =
@@ -74,6 +77,7 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Attach
                         EventId = deps.NewEventId()
                         PerformedBy = command.Viewer.IdentityId
                         OccurredAt = deps.Now()
+                        RequestId = deps.RequestId
                     }
 
                 match! deps.Commit envelope (Some command.ExpectedVersion) state event with
@@ -95,7 +99,7 @@ module Composition =
     open Microsoft.Extensions.DependencyInjection
     open Npgsql
 
-    let buildDeps (services: IServiceProvider) : Deps =
+    let buildDeps (services: IServiceProvider) (requestId: RequestId option) : Deps =
         let source = services.GetRequiredService<NpgsqlDataSource>()
 
         {
@@ -105,6 +109,7 @@ module Composition =
             // смещением, и локальное время упало бы уже в рантайме.
             Now = fun () -> DateTimeOffset.UtcNow
             NewEventId = Guid.CreateVersion7
+            RequestId = requestId
         }
 
 /// Транспортная граница среза: разбор запроса и отображение отказов в коды.

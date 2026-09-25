@@ -203,3 +203,56 @@ type MeetupDispatchTests() =
 
         test <@ report.Published = 2 @>
         test <@ DispatchScenario.pendingEvents dsn = [ Dispatch.eventId 12 ] @>
+
+    /// PER-227, критерий «цепочка не рвётся на задержке между командой и
+    /// публикацией»: команда закоммичена, публикует её отдельный тик позже, и порт
+    /// получает тот же id — прочитанный из строки журнала, а не из запроса, которого
+    /// к этому моменту уже нет.
+    [<Fact>]
+    member _.``The relay hands the port the request id the command stored``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+        let meetupId = Dispatch.meetupId 41
+
+        MeetupCommands.createFrom
+            source
+            (Dispatch.eventId 41)
+            (Meetups.Domain.MeetupId meetupId)
+            MeetupCommands.administrator
+            (Meetups.RequestId.create "req-bot-frame")
+        |> ignore
+
+        let port = DispatchReader.confirming ()
+
+        DispatchReader.runTick source port Dispatch.batchSize
+        |> ignore
+
+        test
+            <@
+                port.Published
+                |> List.map (fun event ->
+                    event.EventId,
+                    event.RequestId
+                    |> Option.map Meetups.RequestId.value
+                ) = [
+                    Dispatch.eventId 41, Some "req-bot-frame"
+                ]
+            @>
+
+    /// Строка без id (вызов без заголовка, запись старше миграции 008) уходит в порт
+    /// без него, а не с пустой строкой.
+    [<Fact>]
+    member _.``A row without a request id reaches the port without one``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = NpgsqlDataSource.Create dsn
+
+        DispatchScenario.seedEvent dsn (Dispatch.meetupId 42) (Dispatch.eventId 42) Dispatch.occurredAt
+
+        let port = DispatchReader.confirming ()
+
+        DispatchReader.runTick source port Dispatch.batchSize
+        |> ignore
+
+        test <@ port.Published |> List.map _.RequestId = [ None ] @>

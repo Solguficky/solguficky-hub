@@ -66,6 +66,15 @@ message Notification {
     // subscription and change category are still on at send time.
     MeetupUnpublished meetup_unpublished = 12;
   }
+
+  // Opaque end-to-end id of the chain this notification belongs to, compared as
+  // is and never parsed. A notification caused by a Meetups event carries that
+  // event's request_id unchanged; a fired reminder carries the id of the sweep
+  // that fired it. Unset means the cause carried none. An empty string is not a
+  // value.
+  //
+  // A channel carries this value into its logs and never mints a replacement.
+  optional string request_id = 13;
 }
 
 // The reference to the fact that made the notification due. The triple (type,

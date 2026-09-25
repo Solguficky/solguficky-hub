@@ -899,3 +899,27 @@ type SchemaTests() =
             SchemaSql.scalar<int64> dsn "SELECT COUNT(*) FROM meetup_events WHERE meetup_id = @id" [ "id", box id ]
 
         test <@ count = 2L @>
+
+    /// Миграция 008: `request_id` — часть неизменяемой записи, а не подвижная
+    /// отметка, и схема отвергает пустое и слишком длинное значение. Граница строже
+    /// схемы, поэтому всё, что пишет команда, схема примет.
+    [<Fact>]
+    member _.``The request id of an event can be neither rewritten nor stored malformed``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let meetupId = Guid.Parse("0199c0de-0000-7000-8000-000000000085")
+        let eventId = Guid.Parse("0199c0de-0000-7000-8000-000000000095")
+
+        SchemaSql.insertNoDate dsn meetupId "hidden" SchemaSql.absent SchemaSql.absent
+        SchemaSql.insertEvent dsn eventId meetupId 1 "meetup_created"
+
+        let rewrite = DispatchScenario.requestIdUpdateCode dsn eventId
+        let blank = DispatchScenario.requestIdStoreCode dsn eventId "  "
+        let oversized = DispatchScenario.requestIdStoreCode dsn eventId (String('r', 129))
+
+        test
+            <@
+                rewrite = Some "MT001"
+                && blank = Some "23514"
+                && oversized = Some "23514"
+            @>

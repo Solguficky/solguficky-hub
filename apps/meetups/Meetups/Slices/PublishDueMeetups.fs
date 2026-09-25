@@ -17,6 +17,7 @@ open System
 open System.Runtime.ExceptionServices
 open System.Threading
 open System.Threading.Tasks
+open Meetups
 open Meetups.Domain
 open Meetups.Infrastructure
 
@@ -33,6 +34,11 @@ open Meetups.Infrastructure
 /// срезов разрешает общий модуль со второго.
 let clockPerformer = PersonId Guid.Empty
 
+/// Публикация по расписанию — сама край своей цепочки (logging.md, PER-227): запроса,
+/// из которого id мог бы прийти, у неё нет, а пустое поле оборвало бы поиск по логам
+/// на первом же поводе без человека. Id рождается на каждую сходку, а не на тик:
+/// сходки пачки независимы, и общий id склеил бы в одну цепочку чужие друг другу
+/// публикации.
 /// Набор, который тик застал.
 type DueBacklog =
     {
@@ -93,6 +99,7 @@ type Deps =
                 -> Task<Result<MeetupSnapshot, MeetupStore.VersionConflict>>
         Now: unit -> DateTimeOffset
         NewEventId: unit -> Guid
+        NewRequestId: unit -> RequestId
         BatchSize: int
     }
 
@@ -139,6 +146,7 @@ let private attempt (deps: Deps) (now: DateTimeOffset) (snapshot: MeetupSnapshot
                     EventId = deps.NewEventId()
                     PerformedBy = clockPerformer
                     OccurredAt = now
+                    RequestId = Some(deps.NewRequestId())
                 }
 
             match! deps.Commit envelope (Some snapshot.Version) state event with
@@ -319,5 +327,6 @@ module Composition =
             // смещением, и локальное время упало бы уже в рантайме.
             Now = fun () -> DateTimeOffset.UtcNow
             NewEventId = Guid.CreateVersion7
+            NewRequestId = RequestId.fresh
             BatchSize = batchSize configuration
         }

@@ -550,3 +550,42 @@ type MeetupBoundaryTests() =
 
         test <@ past = Some StatusCode.InvalidArgument @>
         test <@ published = Some StatusCode.FailedPrecondition @>
+
+    /// PER-227, первое звено: id из кадра бота, пришедший заголовком, лежит в строке
+    /// журнала рядом с событием — тем же значением, что в записи границы.
+    [<Fact>]
+    member _.``A command stores the request id it came with next to its event``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let id = newId ()
+        let headers = Metadata()
+        headers.Add("x-request-id", "req-bot-frame")
+
+        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = administrator (), Id = id.ToString "D"), headers)
+        |> ignore
+
+        test <@ MeetupCommands.requestIds live.ConnectionString id = [ Some "req-bot-frame" ] @>
+
+    /// Вызов без заголовка допустим (integration.md), и журнал не выдумывает замену.
+    /// Заголовок длиннее предела трактуется так же: команда не падает на ограничении
+    /// схемы, а значение отбрасывается и в логе, и в журнале.
+    [<Fact>]
+    member _.``A command without a usable request id stores none``() =
+        use live = new LiveMeetupsHost()
+        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let bare = newId ()
+        let oversized = newId ()
+        let headers = Metadata()
+        headers.Add("x-request-id", String('r', 129))
+
+        client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = administrator (), Id = bare.ToString "D"))
+        |> ignore
+
+        client.CreateMeetupDraft(
+            CreateMeetupDraftRequest(Viewer = administrator (), Id = oversized.ToString "D"),
+            headers
+        )
+        |> ignore
+
+        test <@ MeetupCommands.requestIds live.ConnectionString bare = [ None ] @>
+        test <@ MeetupCommands.requestIds live.ConnectionString oversized = [ None ] @>

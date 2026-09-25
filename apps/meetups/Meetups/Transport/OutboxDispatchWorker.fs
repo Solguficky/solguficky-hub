@@ -4,6 +4,7 @@ open System
 open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
+open Meetups
 open Meetups.Observability
 open Meetups.Slices
 open Meetups.Slices.DispatchMeetupEvents
@@ -29,9 +30,9 @@ module OutboxDispatchLog =
     /// `use_case` — logging.md прямо называет периодическую фоновую работу операцией
     /// без сценария: поле отсутствует, а не заполняется заглушкой.
     ///
-    /// `request_id` рождается на краю и проносится через цепочку. У тика цепочки
-    /// нет, придумать значение здесь — значит выдать его за сквозное. Поле, которое
-    /// нечем заполнить, опускается.
+    /// `request_id` — тик обслуживает много цепочек сразу, и ни одна из них не его:
+    /// придумать значение здесь — значит выдать его за сквозное. Id событий пишет
+    /// запись `relayed`, по одной на публикацию, а запись тика поле опускает.
     let private frame (result: string) (durationMicroseconds: int64) =
         [
             "service", box Failures.Service
@@ -58,6 +59,53 @@ module OutboxDispatchLog =
             | None -> fields
         |> fun fields -> if report.Cancelled then fields @ [ "cancelled", box true ] else fields
 
+    let private requestIdField (requestId: RequestId option) =
+        match requestId with
+        | Some value ->
+            [
+                "request_id", box (RequestId.value value)
+            ]
+        | None -> []
+
+    /// Запись об одной подтверждённой публикации (PER-227). Здесь `request_id` уже не
+    /// выдуман: он пришёл из строки журнала, то есть это id той цепочки, которую
+    /// событие продолжает. Поиск по id из кадра бота находит именно эту запись.
+    /// Событие без id (вызов без заголовка, строка старше миграции 008) пишется без
+    /// поля — logging.md велит опускать значение, которого граница не получила.
+    /// Длительность — самой публикации, а не тика.
+    let relayed (durationMicroseconds: int64) (event: PendingEvent) : (string * obj) list =
+        frame "ok" durationMicroseconds
+        @ [
+            "meetup_id", box event.MeetupId
+            "event_id", box event.EventId
+        ]
+        @ requestIdField event.RequestId
+
+    /// Порт, который пишет `relayed` в момент подтверждения, а не после тика.
+    ///
+    /// Запись из отчёта тика терялась бы вместе с ним: неожиданный отказ на следующем
+    /// событии уносит отчёт, а уже подтверждённое событие отмечено и повторно не
+    /// уйдёт — его id не нашёлся бы в логах вовсе. Запись о публикации стоит до
+    /// отметки: если отметка потом упадёт, событие опубликуют ещё раз и запишут ещё
+    /// раз, и это правда о шине, а не шум. Отказ и исключение порта записи не дают:
+    /// публикации не было.
+    let announcing
+        (write: (string * obj) list -> unit)
+        (publish: CancellationToken -> PendingEvent -> Task<PublishOutcome>)
+        : CancellationToken -> PendingEvent -> Task<PublishOutcome> =
+        fun token event ->
+            task {
+                let started = Stopwatch.GetTimestamp()
+                let! outcome = publish token event
+
+                match outcome with
+                | PublishOutcome.Confirmed ->
+                    write (relayed (int64 (Stopwatch.GetElapsedTime started).TotalMicroseconds) event)
+                | PublishOutcome.Declined _ -> ()
+
+                return outcome
+            }
+
     let describe (outcome: TickOutcome) (durationMicroseconds: int64) : LogLevel * (string * obj) list =
         match outcome with
         // Ход занят другим экземпляром — это норма, а не отказ: ровно так изоляция и
@@ -81,6 +129,7 @@ module OutboxDispatchLog =
                     "meetup_id", box declined.MeetupId
                     "event_id", box declined.EventId
                 ]
+                @ requestIdField declined.RequestId
             // Тик отработал, но чью-то запись он опубликовал вторым. Результат
             // остаётся `ok` — публикация состоялась, — а уровень поднимается:
             // одновременно работающих релеев быть не должно, и молча это выглядело бы
@@ -154,6 +203,7 @@ type OutboxDispatchWorker
                 match outcome with
                 | TickOutcome.TurnBusy -> ()
                 | TickOutcome.Ran report ->
+
                     let declined = if report.Declined.IsSome then 1 else 0
 
                     if declined > 0 then
@@ -213,7 +263,10 @@ type OutboxDispatchWorker
 
             Task.CompletedTask
         | Port.Publish publish ->
-            let deps = DispatchMeetupEvents.Composition.buildDeps services publish
+            let deps =
+                DispatchMeetupEvents.Composition.buildDeps
+                    services
+                    (OutboxDispatchLog.announcing (write LogLevel.Information None) publish)
 
             let timer =
                 new PeriodicTimer(DispatchMeetupEvents.Composition.interval configuration)
