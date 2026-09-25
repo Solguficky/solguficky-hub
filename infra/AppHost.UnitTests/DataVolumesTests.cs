@@ -39,19 +39,19 @@ public class DataVolumesTests
     private static string NatsVolume(string tree) => Volume(NatsSetup.Configure(Context(tree)));
 
     [Fact]
-    public void Postgres_TwoTrees_GetDifferentVolumes() =>
+    public void Name_PostgresInTwoTrees_GetsDifferentVolumes() =>
         PostgresVolume("solguficky-hub").ShouldNotBe(PostgresVolume("per-340-worktree"));
 
     [Fact]
-    public void Postgres_SameTreeRunAgain_GetsSameVolume() =>
+    public void Name_PostgresRunAgainInSameTree_GetsSameVolume() =>
         PostgresVolume("per-340-worktree").ShouldBe(PostgresVolume("per-340-worktree"));
 
     [Fact]
-    public void Nats_TwoTrees_GetDifferentVolumes() =>
+    public void Name_NatsInTwoTrees_GetsDifferentVolumes() =>
         NatsVolume("solguficky-hub").ShouldNotBe(NatsVolume("per-340-worktree"));
 
     [Fact]
-    public void Nats_SameTreeRunAgain_GetsSameVolume() =>
+    public void Name_NatsRunAgainInSameTree_GetsSameVolume() =>
         NatsVolume("per-340-worktree").ShouldBe(NatsVolume("per-340-worktree"));
 
     /// <summary>

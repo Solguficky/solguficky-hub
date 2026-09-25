@@ -47,7 +47,7 @@ internal static class NatsSetup
             logger.LogError(
                 exception,
                 "JetStream topology was not applied. A change JetStream refuses on a live stream or consumer " +
-                "needs the volume '{Volume}' removed.",
+                "needs the volume '{volume}' removed.",
                 volume);
             throw;
         }
