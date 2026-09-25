@@ -187,3 +187,34 @@
 **Инварианты.** Добавлены И-16…И-19; И-10 уточнён: повторный вход в `Trading` — только из `Held` событием `LotResumed`, `config` при этом не меняется. И-06 и И-12 не задеты: удержание не пишет `DeadlineExtended`. Правило живой ставки финала — отдельное решение, [ADR-049](ADR-049-auction-live-bid-rule.md).
 
 **Сигнал пересмотра дополнения.** Отбор в финал становится автоматическим правилом («самые дорогие» или «самые популярные», ОВ-4 [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md#осталось-открытым-на-22092026)) и известен до старта — тогда удержание выразимо конфигурацией, и отметка `MarkForFinal` становится лишней.
+
+## Дополнение 2026-09-24: планирование лота и состав событий сессии
+
+Раздел дописан после первого дополнения того же дня и текст выше не меняет. Причина — первый сигнал пересмотра этого ADR: при описании `contracts/proto/auction/v1/` ([PER-149](https://linear.app/anticnvm/issue/per-149)) лоту до торгов и торговой сессии понадобились поля, которых не было ни в одном payload, поэтому схема описала лот только с `LotOpened`. Правлен словарь, а не схема, как ADR и требует. Решение владельца принято в [PER-301](https://linear.app/anticnvm/issue/per-301); разбор пяти развилок с отвергнутыми вариантами — раздел «Словарь планирования и сессии» [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md).
+
+**Лот до торгов.** `Draft` — состояние после `LotDrafted`, `Scheduled of Schedule` — после `LotScheduled`, которое повторяется при каждой правке до `LotOpened` и несёт снимок. `Schedule = { startingPrice; config : LotConfig }`. Дедлайна в `Schedule` нет: он принадлежит сессии и приходит лоту во входе `OpenLot`.
+
+| Команда | Вход сверх `op_id` | Событие при успехе | Именованные отказы |
+|---|---|---|---|
+| `DraftLot` | `lot_id`, `actor` | `LotDrafted` | `LotAlreadyExists` |
+| `ScheduleLot` | `lot_id`, `startingPrice`, `config`, `actor` | `LotScheduled` | `SchedulingClosed`, `StepPolicyInvalid`, `CurrencyMismatch` |
+| `OpenLot` | добавлен `deadline?` | без изменений | без изменений |
+
+Payload: `LotDrafted` — нет; `LotScheduled` — `startingPrice`, `stepPolicy`, `antiSnipe {N, M, K}`, `proxyEnabled`, `currency`. **Форма существующих событий не меняется**: `LotOpened` и прежде нёс `deadline?`, изменился только вход команды. Команд лота становится одиннадцать, событий — четырнадцать с производным `DeadlineExtended`. `ScheduleLot` идёт через сессию: она подставляет `lotDefaults` в момент команды и после `PrebiddingStarted` команду не пропускает (`LotsFrozen`).
+
+**Сессия.** `Draft` — начальное состояние без события. Реестр лотов — события сессии `LotAdded(lot_id)` и `LotRemoved(lot_id)` от команд `AddLot` и `RemoveLot`, открытый в `Draft` и `Scheduled` и замороженный `PrebiddingStarted` (отказ `LotsFrozen`, для `RemoveLot` ещё `LotNotInSession`). `ScheduleSession` повторяется до старта, после — `SessionAlreadyStarted`. Сессия записывает ответы лотов только там, где они меняют состав или очередь финала; ответы на `OpenLot` и исходы лотов пребиддинга восстанавливаются переспросом, по [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md).
+
+| Событие сессии | Payload |
+|---|---|
+| `SessionScheduled` | `SessionConfig` целиком |
+| `LotAdded`, `LotRemoved`, `FinalistConfirmed`, `FinalistDropped`, `FinalLotActivated`, `FinalLotCompleted` | `lot_id` |
+| `FinalLineupFrozen` | `order` |
+| `PrebiddingStarted`, `PrebiddingDeadlineReached`, `PrebiddingEnded`, `FinalStarted`, `SessionFinished` | нет |
+
+**`SessionConfig`.** `onlinePhase = None | Enabled { opensAt; closesAt?; closesLots }` — моменты вместо длительности, и `closesAt` становится единственным источником дедлайна лота. `finalBlocks : int` с допустимыми `0..1`: модели хватает количества блоков, записи `FinalBlock` нет. `LotDefaults = { stepPolicy; antiSnipe; proxyEnabled; currency }` — ими сессия заполняет незаданные поля `ScheduleLot`.
+
+**`ConfigInvalid` (Т-19, Т-44) выводится из payload `SessionScheduled` без обращения наружу**: `closesLots` или `ByDeadline` без `closesAt`, `closesAt ≤ opensAt`, `finalBlocks` вне `0..1`, `lotDefaults.stepPolicy` против И-15. Т-44 сводится к `closesLots` без `closesAt`, потому что лот без дедлайна при `closesLots = true` стал непредставим.
+
+**Инварианты.** Добавлен И-20: реестр лотов меняется только в `Draft` и `Scheduled`. И-15 уточнён: проверяется уже на `ScheduleLot`, поэтому на входе в `Trading` выполняется по построению.
+
+**Сигналы пересмотра дополнения.** Формату понадобились дедлайны по лотам (волны Ф-3) — это переопределение в `Schedule`, совместимое добавление поля. Формату понадобилось больше одного блока финала (Ф-2) — тогда `finalBlocks > 1` перестаёт быть ошибкой конфигурации, и дописывать нужно машину сессии, а не конфигурацию. Переспрос лотов после рестарта сессии оказался дорогим на полном каталоге — тогда пересматривается выбор не писать их ответы в журнал сессии.

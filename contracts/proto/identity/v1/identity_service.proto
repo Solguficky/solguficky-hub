@@ -12,6 +12,10 @@ service IdentityService {
   // an identity and creates the profile at first contact, while this one must
   // answer NOT_FOUND for an id it does not know.
   rpc ResolveTelegramUserId(ResolveTelegramUserIdRequest) returns (ResolveTelegramUserIdResponse);
+  // Answers whether a known identity holds any of the roles the calling surface
+  // accepts, read from current state. The caller names the roles; Identity
+  // does not know which surface asks or what it guards.
+  rpc CheckGlobalRole(CheckGlobalRoleRequest) returns (CheckGlobalRoleResponse);
   // Grants the global admin role to an existing identity. Requires maintainer authentication.
   rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
   // Revokes the active global admin role. Requires maintainer authentication.
@@ -89,6 +93,22 @@ message ResolveTelegramUserIdResponse {
   // a zero here, so a channel cannot mistake "no such person" for a delivery
   // target.
   int64 telegram_user_id = 1;
+}
+
+message CheckGlobalRoleRequest {
+  // Canonical lowercase UUIDv7 string with hyphens of the person to check.
+  string identity_id = 1;
+
+  // Roles the calling surface accepts; holding any one of them grants. The set
+  // is matched as given: nested circles are not expanded, so a surface that
+  // accepts the member circle lists admin, maintainer and member itself. Must
+  // not be empty and must not contain GLOBAL_ROLE_UNSPECIFIED.
+  repeated GlobalRole accepted_roles = 2;
+}
+
+message CheckGlobalRoleResponse {
+  // True only when the identity holds an accepted role right now.
+  bool granted = 1;
 }
 
 message GrantAdminRoleRequest {

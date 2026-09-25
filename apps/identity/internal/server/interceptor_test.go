@@ -587,6 +587,38 @@ func TestUnaryLoggingOmitsNonCanonicalIdentityIDOfTelegramLookup(t *testing.T) {
 	assertNoAttr(t, logs.sole(t), "identity_id")
 }
 
+func TestUnaryLoggingNamesProfileOfRoleCheckFromRequest(t *testing.T) {
+	t.Parallel()
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/CheckGlobalRole"}
+	for name, tc := range map[string]struct {
+		raw  string
+		want string
+	}{
+		"canonical":     {raw: resolvedIdentityID, want: resolvedIdentityID},
+		"non-canonical": {raw: "caller supplied text"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			logs := &capture{}
+			_, _ = unaryLogging(slog.New(logs))(t.Context(),
+				&identityv1.CheckGlobalRoleRequest{IdentityId: tc.raw}, info,
+				func(context.Context, any) (any, error) {
+					return nil, status.Error(codes.NotFound, "identity not found")
+				})
+
+			rec := logs.sole(t)
+			if tc.want == "" {
+				assertNoAttr(t, rec, "identity_id")
+				return
+			}
+			if got := attrValue(t, rec, "identity_id").String(); got != tc.want {
+				t.Fatalf("identity_id: got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {
 	t.Parallel()
 
