@@ -42,7 +42,17 @@ internal static class IdentitySetup
                 context,
                 AppHostNames.Resources.IdentityDb,
                 "IDENTITY_DATABASE_URL",
-                database => ReferenceExpression.Create($"{database.Resource.UriExpression}?sslmode=disable"));
+                database => ReferenceExpression.Create($"{database.Resource.UriExpression}?sslmode=disable"))
+            // Адрес шины для релея outbox. Узла nats в запуске нет — bind молчит,
+            // и Identity поднимается без релея: события копятся в outbox и уйдут,
+            // когда адрес появится. WaitFor внутри bind ждёт и применения
+            // топологии JetStream (NatsSetup), поэтому первая публикация не
+            // встречает отсутствующий стрим.
+            .BindConnection<ExecutableResource, NatsServerResource>(
+                context,
+                AppHostNames.Resources.Nats,
+                "IDENTITY_NATS_URL",
+                nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
 
         proto.WithParentRelationship(identity);
         build.WithParentRelationship(identity);

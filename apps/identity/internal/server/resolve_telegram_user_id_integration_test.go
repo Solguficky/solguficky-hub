@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -60,7 +62,8 @@ func TestResolveTelegramUserIdDistinguishesMissingFromBlocked(t *testing.T) {
 
 	// Снятие блокировки возвращает адрес: отказ читает текущую отметку, а не
 	// историю профиля.
-	mustExec(t, db, `UPDATE profiles SET blocked = false WHERE id = $1`, target.GetIdentityId())
+	testdb.ExecAnnounced(t, db, target.GetIdentityId(), outbox.ProfileUnblocked, "",
+		`UPDATE profiles SET blocked = false WHERE id = $1`, target.GetIdentityId())
 	resp, err := client.ResolveTelegramUserId(t.Context(),
 		&identityv1.ResolveTelegramUserIdRequest{IdentityId: target.GetIdentityId()})
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -168,7 +169,8 @@ func TestResolveIdentityDoesNotRestoreRevokedAdmin(t *testing.T) {
 
 	first := resolve(t, client, telegramUserID, &username)
 	insertAdminRole(t, db, first.GetIdentityId())
-	mustExec(t, db, `UPDATE identity_roles SET revoked_at = now() WHERE identity_id = $1 AND revoked_at IS NULL`, first.GetIdentityId())
+	testdb.ExecAnnounced(t, db, first.GetIdentityId(), outbox.RoleRevoked, "admin",
+		`UPDATE identity_roles SET revoked_at = now() WHERE identity_id = $1 AND revoked_at IS NULL`, first.GetIdentityId())
 
 	second := resolve(t, client, telegramUserID, &username)
 	if second.GetIdentityId() != first.GetIdentityId() {
@@ -208,8 +210,8 @@ func TestResolveIdentityReturnsEveryGlobalRole(t *testing.T) {
 }
 
 // Отметка блокировки и набор ролей читаются по отдельности: блокировка мимо ядра
-// оставляет активную роль, и ответ обязан отдать обе стороны независимо, а не
-// вывести одну из другой.
+// — до outbox или в обход щитов схемы — оставляет активную роль, и ответ обязан
+// отдать обе стороны независимо, а не вывести одну из другой.
 func TestResolveIdentityReadsBlockedSeparatelyFromRoles(t *testing.T) {
 	t.Parallel()
 
@@ -222,10 +224,11 @@ func TestResolveIdentityReadsBlockedSeparatelyFromRoles(t *testing.T) {
 
 	withRoles := resolve(t, client, blockedWithRolesID, &username)
 	insertRole(t, db, withRoles.GetIdentityId(), "admin")
-	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, withRoles.GetIdentityId())
+	testdb.ExecBypassingShields(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, withRoles.GetIdentityId())
 
 	withoutRoles := resolve(t, client, blockedWithoutRolesID, &username)
-	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, withoutRoles.GetIdentityId())
+	testdb.ExecAnnounced(t, db, withoutRoles.GetIdentityId(), outbox.ProfileBlocked, "",
+		`UPDATE profiles SET blocked = true WHERE id = $1`, withoutRoles.GetIdentityId())
 
 	active := resolve(t, client, activeWithoutBlockID, &username)
 	insertRole(t, db, active.GetIdentityId(), "public")
@@ -424,7 +427,8 @@ func insertRole(t *testing.T, db *sql.DB, identityID, role string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+	testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role,
+		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 		VALUES ($1, $2, $3, now(), $2)`, grantID.String(), identityID, role)
 }
 
