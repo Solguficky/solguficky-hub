@@ -676,13 +676,7 @@ async function handleMessage(
     }
     switch (result.kind) {
       case "message":
-        await ctx.reply(result.text, {
-          reply_markup: new InlineKeyboard()
-            .text("Ближайшие сходки", "v1:nav:hub")
-            .text("Архив", "v1:nav:archive")
-            .row()
-            .text("Управление сходками", "v1:manage:menu"),
-        });
+        await ctx.reply(result.text, { reply_markup: homeKeyboard() });
         outcome = {
           level: "debug",
           message: "start reply sent",
@@ -1112,6 +1106,28 @@ async function handleCallback(
             : undefined;
       await renderCommunity(ctx, runtime, person, true, confirmation);
       outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "home") {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "start",
+      });
+      if (result.kind === "message") {
+        await editScreen(ctx, result.text, homeKeyboard());
+        outcome = {
+          level: "debug",
+          message: "start screen sent",
+          result: "ok",
+          use_case: useCase,
+        };
+      } else {
+        outcome = unexpectedOutcome(
+          `unexpected start result ${result.kind}`,
+          undefined,
+          useCase,
+        );
+      }
       return;
     }
     if (action.kind === "hub" || action.kind === "outdated") {
@@ -1921,6 +1937,16 @@ function meetupSection(
     : `${heading}\n${meetups.map(meetupListLine).join("\n")}`;
 }
 
+// Главный экран — ответ на /start. Возврат на него с других экранов правит то
+// же сообщение той же клавиатурой, поэтому она собрана в одном месте.
+function homeKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Ближайшие сходки", "v1:nav:hub")
+    .text("Архив", "v1:nav:archive")
+    .row()
+    .text("Управление сходками", "v1:manage:menu");
+}
+
 function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const meetup of meetups) {
@@ -1930,7 +1956,9 @@ function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
     .text("Обновить", "v1:nav:hub")
     .text("Архив", "v1:nav:archive")
     .row()
-    .text("Уведомления", "v1:notify:global");
+    .text("Уведомления", "v1:notify:global")
+    .row()
+    .text("Назад", "v1:nav:start");
 }
 
 // Порядок задаёт Meetups (ListArchivedMeetups: новейшая дата первой, без даты —
@@ -2771,6 +2799,7 @@ function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
 
 function callbackUseCase(
   kind:
+    | "home"
     | "hub"
     | "archive"
     | "outdated"
@@ -2848,6 +2877,7 @@ function callbackUseCase(
     case "notify-subscription":
     case "notify-set-meetup":
       return "manage_notifications";
+    case "home":
     case "hub":
     case "archive":
     case "outdated":
