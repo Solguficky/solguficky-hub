@@ -1,8 +1,11 @@
 using System.Net;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using NATS.Client.Core;
+using NATS.Client.JetStream;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
 using Notifications.Reminders;
+using Notifications.Replica;
 using Notifications.Transport;
 using Npgsql;
 using OpenTelemetry.Exporter;
@@ -38,15 +41,27 @@ public static class NotificationsHost
     /// <inheritdoc cref="SiloPortKey" />
     public const string GatewayPortKey = "Orleans:GatewayPort";
 
-    public static WebApplication Build(string[] args, string databaseUrl)
+    /// <summary>Адрес NATS, из которого сервис читает чужие факты.</summary>
+    public const string NatsUrlVariable = "NOTIFICATIONS_NATS_URL";
+
+    /// <param name="natsUrl">
+    /// Адрес шины. Без него потребители реплики не регистрируются: так тест,
+    /// которому шина не нужна, поднимает тот же composition root без неё.
+    /// Сам сервис без адреса не стартует — это решает <c>Program</c>, а не
+    /// эта функция.
+    /// </param>
+    public static WebApplication Build(string[] args, string databaseUrl, string? natsUrl = null)
     {
         var builder = WebApplication.CreateBuilder(args);
         var connectionString = Migrations.ConnectionString(databaseUrl);
 
         builder.AddServiceDefaults();
         builder.Services.AddSingleton<ReminderTelemetry>();
+        builder.Services.AddSingleton<ReplicaTelemetry>();
         builder.Services.AddOpenTelemetry()
-            .WithMetrics(metrics => metrics.AddMeter(ReminderTelemetry.MeterName));
+            .WithMetrics(metrics => metrics
+                .AddMeter(ReminderTelemetry.MeterName)
+                .AddMeter(ReplicaTelemetry.MeterName));
 
         // Локальный diagnostics-профиль пишет те же логи в Loki через OTLP.
         // Обычные профили продолжают экспортировать их только в Aspire.
@@ -158,6 +173,31 @@ public static class NotificationsHost
             builder.Configuration.GetSection(MeetupReminderOptions.SectionName));
 
         builder.Services.AddHostedService<ReminderSweeper>();
+
+        // Реплика чужих фактов (PER-215). Хранилище и чистка ключей не зависят
+        // от шины: таблица ключей существует и без неё.
+        builder.Services.AddSingleton<ReplicaStore>();
+        // Срок хранения ключей сверяет с настоящим стримом сам потребитель при
+        // привязке: копия настройки стрима здесь прошла бы молча, когда
+        // топология поднимет окно хранения.
+        builder.Services.Configure<ReplicaOptions>(builder.Configuration.GetSection(ReplicaOptions.SectionName));
+        builder.Services.AddHostedService<ConsumedEventPruner>();
+
+        if (natsUrl is not null)
+        {
+            builder.Services.AddSingleton(_ => new NatsConnection(new NatsOpts { Url = natsUrl, Name = ServiceId }));
+            builder.Services.AddSingleton<INatsJSContext>(services =>
+                new NatsJSContext(services.GetRequiredService<NatsConnection>()));
+
+            // AddSingleton, а не AddHostedService: тот регистрирует через
+            // TryAddEnumerable по типу реализации, и второй потребитель того же
+            // типа молча не зарегистрировался бы.
+            foreach (var feed in ReplicaFeeds.All)
+            {
+                builder.Services.AddSingleton<IHostedService>(services =>
+                    ActivatorUtilities.CreateInstance<ReplicaConsumer>(services, feed));
+            }
+        }
 
         // Подписки и настройки категорий. Ни один из трёх типов не знает про
         // Orleans: команды синхронны, а источник истины остаётся в PostgreSQL

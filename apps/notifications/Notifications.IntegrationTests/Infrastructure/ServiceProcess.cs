@@ -51,7 +51,11 @@ public sealed class ServiceProcess : IDisposable
     /// <inheritdoc cref="SiloPort" />
     public int GatewayPort { get; }
 
-    public static ServiceProcess Start(string connectionString)
+    /// <param name="natsUrl">
+    /// Адрес шины с уже заведёнными durable. Дочерний процесс — настоящий вход
+    /// сервиса, а он без шины не стартует.
+    /// </param>
+    public static ServiceProcess Start(string connectionString, string natsUrl)
     {
         var executable = Executable();
         var siloPort = FreePort();
@@ -72,6 +76,7 @@ public sealed class ServiceProcess : IDisposable
         start.ArgumentList.Add($"--{NotificationsHost.GatewayPortKey}={gatewayPort}");
 
         start.Environment[Migrations.DatabaseUrlVariable] = connectionString;
+        start.Environment[NotificationsHost.NatsUrlVariable] = natsUrl;
 
         var process = Process.Start(start)
             ?? throw new InvalidOperationException($"cannot start {executable}");

@@ -27,4 +27,13 @@
     <Protobuf Include="..\..\..\contracts\proto\notifications\v1\notifications_service.proto" GrpcServices="Both" ProtoRoot="..\..\..\contracts\proto" />
   </ItemGroup>
 
+  <!-- Чужие факты, из которых собирается реплика (PER-215). Берутся только
+       файлы событий и их значений: сервисы Meetups и Identity в кодогенерацию
+       не попадают, ради этого producers и держат события отдельными файлами. -->
+  <ItemGroup>
+    <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\roles.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
 </Project>
