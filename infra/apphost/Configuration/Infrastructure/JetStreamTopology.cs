@@ -74,8 +74,9 @@ internal static class JetStreamTopology
 
     /// <summary>
     /// Идемпотентно: повторный старт на том же томе не меняет ничего. Правку,
-    /// которую JetStream на живом объекте не принимает — storage и retention
-    /// стрима, deliver policy durable, — сервер отвергает, и применение падает;
+    /// которую JetStream на живом объекте не принимает — storage стрима, переход
+    /// retention в workqueue или из него, deliver policy durable, — сервер
+    /// отвергает, и применение падает;
     /// лечится удалением тома NATS.
     /// </summary>
     public static async Task ApplyAsync(INatsJSContext js, CancellationToken cancellationToken)

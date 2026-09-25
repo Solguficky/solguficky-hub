@@ -6,7 +6,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `scala/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `scala/`, `nats/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -33,6 +33,7 @@
 | [biome/check.md](biome/check.md) | `biome check` как lint+format+assist, отсутствие compiler API у TypeScript 7, почему не ESLint/Prettier/oxlint, спор `useLiteralKeys` с индексом, LF как часть формата и `eol=lf` в `.gitattributes` | вернуться |
 | [scala/build-and-codegen.md](scala/build-and-codegen.md) | sbt как компилируемая программа и мета-сборка `project/`, ключ и три оси его области, setting против task и макрос `.value`, генерация ScalaPB в `sourceManaged` внутри `compile`, `grpc = false` против ненужного `io.grpc`, расхождение входа генерации и состава ресурсов, суффикс `_3` и совместимость линии Scala 3, `-release` из `.java-version` | вернуться |
 | [scala/pekko-http-boundary.md](scala/pekko-http-boundary.md) | `Route` как функция и директива как обёртка, отклонение против исключения, что видит `mapResponse` после `Route.seal` и почему свой `ExceptionHandler` идёт внутрь, держатель причины на запрос, `given`/`using` вместо `implicit`, привязка SLF4J и гонка `SubstituteLogger` при параллельных сьютах | вернуться |
+| [nats/jetstream.md](nats/jetstream.md) | Core NATS против JetStream, стрим как журнал по фильтру subjects и `>`, retention `limits`/`interest`/`workqueue` и хранение без потребителей, durable как позиция на сервере, `DeliverPolicy.All`, pull и bind без создания, два клиента на одном durable делят поток, `ack`/`nak`/`term` и `AckWait`, `MaxDeliver=-1`, `Nats-Msg-Id` и окно дедупликации, неизменяемые поля живого стрима и durable | вернуться |
 | [self-hosting/vocabulary.md](self-hosting/vocabulary.md) | SSH и console/rescue, порядок работ по цене ошибки, образ и digest, rootless Podman и Quadlet, cgroup/slice и квоты, один poller при long polling, SOPS/age и tmpfs против swap, WAL/PITR, off-provider, escrow и restore drill, attestation, идемпотентность Ansible | вернуться |
 
 Статус ставится по факту, а не по ощущению:
