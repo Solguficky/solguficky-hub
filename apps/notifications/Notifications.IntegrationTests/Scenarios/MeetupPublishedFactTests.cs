@@ -176,6 +176,53 @@ public class MeetupPublishedFactTests
         facts[0].Fact.MeetupPublished.Meetup.Title.ShouldBe("Старое имя");
     }
 
+    /// <summary>
+    /// Первая публикация, вернувшаяся после Nak, когда снятие уже применено,
+    /// реплику не двигает и сходку не объявляет: люди её уже не видят.
+    /// </summary>
+    [Fact]
+    public async Task When_FirstPublicationArrivesAfterUnpublish_Expect_NoFact()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, "member");
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var meetupId = EventFactory.NewId();
+        var unpublished = EventFactory.Meetup(meetupId, version: 3);
+        unpublished.MeetupUnpublished = new MeetupUnpublished();
+        unpublished.State.Visibility = MeetupVisibility.Hidden;
+        await nats.Publish(MeetupUnpublishedSubject, unpublished);
+        await nats.Publish(MeetupPublishedSubject, EventFactory.Meetup(meetupId, version: 2));
+
+        await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.MeetupsSource, "stale")), count => count == 1);
+        (await Facts(db)).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// Первая публикация со скрытой сходкой противоречит сама себе; объявлять
+    /// то, чего никто не видит, сервис не станет.
+    /// </summary>
+    [Fact]
+    public async Task When_FirstPublicationCarriesHiddenMeetup_Expect_NoFact()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, "member");
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var hidden = EventFactory.Meetup(EventFactory.NewId(), version: 2);
+        hidden.State.Visibility = MeetupVisibility.Hidden;
+        await nats.Publish(MeetupPublishedSubject, hidden);
+
+        await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.MeetupsSource, "applied")), count => count == 1);
+        (await Facts(db)).ShouldBe(0);
+    }
+
     private static async Task<Guid> Person(IsolatedDatabase db, params string[] roles) =>
         await Person(db, blocked: false, roles);
 

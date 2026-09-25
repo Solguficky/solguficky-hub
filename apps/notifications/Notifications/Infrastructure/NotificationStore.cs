@@ -36,6 +36,16 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ORDER BY person.identity_id;
         """;
 
+    // Реплика уже обновлена этой же транзакцией, поэтому здесь её последнее
+    // слово о сходке. Запоздавшая первая публикация — например, вернувшаяся
+    // после Nak, когда снятие или отмена уже применились, — не должна
+    // объявлять сходку, которую люди уже не видят.
+    private const string AnnounceableSql = """
+        SELECT EXISTS (
+            SELECT 1 FROM meetup_replica
+            WHERE meetup_id = @MeetupId AND visibility = 'visible' AND lifecycle <> 'cancelled');
+        """;
+
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at)
@@ -46,7 +56,10 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     // SKIP LOCKED: второй экземпляр сервиса берёт другие строки, а не ждёт
     // блокировки. Порядок между фактами контракт не обещает — каждый факт
-    // самостоятелен, — поэтому застрявшая строка не держит остальные.
+    // самостоятелен. Строка, которую шина отвергает всегда, при этом держит
+    // очередь: проход останавливается на первом отказе и следующим начинает с
+    // неё же. Виден такой затор по возрасту старейшего неотправленного факта;
+    // dead-letter — PER-72.
     private const string PendingSql = """
         SELECT notification_id AS NotificationId, payload AS Payload
         FROM notification
@@ -74,6 +87,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        if (!await work.Scalar(AnnounceableSql, new { fact.MeetupId }, cancellationToken))
+        {
+            return FactCount.None;
+        }
+
         var audience = await work.Query<AudienceRow>(
             AudienceSql,
             new

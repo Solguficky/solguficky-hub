@@ -119,6 +119,8 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
         // Повод не зависит от того, тронул ли снимок реплику: запоздавшее
         // событие версию не двигает, но первая публикация от этого не перестаёт
         // быть случившейся (007_fact_replica, комментарий к consumed_event).
+        // Объявлять ли сходку, решает уже обновлённая реплика: снятую или
+        // отменённую к этому моменту сходку разворот не объявляет.
         var facts = fact is MeetupFact { FirstPublication: not null } published
             ? await NotificationStore.AddMeetupPublished(work, published, now, cancellationToken)
             : FactCount.None;
