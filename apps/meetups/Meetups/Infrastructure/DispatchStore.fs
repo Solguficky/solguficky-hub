@@ -68,7 +68,8 @@ let private PendingSql =
         payload::text AS Payload,
         performed_by AS PerformedBy,
         occurred_at AS OccurredAt,
-        request_id AS RequestId
+        request_id AS RequestId,
+        material_id AS MaterialId
     FROM meetup_events
     WHERE dispatched_at IS NULL
     ORDER BY position
@@ -112,6 +113,7 @@ type PendingRow =
         OccurredAt: DateTimeOffset
         /// NULL у строк без запроса и у записанных до миграции 008.
         RequestId: string
+        MaterialId: Nullable<Guid>
     }
 
 /// Ход отпускается явным `unlock`, а не только закрытием соединения. Закрытие

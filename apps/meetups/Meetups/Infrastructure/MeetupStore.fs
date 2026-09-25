@@ -129,10 +129,10 @@ let private UpdateMeetupSql =
 let private InsertEventSql =
     """
     INSERT INTO meetup_events (
-        event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id
+        event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id, material_id
     ) VALUES (
         @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at,
-        @request_id
+        @request_id, @material_id
     )
     """
 
@@ -239,6 +239,7 @@ let commit
                             envelope.RequestId
                             |> Option.map RequestId.value
                             |> Option.toObj
+                        material_id = MeetupEventPayload.materialId event
                     |},
                     transaction
                 )

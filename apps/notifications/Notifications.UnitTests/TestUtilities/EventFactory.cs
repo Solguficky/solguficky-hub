@@ -23,7 +23,16 @@ public static class EventFactory
 
     public static string NewId() => Guid.CreateVersion7().ToString();
 
-    public static MeetupEvent Meetup(string meetupId, long version, string? eventId = null, string title = "Сходка")
+    /// <remarks>
+    /// Повод — первая публикация: так выглядит событие, из которого рождается
+    /// адресный факт. Тест другого повода заменяет ветку <c>oneof</c> сам.
+    /// </remarks>
+    public static MeetupEvent Meetup(
+        string meetupId,
+        long version,
+        string? eventId = null,
+        string title = "Сходка",
+        string? requestId = null)
     {
         var message = new MeetupEvent
         {
@@ -57,6 +66,11 @@ public static class EventFactory
             },
             MeetupPublished = new MeetupPublished(),
         };
+
+        if (requestId is not null)
+        {
+            message.RequestId = requestId;
+        }
 
         return message;
     }

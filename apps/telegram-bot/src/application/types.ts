@@ -199,7 +199,9 @@ export type ExecuteResult =
       error?: string;
     }
   | { kind: "preview"; meetup: MeetupSnapshot }
-  | { kind: "published"; meetup: MeetupSnapshot }
+  // `repeated` — сходка была видна уже в перечитанном снимке: Meetups принял
+  // повтор без события, и нового факта публикации нет (E-09).
+  | { kind: "published"; meetup: MeetupSnapshot; repeated?: true }
   | {
       kind: "ask-publish-moment";
       meetup: MeetupSnapshot;

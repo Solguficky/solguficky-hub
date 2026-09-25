@@ -15,7 +15,7 @@ topology.AddInfrastructure(R.Loki, LokiSetup.Configure);
 topology.AddInfrastructure(R.Grafana, GrafanaSetup.Configure);
 
 topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure);
-topology.AddService(R.Meetups, [R.Postgres], MeetupsSetup.Configure);
+topology.AddService(R.Meetups, [R.Postgres, R.Nats], MeetupsSetup.Configure);
 topology.AddService(R.Notifications, [R.Postgres, R.Nats, R.Loki], NotificationsSetup.Configure);
 topology.AddService(R.TelegramBot, [R.Identity, R.Meetups, R.Notifications], TelegramBotSetup.Configure);
 

@@ -252,3 +252,38 @@ module Outbound =
         | None -> ()
 
         contract
+
+    /// Состояние в теле события. Отдельное сообщение, а не `MeetupSnapshot`, —
+    /// решение контракта (PER-206); отображение же одно по смыслу, поэтому
+    /// собирается из тех же помощников и тех же правил моментов, что снимок выше.
+    /// Версии в нём нет: она значение конверта, и две копии одного числа могли бы
+    /// разойтись.
+    let state (value: Meetups.Domain.MeetupSnapshot) : Meetups.V1.MeetupState =
+        let (MeetupId id) = value.Id
+        let (PersonId author) = value.Author
+
+        let contract =
+            Meetups.V1.MeetupState(
+                Id = id.ToString "D",
+                Author = author.ToString "D",
+                Title = value.Title,
+                Description = value.Description,
+                Venue = value.Venue,
+                Kind = value.Kind,
+                CalendarLink = value.CalendarLink,
+                Schedule = schedule value.Schedule,
+                Lifecycle = lifecycle value.Lifecycle,
+                Visibility = visibility value.Visibility
+            )
+
+        contract.Materials.AddRange(value.Materials |> Seq.map material)
+
+        match value.FirstPublishedAt with
+        | Some at -> contract.FirstPublishedAt <- at.ToUniversalTime().UtcDateTime.ToString "o"
+        | None -> ()
+
+        match value.ScheduledPublishAt with
+        | Some at -> contract.ScheduledPublishAt <- at.ToUniversalTime().UtcDateTime.ToString "o"
+        | None -> ()
+
+        contract

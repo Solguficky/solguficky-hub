@@ -41,6 +41,9 @@ type PendingEvent =
         /// что лежит в строке журнала. Адаптер порта (PER-209) кладёт его в поле
         /// `request_id` конверта `meetups.v1.MeetupEvent`, а `None` — отсутствием поля.
         RequestId: RequestId option
+        /// Данные повода, которых снимок выразить не может: у прикрепления и
+        /// удаления материала — его идентификатор, у остальных поводов — `None`.
+        MaterialId: Guid option
     }
 
 /// Исход попытки публикации. Значение, а не исключение: недоступность соседа —
@@ -67,14 +70,14 @@ module Dispatched =
 
     let eventId (Dispatched id) = id
 
-/// Порт публикации. `Unconfigured` — не заглушка, а состояние сервиса: адаптера
-/// ещё нет (PER-209).
+/// Порт публикации. `Publish` несёт адаптер NATS (`Transport/NatsEventPublisher.fs`);
+/// `Unconfigured` — не заглушка, а состояние сервиса, запущенного без адреса шины.
 ///
 /// Вариант нужен потому, что обе заглушки хуже. Порт, подтверждающий публикацию
 /// молча, проставил бы `dispatched_at` всему журналу и потерял бы события
 /// навсегда. Порт, отказывающий всегда, писал бы поток `dependency_unavailable` о
-/// зависимости, которой не существует. Явное состояние не даёт циклу стартовать
-/// вовсе, и это единственный честный ответ, пока транспорта нет.
+/// зависимости, которой в этом запуске нет. Явное состояние не даёт циклу стартовать
+/// вовсе, и это единственный честный ответ, пока транспорт не задан.
 [<RequireQualifiedAccess; NoComparison>]
 type Port =
     | Unconfigured
@@ -348,6 +351,7 @@ module Composition =
                 row.RequestId
                 |> Option.ofObj
                 |> Option.bind RequestId.create
+            MaterialId = Option.ofNullable row.MaterialId
         }
 
     let private toBacklog (row: DispatchStore.BacklogRow) : Backlog =

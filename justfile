@@ -291,7 +291,7 @@ meetups-build:
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_TEST_THRESHOLD := "613"
+MEETUPS_TEST_THRESHOLD := "643"
 
 # Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
 # Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
@@ -331,10 +331,10 @@ meetups-format-check: dotnet-tools
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Порог числа тестов Notifications: 136 = unit + integration. Поднимается вручную
+# Порог числа тестов Notifications: 156 = unit + integration. Поднимается вручную
 # вместе с набором — добавил тест, обнови число здесь тем же изменением. Порог
 # держит исчезновение тестов из набора; частичный пропуск ловит --fail-skips.
-NOTIFICATIONS_TEST_THRESHOLD := "136"
+NOTIFICATIONS_TEST_THRESHOLD := "156"
 
 # Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers;
 # пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри

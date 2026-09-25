@@ -151,6 +151,45 @@ describe("meetup creation form", () => {
     );
   });
 
+  it("answers a repeated publication with the current card, not a new publication", async () => {
+    const { dispatcher, meetups } = harness();
+    const visible = {
+      ...empty,
+      title: "Сходка",
+      visibility: "visible" as const,
+    };
+    meetups.get = vi
+      .fn<Meetups["get"]>()
+      .mockResolvedValueOnce({
+        kind: "ok",
+        meetup: { ...empty, title: "Сходка" },
+      })
+      .mockResolvedValue({ kind: "ok", meetup: visible });
+    meetups.publish = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: visible,
+    }));
+    const first = await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+    });
+    const second = await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+    });
+    expect(first).toEqual({ kind: "published", meetup: visible });
+    expect(second).toEqual({
+      kind: "published",
+      meetup: visible,
+      repeated: true,
+    });
+    // Повтор тоже уходит в Meetups: право решает владелец ресурса, а
+    // идемпотентная команда события второй раз не пишет.
+    expect(meetups.publish).toHaveBeenCalledTimes(2);
+  });
+
   it("forwards an ordinary user and surfaces the Meetups refusal", async () => {
     const meetups = harness().meetups;
     meetups.createDraft = vi.fn(async () => ({ kind: "forbidden" as const }));
