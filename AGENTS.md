@@ -128,7 +128,8 @@ just identity-build
 just identity-test
 just identity-lint
 just identity-run
-# IDENTITY_DATABASE_URL обязателен для identity-run; интеграционные тесты схемы требуют PostgreSQL
+# IDENTITY_DATABASE_URL обязателен и для identity-run, и для identity-test: умолчания
+# на 127.0.0.1:5432 нет, без переменной identity-test отказывает до go test
 
 # Community site API — зависимости, typecheck, линт и тесты
 just community-site-api-tools

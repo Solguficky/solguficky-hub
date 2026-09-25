@@ -68,9 +68,11 @@ func DSN(t *testing.T) string {
 
 func postgresDSN(t *testing.T) string {
 	t.Helper()
+	// Умолчания нет намеренно: на общем порту машины может отвечать посторонний
+	// PostgreSQL, и тогда вердикт зависит от среды, а не от правки.
 	dsn := os.Getenv("IDENTITY_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" //nolint:gosec // G101: local test default, not a secret
+		t.Fatal("postgres: IDENTITY_DATABASE_URL не задан — отказ среды, а не красный тест")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -83,18 +85,13 @@ func postgresDSN(t *testing.T) string {
 	return dsn
 }
 
-// requirePostgres роняет прогон, когда базы нет, и называет, откуда взялся DSN.
+// requirePostgres роняет прогон, когда базы по заданному адресу нет.
 // Пропуска здесь нет намеренно: неполная среда обязана быть видимой ошибкой,
 // иначе зелёный прогон на пропущенных тестах выглядит как проверка
 // (правило «пропуск не равен прохождению», justfile: identity-test).
 func requirePostgres(t *testing.T, err error) {
 	t.Helper()
-
-	if os.Getenv("IDENTITY_DATABASE_URL") == "" {
-		t.Fatalf("postgres: %v (IDENTITY_DATABASE_URL не задан, умолчание — 127.0.0.1:5432)", err)
-	}
-
-	t.Fatalf("postgres: %v (IDENTITY_DATABASE_URL задан)", err)
+	t.Fatalf("postgres: %v (адрес из IDENTITY_DATABASE_URL)", err)
 }
 
 func uniqueDBName(t *testing.T) string {
