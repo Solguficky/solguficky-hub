@@ -13,6 +13,7 @@ import (
 
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
+	otellog "go.opentelemetry.io/otel/log"
 	"google.golang.org/grpc"
 )
 
@@ -25,12 +26,17 @@ func main() {
 }
 
 func run() int {
-	level, levelErr := logLevel()
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	log, closeLogs, logsErr := setupLogging(ctx)
+	// Провайдер логов закрывается последним: defer исполняются в обратном
+	// порядке, и записи об остановке остальных частей успевают уйти.
+	defer closeLogs()
 	slog.SetDefault(log)
-	if levelErr != nil {
-		log.Warn("invalid IDENTITY_LOG_LEVEL, falling back to info",
-			"service", server.ServiceName, "error", levelErr)
+	if logsErr != nil {
+		log.Error("logs setup failed", "service", server.ServiceName, "error", logsErr)
+		return 1
 	}
 
 	addr := os.Getenv("IDENTITY_GRPC_ADDR")
@@ -38,8 +44,6 @@ func run() int {
 		addr = ":50051"
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	metrics, err := startMetrics(ctx)
 	if err != nil {
 		log.Error("metrics setup failed", "service", server.ServiceName, "error", err)
@@ -136,6 +140,29 @@ func databaseURL() (string, error) {
 		return "", errDatabaseURLMissing
 	}
 	return dsn, nil
+}
+
+// setupLogging собирает логгер процесса. Отказ OTLP-провайдера возвращается
+// вместе с логгером на stdout, чтобы о нём было чем написать.
+func setupLogging(ctx context.Context) (*slog.Logger, func(), error) {
+	level, levelErr := logLevel()
+	logs, logsErr := startLogs(ctx)
+	var provider otellog.LoggerProvider
+	closeLogs := func() {}
+	if logs != nil {
+		provider = logs
+		closeLogs = func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cancel()
+			_ = logs.Shutdown(shutdownCtx)
+		}
+	}
+	log := newLogger(os.Stdout, level, provider)
+	if levelErr != nil {
+		log.Warn("invalid IDENTITY_LOG_LEVEL, falling back to info",
+			"service", server.ServiceName, "error", levelErr)
+	}
+	return log, closeLogs, logsErr
 }
 
 func logLevel() (slog.Level, error) {

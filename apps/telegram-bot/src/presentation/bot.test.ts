@@ -645,9 +645,9 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
-    expect(records.some((record) => record.level === "info")).toBe(false);
+    expect(records).toHaveLength(1);
     expectBoundary(records[0], {
-      level: "debug",
+      level: "info",
       result: "ok",
       operation: "message",
       use_case: "find_meetup",
@@ -907,7 +907,7 @@ describe("presentation adapter", () => {
       },
     });
     expectBoundary(records[0], {
-      level: "debug",
+      level: "info",
       result: "ok",
       operation: "callback_query",
       use_case: "find_meetup",
@@ -1631,7 +1631,7 @@ describe("presentation adapter", () => {
       (record) => record.message === "meetup published",
     );
     expectBoundary(published, {
-      level: "debug",
+      level: "info",
       result: "ok",
       operation: "callback_query",
       use_case: "create_meetup",
@@ -1706,7 +1706,7 @@ describe("presentation adapter", () => {
     expectBoundary(
       records.find((record) => record.message === "meetup published"),
       {
-        level: "debug",
+        level: "info",
         result: "ok",
         operation: "callback_query",
         use_case: "create_meetup",
@@ -2080,7 +2080,7 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
     expectBoundary(records[0], {
-      level: "debug",
+      level: "info",
       result: "ok",
       operation: "callback_query",
       use_case: "find_meetup",
@@ -2135,7 +2135,7 @@ describe("presentation adapter", () => {
       message: "meetup list sent",
     },
   ])(
-    "records exactly one $name callback boundary at debug",
+    "records exactly one $name callback boundary at info",
     async ({ data, result, use_case, message }) => {
       const execute =
         result === undefined
@@ -2147,9 +2147,8 @@ describe("presentation adapter", () => {
       await bot.init();
       await bot.handleUpdate(callbackUpdate(data));
       expect(records).toHaveLength(1);
-      expect(records.some((record) => record.level === "info")).toBe(false);
       expectBoundary(records[0], {
-        level: "debug",
+        level: "info",
         result: "ok",
         operation: "callback_query",
         use_case,
@@ -2301,7 +2300,7 @@ describe("presentation adapter", () => {
     );
     expect(records.length).toBe(before + 1);
     expectBoundary(records.at(-1), {
-      level: "debug",
+      level: "info",
       result: "ok",
       operation: "message",
       use_case: "create_meetup",
@@ -2353,7 +2352,7 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(ignoredUpdate());
     expect(calls).toEqual([]);
-    expectBoundary(records[0], { level: "debug", result: "ok" });
+    expectBoundary(records[0], { level: "info", result: "ok" });
     expect(records[0]?.fields.use_case).toBeUndefined();
   });
 
@@ -2452,7 +2451,7 @@ describe("presentation adapter", () => {
     });
     expect(resolve).not.toHaveBeenCalled();
     expect(calls).toEqual([]);
-    expectBoundary(records[0], { level: "debug", result: "ok" });
+    expectBoundary(records[0], { level: "info", result: "ok" });
   });
 
   it("logs a caught error without request fields when middleware did not run", async () => {
@@ -2901,7 +2900,7 @@ describe("deferred publication frames", () => {
       ),
     ).toBe(true);
     expectBoundary(records.at(-1), {
-      level: "debug",
+      level: "info",
       result: "ok",
       use_case: "update_meetup",
     });

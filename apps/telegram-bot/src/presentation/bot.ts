@@ -231,7 +231,7 @@ type UpdateContext = Context & {
 
 type BoundaryOutcome =
   | {
-      level: "debug";
+      level: "info";
       message: string;
       result: "ok";
       use_case?: ProductUseCase;
@@ -332,7 +332,7 @@ async function handleMessage(
       useCase = "update_meetup";
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
-          level: "debug",
+          level: "info",
           message: "foreign publish moment answer ignored",
           result: "ok",
           use_case: useCase,
@@ -384,7 +384,7 @@ async function handleMessage(
       useCase = "update_meetup";
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
-          level: "debug",
+          level: "info",
           message: "foreign material answer ignored",
           result: "ok",
           use_case: useCase,
@@ -414,7 +414,7 @@ async function handleMessage(
             "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли пересланное сообщение с доступным источником, фотографию или документ.",
           );
           outcome = {
-            level: "debug",
+            level: "info",
             message: "material source rejected",
             result: "ok",
             use_case: useCase,
@@ -437,7 +437,7 @@ async function handleMessage(
         });
         evictOldestQuestions(questions);
         outcome = {
-          level: "debug",
+          level: "info",
           message: "material title requested",
           result: "ok",
           use_case: useCase,
@@ -459,7 +459,7 @@ async function handleMessage(
         });
         evictOldestQuestions(questions);
         outcome = {
-          level: "debug",
+          level: "info",
           message: "material title rejected",
           result: "ok",
           use_case: useCase,
@@ -476,7 +476,7 @@ async function handleMessage(
         pending.source,
       );
       outcome = {
-        level: "debug",
+        level: "info",
         message: "material confirmation sent",
         result: "ok",
         use_case: useCase,
@@ -499,7 +499,7 @@ async function handleMessage(
             : "create_meetup";
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
-          level: "debug",
+          level: "info",
           message: "foreign form answer ignored",
           result: "ok",
           use_case: useCase,
@@ -592,7 +592,7 @@ async function handleMessage(
         "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
       );
       outcome = {
-        level: "debug",
+        level: "info",
         message: "stale form answer handled",
         result: "ok",
         use_case: useCase,
@@ -612,7 +612,7 @@ async function handleMessage(
     }
     if (parsed.kind === "ignored") {
       outcome = {
-        level: "debug",
+        level: "info",
         message: "update ignored",
         result: "ok",
       };
@@ -680,7 +680,7 @@ async function handleMessage(
       case "message":
         await ctx.reply(result.text, { reply_markup: homeKeyboard() });
         outcome = {
-          level: "debug",
+          level: "info",
           message: "start reply sent",
           result: "ok",
           use_case: "find_meetup",
@@ -849,7 +849,7 @@ async function handleCallback(
         return;
       }
       outcome = {
-        level: "debug",
+        level: "info",
         message: "material file sent",
         result: "ok",
         use_case: useCase,
@@ -1022,7 +1022,7 @@ async function handleCallback(
         );
       }
       outcome = {
-        level: "debug",
+        level: "info",
         message: "material management step sent",
         result: "ok",
         use_case: useCase,
@@ -1048,7 +1048,7 @@ async function handleCallback(
       });
       evictOldestQuestions(questions);
       outcome = {
-        level: "debug",
+        level: "info",
         message: "allowed username requested",
         result: "ok",
         use_case: "manage_community",
@@ -1118,7 +1118,7 @@ async function handleCallback(
       if (result.kind === "message") {
         await editScreen(ctx, result.text, homeKeyboard());
         outcome = {
-          level: "debug",
+          level: "info",
           message: "start screen sent",
           result: "ok",
           use_case: useCase,
@@ -1230,7 +1230,7 @@ async function handleCallback(
           new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
         );
         outcome = {
-          level: "debug",
+          level: "info",
           message: "cancelled meetup management handled",
           result: "ok",
           use_case: "update_meetup",
@@ -1347,7 +1347,7 @@ async function handleCallback(
         );
       }
       outcome = {
-        level: "debug",
+        level: "info",
         message: "meetup management step sent",
         result: "ok",
         use_case: "update_meetup",
@@ -1388,7 +1388,7 @@ async function handleCallback(
           .text("Состав сообщества", "v1:community:list"),
       });
       outcome = {
-        level: "debug",
+        level: "info",
         message: "manage menu sent",
         result: "ok",
         use_case: useCase,
@@ -1834,7 +1834,7 @@ function adminOutcome(
 ): BoundaryOutcome {
   if (result.kind === "ok")
     return {
-      level: "debug",
+      level: "info",
       message: "community changed",
       result: "ok",
       use_case: "manage_community",
@@ -2953,7 +2953,7 @@ function screenBoundary(
   }
   if (screen.ok.includes(result.kind)) {
     return {
-      level: "debug",
+      level: "info",
       message: screen.okMessage,
       result: "ok",
       use_case: screen.useCase,
