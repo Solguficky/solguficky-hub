@@ -26,6 +26,10 @@ tmp/
 # Файлы операционной системы
 .DS_Store
 Thumbs.db
+# Кэши Windows, которые процесс с незаданной переменной SystemDrive пишет
+# по буквальному пути `%SystemDrive%/ProgramData/...` относительно рабочего
+# каталога. Однажды они уже попали в коммит.
+%SystemDrive%/
 
 # Файлы IDE и редакторов
 # Visual Studio Code / Cursor
