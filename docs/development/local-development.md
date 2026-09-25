@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop; профиль `hub` с Telegram Bot и production-like публикация не проверены.
+> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop, полный `hub` с Telegram Bot — в продакшн-среде Telegram отдельным локальным ботом; тестовая среда Telegram и production-like публикация не проверены.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -154,15 +154,25 @@ just aspire hub -- --skip-services telegram-bot
 18. Событие, опубликованное, пока потребитель выключен, приходит на следующем `consume` одно: уже подтверждённые не перечитываются. Durable `notifications-meetups-events`, у которого потребителя ещё нет, копит их как `pending`.
 19. После `aspire stop` и повторного старта на том же томе стрим сохраняет сообщения, durable — позицию подтверждения, а повторное применение топологии проходит без ошибок.
 
-Более ранние прогоны, которые этот заход не повторял и не отменяет:
+Прогон PER-174 от 2026-09-24–25 — [кадры ошибок](../architecture/first-slice.md#ошибки-и-degraded-behavior) на полном `hub` с тем же локальным ботом, клиент Telegram вёл владелец. Среда та же, что у PER-228: Aspire CLI 13.5.3, Docker 28.5.1, Windows 11.
 
-20. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
-21. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-22. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
+20. Ответ бота отрисовывается в клиенте: после выдачи ролей `admin` и `member` служебными RPC Identity `/start` открывает главный экран, форма создания доходит до карточки предпросмотра и публикации. Этим закрыт пробел пункта 15.
+21. Остановка Meetups и Identity командой `aspire resource <имя> stop` даёт fail-closed: при остановленном Meetups список и карточка отвечают кадром сбоя, а не пустым списком; при остановленном Identity ни один `request_id` не доходит до Meetups, и журнал событий сходки не растёт. Двойное нажатие «Опубликовать» при работающих сервисах оставляет одно событие `meetup_published`. После `aspire resource <имя> start` бот без перезапуска снова работает с обоими по прежним адресам.
+22. Два чтения, пришедшие в proxy endpoint остановленного Meetups, исполнились после старта процесса, хотя бот уже ответил по ним таймаутом. Команду в таком окне не наблюдали; если она ведёт себя так же, это исполнение после отказа клиенту.
+
+Разбор каждого кадра и заведённые по расхождениям задачи — в комментарии к [PER-174](https://linear.app/anticnvm/issue/per-174).
+
+Более ранние прогоны, которые прогоны PER-228, PER-208 и PER-174 не повторяли и не отменяют:
+
+23. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
+24. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+25. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
 
-Тестовая среда Telegram живым прогоном не проверена: полный `hub` прогнан в продакшн-среде отдельным локальным ботом, а с `--telegram-environment test` проверка доходит только до отказа графа на неизвестном имени. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test` с токеном тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)); регулярный прогон тестового контура ведёт [PER-9](https://linear.app/anticnvm/issue/per-9). Отрисовка ответа бота в клиенте логом тоже не подтверждена — пункт 15 заканчивается на Identity.
+Тестовая среда Telegram живым прогоном не проверена: полный `hub` прогнан в продакшн-среде отдельным локальным ботом, а с `--telegram-environment test` проверка доходит только до отказа графа на неизвестном имени. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test` с токеном тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)); регулярный прогон тестового контура ведёт [PER-9](https://linear.app/anticnvm/issue/per-9). Отрисовку ответа бота подтверждает клиент владельца (пункт 20), а не лог: запись границы об успешном ответе бот пишет на уровне `debug`, а по умолчанию уровень `info`, поэтому в прогоне PER-228 её не видно.
+
+Два запуска `aspire run` из разных рабочих деревьев делят один том `solguficky-postgres-data`: на прогоне PER-174 второй AppHost поднял свой PostgreSQL на том же томе, удалил `postmaster.pid`, и первый PostgreSQL ушёл в immediate shutdown. Пока том не разведён по запускам ([PER-340](https://linear.app/anticnvm/issue/per-340)), профиль с PostgreSQL в двух деревьях одновременно не запускают.
 
 Токен бота сообщества способом проверки не является ни в какой среде: живой бот начал бы отвечать реальным людям, а второй polling-экземпляр получает от Telegram `409 Conflict` и способен уронить работающего бота. AppHost различает среду, а не бота, поэтому под `telegram-bot-token` на машине разработчика лежит токен отдельного локального бота, а не бота сообщества.
 
