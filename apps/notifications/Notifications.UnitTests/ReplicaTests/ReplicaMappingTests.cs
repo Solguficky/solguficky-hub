@@ -212,7 +212,8 @@ public class ReplicaMappingTests
 
         var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
 
-        var card = fact.FirstPublication.ShouldNotBeNull();
+        fact.Occasion.ShouldBe(MeetupOccasion.FirstPublication);
+        var card = fact.Card;
         card.Id.ShouldBe(MeetupId);
         card.Title.ShouldBe("Пятничная");
         card.Venue.ShouldBe("Бар");
@@ -226,21 +227,21 @@ public class ReplicaMappingTests
     /// Meetups шлёт его своим поводом, и карточки «новой сходки» у него нет.
     /// </summary>
     [Fact]
-    public void Meetup_Republished_CarriesNoFirstPublication()
+    public void Meetup_Republished_IsNotFirstPublication()
     {
         var message = EventFactory.Meetup(MeetupId, version: 4);
         message.MeetupRepublished = new MeetupRepublished();
 
-        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).FirstPublication.ShouldBeNull();
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).Occasion.ShouldBe(MeetupOccasion.Other);
     }
 
     [Fact]
-    public void Meetup_OccasionUnknownToThisBuild_CarriesNoFirstPublication()
+    public void Meetup_OccasionUnknownToThisBuild_IsOther()
     {
         var message = EventFactory.Meetup(MeetupId, version: 2);
         message.ClearOccasion();
 
-        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).FirstPublication.ShouldBeNull();
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).Occasion.ShouldBe(MeetupOccasion.Other);
     }
 
     [Fact]
@@ -248,6 +249,66 @@ public class ReplicaMappingTests
     {
         var message = EventFactory.Meetup(MeetupId, version: 2);
         message.State.ClearFirstPublishedAt();
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Meetup_Unpublished_IsUnpublication()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 3);
+        message.State.Visibility = MeetupVisibility.Hidden;
+        message.MeetupUnpublished = new MeetupUnpublished();
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(MeetupOccasion.Unpublication);
+        fact.Card.Visibility.ShouldBe(MeetupVisibility.Hidden);
+    }
+
+    /// <summary>
+    /// Карточка есть у любого повода, а не только у первой публикации: из неё
+    /// рождается и факт изменения, и снятие, и материал.
+    /// </summary>
+    [Fact]
+    public void Meetup_Changed_CarriesCardFromEventSnapshot()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 3, title: "Перенесённая");
+        message.MeetupChanged = new MeetupChanged();
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(MeetupOccasion.Other);
+        fact.Card.Title.ShouldBe("Перенесённая");
+        fact.Material.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Meetup_MaterialAttached_NamesMaterialFromSnapshot()
+    {
+        var materialId = EventFactory.NewId();
+        var message = EventFactory.Material(MeetupId, version: 3, materialId, "Афиша");
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(MeetupOccasion.MaterialAttached);
+        fact.Material.ShouldBe(new AttachedMaterial(Guid.Parse(materialId), "Афиша"));
+    }
+
+    [Fact]
+    public void Meetup_MaterialAttachedAbsentFromSnapshot_IsPoison()
+    {
+        var message = EventFactory.Material(MeetupId, version: 3, EventFactory.NewId(), "Афиша");
+        message.MeetupMaterialAttached.MaterialId = EventFactory.NewId();
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Meetup_MaterialAttachedIdNotUuid_IsPoison()
+    {
+        var message = EventFactory.Material(MeetupId, version: 3, EventFactory.NewId(), "Афиша");
+        message.MeetupMaterialAttached.MaterialId = "x";
 
         ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
     }

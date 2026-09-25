@@ -33,6 +33,21 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
         ON CONFLICT (source, event_id) DO NOTHING;
         """;
 
+    // Прежний снимок для разницы с событием. FOR UPDATE держит строку до конца
+    // транзакции: конкурент на том же durable ждёт, и снимок, с которым
+    // сравнивали, остаётся тем, что upsert ниже заменит. Решение о порядке
+    // принимает не это чтение, а WHERE версии в upsert.
+    private const string MeetupBeforeSql = """
+        SELECT title AS Title, description AS Description, venue AS Venue, kind AS Kind,
+               calendar_link AS CalendarLink, lifecycle AS Lifecycle, visibility AS Visibility,
+               schedule_form AS ScheduleForm, schedule_precision AS SchedulePrecision,
+               schedule_start_date AS ScheduleStartDate, schedule_start_time AS ScheduleStartTime,
+               schedule_end_date AS ScheduleEndDate, schedule_end_time AS ScheduleEndTime
+        FROM meetup_replica
+        WHERE meetup_id = @MeetupId
+        FOR UPDATE;
+        """;
+
     private const string MeetupSql = """
         INSERT INTO meetup_replica (
             meetup_id, version, author,
@@ -109,21 +124,42 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
             return ReplicaApplication.Duplicate;
         }
 
-        var written = fact switch
-        {
-            MeetupFact meetup => await work.Execute(MeetupSql, MeetupRow(meetup, now), cancellationToken),
-            IdentityFact identity => await work.Execute(IdentitySql, IdentityRow(identity, now), cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(fact), fact.GetType().Name, "unknown replica fact"),
-        };
+        ProducedFacts? facts = null;
+        int written;
 
-        // Повод не зависит от того, тронул ли снимок реплику: запоздавшее
-        // событие версию не двигает, но первая публикация от этого не перестаёт
-        // быть случившейся (007_fact_replica, комментарий к consumed_event).
-        // Объявлять ли сходку, решает уже обновлённая реплика: снятую или
-        // отменённую к этому моменту сходку разворот не объявляет.
-        var facts = fact is MeetupFact { FirstPublication: not null } published
-            ? await NotificationStore.AddMeetupPublished(work, published, now, cancellationToken)
-            : FactCount.None;
+        if (fact is MeetupFact meetup)
+        {
+            var before = await work.Query<MeetupBeforeRow>(MeetupBeforeSql, new { meetup.MeetupId }, cancellationToken);
+            written = await work.Execute(MeetupSql, MeetupRow(meetup, now), cancellationToken);
+
+            // Разница считается, только если реплика сдвинулась: сравнивать
+            // запоздавший снимок с более поздним значило бы объявить откат,
+            // которого не было. Строки до события нет — сравнивать не с чем,
+            // и это верно: черновик никому не виден. Цена: два первых события
+            // сходки, применённые одновременно двумя экземплярами, оба видят
+            // пустое «до» — FOR UPDATE по отсутствующей строке ничего не
+            // держит, — и разница второго теряется. Первое событие сходки —
+            // создание черновика, так что потеряться может только правка
+            // черновика, который никому не виден.
+            var changed = written > 0 && before.Count == 1
+                ? MeetupDiff.Between(before[0].State(), meetup.State)
+                : [];
+
+            // Повод со своим типом не зависит от того, тронул ли снимок
+            // реплику: запоздавшее событие версию не двигает, но первая
+            // публикация, снятие и материал от этого не перестают быть
+            // случившимися (007_fact_replica, комментарий к consumed_event).
+            // Кому их объявлять, решает уже обновлённая реплика.
+            facts = await NotificationStore.AddForMeetupEvent(work, meetup, changed, now, cancellationToken);
+        }
+        else if (fact is IdentityFact identity)
+        {
+            written = await work.Execute(IdentitySql, IdentityRow(identity, now), cancellationToken);
+        }
+        else
+        {
+            throw new ArgumentOutOfRangeException(nameof(fact), fact.GetType().Name, "unknown replica fact");
+        }
 
         // Устаревшее событие фиксируется вместе с ключом, хотя реплику не
         // трогает: без ключа его нечем подтвердить, и оно вернулось бы снова.
@@ -190,6 +226,60 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
             OccurredAt = fact.OccurredAt.UtcDateTime,
             Now = now.UtcDateTime,
         };
+    }
+
+    // Класс, а не позиционная запись: Dapper сопоставляет колонки со
+    // свойствами по имени. date и time Npgsql отдаёт как DateOnly и TimeOnly,
+    // и обработчик PassThrough пропускает их без перевода.
+    private sealed class MeetupBeforeRow
+    {
+        public string Title { get; init; } = string.Empty;
+
+        public string Description { get; init; } = string.Empty;
+
+        public string Venue { get; init; } = string.Empty;
+
+        public string Kind { get; init; } = string.Empty;
+
+        public string CalendarLink { get; init; } = string.Empty;
+
+        public string Lifecycle { get; init; } = string.Empty;
+
+        public string Visibility { get; init; } = string.Empty;
+
+        public string ScheduleForm { get; init; } = string.Empty;
+
+        public string? SchedulePrecision { get; init; }
+
+        public DateOnly? ScheduleStartDate { get; init; }
+
+        public TimeOnly? ScheduleStartTime { get; init; }
+
+        public DateOnly? ScheduleEndDate { get; init; }
+
+        public TimeOnly? ScheduleEndTime { get; init; }
+
+        // Автор и отметка первой публикации аспектами разницы не являются,
+        // поэтому не читаются: в сравнении они подставлены пустыми значениями
+        // и MeetupDiff их не смотрит.
+        public MeetupReplicaState State() =>
+            new(
+                Guid.Empty,
+                Title,
+                Description,
+                Venue,
+                Kind,
+                CalendarLink,
+                Lifecycle,
+                Visibility,
+                null,
+                new ScheduleColumns(
+                    ScheduleForm,
+                    SchedulePrecision,
+                    ScheduleStartDate,
+                    ScheduleStartTime,
+                    ScheduleEndDate,
+                    ScheduleEndTime));
     }
 
     private sealed class PassThrough<T>(System.Data.DbType type) : SqlMapper.TypeHandler<T>

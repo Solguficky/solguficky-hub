@@ -75,6 +75,29 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Событие появления материала: снимок несёт материал в коллекции, а повод
+    /// называет его идентификатор, как это делает Meetups.
+    /// </summary>
+    public static MeetupEvent Material(
+        string meetupId,
+        long version,
+        string materialId,
+        string materialTitle,
+        string? eventId = null)
+    {
+        var message = Meetup(meetupId, version, eventId);
+        message.State.Materials.Add(new MeetupMaterial
+        {
+            Id = materialId,
+            Title = materialTitle,
+            Source = new MeetupMaterialSource { MessageLink = "https://t.me/c/1/2" },
+        });
+        message.MeetupMaterialAttached = new MeetupMaterialAttached { MaterialId = materialId };
+
+        return message;
+    }
+
     public static IdentityEvent Identity(string identityId, long version, string? eventId = null, bool blocked = false)
     {
         var message = new IdentityEvent
