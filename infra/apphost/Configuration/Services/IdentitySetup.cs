@@ -36,6 +36,10 @@ internal static class IdentitySetup
         var identity = context.Builder
             .AddExecutable(AppHostNames.Resources.Identity, binary, identityPath)
             .WithEnvironment("IDENTITY_MAINTAINER_TOKEN", maintainerToken)
+            // Проект .NET получает OTLP-переменные сам, исполняемый файл — только
+            // так. Без них логи Identity не попадают в Structured logs, и фильтр
+            // по request_id теряет звено цепочки.
+            .WithOtlpExporter()
             .WithEndpoint(scheme: "http", name: AppHostNames.Endpoints.Grpc, env: "ASPIRE_IDENTITY_GRPC_PORT")
             .WaitForCompletion(build)
             .BindConnection<ExecutableResource, PostgresDatabaseResource>(

@@ -6,17 +6,35 @@ import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
 import { createBot, parseTelegramEnvironment } from "./presentation/bot.js";
 import { createShutdown } from "./shutdown.js";
-import { startMetrics } from "./telemetry.js";
+import { type Logs, startLogs, startMetrics } from "./telemetry.js";
 
 const shutdownTimeoutMs = 15_000;
+const logsShutdownTimeoutMs = 5_000;
 
 function readEnv(name: string): string | undefined {
   return process.env[name];
 }
 
+// Провайдер логов живёт дольше main: его закрывают последним, чтобы записи о
+// самой остановке и об отказе конфигурации успели уйти по OTLP. Создаётся он
+// внутри main, чтобы отказ его настройки дошёл до общего .catch.
+let logs: Logs = { shutdown: async () => {} };
+
+// Недоступный dashboard не должен держать процесс после остановки: экспорт
+// ждал бы своего таймаута уже после снятого сторожевого таймера.
+function closeLogs(): Promise<void> {
+  return Promise.race([
+    logs.shutdown(),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, logsShutdownTimeoutMs).unref();
+    }),
+  ]).catch(() => {});
+}
+
 async function main(): Promise<number> {
+  logs = startLogs(serviceName);
   const logLevel = readEnv("TELEGRAM_BOT_LOG_LEVEL") ?? "info";
-  const logger = createLogger(logLevel);
+  const logger = createLogger(logLevel, logs.logger);
   const token = readEnv("TELEGRAM_BOT_TOKEN");
   if (token === undefined || token === "") {
     logger.error("TELEGRAM_BOT_TOKEN is not set");
@@ -75,8 +93,10 @@ async function main(): Promise<number> {
     },
     logger,
     timeoutMs: shutdownTimeoutMs,
+    // Сторожевой выход идёт мимо finally у main, поэтому буфер логов
+    // сбрасывается здесь: иначе запись о зависшей остановке не дойдёт.
     exit: (code) => {
-      process.exit(code);
+      void closeLogs().finally(() => process.exit(code));
     },
   });
 
@@ -117,6 +137,7 @@ async function main(): Promise<number> {
 }
 
 main()
+  .finally(closeLogs)
   .then((code) => {
     if (code !== 0) {
       process.exit(code);

@@ -197,7 +197,15 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 		attrs = append(attrs, slog.String("identity_id", id))
 	}
 	if err == nil {
-		log.DebugContext(ctx, "rpc completed", attrs...)
+		// Успех границы пишется на info, как у Meetups и бота: один фильтр по
+		// request_id в dashboard должен найти его при уровне по умолчанию.
+		// Проба здоровья идёт каждые несколько секунд и сценария не несёт,
+		// поэтому остаётся на debug.
+		level := slog.LevelInfo
+		if healthCheck(method) {
+			level = slog.LevelDebug
+		}
+		log.Log(ctx, level, "rpc completed", attrs...)
 		return
 	}
 
@@ -290,10 +298,14 @@ func requestID(ctx context.Context) string {
 }
 
 func incomingUseCase(ctx context.Context, method string) string {
-	if strings.HasPrefix(method, "/grpc.health.v1.Health/") {
+	if healthCheck(method) {
 		return ""
 	}
 	return incomingMetadata(ctx, "x-use-case")
+}
+
+func healthCheck(method string) bool {
+	return strings.HasPrefix(method, "/grpc.health.v1.Health/")
 }
 
 func incomingMetadata(ctx context.Context, keys ...string) string {
