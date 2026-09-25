@@ -202,11 +202,13 @@ message LotSnapshot {
   // Canonical lowercase UUIDv7 with hyphens.
   string session_id = 2;
 
-  // Unset until the lot enters trading.
+  // The trading conditions. Set by the first LotScheduled and replaceable until the
+  // lot is opened; frozen from that moment on. Unset on a draft, and on a lot
+  // withdrawn while it was a draft.
   LotConfig config = 3;
 
-  // Position of the last event in the journal of the lot. 0 only for a lot that
-  // has not entered trading and has no event yet.
+  // Position of the last event in the journal of the lot, starting at 1: a lot
+  // that exists has at least its LotDrafted, so 0 is not a valid value.
   int64 version = 4;
 
   // The lowest amount a bid is accepted at now; in the live final the only amount.
@@ -217,9 +219,11 @@ message LotSnapshot {
   // Limits of other participants are never shown.
   Money viewer_proxy_limit = 6;
 
-  // Where the lot is. Unset while the lot has not entered trading yet; otherwise
-  // exactly one is set.
+  // Where the lot is. Exactly one is set. The numbers match auction.v1.LotState so
+  // that the two stay readable side by side.
   oneof status {
+    LotDraft draft = 8;
+    LotSchedule scheduled = 9;
     LotTrading trading = 10;
     LotHeld held = 11;
     LotSale sold = 12;
