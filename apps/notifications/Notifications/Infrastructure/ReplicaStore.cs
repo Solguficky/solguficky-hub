@@ -1,4 +1,5 @@
 using Dapper;
+using Notifications.Facts;
 using Npgsql;
 using Notifications.Replica;
 
@@ -88,11 +89,12 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
     private const string PruneSql = "DELETE FROM consumed_event WHERE consumed_at < @Threshold;";
 
     /// <summary>
-    /// Применяет факт: записывает ключ и, если версия новее, снимок. Обе записи
-    /// в одной транзакции — ключ без эффекта или эффект без ключа означали бы
-    /// потерянное или дважды применённое событие.
+    /// Применяет факт: записывает ключ, снимок, если версия новее, и адресные
+    /// факты, если событие — повод. Всё в одной транзакции: ключ без эффекта
+    /// или эффект без ключа означали бы потерянное или дважды применённое
+    /// событие, а повод без ключа — второй разворот на повторе.
     /// </summary>
-    public async Task<ReplicaOutcome> Apply(ReplicaEvent fact, DateTimeOffset now, CancellationToken cancellationToken)
+    public async Task<ReplicaApplication> Apply(ReplicaEvent fact, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
@@ -104,7 +106,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
         if (consumed == 0)
         {
             // Ничего не записано, фиксировать нечего: откат при разборе.
-            return ReplicaOutcome.Duplicate;
+            return ReplicaApplication.Duplicate;
         }
 
         var written = fact switch
@@ -114,11 +116,18 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
             _ => throw new ArgumentOutOfRangeException(nameof(fact), fact.GetType().Name, "unknown replica fact"),
         };
 
+        // Повод не зависит от того, тронул ли снимок реплику: запоздавшее
+        // событие версию не двигает, но первая публикация от этого не перестаёт
+        // быть случившейся (007_fact_replica, комментарий к consumed_event).
+        var facts = fact is MeetupFact { FirstPublication: not null } published
+            ? await NotificationStore.AddMeetupPublished(work, published, now, cancellationToken)
+            : FactCount.None;
+
         // Устаревшее событие фиксируется вместе с ключом, хотя реплику не
         // трогает: без ключа его нечем подтвердить, и оно вернулось бы снова.
         await work.Commit(cancellationToken);
 
-        return written == 0 ? ReplicaOutcome.Stale : ReplicaOutcome.Applied;
+        return new ReplicaApplication(written == 0 ? ReplicaOutcome.Stale : ReplicaOutcome.Applied, facts);
     }
 
     /// <summary>

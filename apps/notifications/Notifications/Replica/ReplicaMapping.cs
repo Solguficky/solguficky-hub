@@ -14,8 +14,10 @@ namespace Notifications.Replica;
 /// повтор ничего не исправит, и решение «снять с доставки» принимает
 /// потребитель, а не стек вызовов.
 ///
-/// Повод (<c>occasion</c>) реплике не нужен и не проверяется: она пишет
-/// снимок, а не повод. Новая ветка <c>oneof</c> — совместимое изменение
+/// Повод (<c>occasion</c>) реплике не нужен: она пишет снимок, а не повод.
+/// Разбор узнаёт из него одно — первая ли это публикация, потому что из неё
+/// рождается адресный факт (PER-216); остальные поводы и пустой oneof для
+/// него одинаковы. Новая ветка <c>oneof</c> — совместимое изменение
 /// контракта, и сборка, которая её ещё не знает, видит пустой повод; сними она
 /// такое сообщение с доставки, реплика потеряла бы полный снимок из-за поля,
 /// которое ей не нужно. Значения перечислений в снимке — другое дело: их
@@ -98,6 +100,16 @@ public static class ReplicaMapping
             return new Decoded.Poison("state.schedule is not a valid schedule");
         }
 
+        // Первая публикация — единственный повод этого разбора, который что-то
+        // значит для потребителя. Её отметка обязана стоять в снимке: без неё
+        // событие противоречит само себе, и порождать из него «новую сходку»
+        // значило бы поверить поводу вопреки состоянию.
+        var firstPublication = message.OccasionCase == MeetupEvent.OccasionOneofCase.MeetupPublished;
+        if (firstPublication && firstPublishedAt is null)
+        {
+            return new Decoded.Poison("meetup_published carries no state.first_published_at");
+        }
+
         return new Decoded.Fact(new MeetupFact(
             Guid.Parse(message.EventId),
             meetupId,
@@ -113,8 +125,28 @@ public static class ReplicaMapping
                 lifecycle,
                 visibility,
                 firstPublishedAt,
-                schedule)));
+                schedule),
+            message.HasRequestId ? message.RequestId : null,
+            firstPublication ? Card(state) : null));
     }
+
+    /// <summary>
+    /// Карточка уведомления из снимка события. Значения перечислений уже
+    /// проверены выше, расписание — тоже, поэтому копируется как есть.
+    /// </summary>
+    private static Notifications.V1.MeetupCard Card(MeetupState state) =>
+        new()
+        {
+            Id = state.Id,
+            Title = state.Title,
+            Description = state.Description,
+            Venue = state.Venue,
+            Kind = state.Kind,
+            CalendarLink = state.CalendarLink,
+            Schedule = state.Schedule.Clone(),
+            Lifecycle = state.Lifecycle,
+            Visibility = state.Visibility,
+        };
 
     public static Decoded Identity(ReadOnlyMemory<byte> payload)
     {
