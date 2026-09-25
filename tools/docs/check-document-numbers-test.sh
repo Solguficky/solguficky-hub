@@ -66,6 +66,11 @@ trap 'rm -rf "$work" "$dup" "$missing"' EXIT
 git -C "$work" init -q
 git -C "$work" config user.email test@example.com
 git -C "$work" config user.name test
+# A commit spawns background maintenance, which creates and removes
+# objects/maintenance.lock while cp -a walks .git. The copies below inherit
+# this config, so their own commits stay quiet too.
+git -C "$work" config maintenance.auto false
+git -C "$work" config gc.auto 0
 seed_catalog "$work" ADR docs/decisions ADR
 seed_catalog "$work" RFC docs/rfcs RFC
 git -C "$work" add docs
