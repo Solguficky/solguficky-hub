@@ -226,16 +226,24 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 // идентификатор есть только в ответе. У ResolveTelegramUserId он приходит в
 // запросе, а ответ несёт Telegram user id, которому в логе не место; запрос
 // читается и на отказе, чтобы NOT_FOUND и FAILED_PRECONDITION связывались с
-// профилем. Строка из запроса — ввод вызывающего, поэтому в запись идёт только
+// профилем. CheckGlobalRole читается так же: его отказ NOT_FOUND должен
+// называть профиль, а ответ несёт только вердикт. Строка из запроса — ввод вызывающего, поэтому в запись идёт только
 // каноническая форма UUID: произвольный текст границу не проходит.
 func loggedIdentityID(req, resp any) string {
 	if resolved, ok := resp.(*identityv1.ResolveIdentityResponse); ok {
 		return resolved.GetIdentityId()
 	}
-	if lookup, ok := req.(*identityv1.ResolveTelegramUserIdRequest); ok {
-		if id, err := canonicalIdentityID(lookup.GetIdentityId()); err == nil {
-			return id
-		}
+	var raw string
+	switch lookup := req.(type) {
+	case *identityv1.ResolveTelegramUserIdRequest:
+		raw = lookup.GetIdentityId()
+	case *identityv1.CheckGlobalRoleRequest:
+		raw = lookup.GetIdentityId()
+	default:
+		return ""
+	}
+	if id, err := canonicalIdentityID(raw); err == nil {
+		return id
 	}
 	return ""
 }

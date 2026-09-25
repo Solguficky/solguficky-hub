@@ -175,6 +175,23 @@ func profileBlocked(ctx context.Context, tx *sql.Tx, identityID string) (bool, e
 // globalRole переводит строку словаря identity_roles в значение контракта.
 // Неизвестная строка отбрасывается, а не отвергает ответ: словарь схемы и
 // контракта могут разойтись на время согласованного развёртывания.
+// roleName — обратное к globalRole: значение контракта в строку хранилища.
+// UNSPECIFIED и неизвестное значение строки не имеют.
+func roleName(role identityv1.GlobalRole) (string, bool) {
+	switch role {
+	case identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER:
+		return roleMaintainer, true
+	case identityv1.GlobalRole_GLOBAL_ROLE_ADMIN:
+		return roleAdmin, true
+	case identityv1.GlobalRole_GLOBAL_ROLE_MEMBER:
+		return roleMember, true
+	case identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC:
+		return rolePublic, true
+	default:
+		return "", false
+	}
+}
+
 func globalRole(role string) (identityv1.GlobalRole, bool) {
 	switch role {
 	case roleMaintainer:
