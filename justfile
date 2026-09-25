@@ -109,6 +109,11 @@ check-document-numbers:
     sh tools/docs/check-document-numbers.sh
     sh tools/docs/check-document-numbers-test.sh
 
+# Применимость не-Active ADR в индексе совпадает с баннером в самом файле
+check-adr-applicability:
+    sh tools/docs/check-adr-applicability.sh
+    sh tools/docs/check-adr-applicability-test.sh
+
 # Весь модуль contracts/proto компилируется, включая схемы, которых не читает
 # ни один потребитель. Потребители сужают вход фильтром paths и поимённым
 # списком Protobuf, поэтому домен без потребителя иначе не проверяется нигде
@@ -136,8 +141,8 @@ contracts-codegen: contracts-codegen-buf auction-proto
 contracts-codegen-buf:
     buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template contracts/buf.gen.codegen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -326,10 +331,10 @@ meetups-format-check: dotnet-tools
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Порог числа тестов Notifications: 136 = unit + integration. Поднимается вручную
+# Порог числа тестов Notifications: 156 = unit + integration. Поднимается вручную
 # вместе с набором — добавил тест, обнови число здесь тем же изменением. Порог
 # держит исчезновение тестов из набора; частичный пропуск ловит --fail-skips.
-NOTIFICATIONS_TEST_THRESHOLD := "136"
+NOTIFICATIONS_TEST_THRESHOLD := "156"
 
 # Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers;
 # пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри

@@ -129,7 +129,7 @@ just nats-tester-check
 
 ## Проверка топологии JetStream
 
-Стримы и durable consumers создаёт AppHost на старте узла `nats` ([каталог интеграций](../../docs/architecture/integration.md#jetstream)). У инструмента свои durable — `nats-tester-meetups-events` и `nats-tester-identity-events`, — поэтому ручная проверка не сдвигает позицию Notifications.
+Стримы и durable consumers создаёт AppHost на старте узла `nats` ([каталог интеграций](../../docs/architecture/integration.md#jetstream)). У инструмента свои durable — `nats-tester-meetups-events`, `nats-tester-identity-events` и `nats-tester-notifications-events`, — поэтому ручная проверка не сдвигает позицию Notifications.
 
 Порт и пароль шины назначает Aspire: порт берётся из дашборда или `aspire describe nats`, пароль — параметр `nats-password` в user secrets AppHost. Адрес собирается как `nats://nats:<пароль>@localhost:<порт>` и передаётся флагом `--nats-url` каждой команде ниже.
 

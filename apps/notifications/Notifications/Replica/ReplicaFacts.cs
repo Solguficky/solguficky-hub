@@ -1,3 +1,5 @@
+using Notifications.Facts;
+
 namespace Notifications.Replica;
 
 /// <summary>
@@ -15,12 +17,23 @@ public abstract record ReplicaEvent(Guid EventId, Guid AggregateId, long Version
 }
 
 /// <summary>Факт о сходке из Meetups.</summary>
+/// <param name="RequestId">
+/// Сквозной идентификатор цепочки из конверта; <c>null</c> — поля не было.
+/// Факт, порождённый этим событием, переносит его без изменений.
+/// </param>
+/// <param name="FirstPublication">
+/// Карточка сходки, если повод события — первая публикация; иначе <c>null</c>.
+/// Карточка собрана из снимка события, а не из реплики: запоздавшее событие
+/// реплику не трогает, но поводом остаётся, и описывать оно обязано себя.
+/// </param>
 public sealed record MeetupFact(
     Guid EventId,
     Guid MeetupId,
     long Version,
     DateTimeOffset OccurredAt,
-    MeetupReplicaState State) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
+    MeetupReplicaState State,
+    string? RequestId = null,
+    Notifications.V1.MeetupCard? FirstPublication = null) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.MeetupsSource;
 }
@@ -80,6 +93,12 @@ public abstract record Decoded
     /// возвращается в шину, а снимается с доставки.
     /// </summary>
     public sealed record Poison(string Reason) : Decoded;
+}
+
+/// <summary>Итог применения одного события: реплика и порождённые им факты.</summary>
+public sealed record ReplicaApplication(ReplicaOutcome Outcome, FactCount Facts)
+{
+    public static readonly ReplicaApplication Duplicate = new(ReplicaOutcome.Duplicate, FactCount.None);
 }
 
 /// <summary>Что применение сделало с репликой.</summary>
