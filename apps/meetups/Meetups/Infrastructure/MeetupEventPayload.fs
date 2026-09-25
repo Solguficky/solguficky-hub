@@ -244,8 +244,14 @@ let toSnapshot (eventId: Guid) (payload: string) : MeetupSnapshot =
             | :? JsonObject as value -> value
             | _ -> malformed eventId "schedule is not an object"
 
+        // Отсутствие ключа — не порча, а возраст строки: писатель стал класть
+        // коллекцию в payload с PER-201, а до него материалов у сходки не было вовсе,
+        // и пустая коллекция — ровно то, что было правдой. Журнал неизменяем, и
+        // другого способа прочитать такие строки у адаптера нет. Ключ, который есть,
+        // но не массив, по-прежнему дефект.
         let materials =
-            match required eventId node "materials" with
+            match node["materials"] with
+            | null -> "[]"
             | :? JsonArray as value -> value.ToJsonString()
             | _ -> malformed eventId "materials is not an array"
 

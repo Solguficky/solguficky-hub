@@ -11,7 +11,7 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.0" />
     <PackageReference Include="Unquote" Version="7.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>

@@ -29,14 +29,16 @@ module private Publication =
 /// Сценарии делят один брокер и один стрим, поэтому идут последовательно: xUnit не
 /// распараллеливает тесты одного класса, а пауза брокера в соседнем классе уронила
 /// бы чужие публикации.
-type MeetupPublicationTests() =
+type MeetupPublicationTests(nats: NatsBroker.Container) =
+    interface IClassFixture<NatsBroker.Container>
+
 
     [<Fact>]
     member _.``An event written by a command reaches the stream in the contract form``() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
-        use broker = new NatsBroker.Broker()
+        use broker = new NatsBroker.Broker(nats)
 
         MeetupCommands.create source Publication.created Publication.meetupId MeetupCommands.administrator
         |> ignore
@@ -68,7 +70,7 @@ type MeetupPublicationTests() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
-        use broker = new NatsBroker.Broker()
+        use broker = new NatsBroker.Broker(nats)
 
         MeetupCommands.create source Publication.created Publication.meetupId MeetupCommands.administrator
         |> ignore
@@ -95,7 +97,7 @@ type MeetupPublicationTests() =
         use db = SchemaSql.applyIsolated ()
         let dsn = db.ConnectionString
         use source = MeetupCommands.source dsn
-        use broker = new NatsBroker.Broker()
+        use broker = new NatsBroker.Broker(nats)
         let publish = Publication.publisher broker
 
         MeetupCommands.create source Publication.created Publication.meetupId MeetupCommands.administrator

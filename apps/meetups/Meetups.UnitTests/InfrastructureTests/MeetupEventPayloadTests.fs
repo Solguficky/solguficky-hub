@@ -265,6 +265,18 @@ let ``A payload without a required field is rejected naming the event`` () =
             && error.Message.Contains "venue"
         @>
 
+/// Строка, записанная до PER-201, коллекции в payload не несёт: материалов тогда не
+/// было, и читатель обязан прочитать её пустой, а не остановить очередь публикации.
+[<Fact>]
+let ``A payload written before materials existed reads with an empty collection`` () =
+    let payload =
+        (parse (Meetup.toSnapshot Sample.titled)
+         |> fun node ->
+             node.Remove "materials" |> ignore
+             node.ToJsonString())
+
+    test <@ MeetupEventPayload.toSnapshot eventId payload = Meetup.toSnapshot Sample.titled @>
+
 [<Fact>]
 let ``Only the material occasions carry a material id`` () =
     let (MaterialId attached) = Sample.material.Id

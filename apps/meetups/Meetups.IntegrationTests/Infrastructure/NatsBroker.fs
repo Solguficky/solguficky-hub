@@ -1,9 +1,13 @@
 /// Настоящий NATS с JetStream для сценариев публикации.
 ///
-/// Контейнер один на процесс, как у PostgreSQL в `Testdb.fs`, и по той же причине:
-/// старт брокера на каждый тест стоил бы дороже самих сценариев. Стрим же свой у
-/// каждого сценария — он пересоздаётся перед тестом, поэтому ни одно сообщение
-/// соседнего прогона в выборку не попадает.
+/// Контейнер один на класс сценариев — фикстура xUnit, а не ленивое значение на весь
+/// процесс, как у PostgreSQL в `Testdb.fs`. Разница намеренная: контейнер процесса
+/// удаляется в `ProcessExit`, а xUnit ждёт потоки переднего плана после прогона
+/// только десять секунд. Два контейнера, удаляемые там по очереди, этот предел
+/// превысили, и прогон с зелёными тестами завершался принудительным выходом с
+/// кодом 1. Фикстура удаляет брокер сразу после своего класса, до выхода процесса.
+/// Стрим же свой у каждого сценария — он пересоздаётся перед тестом, поэтому ни
+/// одно сообщение соседнего сценария в выборку не попадает.
 module Meetups.IntegrationTests.Infrastructure.NatsBroker
 
 open System
@@ -21,46 +25,58 @@ open Xunit
 /// версии мог бы отвечать на публикацию иначе, и сценарий проверял бы не тот NATS.
 let private image = "nats:2.10-alpine"
 
-let private container =
-    lazy
-        (try
-            let nats =
-                NatsBuilder(image)
-                    // JetStream включается флагом сервера: без него публикация в
-                    // стрим получает «нет ответчиков», и сценарии проверяли бы отказ
-                    // вместо публикации.
-                    .WithCommand("--jetstream")
-                    .Build()
-
-            nats.StartAsync().GetAwaiter().GetResult()
-
-            AppDomain.CurrentDomain.ProcessExit.Add(fun _ -> nats.DisposeAsync().AsTask().GetAwaiter().GetResult())
-
-            Ok nats
-         with
-         | :? DockerUnavailableException as ex -> Error $"docker unavailable: {ex.Message}"
-         | ex -> Error $"testcontainers: {ex.GetType().Name}: {ex.Message}")
-
-/// Брокер обязателен в CI и необязателен локально — то же правило, что у базы:
-/// пропуск на CI прятал бы непроверенную публикацию за зелёным прогоном.
-let private started () : NatsContainer =
-    match container.Value with
-    | Ok nats -> nats
-    | Error reason when not (isNull (Environment.GetEnvironmentVariable "GITHUB_ACTIONS")) ->
-        failwith $"testcontainers nats is required in CI: {reason}"
-    | Error reason ->
-        Assert.Skip $"nats not available: {reason}"
-        failwith "unreachable: Assert.Skip throws"
-
 let private run (work: Task<'a>) = work.GetAwaiter().GetResult()
+
+/// Брокер класса сценариев. Отказ старта не роняет фикстуру: он сохраняется и
+/// превращается в пропуск или отказ уже в сценарии — по тому же правилу, что у базы.
+type Container() =
+    let mutable state: Result<NatsContainer, string> =
+        Error "the broker was not started"
+
+    /// Брокер обязателен в CI и необязателен локально — то же правило, что у базы:
+    /// пропуск на CI прятал бы непроверенную публикацию за зелёным прогоном.
+    member _.Started: NatsContainer =
+        match state with
+        | Ok nats -> nats
+        | Error reason when not (isNull (Environment.GetEnvironmentVariable "GITHUB_ACTIONS")) ->
+            failwith $"testcontainers nats is required in CI: {reason}"
+        | Error reason ->
+            Assert.Skip $"nats not available: {reason}"
+            failwith "unreachable: Assert.Skip throws"
+
+    interface IAsyncLifetime with
+        member _.InitializeAsync() =
+            task {
+                try
+                    let nats =
+                        NatsBuilder(image)
+                            // JetStream включается флагом сервера: без него публикация
+                            // в стрим получает «нет ответчиков», и сценарии проверяли бы
+                            // отказ вместо публикации.
+                            .WithCommand("--jetstream")
+                            .Build()
+
+                    do! nats.StartAsync()
+                    state <- Ok nats
+                with
+                | :? DockerUnavailableException as ex -> state <- Error $"docker unavailable: {ex.Message}"
+                | ex -> state <- Error $"testcontainers: {ex.GetType().Name}: {ex.Message}"
+            }
+            |> ValueTask
+
+    interface IAsyncDisposable with
+        member _.DisposeAsync() =
+            match state with
+            | Ok nats -> nats.DisposeAsync()
+            | Error _ -> ValueTask.CompletedTask
 
 /// Соединение сценария вместе со стримом `MEETUPS_EVENTS`, созданным заново.
 ///
 /// Конфигурация стрима повторяет в тесте то, что держит `JetStreamTopology.cs`:
 /// подмножество subject и окно дедупликации. Расхождение с AppHost этот набор не
 /// поймает — это цена того, что L1 не поднимает Aspire.
-type Broker() =
-    let nats = started ()
+type Broker(container: Container) =
+    let nats = container.Started
 
     let connection =
         new NatsConnection(
