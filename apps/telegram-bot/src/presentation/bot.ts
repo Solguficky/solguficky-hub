@@ -1424,12 +1424,24 @@ async function handleCallback(
         meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await renderFormResult(
-        ctx,
-        result,
-        questions,
-        runtime.presentation ?? "rich",
-      );
+      if (result.kind === "published" && result.repeated === true) {
+        // Повтор (E-09) и устаревший предпросмотр (E-04): карточка по текущему
+        // состоянию вместо второго «Сходка создана».
+        await renderMeetupCard(
+          ctx,
+          { kind: "meetup-card", meetup: result.meetup },
+          true,
+          runtime.presentation ?? "rich",
+          true,
+        );
+      } else {
+        await renderFormResult(
+          ctx,
+          result,
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      }
       outcome = screenBoundary(result, {
         ok: ["published"],
         okMessage: "meetup published",
@@ -2733,14 +2745,15 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "published") {
+    // Результат нажатия — правкой предпросмотра: одновременный двойной клик
+    // пишет тот же текст в то же сообщение, и Telegram отвечает «not modified».
     const meetupId = result.meetup.id;
-    await ctx.reply(
+    await editScreen(
+      ctx,
       `Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
-      {
-        reply_markup: new InlineKeyboard()
-          .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
-          .text("К управлению", "v1:manage:menu"),
-      },
+      new InlineKeyboard()
+        .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
+        .text("К управлению", "v1:manage:menu"),
     );
     return;
   }

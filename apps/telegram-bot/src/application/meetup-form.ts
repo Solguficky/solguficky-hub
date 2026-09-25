@@ -128,6 +128,13 @@ export function createMeetupForm(meetups: Meetups) {
       case "publish-meetup": {
         const current = await currentSnapshot(meetups, request);
         if (current.kind === "rejected") return current.result;
+        // Повтор на видимой сходке Meetups принимает успехом без события
+        // (ADR-031, I5), но человеку это уже не новость: второе нажатие и
+        // нажатие на устаревшем предпросмотре получают карточку по текущему
+        // состоянию (E-04, E-09). Команда уходит и тогда — право решает Meetups.
+        // Признак, а не отдельный вид результата: тот же intent зовёт кнопка
+        // статуса, и она рисует оба исхода одной карточкой.
+        const repeated = current.meetup.visibility === "visible";
         const published = await meetups.publish(
           request.identity,
           current.meetup,
@@ -136,7 +143,7 @@ export function createMeetupForm(meetups: Meetups) {
         if (published.kind === "conflict") {
           return conflict(meetups, request);
         }
-        return mapPublished(published);
+        return mapPublished(published, repeated);
       }
       case "schedule-publication": {
         const current = await currentSnapshot(meetups, request);
@@ -381,9 +388,12 @@ function map(
 
 function mapPublished(
   result: Awaited<ReturnType<Meetups["publish"]>>,
+  repeated: boolean,
 ): ExecuteResult {
   if (result.kind !== "ok") return failure(result);
-  return { kind: "published", meetup: result.meetup };
+  return repeated
+    ? { kind: "published", meetup: result.meetup, repeated: true }
+    : { kind: "published", meetup: result.meetup };
 }
 
 function failure(

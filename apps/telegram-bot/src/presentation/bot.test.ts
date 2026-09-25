@@ -1587,7 +1587,7 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("replies after publication with a start link and navigation", async () => {
+  it("edits the preview into the publication result with a start link", async () => {
     const meetup = publishedMeetup();
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "published",
@@ -1600,11 +1600,10 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(
       callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
     );
-    const reply = calls.find((call) => call.method === "sendMessage");
-    expect(sendMessageText(reply)).toBe(
-      "Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\nhttps://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
-    );
-    expect(reply?.payload).toMatchObject({
+    expect(calls.some((call) => call.method === "sendMessage")).toBe(false);
+    const edited = calls.find((call) => call.method === "editMessageText");
+    expect(edited?.payload).toMatchObject({
+      text: "Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\nhttps://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
       reply_markup: {
         inline_keyboard: [
           [
@@ -1635,6 +1634,75 @@ describe("presentation adapter", () => {
     expect(published?.fields).not.toHaveProperty("link");
   });
 
+  it("answers a double publish tap with one publication message", async () => {
+    const meetup = publishedMeetup();
+    // Второе нажатие use case отдаёт карточкой: сходка уже видна (E-09).
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValueOnce({ kind: "published", meetup })
+      .mockResolvedValueOnce({ kind: "published", meetup, repeated: true });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(calls.filter((call) => call.method.startsWith("send"))).toHaveLength(
+      0,
+    );
+    const announced = calls.filter((call) =>
+      JSON.stringify(call.payload).includes("Сходка создана"),
+    );
+    expect(announced).toHaveLength(1);
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        rich_message: { html: expect.stringContaining("Настолки") },
+      },
+    });
+  });
+
+  it("redraws a stale preview by the current state without a new message", async () => {
+    const current = { ...publishedMeetup(), title: "Настолки у Лёши" };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "published",
+      meetup: current,
+      repeated: true,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackMessageUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA", {
+        text: "Проверь сходку\n\nНастолки",
+      }),
+    );
+    expect(calls.filter((call) => call.method.startsWith("send"))).toHaveLength(
+      0,
+    );
+    expect(JSON.stringify(calls)).not.toContain("Сходка создана");
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        rich_message: { html: expect.stringContaining("Настолки у Лёши") },
+      },
+    });
+    expectBoundary(
+      records.find((record) => record.message === "meetup published"),
+      {
+        level: "debug",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "create_meetup",
+      },
+    );
+  });
+
   it("records meetup_id when publication is rejected", async () => {
     const counted = vi.spyOn(failures, "countFailure");
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
@@ -1663,6 +1731,31 @@ describe("presentation adapter", () => {
     );
     expect(JSON.stringify(rejected?.fields)).not.toContain("start=");
     expect(JSON.stringify(rejected?.fields)).not.toContain("m_AZL");
+  });
+
+  it("redraws the card when the status publish button repeats a publication", async () => {
+    const meetup = publishedMeetup();
+    // Снимок ещё скрыт, но между чтениями сходку опубликовали: use case
+    // отдаёт повтор, и кнопка статуса рисует его той же карточкой.
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: { ...meetup, visibility: "hidden" } }
+        : { kind: "published", meetup, repeated: true },
+    );
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { rich_message: { html: expect.stringContaining("Настолки") } },
+    });
+    expect(
+      records.find((record) => record.message === "meetup published"),
+    ).toBeDefined();
   });
 
   it("shows the domain's rejection message for a stale republish attempt", async () => {
@@ -1702,9 +1795,9 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(
       callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
     );
-    const text = sendMessageText(
-      calls.find((call) => call.method === "sendMessage"),
-    );
+    const text = screen(
+      calls.find((call) => call.method === "editMessageText"),
+    ).text;
     const payload = text?.match(/\?start=(m_[A-Za-z0-9_-]{22})/)?.[1];
     expect(payload).toBe("m_AZLzpLXGfY6fChssPU5fYA");
     await bot.handleUpdate(messageUpdate(`/start ${payload}`));
