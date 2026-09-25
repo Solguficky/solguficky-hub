@@ -18,6 +18,7 @@ topology.AddService(R.Identity, [R.Postgres, R.Nats], IdentitySetup.Configure);
 topology.AddService(R.Meetups, [R.Postgres, R.Nats], MeetupsSetup.Configure);
 topology.AddService(R.Notifications, [R.Postgres, R.Nats, R.Loki], NotificationsSetup.Configure);
 topology.AddService(R.TelegramBot, [R.Identity, R.Meetups, R.Notifications], TelegramBotSetup.Configure);
+topology.AddService(R.Auction, [R.Postgres], AuctionSetup.Configure);
 
 topology.Build();
 builder.Build().Run();

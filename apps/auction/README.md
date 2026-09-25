@@ -27,6 +27,9 @@ just auction-format
 
 # Локальный запуск вне Aspire
 just auction-run
+
+# Запуск в Aspire вместе с PostgreSQL
+just aspire auction
 ```
 
 ## Переменные окружения

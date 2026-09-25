@@ -94,7 +94,7 @@ builder.Build().Run();
 
 ## Полиглот
 
-Граф полиглотный: Identity — Go через `AddExecutable`, Telegram Bot — Node через `AddJavaScriptApp`, Meetups (F#) и Notifications (C# с Orleans) — обычным `AddProject`. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
+Граф полиглотный: Identity — Go через `AddExecutable`, Telegram Bot — Node через `AddJavaScriptApp`, Meetups (F#) и Notifications (C# с Orleans) — обычным `AddProject`, Auction (Scala) — голой JVM через `AddExecutable("java", …)` после узла, который пишет classpath. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
 
 Модель это выдержала без правок: .NET-сервисы пришли в тот же граф тем же `AddService`, и обобщение по `T` оказалось не запасом на будущее, а тем, что позволило не переписывать реестр.
 

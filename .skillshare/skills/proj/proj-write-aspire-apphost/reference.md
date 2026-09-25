@@ -198,6 +198,10 @@ TOPOLOGY__PROFILE=infra aspire run
 
 **`go run` не доставляет SIGTERM.** DCP останавливает ресурс сигналом, `go run` не пересылает его дочернему процессу. Graceful shutdown в `main.go` становится недостижим, процесс остаётся жить с занятым портом и открытым пулом PostgreSQL. Поэтому Go-компонент запускается собранным бинарником, а сборка вынесена в отдельный узел.
 
+**`sbt run` с `fork := true` — та же ловушка для JVM.** Форкнутая JVM переживает sbt, которого остановил DCP. Поэтому Auction запускается `java <main>` по classpath, записанному узлом сборки, а classpath уходит переменной `CLASSPATH`, прочитанной callback'ом `WithEnvironment` при старте ресурса — уже после `WaitForCompletion`.
+
+**`sbt` на Windows — это `sbt.bat`.** `AddExecutable("sbt", …)` идёт через `cmd.exe`, и тот разбирает кавычки и скобки аргумента `set …` как свой синтаксис. Сложную команду sbt узел зовёт рецептом `just`, где аргумент разбирает bash.
+
 **Прокси DCP принимает TCP раньше сервера.** Health-проба успевает подключиться до того, как Go-сервер начал слушать, и `CheckAsync` ждёт бесконечно: цикл health молча зависает, `aspire wait` и любой `WaitFor` стоят без диагностики. Нужны оба предела — `deadline:` у вызова и `timeout:` у самой проверки.
 
 **Отмена — не отказ.** gRPC отдаёт отмену как `RpcException(Cancelled)`, а health-инфраструктура отличает отмену от падения только по `OperationCanceledException`. Без `cancellationToken.ThrowIfCancellationRequested()` в `catch` штатная остановка выглядит на дашборде как `Unhealthy` с приложенным исключением.

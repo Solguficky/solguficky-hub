@@ -400,6 +400,16 @@ auction-format:
 auction-run:
     cd apps/auction && sbt -batch run
 
+# Узел `auction-build` AppHost зовёт этот рецепт, а не sbt напрямую: на Windows
+# `sbt` — это sbt.bat, и cmd.exe разбирает кавычки и скобки выражения `set` как
+# свой синтаксис. Задача объявляется на одну сессию, build.sbt её не держит:
+# classpath нужен только графу, который запускает сервис голой JVM вместо
+# `sbt run` — форкнутая JVM переживает остановленный sbt.
+#
+# Компиляция и runtime classpath в apps/auction/target/aspire-classpath
+auction-classpath:
+    cd apps/auction && sbt -batch 'set TaskKey[Unit]("aspireClasspath") := IO.write(target.value / "aspire-classpath", (Runtime / fullClasspath).value.files.mkString(java.io.File.pathSeparator))' aspireClasspath
+
 # В `verify` входит именно этот рецепт, а не три отдельных: каждый вызов sbt
 # поднимает свою JVM, и три холодных старта добавили бы к гейту около двух
 # минут на пустом месте.

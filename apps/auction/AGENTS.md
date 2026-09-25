@@ -2,7 +2,10 @@
 
 Scala 3 + Apache Pekko. Стек и хранение — [ADR-045](../../docs/decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), сборка и кодогенерация — [ADR-048](../../docs/decisions/ADR-048-auction-sbt-and-scalapb-build.md), словарь домена торгов — [ADR-047](../../docs/decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md), ответственность — [бриф](../../docs/services/auction.md). Состав полей лога — [standard](../../docs/standards/observability/logging.md), тестовый стек и уровни — [standard](../../docs/standards/testing/testing-strategy.md), имена тестов — [standard](../../docs/standards/testing/naming.md).
 
-Сейчас это языковой контур, а не сервис: HTTP-граница с health, кодогенерация и тесты. Доменной логики торгов, persistence Pekko, схемы журнала и узла в графе Aspire здесь нет — они приходят отдельными задачами.
+Сейчас это языковой контур, а не сервис: HTTP-граница с health, кодогенерация и тесты. Доменной логики торгов, persistence Pekko и схемы журнала здесь нет — они приходят отдельными задачами.
+
+- В графе Aspire сервисом владеет профиль `auction`: `just aspire auction`. Узел запускает голую JVM `java auction.Main`, а не `sbt run`, по classpath из `just auction-classpath`; устройство и подтверждённый прогон — [local-development.md](../../docs/development/local-development.md). Поэтому новая настройка запуска (`javaOptions`, системные свойства) в `build.sbt` до узла не доедет: её несёт `application.conf` или переменная окружения.
+- AppHost уже отдаёт базу `auction` ключами `AUCTION_DATABASE_JDBC_URL`, `AUCTION_DATABASE_USER` и `AUCTION_DATABASE_PASSWORD` в форме Pekko Persistence JDBC. Сервис их пока не читает: читателя приносит журнал (PER-302), и он берёт эти имена, а не заводит свои.
 
 - `Main.scala` — composition root: конфигурация, actor system, привязка HTTP. Доменная логика туда не переезжает.
 - `boundary/` владеет HTTP-границей. Каркас лога заполняет `BoundaryLogging`, и маршруты о логе ничего не знают: заполнение каркаса — работа границы, а не вызываемого кода.

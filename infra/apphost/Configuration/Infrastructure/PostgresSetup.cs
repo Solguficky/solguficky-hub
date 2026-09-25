@@ -29,6 +29,13 @@ internal static class PostgresSetup
             AppHostNames.Resources.NotificationsDb,
             postgres.AddDatabase(AppHostNames.Resources.NotificationsDb, AppHostNames.Resources.NotificationsDbName));
 
+        // Журнал и snapshots Pekko Persistence JDBC лягут в отдельную базу
+        // Auction (ADR-045). Схему в ней заведёт сам сервис, когда появится
+        // persistence (PER-302); до тех пор база пустая.
+        context.Publish(
+            AppHostNames.Resources.AuctionDb,
+            postgres.AddDatabase(AppHostNames.Resources.AuctionDb, AppHostNames.Resources.AuctionDbName));
+
         return postgres;
     }
 }
