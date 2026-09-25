@@ -188,11 +188,16 @@ just aspire hub -- --skip-services telegram-bot
 31. После `aspire stop` процесса `java` с `auction.Main` в системе не остаётся, и target-порт сервиса свободен. Повторный `aspire start` того же профиля снова доводит `auction` до `Healthy`: блокировку сервера sbt узел сборки не оставляет. Отработал ли при остановке `CoordinatedShutdown`, прогон не видел — логи ресурса уходят вместе с AppHost.
 32. Прямой вызов `sbt` из AppHost не работает на Windows: `sbt` там — `sbt.bat`, и `cmd.exe` разбирает кавычки и скобки выражения `set` как свой синтаксис, узел сборки падает на разборе. Поэтому `auction-build` зовёт рецепт `just auction-classpath`, где аргумент разбирает bash.
 
-Более ранние прогоны, которые прогоны PER-228, PER-208, PER-174, PER-5 и PER-290 не повторяли и не отменяют:
+Прогон PER-340 от 2026-09-26 — `--profile hub --run-services identity,meetups` из двух рабочих деревьев на одном коммите, агентский lifecycle (`aspire start --isolated`, `aspire wait`, `aspire stop`). Среда та же, что у PER-228.
 
-33. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
-34. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-35. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
+33. Два AppHost из разных деревьев работают одновременно: каждый поднимает свои PostgreSQL и NATS на томах `solguficky-<дерево>-<хэш>-postgres-data` и `…-nats-data`, все узлы обоих запусков доходят до готовности. PostgreSQL первого дерева не перезапускался, пока второй поднимался на своём свежем томе, и признака `data directory lock file is invalid` в его логе нет.
+34. Повторный запуск из того же дерева после `aspire stop` подключает новый контейнер PostgreSQL к прежнему тому и видит базу-метку, созданную в прошлом запуске.
+
+Более ранние прогоны, которые прогоны PER-228, PER-208, PER-174, PER-5, PER-290 и PER-340 не повторяли и не отменяют:
+
+35. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
+36. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+37. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
 
