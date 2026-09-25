@@ -219,9 +219,9 @@ message SessionEvent {
 }
 
 // The public state of a session after an event. The service reads no session yet,
-// so no second definition exists to line up with; the statuses start at 10 as in
-// LotState so that a read snapshot, when it comes, has the same room for its own
-// values below them.
+// so no second definition exists to line up with; the statuses start at 10 so that
+// a read snapshot, when it comes, has room below them for its own values, the way
+// LotSnapshot spends 4 to 6.
 message SessionState {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
@@ -257,7 +257,7 @@ message SessionState {
     Finished finished = 17;
   }
 
-  // The initial state: no configuration yet; lots may be added.
+  // The initial state: no configuration yet; lots may be added and removed.
   message Draft {}
 
   // The configuration is checked and in place; lots may still be added and removed.

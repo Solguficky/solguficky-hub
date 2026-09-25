@@ -203,7 +203,8 @@ message LotSnapshot {
   string session_id = 2;
 
   // The trading conditions. Set by the first LotScheduled and replaceable until the
-  // lot is opened; frozen from that moment on. Unset on a draft.
+  // lot is opened; frozen from that moment on. Unset on a draft, and on a lot
+  // withdrawn while it was a draft.
   LotConfig config = 3;
 
   // Position of the last event in the journal of the lot, starting at 1: a lot

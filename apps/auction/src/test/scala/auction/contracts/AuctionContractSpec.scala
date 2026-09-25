@@ -50,14 +50,17 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
     // полей совпадают». Ни buf, ни гейт nats-tester их не сравнивают: до этого
     // теста зеркальность держалась на комментарии в схеме.
     "keeps the lot state of the bus aligned with the read snapshot field for field" in {
-      def shape(descriptor: Descriptor): Map[Int, (String, String)] =
+      // Имя, тип, label и принадлежность oneof: поле, вынесенное из `status`
+      // наверх с тем же номером и типом, — тоже расхождение.
+      def shape(descriptor: Descriptor): Map[Int, (String, String, String, Option[String])] =
         descriptor.getFields.asScala.map { field =>
           val typeName = field.getType match {
             case FieldDescriptor.Type.MESSAGE => field.getMessageType.getFullName
             case FieldDescriptor.Type.ENUM => field.getEnumType.getFullName
             case other => other.name
           }
-          field.getNumber -> (field.getName, typeName)
+          val label = if (field.toProto.getProto3Optional) "optional" else field.toProto.getLabel.name
+          field.getNumber -> (field.getName, typeName, label, Option(field.getContainingOneof).map(_.getName))
         }.toMap
 
       val state = shape(LotState.javaDescriptor)
@@ -65,7 +68,7 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       val reservedByState = LotState.javaDescriptor.toProto.getReservedRangeList.asScala
         .flatMap(range => range.getStart until range.getEnd)
 
-      state.keySet.foreach(number => state(number) shouldBe snapshot(number))
+      state.foreach { case (number, field) => snapshot.get(number) shouldBe Some(field) }
       (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
     }
 
