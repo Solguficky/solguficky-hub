@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Notifications\Notifications.csproj" />
+    <ProjectReference Include="..\Notifications.TestKit\Notifications.TestKit.csproj" />
   </ItemGroup>
 
 </Project>

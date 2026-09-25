@@ -1,7 +1,7 @@
 using Identity.V1;
 using Meetups.V1;
 using Notifications.Replica;
-using Notifications.Tests;
+using Notifications.TestKit;
 using Shouldly;
 using Xunit;
 

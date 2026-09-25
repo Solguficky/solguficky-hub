@@ -1,6 +1,6 @@
 using Notifications.Facts;
 using Notifications.Replica;
-using Notifications.Tests;
+using Notifications.TestKit;
 using Notifications.V1;
 using Shouldly;
 using Xunit;

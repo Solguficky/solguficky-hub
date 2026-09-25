@@ -2,15 +2,15 @@ using Google.Protobuf;
 using Identity.V1;
 using Meetups.V1;
 
-namespace Notifications.Tests;
+namespace Notifications.TestKit;
 
 /// <summary>
 /// Валидные события обоих источников в форме, в которой их публикуют
 /// Meetups и Identity. Тест правит в них ровно то поле, которое проверяет.
 /// </summary>
 /// <remarks>
-/// Файл общий для unit- и интеграционного набора: интеграционный подключает
-/// его ссылкой, а не копией, чтобы два набора не разошлись в том, что считать
+/// Фабрика общая для unit- и интеграционного набора и живёт в TestKit, а не
+/// копией в каждом, чтобы два набора не разошлись в том, что считать
 /// правильным событием.
 /// </remarks>
 public static class EventFactory
