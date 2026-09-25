@@ -38,6 +38,7 @@ const TargetStateSchema = z.enum(["0", "1"]);
 export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
 export type CallbackAction =
+  | { kind: "home" }
   | { kind: "hub" }
   | { kind: "archive" }
   | { kind: "manage-menu" }
@@ -94,6 +95,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:community:list") return { kind: "community" };
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
+  if (parsed.data === "v1:nav:start") return { kind: "home" };
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };

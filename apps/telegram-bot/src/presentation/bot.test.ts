@@ -858,9 +858,51 @@ describe("presentation adapter", () => {
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
             [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            [{ text: "Назад", callback_data: "v1:nav:start" }],
           ],
         },
       },
+    });
+  });
+
+  it("returns from the meetup list to the start screen by editing the same message", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "message",
+      text: "Привет. Главный экран.",
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:start"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "start" }),
+    );
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        message_id: 9,
+        text: "Привет. Главный экран.",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+              { text: "Архив", callback_data: "v1:nav:archive" },
+            ],
+            [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+          ],
+        },
+      },
+    });
+    expectBoundary(records[0], {
+      level: "debug",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "find_meetup",
     });
   });
 
@@ -907,6 +949,7 @@ describe("presentation adapter", () => {
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
             [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            [{ text: "Назад", callback_data: "v1:nav:start" }],
           ],
         },
       },

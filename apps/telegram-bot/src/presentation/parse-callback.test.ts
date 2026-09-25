@@ -25,7 +25,8 @@ describe("callback parser", () => {
     });
   });
 
-  it("parses the hub and archive navigation actions", () => {
+  it("parses the home, hub and archive navigation actions", () => {
+    expect(parseCallback("v1:nav:start")).toEqual({ kind: "home" });
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
     expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
   });
