@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from nats_tester.generated.meetups.v1 import meetups_pb2 as meetups_dot_v1_dot_meetups__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fmeetups/v1/meetups_events.proto\x12\nmeetups.v1\x1a\x18meetups/v1/meetups.proto\"\xbf\x06\n\x0bMeetupEvent\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x11\n\tmeetup_id\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\x03\x12\x13\n\x0boccurred_at\x18\x04 \x01(\t\x12&\n\x05state\x18\x05 \x01(\x0b\x32\x17.meetups.v1.MeetupState\x12\x33\n\x0emeetup_created\x18\x06 \x01(\x0b\x32\x19.meetups.v1.MeetupCreatedH\x00\x12\x33\n\x0emeetup_changed\x18\x07 \x01(\x0b\x32\x19.meetups.v1.MeetupChangedH\x00\x12\x37\n\x10meetup_published\x18\x08 \x01(\x0b\x32\x1b.meetups.v1.MeetupPublishedH\x00\x12;\n\x12meetup_unpublished\x18\t \x01(\x0b\x32\x1d.meetups.v1.MeetupUnpublishedH\x00\x12;\n\x12meetup_republished\x18\n \x01(\x0b\x32\x1d.meetups.v1.MeetupRepublishedH\x00\x12N\n\x1cmeetup_publication_scheduled\x18\x0b \x01(\x0b\x32&.meetups.v1.MeetupPublicationScheduledH\x00\x12N\n\x1cmeetup_publication_cancelled\x18\x0c \x01(\x0b\x32&.meetups.v1.MeetupPublicationCancelledH\x00\x12\x37\n\x10meetup_cancelled\x18\r \x01(\x0b\x32\x1b.meetups.v1.MeetupCancelledH\x00\x12\x46\n\x18meetup_material_attached\x18\x0e \x01(\x0b\x32\".meetups.v1.MeetupMaterialAttachedH\x00\x12\x44\n\x17meetup_material_removed\x18\x0f \x01(\x0b\x32!.meetups.v1.MeetupMaterialRemovedH\x00\x12-\n\x0bmeetup_held\x18\x10 \x01(\x0b\x32\x16.meetups.v1.MeetupHeldH\x00\x42\n\n\x08occasion\"\xb4\x03\n\x0bMeetupState\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\r\n\x05venue\x18\x05 \x01(\t\x12\x0c\n\x04kind\x18\x06 \x01(\t\x12\x15\n\rcalendar_link\x18\x07 \x01(\t\x12&\n\x08schedule\x18\x08 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\t \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\n \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\x12\x1f\n\x12\x66irst_published_at\x18\x0b \x01(\tH\x00\x88\x01\x01\x12-\n\tmaterials\x18\r \x03(\x0b\x32\x1a.meetups.v1.MeetupMaterial\x12!\n\x14scheduled_publish_at\x18\x0e \x01(\tH\x01\x88\x01\x01\x42\x15\n\x13_first_published_atB\x17\n\x15_scheduled_publish_atJ\x04\x08\x0c\x10\r\"\x0f\n\rMeetupCreated\"\x0f\n\rMeetupChanged\"\x11\n\x0fMeetupPublished\"\x13\n\x11MeetupUnpublished\"\x13\n\x11MeetupRepublished\"\x1c\n\x1aMeetupPublicationScheduled\"\x1c\n\x1aMeetupPublicationCancelled\"\x11\n\x0fMeetupCancelled\"\x0c\n\nMeetupHeld\"-\n\x16MeetupMaterialAttached\x12\x13\n\x0bmaterial_id\x18\x01 \x01(\t\",\n\x15MeetupMaterialRemoved\x12\x13\n\x0bmaterial_id\x18\x01 \x01(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fmeetups/v1/meetups_events.proto\x12\nmeetups.v1\x1a\x18meetups/v1/meetups.proto\"\xe7\x06\n\x0bMeetupEvent\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x11\n\tmeetup_id\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\x03\x12\x13\n\x0boccurred_at\x18\x04 \x01(\t\x12&\n\x05state\x18\x05 \x01(\x0b\x32\x17.meetups.v1.MeetupState\x12\x33\n\x0emeetup_created\x18\x06 \x01(\x0b\x32\x19.meetups.v1.MeetupCreatedH\x00\x12\x33\n\x0emeetup_changed\x18\x07 \x01(\x0b\x32\x19.meetups.v1.MeetupChangedH\x00\x12\x37\n\x10meetup_published\x18\x08 \x01(\x0b\x32\x1b.meetups.v1.MeetupPublishedH\x00\x12;\n\x12meetup_unpublished\x18\t \x01(\x0b\x32\x1d.meetups.v1.MeetupUnpublishedH\x00\x12;\n\x12meetup_republished\x18\n \x01(\x0b\x32\x1d.meetups.v1.MeetupRepublishedH\x00\x12N\n\x1cmeetup_publication_scheduled\x18\x0b \x01(\x0b\x32&.meetups.v1.MeetupPublicationScheduledH\x00\x12N\n\x1cmeetup_publication_cancelled\x18\x0c \x01(\x0b\x32&.meetups.v1.MeetupPublicationCancelledH\x00\x12\x37\n\x10meetup_cancelled\x18\r \x01(\x0b\x32\x1b.meetups.v1.MeetupCancelledH\x00\x12\x46\n\x18meetup_material_attached\x18\x0e \x01(\x0b\x32\".meetups.v1.MeetupMaterialAttachedH\x00\x12\x44\n\x17meetup_material_removed\x18\x0f \x01(\x0b\x32!.meetups.v1.MeetupMaterialRemovedH\x00\x12-\n\x0bmeetup_held\x18\x10 \x01(\x0b\x32\x16.meetups.v1.MeetupHeldH\x00\x12\x17\n\nrequest_id\x18\x11 \x01(\tH\x01\x88\x01\x01\x42\n\n\x08occasionB\r\n\x0b_request_id\"\xb4\x03\n\x0bMeetupState\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\r\n\x05venue\x18\x05 \x01(\t\x12\x0c\n\x04kind\x18\x06 \x01(\t\x12\x15\n\rcalendar_link\x18\x07 \x01(\t\x12&\n\x08schedule\x18\x08 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\t \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\n \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\x12\x1f\n\x12\x66irst_published_at\x18\x0b \x01(\tH\x00\x88\x01\x01\x12-\n\tmaterials\x18\r \x03(\x0b\x32\x1a.meetups.v1.MeetupMaterial\x12!\n\x14scheduled_publish_at\x18\x0e \x01(\tH\x01\x88\x01\x01\x42\x15\n\x13_first_published_atB\x17\n\x15_scheduled_publish_atJ\x04\x08\x0c\x10\r\"\x0f\n\rMeetupCreated\"\x0f\n\rMeetupChanged\"\x11\n\x0fMeetupPublished\"\x13\n\x11MeetupUnpublished\"\x13\n\x11MeetupRepublished\"\x1c\n\x1aMeetupPublicationScheduled\"\x1c\n\x1aMeetupPublicationCancelled\"\x11\n\x0fMeetupCancelled\"\x0c\n\nMeetupHeld\"-\n\x16MeetupMaterialAttached\x12\x13\n\x0bmaterial_id\x18\x01 \x01(\t\",\n\x15MeetupMaterialRemoved\x12\x13\n\x0bmaterial_id\x18\x01 \x01(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,29 +33,29 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'meetups.v1.meetups_events_p
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_MEETUPEVENT']._serialized_start=74
-  _globals['_MEETUPEVENT']._serialized_end=905
-  _globals['_MEETUPSTATE']._serialized_start=908
-  _globals['_MEETUPSTATE']._serialized_end=1344
-  _globals['_MEETUPCREATED']._serialized_start=1346
-  _globals['_MEETUPCREATED']._serialized_end=1361
-  _globals['_MEETUPCHANGED']._serialized_start=1363
-  _globals['_MEETUPCHANGED']._serialized_end=1378
-  _globals['_MEETUPPUBLISHED']._serialized_start=1380
-  _globals['_MEETUPPUBLISHED']._serialized_end=1397
-  _globals['_MEETUPUNPUBLISHED']._serialized_start=1399
-  _globals['_MEETUPUNPUBLISHED']._serialized_end=1418
-  _globals['_MEETUPREPUBLISHED']._serialized_start=1420
-  _globals['_MEETUPREPUBLISHED']._serialized_end=1439
-  _globals['_MEETUPPUBLICATIONSCHEDULED']._serialized_start=1441
-  _globals['_MEETUPPUBLICATIONSCHEDULED']._serialized_end=1469
-  _globals['_MEETUPPUBLICATIONCANCELLED']._serialized_start=1471
-  _globals['_MEETUPPUBLICATIONCANCELLED']._serialized_end=1499
-  _globals['_MEETUPCANCELLED']._serialized_start=1501
-  _globals['_MEETUPCANCELLED']._serialized_end=1518
-  _globals['_MEETUPHELD']._serialized_start=1520
-  _globals['_MEETUPHELD']._serialized_end=1532
-  _globals['_MEETUPMATERIALATTACHED']._serialized_start=1534
-  _globals['_MEETUPMATERIALATTACHED']._serialized_end=1579
-  _globals['_MEETUPMATERIALREMOVED']._serialized_start=1581
-  _globals['_MEETUPMATERIALREMOVED']._serialized_end=1625
+  _globals['_MEETUPEVENT']._serialized_end=945
+  _globals['_MEETUPSTATE']._serialized_start=948
+  _globals['_MEETUPSTATE']._serialized_end=1384
+  _globals['_MEETUPCREATED']._serialized_start=1386
+  _globals['_MEETUPCREATED']._serialized_end=1401
+  _globals['_MEETUPCHANGED']._serialized_start=1403
+  _globals['_MEETUPCHANGED']._serialized_end=1418
+  _globals['_MEETUPPUBLISHED']._serialized_start=1420
+  _globals['_MEETUPPUBLISHED']._serialized_end=1437
+  _globals['_MEETUPUNPUBLISHED']._serialized_start=1439
+  _globals['_MEETUPUNPUBLISHED']._serialized_end=1458
+  _globals['_MEETUPREPUBLISHED']._serialized_start=1460
+  _globals['_MEETUPREPUBLISHED']._serialized_end=1479
+  _globals['_MEETUPPUBLICATIONSCHEDULED']._serialized_start=1481
+  _globals['_MEETUPPUBLICATIONSCHEDULED']._serialized_end=1509
+  _globals['_MEETUPPUBLICATIONCANCELLED']._serialized_start=1511
+  _globals['_MEETUPPUBLICATIONCANCELLED']._serialized_end=1539
+  _globals['_MEETUPCANCELLED']._serialized_start=1541
+  _globals['_MEETUPCANCELLED']._serialized_end=1558
+  _globals['_MEETUPHELD']._serialized_start=1560
+  _globals['_MEETUPHELD']._serialized_end=1572
+  _globals['_MEETUPMATERIALATTACHED']._serialized_start=1574
+  _globals['_MEETUPMATERIALATTACHED']._serialized_end=1619
+  _globals['_MEETUPMATERIALREMOVED']._serialized_start=1621
+  _globals['_MEETUPMATERIALREMOVED']._serialized_end=1665
 # @@protoc_insertion_point(module_scope)

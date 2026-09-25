@@ -9,7 +9,11 @@
 module Meetups.DuePublicationLogTests
 
 open System
+open System.Threading.Tasks
+open Meetups
 open Meetups.Domain
+open Meetups.Infrastructure
+open Meetups.TestData
 open Meetups.Slices.PublishDueMeetups
 open Meetups.Transport
 open Microsoft.Extensions.Logging
@@ -201,3 +205,78 @@ let ``A cancelled tick says so`` () =
             }
 
     test <@ fields.TryFind "cancelled" = Some "True" @>
+
+/// Критерий PER-227 «у сработавшего по расписанию повода есть собственный
+/// идентификатор»: запись о начатой цепочке несёт его и называет сходку.
+[<Fact>]
+let ``A chain started by the tick carries its own request id`` () =
+    let requestId = (RequestId.create "due-1").Value
+
+    let fields =
+        DuePublicationLog.started duration (meetupId, requestId)
+        |> List.map (fun (name, raw) -> name, string raw)
+        |> Map.ofList
+
+    let (MeetupId id) = meetupId
+
+    test <@ fields.TryFind "request_id" = Some "due-1" @>
+    test <@ fields.TryFind "meetup_id" = Some(string id) @>
+    test <@ fields.TryFind "operation" = Some DuePublicationLog.Operation @>
+    test <@ fields.TryFind "result" = Some "ok" @>
+
+/// Сам тик цепочкой не является: он начинает по одной на сходку, и id пишут их
+/// записи, а не запись тика.
+[<Fact>]
+let ``The tick record itself carries no request id`` () =
+    let _, fields =
+        described
+            { report with
+                Published = 1
+            }
+
+    test <@ fields.ContainsKey "request_id" = false @>
+
+let private envelope (requestId: string) : MeetupStore.EventEnvelope =
+    {
+        EventId = Guid.Parse "0199c0de-0000-7000-8000-0000000000e1"
+        PerformedBy = PersonId Guid.Empty
+        OccurredAt = DateTimeOffset(2026, 9, 7, 18, 30, 0, TimeSpan.Zero)
+        RequestId = RequestId.create requestId
+    }
+
+/// Запись, обёрнутая границей, вместе с записями лога, которые она оставила.
+let private announced (answer: Result<MeetupSnapshot, MeetupStore.VersionConflict>) =
+    let written = ResizeArray<(string * obj) list>()
+
+    let commit =
+        DuePublicationLog.announcing written.Add (fun _ _ _ _ -> Task.FromResult answer)
+
+    commit (envelope "due-1") (Some 1L) Initial (MeetupPublished Sample.later)
+    |> Async.AwaitTask
+    |> Async.RunSynchronously
+    |> ignore
+
+    List.ofSeq written
+
+/// Запись пишется в момент коммита, а не из отчёта тика: отмена посреди пачки
+/// уносит отчёт, а уже опубликованная сходка без записи не нашлась бы в логах.
+[<Fact>]
+let ``A committed publication is recorded the moment it is committed`` () =
+    let snapshot = Meetup.toSnapshot Sample.scheduled
+
+    let written = announced (Ok snapshot)
+
+    let (MeetupId id) = snapshot.Id
+
+    test
+        <@
+            written
+            |> List.map Map.ofList
+            |> List.map (fun fields ->
+                fields.TryFind "request_id" |> Option.map string, fields.TryFind "meetup_id" |> Option.map string
+            ) = [ Some "due-1", Some(string id) ]
+        @>
+
+/// Проигранная гонка события не породила, и цепочка не началась.
+[<Fact>]
+let ``A lost race starts no chain`` () = test <@ announced (Error MeetupStore.VersionConflict) = [] @>

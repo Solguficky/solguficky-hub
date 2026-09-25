@@ -289,3 +289,30 @@ module DispatchScenario =
         use reader = command.ExecuteReader()
         reader.Read() |> ignore
         (reader.GetInt64(0), reader.GetInt64(1))
+
+    /// Попытка переписать, с каким запросом связан факт (PER-227). Колонка вошла в
+    /// перечисление триггера миграцией 008, и отказ обязан быть `MT001`, а не успех.
+    let requestIdUpdateCode (dsn: string) (eventId: Guid) =
+        DispatchSql.failureCode
+            dsn
+            "UPDATE meetup_events SET request_id = 'rewritten' WHERE event_id = @event_id"
+            [ "event_id", box eventId ]
+
+    /// Запись в колонку значения, которое граница не приняла бы: пустого или длиннее
+    /// предела. Схема держит то же правило, что и `RequestId.create`.
+    let requestIdStoreCode (dsn: string) (eventId: Guid) (value: string) =
+        DispatchSql.failureCode
+            dsn
+            """
+            INSERT INTO meetup_events (
+                event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id
+            )
+            SELECT @new_event_id, meetup_id, version + 1, event_type, payload, performed_by, occurred_at, @request_id
+            FROM meetup_events
+            WHERE event_id = @event_id
+            """
+            [
+                "event_id", box eventId
+                "new_event_id", box (Guid.CreateVersion7())
+                "request_id", box value
+            ]

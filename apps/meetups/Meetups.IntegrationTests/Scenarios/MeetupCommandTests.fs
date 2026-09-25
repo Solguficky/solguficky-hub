@@ -751,7 +751,7 @@ type MeetupCommandTests() =
                     $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
                 |]
 
-        let deps = Meetups.Slices.CreateMeetupDraft.Composition.buildDeps app.Services
+        let deps = Meetups.Slices.CreateMeetupDraft.Composition.buildDeps app.Services None
 
         let created =
             Meetups.Slices.CreateMeetupDraft.execute

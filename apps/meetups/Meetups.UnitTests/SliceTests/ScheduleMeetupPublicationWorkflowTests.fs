@@ -35,6 +35,7 @@ let private stub: Deps =
         Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
         Now = fun () -> Sample.fixedNow
         NewEventId = fun () -> eventId
+        RequestId = None
         CommunityTimeZone = moscow
     }
 

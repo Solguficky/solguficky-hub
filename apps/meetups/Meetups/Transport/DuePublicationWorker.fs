@@ -4,7 +4,9 @@ open System
 open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
+open Meetups
 open Meetups.Domain
+open Meetups.Infrastructure
 open Meetups.Observability
 open Meetups.Slices
 open Meetups.Slices.PublishDueMeetups
@@ -28,7 +30,8 @@ module DuePublicationLog =
 
     /// Каркас без `use_case` и без `request_id`, и оба отсутствия намеренные:
     /// logging.md называет периодическую фоновую работу операцией без сценария, а
-    /// `request_id` рождается на краю и проносится через цепочку, которой у тика нет.
+    /// тик цепочкой не является — он начинает по одной на каждую опубликованную
+    /// сходку, и их id пишет запись `started`, а не запись тика.
     let private frame (result: string) (durationMicroseconds: int64) =
         [
             "service", box Failures.Service
@@ -101,6 +104,47 @@ module DuePublicationLog =
                 // цикла относится к Debug.
                 LogLevel.Debug, frame "ok" durationMicroseconds @ setFields report
             | _ -> LogLevel.Information, frame "ok" durationMicroseconds @ setFields report
+
+    /// Запись о цепочке, которую начал тик: сходка опубликована по расписанию под
+    /// собственным `request_id` (logging.md, PER-227). Без неё id повода жил бы только
+    /// в журнале, и поиск по логам — первое, чем разбирают «почему не пришло», — его
+    /// не нашёл бы. Длительность — записи этой сходки, а не тика.
+    let started (durationMicroseconds: int64) (MeetupId id, requestId: RequestId) : (string * obj) list =
+        frame "ok" durationMicroseconds
+        @ [
+            "request_id", box (RequestId.value requestId)
+            "meetup_id", box id
+        ]
+
+    /// Запись, которая пишет `started` в момент коммита, а не после тика.
+    ///
+    /// Запись из отчёта тика терялась бы вместе с ним: отмена или неожиданный отказ
+    /// посреди пачки уносят отчёт, а уже закоммиченные публикации остались бы с id
+    /// только в журнале. Проигранная гонка записи не даёт: события нет, и цепочка не
+    /// началась. Конверт без id сюда не приходит — срез рождает его на каждую
+    /// попытку, — а если придёт, записи нет: придумывать id граница не вправе.
+    let announcing
+        (write: (string * obj) list -> unit)
+        (commit:
+            MeetupStore.EventEnvelope
+                -> int64 option
+                -> MeetupState
+                -> MeetupEvent
+                -> Task<Result<MeetupSnapshot, MeetupStore.VersionConflict>>)
+        =
+        fun (envelope: MeetupStore.EventEnvelope) expectedVersion state event ->
+            task {
+                let began = Stopwatch.GetTimestamp()
+                let! result = commit envelope expectedVersion state event
+
+                match result, envelope.RequestId with
+                | Ok snapshot, Some requestId ->
+                    write (started (int64 (Stopwatch.GetElapsedTime began).TotalMicroseconds) (snapshot.Id, requestId))
+                | Ok _, None
+                | Error MeetupStore.VersionConflict, _ -> ()
+
+                return result
+            }
 
     /// Неожиданный отказ: та же рамка плюс `stack`, которого у объявленных отказов
     /// быть не должно.
@@ -203,7 +247,12 @@ type DuePublicationWorker
         }
 
     override _.ExecuteAsync(token: CancellationToken) : Task =
-        let deps = PublishDueMeetups.Composition.buildDeps services
+        let deps =
+            let composed = PublishDueMeetups.Composition.buildDeps services
+
+            { composed with
+                Commit = DuePublicationLog.announcing (write LogLevel.Information None) composed.Commit
+            }
 
         let timer = new PeriodicTimer(PublishDueMeetups.Composition.interval configuration)
 

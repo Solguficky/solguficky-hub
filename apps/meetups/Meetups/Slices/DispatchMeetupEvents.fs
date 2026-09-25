@@ -11,6 +11,7 @@ open System
 open System.Runtime.ExceptionServices
 open System.Threading
 open System.Threading.Tasks
+open Meetups
 open Meetups.Infrastructure
 
 /// Запись журнала в том виде, в каком её получает порт публикации.
@@ -35,6 +36,11 @@ type PendingEvent =
         Payload: string
         PerformedBy: Guid
         OccurredAt: DateTimeOffset
+        /// Запрос, породивший событие (PER-227). Релей его переносит и не рождает:
+        /// значение пережило задержку между командой и публикацией только потому,
+        /// что лежит в строке журнала. Адаптер порта (PER-209) кладёт его в поле
+        /// `request_id` конверта `meetups.v1.MeetupEvent`, а `None` — отсутствием поля.
+        RequestId: RequestId option
     }
 
 /// Исход попытки публикации. Значение, а не исключение: недоступность соседа —
@@ -96,6 +102,7 @@ type Decline =
     {
         EventId: Guid
         MeetupId: Guid
+        RequestId: RequestId option
         Reason: string
     }
 
@@ -196,6 +203,7 @@ let rec private publishBatch
                                     {
                                         EventId = event.EventId
                                         MeetupId = event.MeetupId
+                                        RequestId = event.RequestId
                                         Reason = reason
                                     }
                         }
@@ -332,6 +340,14 @@ module Composition =
             Payload = row.Payload
             PerformedBy = row.PerformedBy
             OccurredAt = row.OccurredAt
+            // Граница строже схемы: всё, что пишет команда, `create` примет снова, и
+            // для таких строк `bind` только переводит NULL в `None`. Значение, записанное
+            // в обход границы и не проходящее `create`, тоже станет `None` — релей не
+            // выдаёт наружу то, чего граница не приняла бы.
+            RequestId =
+                row.RequestId
+                |> Option.ofObj
+                |> Option.bind RequestId.create
         }
 
     let private toBacklog (row: DispatchStore.BacklogRow) : Backlog =

@@ -72,6 +72,7 @@ let createDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Creat
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let changeDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.ChangeMeetupAttributes.Deps =
@@ -80,6 +81,7 @@ let changeDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Chang
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let scheduleDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.SetMeetupSchedule.Deps =
@@ -88,6 +90,7 @@ let scheduleDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Set
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let publishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.PublishMeetup.Deps =
@@ -96,6 +99,7 @@ let publishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Publ
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let unpublishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.UnpublishMeetup.Deps =
@@ -104,6 +108,7 @@ let unpublishDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Un
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let cancelDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.CancelMeetup.Deps =
@@ -112,6 +117,7 @@ let cancelDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Cance
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let markHeldDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.MarkMeetupHeld.Deps =
@@ -120,6 +126,7 @@ let markHeldDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Mar
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 /// Пояс сообщества — та же конфигурация, что подставляет AppHost: 19:00 в Москве
@@ -130,6 +137,7 @@ let schedulePublicationDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
         CommunityTimeZone = TimeZoneInfo.FindSystemTimeZoneById "Europe/Moscow"
     }
 
@@ -139,6 +147,7 @@ let cancelPublicationDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.S
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 /// Локальная пара для команды назначения: минута — предел точности, который несёт
@@ -151,14 +160,27 @@ let localMoment year month day hours minutes : LocalDateTime =
             |> Result.defaultWith (fun _ -> failwith "the test time is more precise than a minute")
     }
 
-let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: Viewer) =
+/// Создание от имени запроса: `requestId` — то, что граница передала бы срезу из
+/// заголовка `x-request-id` (PER-227), `None` — вызов без него.
+let createFrom
+    (source: NpgsqlDataSource)
+    (eventId: Guid)
+    (id: MeetupId)
+    (performedBy: Viewer)
+    (requestId: Meetups.RequestId option)
+    =
     Meetups.Slices.CreateMeetupDraft.execute
-        (createDeps source eventId)
+        { createDeps source eventId with
+            RequestId = requestId
+        }
         {
             Id = id
             Viewer = performedBy
         }
     |> run
+
+let create (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) (performedBy: Viewer) =
+    createFrom source eventId id performedBy None
 
 let change (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
     Meetups.Slices.ChangeMeetupAttributes.execute
@@ -223,6 +245,7 @@ let attachDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Attac
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let removeDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.RemoveMaterial.Deps =
@@ -231,6 +254,7 @@ let removeDeps (source: NpgsqlDataSource) (eventId: Guid) : Meetups.Slices.Remov
         Commit = MeetupStore.commit source
         Now = fun () -> now
         NewEventId = fun () -> eventId
+        RequestId = None
     }
 
 let attach
@@ -478,4 +502,22 @@ let performers (dsn: string) (id: Guid) =
     [
         while reader.Read() do
             reader.GetGuid 0
+    ]
+
+/// `request_id` строк журнала сходки в порядке записи; NULL — `None` (PER-227).
+let requestIds (dsn: string) (id: Guid) =
+    use connection = new NpgsqlConnection(dsn)
+    connection.Open()
+
+    use command =
+        new NpgsqlCommand("SELECT request_id FROM meetup_events WHERE meetup_id = @id ORDER BY position", connection)
+
+    command.Parameters.AddWithValue("id", id)
+    |> ignore
+
+    use reader = command.ExecuteReader()
+
+    [
+        while reader.Read() do
+            if reader.IsDBNull 0 then None else Some(reader.GetString 0)
     ]

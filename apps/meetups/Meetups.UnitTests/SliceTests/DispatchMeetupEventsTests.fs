@@ -7,6 +7,7 @@ module Meetups.SliceTests.DispatchMeetupEventsTests
 open System
 open System.Threading
 open System.Threading.Tasks
+open Meetups
 open Meetups.Slices.DispatchMeetupEvents
 open Swensen.Unquote
 open Xunit
@@ -35,6 +36,7 @@ let private pendingEvent (n: int) (meetup: int) =
         Payload = "{}"
         PerformedBy = actor
         OccurredAt = now
+        RequestId = RequestId.create $"req-{n}"
     }
 
 let private backlog (pending: int64) (oldest: DateTimeOffset option) =
@@ -351,3 +353,49 @@ let ``The turn is released once the tick is done`` () =
     run deps CancellationToken.None |> ignore
 
     test <@ released.Value = 1 @>
+
+/// PER-227: релей переносит id из строки журнала и не рождает своего — порт получает
+/// событие с тем же `RequestId`, что прочитан из журнала.
+[<Fact>]
+let ``Every published event keeps the request id of its journal row`` () =
+    let turn, _ = countingTurn ()
+    let offered = ResizeArray<PendingEvent>()
+
+    let deps =
+        { holding turn [ pendingEvent 1 1; pendingEvent 2 2 ] (backlog 2L (Some now)) with
+            Publish =
+                fun _ event ->
+                    offered.Add event
+                    Task.FromResult PublishOutcome.Confirmed
+            MarkDispatched = fun _ _ -> Task.FromResult 1
+        }
+
+    run deps CancellationToken.None |> ignore
+
+    test
+        <@
+            offered
+            |> Seq.map (fun event -> event.EventId, event.RequestId |> Option.map RequestId.value)
+            |> List.ofSeq = [
+                eventId 1, Some "req-1"
+                eventId 2, Some "req-2"
+            ]
+        @>
+
+[<Fact>]
+let ``A declined event names the chain it stalled`` () =
+    let turn, _ = countingTurn ()
+
+    let deps =
+        { holding turn [ pendingEvent 1 1 ] (backlog 1L (Some now)) with
+            Publish = fun _ _ -> Task.FromResult(PublishOutcome.Declined "nats is unreachable")
+        }
+
+    let report = run deps CancellationToken.None |> reportOf
+
+    test
+        <@
+            report.Declined
+            |> Option.bind (fun declined -> declined.RequestId)
+            |> Option.map RequestId.value = Some "req-1"
+        @>

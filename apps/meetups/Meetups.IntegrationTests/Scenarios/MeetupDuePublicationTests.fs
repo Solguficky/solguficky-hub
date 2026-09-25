@@ -281,3 +281,27 @@ type MeetupDuePublicationTests() =
         test <@ report.Published = 1 @>
         test <@ MeetupCommands.visibilityOf dsn DuePublication.meetupId = "visible" @>
         test <@ not (MeetupCommands.scheduledPublicationIsSet dsn DuePublication.meetupId) @>
+
+    /// PER-227: у сработавшего по расписанию повода собственный id, а не пустое поле
+    /// и не id команды, которая назначила момент, — та цепочка закончилась вместе с
+    /// назначением.
+    [<Fact>]
+    member _.``A publication by the clock carries a request id of its own``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        DuePublication.scheduled source DuePublication.meetupId 1
+
+        DuePublicationReader.runTickAt source DuePublication.after DuePublication.batchSize
+        |> ignore
+
+        let stored = MeetupCommands.requestIds dsn DuePublication.meetupId
+
+        test <@ List.last stored |> Option.isSome @>
+
+        test
+            <@
+                List.take (List.length stored - 1) stored
+                |> List.forall Option.isNone
+            @>

@@ -8,6 +8,7 @@ open Grpc.Core
 open Grpc.Core.Interceptors
 open Microsoft.Extensions.Logging
 open Npgsql
+open Meetups
 
 /// Транспортная граница сервиса: заполняет каркас записи об операции из
 /// docs/standards/observability/logging.md. Каркас заполняет граница, а не
@@ -44,23 +45,11 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
     /// каждые несколько секунд, поэтому её запись была бы шумом, а не журналом.
     static let isProbe (method: string) = method.StartsWith "/grpc.health.v1.Health/"
 
-    /// Значения рождаются на Telegram-краю и приходят транспортными
-    /// метаданными. Пустой заголовок не превращается в структурное поле:
-    /// logging.md требует опускать значение, которое граница не получила.
-    static let incomingHeader (name: string) (context: ServerCallContext) =
-        context.RequestHeaders
-        |> Seq.tryPick (fun entry ->
-            if
-                String.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)
-                && not (String.IsNullOrWhiteSpace entry.Value)
-            then
-                Some entry.Value
-            else
-                None
-        )
+    static let requestId context =
+        IncomingMetadata.requestId context
+        |> Option.map RequestId.value
 
-    static let requestId context = incomingHeader "x-request-id" context
-    static let useCase context = incomingHeader "x-use-case" context
+    static let useCase context = IncomingMetadata.useCase context
 
     static let optional name value extras =
         match value with

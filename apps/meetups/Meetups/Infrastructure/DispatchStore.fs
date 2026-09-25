@@ -7,6 +7,7 @@
 /// запроса, которыми он это делает.
 module Meetups.Infrastructure.DispatchStore
 
+open Meetups
 open System
 open System.Threading.Tasks
 open Dapper
@@ -66,7 +67,8 @@ let private PendingSql =
         event_type AS EventType,
         payload::text AS Payload,
         performed_by AS PerformedBy,
-        occurred_at AS OccurredAt
+        occurred_at AS OccurredAt,
+        request_id AS RequestId
     FROM meetup_events
     WHERE dispatched_at IS NULL
     ORDER BY position
@@ -108,6 +110,8 @@ type PendingRow =
         Payload: string
         PerformedBy: Guid
         OccurredAt: DateTimeOffset
+        /// NULL у строк без запроса и у записанных до миграции 008.
+        RequestId: string
     }
 
 /// Ход отпускается явным `unlock`, а не только закрытием соединения. Закрытие

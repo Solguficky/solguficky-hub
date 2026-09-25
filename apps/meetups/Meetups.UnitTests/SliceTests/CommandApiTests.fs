@@ -40,6 +40,7 @@ module private Create =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e1"
+            RequestId = None
         }
 
     let untouched =
@@ -55,6 +56,7 @@ module private Publish =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e2"
+            RequestId = None
         }
 
     let untouched =
@@ -270,6 +272,7 @@ module private Change =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e3"
+            RequestId = None
         }
 
     let untouched =
@@ -291,6 +294,7 @@ module private Schedule =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e4"
+            RequestId = None
         }
 
     let untouched =
@@ -489,6 +493,7 @@ module private Unpublish =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e5"
+            RequestId = None
         }
 
     let untouched =
@@ -505,6 +510,7 @@ module private Cancel =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e6"
+            RequestId = None
         }
 
     let untouched =
@@ -521,6 +527,7 @@ module private Held =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e7"
+            RequestId = None
         }
 
     let untouched =
@@ -682,6 +689,7 @@ module private Attach =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e7"
+            RequestId = None
         }
 
     let untouched =
@@ -705,6 +713,7 @@ module private Remove =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e8"
+            RequestId = None
         }
 
     let untouched =
@@ -967,6 +976,7 @@ module private SchedulePublication =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e7"
+            RequestId = None
             // Пояс проверяется отдельно, в тестах среза; на границе достаточно
             // фиксированного, чтобы значение доходило до домена.
             CommunityTimeZone = TimeZoneInfo.Utc
@@ -1000,6 +1010,7 @@ module private CancelPublication =
             Commit = commit
             Now = fun () -> Sample.fixedNow
             NewEventId = fun () -> Guid.Parse "0199c0de-0000-7000-8000-0000000000e8"
+            RequestId = None
         }
 
     let untouched =
