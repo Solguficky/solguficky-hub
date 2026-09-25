@@ -1,10 +1,16 @@
 import { createDispatcher } from "./application/dispatcher.js";
 import { parseTimeZone } from "./community-time.js";
+import { createDeliverNotification } from "./delivery/deliver.js";
+import { startNatsDelivery } from "./delivery/nats.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
 import { createBot, parseTelegramEnvironment } from "./presentation/bot.js";
+import {
+  createNotificationApi,
+  createNotificationSender,
+} from "./presentation/notification-message.js";
 import { createShutdown } from "./shutdown.js";
 import { type Logs, startLogs, startMetrics } from "./telemetry.js";
 
@@ -51,6 +57,7 @@ async function main(): Promise<number> {
   const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
   const notificationsUrl =
     readEnv("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053";
+  const natsUrl = readEnv("TELEGRAM_BOT_NATS_URL") ?? "nats://127.0.0.1:4222";
   const presentationRaw = readEnv("TELEGRAM_BOT_PRESENTATION") ?? "rich";
   if (presentationRaw !== "rich" && presentationRaw !== "plain") {
     logger.error("TELEGRAM_BOT_PRESENTATION must be rich or plain");
@@ -81,10 +88,26 @@ async function main(): Promise<number> {
     presentation: presentationRaw,
     environment,
   });
+  // Второй вход компонента: адресные факты Notifications из шины. Он стартует
+  // до поллера, чтобы отказ шины остановил процесс сразу, а не после того, как
+  // бот уже начал отвечать людям без канала уведомлений.
+  const sender = createNotificationSender(
+    createNotificationApi(token, environment),
+  );
+  const delivery = await startNatsDelivery({
+    url: natsUrl,
+    logger,
+    deliver: (journal) =>
+      createDeliverNotification({ journal, recipients: identity, sender }),
+  });
+  let failed = false;
   const shutdown = createShutdown({
     bot,
     resources: {
       async close() {
+        // Потребитель гасится первым: сообщение в обработке дописывается в
+        // журнал, пока клиенты Identity и Telegram ещё открыты.
+        await delivery.close();
         identity.close();
         meetups.close();
         notifications.close();
@@ -105,6 +128,17 @@ async function main(): Promise<number> {
   });
   process.on("SIGTERM", () => {
     void shutdown.request("SIGTERM");
+  });
+  // Поток сообщений кончился сам — durable или стрим удалены. Бот без канала
+  // уведомлений молча терял бы их, поэтому процесс останавливается с отказом, и
+  // оркестратор это видит. Недоступность NATS сюда не приводит: клиент
+  // переподключается без предела.
+  delivery.done.catch((cause: unknown) => {
+    failed = true;
+    logger.error("notification delivery stopped", {
+      error: cause instanceof Error ? cause.message : String(cause),
+    });
+    void shutdown.request("delivery-stopped");
   });
 
   try {
@@ -130,7 +164,7 @@ async function main(): Promise<number> {
         throw cause;
       }
     }
-    return 0;
+    return failed ? 1 : 0;
   } finally {
     await shutdown.complete();
   }

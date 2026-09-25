@@ -46,8 +46,9 @@ internal static class NatsSetup
         }
 
         logger.LogInformation(
-            "JetStream topology applied: streams {Streams}; durable consumers {Durables}.",
+            "JetStream topology applied: streams {Streams}; durable consumers {Durables}; key-value buckets {Buckets}.",
             string.Join(", ", JetStreamTopology.Streams.Select(stream => stream.Name)),
-            string.Join(", ", JetStreamTopology.Durables.Select(durable => durable.Durable)));
+            string.Join(", ", JetStreamTopology.Durables.Select(durable => durable.Durable)),
+            string.Join(", ", JetStreamTopology.KeyValueBuckets.Select(bucket => bucket.Bucket)));
     }
 }

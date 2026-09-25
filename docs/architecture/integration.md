@@ -401,7 +401,7 @@ Subject называет повод, сообщение на всех повод
 
 Один стрим на домен-producer, а не на subject: повод — фильтр внутри стрима, и новый повод словаря не заводит стрима. Retention `limits`, а не `interest` или `workqueue`: те привязывают хранение к составу потребителей, и сообщение, пришедшее раньше объявления durable, исчезало бы. Семь дней — не гарантия хранения, а запас на простой потребителя: стрим не источник истины, и потерявший позицию потребитель собирает состояние с нуля, не полагаясь ни на журнал, ни на стрим ([PER-70](https://linear.app/anticnvm/issue/per-70)).
 
-Стрим `NOTIFICATIONS_EVENTS` заведён вместе с producer'ом адресного факта ([PER-216](https://linear.app/anticnvm/issue/per-216)), раньше первого канала: retention `limits` держит опубликованное независимо от состава потребителей, и факты, вынесенные до появления durable канала, дождутся его в пределах окна хранения. Durable канала заводится вместе с каналом ([PER-217](https://linear.app/anticnvm/issue/per-217)). Стрима под `events.auction.>` нет: аукцион вне MVP, потребитель его событий не выбран, и стрим заводится вместе с первым из них.
+Стрим `NOTIFICATIONS_EVENTS` заведён вместе с producer'ом адресного факта ([PER-216](https://linear.app/anticnvm/issue/per-216)), раньше первого канала: retention `limits` держит опубликованное независимо от состава потребителей, и факты, вынесенные до появления durable канала, дождутся его в пределах окна хранения. Durable канала заведён вместе с каналом ([PER-217](https://linear.app/anticnvm/issue/per-217)). Стрима под `events.auction.>` нет: аукцион вне MVP, потребитель его событий не выбран, и стрим заводится вместе с первым из них.
 
 ### Durable consumers
 
@@ -409,6 +409,7 @@ Subject называет повод, сообщение на всех повод
 |---|---|---|---|
 | `notifications-meetups-events` | `MEETUPS_EVENTS` | `events.meetups.>` | Notifications, реплика сходок |
 | `notifications-identity-events` | `IDENTITY_EVENTS` | `events.identity.>` | Notifications, реплика доступа |
+| `telegram-bot-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | Telegram Bot, канал доставки уведомлений |
 | `nats-tester-meetups-events` | `MEETUPS_EVENTS` | `events.meetups.>` | `tools/nats-tester`, ручная проверка |
 | `nats-tester-identity-events` | `IDENTITY_EVENTS` | `events.identity.>` | то же |
 | `nats-tester-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | то же |
@@ -417,14 +418,22 @@ Subject называет повод, сообщение на всех повод
 
 **Кто создаёт.** Durable принадлежит потребителю, но создаёт его топология, а не сам потребитель: иначе всё, что пришло до первого старта сервиса, было бы потеряно для него при `deliver_policy=all`, а настройки шины разошлись бы по двум языкам. Сервис привязывается к durable по имени и падает, если его нет, — он его не заводит. Свои durable у `nats-tester` нужны, чтобы ручная проверка не сдвигала позицию продуктового потребителя.
 
-**Настройки.** Pull, `ack_policy=explicit`, `deliver_policy=all`. `AckWait` и `MaxDeliver` — значения сервера по умолчанию: политика повторов, dead-letter и метрики lag и redelivery проектируются вместе с первым настоящим потребителем ([PER-72](https://linear.app/anticnvm/issue/per-72)) и меняются в той же таблице.
+**Настройки.** Pull, `ack_policy=explicit`, `deliver_policy=all`. `AckWait` и `MaxDeliver` — значения сервера по умолчанию, одинаковые для всех durable. Повтор с задержкой решает сам потребитель: канал доставки откладывает сообщение явным `nak` с задержкой и снимает его `term`, когда повтор ничего не изменит или кончились попытки ([services/telegram-bot.md](../services/telegram-bot.md#доставка-уведомлений)). Поэтому `BackOff` и `MaxDeliver` в конфигурации durable не нужны: первый действует только на истечение `AckWait`, а явный `nak` его перекрывает. Dead-letter нет: снятое сообщение остаётся в логе и журнале потребителя.
+
+### Key-value buckets
+
+| Bucket | Владелец | Ключ | Хранение |
+|---|---|---|---|
+| `telegram-bot-deliveries` | Telegram Bot, журнал попыток доставки | `notification_id` | `file`, одна версия на ключ, `max_age` — окно стрима плюс сутки |
+
+Bucket объявляет та же таблица топологии AppHost, что и durable, по тому же доводу: настройки хранения не расходятся по двум языкам, а потребитель к bucket только привязывается и без него не стартует ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md)). Срок жизни записи длиннее окна стрима: запись обязана пережить последнюю повторную выдачу своего сообщения.
 
 ### Дедупликация
 
 Доставка at-least-once, и защита от повтора двухслойная.
 
 - **Publisher** ставит заголовок `Nats-Msg-Id` равным `event_id` конверта; у адресного факта, где конверта события нет, — равным `notification_id`. Повтор той же публикации внутри окна стрима сервер отбрасывает. Это оптимизация, а не гарантия: повтор после окна и повторную доставку потребителю после потерянного ack она не ловит. Правило исполняют адаптер Meetups ([PER-209](https://linear.app/anticnvm/issue/per-209)) и релей адресных фактов Notifications ([PER-216](https://linear.app/anticnvm/issue/per-216)) и исполнит адаптер Identity ([PER-210](https://linear.app/anticnvm/issue/per-210)). Адаптер Meetups дополнительно ставит `Nats-Expected-Stream: MEETUPS_EVENTS`: публикация мимо стрима становится отказом сервера, а не тихо принятым сообщением, и ack с пометкой повтора считает подтверждением.
-- **Потребитель** даёт гарантию. Ключ — `event_id` из конверта, тот же при любом повторе. Потребитель записывает обработанный `event_id` в своё хранилище той же транзакцией, что и эффект события, и сообщение с уже записанным ключом подтверждает, не применяя: без ack сервер вернёт его снова. Реплика вдобавок сравнивает `version` ([Meetups NATS](#meetups-nats), [Identity NATS](#identity-nats)): `event_id` отсекает повтор того же события, `version` — более старое событие, пришедшее позже нового. Где лежит хранилище ключей и сколько оно их держит — решение потребителя; держать его меньше окна хранения стрима нельзя. У Notifications это таблица `consumed_event` с ключами восемь дней ([services/notifications.md](../services/notifications.md#как-реплика-устроена)).
+- **Потребитель** даёт гарантию. Ключ — `event_id` из конверта, тот же при любом повторе. Потребитель записывает обработанный `event_id` в своё хранилище той же транзакцией, что и эффект события, и сообщение с уже записанным ключом подтверждает, не применяя: без ack сервер вернёт его снова. Реплика вдобавок сравнивает `version` ([Meetups NATS](#meetups-nats), [Identity NATS](#identity-nats)): `event_id` отсекает повтор того же события, `version` — более старое событие, пришедшее позже нового. Где лежит хранилище ключей и сколько оно их держит — решение потребителя; держать его меньше окна хранения стрима нельзя. У Notifications это таблица `consumed_event` с ключами восемь дней ([services/notifications.md](../services/notifications.md#как-реплика-устроена)); у канала доставки — bucket `telegram-bot-deliveries` с ключом `notification_id` и тем же сроком.
 
 Порядок топология не обещает: redelivery возвращает неподтверждённое сообщение после уже выданных, поэтому защита потребителя остаётся на `version`, а не на порядке доставки.
 
@@ -475,7 +484,7 @@ Schema Registry — не одно бинарное решение:
 
 ## Delivery semantics
 
-- Действующий consumer среди сервисов один — Notifications читает `notifications-meetups-events` и `notifications-identity-events` и собирает из них реплику чужих фактов ([services/notifications.md](../services/notifications.md), PER-215). Он привязывается к своему durable, а не заводит обычную subscription. Subject уведомления публикует релей Notifications из своего outbox (PER-216), а его потребитель — канал доставки — ещё не реализован.
+- Действующий consumer среди сервисов один — Notifications читает `notifications-meetups-events` и `notifications-identity-events` и собирает из них реплику чужих фактов ([services/notifications.md](../services/notifications.md), PER-215). Он привязывается к своему durable, а не заводит обычную subscription. Subject уведомления публикует релей Notifications из своего outbox (PER-216), а читает канал доставки — Telegram Bot через `telegram-bot-notifications-events` (PER-217). Выбор канала между дублем и потерей — дубль: отметка «доставлено» пишется после ответа Telegram ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md)).
 - Durable consumers, redelivery, deduplication и idempotency должны проектироваться совместно.
 - Наличие `op_id` в части команд само по себе не обеспечивает идемпотентность: consumer должен сохранять или проверять обработанные операции.
 - Требования к допустимой потере, повтору и порядку задаются отдельно для каждого сценария.

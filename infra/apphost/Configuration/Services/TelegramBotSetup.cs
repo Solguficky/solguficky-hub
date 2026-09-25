@@ -1,5 +1,6 @@
 using AppHost.Configuration.Extensions;
 using AppHost.Configuration.Topology;
+using Aspire.Hosting.JavaScript;
 
 namespace AppHost.Configuration.Services;
 
@@ -29,6 +30,14 @@ internal static class TelegramBotSetup
             .WithEnvironment("TELEGRAM_BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL")
-            .BindEndpoint(context, AppHostNames.Resources.Notifications, "grpc", "NOTIFICATIONS_GRPC_URL");
+            .BindEndpoint(context, AppHostNames.Resources.Notifications, "grpc", "NOTIFICATIONS_GRPC_URL")
+            // Второй вход бота — адресные факты Notifications. WaitFor(nats)
+            // внутри BindConnection ждёт и применения топологии: durable и
+            // bucket журнала заводит AppHost, а бот без них не стартует.
+            .BindConnection<JavaScriptAppResource, NatsServerResource>(
+                context,
+                AppHostNames.Resources.Nats,
+                "TELEGRAM_BOT_NATS_URL",
+                nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
     }
 }

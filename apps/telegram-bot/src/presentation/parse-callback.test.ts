@@ -176,6 +176,19 @@ describe("notification callbacks", () => {
     });
   });
 
+  it("parses disabling a category from a notification", () => {
+    expect(parseCallback("v1:notify:off:published")).toEqual({
+      kind: "notify-disable-global",
+      category: "published",
+    });
+    expect(parseCallback("v1:notify:off:unknown")).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback("v1:notify:off:published:0")).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses meetup notification actions matching the brief", () => {
     expect(parseCallback(`v1:notify:settings:${token}`)).toEqual({
       kind: "notify-settings",
@@ -239,6 +252,7 @@ describe("notification callbacks", () => {
       `v1:notify:settings:${token}`,
       `v1:notify:sub:${token}:1`,
       ...categories.map((category) => `v1:notify:gset:${category}:1`),
+      ...categories.map((category) => `v1:notify:off:${category}`),
       ...["changes", "material", "reminder", "organizer"].map(
         (category) => `v1:notify:set:${token}:${category}:1`,
       ),

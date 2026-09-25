@@ -75,6 +75,10 @@ export type CallbackAction =
       category: NotificationCategory;
       enabled: boolean;
     }
+  // Отключение категории прямо из уведомления. Отдельное действие, а не `gset`:
+  // тот перерисовывает сообщение в экран настроек, и текст уведомления пропал
+  // бы вместе с ним.
+  | { kind: "notify-disable-global"; category: NotificationCategory }
   | { kind: "notify-settings"; token: string }
   | { kind: "notify-subscription"; token: string; subscribed: boolean }
   | {
@@ -221,6 +225,12 @@ function parseNotify(parts: readonly string[]): CallbackAction {
           category: category.data,
           enabled: state.data === "1",
         }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "off") {
+    const category = GlobalCategorySchema.safeParse(parts[3]);
+    return category.success
+      ? { kind: "notify-disable-global", category: category.data }
       : { kind: "malformed" };
   }
   const token = TokenSchema.safeParse(parts[3]);

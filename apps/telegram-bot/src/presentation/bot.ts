@@ -1481,6 +1481,36 @@ async function handleCallback(
       });
       return;
     }
+    // Кнопка из уведомления меняет ту же глобальную настройку, что и P-09, но
+    // уведомление остаётся на месте: результат дописывается под ним, а отказ
+    // приходит отдельным сообщением, чтобы не стереть то, о чём уведомляли.
+    // Своей кнопки повтора у отказа нет: повтор — та же кнопка в уведомлении,
+    // иначе успех дописался бы под текстом отказа, а не под уведомлением.
+    if (action.kind === "notify-disable-global") {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "set-global-category",
+        category: action.category,
+        enabled: false,
+        ...rpcCall(ctx, useCase),
+      });
+      if (result.kind === "global-notification-settings") {
+        await confirmCategoryDisabled(ctx, action.category);
+      } else {
+        await ctx.reply(
+          result.kind === "dependency-rejected" && result.reason === "forbidden"
+            ? "Notifications не разрешил это действие."
+            : unavailableText,
+        );
+      }
+      outcome = screenBoundary(result, {
+        ok: ["global-notification-settings"],
+        okMessage: "notification category disabled",
+        rejectedMessage: "notification category disable rejected",
+        useCase,
+      });
+      return;
+    }
     // Подписка меняет карточку, а не открывает кадр настроек: действие живёт в
     // P-04, и человек обязан остаться там же с обновлённой кнопкой.
     if (action.kind === "notify-subscription") {
@@ -2221,6 +2251,37 @@ async function renderNotificationSettings(
   await renderNotificationFailure(ctx, result, retry);
 }
 
+async function confirmCategoryDisabled(
+  ctx: UpdateContext,
+  category: NotificationCategory,
+): Promise<void> {
+  const note = `Больше не присылаю: ${categoryLabels[category].toLowerCase()}. Включить снова можно в настройках уведомлений.`;
+  const message = ctx.callbackQuery?.message;
+  const pressed = ctx.callbackQuery?.data;
+  // Кнопки уведомления, кроме нажатой, остаются: «Открыть сходку» по-прежнему
+  // нужна, а отключать уже нечего.
+  const rows = (message?.reply_markup?.inline_keyboard ?? [])
+    .map((row) =>
+      row.filter(
+        (button) =>
+          !("callback_data" in button) || button.callback_data !== pressed,
+      ),
+    )
+    .filter((row) => row.length > 0);
+  const keyboard = InlineKeyboard.from(rows)
+    .row()
+    .text("Настроить уведомления", "v1:notify:global");
+  const original =
+    message !== undefined && "text" in message ? message.text : undefined;
+  const text =
+    original === undefined
+      ? note
+      : original.includes(note)
+        ? original
+        : `${original}\n\n${note}`;
+  await editScreen(ctx, text, keyboard);
+}
+
 // Отказ Notifications отвечает кадром по природе отказа, а не одним «сбой на
 // моей стороне»: бриф компонента обещает разные кадры, и «Повторить» на отказе
 // по праву или на устаревшем экране не лечит ничего.
@@ -2853,6 +2914,7 @@ function callbackUseCase(
     | "manage-confirm-cancel"
     | "notify-global"
     | "notify-set-global"
+    | "notify-disable-global"
     | "notify-settings"
     | "notify-subscription"
     | "notify-set-meetup"
@@ -2904,6 +2966,7 @@ function callbackUseCase(
       return "manage_community";
     case "notify-global":
     case "notify-set-global":
+    case "notify-disable-global":
     case "notify-settings":
     case "notify-subscription":
     case "notify-set-meetup":

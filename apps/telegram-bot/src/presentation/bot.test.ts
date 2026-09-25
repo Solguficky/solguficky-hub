@@ -2737,6 +2737,72 @@ describe("notification frames", () => {
     });
   });
 
+  describe("disabling a category from a notification", () => {
+    const notification = {
+      text: "Новая сходка: Настолки у Лёши\n12.08.2026 19:00",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+          [
+            {
+              text: "Не присылать новые сходки",
+              callback_data: "v1:notify:off:published",
+            },
+          ],
+        ],
+      },
+    };
+
+    it("turns the global category off and keeps the notification text", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "global-notification-settings",
+        categories: [{ category: "published", enabled: false }],
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(
+        callbackMessageUpdate("v1:notify:off:published", notification),
+      );
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-global-category",
+          category: "published",
+          enabled: false,
+        }),
+      );
+      expect(calls[0]?.method).toBe("answerCallbackQuery");
+      expect(calls[1]?.method).toBe("editMessageText");
+      const payload = screen(calls[1]);
+      expect(payload.text).toContain(notification.text);
+      expect(payload.text).toContain("Больше не присылаю: новые сходки");
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+        [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+      ]);
+    });
+
+    it("reports a Notifications failure in a new message and keeps the notification", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "unavailable",
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(
+        callbackMessageUpdate("v1:notify:off:published", notification),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "sendMessage",
+      ]);
+      const payload = screen(calls[1]);
+      expect(payload.text).toContain("Это на моей стороне");
+      // Повтор — та же кнопка в уведомлении: своя кнопка у отказа дописала бы
+      // успех под текстом отказа.
+      expect(payload.reply_markup).toBeUndefined();
+    });
+  });
+
   // E-05: отказ Notifications приходит кадром о сбое, а не пустым списком
   // категорий, который человек прочитал бы как «всё выключено».
   it("renders a Notifications refusal as E-05 instead of an empty frame", async () => {

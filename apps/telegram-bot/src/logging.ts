@@ -26,6 +26,10 @@ export type LogFields = {
   signal?: string;
   timeout?: number;
   telegram_environment?: string;
+  notification_id?: string;
+  notification_type?: string;
+  attempt?: number;
+  retry_delay_ms?: number;
 };
 
 export type Logger = {

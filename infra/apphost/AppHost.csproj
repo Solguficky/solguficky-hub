@@ -23,6 +23,9 @@
          приходит транзитивно от health check Aspire.Hosting.Nats; явная ссылка
          держит её, если Aspire при обновлении сменит свою зависимость. -->
     <PackageReference Include="NATS.Client.JetStream" Version="2.8.0" />
+    <!-- Bucket журнала доставки объявляется той же таблицей топологии; версия
+         держится на линии клиента JetStream. -->
+    <PackageReference Include="NATS.Client.KeyValueStore" Version="2.8.0" />
   </ItemGroup>
 
   <!-- Ссылка на сервис даёт типизованный Projects.Meetups: опечатка в пути падает

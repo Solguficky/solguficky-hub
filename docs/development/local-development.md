@@ -177,6 +177,8 @@ just aspire hub -- --skip-services telegram-bot
 
 Прогон PER-351 от 2026-09-25 — полный `hub` с тем же локальным ботом. Открытие карточки опубликованной сходки через `/start m_<токен>` дало в Structured logs три записи уровня `Information` — `telegram-bot`, `identity` и `meetups` — с одним атрибутом `request_id` и `use_case` = `view_meetup`; поиск по значению поля нашёл все три. Первая попытка до Meetups не дошла: PostgreSQL ответил Identity `cache lookup failed for function`, а через пять секунд ушёл в immediate shutdown с признаком из пункта 28. Помогли `aspire resource postgres start` и рестарт зависимых сервисов, как и там ([PER-340](https://linear.app/anticnvm/issue/per-340)).
 
+Прогон PER-217 от 2026-09-26 — профиль `infra`, без компонентов. AppHost применил топологию на живом NATS и назвал в логе durable `telegram-bot-notifications-events` и key-value bucket `telegram-bot-deliveries`. Код привязки бота с адресом в той форме, в какой его отдаёт Aspire — `nats://<пользователь>:<пароль>@host:port`, — соединился с сервером, получил этот durable (`ack_policy=explicit`, `deliver_policy=all`, фильтр `events.notifications.>`) и статус bucket: одна версия на ключ, хранение `file`, срок жизни записи восемь дней. Сообщений он не читал. Доставка в Telegram этим прогоном не проверялась: её граница названа ниже.
+
 Более ранние прогоны, которые прогоны PER-228, PER-208, PER-174 и PER-5 не повторяли и не отменяют:
 
 29. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
@@ -184,6 +186,8 @@ just aspire hub -- --skip-services telegram-bot
 31. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
+
+Доставка уведомления о новой сходке в Telegram живым прогоном не проверена. Потребление с журналом, повтор после потерянного ack, отказ заблокированного получателя и повтор временного отказа подтверждены интеграционным тестом бота на настоящем JetStream с отправителем-заглушкой ([PER-217](https://linear.app/anticnvm/issue/per-217)). Путь «опубликовал сходку — подписчик получил сообщение и отключил категорию кнопкой» требует полного `hub` с локальным ботом и двух Telegram-клиентов, как у прогона PER-5.
 
 Тестовая среда Telegram живым прогоном не проверена: полный `hub` прогнан в продакшн-среде отдельным локальным ботом, а с `--telegram-environment test` проверка доходит только до отказа графа на неизвестном имени. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test` с токеном тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)); регулярный прогон тестового контура ведёт [PER-9](https://linear.app/anticnvm/issue/per-9). Отрисовку ответа бота подтверждает клиент владельца (пункт 20), а не лог: запись границы говорит, что update обработан, но не то, как ответ выглядит у человека. В прогоне PER-228 бот писал успех на `debug`, и записи не было вовсе; с [PER-351](https://linear.app/anticnvm/issue/per-351) она на `info`.
 

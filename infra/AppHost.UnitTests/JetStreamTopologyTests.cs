@@ -57,6 +57,38 @@ public class JetStreamTopologyTests
             .Select(durable => durable.Durable)
             .ShouldNotContain("notifications-notifications-events");
 
+    /// <summary>
+    /// Канал доставки читает только адресные факты: события Meetups и Identity
+    /// ему не адресованы, и durable на них копил бы неподтверждаемое.
+    /// </summary>
+    [Fact]
+    public void Durables_TelegramBot_ReadsOnlyNotificationFacts() =>
+        JetStreamTopology.Durables
+            .Where(durable => durable.Durable.StartsWith("telegram-bot-", StringComparison.Ordinal))
+            .Select(durable => durable.Durable)
+            .ShouldBe(["telegram-bot-notifications-events"]);
+
+    /// <summary>
+    /// Запись журнала обязана пережить последнюю повторную выдачу своего
+    /// сообщения: истеки она раньше стрима, повтор ушёл бы человеку второй раз.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_DeliveryJournal_OutlivesStreamRetention()
+    {
+        var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "telegram-bot-deliveries");
+
+        journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
+    }
+
+    [Fact]
+    public void ToConfig_Bucket_KeepsLatestStateOnDisk()
+    {
+        var config = JetStreamTopology.ToConfig(JetStreamTopology.KeyValueBuckets[0]);
+
+        config.History.ShouldBe(1);
+        config.Storage.ShouldBe(NATS.Client.KeyValueStore.NatsKVStorageType.File);
+    }
+
     [Fact]
     public void Durables_NatsTester_ReadsEveryStream() =>
         JetStreamTopology.Durables
