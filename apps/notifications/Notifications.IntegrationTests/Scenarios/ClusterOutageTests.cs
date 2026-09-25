@@ -26,6 +26,7 @@ public class ClusterOutageTests
     {
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
 
         var meetupId = Guid.NewGuid().ToString();
         var startsAt = DateTimeOffset.UtcNow.AddDays(30);
@@ -34,7 +35,7 @@ public class ClusterOutageTests
         DateTime killedAt;
         string[] sameEndpoint;
 
-        using (var service = ServiceProcess.Start(db.ConnectionString))
+        using (var service = ServiceProcess.Start(db.ConnectionString, nats.Url))
         {
             killedSilo = await service.WaitUntilActive(db.ConnectionString);
 

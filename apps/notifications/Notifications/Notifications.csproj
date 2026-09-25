@@ -30,6 +30,10 @@
          ослабляют. -->
     <PackageReference Include="Microsoft.Orleans.Clustering.AdoNet" Version="10.3.1" />
     <PackageReference Include="Microsoft.Orleans.Reminders.AdoNet" Version="10.3.1" />
+    <!-- Клиент шины для реплики чужих фактов (PER-215). Та же линия, что у
+         AppHost, который заводит streams и durable: версии клиента по обе
+         стороны одной топологии не расходятся. -->
+    <PackageReference Include="NATS.Client.JetStream" Version="2.8.0" />
     <PackageReference Include="Npgsql" Version="10.0.1" />
   </ItemGroup>
 

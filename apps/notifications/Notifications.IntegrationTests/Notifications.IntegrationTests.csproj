@@ -21,10 +21,20 @@
     <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
     <PackageReference Include="Npgsql" Version="10.0.1" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <!-- Шина для реплики чужих фактов: потребитель проверяется на настоящем
+         JetStream, а не на своей имитации pull и ack. -->
+    <PackageReference Include="Testcontainers.Nats" Version="4.14.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Notifications\Notifications.csproj" />
+  </ItemGroup>
+
+  <!-- Валидные события источников — один файл на оба набора, ссылкой, а не
+       копией: иначе unit- и интеграционный тест разошлись бы в том, что
+       считать правильным событием. -->
+  <ItemGroup>
+    <Compile Include="..\Notifications.UnitTests\TestUtilities\EventFactory.cs" Link="Infrastructure\EventFactory.cs" />
   </ItemGroup>
 
 </Project>

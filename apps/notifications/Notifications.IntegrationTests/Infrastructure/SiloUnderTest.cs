@@ -51,7 +51,18 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// ждать штатные тридцать секунд и сутки в тесте нечем, а подменять часы
     /// процесса ради этого не нужно — оба значения и так настройки.
     /// </param>
-    public static async Task<SiloUnderTest> Start(string connectionString, params string[] settings)
+    public static Task<SiloUnderTest> Start(string connectionString, params string[] settings) =>
+        Launch(connectionString, natsUrl: null, settings);
+
+    /// <summary>
+    /// То же, но с потребителями реплики на шине <paramref name="natsUrl" />.
+    /// Без адреса composition root их не регистрирует, поэтому тестам, которым
+    /// шина не нужна, контейнер NATS не нужен тоже.
+    /// </summary>
+    public static Task<SiloUnderTest> StartOnBus(string connectionString, string natsUrl, params string[] settings) =>
+        Launch(connectionString, natsUrl, settings);
+
+    private static async Task<SiloUnderTest> Launch(string connectionString, string? natsUrl, string[] settings)
     {
         // Порты силоса берутся свободные: иначе второй силос этого же теста и
         // соседнее рабочее дерево дерутся за штатные 11111 и 30000.
@@ -62,7 +73,8 @@ public sealed class SiloUnderTest : IAsyncDisposable
                 $"--{NotificationsHost.GatewayPortKey}={FreePort()}",
                 .. settings,
             ],
-            connectionString);
+            connectionString,
+            natsUrl);
 
         try
         {

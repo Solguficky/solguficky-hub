@@ -27,6 +27,14 @@ internal static class NotificationsSetup
                 "NOTIFICATIONS_DATABASE_URL",
                 database => ReferenceExpression.Create(
                     $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"))
+            // Шина реплики чужих фактов. WaitFor(nats) внутри BindConnection ждёт
+            // и применения топологии: сервис стартует, когда его durable уже
+            // заведены, а сам он их не заводит и без них падает.
+            .BindConnection<ProjectResource, NatsServerResource>(
+                context,
+                AppHostNames.Resources.Nats,
+                "NOTIFICATIONS_NATS_URL",
+                nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"))
             .BindEndpoint(
                 context,
                 AppHostNames.Resources.Loki,

@@ -326,10 +326,10 @@ meetups-format-check: dotnet-tools
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Порог числа тестов Notifications: 19 = unit + integration. Поднимается вручную
+# Порог числа тестов Notifications: 136 = unit + integration. Поднимается вручную
 # вместе с набором — добавил тест, обнови число здесь тем же изменением. Порог
 # держит исчезновение тестов из набора; частичный пропуск ловит --fail-skips.
-NOTIFICATIONS_TEST_THRESHOLD := "19"
+NOTIFICATIONS_TEST_THRESHOLD := "136"
 
 # Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers;
 # пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри

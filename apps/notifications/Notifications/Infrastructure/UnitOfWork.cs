@@ -53,7 +53,8 @@ public sealed class UnitOfWork : IAsyncDisposable
     /// <summary>Фиксирует операцию. Не вызван — транзакция откатится при разборе.</summary>
     public Task Commit(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
 
-    internal Task Execute(string sql, object parameters, CancellationToken cancellationToken) =>
+    /// <summary>Выполняет команду. Возвращает число затронутых строк.</summary>
+    internal Task<int> Execute(string sql, object parameters, CancellationToken cancellationToken) =>
         connection.ExecuteAsync(
             new CommandDefinition(sql, parameters, transaction, cancellationToken: cancellationToken));
 

@@ -1,0 +1,216 @@
+using Identity.V1;
+using Meetups.V1;
+using Notifications.Replica;
+using Notifications.Tests;
+using Shouldly;
+using Xunit;
+
+namespace Notifications.UnitTests.ReplicaTests;
+
+/// <summary>
+/// Разбор сообщения шины в значения реплики. Каждое нарушение контракта обязано
+/// стать ядом, а не исключением: исключение потребитель принял бы за отказ базы
+/// и возвращал бы сообщение в шину бесконечно.
+/// </summary>
+public class ReplicaMappingTests
+{
+    private static readonly string MeetupId = EventFactory.NewId();
+    private static readonly string IdentityId = EventFactory.NewId();
+
+    [Fact]
+    public void Meetup_ValidEvent_CarriesEnvelopeAndSnapshot()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 3);
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        fact.EventId.ShouldBe(Guid.Parse(message.EventId));
+        fact.MeetupId.ShouldBe(Guid.Parse(MeetupId));
+        fact.Version.ShouldBe(3);
+        fact.OccurredAt.ShouldBe(EventFactory.Committed.AddMinutes(3));
+        fact.Source.ShouldBe(ReplicaFeeds.MeetupsSource);
+        fact.State.Title.ShouldBe("Сходка");
+        fact.State.Lifecycle.ShouldBe("planned");
+        fact.State.Visibility.ShouldBe("visible");
+        fact.State.FirstPublishedAt.ShouldBe(EventFactory.Committed);
+        fact.State.Schedule.ShouldBe(
+            new ScheduleColumns("fixed", "day_start", new DateOnly(2026, 10, 15), new TimeOnly(19, 30), null, null));
+    }
+
+    [Fact]
+    public void Meetup_NeverPublished_LeavesFirstPublicationUnset()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 1);
+        message.State.ClearFirstPublishedAt();
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).State.FirstPublishedAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Meetup_NoDate_MapsToEmptySchedule()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 1);
+        message.State.Schedule = new Schedule { NoDate = new NoDate() };
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).State.Schedule.ShouldBe(ScheduleColumns.NoDate);
+    }
+
+    [Fact]
+    public void Meetup_TentativeInterval_KeepsBothEnds()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 1);
+        message.State.Schedule = new Schedule
+        {
+            Tentative = new DateValue
+            {
+                Interval = new LocalInterval
+                {
+                    Start = At(2026, 10, 15, 19, 0),
+                    End = At(2026, 10, 16, 2, 0),
+                },
+            },
+        };
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).State.Schedule.ShouldBe(
+            new ScheduleColumns(
+                "tentative",
+                "interval",
+                new DateOnly(2026, 10, 15),
+                new TimeOnly(19, 0),
+                new DateOnly(2026, 10, 16),
+                new TimeOnly(2, 0)));
+    }
+
+    [Theory]
+    [MemberData(nameof(BrokenMeetups))]
+    public void Meetup_ContractViolation_BecomesPoison(string violation, Action<MeetupEvent> breakIt)
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2);
+        breakIt(message);
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>(violation);
+    }
+
+    public static TheoryData<string, Action<MeetupEvent>> BrokenMeetups() => new()
+    {
+        { "event id", m => m.EventId = "not-a-uuid" },
+        { "meetup id", m => m.MeetupId = string.Empty },
+        { "zero version", m => m.Version = 0 },
+        { "occurred at", m => m.OccurredAt = "yesterday" },
+        { "state", m => m.State = null },
+        { "state id", m => m.State.Id = EventFactory.NewId() },
+        { "author", m => m.State.Author = string.Empty },
+        { "lifecycle", m => m.State.Lifecycle = MeetupLifecycle.Unspecified },
+        { "visibility", m => m.State.Visibility = MeetupVisibility.Unspecified },
+        { "first published", m => m.State.FirstPublishedAt = "never" },
+        { "schedule", m => m.State.Schedule = null },
+        { "schedule form", m => m.State.Schedule = new Schedule() },
+        { "precision", m => m.State.Schedule = new Schedule { Fixed = new DateValue() } },
+        {
+            "calendar date", m => m.State.Schedule = new Schedule
+            {
+                Fixed = new DateValue { Day = new CalendarDate { Year = 2026, Month = 2, Day = 30 } },
+            }
+        },
+        {
+            "local time", m => m.State.Schedule = new Schedule
+            {
+                Fixed = new DateValue { DayStart = At(2026, 10, 15, 24, 0) },
+            }
+        },
+    };
+
+    [Fact]
+    public void Meetup_OccasionUnknownToThisBuild_StillCarriesSnapshot()
+    {
+        // Новая ветка oneof — совместимое изменение контракта: сборка, которая
+        // её не знает, видит пустой повод, а снимок остаётся полным.
+        var message = EventFactory.Meetup(MeetupId, version: 4);
+        message.ClearOccasion();
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).Version.ShouldBe(4);
+    }
+
+    [Fact]
+    public void Identity_OccasionUnknownToThisBuild_StillCarriesSnapshot()
+    {
+        var message = EventFactory.Identity(IdentityId, version: 4);
+        message.ClearOccasion();
+
+        Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message))).Version.ShouldBe(4);
+    }
+
+    [Fact]
+    public void Meetup_NotProtobuf_BecomesPoison()
+    {
+        ReplicaMapping.Meetup(new byte[] { 0xFF, 0xFF, 0xFF }).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Meetup_EmptyPayload_BecomesPoison()
+    {
+        // Пустое тело разбирается protobuf'ом как сообщение со всеми полями по
+        // умолчанию; ядом его делает проверка конверта, а не парсер.
+        ReplicaMapping.Meetup(ReadOnlyMemory<byte>.Empty).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Identity_ValidEvent_CarriesRolesAndBlockMark()
+    {
+        var message = EventFactory.Identity(IdentityId, version: 2);
+        message.State.GlobalRoles.Add(GlobalRole.Admin);
+        message.State.GlobalRoles.Add(GlobalRole.Member);
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.IdentityId.ShouldBe(Guid.Parse(IdentityId));
+        fact.Version.ShouldBe(2);
+        fact.Source.ShouldBe(ReplicaFeeds.IdentitySource);
+        fact.GlobalRoles.ShouldBe(["admin", "member"]);
+        fact.Blocked.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Identity_Blocked_CarriesEmptyRoleSet()
+    {
+        var message = EventFactory.Identity(IdentityId, version: 5, blocked: true);
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Blocked.ShouldBeTrue();
+        fact.GlobalRoles.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [MemberData(nameof(BrokenIdentities))]
+    public void Identity_ContractViolation_BecomesPoison(string violation, Action<IdentityEvent> breakIt)
+    {
+        var message = EventFactory.Identity(IdentityId, version: 2);
+        breakIt(message);
+
+        ReplicaMapping.Identity(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>(violation);
+    }
+
+    public static TheoryData<string, Action<IdentityEvent>> BrokenIdentities() => new()
+    {
+        { "event id", m => m.EventId = "x" },
+        { "identity id", m => m.IdentityId = "x" },
+        { "negative version", m => m.Version = -1 },
+        { "occurred at", m => m.OccurredAt = string.Empty },
+        { "state", m => m.State = null },
+        { "state id", m => m.State.Id = EventFactory.NewId() },
+        { "unknown role", m => m.State.GlobalRoles.Add((GlobalRole)99) },
+        { "unspecified role", m => m.State.GlobalRoles.Add(GlobalRole.Unspecified) },
+    };
+
+    private static TFact Fact<TFact>(Decoded decoded)
+        where TFact : ReplicaEvent =>
+        decoded.ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<TFact>();
+
+    private static LocalDateTime At(int year, int month, int day, int hours, int minutes) =>
+        new()
+        {
+            Date = new CalendarDate { Year = year, Month = month, Day = day },
+            Time = new LocalTime { Hours = hours, Minutes = minutes },
+        };
+}
