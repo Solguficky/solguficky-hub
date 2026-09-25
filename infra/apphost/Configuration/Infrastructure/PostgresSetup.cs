@@ -9,7 +9,7 @@ internal static class PostgresSetup
         var postgres = context.Builder
             .AddPostgres(AppHostNames.Resources.Postgres)
             .WithImageTag("16-alpine")
-            .WithDataVolume("solguficky-postgres-data");
+            .WithDataVolume(DataVolumes.Name(context.Builder, "postgres-data"));
 
         // Базы принадлежат серверу, а не профилю: их жизненный цикл задаёт этот
         // setup, поэтому в графе они появляются через Publish, а не через AddInfrastructure.
