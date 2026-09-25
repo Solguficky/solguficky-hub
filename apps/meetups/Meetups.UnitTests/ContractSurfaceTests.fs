@@ -74,7 +74,7 @@ let ``The generated service lives under the meetups v1 package`` () =
     test <@ MeetupsService.Descriptor.FullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
-let ``Service exposes exactly the thirteen slice operations`` () =
+let ``Service exposes exactly the sixteen slice operations`` () =
     let actual =
         MeetupsService.Descriptor.Methods
         |> Seq.map (fun m -> m.Name)
@@ -97,6 +97,7 @@ let ``Service exposes exactly the thirteen slice operations`` () =
             "ListArchivedMeetups"
             "GetMeetup"
             "ListMeetupStates"
+            "CheckMeetupAuthority"
         ]
         |> set
 
@@ -150,6 +151,19 @@ let ``Cancelling a scheduled publication takes only the viewer and the id`` () =
     let actual = fieldNames CancelMeetupPublicationRequest.Descriptor
 
     test <@ actual = set [ "viewer"; "id"; "expected_version" ] @>
+
+/// Вопрос о праве не несёт сценария вызывающей стороны, а ответ — готового
+/// разрешения для кэша: решение передаёт статус, тело пустое (PER-224).
+[<Fact>]
+let ``The authority check asks about a meetup and answers with the status alone`` () =
+    let request = fieldNames CheckMeetupAuthorityRequest.Descriptor
+    let response = fieldNames MeetupAuthority.Descriptor
+
+    test
+        <@
+            request = set [ "viewer"; "id" ]
+            && response = Set.empty
+        @>
 
 /// Запрос сверяется целиком, а не «содержит page_token»: равенство множеств и
 /// есть утверждение о том, что viewer в служебной операции не появился.
