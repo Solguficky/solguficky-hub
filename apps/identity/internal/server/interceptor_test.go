@@ -372,7 +372,7 @@ func TestUnaryChainLogsSuccessOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := logs.sole(t)
-	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
+	assertRecord(t, rec, slog.LevelInfo, "rpc completed")
 	assertFrame(t, rec, frameWant{result: resultOK, code: codes.OK, operation: info.FullMethod})
 }
 
@@ -387,7 +387,7 @@ func TestStreamLoggingRecordsOutcome(t *testing.T) {
 		result  string
 		code    codes.Code
 	}{
-		{name: "success", err: nil, level: slog.LevelDebug, message: "rpc completed", result: resultOK, code: codes.OK},
+		{name: "success", err: nil, level: slog.LevelInfo, message: "rpc completed", result: resultOK, code: codes.OK},
 		{
 			name:    "unknown service",
 			err:     status.Error(codes.NotFound, "unknown service"),
@@ -471,7 +471,7 @@ func TestUnaryLoggingRecordsSuccess(t *testing.T) {
 	}
 
 	rec := logs.sole(t)
-	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
+	assertRecord(t, rec, slog.LevelInfo, "rpc completed")
 	assertFrame(t, rec, frameWant{
 		result:    resultOK,
 		code:      codes.OK,
@@ -638,7 +638,7 @@ func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {
 	}
 
 	rec := logs.sole(t)
-	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
+	assertRecord(t, rec, slog.LevelInfo, "rpc completed")
 	assertFrame(t, rec, frameWant{
 		result:    resultOK,
 		code:      codes.OK,
@@ -667,6 +667,9 @@ func TestUnaryLoggingOmitsUseCaseOnHealthEvenWhenHeaderPresent(t *testing.T) {
 	}
 
 	rec := logs.sole(t)
+	// Проба здоровья идёт каждые несколько секунд, поэтому её успех остаётся
+	// на debug и не попадает в dashboard при уровне по умолчанию.
+	assertRecord(t, rec, slog.LevelDebug, "rpc completed")
 	assertFrame(t, rec, frameWant{
 		result:    resultOK,
 		code:      codes.OK,

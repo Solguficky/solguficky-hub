@@ -8,9 +8,13 @@ require (
 	github.com/nats-io/nats-server/v2 v2.10.29
 	github.com/nats-io/nats.go v1.54.0
 	github.com/pressly/goose/v3 v3.27.3
+	go.opentelemetry.io/contrib/bridges/otelslog v0.19.0
 	go.opentelemetry.io/otel v1.44.0
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.20.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0
+	go.opentelemetry.io/otel/log v0.20.0
 	go.opentelemetry.io/otel/metric v1.44.0
+	go.opentelemetry.io/otel/sdk/log v0.20.0
 	go.opentelemetry.io/otel/sdk/metric v1.44.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
