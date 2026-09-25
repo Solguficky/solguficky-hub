@@ -4,7 +4,7 @@ using Notifications.Facts;
 using Notifications.Infrastructure;
 using Notifications.IntegrationTests.Infrastructure;
 using Notifications.Replica;
-using Notifications.Tests;
+using Notifications.TestKit;
 using Notifications.V1;
 using Npgsql;
 using Shouldly;
