@@ -36,7 +36,7 @@ Production deployment не обязан быть первым milestone; пор�
 - Identity, Meetups и Notifications ждут свою базу, применяют миграции при старте и получают строку подключения и динамический gRPC-порт от AppHost;
 - Telegram Bot ждёт здоровые Identity и Meetups и получает их proxy endpoints через `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
-- NATS поднимается в профилях `infra` и `hub`, но потребителя среди компонентов у шины пока нет: зелёный узел означает работающий брокер, а не работающую интеграцию;
+- NATS поднимается в профилях `infra` и `hub` на томе `solguficky-nats-data`, и AppHost на старте создаёт стримы и durable consumers ([каталог](integration.md#jetstream)), но потребителя среди компонентов у шины пока нет: зелёный узел означает работающий брокер со стримами, а не работающую интеграцию;
 - тестовая среда Telegram, `aspire publish` и production-топология не проверены; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 

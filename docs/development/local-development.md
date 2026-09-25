@@ -52,7 +52,7 @@ AppHost объявляет граф узлов и их связи, а профи
 
 Профиль `notifications` устроен так же, но зависимость от базы у него жёстче: в его базе лежат не только доменные таблицы, но и membership силоса Orleans, поэтому без строки подключения сервис не просто не слушает — он не поднимает силос вовсе. Миграции применяет тот же DbUp, и он же заводит таблицы Orleans. Порты силоса штатные и берутся из конфигурации: два профиля с Notifications одновременно на одной машине за них подерутся.
 
-Узел `nats` поднимается образом `nats:2.10-alpine` с включённым JetStream и защищён паролем из параметра `nats-password`. Две вещи ломают ожидания и стоят отдельной строки. Порт клиента назначает Aspire, а не 4222: `tools/nats-tester` по умолчанию идёт в `nats://localhost:4222`, поэтому адрес и учётные данные берутся из дашборда и передаются флагом `--nats-url`. Тома у шины нет, и JetStream держит store в `/tmp/nats/jetstream` внутри контейнера — сам сервер пишет об этом `Temporary storage directory used, data could be lost`. Для локального инструмента этого достаточно; durable consumers потребуют тома и решаются вместе с первым потребителем.
+Узел `nats` поднимается образом `nats:2.10-alpine` с включённым JetStream и защищён паролем из параметра `nats-password`. Две вещи ломают ожидания и стоят отдельной строки. Порт клиента назначает Aspire, а не 4222: `tools/nats-tester` по умолчанию идёт в `nats://localhost:4222`, поэтому адрес и учётные данные берутся из дашборда и передаются флагом `--nats-url`. JetStream держит store на томе `solguficky-nats-data`, поэтому стримы, сообщения и позиции durable переживают перезапуск AppHost. Streams и durable consumers создаёт сам AppHost, когда узел готов: состав — в [каталоге интеграций](../architecture/integration.md#jetstream), лог узла `nats` пишет `JetStream topology applied` с перечнем имён. Применение идемпотентно, но правку, которую JetStream на живом объекте не принимает, — storage стрима, переход retention в `workqueue` или из него, deliver policy durable (проверено на nats-server 2.10.29; `limits` ↔ `interest` сервер принимает) — сервер отвергает, и лог узла пишет `JetStream topology was not applied`. Узел при этом остаётся `Healthy`, пока его не ждёт ни один потребитель, поэтому после правки топологии лог смотрят глазами. Лечится удалением тома `solguficky-nats-data`, а с ним и всех сообщений шины. Имя тома одно на машину, как у PostgreSQL: два одновременных запуска с NATS из разных деревьев или вместе с `just contour-test` пишут в один store, а последовательные наследуют сообщения и позиции durable друг друга.
 
 `notifications-observability` — отдельный локальный профиль для разбора молчащего reminder'а: Aspire поднимает Loki 3.7.0 и Grafana 13.1.6 вместе с Notifications, а сервис отправляет логи одновременно в Aspire Dashboard и Loki через OTLP/HTTP. Обычные профили этих контейнеров не поднимают. Адрес Grafana выдаёт Aspire (`aspire describe --format Json`), панель **Notifications reminders** и источник Loki загружаются автоматически из `infra/observability/`. Для агента в рабочем дереве:
 
@@ -147,11 +147,18 @@ just aspire hub -- --skip-services telegram-bot
 
 Запуск шёл в продакшн-среде Telegram, но **не токеном бота сообщества**: под `Parameters:telegram-bot-token` на машине владельца лежит токен отдельного локального бота, созданного для разработки. Поэтому второго polling-экземпляра у бота сообщества не появилось, а писать такому боту некому, кроме самого разработчика. Это не тестовый контур [ADR-046](../decisions/ADR-046-telegram-test-contour.md): аккаунты в продакшн-среде настоящие.
 
+Прогон PER-208 от 2026-09-24 — топология JetStream, профиль `infra`, проверка `tools/nats-tester`:
+
+16. На старте узла `nats` AppHost создаёт стримы `MEETUPS_EVENTS` и `IDENTITY_EVENTS` и четыре durable, лог пишет `JetStream topology applied`. Store лежит в `/var/lib/nats/jetstream` на томе, а не во временном каталоге. `nats-tester streams` показывает retention `limits`, storage `file`, `max_age` 7 дней и окно дедупликации 2 минуты.
+17. Четыре публикации дают три сообщения в стриме: второй `publish` того же события с `Nats-Msg-Id = event_id` сервер отбрасывает. Повтор с `--no-msg-id` доходит до потребителя, и `nats-tester consume` помечает его `DUPLICATE` по `event_id`.
+18. Событие, опубликованное, пока потребитель выключен, приходит на следующем `consume` одно: уже подтверждённые не перечитываются. Durable `notifications-meetups-events`, у которого потребителя ещё нет, копит их как `pending`.
+19. После `aspire stop` и повторного старта на том же томе стрим сохраняет сообщения, durable — позицию подтверждения, а повторное применение топологии проходит без ошибок.
+
 Более ранние прогоны, которые этот заход не повторял и не отменяет:
 
-16. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
-17. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-18. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
+20. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
+21. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+22. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
 
@@ -161,7 +168,7 @@ just aspire hub -- --skip-services telegram-bot
 
 У самого узла бота понятия готовности в терминах AppHost нет: он не слушает порт, а ходит наружу long polling, поэтому пробы у него не будет и `WaitFor` на него не ставит никто. Его готовность читается собственной строкой лога, и «узел `Running`» подтверждением работы в Telegram не является.
 
-Шина поднимается, но не используется: ни один компонент в NATS не пишет и из него не читает, поэтому зелёный узел `nats` на дашборде означает работающий брокер, а не работающую интеграцию. Пригодность `aspire publish` для production-like k3s и сама production-топология не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+Шина поднимается с топологией, но не используется: ни один компонент в NATS не пишет и из него не читает, поэтому зелёный узел `nats` на дашборде означает работающий брокер со стримами, а не работающую интеграцию. Пункты 16–19 проверены ручным потребителем `nats-tester`, а не Notifications. Пригодность `aspire publish` для production-like k3s и сама production-топология не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
 
 ## Повторная проверка
 

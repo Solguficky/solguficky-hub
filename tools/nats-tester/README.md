@@ -1,6 +1,6 @@
 # NATS Tester
 
-CLI для ручной проверки сообщений на шине: публикует Protobuf-сообщение из JSON-файла, подписывается на subject и декодирует то, что по нему приходит.
+CLI для ручной проверки сообщений на шине: публикует Protobuf-сообщение из JSON-файла, подписывается на subject и декодирует то, что по нему приходит, читает durable consumer JetStream и показывает топологию стримов.
 
 ## Текущее состояние
 
@@ -55,8 +55,10 @@ nats-tester --help
 
 | Команда | Что делает |
 |---|---|
-| `publish FILE --subject S` | Читает JSON, кодирует в Protobuf по типу из реестра, публикует в NATS |
+| `publish FILE --subject S` | Читает JSON, кодирует в Protobuf по типу из реестра, публикует в NATS с заголовком `Nats-Msg-Id` = `event_id`; `--msg-id` задаёт свой, `--no-msg-id` снимает |
 | `subscribe [--subject S]` | Слушает subject (по умолчанию `>`), декодирует известные типы, неизвестные показывает как сырые |
+| `consume --stream S --durable D [--drain]` | Читает существующий durable JetStream, подтверждает каждое сообщение и помечает повтор по `event_id`; `--drain` выходит, когда читать нечего |
+| `streams` | Показывает стримы, их retention и окно дедупликации и позиции durable consumers |
 | `validate FILE --event-type S` | Проверяет, что JSON соответствует схеме, без обращения к сети |
 | `list-types` | Показывает зарегистрированные subjects |
 | `check` | Проверяет наличие `nats` CLI и то, что сгенерированные классы проходят проверки гейта |
@@ -124,6 +126,32 @@ just nats-tester-check
 ```
 
 Проверка сверяет реестр и состав `nats_tester/generated/` со схемами; тем же рецептом краснеет `just verify`. Она же держит два соглашения, которые иначе жили бы только в прозе: subjects домена фактов выводятся из веток его `oneof occasion` и сверяются с реестром в обе стороны, а конверт события у всех таких доменов совпадает по номерам, типам и смыслу пяти полей. Второе нигде больше не проверяется: раздельные определения в разных пакетах не видят одновременно ни `buf lint`, ни `buf breaking`, ни сборка потребителя.
+
+## Проверка топологии JetStream
+
+Стримы и durable consumers создаёт AppHost на старте узла `nats` ([каталог интеграций](../../docs/architecture/integration.md#jetstream)). У инструмента свои durable — `nats-tester-meetups-events` и `nats-tester-identity-events`, — поэтому ручная проверка не сдвигает позицию Notifications.
+
+Порт и пароль шины назначает Aspire: порт берётся из дашборда или `aspire describe nats`, пароль — параметр `nats-password` в user secrets AppHost. Адрес собирается как `nats://nats:<пароль>@localhost:<порт>` и передаётся флагом `--nats-url` каждой команде ниже.
+
+```bash
+# Топология применена: стримы, retention, окно дедупликации, позиции durable
+nats-tester streams
+
+# Дважды с одним Nats-Msg-Id — в стриме одно сообщение: повтор отбросил сервер
+nats-tester publish created.json --subject events.meetups.meetup_created
+nats-tester publish created.json --subject events.meetups.meetup_created
+
+# Повтор без заголовка доходит до потребителя
+nats-tester publish created.json --subject events.meetups.meetup_created --no-msg-id
+
+# Потребитель: второе сообщение с тем же event_id помечается DUPLICATE
+nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events --drain
+
+# Опубликовать, пока потребитель выключен, и прочитать снова: придёт только новое
+nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events --drain
+```
+
+Множество увиденных `event_id` у `consume` живёт в памяти одного запуска. Настоящий потребитель держит его в своём хранилище той же транзакцией, что и эффект события; инструмент показывает правило, а не реализует его хранилище.
 
 ## Как это работает
 
