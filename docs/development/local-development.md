@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop, полный `hub` с Telegram Bot — в продакшн-среде Telegram отдельным локальным ботом; тестовая среда Telegram и production-like публикация не проверены.
+> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop, полный `hub` с Telegram Bot и сценарий первого среза целиком — в продакшн-среде Telegram отдельным локальным ботом; тестовая среда Telegram и production-like публикация не проверены.
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -162,11 +162,22 @@ just aspire hub -- --skip-services telegram-bot
 
 Разбор каждого кадра и заведённые по расхождениям задачи — в комментарии к [PER-174](https://linear.app/anticnvm/issue/per-174).
 
-Более ранние прогоны, которые прогоны PER-228, PER-208 и PER-174 не повторяли и не отменяют:
+Прогон PER-5 от 2026-09-25 — [сценарий первого среза](../architecture/first-slice.md#сценарий) целиком на полном `hub` с тем же локальным ботом; Telegram-клиент вёл владелец с двух аккаунтов, администратора и солегуфика. Среда та же, что у PER-228.
 
-23. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
-24. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
-25. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
+23. Юзкейс проходит без Telegram: сценарий `grpcurl` через reflection и proxy endpoint выдаёт роли служебными RPC Identity, заводит черновик, публикует сходку и открывает её от лица `member` — 12 проверок из 12. Повтор `CreateMeetupDraft` с тем же id и повтор `PublishMeetup` возвращают прежнюю версию, в журнале сходки одно `meetup_created` и одно `meetup_published`. Сценарий приложен к [PER-5](https://linear.app/anticnvm/issue/per-5).
+24. Отрицательная половина держится и через `grpcurl`, и через бота. До публикации `GetMeetup` от лица `member` отвечает `NotFound`, побайтово совпадающим с ответом на несуществующий id, а `ListVisibleMeetups` черновика не содержит. В клиенте `/start m_<токен>` скрытой и несуществующей сходки дают одинаковое «Сходка не найдена или больше недоступна». Настоящая причина остаётся в логе Meetups: `visibility` / `not_visible` у скрытой, `invariant` / `missing` у несуществующей. Payload — `m_` и 22 символа base64url, а не сырой UUID: `/start m_<uuid>` бот принимает за обычный `/start`.
+25. Новый профиль с ником из whitelist получает `member` на первом `/start`, и солегуфик сразу видит список. После публикации сходка появляется в его списке, карточка открывается и кнопкой, и прямой ссылкой.
+26. Опубликованная сходка переживает `aspire resource <имя> restart` для Identity и Meetups, а затем `aspire stop` и новый `aspire start` на том же томе: состояние и версия прежние, строка одна, в списке солегуфика она один раз. Брошенная на вопросе о дате форма после рестарта бота отвечает «вопрос устарел», как и задумано [ADR-030](../decisions/ADR-030-telegram-bot.md). Сам черновик в Meetups цел, но из интерфейса недостижим: «Управление сходками» предлагает только создать новую ([PER-353](https://linear.app/anticnvm/issue/per-353)).
+27. Цепочка одного `request_id` собирается не во всех трёх сервисах. Для открытия карточки по deep link фильтр в Structured logs находит одну запись Meetups; в консольном логе запись есть у бота и нет у Identity. Identity и бот в Structured logs не попадают вовсе, а успешную запись границы пишут на `debug`. Раздел «Сквозной идентификатор в логах» выше этим прогоном не подтверждён ([PER-351](https://linear.app/anticnvm/issue/per-351)).
+28. Посреди прогона PostgreSQL ушёл в immediate shutdown по той же причине, что в PER-174: второй запуск на общем томе удалил `postmaster.pid`. Aspire контейнер сам не поднял — помогли `aspire resource postgres start` и рестарт зависимых сервисов; данные уцелели ([PER-340](https://linear.app/anticnvm/issue/per-340)).
+
+Разбор и заведённые по расхождениям задачи — в комментарии к [PER-5](https://linear.app/anticnvm/issue/per-5).
+
+Более ранние прогоны, которые прогоны PER-228, PER-208, PER-174 и PER-5 не повторяли и не отменяют:
+
+29. Профиль `identity` завершает `identity-proto` и `identity-build` с кодом 0 и доводит Identity до `Healthy`; NATS в этом профиле не поднимается. Identity запущен собранным бинарником из `apps/identity/bin`, получает `IDENTITY_DATABASE_URL` с `sslmode=disable` и слушает назначенный Aspire порт, а после `aspire stop` процесса `identity.exe` в системе не остаётся.
+30. Профиль `meetups` после PER-58 поднимает здоровые PostgreSQL, `meetups-db` и Meetups. Полный интеграционный набор с Docker/Testcontainers проходит 53 теста без пропусков.
+31. Профиль `notifications` после PER-212 поднимает здоровые PostgreSQL, `notifications-db` и Notifications: в логах видно применение миграций DbUp до подъёма силоса, затем `Orleans Silo started.`, а проба отвечает `SERVING` и через proxy endpoint, и напрямую.
 
 ## Неподтверждённая граница
 
