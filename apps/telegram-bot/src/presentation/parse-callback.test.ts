@@ -157,6 +157,46 @@ describe("callback parser", () => {
   });
 });
 
+describe("past meetup date callbacks", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+
+  it("carries the confirmed date back in the typed form, within the byte budget", () => {
+    const data = `v1:manage:past:${token}:e:210920261930`;
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(data)).toEqual({
+      kind: "manage-confirm-past-schedule",
+      token,
+      editing: true,
+      value: "21.09.2026 19:30",
+    });
+    expect(parseCallback(`v1:manage:past:${token}:c:210920261930`)).toEqual({
+      kind: "manage-confirm-past-schedule",
+      token,
+      editing: false,
+      value: "21.09.2026 19:30",
+    });
+  });
+
+  it("parses the retry within the form mode it came from", () => {
+    expect(parseCallback(`v1:manage:past-retry:${token}:c`)).toEqual({
+      kind: "manage-retry-past-schedule",
+      token,
+      editing: false,
+    });
+  });
+
+  it("refuses a mangled date or mode", () => {
+    for (const data of [
+      `v1:manage:past:${token}:e:2109202619`,
+      `v1:manage:past:${token}:x:210920261930`,
+      `v1:manage:past:${token}:e:21.09.2026`,
+      `v1:manage:past-retry:${token}:x`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+});
+
 describe("notification callbacks", () => {
   const token = "AZLzpLXGfY6fChssPU5fYA";
 

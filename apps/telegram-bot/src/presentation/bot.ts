@@ -30,6 +30,7 @@ import type { LogFields, Logger } from "../logging.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
+  MeetupSchedule,
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
@@ -575,6 +576,7 @@ async function handleMessage(
           "published",
           "meetup-updated",
           "edit-unavailable",
+          "confirm-past-schedule",
         ],
         okMessage: "meetup form answer handled",
         rejectedMessage: "meetup form answer rejected",
@@ -689,6 +691,7 @@ async function handleMessage(
       case "ask":
       case "edit-ask":
       case "preview":
+      case "confirm-past-schedule":
       case "published":
       case "ask-publish-moment":
       case "publication-scheduled":
@@ -764,6 +767,15 @@ async function handleCallback(
       return;
     }
     useCase = callbackUseCase(action.kind);
+    // Вопрос о прошедшей дате задают и в форме создания, и в правке: сценарий
+    // тот же, что у ответа текстом, который его породил.
+    if (
+      (action.kind === "manage-confirm-past-schedule" ||
+        action.kind === "manage-retry-past-schedule") &&
+      !action.editing
+    ) {
+      useCase = "create_meetup";
+    }
     await ctx.answerCallbackQuery();
     const retryCallback =
       action.kind === "outdated"
@@ -1195,7 +1207,8 @@ async function handleCallback(
       action.kind === "manage-hold" ||
       action.kind === "manage-publish" ||
       action.kind === "manage-publish-later" ||
-      action.kind === "manage-unschedule"
+      action.kind === "manage-unschedule" ||
+      action.kind === "manage-retry-past-schedule"
     ) {
       const meetupId = tokenToUuid(action.token);
       const current = await runtime.dispatcher.execute({
@@ -1257,6 +1270,20 @@ async function handleCallback(
           {
             kind: "edit-ask",
             field: action.field,
+            meetup,
+          },
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      } else if (action.kind === "manage-retry-past-schedule") {
+        // Кадр подтверждения одноразовый: после любого ответа его кнопки
+        // снимаются, иначе старое «Сохранить дату» откатило бы дату позже.
+        await clearCallbackKeyboard(ctx);
+        await renderFormResult(
+          ctx,
+          {
+            kind: action.editing ? "edit-ask" : "ask",
+            field: "schedule",
             meetup,
           },
           questions,
@@ -1374,6 +1401,35 @@ async function handleCallback(
         ok: ["meetup-state-changed", "meetup-state-unchanged"],
         okMessage: "meetup state handled",
         rejectedMessage: "meetup state rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (action.kind === "manage-confirm-past-schedule") {
+      // Кнопки снимаются до команды: второе нажатие того же кадра или нажатие
+      // после «Ввести другую» не должно переписать дату ещё раз.
+      await clearCallbackKeyboard(ctx);
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: action.editing ? "update-meetup-field" : "set-meetup-field",
+        field: "schedule",
+        value: action.value,
+        meetupId,
+        confirmedPast: true,
+        ...rpcCall(ctx, useCase),
+      });
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
+      outcome = screenBoundary(result, {
+        ok: ["ask", "edit-ask", "meetup-updated", "edit-unavailable"],
+        okMessage: "past meetup date confirmed",
+        rejectedMessage: "past meetup date rejected",
         useCase,
         meetupId,
       });
@@ -2577,6 +2633,13 @@ function replyQuestion(ctx: UpdateContext, question: QuestionMessage) {
   });
 }
 
+/// Прошедшая дата цифрами `ДДММГГГГЧЧММ` для данных кнопки подтверждения;
+/// обратно её собирает разбор кнопки.
+function pastScheduleDigits(value: MeetupSchedule): string {
+  const pad = (part: number, width = 2) => String(part).padStart(width, "0");
+  return `${pad(value.day)}${pad(value.month)}${pad(value.year, 4)}${pad(value.hours)}${pad(value.minutes)}`;
+}
+
 async function renderFormResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
@@ -2666,8 +2729,32 @@ async function renderFormResult(
     evictOldestQuestions(questions);
     return;
   }
+  if (result.kind === "confirm-past-schedule") {
+    // Кадр подтверждения, а не отказ: сходку с прошедшей датой завести можно,
+    // но она сразу окажется в архиве, и чаще такая дата — опечатка (PER-342).
+    const token = uuidToToken(result.meetup.id);
+    const mode = result.editing === true ? "e" : "c";
+    const value = formatLocalMoment(result.schedule);
+    await ctx.reply(
+      `Дата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Ближайших сходках». Сохранить её?`,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(
+            "Сохранить дату",
+            `v1:manage:past:${token}:${mode}:${pastScheduleDigits(result.schedule)}`,
+          )
+          .row()
+          .text("Ввести другую", `v1:manage:past-retry:${token}:${mode}`),
+      },
+    );
+    return;
+  }
   if (result.kind === "meetup-updated") {
-    await ctx.reply("Изменение сохранено.");
+    await ctx.reply(
+      result.archived === true
+        ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Ближайших сходках»."
+        : "Изменение сохранено.",
+    );
     await renderMeetupCard(
       ctx,
       { kind: "meetup-card", meetup: result.meetup },
@@ -2765,10 +2852,16 @@ async function renderFormResult(
   if (result.kind === "published") {
     // Результат нажатия — правкой предпросмотра: одновременный двойной клик
     // пишет тот же текст в то же сообщение, и Telegram отвечает «not modified».
+    // С прошедшей датой сходка сразу в архиве: ответ не обещает её в списке
+    // «Ближайших», где её нет (PER-342).
     const meetupId = result.meetup.id;
+    const created =
+      result.archived === true
+        ? "Сходка создана. Её дата уже прошла, поэтому она сразу в архиве, а не в «Ближайших сходках»."
+        : "Сходка создана. Теперь она видна в списке.";
     await editScreen(
       ctx,
-      `Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
+      `${created}\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
       new InlineKeyboard()
         .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
         .text("К управлению", "v1:manage:menu"),
@@ -2861,6 +2954,8 @@ function callbackUseCase(
     | "manage-publish-later"
     | "manage-unschedule"
     | "manage-confirm-unschedule"
+    | "manage-confirm-past-schedule"
+    | "manage-retry-past-schedule"
     | "manage-materials"
     | "begin-attach-material"
     | "confirm-attach-material"
@@ -2888,6 +2983,8 @@ function callbackUseCase(
     case "manage-publish-later":
     case "manage-unschedule":
     case "manage-confirm-unschedule":
+    case "manage-confirm-past-schedule":
+    case "manage-retry-past-schedule":
     case "manage-materials":
     case "begin-attach-material":
     case "confirm-attach-material":

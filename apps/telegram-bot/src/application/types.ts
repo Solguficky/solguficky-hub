@@ -1,6 +1,7 @@
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
+  MeetupSchedule,
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
@@ -56,6 +57,9 @@ export type ExecuteRequest =
       field: FormField;
       value: string;
       meetupId: string;
+      // Дату раньше сегодняшнего дня сообщества человек уже подтвердил:
+      // вопрос о прошедшей дате второй раз не задаётся (PER-342).
+      confirmedPast?: true;
       requestId?: string;
       useCase?: string;
     }
@@ -65,6 +69,7 @@ export type ExecuteRequest =
       field: FormField;
       value: string;
       meetupId: string;
+      confirmedPast?: true;
       requestId?: string;
       useCase?: string;
     }
@@ -199,9 +204,23 @@ export type ExecuteResult =
       error?: string;
     }
   | { kind: "preview"; meetup: MeetupSnapshot }
+  // Введённая дата раньше сегодняшнего дня сообщества: сходка с ней сразу
+  // уйдёт в архив. Команда в Meetups не отправлена и ждёт подтверждения.
+  | {
+      kind: "confirm-past-schedule";
+      meetup: MeetupSnapshot;
+      schedule: MeetupSchedule;
+      editing?: true;
+    }
   // `repeated` — сходка была видна уже в перечитанном снимке: Meetups принял
-  // повтор без события, и нового факта публикации нет (E-09).
-  | { kind: "published"; meetup: MeetupSnapshot; repeated?: true }
+  // повтор без события, и нового факта публикации нет (E-09). `archived` —
+  // дата сходки раньше сегодняшнего дня сообщества, и в «Ближайших» её нет.
+  | {
+      kind: "published";
+      meetup: MeetupSnapshot;
+      repeated?: true;
+      archived?: true;
+    }
   | {
       kind: "ask-publish-moment";
       meetup: MeetupSnapshot;
@@ -211,7 +230,7 @@ export type ExecuteResult =
   // Назначить публикацию нельзя в текущем состоянии сходки: она уже
   // опубликована или отменена (FAILED_PRECONDITION). Снимок — перечитанный.
   | { kind: "publication-unavailable"; meetup: MeetupSnapshot }
-  | { kind: "meetup-updated"; meetup: MeetupSnapshot }
+  | { kind: "meetup-updated"; meetup: MeetupSnapshot; archived?: true }
   | {
       kind: "meetup-state-changed";
       action: MeetupStateAction;
