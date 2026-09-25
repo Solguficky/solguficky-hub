@@ -1,9 +1,12 @@
 package auction.contracts
 
-import auction.v1.auction_events.{BidPlaced, LotEvent, ManualBid, ProxyBid}
-import auction.v1.auction_service.AuctionService
+import auction.v1.auction_events.{BidPlaced, LotEvent, LotState, ManualBid, ProxyBid, SessionState}
+import auction.v1.auction_service.{AuctionService, LotSnapshot}
+import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
+
+import scala.jdk.CollectionConverters.*
 
 /**
  * Держит проверяемой кодогенерацию собственного контракта аукциона, как `IdentityContractSpec` держит чужой.
@@ -33,6 +36,37 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
 
     "leaves the occasion unset on an event that carries none" in {
       LotEvent.parseFrom(LotEvent(eventId = "e", lotId = "l", version = 1).toByteArray).occasion.isEmpty shouldBe true
+    }
+
+    // Между лотами финала активного лота нет; `""` в этом поле читалось бы как
+    // идентификатор лота, которого нет.
+    "keeps the active lot absent between the lots of the final after a round trip" in {
+      val between = SessionState(id = "s").withInFinal(SessionState.Final(order = Seq("l")))
+
+      SessionState.parseFrom(between.toByteArray).status.inFinal.flatMap(_.activeLotId) shouldBe None
+    }
+
+    // Снимок факта на шине и снимок чтения — два определения с обещанием «номера
+    // полей совпадают». Ни buf, ни гейт nats-tester их не сравнивают: до этого
+    // теста зеркальность держалась на комментарии в схеме.
+    "keeps the lot state of the bus aligned with the read snapshot field for field" in {
+      def shape(descriptor: Descriptor): Map[Int, (String, String)] =
+        descriptor.getFields.asScala.map { field =>
+          val typeName = field.getType match {
+            case FieldDescriptor.Type.MESSAGE => field.getMessageType.getFullName
+            case FieldDescriptor.Type.ENUM => field.getEnumType.getFullName
+            case other => other.name
+          }
+          field.getNumber -> (field.getName, typeName)
+        }.toMap
+
+      val state = shape(LotState.javaDescriptor)
+      val snapshot = shape(LotSnapshot.javaDescriptor)
+      val reservedByState = LotState.javaDescriptor.toProto.getReservedRangeList.asScala
+        .flatMap(range => range.getStart until range.getEnd)
+
+      state.keySet.foreach(number => state(number) shouldBe snapshot(number))
+      (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
     }
 
     // Серверный трейт генерирует pekko-grpc поверх того же ScalaPB (ADR-048).

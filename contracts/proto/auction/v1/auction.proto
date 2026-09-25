@@ -22,8 +22,8 @@ message Money {
   string currency = 2;
 }
 
-// Trading configuration of a lot. It is set when the lot enters trading and does
-// not change afterwards.
+// Trading configuration of a lot. LotScheduled sets it and may replace it until
+// the lot enters trading; from LotOpened on it never changes.
 message LotConfig {
   // ISO 4217 alphabetic code shared by every amount of the lot.
   string currency = 1;
@@ -73,6 +73,20 @@ message AntiSnipe {
 
   // How many extensions the lot may use in total. 0 is a real value: never extend.
   int32 max_extensions = 3;
+}
+
+// A lot that exists and belongs to its session, with no trading conditions yet.
+// It carries nothing: the session is in the envelope, and the config is unset.
+message LotDraft {}
+
+// A lot with checked trading conditions, waiting to be opened. The conditions
+// are the config next to the status and are not repeated here; this carries only
+// what the config does not - the starting price. A deadline is not here either:
+// it belongs to the session and reaches the lot when the lot is opened. Bids are
+// not accepted.
+message LotSchedule {
+  // The price trading opens at. Its currency is the currency of the config.
+  Money starting_price = 1;
 }
 
 // A lot in trading: bids are accepted.
@@ -130,6 +144,81 @@ message LotSale {
 
   // RFC 3339 instant in UTC: the server time the sale was decided.
   string sold_at = 4;
+}
+
+// Configuration of a trading session: the format of the auction expressed as
+// values, not as branches. SessionScheduled sets it and may replace it until
+// prebidding starts; from PrebiddingStarted on it never changes.
+message SessionConfig {
+  // The online phase. Unset is a real value: a format without an online phase.
+  // It is then absent, not empty.
+  OnlinePhase online_phase = 1;
+
+  // How many blocks the live final has: 0 or 1. 0 is a real value: no final.
+  // The session knows one final, so a larger number is refused as an invalid
+  // configuration rather than accepted silently.
+  int32 final_blocks = 2;
+
+  ClosingPolicy closing_policy = 3;
+
+  // Values the session fills into the conditions of a lot that a ScheduleLot
+  // leaves unset. They are applied at that moment: a later change of the defaults
+  // does not reach a lot already scheduled.
+  LotDefaults lot_defaults = 4;
+}
+
+// The online phase of a session: two instants, not a duration, because the
+// scheduler needs points on the time line to start and to end the prebidding.
+message OnlinePhase {
+  // RFC 3339 instant in UTC: when the prebidding starts.
+  string opens_at = 1;
+
+  // RFC 3339 instant in UTC: when the online phase ends. It is the one source of
+  // the common deadline of the lots: a lot has no deadline of its own and receives
+  // this one when it is opened, if closes_lots is set. Unset when the phase ends on
+  // a command rather than by time; it is then absent, not empty.
+  optional string closes_at = 2;
+
+  // Whether the end of the online phase closes the lots. false is a real value:
+  // the lots stay open and a person closes them.
+  bool closes_lots = 3;
+}
+
+// Who closes the lots. Exactly one is set, and an empty oneof is not a value.
+message ClosingPolicy {
+  oneof policy {
+    ClosingByAuctioneer by_auctioneer = 1;
+    ClosingByDeadline by_deadline = 2;
+    MixedClosing mixed = 3;
+  }
+}
+
+// Every lot is closed by the auctioneer.
+message ClosingByAuctioneer {}
+
+// Every lot is closed by its deadline.
+message ClosingByDeadline {}
+
+// The online phase and the final are closed differently. Only the online side is
+// a parameter.
+message MixedClosing {
+  // Whether the lots of the online phase close by deadline. false is a real value.
+  bool online_by_deadline = 1;
+}
+
+// Defaults for the trading conditions of a lot. The fields are those of LotConfig
+// with the same numbers so that the two stay readable side by side, but this is
+// not a config: nothing trades on it, and it is a value of the session, not of a
+// lot.
+message LotDefaults {
+  // ISO 4217 alphabetic code.
+  string currency = 1;
+
+  StepPolicy step_policy = 2;
+  AntiSnipe anti_snipe = 3;
+
+  // false is a real value: proxy limits are disabled unless a lot says otherwise.
+  bool proxy_enabled = 4;
 }
 
 // Phase of a lot in trading. The format of the session is not visible here: the

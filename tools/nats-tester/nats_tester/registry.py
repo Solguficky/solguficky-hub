@@ -10,12 +10,16 @@
 собираются как payload: их импортируют схемы событий своих доменов, и без них
 те не импортируются.
 
-У Meetups, Identity и Auction subject называет повод, а сообщение на всех поводах
-домена одно: повод живёт и в ветке `oneof` тоже, поэтому потребитель на
-`events.meetups.>` или `events.identity.>` разбирает ветку, а не строку
-subject'а. Имя subject'а — префикс домена плюс имя ветки `oneof occasion`, и
-это соответствие проверяет `gate.subject_problems()`: до него оно держалось
-на слове в этом комментарии.
+У Meetups, Identity и Auction subject называет повод, и повод живёт в ветке
+`oneof` тоже, поэтому потребитель на `events.meetups.>` или `events.identity.>`
+разбирает ветку, а не строку subject'а. Имя subject'а — префикс домена плюс имя
+ветки `oneof occasion`, и это соответствие проверяет `gate.subject_problems()`:
+до него оно держалось на слове в этом комментарии.
+
+У Meetups и Identity сообщение на всех поводах домена одно. У Auction их два —
+`LotEvent` у поводов лота и `SessionEvent` у поводов сессии — под одним
+префиксом `events.auction.`, поэтому там тип сообщения читается из этого реестра
+по subject'у до разбора ветки, а не после.
 """
 
 from typing import Type
@@ -54,6 +58,19 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.lot_withdrawn': auction_events_pb2.LotEvent,
     'events.auction.lot_held_for_final': auction_events_pb2.LotEvent,
     'events.auction.lot_resumed': auction_events_pb2.LotEvent,
+    'events.auction.lot_drafted': auction_events_pb2.LotEvent,
+    'events.auction.lot_scheduled': auction_events_pb2.LotEvent,
+    'events.auction.session_scheduled': auction_events_pb2.SessionEvent,
+    'events.auction.lot_added': auction_events_pb2.SessionEvent,
+    'events.auction.lot_removed': auction_events_pb2.SessionEvent,
+    'events.auction.prebidding_started': auction_events_pb2.SessionEvent,
+    'events.auction.prebidding_deadline_reached': auction_events_pb2.SessionEvent,
+    'events.auction.prebidding_ended': auction_events_pb2.SessionEvent,
+    'events.auction.final_lineup_frozen': auction_events_pb2.SessionEvent,
+    'events.auction.final_started': auction_events_pb2.SessionEvent,
+    'events.auction.final_lot_activated': auction_events_pb2.SessionEvent,
+    'events.auction.final_lot_completed': auction_events_pb2.SessionEvent,
+    'events.auction.session_finished': auction_events_pb2.SessionEvent,
 }
 
 COMMAND_TYPES: dict[str, Type[Message]] = {}
