@@ -38,7 +38,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
 - `tools/contour/` — проверки сквозного контура. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта контура. Его вызывают `just contour-contracts-check` и CI.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
-- `tools/docs/` — проверка номеров ADR и RFC. Сейчас это `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога. Его вызывают `just check-document-numbers` и джоба `document-numbers` в CI.
+- `tools/docs/` — механические проверки каталогов ADR и RFC. Сейчас их две. `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога; его вызывают `just check-document-numbers` и джоба `document-numbers` в CI. `check-adr-applicability.sh`: у не-Active ADR баннер применимости стоит первой строкой после заголовка и совпадает со строкой индекса; его вызывают `just check-adr-applicability` и джоба `adr-applicability` в CI.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
 - `.rulesync/` — источник правды по MCP-серверам и командам агента: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из `.rulesync/mcp.jsonc`, а `.claude/commands/` и `.opencode/commands/` — из `.rulesync/commands/`.
 - `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений; единственный сервис репозитория с закоммиченными сгенерированными классами. Проверку держит `python -m nats_tester.gate`: импорт классов, состав генерации против схем, согласие реестра. Её вызывают `just nats-tester-check` и джоба `nats-tester` в CI; джоба дополнительно перегенерирует классы закреплённым `protoc` и падает на расхождении со схемой.
@@ -91,6 +91,9 @@ just check-published-pages
 
 # Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
 just check-document-numbers
+
+# Применимость не-Active ADR в индексе совпадает с баннером в самом файле
+just check-adr-applicability
 
 # Весь модуль contracts/proto компилируется, включая домен без потребителя
 just contracts-build

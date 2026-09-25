@@ -586,3 +586,20 @@ jobs:
         run: sh tools/docs/check-document-numbers.sh
       - name: Duplicate and missing-index cases fail with paths
         run: sh tools/docs/check-document-numbers-test.sh
+
+  # Без path-фильтра: применимость живёт в индексе и в баннере файла, и правка
+  # одного места без другого расходится ровно так же, как правка обоих сразу.
+  adr-applicability:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Джоба читает дерево и запускает из него же скрипты. Токен ей не нужен:
+      # права сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Non-Active ADR banners match the index
+        run: sh tools/docs/check-adr-applicability.sh
+      - name: Missing and mismatched banners fail with paths
+        run: sh tools/docs/check-adr-applicability-test.sh
