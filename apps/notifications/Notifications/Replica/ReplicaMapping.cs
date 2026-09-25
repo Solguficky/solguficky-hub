@@ -15,9 +15,10 @@ namespace Notifications.Replica;
 /// потребитель, а не стек вызовов.
 ///
 /// Повод (<c>occasion</c>) реплике не нужен: она пишет снимок, а не повод.
-/// Разбор узнаёт из него одно — первая ли это публикация, потому что из неё
-/// рождается адресный факт (PER-216); остальные поводы и пустой oneof для
-/// него одинаковы. Новая ветка <c>oneof</c> — совместимое изменение
+/// Разбор узнаёт из него только то, что различает адресные факты, —
+/// <see cref="MeetupOccasion" />: первую публикацию (PER-216), снятие с
+/// публикации и появление материала (PER-218); остальные поводы и пустой oneof
+/// для него одинаковы. Новая ветка <c>oneof</c> — совместимое изменение
 /// контракта, и сборка, которая её ещё не знает, видит пустой повод; сними она
 /// такое сообщение с доставки, реплика потеряла бы полный снимок из-за поля,
 /// которое ей не нужно. Значения перечислений в снимке — другое дело: их
@@ -100,14 +101,39 @@ public static class ReplicaMapping
             return new Decoded.Poison("state.schedule is not a valid schedule");
         }
 
-        // Первая публикация — единственный повод этого разбора, который что-то
-        // значит для потребителя. Её отметка обязана стоять в снимке: без неё
-        // событие противоречит само себе, и порождать из него «новую сходку»
-        // значило бы поверить поводу вопреки состоянию.
-        var firstPublication = message.OccasionCase == MeetupEvent.OccasionOneofCase.MeetupPublished;
-        if (firstPublication && firstPublishedAt is null)
+        // Отметка первой публикации обязана стоять в снимке её события: без
+        // неё событие противоречит само себе, и порождать из него «новую
+        // сходку» значило бы поверить поводу вопреки состоянию.
+        var occasion = message.OccasionCase switch
+        {
+            MeetupEvent.OccasionOneofCase.MeetupPublished => MeetupOccasion.FirstPublication,
+            MeetupEvent.OccasionOneofCase.MeetupUnpublished => MeetupOccasion.Unpublication,
+            MeetupEvent.OccasionOneofCase.MeetupMaterialAttached => MeetupOccasion.MaterialAttached,
+            _ => MeetupOccasion.Other,
+        };
+
+        if (occasion == MeetupOccasion.FirstPublication && firstPublishedAt is null)
         {
             return new Decoded.Poison("meetup_published carries no state.first_published_at");
+        }
+
+        // Тот же довод, что у отметки первой публикации: повод называет
+        // материал, которого нет в снимке, — событие противоречит само себе.
+        AttachedMaterial? material = null;
+        if (occasion == MeetupOccasion.MaterialAttached)
+        {
+            var attached = message.MeetupMaterialAttached.MaterialId;
+            if (!Guid.TryParse(attached, out var materialId))
+            {
+                return new Decoded.Poison($"meetup_material_attached.material_id '{attached}' is not a UUID");
+            }
+
+            if (state.Materials.FirstOrDefault(item => Guid.TryParse(item.Id, out var id) && id == materialId) is not { } item)
+            {
+                return new Decoded.Poison($"meetup_material_attached names material {attached} absent from state.materials");
+            }
+
+            material = new AttachedMaterial(materialId, item.Title);
         }
 
         return new Decoded.Fact(new MeetupFact(
@@ -126,8 +152,10 @@ public static class ReplicaMapping
                 visibility,
                 firstPublishedAt,
                 schedule),
+            Card(state),
+            occasion,
             message.HasRequestId ? message.RequestId : null,
-            firstPublication ? Card(state) : null));
+            material));
     }
 
     /// <summary>
