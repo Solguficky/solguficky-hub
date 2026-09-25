@@ -3,7 +3,7 @@ using Meetups.V1;
 using Notifications.Facts;
 using Notifications.IntegrationTests.Infrastructure;
 using Notifications.Replica;
-using Notifications.Tests;
+using Notifications.TestKit;
 using Npgsql;
 using Shouldly;
 using Xunit;
