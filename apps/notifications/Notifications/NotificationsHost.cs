@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
+using Notifications.Facts;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
 using Notifications.Reminders;
@@ -58,10 +59,12 @@ public static class NotificationsHost
         builder.AddServiceDefaults();
         builder.Services.AddSingleton<ReminderTelemetry>();
         builder.Services.AddSingleton<ReplicaTelemetry>();
+        builder.Services.AddSingleton<FactTelemetry>();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics => metrics
                 .AddMeter(ReminderTelemetry.MeterName)
-                .AddMeter(ReplicaTelemetry.MeterName));
+                .AddMeter(ReplicaTelemetry.MeterName)
+                .AddMeter(FactTelemetry.MeterName));
 
         // Локальный diagnostics-профиль пишет те же логи в Loki через OTLP.
         // Обычные профили продолжают экспортировать их только в Aspire.
@@ -183,6 +186,11 @@ public static class NotificationsHost
         builder.Services.Configure<ReplicaOptions>(builder.Configuration.GetSection(ReplicaOptions.SectionName));
         builder.Services.AddHostedService<ConsumedEventPruner>();
 
+        // Адресные факты (PER-216). Порождаются в транзакции реплики, а в шину
+        // их выносит релей — он есть только там, где есть шина.
+        builder.Services.AddSingleton<NotificationStore>();
+        builder.Services.Configure<DispatchOptions>(builder.Configuration.GetSection(DispatchOptions.SectionName));
+
         if (natsUrl is not null)
         {
             builder.Services.AddSingleton(_ => new NatsConnection(new NatsOpts { Url = natsUrl, Name = ServiceId }));
@@ -197,6 +205,8 @@ public static class NotificationsHost
                 builder.Services.AddSingleton<IHostedService>(services =>
                     ActivatorUtilities.CreateInstance<ReplicaConsumer>(services, feed));
             }
+
+            builder.Services.AddHostedService<NotificationDispatcher>();
         }
 
         // Подписки и настройки категорий. Ни один из трёх типов не знает про

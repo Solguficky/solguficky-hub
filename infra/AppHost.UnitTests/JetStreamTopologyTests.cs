@@ -24,13 +24,45 @@ public class JetStreamTopologyTests
         JetStreamTopology.Streams.Select(stream => stream.Subject).ShouldBeUnique();
 
     [Fact]
-    public void Durables_EveryConsumerAndStream_HaveExactlyOneDurable()
+    public void Durables_EveryDeclaredPair_HasExactlyOneDurable()
     {
         var durables = JetStreamTopology.Durables.ToList();
 
-        durables.Count.ShouldBe(JetStreamTopology.Consumers.Count * JetStreamTopology.Streams.Count);
+        durables.Count.ShouldBe(JetStreamTopology.Consumers.Sum(consumer => consumer.Streams.Count));
         durables.Select(durable => durable.Durable).ShouldBeUnique();
     }
+
+    /// <summary>
+    /// Пара потребителя со стримом, которого нет в таблице, иначе упала бы
+    /// только на старте AppHost, а не здесь.
+    /// </summary>
+    [Fact]
+    public void Consumers_AnyDeclaredStream_ExistsInTopology()
+    {
+        var streams = JetStreamTopology.Streams.Select(stream => stream.Name).ToHashSet();
+
+        foreach (var consumer in JetStreamTopology.Consumers)
+        {
+            consumer.Streams.ShouldAllBe(stream => streams.Contains(stream), consumer.Consumer);
+        }
+    }
+
+    /// <summary>
+    /// Сервис не читает собственный выход: такой durable копил бы сообщения,
+    /// которые никто не подтверждает.
+    /// </summary>
+    [Fact]
+    public void Durables_Notifications_DoesNotReadItsOwnFacts() =>
+        JetStreamTopology.Durables
+            .Select(durable => durable.Durable)
+            .ShouldNotContain("notifications-notifications-events");
+
+    [Fact]
+    public void Durables_NatsTester_ReadsEveryStream() =>
+        JetStreamTopology.Durables
+            .Where(durable => durable.Durable.StartsWith("nats-tester-", StringComparison.Ordinal))
+            .Select(durable => durable.Stream)
+            .ShouldBe(JetStreamTopology.Streams.Select(stream => stream.Name), ignoreOrder: true);
 
     [Fact]
     public void Durables_AnyDurable_FiltersItsStreamSubject()

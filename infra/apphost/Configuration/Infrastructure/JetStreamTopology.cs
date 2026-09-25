@@ -29,20 +29,36 @@ internal static class JetStreamTopology
     [
         new("MEETUPS_EVENTS", "events.meetups.>"),
         new("IDENTITY_EVENTS", "events.identity.>"),
+
+        // Адресные факты Notifications (PER-216). Стрим заведён раньше
+        // первого канала: retention limits держит опубликованное до появления
+        // его durable, и факты, вынесенные релеем до того, не теряются.
+        new("NOTIFICATIONS_EVENTS", "events.notifications.>"),
     ];
 
     /// <summary>
-    /// Потребители, для которых durable объявляется заранее. Durable
-    /// принадлежит потребителю, а создаётся здесь: пришедшее до первого старта
-    /// потребителя ждёт в нём, а не теряется. <c>nats-tester</c> держит свои
-    /// durable, чтобы ручная проверка не сдвигала позицию продуктового.
+    /// Потребители, для которых durable объявляется заранее, и стримы, которые
+    /// каждый из них читает. Durable принадлежит потребителю, а создаётся здесь:
+    /// пришедшее до первого старта потребителя ждёт в нём, а не теряется.
     /// </summary>
-    public static readonly IReadOnlyList<string> Consumers = ["notifications", "nats-tester"];
+    /// <remarks>
+    /// Список пар, а не произведение всех потребителей на все стримы: сервис не
+    /// читает собственный выход, и durable <c>notifications-notifications-events</c>
+    /// копил бы сообщения, которые никто не подтверждает. <c>nats-tester</c>
+    /// читает всё: у него свои durable, чтобы ручная проверка не сдвигала
+    /// позицию продуктового.
+    /// </remarks>
+    public static readonly IReadOnlyList<ConsumerStreams> Consumers =
+    [
+        new("notifications", ["MEETUPS_EVENTS", "IDENTITY_EVENTS"]),
+        new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "NOTIFICATIONS_EVENTS"]),
+    ];
 
     public static IEnumerable<ConsumerSpec> Durables =>
         from consumer in Consumers
-        from stream in Streams
-        select new ConsumerSpec(DurableName(consumer, stream.Name), stream.Name, stream.Subject);
+        from streamName in consumer.Streams
+        let stream = Streams.Single(candidate => candidate.Name == streamName)
+        select new ConsumerSpec(DurableName(consumer.Consumer, stream.Name), stream.Name, stream.Subject);
 
     /// <summary>
     /// <c>&lt;потребитель&gt;-&lt;стрим в нижнем регистре через дефис&gt;</c>:
@@ -94,5 +110,7 @@ internal static class JetStreamTopology
 }
 
 internal sealed record StreamSpec(string Name, string Subject);
+
+internal sealed record ConsumerStreams(string Consumer, IReadOnlyList<string> Streams);
 
 internal sealed record ConsumerSpec(string Durable, string Stream, string FilterSubject);

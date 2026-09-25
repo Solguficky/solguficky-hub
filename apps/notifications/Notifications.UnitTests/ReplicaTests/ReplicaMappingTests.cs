@@ -40,7 +40,9 @@ public class ReplicaMappingTests
     [Fact]
     public void Meetup_NeverPublished_LeavesFirstPublicationUnset()
     {
+        // Черновик: сходка создана и ещё не публиковалась, поэтому отметки нет.
         var message = EventFactory.Meetup(MeetupId, version: 1);
+        message.MeetupCreated = new MeetupCreated();
         message.State.ClearFirstPublishedAt();
 
         Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).State.FirstPublishedAt.ShouldBeNull();
@@ -202,6 +204,66 @@ public class ReplicaMappingTests
         { "unknown role", m => m.State.GlobalRoles.Add((GlobalRole)99) },
         { "unspecified role", m => m.State.GlobalRoles.Add(GlobalRole.Unspecified) },
     };
+
+    [Fact]
+    public void Meetup_FirstPublication_CarriesCardFromEventSnapshot()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2, title: "Пятничная");
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        var card = fact.FirstPublication.ShouldNotBeNull();
+        card.Id.ShouldBe(MeetupId);
+        card.Title.ShouldBe("Пятничная");
+        card.Venue.ShouldBe("Бар");
+        card.Schedule.ShouldBe(message.State.Schedule);
+        card.Lifecycle.ShouldBe(MeetupLifecycle.Planned);
+        card.Visibility.ShouldBe(MeetupVisibility.Visible);
+    }
+
+    /// <summary>
+    /// Возврат после снятия с публикации — не вторая первая публикация:
+    /// Meetups шлёт его своим поводом, и карточки «новой сходки» у него нет.
+    /// </summary>
+    [Fact]
+    public void Meetup_Republished_CarriesNoFirstPublication()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 4);
+        message.MeetupRepublished = new MeetupRepublished();
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).FirstPublication.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Meetup_OccasionUnknownToThisBuild_CarriesNoFirstPublication()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2);
+        message.ClearOccasion();
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).FirstPublication.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Meetup_FirstPublicationWithoutMark_IsPoison()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2);
+        message.State.ClearFirstPublishedAt();
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Meetup_RequestId_CarriedAsIs()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2, requestId: "req-42");
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).RequestId.ShouldBe("req-42");
+    }
+
+    [Fact]
+    public void Meetup_NoRequestId_LeavesItUnset() =>
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(EventFactory.Meetup(MeetupId, version: 2))))
+            .RequestId.ShouldBeNull();
 
     private static TFact Fact<TFact>(Decoded decoded)
         where TFact : ReplicaEvent =>

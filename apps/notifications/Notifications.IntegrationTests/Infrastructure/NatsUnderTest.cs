@@ -2,7 +2,9 @@ using Google.Protobuf;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
+using Notifications.Facts;
 using Notifications.Replica;
+using Notifications.V1;
 using Testcontainers.Nats;
 
 namespace Notifications.IntegrationTests.Infrastructure;
@@ -75,7 +77,55 @@ public sealed class NatsUnderTest : IAsyncDisposable
             }
         }
 
+        // Стрим адресных фактов, куда пишет релей. Durable на нём сервису не
+        // нужен — свой выход он не читает, — а тест читает его упорядоченным
+        // потребителем без позиции на сервере.
+        await bus.JetStream.CreateStreamAsync(new StreamConfig(FactsStream, ["events.notifications.>"])
+        {
+            Retention = StreamConfigRetention.Limits,
+            Storage = StreamConfigStorage.File,
+            MaxAge = streamMaxAge ?? ReplicaFeeds.StreamMaxAge,
+            DuplicateWindow = TimeSpan.FromMinutes(2),
+        });
+
         return bus;
+    }
+
+    public const string FactsStream = "NOTIFICATIONS_EVENTS";
+
+    /// <summary>
+    /// Все адресные факты, опубликованные в шину к этому моменту, вместе с
+    /// заголовком <c>Nats-Msg-Id</c> каждого.
+    /// </summary>
+    public async Task<IReadOnlyList<(Notification Fact, string? MessageId)>> PublishedFacts()
+    {
+        var stream = await JetStream.GetStreamAsync(FactsStream);
+        var total = (int)stream.Info.State.Messages;
+        if (total == 0)
+        {
+            return [];
+        }
+
+        var consumer = await JetStream.CreateOrderedConsumerAsync(FactsStream);
+        var facts = new List<(Notification, string?)>(total);
+
+        await foreach (var message in consumer.ConsumeAsync<byte[]>())
+        {
+            if (message.Subject != NotificationDispatcher.Subject)
+            {
+                throw new InvalidOperationException($"fact published to {message.Subject}, not {NotificationDispatcher.Subject}");
+            }
+
+            var messageId = message.Headers is { } headers && headers.TryGetValue("Nats-Msg-Id", out var id) ? id.ToString() : null;
+            facts.Add((Notification.Parser.ParseFrom(message.Data), messageId));
+
+            if (facts.Count == total)
+            {
+                break;
+            }
+        }
+
+        return facts;
     }
 
     /// <summary>

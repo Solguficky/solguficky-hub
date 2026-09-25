@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using NATS.Client.JetStream;
+using Notifications.Facts;
 using Notifications.Infrastructure;
 
 namespace Notifications.Replica;
@@ -29,6 +30,7 @@ public sealed class ReplicaConsumer(
     INatsJSContext jetStream,
     ReplicaStore store,
     ReplicaTelemetry telemetry,
+    FactTelemetry facts,
     IOptions<ReplicaOptions> options,
     TimeProvider clock,
     ILogger<ReplicaConsumer> logger) : BackgroundService
@@ -113,11 +115,11 @@ public sealed class ReplicaConsumer(
         }
 
         var fact = ((Decoded.Fact)decoded).Event;
-        ReplicaOutcome outcome;
+        ReplicaApplication application;
 
         try
         {
-            outcome = await store.Apply(fact, clock.GetUtcNow(), stoppingToken);
+            application = await store.Apply(fact, clock.GetUtcNow(), stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -133,10 +135,21 @@ public sealed class ReplicaConsumer(
             return;
         }
 
+        var outcome = application.Outcome;
         var outcomeName = outcome.ToString().ToLowerInvariant();
         telemetry.Record(feed.Source, outcomeName, outcome == ReplicaOutcome.Applied ? fact.OccurredAt : null);
+
+        var occasion = fact is MeetupFact { FirstPublication: not null } && outcome != ReplicaOutcome.Duplicate
+            ? NotificationFacts.MeetupPublishedType
+            : null;
+
+        if (occasion is not null)
+        {
+            facts.Record(occasion, application.Facts);
+        }
+
         await message.AckAsync(cancellationToken: stoppingToken);
-        Log(LogLevel.Information, message, startedAt, fact, outcomeName, null, null, null);
+        Log(LogLevel.Information, message, startedAt, fact, outcomeName, null, null, null, occasion, application.Facts);
     }
 
     private void Log(
@@ -147,12 +160,15 @@ public sealed class ReplicaConsumer(
         string outcome,
         string? errorCategory,
         string? error,
-        Exception? exception)
+        Exception? exception,
+        string? occasion = null,
+        FactCount? produced = null)
     {
         // JSON в теле строки — та же форма, что у снимка sweeper'а: LogQL
         // получает числовые поля без привязки к раскладке атрибутов OTLP.
-        // use_case и request_id опущены, а не пусты: сообщение шины человек не
-        // начинал, а сквозной идентификатор конверт пока не несёт (PER-70).
+        // use_case опущен, а не пуст: сообщение шины человек не начинал.
+        // request_id пишется, когда его несёт конверт сходки; у Identity его
+        // в конверте нет.
         var fields = new Dictionary<string, object>
         {
             ["service"] = NotificationsHost.ServiceId,
@@ -174,6 +190,21 @@ public sealed class ReplicaConsumer(
             fields["aggregate_id"] = fact.AggregateId;
             fields["version"] = fact.Version;
             fields["event_age_seconds"] = (clock.GetUtcNow() - fact.OccurredAt).TotalSeconds;
+
+            if (fact is MeetupFact { RequestId: { } requestId })
+            {
+                fields["request_id"] = requestId;
+            }
+        }
+
+        // Разбивка на один повод: сколько получателей получили факт и скольких
+        // отсекла настройка категории. Повтор события повода не разворачивает,
+        // поэтому полей у него нет.
+        if (occasion is not null && produced is not null)
+        {
+            fields["occasion"] = occasion;
+            fields["facts_created"] = produced.Created;
+            fields["facts_suppressed"] = produced.Suppressed;
         }
 
         if (telemetry.AgeSeconds(feed.Source) is { } age)
