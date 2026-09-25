@@ -78,13 +78,20 @@ let private provider (source: NpgsqlDataSource) (batchSize: int) =
 
 /// Один тик против настоящей базы. Размер пачки задаётся явно: сценарий, которому
 /// важна граница пачки, не должен зависеть от значения по умолчанию.
-let runTick (source: NpgsqlDataSource) (port: RecordingPort) (batchSize: int) =
+let runTickWith
+    (source: NpgsqlDataSource)
+    (publish: CancellationToken -> PendingEvent -> Task<PublishOutcome>)
+    (batchSize: int)
+    =
     use services = provider source batchSize
-    let deps = Composition.buildDeps services port.Publish
+    let deps = Composition.buildDeps services publish
 
     execute deps CancellationToken.None
     |> Async.AwaitTask
     |> Async.RunSynchronously
+
+let runTick (source: NpgsqlDataSource) (port: RecordingPort) (batchSize: int) =
+    runTickWith source port.Publish batchSize
 
 let reportOf (outcome: TickOutcome) =
     match outcome with

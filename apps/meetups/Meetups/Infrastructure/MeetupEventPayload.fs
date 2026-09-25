@@ -6,11 +6,14 @@
 /// Форма внутренняя. Это хранение, а не шина: наружу то же событие уходит
 /// сообщением `meetups.v1.MeetupEvent` (PER-206), и совпадение имён с ним здесь —
 /// удобство чтения, а не обещание совместимости. Перевод одной формы в другую
-/// принадлежит адаптеру публикации (PER-209); читателя у payload не будет до его
-/// появления, поэтому пишется только писатель.
+/// принадлежит адаптеру публикации (PER-209): он читает payload обратно в снимок
+/// через `toSnapshot`, и писатель с читателем лежат рядом, чтобы форма менялась
+/// одним изменением.
 module Meetups.Infrastructure.MeetupEventPayload
 
 open System
+open System.Globalization
+open System.Text.Json
 open System.Text.Json.Nodes
 open Meetups.Domain
 
@@ -28,6 +31,25 @@ let eventType (event: MeetupEvent) : string =
     | MeetupMaterialAttached _ -> "meetup_material_attached"
     | MeetupMaterialRemoved _ -> "meetup_material_removed"
     | MeetupHeld -> "meetup_held"
+
+/// Данные повода, которых снимок выразить не может: удалённого материала в нём уже
+/// нет. Колонка `material_id`, а не ключ payload, — её правило держит CHECK
+/// `meetup_events_material_id_occasion`, и заполнена она ровно у двух поводов.
+let materialId (event: MeetupEvent) : Nullable<Guid> =
+    match event with
+    | MeetupMaterialAttached material ->
+        let (MaterialId id) = material.Id
+        Nullable id
+    | MeetupMaterialRemoved(MaterialId id) -> Nullable id
+    | MeetupCreated _
+    | MeetupChanged _
+    | MeetupPublished _
+    | MeetupUnpublished
+    | MeetupRepublished
+    | MeetupPublicationScheduled _
+    | MeetupPublicationCancelled
+    | MeetupCancelled
+    | MeetupHeld -> Nullable()
 
 let private dateText (date: DateOnly) : string = date.ToString "yyyy-MM-dd"
 
@@ -104,3 +126,151 @@ let ofSnapshot (snapshot: MeetupSnapshot) : string =
     node["version"] <- JsonValue.Create row.Version
 
     node.ToJsonString()
+
+/// Payload, который схема приняла, но читатель разобрать не может, — нарушение
+/// внутреннего контракта писателя и читателя, а не ожидаемый отказ. Исключение с
+/// идентификатором события, по той же причине, что `malformed` у MeetupRow.
+let private malformed (eventId: Guid) (what: string) : 'a = failwith $"malformed meetup event payload {eventId}: {what}"
+
+let private required (eventId: Guid) (node: JsonObject) (name: string) : JsonNode =
+    match node[name] with
+    | null -> malformed eventId $"{name} is missing"
+    | value -> value
+
+let private text (eventId: Guid) (node: JsonObject) (name: string) : string =
+    match required eventId node name with
+    | :? JsonValue as value ->
+        match value.TryGetValue<string>() with
+        | true, result -> result
+        | _ -> malformed eventId $"{name} is not text"
+    | _ -> malformed eventId $"{name} is not text"
+
+let private optionalText (eventId: Guid) (node: JsonObject) (name: string) : string option =
+    match node[name] with
+    | null -> None
+    | _ -> Some(text eventId node name)
+
+let private uuid (eventId: Guid) (node: JsonObject) (name: string) : Guid =
+    match Guid.TryParseExact(text eventId node name, "D") with
+    | true, value -> value
+    | _ -> malformed eventId $"{name} is not a UUID"
+
+let private int64Of (eventId: Guid) (node: JsonObject) (name: string) : int64 =
+    match required eventId node name with
+    | :? JsonValue as value ->
+        match value.TryGetValue<int64>() with
+        | true, result -> result
+        | _ -> malformed eventId $"{name} is not an integer"
+    | _ -> malformed eventId $"{name} is not an integer"
+
+let private parseExact
+    (eventId: Guid)
+    (name: string)
+    (format: string)
+    (parse: string -> string -> 'a option)
+    (value: string)
+    =
+    match parse value format with
+    | Some result -> result
+    | None -> malformed eventId $"{name} is not in the form {format}"
+
+let private dateOf (eventId: Guid) (node: JsonObject) (name: string) : Nullable<DateOnly> =
+    optionalText eventId node name
+    |> Option.map (
+        parseExact
+            eventId
+            name
+            "yyyy-MM-dd"
+            (fun value format ->
+                match DateOnly.TryParseExact(value, format, CultureInfo.InvariantCulture, DateTimeStyles.None) with
+                | true, date -> Some date
+                | _ -> None
+            )
+    )
+    |> Option.toNullable
+
+let private timeOf (eventId: Guid) (node: JsonObject) (name: string) : Nullable<TimeOnly> =
+    optionalText eventId node name
+    |> Option.map (
+        parseExact
+            eventId
+            name
+            "HH:mm"
+            (fun value format ->
+                match TimeOnly.TryParseExact(value, format, CultureInfo.InvariantCulture, DateTimeStyles.None) with
+                | true, time -> Some time
+                | _ -> None
+            )
+    )
+    |> Option.toNullable
+
+let private momentOf (eventId: Guid) (node: JsonObject) (name: string) : Nullable<DateTimeOffset> =
+    optionalText eventId node name
+    |> Option.map (
+        parseExact
+            eventId
+            name
+            "yyyy-MM-ddTHH:mm:ss.ffffffZ"
+            (fun value format ->
+                match
+                    DateTimeOffset.TryParseExact(
+                        value,
+                        format,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal
+                        ||| DateTimeStyles.AdjustToUniversal
+                    )
+                with
+                | true, moment -> Some moment
+                | _ -> None
+            )
+    )
+    |> Option.toNullable
+
+/// Обратное `ofSnapshot`: payload в снимок. Читает в ту же строку `MeetupRow`, что
+/// приходит из таблицы, и отдаёт её `MeetupRow.toSnapshot`, поэтому правила оси,
+/// расписания и материалов разбираются одним кодом на оба источника, а не копией.
+let toSnapshot (eventId: Guid) (payload: string) : MeetupSnapshot =
+    let root =
+        try
+            JsonNode.Parse payload
+        with :? JsonException ->
+            malformed eventId "payload is not JSON"
+
+    match root with
+    | :? JsonObject as node ->
+        let schedule =
+            match required eventId node "schedule" with
+            | :? JsonObject as value -> value
+            | _ -> malformed eventId "schedule is not an object"
+
+        let materials =
+            match required eventId node "materials" with
+            | :? JsonArray as value -> value.ToJsonString()
+            | _ -> malformed eventId "materials is not an array"
+
+        MeetupRow.toSnapshot
+            {
+                Id = uuid eventId node "id"
+                Author = uuid eventId node "author"
+                Title = text eventId node "title"
+                Description = text eventId node "description"
+                Venue = text eventId node "venue"
+                Kind = text eventId node "kind"
+                CalendarLink = text eventId node "calendar_link"
+                Materials = materials
+                Lifecycle = text eventId node "lifecycle"
+                Visibility = text eventId node "visibility"
+                FirstPublishedAt = momentOf eventId node "first_published_at"
+                ScheduledPublishAt = momentOf eventId node "scheduled_publish_at"
+                Version = int64Of eventId node "version"
+                ScheduleForm = text eventId schedule "form"
+                SchedulePrecision =
+                    optionalText eventId schedule "precision"
+                    |> Option.toObj
+                ScheduleStartDate = dateOf eventId schedule "start_date"
+                ScheduleStartTime = timeOf eventId schedule "start_time"
+                ScheduleEndDate = dateOf eventId schedule "end_date"
+                ScheduleEndTime = timeOf eventId schedule "end_time"
+            }
+    | _ -> malformed eventId "payload is not an object"

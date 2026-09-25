@@ -168,13 +168,23 @@ module SchemaSql =
         (eventType: string)
         (payload: string)
         =
+        // Повод материала без идентификатора схема не примет
+        // (`meetup_events_material_id_occasion`), поэтому помощник, пишущий
+        // допустимую строку, ставит его сам: сценариям схемы материал не важен.
+        let materialId: obj =
+            match eventType with
+            | "meetup_material_attached"
+            | "meetup_material_removed" -> box (Guid.Parse("0199c0de-0000-7000-8000-0000000000a1"))
+            | _ -> absent
+
         exec
             dsn
             """
             INSERT INTO meetup_events (
-                event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
+                event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, material_id
             ) VALUES (
-                @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at
+                @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at,
+                @material_id
             )
             """
             [
@@ -185,6 +195,7 @@ module SchemaSql =
                 "payload", box payload
                 "performed_by", box (Guid.Parse("0199c0de-0000-7000-8000-00000000000a"))
                 "occurred_at", box (DateTimeOffset.Parse("2026-09-06T12:00:00Z"))
+                "material_id", materialId
             ]
 
     let insertEvent (dsn: string) (eventId: Guid) (meetupId: Guid) (version: int) (eventType: string) =
