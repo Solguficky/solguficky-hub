@@ -3,6 +3,7 @@ using Google.Protobuf;
 using Notifications.Domain;
 using Notifications.Facts;
 using Notifications.Replica;
+using Notifications.V1;
 using Npgsql;
 
 namespace Notifications.Infrastructure;
@@ -36,6 +37,30 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ORDER BY person.identity_id;
         """;
 
+    // Подписчики сходки с действующим значением категории: переопределение у
+    // сходки, иначе глобальная настройка, иначе значение продукта — то же
+    // правило, что EffectivePreference.Resolve, одним запросом. Подписка
+    // правил круга не отменяет: заблокированный и человек вне круга хаба
+    // адресатами не считаются, как и в развороте новой сходки.
+    private const string SubscribersSql = """
+        SELECT person.identity_id AS IdentityId,
+               COALESCE(own.enabled, global.enabled, @Default) AS Enabled
+        FROM meetup_subscription AS subscription
+        JOIN identity_replica AS person ON person.identity_id = subscription.identity_id
+        LEFT JOIN notification_preference AS own
+            ON own.identity_id = person.identity_id
+            AND own.meetup_id = @MeetupId
+            AND own.category = @Category
+        LEFT JOIN notification_preference AS global
+            ON global.identity_id = person.identity_id
+            AND global.meetup_id IS NULL
+            AND global.category = @Category
+        WHERE subscription.meetup_id = @MeetupId
+            AND NOT person.blocked
+            AND person.global_roles && @Circle
+        ORDER BY person.identity_id;
+        """;
+
     // Реплика уже обновлена этой же транзакцией, поэтому здесь её последнее
     // слово о сходке. Запоздавшая первая публикация — например, вернувшаяся
     // после Nak, когда снятие или отмена уже применились, — не должна
@@ -44,6 +69,19 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         SELECT EXISTS (
             SELECT 1 FROM meetup_replica
             WHERE meetup_id = @MeetupId AND visibility = 'visible' AND lifecycle <> 'cancelled');
+        """;
+
+    // Изменение и материал адресуются только видимой сходке: скрытую карточку
+    // уведомление не открывает. Отменённая остаётся видна, и её отмена — как
+    // раз то изменение состояния, о котором подписчик должен узнать.
+    private const string VisibleSql = """
+        SELECT EXISTS (SELECT 1 FROM meetup_replica WHERE meetup_id = @MeetupId AND visibility = 'visible');
+        """;
+
+    // Снятие, пришедшее после возврата в публикацию, уже неправда: сходка
+    // снова видна, и служебного сообщения о снятии никто не получает.
+    private const string HiddenSql = """
+        SELECT EXISTS (SELECT 1 FROM meetup_replica WHERE meetup_id = @MeetupId AND visibility = 'hidden');
         """;
 
     private const string InsertSql = """
@@ -77,11 +115,70 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     private const string OldestPendingSql = "SELECT MIN(created_at) FROM notification WHERE dispatched_at IS NULL;";
 
     /// <summary>
-    /// Разворачивает первую публикацию сходки на получателей и пишет факты в
+    /// Разворачивает повод события Meetups на получателей и пишет факты в
     /// транзакции <paramref name="work" /> — той же, где ключ события и снимок
-    /// реплики.
+    /// реплики. Возвращает <c>null</c>, если событие поводом не является.
     /// </summary>
-    internal static async Task<FactCount> AddMeetupPublished(
+    /// <param name="changed">
+    /// Разница снимка с репликой; пуста, если реплика событием не сдвинута.
+    /// </param>
+    internal static async Task<ProducedFacts?> AddForMeetupEvent(
+        UnitOfWork work,
+        MeetupFact fact,
+        IReadOnlyList<MeetupAspect> changed,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        fact.Occasion switch
+        {
+            MeetupOccasion.FirstPublication => new ProducedFacts(
+                NotificationFacts.MeetupPublishedType,
+                await AddMeetupPublished(work, fact, now, cancellationToken)),
+
+            // Снятие не трогает подписки (docs/services/notifications.md),
+            // поэтому здесь их ровно столько, сколько было до него.
+            MeetupOccasion.Unpublication => new ProducedFacts(
+                NotificationFacts.MeetupUnpublishedType,
+                await AddForSubscribers(
+                    work,
+                    fact,
+                    HiddenSql,
+                    NotificationFacts.MeetupChangedCategory,
+                    NotificationFacts.MeetupUnpublishedType,
+                    (id, recipient) => NotificationFacts.MeetupUnpublished(id, recipient, fact, now),
+                    now,
+                    cancellationToken)),
+
+            MeetupOccasion.MaterialAttached => new ProducedFacts(
+                NotificationFacts.MeetupMaterialType,
+                await AddForSubscribers(
+                    work,
+                    fact,
+                    VisibleSql,
+                    NotificationFacts.MeetupMaterialCategory,
+                    NotificationFacts.MeetupMaterialType,
+                    (id, recipient) => NotificationFacts.MeetupMaterial(id, recipient, fact, now),
+                    now,
+                    cancellationToken)),
+
+            // Остальные поводы различаются не типом, а разницей: пустая — не
+            // повод (ADR-031), непустая — изменение сведений, состояния или
+            // того и другого.
+            _ when changed.Count > 0 => new ProducedFacts(
+                NotificationFacts.MeetupChangedType,
+                await AddForSubscribers(
+                    work,
+                    fact,
+                    VisibleSql,
+                    NotificationFacts.MeetupChangedCategory,
+                    NotificationFacts.MeetupChangedType,
+                    (id, recipient) => NotificationFacts.MeetupChanged(id, recipient, fact, changed, now),
+                    now,
+                    cancellationToken)),
+
+            _ => null,
+        };
+
+    private static async Task<FactCount> AddMeetupPublished(
         UnitOfWork work,
         MeetupFact fact,
         DateTimeOffset now,
@@ -102,6 +199,56 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             },
             cancellationToken);
 
+        return await Insert(
+            work,
+            fact,
+            NotificationFacts.MeetupPublishedType,
+            audience,
+            (id, recipient) => NotificationFacts.MeetupPublished(id, recipient, fact, now),
+            now,
+            cancellationToken);
+    }
+
+    // Категории, которые требуют подписки: разворот идёт по подписчикам этой
+    // сходки, а не по всему кругу.
+    private static async Task<FactCount> AddForSubscribers(
+        UnitOfWork work,
+        MeetupFact fact,
+        string addressableSql,
+        NotificationCategory category,
+        string type,
+        Func<Guid, Guid, Notification> build,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!await work.Scalar(addressableSql, new { fact.MeetupId }, cancellationToken))
+        {
+            return FactCount.None;
+        }
+
+        var audience = await work.Query<AudienceRow>(
+            SubscribersSql,
+            new
+            {
+                fact.MeetupId,
+                Default = NotificationCategories.DefaultEnabled(category),
+                Category = NotificationCategories.Storage(category),
+                Circle = NotificationFacts.HubCircle.ToArray(),
+            },
+            cancellationToken);
+
+        return await Insert(work, fact, type, audience, build, now, cancellationToken);
+    }
+
+    private static async Task<FactCount> Insert(
+        UnitOfWork work,
+        MeetupFact fact,
+        string type,
+        IReadOnlyList<AudienceRow> audience,
+        Func<Guid, Guid, Notification> build,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
         var recipients = audience.Where(person => person.Enabled).Select(person => person.IdentityId).ToArray();
         var suppressed = audience.Count - recipients.Length;
 
@@ -112,7 +259,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         var ids = recipients.Select(_ => Guid.CreateVersion7(now)).ToArray();
         var payloads = recipients
-            .Select((recipient, index) => NotificationFacts.MeetupPublished(ids[index], recipient, fact, now).ToByteArray())
+            .Select((recipient, index) => build(ids[index], recipient).ToByteArray())
             .ToArray();
 
         // Число вставленных строк, а не число получателей: факт, который уже
@@ -121,7 +268,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             InsertSql,
             new
             {
-                Type = NotificationFacts.MeetupPublishedType,
+                Type = type,
                 CauseKind = NotificationFacts.MeetupEventCause,
                 CauseId = fact.EventId.ToString(),
                 fact.MeetupId,

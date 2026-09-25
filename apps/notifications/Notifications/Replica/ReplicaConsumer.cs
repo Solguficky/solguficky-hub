@@ -139,17 +139,13 @@ public sealed class ReplicaConsumer(
         var outcomeName = outcome.ToString().ToLowerInvariant();
         telemetry.Record(feed.Source, outcomeName, outcome == ReplicaOutcome.Applied ? fact.OccurredAt : null);
 
-        var occasion = fact is MeetupFact { FirstPublication: not null } && outcome != ReplicaOutcome.Duplicate
-            ? NotificationFacts.MeetupPublishedType
-            : null;
-
-        if (occasion is not null)
+        if (application.Facts is { } produced)
         {
-            facts.Record(occasion, application.Facts);
+            facts.Record(produced.Type, produced.Facts);
         }
 
         await message.AckAsync(cancellationToken: stoppingToken);
-        Log(LogLevel.Information, message, startedAt, fact, outcomeName, null, null, null, occasion, application.Facts);
+        Log(LogLevel.Information, message, startedAt, fact, outcomeName, null, null, null, application.Facts);
     }
 
     private void Log(
@@ -161,8 +157,7 @@ public sealed class ReplicaConsumer(
         string? errorCategory,
         string? error,
         Exception? exception,
-        string? occasion = null,
-        FactCount? produced = null)
+        ProducedFacts? produced = null)
     {
         // JSON в теле строки — та же форма, что у снимка sweeper'а: LogQL
         // получает числовые поля без привязки к раскладке атрибутов OTLP.
@@ -199,12 +194,13 @@ public sealed class ReplicaConsumer(
 
         // Разбивка на один повод: сколько получателей получили факт и скольких
         // отсекла настройка категории. Повтор события повода не разворачивает,
-        // поэтому полей у него нет.
-        if (occasion is not null && produced is not null)
+        // поэтому полей у него нет, как и у события, которое поводом не стало:
+        // изменения с пустой разницей.
+        if (produced is not null)
         {
-            fields["occasion"] = occasion;
-            fields["facts_created"] = produced.Created;
-            fields["facts_suppressed"] = produced.Suppressed;
+            fields["occasion"] = produced.Type;
+            fields["facts_created"] = produced.Facts.Created;
+            fields["facts_suppressed"] = produced.Facts.Suppressed;
         }
 
         if (telemetry.AgeSeconds(feed.Source) is { } age)

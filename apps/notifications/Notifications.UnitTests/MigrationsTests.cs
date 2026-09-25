@@ -51,6 +51,7 @@ public class MigrationsTests
             "reminder_task",
             "fact_replica",
             "notification",
+            "notification_change_types",
         ]);
 
         var main = names.IndexOf("orleans_main");
