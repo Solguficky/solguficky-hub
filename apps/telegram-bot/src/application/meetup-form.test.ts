@@ -66,8 +66,15 @@ function harness() {
       meetup: snapshot,
     })),
   };
-  return { meetups, dispatcher: createDispatcher(meetups) };
+  // День сообщества закреплён: иначе вердикт «дата прошла» зависел бы от дня
+  // прогона, и фикстуры с датами покраснели бы сами по себе.
+  return {
+    meetups,
+    dispatcher: createDispatcher(meetups, undefined, () => today),
+  };
 }
+
+const today = { year: 2026, month: 9, day: 1 };
 
 describe("meetup creation form", () => {
   it("creates the draft on entry and persists every completed step", async () => {
@@ -567,5 +574,123 @@ describe("deferred publication", () => {
       meetup: empty,
     });
     expect(meetups.cancelPublication).toHaveBeenCalledOnce();
+  });
+});
+
+describe("past meetup date", () => {
+  it("asks to confirm a date before today without calling Meetups", async () => {
+    const { dispatcher, meetups } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+    });
+    expect(result).toEqual({
+      kind: "confirm-past-schedule",
+      meetup: empty,
+      schedule: { year: 2026, month: 8, day: 31, hours: 19, minutes: 30 },
+    });
+    expect(meetups.setSchedule).not.toHaveBeenCalled();
+  });
+
+  it("marks the question as an edit when it came from the edit flow", async () => {
+    const { dispatcher } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "update-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+    });
+    expect(result).toMatchObject({
+      kind: "confirm-past-schedule",
+      editing: true,
+    });
+  });
+
+  // Граница — день, как у архива Meetups: сходка сегодня в прошедший час
+  // остаётся в «Ближайших», и спрашивать о ней не о чем.
+  it("accepts today's date at an hour that has already passed", async () => {
+    const { dispatcher, meetups } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "01.09.2026 00:01",
+      meetupId: empty.id,
+    });
+    expect(result).toMatchObject({ kind: "ask", field: "venue" });
+    expect(meetups.setSchedule).toHaveBeenCalledOnce();
+  });
+
+  it("saves a confirmed past date and continues the form", async () => {
+    const { dispatcher, meetups } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+      confirmedPast: true,
+    });
+    expect(result).toMatchObject({ kind: "ask", field: "venue" });
+    expect(meetups.setSchedule).toHaveBeenCalledWith(
+      identity,
+      empty,
+      { year: 2026, month: 8, day: 31, hours: 19, minutes: 30 },
+      undefined,
+    );
+  });
+
+  it("says a confirmed past date from the edit flow moved the meetup to the archive", async () => {
+    const { dispatcher } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "update-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+      confirmedPast: true,
+    });
+    expect(result).toMatchObject({ kind: "meetup-updated", archived: true });
+  });
+
+  it("marks a publication with a past date as archived, and a future one as not", async () => {
+    const { dispatcher, meetups } = harness();
+    const past = {
+      ...empty,
+      schedule: { year: 2026, month: 8, day: 31, hours: 19, minutes: 30 },
+    };
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: past }));
+    meetups.publish = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: past,
+    }));
+    expect(
+      await dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).toEqual({ kind: "published", meetup: past, archived: true });
+
+    const future = {
+      ...past,
+      schedule: { ...past.schedule, month: 9, day: 1 },
+    };
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: future }));
+    meetups.publish = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: future,
+    }));
+    expect(
+      await dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).toEqual({ kind: "published", meetup: future });
   });
 });

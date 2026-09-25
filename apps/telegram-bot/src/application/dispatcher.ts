@@ -1,7 +1,7 @@
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
-import { createMeetupForm } from "./meetup-form.js";
+import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { start } from "./start.js";
@@ -14,8 +14,10 @@ export type Dispatcher = {
 export function createDispatcher(
   meetups?: Meetups,
   notifications?: Notifications,
+  today?: CommunityToday,
 ): Dispatcher {
-  const form = meetups === undefined ? undefined : createMeetupForm(meetups);
+  const form =
+    meetups === undefined ? undefined : createMeetupForm(meetups, today);
   // Кадры уведомлений читают и сходку тоже: заголовок кадра берётся из Meetups,
   // а значения категорий — из Notifications.
   const settings =
