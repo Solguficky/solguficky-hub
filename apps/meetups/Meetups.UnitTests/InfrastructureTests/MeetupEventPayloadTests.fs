@@ -1,7 +1,8 @@
-/// Тело строки журнала. Форма закрепляется тестом намеренно: читателя у payload не
-/// будет до появления релея, апкаст старых событий по ADR-024 не предусмотрен, и
-/// записанное сегодня останется в журнале навсегда. Тест — единственное место, где
-/// эта форма объявлена явно, а не выведена из реализации.
+/// Тело строки журнала. Форма закрепляется тестом намеренно: апкаст старых событий
+/// по ADR-024 не предусмотрен, и записанное сегодня останется в журнале навсегда.
+/// Тест — единственное место, где эта форма объявлена явно, а не выведена из
+/// реализации. Читатель — адаптер публикации — проверяется здесь же обратным ходом:
+/// писатель и читатель обязаны согласоваться на каждом снимке.
 module Meetups.InfrastructureTests.MeetupEventPayloadTests
 
 open System
@@ -176,3 +177,115 @@ let ``A meetup without materials carries an empty array`` () =
     let payload = parse (Meetup.toSnapshot Sample.titled)
 
     test <@ payload["materials"].AsArray().Count = 0 @>
+
+let private minute hours minutes =
+    LocalTime.create (TimeOnly(hours, minutes))
+    |> Result.defaultWith (fun _ -> failwith "the sample time must have minute precision")
+
+let private interval =
+    LocalInterval.create
+        {
+            Date = DateOnly(2026, 10, 3)
+            Time = minute 18 30
+        }
+        {
+            Date = DateOnly(2026, 10, 4)
+            Time = minute 1 15
+        }
+    |> Result.defaultWith (fun _ -> failwith "the sample interval must be ordered")
+
+let private eventId = Guid.Parse "0199c0de-0000-7000-8000-0000000000e1"
+
+let private roundTrip (snapshot: MeetupSnapshot) : MeetupSnapshot =
+    MeetupEventPayload.toSnapshot eventId (MeetupEventPayload.ofSnapshot snapshot)
+
+/// Каждая ветка формы: пустое и датированное расписание трёх точностей, обе
+/// необязательные метки времени, материалы и конечные оси жизненного цикла. Снимок,
+/// потерявший что-то на обратном пути, ушёл бы в шину правдоподобным, но не тем.
+[<Fact>]
+let ``Reading the payload back yields the snapshot it was written from`` () =
+    let snapshots =
+        [
+            Meetup.toSnapshot Sample.draft
+            Meetup.toSnapshot Sample.published
+            Meetup.toSnapshot Sample.scheduled
+            Meetup.toSnapshot Sample.cancelledVisible
+            Meetup.toSnapshot Sample.held
+            Meetup.toSnapshot Sample.withMaterial
+            { Meetup.toSnapshot Sample.titled with
+                Schedule = Tentative Sample.day
+            }
+            { Meetup.toSnapshot Sample.titled with
+                Schedule =
+                    Fixed(
+                        DayStart
+                            {
+                                Date = DateOnly(2026, 10, 3)
+                                Time = minute 18 30
+                            }
+                    )
+            }
+            { Meetup.toSnapshot Sample.titled with
+                Schedule = Fixed(Interval interval)
+            }
+        ]
+
+    test <@ snapshots |> List.map roundTrip = snapshots @>
+
+/// Момент читается той же точностью, что пишется: микросекунды целиком, без
+/// округления до секунды.
+[<Fact>]
+let ``Reading the payload back keeps the microseconds of a moment`` () =
+    let snapshot =
+        { Meetup.toSnapshot Sample.published with
+            FirstPublishedAt = Some(Sample.fixedNow.AddTicks 12340L)
+        }
+
+    test <@ (roundTrip snapshot).FirstPublishedAt = Some(Sample.fixedNow.AddTicks 12340L) @>
+
+/// Payload, который читатель не понимает, — дефект, а не отказ: исключение называет
+/// событие, чтобы запись о нём вела к строке журнала.
+[<Fact>]
+let ``A payload without a required field is rejected naming the event`` () =
+    let payload =
+        (parse (Meetup.toSnapshot Sample.titled)
+         |> fun node ->
+             node.Remove "venue" |> ignore
+             node.ToJsonString())
+
+    let error =
+        Assert.Throws<exn>(fun () ->
+            MeetupEventPayload.toSnapshot eventId payload
+            |> ignore
+        )
+
+    test
+        <@
+            error.Message.Contains(eventId.ToString "D")
+            && error.Message.Contains "venue"
+        @>
+
+/// Строка, записанная до PER-201, коллекции в payload не несёт: материалов тогда не
+/// было, и читатель обязан прочитать её пустой, а не остановить очередь публикации.
+[<Fact>]
+let ``A payload written before materials existed reads with an empty collection`` () =
+    let payload =
+        (parse (Meetup.toSnapshot Sample.titled)
+         |> fun node ->
+             node.Remove "materials" |> ignore
+             node.ToJsonString())
+
+    test <@ MeetupEventPayload.toSnapshot eventId payload = Meetup.toSnapshot Sample.titled @>
+
+[<Fact>]
+let ``Only the material occasions carry a material id`` () =
+    let (MaterialId attached) = Sample.material.Id
+    let (MaterialId removed) = Sample.materialId
+
+    test
+        <@
+            MeetupEventPayload.materialId (MeetupMaterialAttached Sample.material) = Nullable attached
+            && MeetupEventPayload.materialId (MeetupMaterialRemoved Sample.materialId) = Nullable removed
+            && MeetupEventPayload.materialId MeetupCancelled = Nullable()
+            && MeetupEventPayload.materialId (MeetupCreated(Sample.meetupId, Sample.authorId)) = Nullable()
+        @>

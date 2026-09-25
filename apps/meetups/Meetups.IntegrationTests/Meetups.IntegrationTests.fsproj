@@ -14,6 +14,7 @@
     <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
     <PackageReference Include="Grpc.HealthCheck" Version="2.67.0" />
     <PackageReference Include="Npgsql" Version="10.0.1" />
+    <PackageReference Include="Testcontainers.Nats" Version="4.14.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
   </ItemGroup>
 
@@ -24,6 +25,7 @@
     <Compile Include="Infrastructure/LiveMeetupsHost.fs" />
     <Compile Include="Infrastructure/DispatchScenario.fs" />
     <Compile Include="Infrastructure/DispatchReader.fs" />
+    <Compile Include="Infrastructure/NatsBroker.fs" />
     <Compile Include="Infrastructure/DuePublicationReader.fs" />
     <Compile Include="Infrastructure/MeetupCommands.fs" />
     <Compile Include="Scenarios/GrpcBoundaryTests.fs" />
@@ -34,6 +36,8 @@
     <Compile Include="Scenarios/HiddenMeetupReadTests.fs" />
     <Compile Include="Scenarios/ListMeetupStatesTests.fs" />
     <Compile Include="Scenarios/MeetupDispatchTests.fs" />
+    <Compile Include="Scenarios/JournalMaterialIdTests.fs" />
+    <Compile Include="Scenarios/MeetupPublicationTests.fs" />
     <Compile Include="Scenarios/MeetupDuePublicationTests.fs" />
   </ItemGroup>
 

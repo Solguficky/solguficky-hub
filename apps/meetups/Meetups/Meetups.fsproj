@@ -49,10 +49,12 @@
     <Compile Include="Slices/PublishDueMeetups.fs" />
     <Compile Include="Observability/Failures.fs" />
     <Compile Include="Observability/DispatchTelemetry.fs" />
+    <Compile Include="Observability/PublisherTelemetry.fs" />
     <Compile Include="Observability/DuePublicationTelemetry.fs" />
     <Compile Include="Observability/IncomingMetadata.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
+    <Compile Include="Transport/NatsEventPublisher.fs" />
     <Compile Include="Transport/OutboxDispatchWorker.fs" />
     <Compile Include="Transport/DuePublicationWorker.fs" />
     <Compile Include="Host.fs" />
@@ -61,6 +63,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.NATS.Net" Version="13.5.3" />
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="dbup-postgresql" Version="7.0.1" />
     <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.67.0" />
