@@ -43,6 +43,10 @@ export type MeetupSummary = {
   id: string;
   title: string;
   schedule?: { year: number; month: number; day: number };
+  // Скрытую сходку Meetups отдаёт только автору и администратору (ADR-022):
+  // по этому полю бот помечает её в списке и собирает раздел «Скрытые»,
+  // не повторяя само правило видимости.
+  visibility: "hidden" | "visible";
 };
 
 // Архив различает три исхода вручную (Archive.fs, PER-229): "held"/"cancelled"

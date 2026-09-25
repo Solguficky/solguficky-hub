@@ -1254,7 +1254,7 @@ async function handleCallback(
       if (action.kind === "manage-edit") {
         await editScreen(
           ctx,
-          `Что изменить в сходке «${meetup.title}»?`,
+          `Что изменить в сходке «${meetupTitleLabel(meetup.title)}»?`,
           new InlineKeyboard()
             .text("Название", `v1:manage:field:${token}:title`)
             .text("Дата и время", `v1:manage:field:${token}:schedule`)
@@ -1435,11 +1435,31 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "manage-hidden") {
+      // Отдельного запроса нет: правило видимости ADR-022 уже отдало скрытые
+      // сходки только тем, кому их можно видеть, и экран лишь выбирает их из
+      // того же списка. Постороннему раздел поэтому показывает пустоту.
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-visible-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderHiddenMeetupList(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["meetup-list"],
+        okMessage: "hidden meetup list sent",
+        rejectedMessage: "hidden meetup list rejected",
+        useCase,
+      });
+      return;
+    }
     if (action.kind === "manage-menu") {
       const id = createUuidV7();
       await ctx.reply("Управление сходками", {
         reply_markup: new InlineKeyboard()
           .text("Создать сходку", `v1:manage:new:${uuidToToken(id)}`)
+          .row()
+          .text("Скрытые сходки", "v1:manage:hidden")
           .row()
           .text("Состав сообщества", "v1:community:list"),
       });
@@ -1926,11 +1946,55 @@ async function renderMeetupList(
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
-    await editScreen(
-      ctx,
-      `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
-      new InlineKeyboard().text("Повторить", "v1:nav:hub"),
+    await renderMeetupListFailure(ctx, "v1:nav:hub");
+  }
+}
+
+// «Ближайшие сходки» и «Скрытые сходки» читают один и тот же список, поэтому и
+// отказ у них один; различается только экран, на который ведёт повтор.
+async function renderMeetupListFailure(
+  ctx: UpdateContext,
+  retry: string,
+): Promise<void> {
+  await editScreen(
+    ctx,
+    `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
+    new InlineKeyboard().text("Повторить", retry),
+  );
+}
+
+async function renderHiddenMeetupList(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+): Promise<void> {
+  if (result.kind === "meetup-list") {
+    const hidden = result.meetups.filter(
+      (meetup) => meetup.visibility === "hidden",
     );
+    const keyboard = new InlineKeyboard();
+    for (const meetup of hidden) {
+      keyboard
+        .text(
+          meetupTitleLabel(meetup.title),
+          `v1:view:${uuidToToken(meetup.id)}`,
+        )
+        .row();
+    }
+    keyboard.text("Обновить", "v1:manage:hidden").row();
+    keyboard.text("Назад", "v1:manage:menu");
+    // Незаконченный черновик и снятая с публикации сходка в контракте не
+    // различаются, поэтому раздел говорит о скрытых, а не о черновиках.
+    const text =
+      hidden.length === 0
+        ? "Скрытых сходок нет.\n\nЗдесь появляются черновики и сходки, снятые с публикации."
+        : ["Скрытые сходки", hidden.map(meetupListLine).join("\n")].join(
+            "\n\n",
+          );
+    await editScreen(ctx, text, keyboard);
+    return;
+  }
+  if (result.kind === "dependency-rejected" || result.kind === "rejected") {
+    await renderMeetupListFailure(ctx, "v1:manage:hidden");
   }
 }
 
@@ -2020,7 +2084,9 @@ function homeKeyboard(): InlineKeyboard {
 function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const meetup of meetups) {
-    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+    keyboard
+      .text(meetupTitleLabel(meetup.title), `v1:view:${uuidToToken(meetup.id)}`)
+      .row();
   }
   return keyboard
     .text("Обновить", "v1:nav:hub")
@@ -2043,9 +2109,10 @@ function archiveListText(meetups: readonly ArchivedMeetupSummary[]): string {
 function archivedMeetupListLine(meetup: ArchivedMeetupSummary): string {
   const label = scheduleLabel(meetup.schedule);
   const status = archiveStatusLabel(meetup.status);
+  const title = meetupTitleLabel(meetup.title);
   return label === undefined
-    ? `• ${meetup.title} (${status})`
-    : `• ${label} — ${meetup.title} (${status})`;
+    ? `• ${title} (${status})`
+    : `• ${label} — ${title} (${status})`;
 }
 
 function archiveStatusLabel(status: ArchivedMeetupSummary["status"]): string {
@@ -2064,7 +2131,9 @@ function archiveListKeyboard(
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const meetup of meetups) {
-    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+    keyboard
+      .text(meetupTitleLabel(meetup.title), `v1:view:${uuidToToken(meetup.id)}`)
+      .row();
   }
   return keyboard
     .text("Обновить", "v1:nav:archive")
@@ -2459,7 +2528,7 @@ function meetupCardText(
     meetup.publishAt === undefined
       ? ""
       : `\nПубликация назначена на ${formatLocalMoment(meetup.publishAt)}`;
-  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  const card = `${meetupTitleLabel(meetup.title)}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
   if (!includeMaterials || meetup.materials.length === 0) return card;
   const materials = meetup.materials
     .slice(0, materialCardLimit)
@@ -2517,9 +2586,20 @@ function buttonText(value: string): string {
 
 function meetupListLine(meetup: MeetupSummary): string {
   const label = scheduleLabel(meetup.schedule);
+  const title = meetupTitleLabel(meetup.title);
+  // Скрытую сходку видят только автор и администратор (ADR-022); без пометки
+  // она читалась бы в общем списке как опубликованная.
+  const hidden = meetup.visibility === "hidden" ? " (скрыта)" : "";
   return label === undefined
-    ? `• ${meetup.title}`
-    : `• ${label} — ${meetup.title}`;
+    ? `• ${title}${hidden}`
+    : `• ${label} — ${title}${hidden}`;
+}
+
+// Черновик получает название вторым шагом формы, и брошенный на первом вопросе
+// остаётся с пустым: Telegram не принимает кнопку без текста, а строка списка
+// и карточка без подписи не читаются.
+function meetupTitleLabel(title: string): string {
+  return title.trim() === "" ? "Без названия" : title;
 }
 
 function scheduleLabel(
@@ -2929,6 +3009,7 @@ function callbackUseCase(
     | "outdated"
     | "view-meetup"
     | "manage-menu"
+    | "manage-hidden"
     | "community"
     | "ask-allowed-username"
     | "admit-member"
@@ -2966,6 +3047,8 @@ function callbackUseCase(
   switch (kind) {
     case "view-meetup":
       return "view_meetup";
+    case "manage-hidden":
+      return "find_meetup";
     case "create-meetup":
     case "publish-meetup":
     case "manage-menu":

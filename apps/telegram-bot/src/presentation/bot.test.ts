@@ -921,11 +921,13 @@ describe("presentation adapter", () => {
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
           title: "Без даты",
+          visibility: "visible" as const,
         },
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
           title: "Настолки",
           schedule: { year: 2026, month: 8, day: 15 },
+          visibility: "visible" as const,
         },
       ],
     });
@@ -964,6 +966,179 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("marks a hidden meetup in the hub", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "Черновик",
+          visibility: "hidden" as const,
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Настолки",
+          visibility: "visible" as const,
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "Ближайшие сходки\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
+      },
+    });
+  });
+
+  it("labels a draft without a title in the hub", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "",
+          visibility: "visible" as const,
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "Ближайшие сходки\n\nБез даты\n• Без названия",
+        reply_markup: {
+          inline_keyboard: expect.arrayContaining([
+            [
+              {
+                text: "Без названия",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
+              },
+            ],
+          ]),
+        },
+      },
+    });
+  });
+
+  it("labels a cancelled draft without a title in the archive", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "archived-meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "",
+          visibility: "hidden" as const,
+          status: "cancelled" as const,
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:nav:archive"));
+    const text = (calls[1] as { payload: { text: string } } | undefined)
+      ?.payload.text;
+    expect(text).toContain("• Без названия (отменена)");
+  });
+
+  it("offers the hidden meetups section in the management menu", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    expect(JSON.stringify(calls[1]?.payload)).toContain(
+      '{"text":"Скрытые сходки","callback_data":"v1:manage:hidden"}',
+    );
+  });
+
+  it("lists only hidden meetups in the hidden section", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+          title: "",
+          visibility: "hidden" as const,
+        },
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Настолки",
+          schedule: { year: 2026, month: 8, day: 15 },
+          visibility: "visible" as const,
+        },
+      ],
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:manage:hidden"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "list-visible-meetups" }),
+    );
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "Скрытые сходки\n\n• Без названия (скрыта)",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Без названия",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
+              },
+            ],
+            [{ text: "Обновить", callback_data: "v1:manage:hidden" }],
+            [{ text: "Назад", callback_data: "v1:manage:menu" }],
+          ],
+        },
+      },
+    });
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+  });
+
+  it("shows an empty hidden section when Meetups returns nothing hidden", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-list",
+      meetups: [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+          title: "Настолки",
+          visibility: "visible" as const,
+        },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:manage:hidden"));
+    expect(calls[1]).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: expect.stringContaining("Скрытых сходок нет."),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Обновить", callback_data: "v1:manage:hidden" }],
+            [{ text: "Назад", callback_data: "v1:manage:menu" }],
+          ],
+        },
+      },
+    });
+  });
+
   it("renders an empty archive as an empty state", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "archived-meetup-list",
@@ -988,16 +1163,19 @@ describe("presentation adapter", () => {
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
           title: "Состоялась",
+          visibility: "visible" as const,
           status: "held" as const,
         },
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
           title: "Отменена",
+          visibility: "visible" as const,
           status: "cancelled" as const,
         },
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
           title: "Прошла",
+          visibility: "visible" as const,
           status: "past" as const,
         },
       ],

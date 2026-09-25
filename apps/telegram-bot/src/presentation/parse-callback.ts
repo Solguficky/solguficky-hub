@@ -49,6 +49,7 @@ export type CallbackAction =
   | { kind: "hub" }
   | { kind: "archive" }
   | { kind: "manage-menu" }
+  | { kind: "manage-hidden" }
   | { kind: "community" }
   | { kind: "ask-allowed-username" }
   | { kind: "admit-member"; token: string }
@@ -106,6 +107,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   const parts = parsed.data.split(":");
   if (parts[0] !== "v1") return { kind: "outdated" };
   if (parsed.data === "v1:manage:menu") return { kind: "manage-menu" };
+  if (parsed.data === "v1:manage:hidden") return { kind: "manage-hidden" };
   if (parsed.data === "v1:community:list") return { kind: "community" };
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
