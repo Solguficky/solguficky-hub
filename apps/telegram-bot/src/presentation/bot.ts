@@ -36,10 +36,12 @@ import type {
 import type { NotificationCategory } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import {
-  editQuestionText,
+  editQuestion,
   parseEditQuestion,
   parsePublishMomentQuestion,
-  publishMomentQuestionText,
+  plainQuestion,
+  publishMomentQuestion,
+  type QuestionMessage,
 } from "./edit-question.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
@@ -291,17 +293,17 @@ async function handleMessage(
         ? undefined
         : questions.get(questionKey(ctx.chat?.id, replyId));
     const repliedMessage = ctx.message?.reply_to_message;
-    const repliedText =
-      repliedMessage !== undefined && "text" in repliedMessage
-        ? repliedMessage.text
+    const repliedEntities =
+      repliedMessage !== undefined && "entities" in repliedMessage
+        ? repliedMessage.entities
         : undefined;
     const recoveredEdit =
       storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
-        ? parseEditQuestion(repliedText)
+        ? parseEditQuestion(repliedEntities)
         : undefined;
     const recoveredMoment =
       storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
-        ? parsePublishMomentQuestion(repliedText)
+        ? parsePublishMomentQuestion(repliedEntities)
         : undefined;
     const pending: PendingInput | undefined =
       storedPending ??
@@ -2162,7 +2164,7 @@ async function renderNotificationSettings(
       ctx,
       `Уведомления: общие настройки
 
-Отметь, о чём присылать. Настройка действует для всех сходок, включая будущие.`,
+Отметь, о чём присылать. Настройка действует для всех сходок, включая будущие. Категории, закреплённые отдельно у сходки, она уже не меняет.`,
       keyboard,
     );
     return;
@@ -2553,6 +2555,16 @@ async function resolvePerson(
   };
 }
 
+// Вопрос формы и правки: ForceReply и шаг в сущностях. Превью ссылок
+// выключено, иначе скрытая ссылка на профиль бота развернулась бы карточкой.
+function replyQuestion(ctx: UpdateContext, question: QuestionMessage) {
+  return ctx.reply(question.text, {
+    entities: question.entities,
+    link_preview_options: { is_disabled: true },
+    reply_markup: { force_reply: true, selective: true },
+  });
+}
+
 async function renderFormResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
@@ -2570,13 +2582,16 @@ async function renderFormResult(
       result.kind === "edit-ask"
         ? `Сейчас: ${currentValue}\n${result.error ?? formPrompts[result.field]}`
         : (result.error ?? formPrompts[result.field]);
-    const text =
+    const question: QuestionMessage =
       result.kind === "edit-ask"
-        ? editQuestionText(prompt, uuidToToken(result.meetup.id), result.field)
-        : prompt;
-    const message = await ctx.reply(text, {
-      reply_markup: { force_reply: true, selective: true },
-    });
+        ? editQuestion({
+            prompt,
+            botUsername: ctx.me.username,
+            token: uuidToToken(result.meetup.id),
+            field: result.field,
+          })
+        : plainQuestion(prompt);
+    const message = await replyQuestion(ctx, question);
     questions.set(questionKey(ctx.chat?.id, message.message_id), {
       kind: "meetup",
       mode: result.kind === "edit-ask" ? "edit" : "create",
@@ -2618,17 +2633,16 @@ async function renderFormResult(
     // Правка поля: сохранённый ввод показан, но повторно не отправляется — его
     // вводят заново, уже по актуальным данным. Режим вопроса сохраняет ту же
     // форму (создание или редактирование), в которой конфликт случился.
-    const text =
+    const question: QuestionMessage =
       result.editing === true
-        ? editQuestionText(
-            `Сейчас: ${lines.join("\n")}\n\n${formPrompts[result.field]}`,
-            uuidToToken(stored.id),
-            result.field,
-          )
-        : `${lines.join("\n")}\n\n${formPrompts[result.field]}`;
-    const message = await ctx.reply(text, {
-      reply_markup: { force_reply: true, selective: true },
-    });
+        ? editQuestion({
+            prompt: `Сейчас: ${lines.join("\n")}\n\n${formPrompts[result.field]}`,
+            botUsername: ctx.me.username,
+            token: uuidToToken(stored.id),
+            field: result.field,
+          })
+        : plainQuestion(`${lines.join("\n")}\n\n${formPrompts[result.field]}`);
+    const message = await replyQuestion(ctx, question);
     questions.set(questionKey(ctx.chat?.id, message.message_id), {
       kind: "meetup",
       mode: result.editing === true ? "edit" : "create",
@@ -2686,9 +2700,13 @@ async function renderFormResult(
       result.retry === undefined
         ? publishMomentPrompt
         : publishMomentRetryText[result.retry];
-    const message = await ctx.reply(
-      publishMomentQuestionText(`${current}${prompt}`, token),
-      { reply_markup: { force_reply: true, selective: true } },
+    const message = await replyQuestion(
+      ctx,
+      publishMomentQuestion({
+        prompt: `${current}${prompt}`,
+        botUsername: ctx.me.username,
+        token,
+      }),
     );
     questions.set(questionKey(ctx.chat?.id, message.message_id), {
       kind: "publish-moment",

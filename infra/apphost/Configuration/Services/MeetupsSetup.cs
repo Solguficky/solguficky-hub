@@ -32,6 +32,16 @@ internal static class MeetupsSetup
             // нём интерпретируется момент назначенной публикации; без него
             // `Host.build` падает на старте, а не на первом запросе. Значение
             // общее с ботом (CommunityTime).
-            .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", CommunityTime.Zone);
+            .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
+            // Адрес шины для адаптера публикации из журнала. Узла nats в запуске
+            // нет — bind молчит, и Meetups поднимается с ненастроенным портом:
+            // события копятся в журнале и уйдут, когда адрес появится. WaitFor
+            // внутри bind ждёт и применения топологии JetStream (NatsSetup), поэтому
+            // первая публикация не встречает отсутствующий стрим.
+            .BindConnection<ProjectResource, NatsServerResource>(
+                context,
+                AppHostNames.Resources.Nats,
+                "MEETUPS_NATS_URL",
+                nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
     }
 }

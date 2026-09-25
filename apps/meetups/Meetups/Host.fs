@@ -74,14 +74,38 @@ let build (args: string array) : WebApplication =
     // grpcurl требует -import-path и -proto.
     builder.Services.AddGrpcReflection() |> ignore
 
-    // Фоновая публикация из журнала. Порт зарегистрирован ненастроенным, потому что
-    // адаптера ещё нет (PER-209): цикл не стартует и в базу не ходит, поэтому хост
-    // поднимается без неё ровно так же, как и до появления этой границы.
-    //
-    // Регистрация стоит здесь, а не приезжает вместе с NATS: граница существует
-    // вместе с чтением журнала, а PER-209 меняет одно это значение на рабочий порт.
-    builder.Services.AddSingleton<DispatchMeetupEvents.Port>(DispatchMeetupEvents.Port.Unconfigured)
-    |> ignore
+    // Фоновая публикация из журнала. Порт рабочий, когда задан адрес NATS, и
+    // ненастроенный без него: тогда цикл не стартует и в базу не ходит, и хост
+    // поднимается без брокера ровно так же, как без базы. Ветка по конфигурации, а
+    // не по доступности: недоступный NATS при заданном адресе — отказ каждого тика,
+    // а не повод молча выключить публикацию.
+    match builder.Configuration[NatsEventPublisher.UrlVariable] with
+    | null
+    | "" ->
+        builder.Services.AddSingleton<DispatchMeetupEvents.Port>(DispatchMeetupEvents.Port.Unconfigured)
+        |> ignore
+    | url ->
+        // Клиент Aspire, а не свой NatsConnection: логи клиента, трассировка и
+        // переподключение приходят той же интеграцией, что у остальных ресурсов.
+        // Health check выключен намеренно: недоступный NATS перевёл бы
+        // grpc.health.v1 в NOT_SERVING, хотя команды и чтение работают без шины, а
+        // публикация догонит журнал после его возвращения.
+        builder.AddNatsClient(
+            "nats",
+            fun (settings: Aspire.NATS.Net.NatsClientSettings) ->
+                settings.ConnectionString <- url
+                settings.DisableHealthChecks <- true
+        )
+
+        builder.AddNatsJetStream()
+
+        builder.Services.AddSingleton<DispatchMeetupEvents.Port>(fun services ->
+            let send =
+                NatsEventPublisher.ofContext (services.GetRequiredService<NATS.Client.JetStream.INatsJSContext>())
+
+            DispatchMeetupEvents.Port.Publish(NatsEventPublisher.publish send NatsEventPublisher.defaultAckTimeout)
+        )
+        |> ignore
 
     builder.Services.AddHostedService<OutboxDispatchWorker>()
     |> ignore
@@ -100,6 +124,9 @@ let build (args: string array) : WebApplication =
     // причине и рядом.
     builder.Services.ConfigureOpenTelemetryMeterProvider(fun metrics ->
         metrics.AddMeter DispatchTelemetry.MeterName
+        |> ignore
+
+        metrics.AddMeter PublisherTelemetry.MeterName
         |> ignore
 
         metrics.AddMeter DuePublicationTelemetry.MeterName

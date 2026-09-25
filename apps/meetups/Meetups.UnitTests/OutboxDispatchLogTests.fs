@@ -181,6 +181,7 @@ let private pending (requestId: RequestId option) =
         PerformedBy = Guid.Empty
         OccurredAt = DateTimeOffset(2026, 9, 7, 12, 0, 0, TimeSpan.Zero)
         RequestId = requestId
+        MaterialId = None
     }
 
 let private relayedFields (event: PendingEvent) =
