@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.Extensions.Options;
 using Notifications.Facts;
 using Npgsql;
 using Notifications.Replica;
@@ -16,7 +17,7 @@ namespace Notifications.Infrastructure;
 /// durable безопасны без грина и без блокировок в памяти: гонку разводит
 /// блокировка строки PostgreSQL.
 /// </remarks>
-public sealed class ReplicaStore(NpgsqlDataSource source)
+public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> factOptions)
 {
     static ReplicaStore()
     {
@@ -150,7 +151,13 @@ public sealed class ReplicaStore(NpgsqlDataSource source)
             // публикация, снятие и материал от этого не перестают быть
             // случившимися (007_fact_replica, комментарий к consumed_event).
             // Кому их объявлять, решает уже обновлённая реплика.
-            facts = await NotificationStore.AddForMeetupEvent(work, meetup, changed, now, cancellationToken);
+            facts = await NotificationStore.AddForMeetupEvent(
+                work,
+                meetup,
+                changed,
+                now,
+                factOptions.Value.StaleAfter,
+                cancellationToken);
         }
         else if (fact is IdentityFact identity)
         {

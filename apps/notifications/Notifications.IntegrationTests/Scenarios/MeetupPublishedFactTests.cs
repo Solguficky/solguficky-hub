@@ -63,7 +63,7 @@ public class MeetupPublishedFactTests
             messageId.ShouldBe(fact.NotificationId);
             fact.Cause.MeetupEventId.ShouldBe(published.EventId);
             fact.RequestId.ShouldBe("req-216");
-            fact.HasNotAfter.ShouldBeFalse();
+            fact.HasNotAfter.ShouldBeTrue();
             fact.MeetupPublished.Meetup.Id.ShouldBe(meetupId);
             fact.MeetupPublished.Meetup.Title.ShouldBe("Пятничная");
         }

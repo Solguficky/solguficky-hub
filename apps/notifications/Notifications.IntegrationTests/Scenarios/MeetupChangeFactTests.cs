@@ -62,6 +62,13 @@ public class MeetupChangeFactTests
         var renamed = Changed(meetupId, version: 3, title: "Пятничная", requestId: "req-218");
         await nats.Publish(MeetupChangedSubject, renamed);
 
+        // Отмена снимает то, что ещё ждёт релея (PER-219), поэтому правка
+        // должна уйти в шину до неё: предмет сценария — аспекты двух фактов, а
+        // не гонка с релеем.
+        await Eventually(
+            () => OfType(nats, Notification.TypeOneofCase.MeetupChanged),
+            facts => facts.Count == 1);
+
         var cancelled = Changed(meetupId, version: 4, title: "Пятничная");
         cancelled.State.Lifecycle = MeetupLifecycle.Cancelled;
         cancelled.MeetupCancelled = new Meetups.V1.MeetupCancelled();
