@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 )
@@ -161,9 +162,14 @@ func seedProfile(t *testing.T, db *sql.DB, telegramUserID int64) string {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	identityID, err := upsertProfile(t.Context(), tx, telegramUserID, nil)
+	identityID, registered, err := upsertProfile(t.Context(), tx, telegramUserID, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if registered {
+		if err := outbox.Append(t.Context(), tx, identityID, outbox.ProfileRegistered, ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -171,20 +177,18 @@ func seedProfile(t *testing.T, db *sql.DB, telegramUserID int64) string {
 	return identityID
 }
 
+// setBlocked ставит отметку мимо сервиса: роли, выданные раньше, остаются
+// активными — именно это состояние лечит blockIdentity.
 func setBlocked(t *testing.T, db *sql.DB, identityID string) {
 	t.Helper()
-	if _, err := db.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, identityID); err != nil {
-		t.Fatal(err)
-	}
+	testdb.ExecBypassingShields(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, identityID)
 }
 
 func insertRoleGrantedAhead(t *testing.T, db *sql.DB, identityID, role string) {
 	t.Helper()
-	if _, err := db.ExecContext(t.Context(), `
+	testdb.ExecBypassingShields(t, db, `
 		INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, $3, now() + interval '1 day', NULL)`, uuid.NewString(), identityID, role); err != nil {
-		t.Fatal(err)
-	}
+		VALUES ($1, $2, $3, now() + interval '1 day', NULL)`, uuid.NewString(), identityID, role)
 }
 
 func activeRoleCountInternal(t *testing.T, db *sql.DB, identityID string) int {

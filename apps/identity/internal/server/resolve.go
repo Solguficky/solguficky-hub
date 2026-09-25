@@ -8,19 +8,26 @@ import (
 	"log/slog"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 const (
-	upsertProfileSQL = `
+	// Вставка и обновление ника разделены: регистрация — событие, а смена ника
+	// нет, и один upsert их не различает.
+	insertProfileSQL = `
 INSERT INTO profiles (id, telegram_user_id, username)
 VALUES ($1, $2, $3)
-ON CONFLICT (telegram_user_id) DO UPDATE
-SET username = EXCLUDED.username,
+ON CONFLICT (telegram_user_id) DO NOTHING
+RETURNING id`
+
+	refreshUsernameSQL = `
+UPDATE profiles
+SET username = $2,
     updated_at = now()
-WHERE profiles.username IS DISTINCT FROM EXCLUDED.username
+WHERE telegram_user_id = $1 AND username IS DISTINCT FROM $2
 RETURNING id`
 
 	selectProfileIDSQL = `SELECT id FROM profiles WHERE telegram_user_id = $1`
@@ -50,12 +57,20 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	identityID, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
+	identityID, registered, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
 	if err != nil {
 		return nil, internal("upsert profile", err)
 	}
-	if err := admitAllowedUsername(ctx, tx, identityID, req.GetTelegramUsername()); err != nil {
+	if err := admitAllowedUsername(ctx, tx, identityID, req.GetTelegramUsername(), !registered); err != nil {
 		return nil, internal("admit allowed username", err)
+	}
+	// Регистрация пишется после допуска: снимок события — состояние после всей
+	// транзакции, и допуск по списку ников приходит в нём ролями, а не отдельными
+	// выдачами.
+	if registered {
+		if err := outbox.Append(ctx, tx, identityID, outbox.ProfileRegistered, ""); err != nil {
+			return nil, internal("announce registration", err)
+		}
 	}
 
 	roles, err := listRoles(ctx, tx, identityID)
@@ -89,7 +104,12 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 //
 // Отметка блокировки читается под FOR UPDATE до гашения записи: иначе
 // заблокированный сжёг бы своё разрешение, получив отказ триггера на выдаче.
-func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string) error {
+//
+// announce ложно при регистрации: тогда выдачи входят в снимок одного события
+// profile_registered, а не выходят отдельными role_granted. Для существующего
+// профиля каждая выдача — своё событие. public выдаётся раньше member: круги
+// вложенные, и промежуточный снимок {member} без public нарушил бы ADR-043.
+func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string, announce bool) error {
 	if username == "" {
 		return nil
 	}
@@ -104,8 +124,8 @@ func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username 
 	if err != nil || !consumed {
 		return err
 	}
-	for _, role := range []string{roleMember, rolePublic} {
-		if _, err := grantRoleTxWithReason(ctx, tx, identityID, role, uuid.NullUUID{}, reasonAllowedUsername); err != nil {
+	for _, role := range hubAdmissionRoles {
+		if _, err := grantRoleTxWithReason(ctx, tx, identityID, role, uuid.NullUUID{}, reasonAllowedUsername, announce); err != nil {
 			return err
 		}
 	}
@@ -119,26 +139,37 @@ func usernameArg(req *identityv1.ResolveIdentityRequest) any {
 	return req.GetTelegramUsername()
 }
 
-func upsertProfile(ctx context.Context, tx *sql.Tx, telegramUserID int64, username any) (string, error) {
+// upsertProfile находит профиль по Telegram id или создаёт его. registered
+// истинно ровно тогда, когда профиль создан этой транзакцией: только это —
+// регистрация, а обновление кэша ника событием не является.
+func upsertProfile(ctx context.Context, tx *sql.Tx, telegramUserID int64, username any) (string, bool, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return "", fmt.Errorf("generate identity id: %w", err)
+		return "", false, fmt.Errorf("generate identity id: %w", err)
 	}
 
 	var identityID string
-	err = tx.QueryRowContext(ctx, upsertProfileSQL, id.String(), telegramUserID, username).Scan(&identityID)
+	err = tx.QueryRowContext(ctx, insertProfileSQL, id.String(), telegramUserID, username).Scan(&identityID)
 	if err == nil {
-		return identityID, nil
+		return identityID, true, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
+		return "", false, err
+	}
+
+	err = tx.QueryRowContext(ctx, refreshUsernameSQL, telegramUserID, username).Scan(&identityID)
+	if err == nil {
+		return identityID, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
 	}
 
 	err = tx.QueryRowContext(ctx, selectProfileIDSQL, telegramUserID).Scan(&identityID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return identityID, nil
+	return identityID, false, nil
 }
 
 func listRoles(ctx context.Context, tx *sql.Tx, identityID string) ([]identityv1.GlobalRole, error) {

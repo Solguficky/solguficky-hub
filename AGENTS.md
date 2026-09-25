@@ -20,7 +20,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 ## Карта репозитория
 
 - `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
-- `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL.
+- `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL и outbox исходящих событий с релеем в JetStream; изменение состояния доступа без события той же транзакции схема не коммитит.
 - `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
 - `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, команды записи и запросы чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а продуктовые запросы идут через единый viewer-aware reader.
