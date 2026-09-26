@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Dapper;
+using Notifications.Reminders;
 using Npgsql;
 
 namespace Notifications.IntegrationTests.Infrastructure;
@@ -77,6 +78,7 @@ public sealed class ServiceProcess : IDisposable
 
         start.Environment[Migrations.DatabaseUrlVariable] = connectionString;
         start.Environment[NotificationsHost.NatsUrlVariable] = natsUrl;
+        start.Environment[CommunityTime.TimeZoneVariable] = SiloUnderTest.CommunityZone;
 
         var process = Process.Start(start)
             ?? throw new InvalidOperationException($"cannot start {executable}");

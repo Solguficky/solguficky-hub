@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Notifications.Facts;
 using Notifications.Infrastructure;
 using Notifications.Reminders;
 using Orleans.Runtime;
@@ -9,6 +10,9 @@ namespace Notifications.Grains;
 public sealed class MeetupNotificationGrain(
     GrainActivationStore activations,
     ReminderTaskStore tasks,
+    ReplicaStore replica,
+    CommunityTime community,
+    FactTelemetry facts,
     IOptions<MeetupReminderOptions> options,
     TimeProvider clock,
     ILocalSiloDetails silo,
@@ -55,6 +59,17 @@ public sealed class MeetupNotificationGrain(
 
     public Task<ActivationRecord> Describe() =>
         Task.FromResult(record ?? throw new InvalidOperationException("grain is not activated"));
+
+    public async Task ApplyReplica()
+    {
+        // Реплика читается здесь, внутри хода грина, а не у вызывающего. Ход
+        // у сходки один, поэтому вызов, пришедший позже, всегда видит не
+        // более старую реплику, чем пришедший раньше: два экземпляра сервиса,
+        // применившие v5 и v6 и дошедшие сюда в обратном порядке, оба
+        // приводят задание к последнему слову, а не откатывают его. Сходки,
+        // которой реплика не знает, для напоминания нет.
+        await ApplySchedule((await CurrentStart())?.Moment);
+    }
 
     public async Task ApplySchedule(DateTimeOffset? startsAt)
     {
@@ -151,11 +166,30 @@ public sealed class MeetupNotificationGrain(
             return false;
         }
 
-        var fired = await tasks.Fire(live.TaskId, Now(), token);
-
-        if (fired)
+        // Задание могло отстать от реплики: консьюмер коммитит реплику раньше,
+        // чем зовёт грин, а упавший вызов ждёт повтора после Nak. Исполнить
+        // такое задание значило бы напомнить о моменте, которого уже нет, или
+        // сработать вхолостую по скрытой сходке и тем закрыть напоминание её
+        // возврату на тот же момент. Поэтому сначала задание догоняет реплику;
+        // если момент по-прежнему наступил, ApplySchedule исполнит его сам.
+        if (await CurrentStart() is { } current && current.Moment != live.StartsAt)
         {
-            logger.LogInformation("Reminder fired {meetup_id} {task_id}", meetupId, live.TaskId);
+            await ApplySchedule(current.Moment);
+            return false;
+        }
+
+        var produced = await tasks.Fire(live, meetupId, Now(), token);
+        var fired = produced is not null;
+
+        if (produced is not null)
+        {
+            facts.Record(NotificationFacts.MeetupReminderType, produced);
+            logger.LogInformation(
+                "Reminder fired {meetup_id} {task_id} {facts_created} {facts_suppressed}",
+                meetupId,
+                live.TaskId,
+                produced.Created,
+                produced.Suppressed);
         }
 
         // Reminder снимается в обоих исходах. Задание перестало быть живым и
@@ -171,6 +205,25 @@ public sealed class MeetupNotificationGrain(
     public Task ReceiveReminder(string reminderName, TickStatus status) => FireDue();
 
     private DateTimeOffset Now() => clock.GetUtcNow();
+
+    /// <summary>
+    /// Момент начала по реплике в точности хранения, если реплика о сходке
+    /// знает. <c>null</c> — сверять не с чем: ключ не сходка или строки нет, и
+    /// задание заведено не по реплике, а напрямую через <see cref="ApplySchedule" />.
+    /// Внутри — <c>null</c>-момент: реплика говорит, что напоминать не о чем.
+    /// </summary>
+    private async Task<CurrentMoment?> CurrentStart()
+    {
+        if (!Guid.TryParse(this.GetPrimaryKeyString(), out var meetupId)
+            || await replica.Meetup(meetupId, CancellationToken.None) is not { } state)
+        {
+            return null;
+        }
+
+        return new CurrentMoment(community.StartsAt(state) is { } start ? ReminderPlan.ToStoredPrecision(start) : null);
+    }
+
+    private sealed record CurrentMoment(DateTimeOffset? Moment);
 
     /// <summary>
     /// Просит рантайм разбудить грин к моменту срабатывания. Reminder — только

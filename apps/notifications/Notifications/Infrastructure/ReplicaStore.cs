@@ -49,6 +49,18 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         FOR UPDATE;
         """;
 
+    // Последнее слово реплики о сходке, без блокировки: его читают грин
+    // напоминания и срабатывание, а решение о порядке уже принял upsert.
+    private const string MeetupLatestSql = """
+        SELECT title AS Title, description AS Description, venue AS Venue, kind AS Kind,
+               calendar_link AS CalendarLink, lifecycle AS Lifecycle, visibility AS Visibility,
+               schedule_form AS ScheduleForm, schedule_precision AS SchedulePrecision,
+               schedule_start_date AS ScheduleStartDate, schedule_start_time AS ScheduleStartTime,
+               schedule_end_date AS ScheduleEndDate, schedule_end_time AS ScheduleEndTime
+        FROM meetup_replica
+        WHERE meetup_id = @MeetupId;
+        """;
+
     private const string MeetupSql = """
         INSERT INTO meetup_replica (
             meetup_id, version, author,
@@ -173,6 +185,30 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
 
         return new ReplicaApplication(written == 0 ? ReplicaOutcome.Stale : ReplicaOutcome.Applied, facts);
+    }
+
+    /// <summary>
+    /// Снимок сходки в реплике; <c>null</c>, если реплика о ней не знает. Автор
+    /// и отметка первой публикации в снимке пусты: ни напоминанию, ни карточке
+    /// они не нужны.
+    /// </summary>
+    public async Task<MeetupReplicaState?> Meetup(Guid meetupId, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+
+        var row = await connection.QuerySingleOrDefaultAsync<MeetupBeforeRow>(
+            new CommandDefinition(MeetupLatestSql, new { MeetupId = meetupId }, cancellationToken: cancellationToken));
+
+        return row?.State();
+    }
+
+    /// <inheritdoc cref="Meetup(Guid, CancellationToken)" />
+    /// <remarks>То же чтение внутри чужой транзакции.</remarks>
+    internal static async Task<MeetupReplicaState?> Meetup(UnitOfWork work, Guid meetupId, CancellationToken cancellationToken)
+    {
+        var rows = await work.Query<MeetupBeforeRow>(MeetupLatestSql, new { MeetupId = meetupId }, cancellationToken);
+
+        return rows.Count == 1 ? rows[0].State() : null;
     }
 
     /// <summary>

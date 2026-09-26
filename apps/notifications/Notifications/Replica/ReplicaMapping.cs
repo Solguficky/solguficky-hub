@@ -176,6 +176,85 @@ public static class ReplicaMapping
             Visibility = state.Visibility,
         };
 
+    /// <summary>
+    /// Карточка уведомления из снимка реплики — обратное отображение к разбору
+    /// выше. Нужна поводу, у которого нет своего события: сработавшему
+    /// напоминанию. Его карточка — значение на момент срабатывания, а не на
+    /// момент последнего события, и описывает то, о чём напоминают.
+    /// </summary>
+    /// <remarks>
+    /// Значения колонок записал разбор выше и держат ограничения схемы, поэтому
+    /// незнакомое значение здесь — поломка, а не яд, и оно роняет вызов.
+    /// </remarks>
+    public static Notifications.V1.MeetupCard Card(Guid meetupId, MeetupReplicaState state) =>
+        new()
+        {
+            Id = meetupId.ToString(),
+            Title = state.Title,
+            Description = state.Description,
+            Venue = state.Venue,
+            Kind = state.Kind,
+            CalendarLink = state.CalendarLink,
+            Schedule = ToSchedule(state.Schedule),
+            Lifecycle = state.Lifecycle switch
+            {
+                "planned" => MeetupLifecycle.Planned,
+                "held" => MeetupLifecycle.Held,
+                "cancelled" => MeetupLifecycle.Cancelled,
+                var other => throw new InvalidOperationException($"replica lifecycle '{other}' is not a known value"),
+            },
+            Visibility = state.Visibility switch
+            {
+                "hidden" => MeetupVisibility.Hidden,
+                "visible" => MeetupVisibility.Visible,
+                var other => throw new InvalidOperationException($"replica visibility '{other}' is not a known value"),
+            },
+        };
+
+    private static Meetups.V1.Schedule ToSchedule(ScheduleColumns columns)
+    {
+        if (columns.Form == "no_date")
+        {
+            return new Meetups.V1.Schedule { NoDate = new NoDate() };
+        }
+
+        var value = columns.Precision switch
+        {
+            "day" => new DateValue { Day = ToCalendarDate(columns.StartDate) },
+            "day_start" => new DateValue { DayStart = ToLocalDateTime(columns.StartDate, columns.StartTime) },
+            "interval" => new DateValue
+            {
+                Interval = new LocalInterval
+                {
+                    Start = ToLocalDateTime(columns.StartDate, columns.StartTime),
+                    End = ToLocalDateTime(columns.EndDate, columns.EndTime),
+                },
+            },
+            var other => throw new InvalidOperationException($"replica schedule precision '{other}' is not a known value"),
+        };
+
+        return columns.Form switch
+        {
+            "tentative" => new Meetups.V1.Schedule { Tentative = value },
+            "fixed" => new Meetups.V1.Schedule { Fixed = value },
+            var other => throw new InvalidOperationException($"replica schedule form '{other}' is not a known value"),
+        };
+    }
+
+    private static CalendarDate ToCalendarDate(DateOnly? date) =>
+        date is { } value
+            ? new CalendarDate { Year = value.Year, Month = value.Month, Day = value.Day }
+            : throw new InvalidOperationException("replica schedule has no date where its precision requires one");
+
+    private static LocalDateTime ToLocalDateTime(DateOnly? date, TimeOnly? time) =>
+        time is { } value
+            ? new LocalDateTime
+            {
+                Date = ToCalendarDate(date),
+                Time = new LocalTime { Hours = value.Hour, Minutes = value.Minute },
+            }
+            : throw new InvalidOperationException("replica schedule has no time where its precision requires one");
+
     public static Decoded Identity(ReadOnlyMemory<byte> payload)
     {
         IdentityEvent message;
