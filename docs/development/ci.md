@@ -24,7 +24,7 @@ Workflow собирает, тестирует и линтит Identity на из
 
 ## Проверки репозитория
 
-Джоба `repo-hygiene` запускает `tools/skillshare/check-frontmatter.sh`, `tools/community-site/check-published-pages.sh` и рецепты rulesync `just check-commands` и `just check-mcp`; последний описан в разделе «Сайт сообщества». Первый разбирает YAML-frontmatter каждого `SKILL.md` в источниках `.skillshare/skills/` и в таргетах, если те разложены на этой машине. Локально frontmatter разбирает `just check-agent-tools`.
+Джоба `repo-hygiene` запускает `tools/skillshare/check-frontmatter.sh`, `tools/community-site/check-published-pages.sh`, фикстуры селектора `tools/verify/select-recipes-test.sh` и рецепты rulesync `just check-commands` и `just check-mcp`; последний описан в разделе «Сайт сообщества». Первый разбирает YAML-frontmatter каждого `SKILL.md` в источниках `.skillshare/skills/` и в таргетах, если те разложены на этой машине. Локально frontmatter разбирает `just check-agent-tools`. Фикстуры селектора стоят здесь потому, что локальный `just verify-changed` читает карту путей из джобы `changes` этого workflow: правка фильтра, которую селектор не понимает, или рецепт `verify` без группы в селекторе краснеют в CI, а не тихо сужают чужой локальный гейт.
 
 Таргеты скиллов не сверяются ни локально, ни в CI: они не хранятся в Git и собираются `skillshare sync -p` на каждой машине ([ADR-041](../decisions/ADR-041-skillshare-targets-not-committed.md)). Правка `proj-`скилла читается в диффе источника, а скилл, чей frontmatter не разобрался, ловит `check-frontmatter.sh` прямо по источнику — раньше это делала косвенная проверка записи в закоммиченном манифесте. В голом чекауте CI он разбирает только `proj-`скиллы из Git; локально — ещё и всё, что разложено в таргетах.
 

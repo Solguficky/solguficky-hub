@@ -146,8 +146,21 @@ contracts-codegen: contracts-codegen-buf auction-proto
 contracts-codegen-buf:
     buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template contracts/buf.gen.codegen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Селектор verify-changed читает карту путей из джобы changes в CI и для
+# правки justfile выбирает ровно зависимости verify — это и сверяет тест
+check-verify-selection:
+    sh tools/verify/select-recipes-test.sh
+
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+
+# Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
+# проверки репозитория идут всегда, рецепты компонента — если изменённый путь
+# поднимает его джобу в CI. Карта путей одна — джоба changes в ci.yml, её
+# читает tools/verify/select-recipes.sh. Правка justfile или ci.yml поднимает
+# все джобы, и здесь выбирается весь verify. Выбор печатается до прогона.
+verify-changed:
+    @recipes=$(sh tools/verify/select-recipes.sh) && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools

@@ -499,6 +499,8 @@ jobs:
         run: just check-mcp
       - name: Published pages are addressable
         run: sh tools/community-site/check-published-pages.sh
+      - name: Local gate selection matches the CI path map and verify
+        run: sh tools/verify/select-recipes-test.sh
 
   # Уровень L2: среду поднимает AppHost через Aspire.Hosting.Testing, набор ею
   # не владеет. Джоба намеренно НЕ входит в обязательные проверки ветки: по
