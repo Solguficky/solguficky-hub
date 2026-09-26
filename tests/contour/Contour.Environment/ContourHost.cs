@@ -129,8 +129,8 @@ public sealed class ContourHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Именованный том `solguficky-postgres-data` — состояние прошлых прогонов и
-    /// столкновение с локальным `aspire run`. Снимается здесь, в тестовом
+    /// Том PostgreSQL рабочего дерева — состояние прошлых прогонов и
+    /// столкновение с локальным `aspire run` из того же дерева. Снимается здесь, в тестовом
     /// подъёме, а не в графе: продакшн-топология про этот прогон знать не должна.
     /// </summary>
     private static void DetachDataVolume(IDistributedApplicationTestingBuilder builder)

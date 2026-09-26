@@ -395,7 +395,7 @@ Subject называет повод, сообщение на всех повод
 
 | Stream | Subjects | Retention | Хранение | Окно дедупликации |
 |---|---|---|---|---|
-| `MEETUPS_EVENTS` | `events.meetups.>` | `limits`: `max_age` 7 дней, `discard old` | `file`, том `solguficky-nats-data` | 2 минуты |
+| `MEETUPS_EVENTS` | `events.meetups.>` | `limits`: `max_age` 7 дней, `discard old` | `file`, том `nats-data` рабочего дерева | 2 минуты |
 | `IDENTITY_EVENTS` | `events.identity.>` | то же | то же | то же |
 | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | то же | то же | то же |
 
