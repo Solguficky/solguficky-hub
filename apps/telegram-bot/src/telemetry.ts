@@ -6,6 +6,7 @@ import {
   defaultResource,
   detectResources,
   envDetector,
+  type Resource,
 } from "@opentelemetry/resources";
 import {
   BatchLogRecordProcessor,
@@ -32,6 +33,7 @@ export function startMetrics(): Metrics {
   }
 
   const provider = new MeterProvider({
+    resource: telemetryResource(),
     readers: [
       new PeriodicExportingMetricReader({
         exporter: new OTLPMetricExporter(),
@@ -50,14 +52,7 @@ export function startLogs(name: string): Logs {
     return { shutdown: async () => {} };
   }
 
-  // JS SDK сам не читает OTEL_SERVICE_NAME и OTEL_RESOURCE_ATTRIBUTES, которые
-  // выдаёт AppHost: без детектора записи ушли бы от unknown_service и не
-  // легли бы на ресурс telegram-bot в dashboard.
-  const provider = new LoggerProvider({
-    resource: defaultResource().merge(
-      detectResources({ detectors: [envDetector] }),
-    ),
-  });
+  const provider = new LoggerProvider({ resource: telemetryResource() });
   provider.addLogRecordProcessor(
     new BatchLogRecordProcessor(new OTLPLogExporter()),
   );
@@ -65,6 +60,14 @@ export function startLogs(name: string): Logs {
     logger: provider.getLogger(name),
     shutdown: () => provider.shutdown(),
   };
+}
+
+// JS SDK сам не читает OTEL_SERVICE_NAME и OTEL_RESOURCE_ATTRIBUTES, которые
+// выдаёт AppHost: без детектора сигналы ушли бы от unknown_service и не легли
+// бы на ресурс telegram-bot в dashboard. Ресурс один на логи и метрики, иначе
+// они снова разойдутся по разным ресурсам.
+export function telemetryResource(): Resource {
+  return defaultResource().merge(detectResources({ detectors: [envDetector] }));
 }
 
 function otlpConfigured(signalEndpoint: string): boolean {
