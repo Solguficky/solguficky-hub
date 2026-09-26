@@ -168,7 +168,7 @@ verify-changed:
 # умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
 # `identity-test-integration` гоняет под тегом и unit-тесты, поэтому
 # `identity-test` здесь не повторяется.
-test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test contour-test
+test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -548,17 +548,28 @@ telegram-rich-probe:
 contour-test:
     dotnet run --project tests/contour/Contour.E2ETests/Contour.E2ETests.csproj -- --fail-skips on --minimum-expected-tests 1
 
-# Адреса уходят в окружение дочерней команды и, если указан путь, в
-# dotenv-файл. Этим входом пользуется набор провода бота (PER-271), который
-# средой не владеет.
+# Адреса и токен maintainer'а уходят в окружение дочерней команды и, если
+# указан путь, в dotenv-файл; унаследованные от Aspire переменные OTEL_*
+# дочерняя команда не получает. Этим входом пользуется набор провода бота,
+# который средой не владеет.
 #
 #   just contour-up                             держит среду до Ctrl+C
 #   just contour-up '--env-file .contour.env'
 #   just contour-up '-- npm test'
 #
-# Поднять контур и отдать IDENTITY_GRPC_URL и MEETUPS_GRPC_URL наружу
+# Поднять контур и отдать IDENTITY_GRPC_URL, MEETUPS_GRPC_URL и IDENTITY_MAINTAINER_TOKEN наружу
 contour-up *args="":
     dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- {{args}}
+
+# Провод бота (L2, вход B RFC-012): `bot.handleUpdate` с настоящими клиентами
+# Identity и Meetups на топологии, которую поднимает Contour.Host. Сценарии
+# лежат в tests/contour/bot-wire, kit и зависимости — у бота. Нужно то же, что
+# `contour-test`, и Node. Пустой набор и забытый `.only` роняют прогон
+# (vitest.contour.config.ts); порога числа тестов у vitest нет — PER-358.
+#
+# Провод бота против настоящих Identity и Meetups; в verify не входит
+contour-bot-test: telegram-bot-proto
+    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/telegram-bot run test:contour
 
 # Контрактный проект контура остаётся generated-only (ADR-025)
 contour-contracts-check:

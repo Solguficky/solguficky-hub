@@ -2,8 +2,9 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Contour.Environment;
 
-// Процесс-обёртка: поднимает контур, отдаёт адреса наружу и запускает
-// переданную команду в окружении с ними, пробрасывая её код возврата.
+// Процесс-обёртка: поднимает контур, отдаёт адреса и токен maintainer'а
+// наружу и запускает переданную команду в окружении с ними, пробрасывая её код
+// возврата.
 //
 // Так среда живёт ровно столько, сколько потребитель, и её владелец — этот
 // процесс, а не набор тестов. PER-271 написан на TypeScript, средой не владеет
@@ -29,10 +30,11 @@ try
     };
 
     await using var contour = await ContourHost.StartAsync(cancellationToken: stopping.Token);
+    var variables = ConsumerEnvironment.Of(contour);
 
     if (envFile is not null)
     {
-        await contour.Endpoints.WriteDotenvAsync(envFile, stopping.Token);
+        await ConsumerEnvironment.WriteDotenvAsync(variables, envFile, stopping.Token);
         Console.WriteLine($"contour: endpoints written to {Path.GetFullPath(envFile)}");
     }
 
@@ -43,7 +45,7 @@ try
         return 0;
     }
 
-    return await RunAsync(command, contour.Endpoints, stopping.Token);
+    return await RunAsync(command, variables, stopping.Token);
 }
 catch (OperationCanceledException)
 {
@@ -60,18 +62,14 @@ catch (ContourFailure failure)
 
 static async Task<int> RunAsync(
     IReadOnlyList<string> command,
-    ContourEndpoints endpoints,
+    IReadOnlyDictionary<string, string> variables,
     CancellationToken cancellationToken)
 {
     var info = Launch(command);
 
-    // Наследуется окружение родителя плюс ровно два ключа. OTEL_* сюда не
-    // добавляется: потребителю нужна чистая среда, и дешевле не отдавать
-    // лишнего, чем вычищать его на той стороне.
-    foreach (var (key, value) in endpoints.AsEnvironment())
-    {
-        info.Environment[key] = value;
-    }
+    // Окружение родителя наследуется, поэтому унаследованная от Aspire
+    // телеметрия вычищается здесь, у владельца среды, а не у потребителя.
+    ConsumerEnvironment.Apply(info.Environment, variables);
 
     using var process = Process.Start(info)
         ?? throw new InvalidOperationException($"не удалось запустить '{command[0]}'");

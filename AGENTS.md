@@ -31,7 +31,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `infra/apphost/` — локальная оркестрация .NET Aspire, разложенная как компонент: проект `AppHost/` и его тесты `AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`.
 - `infra/apphost/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
-- `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL` внешнему потребителю, `Contour.Contracts` держит generated-only C#-клиента Identity. Рецепты `just contour-test`, `just contour-up` и `just contour-contracts-check`; в `verify` набор не входит и гоняется джобой `contour` в CI.
+- `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL` и `IDENTITY_MAINTAINER_TOKEN` внешнему потребителю и не пропускает к нему унаследованные `OTEL_*`, `Contour.Contracts` держит generated-only C#-клиента Identity, а `bot-wire/` — сценарии провода Telegram Bot против настоящих Identity и Meetups на TypeScript, которые берут зависимости и test kit у бота (`apps/telegram-bot/testkit/`). Рецепты `just contour-test`, `just contour-bot-test`, `just contour-up` и `just contour-contracts-check`; в `verify` наборы не входят и гоняются джобой `contour` в CI.
 - `tools/git-hooks/` — POSIX sh скрипты локальных хуков. Сейчас их два: `check-commit-message.sh` вызывает только хук `commit-msg`, `sync-skillshare-targets.sh` — хуки `post-checkout` и `post-merge`, чтобы таргеты skillshare не отставали от источника после смены ветки, pull и создания дерева.
 - `tools/skillshare/` — два скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первый вызывают `just check-agent-tools` и CI, второй — `just skillshare-install`.
 - `tools/identity/` — прогоны Identity. Сейчас это `test-integration.sh`: он гоняет тесты под тегом сборки `integration` и роняет прогон на пропуске, которого `go test` сам не ловит. Его вызывает `just identity-test-integration`.
@@ -205,12 +205,13 @@ just auction-run
 # Нужны JDK версии из apps/auction/.java-version и sbt; репозиторий их не ставит.
 # Кодогенерация входит в сборку: auction-proto нужен только отдельным шагом
 
-# Сквозной контур (L2) — дымовой прогон, среда наружу, гейт контрактов
+# Сквозной контур (L2) — дымовой прогон, провод бота, среда наружу, гейт контрактов
 just contour-test
+just contour-bot-test
 just contour-up '--env-file .contour.env'
 just contour-contracts-check
 # Нужны Docker, go и buf в PATH: узел Identity сначала генерирует Go-код и
-# собирает бинарник. В verify набор не входит; в CI его гоняет джоба contour,
+# собирает бинарник; провод бота нужен ещё Node. В verify набор не входит; в CI его гоняет джоба contour,
 # которая намеренно не числится в обязательных проверках ветки
 
 # .NET — из папки проекта

@@ -68,6 +68,8 @@ jobs:
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
+              # Сценарии провода бота типизирует и линтует конфиг бота.
+              - 'tests/contour/bot-wire/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction:
@@ -99,11 +101,14 @@ jobs:
             # набор молчать ровно тогда, когда ломается то, что он проверяет.
             # Notifications здесь потому, что AppHost на него ссылается и его
             # поломка валит сборку, хотя профиль контура его не поднимает.
+            # Telegram Bot — участник провода: его клиенты и kit гоняет набор
+            # tests/contour/bot-wire.
             contour:
               - 'tests/contour/**'
               - 'tools/contour/**'
               - 'infra/apphost/**'
               - 'apps/identity/**'
+              - 'apps/telegram-bot/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -563,6 +568,13 @@ jobs:
           github_token: ${{ github.token }}
       - run: go install tool
         working-directory: apps/identity
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/telegram-bot/package-lock.json
+      - run: npm ci
+        working-directory: apps/telegram-bot
       - uses: extractions/setup-just@v4
       - name: Contour contracts stay generated-only
         run: just contour-contracts-check
@@ -583,11 +595,21 @@ jobs:
         run: |
           set -o pipefail
           just contour-test 2>&1 | tee contour-run.log
+      # Провод бота поднимает свою топологию через Contour.Host: среда живёт
+      # ровно столько, сколько набор, и делить её с дымовым прогоном значило
+      # бы сделать один набор владельцем среды другого.
+      - name: Run the bot wire against the live topology
+        shell: bash
+        run: |
+          set -o pipefail
+          just contour-bot-test 2>&1 | tee contour-bot-run.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: contour-run-log
-          path: contour-run.log
+          path: |
+            contour-run.log
+            contour-bot-run.log
           retention-days: 7
           if-no-files-found: ignore
 
