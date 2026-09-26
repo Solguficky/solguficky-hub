@@ -172,6 +172,11 @@ public static class NotificationsHost
         // от часов машины, а период прохода sweeper'а иначе нечем двигать.
         builder.Services.AddSingleton(TimeProvider.System);
 
+        // Пояс сообщества разбирается здесь, при сборке хоста, а не при первом
+        // событии: пустое и неизвестное имя роняют старт, а не каждое
+        // применение сходки. Program проверяет то же раньше ради внятной строки.
+        builder.Services.AddSingleton(CommunityTime.Parse(builder.Configuration[CommunityTime.TimeZoneVariable]));
+
         builder.Services.Configure<MeetupReminderOptions>(
             builder.Configuration.GetSection(MeetupReminderOptions.SectionName));
 

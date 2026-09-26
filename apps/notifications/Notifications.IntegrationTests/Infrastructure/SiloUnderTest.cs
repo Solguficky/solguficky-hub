@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Notifications.Reminders;
 
 namespace Notifications.IntegrationTests.Infrastructure;
 
@@ -62,6 +63,12 @@ public sealed class SiloUnderTest : IAsyncDisposable
     public static Task<SiloUnderTest> StartOnBus(string connectionString, string natsUrl, params string[] settings) =>
         Launch(connectionString, natsUrl, settings);
 
+    /// <summary>
+    /// Пояс сообщества в тестах — тот же, что задаёт AppHost: сценарии считают
+    /// ожидаемый момент начала в нём.
+    /// </summary>
+    public const string CommunityZone = "Europe/Moscow";
+
     private static async Task<SiloUnderTest> Launch(string connectionString, string? natsUrl, string[] settings)
     {
         // Порты силоса берутся свободные: иначе второй силос этого же теста и
@@ -71,6 +78,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
                 "--urls=http://127.0.0.1:0",
                 $"--{NotificationsHost.SiloPortKey}={FreePort()}",
                 $"--{NotificationsHost.GatewayPortKey}={FreePort()}",
+                $"--{CommunityTime.TimeZoneVariable}={CommunityZone}",
                 .. settings,
             ],
             connectionString,

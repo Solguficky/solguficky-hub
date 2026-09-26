@@ -152,6 +152,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         NotificationFacts.MeetupPublishedType,
         NotificationFacts.MeetupChangedType,
         NotificationFacts.MeetupMaterialType,
+        NotificationFacts.MeetupReminderType,
     ];
 
     /// <summary>
@@ -241,6 +242,51 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         return produced is null ? null : produced with { Withdrawn = withdrawn };
     }
 
+    /// <summary>
+    /// Разворачивает сработавшее напоминание на подписчиков сходки и пишет факты
+    /// в транзакции <paramref name="work" /> — той же, что переводит задание в
+    /// «сработало». Повтор срабатывания до сюда не доходит: его отсекает захват
+    /// задания, а дошедший всё равно упрётся в ключ повода.
+    /// </summary>
+    /// <param name="startsAt">Момент начала сходки — срок годности факта.</param>
+    /// <remarks>
+    /// Аудитория и карточка читаются на момент срабатывания
+    /// (docs/services/notifications.md): отписка и выключение категории задания
+    /// не трогают, человек просто не попадает в разворот. Сходке, которую
+    /// реплика уже не показывает или отменила, напоминать не о чем — задание
+    /// всё равно сработало, но фактов не дало. То же со сходкой, которая уже
+    /// началась: такое задание рождает возврат или правка после начала, и
+    /// напоминание о прошедшем было бы шумом, который релей всё равно снял бы
+    /// по сроку.
+    /// </remarks>
+    internal static async Task<FactCount> AddMeetupReminder(
+        UnitOfWork work,
+        Guid taskId,
+        Guid meetupId,
+        DateTimeOffset startsAt,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (startsAt <= now
+            || !await work.Scalar(AnnounceableSql, new { MeetupId = meetupId }, cancellationToken)
+            || await ReplicaStore.Meetup(work, meetupId, cancellationToken) is not { } state)
+        {
+            return FactCount.None;
+        }
+
+        var card = ReplicaMapping.Card(meetupId, state);
+        var audience = await Subscribers(work, meetupId, NotificationFacts.MeetupReminderCategory, cancellationToken);
+
+        return await Insert(
+            work,
+            new FactCause(NotificationFacts.MeetupReminderType, NotificationFacts.ReminderTaskCause, taskId.ToString(), meetupId, null),
+            audience,
+            (id, recipient) => NotificationFacts.MeetupReminder(id, recipient, taskId, card, now, startsAt),
+            now,
+            startsAt,
+            cancellationToken);
+    }
+
     // Отмена — это сдвиг реплики в «отменена»: запоздавшее событие отмены
     // разницы не даёт и ничего не снимает, но и снимать ему нечего — то, что
     // сдвинуло реплику раньше, уже сняло.
@@ -291,8 +337,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         return await Insert(
             work,
-            fact,
-            NotificationFacts.MeetupPublishedType,
+            FactCause.Of(fact, NotificationFacts.MeetupPublishedType),
             audience,
             (id, recipient) => NotificationFacts.MeetupPublished(id, recipient, fact, now, notAfter),
             now,
@@ -318,24 +363,30 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             return FactCount.None;
         }
 
-        var audience = await work.Query<AudienceRow>(
+        var audience = await Subscribers(work, fact.MeetupId, category, cancellationToken);
+
+        return await Insert(work, FactCause.Of(fact, type), audience, build, now, notAfter, cancellationToken);
+    }
+
+    private static Task<IReadOnlyList<AudienceRow>> Subscribers(
+        UnitOfWork work,
+        Guid meetupId,
+        NotificationCategory category,
+        CancellationToken cancellationToken) =>
+        work.Query<AudienceRow>(
             SubscribersSql,
             new
             {
-                fact.MeetupId,
+                MeetupId = meetupId,
                 Default = NotificationCategories.DefaultEnabled(category),
                 Category = NotificationCategories.Storage(category),
                 Circle = NotificationFacts.HubCircle.ToArray(),
             },
             cancellationToken);
 
-        return await Insert(work, fact, type, audience, build, now, notAfter, cancellationToken);
-    }
-
     private static async Task<FactCount> Insert(
         UnitOfWork work,
-        MeetupFact fact,
-        string type,
+        FactCause cause,
         IReadOnlyList<AudienceRow> audience,
         Func<Guid, Guid, Notification> build,
         DateTimeOffset now,
@@ -361,11 +412,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             InsertSql,
             new
             {
-                Type = type,
-                CauseKind = NotificationFacts.MeetupEventCause,
-                CauseId = fact.EventId.ToString(),
-                fact.MeetupId,
-                fact.RequestId,
+                cause.Type,
+                cause.CauseKind,
+                cause.CauseId,
+                cause.MeetupId,
+                cause.RequestId,
                 Now = now.UtcDateTime,
                 NotAfter = notAfter.UtcDateTime,
                 Ids = ids,
@@ -451,6 +502,14 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             new CommandDefinition(OldestPendingSql, cancellationToken: cancellationToken));
 
         return oldest is { } moment ? new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Utc)) : null;
+    }
+
+    // Повод строки: тип факта, ссылка на то, что его породило, сходка и цепочка.
+    // Отдельно от MeetupFact, потому что у сработавшего напоминания события нет.
+    private sealed record FactCause(string Type, string CauseKind, string CauseId, Guid MeetupId, string? RequestId)
+    {
+        public static FactCause Of(MeetupFact fact, string type) =>
+            new(type, NotificationFacts.MeetupEventCause, fact.EventId.ToString(), fact.MeetupId, fact.RequestId);
     }
 
     // Классы, а не позиционные записи: Dapper сопоставляет колонки со
