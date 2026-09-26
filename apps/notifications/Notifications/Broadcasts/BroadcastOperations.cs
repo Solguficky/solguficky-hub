@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Notifications.Facts;
 using Notifications.Infrastructure;
+using Notifications.Observability;
 
 namespace Notifications.Broadcasts;
 
@@ -69,21 +70,12 @@ public sealed class BroadcastOperations(
         AcceptedBroadcast broadcast,
         Forwarded forwarded)
     {
-        // Команду начал человек, поэтому записи о ней несут цепочку: request_id
-        // и use_case пришли заголовками границы (standards/observability/logging.md).
-        // Отсутствующее поле не пишется, а не заполняется заглушкой.
-        using var scope = logger.BeginScope(Chain(forwarded));
-
         if (answer.Verdict != AuthorityVerdict.Granted)
         {
-            logger.LogInformation(
-                "Broadcast declined {broadcast_id} {type} {author_id} {meetup_id} {verdict} {reason}",
-                broadcast.Id,
-                broadcast.Kind,
-                broadcast.AuthorId,
-                broadcast.MeetupId,
-                answer.Verdict,
-                answer.Reason);
+            var declined = Fields(broadcast, forwarded, "declined");
+            declined["verdict"] = answer.Verdict.ToString();
+            declined["reason"] = answer.Reason;
+            OperationLog.Write(logger, LogLevel.Information, null, declined);
 
             return new BroadcastResult(answer, null);
         }
@@ -94,36 +86,47 @@ public sealed class BroadcastOperations(
             factOptions.Value.StaleAfter,
             forwarded.Cancellation);
 
+        var fields = Fields(broadcast, forwarded, outcome switch
+        {
+            BroadcastOutcome.Accepted => "accepted",
+            BroadcastOutcome.Repeated => "repeated",
+            BroadcastOutcome.Conflict => "conflict",
+            BroadcastOutcome.MeetupNotReplicated => "meetup_not_replicated",
+            _ => "unknown",
+        });
+
         if (outcome is BroadcastOutcome.Accepted accepted)
         {
             telemetry.Record(broadcast.Kind, accepted.Facts);
+            fields["facts_created"] = accepted.Facts.Created;
+            fields["facts_suppressed"] = accepted.Facts.Suppressed;
+        }
 
-            logger.LogInformation(
-                "Broadcast accepted {broadcast_id} {type} {author_id} {meetup_id} {facts_created} {facts_suppressed}",
-                broadcast.Id,
-                broadcast.Kind,
-                broadcast.AuthorId,
-                broadcast.MeetupId,
-                accepted.Facts.Created,
-                accepted.Facts.Suppressed);
-        }
-        else
-        {
-            logger.LogInformation(
-                "Broadcast not expanded {broadcast_id} {type} {author_id} {meetup_id} {outcome}",
-                broadcast.Id,
-                broadcast.Kind,
-                broadcast.AuthorId,
-                broadcast.MeetupId,
-                outcome.GetType().Name);
-        }
+        OperationLog.Write(logger, LogLevel.Information, null, fields);
 
         return new BroadcastResult(answer, outcome);
     }
 
-    private static Dictionary<string, object> Chain(Forwarded forwarded)
+    // Запись о рассылке рядом с записью границы: граница пишет каркас вызова
+    // (BoundaryLogInterceptor), а эта — что стало с рассылкой. Команду начал
+    // человек, поэтому цепочка из заголовков идёт и сюда; отсутствующее поле
+    // не пишется, а не заполняется заглушкой (standards/observability/logging.md).
+    private static Dictionary<string, object> Fields(AcceptedBroadcast broadcast, Forwarded forwarded, string outcome)
     {
-        var fields = new Dictionary<string, object>(StringComparer.Ordinal);
+        var fields = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["service"] = NotificationsHost.ServiceId,
+            ["operation"] = "broadcast",
+            ["outcome"] = outcome,
+            ["broadcast_id"] = broadcast.Id.ToString(),
+            ["type"] = broadcast.Kind,
+            ["identity_id"] = broadcast.AuthorId.ToString(),
+        };
+
+        if (broadcast.MeetupId is { } meetupId)
+        {
+            fields["meetup_id"] = meetupId.ToString();
+        }
 
         if (forwarded.RequestId is { } requestId)
         {
