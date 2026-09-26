@@ -1,6 +1,6 @@
 # ADR-015: Использование Loki для централизованного сбора логов
 
-> **Текущая применимость:** Superseded. Заменён [ADR-draft](ADR-draft-production-observability-otlp-better-stack.md): сервисы шлют OTLP в Collector на хосте, бэкенд продакшена — Better Stack. Предпосылка про Railway и log drains не сбылась, хостинг сменил [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md). Локальные Loki и Grafana остаются диагностическим профилем `notifications-observability` и продакшен не описывают. Grafana Cloud перенесён в замену как запасной бэкенд с критериями перехода.
+> **Текущая применимость:** Superseded. Заменён [ADR-053](ADR-053-production-observability-otlp-better-stack.md): сервисы шлют OTLP в Collector на хосте, бэкенд продакшена — Better Stack. Предпосылка про Railway и log drains не сбылась, хостинг сменил [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md). Локальные Loki и Grafana остаются диагностическим профилем `notifications-observability` и продакшен не описывают. Grafana Cloud перенесён в замену как запасной бэкенд с критериями перехода.
 
 **Дата**: 2025-10-23
 
