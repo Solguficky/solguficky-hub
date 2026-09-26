@@ -209,6 +209,10 @@ public static class NotificationsHost
             builder.Services.AddSingleton<INatsJSContext>(services =>
                 new NatsJSContext(services.GetRequiredService<NatsConnection>()));
 
+            // Раньше потребителей: соединение открывается лениво, на первом их
+            // обращении, и подписка на его события должна его опередить.
+            builder.Services.AddHostedService<BusConnectionWatcher>();
+
             // AddSingleton, а не AddHostedService: тот регистрирует через
             // TryAddEnumerable по типу реализации, и второй потребитель того же
             // типа молча не зарегистрировался бы.
