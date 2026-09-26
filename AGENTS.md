@@ -41,6 +41,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/apphost/` — живой smoke-test профиля AppHost. Сейчас это `smoke.sh`: он ждёт конечного состояния всех ресурсов, делает доменный вызов каждого gRPC-сервиса с общим `x-request-id` и проверяет топологию JetStream. Его вызывает `just aspire-smoke`; в `verify` и CI он не входит, потому что нужны Docker и живой AppHost.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — механические проверки документации. Сейчас их три. `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога; его вызывают `just check-document-numbers` и джоба `document-numbers` в CI. `check-adr-applicability.sh`: у не-Active ADR баннер применимости стоит первой строкой после заголовка и совпадает со строкой индекса; его вызывают `just check-adr-applicability` и джоба `adr-applicability` в CI. `check-doc-links.py`: относительная ссылка из `docs/**/*.md` на `.md` ведёт в существующий файл, а якорь — на заголовок со slug по правилам GitHub; внешние URL пропускаются. Написан на Python, потому что slug переводит кириллицу в нижний регистр, а байтовый awk этого не умеет без UTF-8 локали. Его вызывают `just check-doc-links` и джоба `doc-links` в CI.
+- `tools/agent-env/` — готовность среды агента к контуру. `ready.sh` проверяет инструменты из контракта среды в [agent-execution-loop.md](docs/development/agent-execution-loop.md#контракт-среды) и называет каждый поимённо с состоянием `ok`, `missing`, `unauthorized` или `unverified`. Авторизацию Linear MCP он спрашивает у CLI названного харнесса; где харнесс её не сообщает, ответ — `unverified`, а не зелёный. Его вызывает `just agent-ready <харнесс>`. Фикстуры `ready-test.sh` гоняют его на заглушках в PATH, без сети и харнесса; их вызывают `just check-agent-ready` и джоба `repo-hygiene` в CI.
 - `tools/verify/` — сужение механического гейта. `select-recipes.sh` выбирает рецепты `verify` по изменённым путям, читая карту из джобы `changes` в `.github/workflows/ci.yml`; его вызывает `just verify-changed`. Фикстуры `select-recipes-test.sh` держат выбор равным составу `verify` на правке `justfile`; их вызывают `just check-verify-selection` и джоба `repo-hygiene` в CI.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
 - `.rulesync/` — источник правды по MCP-серверам и командам агента: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из `.rulesync/mcp.jsonc`, а `.claude/commands/` и `.opencode/commands/` — из `.rulesync/commands/`.
@@ -73,6 +74,14 @@ skillshare sync --all -p
 # красный по окружению, а не по правке, и гоняет он все компоненты, даже
 # когда правка только в docs/.
 just tools
+
+# Готовность среды к контуру по контракту из agent-execution-loop.md: называет
+# отсутствующий и неавторизованный инструмент поимённо. Харнесс — claude, codex,
+# cursor, opencode или copilot. Код 0 — готова, 1 — не готова, 3 — не проверено
+# (в десктопе Claude Code и в харнессах без команды состояния MCP Linear
+# подтверждает get_issue из сессии). В verify входят только её фикстуры
+just agent-ready claude
+just check-agent-ready
 
 # Проверка из хука (можно запускать вручную); в CI не дублируется
 sh tools/git-hooks/check-commit-message.sh <файл-с-сообщением>
