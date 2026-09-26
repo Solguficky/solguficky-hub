@@ -59,7 +59,7 @@ else
 fi
 
 log "Restoring AppHost"
-dotnet restore "$REPO_ROOT/infra/apphost/AppHost.csproj"
+dotnet restore "$REPO_ROOT/infra/apphost/AppHost/AppHost.csproj"
 
 log "Installing nats-tester CLI"
 pip install --break-system-packages -e "$REPO_ROOT/tools/nats-tester"

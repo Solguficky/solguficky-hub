@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using Dapper;
 using Notifications.Reminders;
@@ -32,35 +30,78 @@ public sealed class ServiceProcess : IDisposable
     private readonly Process process;
     private readonly StringBuilder output = new();
 
-    private ServiceProcess(Process process, int siloPort, int gatewayPort)
+    private ServiceProcess(Process process, SiloEndpoint endpoint)
     {
         this.process = process;
-        SiloPort = siloPort;
-        GatewayPort = gatewayPort;
+        Endpoint = endpoint;
     }
 
-    /// <summary>Порт силоса этого процесса.</summary>
+    /// <summary>Порты силоса этого процесса.</summary>
     /// <remarks>
-    /// Нужен наружу, потому что восстановление после падения обязано занять тот
+    /// Нужны наружу, потому что восстановление после падения обязано занять тот
     /// же адрес: Orleans пропускает при проверке связности только записи того же
     /// логического силоса, а логический силос — это адрес. Рестарт на новом
     /// порту в кластер не войдёт и будет пять минут ждать ответа от покойника.
     /// В развёртывании это выполняется само собой — порты штатные и постоянные.
+    /// Поднимает силос на них <see cref="SiloUnderTest.StartAt" />.
     /// </remarks>
-    public int SiloPort { get; }
+    public SiloEndpoint Endpoint { get; }
 
-    /// <inheritdoc cref="SiloPort" />
-    public int GatewayPort { get; }
+    /// <summary>Адрес силоса, под которым он объявил себя Active в membership.</summary>
+    public string Address { get; private set; } = "";
 
+    /// <summary>Запускает сервис и ждёт, пока его силос станет Active.</summary>
     /// <param name="natsUrl">
     /// Адрес шины с уже заведёнными durable. Дочерний процесс — настоящий вход
     /// сервиса, а он без шины не стартует.
     /// </param>
-    public static ServiceProcess Start(string connectionString, string natsUrl)
+    /// <remarks>
+    /// Старт повторяется на свежих портах, если процесс умер на bind: это та же
+    /// гонка за порт, что и у внутрипроцессного силоса, и повтор безопасен по
+    /// той же причине — отказ bind случается раньше записи в membership. Умер
+    /// по любой другой причине — это отказ сервиса, и он уходит наружу сразу.
+    /// </remarks>
+    public static Task<ServiceProcess> Start(string connectionString, string natsUrl) =>
+        Start(connectionString, natsUrl, SiloEndpoint.Allocate);
+
+    /// <summary>
+    /// То же, но пары портов выдаёт <paramref name="endpoints" />: тест ставит
+    /// проигранную гонку за порт заранее.
+    /// </summary>
+    public static async Task<ServiceProcess> Start(
+        string connectionString, string natsUrl, Func<SiloEndpoint> endpoints)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var service = Launch(connectionString, natsUrl, endpoints());
+
+            try
+            {
+                service.Address = await service.WaitUntilActive(connectionString);
+                return service;
+            }
+            catch (InvalidOperationException) when (attempt < SiloEndpoint.LaunchAttempts && service.LostPortRace)
+            {
+                service.Dispose();
+            }
+            catch
+            {
+                service.Dispose();
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Процесс умер, проиграв порт: об отказе листенера Orleans пишет в вывод
+    /// строку, одинаковую на всех ОС.
+    /// </summary>
+    private bool LostPortRace =>
+        process.HasExited && Output.Contains(SiloEndpoint.ListenerFailure, StringComparison.Ordinal);
+
+    private static ServiceProcess Launch(string connectionString, string natsUrl, SiloEndpoint endpoint)
     {
         var executable = Executable();
-        var siloPort = FreePort();
-        var gatewayPort = FreePort();
 
         var start = new ProcessStartInfo(executable)
         {
@@ -70,11 +111,12 @@ public sealed class ServiceProcess : IDisposable
             UseShellExecute = false,
         };
 
-        // Порты свободные по той же причине, что и у внутрипроцессного силоса:
-        // параллельные классы тестов и соседнее рабочее дерево.
         start.ArgumentList.Add("--urls=http://127.0.0.1:0");
-        start.ArgumentList.Add($"--{NotificationsHost.SiloPortKey}={siloPort}");
-        start.ArgumentList.Add($"--{NotificationsHost.GatewayPortKey}={gatewayPort}");
+
+        foreach (var argument in endpoint.Arguments)
+        {
+            start.ArgumentList.Add(argument);
+        }
 
         start.Environment[Migrations.DatabaseUrlVariable] = connectionString;
         start.Environment[NotificationsHost.NatsUrlVariable] = natsUrl;
@@ -83,7 +125,7 @@ public sealed class ServiceProcess : IDisposable
         var process = Process.Start(start)
             ?? throw new InvalidOperationException($"cannot start {executable}");
 
-        var service = new ServiceProcess(process, siloPort, gatewayPort);
+        var service = new ServiceProcess(process, endpoint);
 
         // Вывод читается всегда: без этого полный буфер канала подвешивает
         // дочерний процесс, а при отказе теста читать было бы нечего.
@@ -107,7 +149,7 @@ public sealed class ServiceProcess : IDisposable
     }
 
     /// <summary>Ждёт, пока силос объявит себя Active в таблице membership.</summary>
-    public async Task<string> WaitUntilActive(string connectionString)
+    private async Task<string> WaitUntilActive(string connectionString)
     {
         var deadline = DateTime.UtcNow.AddSeconds(90);
 
@@ -115,6 +157,11 @@ public sealed class ServiceProcess : IDisposable
         {
             if (process.HasExited)
             {
+                // Без аргумента WaitForExit дожидается конца асинхронного
+                // чтения вывода: иначе последние строки — с причиной смерти —
+                // ещё в пути, и ни сообщение, ни LostPortRace их не увидят.
+                process.WaitForExit();
+
                 throw new InvalidOperationException(
                     $"service exited with {process.ExitCode} before becoming active:{Environment.NewLine}{Output}");
             }
@@ -229,12 +276,5 @@ public sealed class ServiceProcess : IDisposable
 
         throw new InvalidOperationException(
             $"cannot find the Notifications project above {AppContext.BaseDirectory}");
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

@@ -21,7 +21,7 @@ just identity-run
 В составе локальной топологии профиль `hub` запускает Identity через AppHost: отдельные ресурсы выполняют ту же Protobuf-кодогенерацию и `go build` в `bin/` (в Git тоже не хранится), после чего AppHost запускает собранный бинарник с динамическим gRPC-портом и PostgreSQL URI:
 
 ```bash
-dotnet user-secrets --project infra/apphost set Parameters:identity-maintainer-token "<secret>"
+dotnet user-secrets --project infra/apphost/AppHost set Parameters:identity-maintainer-token "<secret>"
 just aspire hub
 ```
 

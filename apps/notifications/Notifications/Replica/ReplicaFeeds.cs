@@ -7,7 +7,7 @@ public sealed record ReplicaFeed(string Source, string Stream, string Durable, F
 
 /// <summary>
 /// Потоки, из которых собирается реплика. Имена streams и durable повторяют
-/// топологию AppHost (<c>infra/apphost/Configuration/Infrastructure/JetStreamTopology.cs</c>):
+/// топологию AppHost (<c>infra/apphost/AppHost/Configuration/Infrastructure/JetStreamTopology.cs</c>):
 /// durable создаёт она, а сервис только привязывается к нему по имени и падает,
 /// если его нет (docs/architecture/integration.md, раздел «JetStream»).
 /// </summary>

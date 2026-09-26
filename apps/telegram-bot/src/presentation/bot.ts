@@ -2513,7 +2513,12 @@ async function renderNotificationSettings(
   await renderNotificationFailure(ctx, result, retry);
 }
 
+// Настройка у сходки сильнее общей, а снять её одной кнопкой контракт не даёт:
+// напоминание, включённое у сходки отдельно, после общего выключения придёт.
 function globalCategoryDisabledNote(category: NotificationCategory): string {
+  if (category === "reminder") {
+    return "Больше не присылаю напоминания, кроме сходок, где они включены отдельно: их выключают в уведомлениях сходки. Включить снова можно в настройках уведомлений.";
+  }
   return `Больше не присылаю: ${categoryLabels[category].toLowerCase()}. Включить снова можно в настройках уведомлений.`;
 }
 

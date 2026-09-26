@@ -31,8 +31,8 @@
   <!-- Ссылка на сервис даёт типизованный Projects.Meetups: опечатка в пути падает
        на сборке AppHost, а не на старте графа. -->
   <ItemGroup>
-    <ProjectReference Include="..\..\apps\meetups\Meetups\Meetups.fsproj" />
-    <ProjectReference Include="..\..\apps\notifications\Notifications\Notifications.csproj" />
+    <ProjectReference Include="..\..\..\apps\meetups\Meetups\Meetups.fsproj" />
+    <ProjectReference Include="..\..\..\apps\notifications\Notifications\Notifications.csproj" />
   </ItemGroup>
 
   <ItemGroup>

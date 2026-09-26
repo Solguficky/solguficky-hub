@@ -3113,6 +3113,50 @@ describe("notification frames", () => {
       // успех под текстом отказа.
       expect(payload.reply_markup).toBeUndefined();
     });
+
+    // Настройка у сходки сильнее общей, поэтому подтверждение не обещает
+    // тишины там, где напоминание включено у сходки отдельно.
+    it("turns reminders off globally and names what stays on", async () => {
+      const reminder = {
+        text: "Напоминание: Настолки у Лёши\n12.08.2026 19:00",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+            [
+              {
+                text: "Не присылать напоминания",
+                callback_data: "v1:notify:off:reminder",
+              },
+            ],
+          ],
+        },
+      };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "global-notification-settings",
+        categories: [{ category: "reminder", enabled: false }],
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(
+        callbackMessageUpdate("v1:notify:off:reminder", reminder),
+      );
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-global-category",
+          category: "reminder",
+          enabled: false,
+        }),
+      );
+      const payload = screen(calls[1]);
+      expect(payload.text).toContain(reminder.text);
+      expect(payload.text).toContain(
+        "Больше не присылаю напоминания, кроме сходок, где они включены отдельно",
+      );
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+        [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+      ]);
+    });
   });
 
   describe("disabling a meetup category from a change notification", () => {
