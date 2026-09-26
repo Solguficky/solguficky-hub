@@ -603,3 +603,22 @@ jobs:
         run: sh tools/docs/check-adr-applicability.sh
       - name: Missing and mismatched banners fail with paths
         run: sh tools/docs/check-adr-applicability-test.sh
+
+  # Без path-фильтра: ссылку ломает правка целевого документа, а не того, где
+  # она стоит, поэтому фильтр по изменённым файлам пропустил бы ровно этот случай.
+  # python3 есть в образе ubuntu-latest, а скрипт берёт только stdlib, поэтому
+  # setup-python не нужен.
+  doc-links:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Джоба читает дерево и запускает из него же скрипты. Токен ей не нужен:
+      # права сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Relative links in docs resolve to a file and a heading
+        run: python3 tools/docs/check-doc-links.py
+      - name: Broken and valid link cases land where they should
+        run: sh tools/docs/check-doc-links-test.sh
