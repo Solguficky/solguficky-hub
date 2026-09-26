@@ -509,7 +509,7 @@ Read model вводится, когда query-нагрузка, UX или изо
 - trace первого вертикального среза Telegram Bot → Identity → Meetups;
 - операторский способ увидеть и повторить неуспешное действие без ручной правки БД.
 
-Loki/Grafana и Aspire dashboard являются заделом. Наличие конфигурации не подтверждает работающую наблюдаемость.
+Локально телеметрию показывает Aspire dashboard, а Loki/Grafana — только диагностический профиль. Для продакшена [ADR-draft](../decisions/ADR-draft-production-observability-otlp-better-stack.md) выбрал OTLP через Collector на хосте и бэкенд Better Stack; подключение на хосте — работа [PER-80](https://linear.app/anticnvm/issue/per-80). Наличие конфигурации не подтверждает работающую наблюдаемость.
 
 ## Изменение
 
