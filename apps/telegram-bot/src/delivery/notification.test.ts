@@ -11,6 +11,7 @@ import {
   MeetupReminderSchema,
   type Notification,
   NotificationSchema,
+  OrganizerMessageSchema,
 } from "../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -85,16 +86,56 @@ describe("decodeNotification", () => {
     const decoded = decodeNotification(
       published((message) => {
         message.type = {
-          case: "meetupReminder",
-          value: create(MeetupReminderSchema),
+          case: "organizerMessage",
+          value: create(OrganizerMessageSchema),
         };
       }),
     );
     expect(decoded).toMatchObject({
       kind: "ok",
       notification: {
-        content: { kind: "unrendered", type: "meetupReminder" },
+        content: { kind: "unrendered", type: "organizerMessage" },
       },
+    });
+  });
+
+  describe("a reminder", () => {
+    const reminder = (drop = false): Uint8Array =>
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        message.type = {
+          case: "meetupReminder",
+          value: create(MeetupReminderSchema, {
+            meetup: drop ? undefined : message.type.value.meetup,
+          }),
+        };
+      });
+
+    it("carries the meetup it reminds about with its schedule", () => {
+      expect(decodeNotification(reminder())).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: {
+            kind: "meetup-reminder",
+            meetup: {
+              id: meetupId,
+              title: "Настолки у Лёши",
+              venue: "Циферблат",
+              when: {
+                kind: "day-start",
+                at: { year: 2026, month: 8, day: 12, hours: 19, minutes: 0 },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it("rejects a reminder without a meetup card", () => {
+      expect(decodeNotification(reminder(true))).toEqual({
+        kind: "malformed",
+        error: "invalid notification body",
+      });
     });
   });
 

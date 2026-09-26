@@ -40,19 +40,21 @@ AppHost либо владеет узлом и поднимает его, либ�
 
 ```
 infra/apphost/
-  Program.cs                                  composition root
-  appsettings.json                            Topology:Profile + Topology:Profiles
-  Configuration/
-    AppHostNames.cs                           имена узлов
-    RepositoryPaths.cs                        пути компонентов от корня репозитория
-    ProfileResolver.cs                        --profile | TOPOLOGY__PROFILE, --run-services
-    Models/ProfileConfig.cs                   списки владения
-    Topology/ServiceGraph.cs                  реестр, валидация, порядок, баннер
-    Topology/ServiceGraphContext.cs           builder, профиль, материализованные узлы
-    Extensions/ResourceBuilderExtensions.cs   ApplyIf
-    Extensions/ResourceBindExtensions.cs      BindEndpoint, BindConnection
-    Infrastructure/                           один файл на backing store
-    Services/                                 один файл на компонент
+  AppHost/                                    проект AppHost; appHost.path в корневом aspire.config.json
+    Program.cs                                composition root
+    appsettings.json                          Topology:Profile + Topology:Profiles
+    Configuration/
+      AppHostNames.cs                           имена узлов
+      RepositoryPaths.cs                        пути компонентов от корня репозитория
+      ProfileResolver.cs                        --profile | TOPOLOGY__PROFILE, --run-services
+      Models/ProfileConfig.cs                   списки владения
+      Topology/ServiceGraph.cs                  реестр, валидация, порядок, баннер
+      Topology/ServiceGraphContext.cs           builder, профиль, материализованные узлы
+      Extensions/ResourceBuilderExtensions.cs   ApplyIf
+      Extensions/ResourceBindExtensions.cs      BindEndpoint, BindConnection
+      Infrastructure/                           один файл на backing store
+      Services/                                 один файл на компонент
+  AppHost.UnitTests/                          тесты графа и профилей, just apphost-test
 ```
 
 Другой расклад без причины не выдумывай.
@@ -127,9 +129,9 @@ Lifecycle — через `aspire-orchestration`, состояние и логи 
 
 Механика:
 
-1. `dotnet build` для `infra/apphost`.
+1. `dotnet build` для `infra/apphost/AppHost`.
 2. Неизвестный профиль, незарегистрированный узел в профиле, битый `depends` и зарегистрированный узел без владеющего профиля дают понятный отказ до старта ресурсов.
-3. `just apphost-test` зелёный — набор в `infra/AppHost.UnitTests/` держит эти четыре ветки отказа и семантику среза; Docker ему не нужен. Добавил тест — подними порог `APPHOST_TEST_THRESHOLD` тем же изменением.
+3. `just apphost-test` зелёный — набор в `infra/apphost/AppHost.UnitTests/` держит эти четыре ветки отказа и семантику среза; Docker ему не нужен. Добавил тест — подними порог `APPHOST_TEST_THRESHOLD` тем же изменением.
 4. `just verify` зелёный.
 
 Тест строит свой `IDistributedApplicationBuilder` и **очищает источники конфигурации** перед тем, как подложить свои профили: ссылка на AppHost кладёт его настоящий `appsettings.json` в выходной каталог теста, и без очистки продовые профили накладываются поверх тестовых, а не заменяются — узел, оставленный без владельца, оказывается назван реальным профилем, и ветка отказа молча не срабатывает.

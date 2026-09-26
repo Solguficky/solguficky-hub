@@ -2,7 +2,7 @@
 
 Правила — в [SKILL.md](SKILL.md). Здесь то, что пишется руками при добавлении узла, и ловушки, на которых этот каркас уже спотыкался.
 
-Каркас живёт в `infra/apphost/Configuration/` и в reference не копируется: он один, и вторая копия разойдётся с ним. Ниже — только то, что появляется в новом коде.
+Каркас живёт в `infra/apphost/AppHost/Configuration/` и в reference не копируется: он один, и вторая копия разойдётся с ним. Ниже — только то, что появляется в новом коде.
 
 | Нужно | Секция |
 |---|---|
@@ -170,7 +170,7 @@ identity.WithHealthCheck(HealthCheck);
 
 ## 7. Новый профиль и срез
 
-Профиль — блок в `Topology:Profiles` (`infra/apphost/appsettings.json`). C# не трогается.
+Профиль — блок в `Topology:Profiles` (`infra/apphost/AppHost/appsettings.json`). C# не трогается.
 
 ```json
 "identity": {

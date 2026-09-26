@@ -56,7 +56,7 @@ export type MeetupAspect =
 export type MeetupLifecycle = "planned" | "held" | "cancelled";
 export type MeetupVisibility = "hidden" | "visible";
 
-// Типы, которые канал не рисует — напоминание и ручные рассылки, — доезжают до
+// Типы, которые канал не рисует — ручные рассылки, — доезжают до
 // решения явным вариантом, а не пропадают на разборе: контракт запрещает
 // доставлять неизвестное молча, и отказ обязан быть виден в журнале и логах.
 export type NotificationContent =
@@ -70,6 +70,7 @@ export type NotificationContent =
     }
   | { kind: "meetup-material"; meetup: NotifiedMeetup; materialTitle: string }
   | { kind: "meetup-unpublished"; meetup: NotifiedMeetup }
+  | { kind: "meetup-reminder"; meetup: NotifiedMeetup }
   | { kind: "unrendered"; type: string };
 
 export type RenderableContent = Exclude<
@@ -172,6 +173,12 @@ function toContent(message: Notification): NotificationContent | undefined {
       return meetup === undefined
         ? undefined
         : { kind: "meetup-unpublished", meetup };
+    }
+    case "meetupReminder": {
+      const meetup = toMeetup(type.value.meetup);
+      return meetup === undefined
+        ? undefined
+        : { kind: "meetup-reminder", meetup };
     }
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };

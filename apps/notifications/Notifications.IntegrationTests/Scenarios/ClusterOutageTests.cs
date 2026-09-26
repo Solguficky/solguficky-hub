@@ -33,11 +33,11 @@ public class ClusterOutageTests
 
         string killedSilo;
         DateTime killedAt;
-        string[] sameEndpoint;
+        SiloEndpoint sameEndpoint;
 
-        using (var service = ServiceProcess.Start(db.ConnectionString, nats.Url))
+        using (var service = await ServiceProcess.Start(db.ConnectionString, nats.Url))
         {
-            killedSilo = await service.WaitUntilActive(db.ConnectionString);
+            killedSilo = service.Address;
 
             // Поднявшийся силос обязан занять тот же адрес, что и убитый.
             // Orleans пропускает при проверке связности только записи того же
@@ -46,15 +46,7 @@ public class ClusterOutageTests
             // OrleansClusterConnectivityCheckFailedException. В развёртывании
             // это выполняется само собой: порты штатные и постоянные, поэтому
             // подставлять их здесь — воспроизводить рестарт, а не обходить его.
-            sameEndpoint =
-            [
-                $"--{NotificationsHost.SiloPortKey}={service.SiloPort}",
-                $"--{NotificationsHost.GatewayPortKey}={service.GatewayPort}",
-
-                // Частый проход: тест дожидается именно его, и штатные
-                // тридцать секунд совпали бы с дедлайном ожидания.
-                "--Notifications:Reminders:SweepPeriod=00:00:01",
-            ];
+            sameEndpoint = service.Endpoint;
 
             // Задание живо и его момент ещё впереди.
             ReminderProbe.InsertScheduled(db.ConnectionString, meetupId, startsAt, startsAt.AddDays(-1));
@@ -72,7 +64,10 @@ public class ClusterOutageTests
         // Момент срабатывания проходит, пока кластера нет.
         ReminderProbe.MoveDueToPast(db.ConnectionString, meetupId);
 
-        await using (await SiloUnderTest.Start(db.ConnectionString, sameEndpoint))
+        // Частый проход: тест дожидается именно его, и штатные тридцать секунд
+        // совпали бы с дедлайном ожидания.
+        await using (await SiloUnderTest.StartAt(
+            db.ConnectionString, sameEndpoint, "--Notifications:Reminders:SweepPeriod=00:00:01"))
         {
             var occasions = await ReminderProbe.WaitFor(
                 () => ReminderProbe.Occasions(db.ConnectionString, meetupId),

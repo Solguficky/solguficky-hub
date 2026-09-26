@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -53,7 +51,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// процесса ради этого не нужно — оба значения и так настройки.
     /// </param>
     public static Task<SiloUnderTest> Start(string connectionString, params string[] settings) =>
-        Launch(connectionString, natsUrl: null, settings);
+        Start(connectionString, SiloEndpoint.Allocate, settings);
 
     /// <summary>
     /// То же, но с потребителями реплики на шине <paramref name="natsUrl" />.
@@ -61,7 +59,28 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// шина не нужна, контейнер NATS не нужен тоже.
     /// </summary>
     public static Task<SiloUnderTest> StartOnBus(string connectionString, string natsUrl, params string[] settings) =>
-        Launch(connectionString, natsUrl, settings);
+        Retry(SiloEndpoint.Allocate, endpoint => Launch(connectionString, natsUrl, endpoint, settings));
+
+    /// <summary>
+    /// Силос на заданном адресе — ровно одна попытка.
+    /// </summary>
+    /// <remarks>
+    /// Нужен восстановлению после падения: логический силос Orleans — это его
+    /// адрес, и поднявшийся на другом порту в кластер убитого не войдёт.
+    /// Поэтому отказ bind здесь не повторяется на свежих портах, а уходит
+    /// наружу: повтор подменил бы проверяемый сценарий другим.
+    /// </remarks>
+    public static Task<SiloUnderTest> StartAt(string connectionString, SiloEndpoint endpoint, params string[] settings) =>
+        Launch(connectionString, natsUrl: null, endpoint, settings);
+
+    /// <summary>
+    /// Старт с повтором, в котором пары портов выдаёт <paramref name="endpoints" />.
+    /// Штатно это <see cref="SiloEndpoint.Allocate" />; своя выдача нужна тесту,
+    /// который ставит проигранную гонку за порт заранее.
+    /// </summary>
+    public static Task<SiloUnderTest> Start(
+        string connectionString, Func<SiloEndpoint> endpoints, params string[] settings) =>
+        Retry(endpoints, endpoint => Launch(connectionString, natsUrl: null, endpoint, settings));
 
     /// <summary>
     /// Пояс сообщества в тестах — тот же, что задаёт AppHost: сценарии считают
@@ -69,15 +88,36 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// </summary>
     public const string CommunityZone = "Europe/Moscow";
 
-    private static async Task<SiloUnderTest> Launch(string connectionString, string? natsUrl, string[] settings)
+    /// <remarks>
+    /// Повтор безопасен для кластера: оба листенера Orleans биндятся на стадии
+    /// <c>RuntimeInitialize - 1</c>, а в membership силос пишет себя позже,
+    /// начиная с <c>AfterRuntimeGrainServices</c>. Проигравшая попытка не
+    /// оставляет в таблице записи, на которую следующая ждала бы ответа.
+    /// Ловится только отказ bind: любая другая ошибка старта — дефект, и
+    /// повтор бы её спрятал.
+    /// </remarks>
+    private static async Task<SiloUnderTest> Retry(
+        Func<SiloEndpoint> endpoints, Func<SiloEndpoint, Task<SiloUnderTest>> launch)
     {
-        // Порты силоса берутся свободные: иначе второй силос этого же теста и
-        // соседнее рабочее дерево дерутся за штатные 11111 и 30000.
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await launch(endpoints());
+            }
+            catch (Exception ex) when (attempt < SiloEndpoint.LaunchAttempts && SiloEndpoint.Refused(ex))
+            {
+            }
+        }
+    }
+
+    private static async Task<SiloUnderTest> Launch(
+        string connectionString, string? natsUrl, SiloEndpoint endpoint, string[] settings)
+    {
         var app = NotificationsHost.Build(
             [
                 "--urls=http://127.0.0.1:0",
-                $"--{NotificationsHost.SiloPortKey}={FreePort()}",
-                $"--{NotificationsHost.GatewayPortKey}={FreePort()}",
+                .. endpoint.Arguments,
                 $"--{CommunityTime.TimeZoneVariable}={CommunityZone}",
                 .. settings,
             ],
@@ -95,19 +135,6 @@ public sealed class SiloUnderTest : IAsyncDisposable
         }
 
         return new SiloUnderTest(app);
-    }
-
-    /// <summary>
-    /// Порт, свободный на момент вызова. Гонка между освобождением и повторным
-    /// занятием теоретически возможна и здесь принимается: цена — редкий
-    /// перезапуск теста, альтернатива — фиксированные порты, которые ломают
-    /// параллельный прогон гарантированно.
-    /// </summary>
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     public async ValueTask DisposeAsync()

@@ -389,7 +389,7 @@ Subject называет повод, сообщение на всех повод
 
 ## JetStream
 
-Топологию шины описывает одна таблица данных — `infra/apphost/Configuration/Infrastructure/JetStreamTopology.cs`, — и применяет её AppHost, когда узел `nats` готов: сервер JetStream объявлять streams в конфиге не умеет, а ручной `nats stream add` на каждой машине и есть то, от чего здесь отказались. Применение идемпотентно (`CreateOrUpdate`), а `WaitFor(nats)` в Aspire ждёт не только `Healthy`, но и завершения обработчиков готовности, поэтому потребитель, который ждёт шину, стартует, когда его durable уже есть, а упавшее применение роняет его старт. Пока такого потребителя нет, сбой пишется только в лог узла `nats`. Решение и отвергнутые варианты — [ADR-050](../decisions/ADR-050-jetstream-topology-owned-by-platform.md).
+Топологию шины описывает одна таблица данных — `infra/apphost/AppHost/Configuration/Infrastructure/JetStreamTopology.cs`, — и применяет её AppHost, когда узел `nats` готов: сервер JetStream объявлять streams в конфиге не умеет, а ручной `nats stream add` на каждой машине и есть то, от чего здесь отказались. Применение идемпотентно (`CreateOrUpdate`), а `WaitFor(nats)` в Aspire ждёт не только `Healthy`, но и завершения обработчиков готовности, поэтому потребитель, который ждёт шину, стартует, когда его durable уже есть, а упавшее применение роняет его старт. Пока такого потребителя нет, сбой пишется только в лог узла `nats`. Решение и отвергнутые варианты — [ADR-050](../decisions/ADR-050-jetstream-topology-owned-by-platform.md).
 
 ### Streams
 

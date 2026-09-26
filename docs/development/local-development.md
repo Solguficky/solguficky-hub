@@ -22,11 +22,12 @@ SDK закреплён в корневом `global.json`: базовая вер�
 ## AppHost
 
 ```powershell
-cd infra/apphost
 aspire run
 ```
 
-Для человека `aspire run` остаётся интерактивной командой с dashboard. Агент в worktree использует точный AppHost через `aspire start --non-interactive --isolated --apphost infra/apphost/AppHost.csproj`, ждёт ресурсы через `aspire wait` и штатно останавливает тот же AppHost. На холодном дереве сборка всех компонентов идёт дольше 120 секунд, которые CLI по умолчанию ждёт AppHost, поэтому первый `aspire start` падает, хотя граф исправен: помогает `ASPIRE_CLI_START_TIMEOUT=600`.
+Проект AppHost лежит в `infra/apphost/AppHost/`, его тесты — рядом, в `infra/apphost/AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`, поэтому `aspire run` и `aspire start` работают из любого каталога клона или рабочего дерева без `--apphost`. Команды к уже запущенному AppHost (`wait`, `describe`, `logs`, `stop`) запускают из корня: на CLI 13.5.3 `aspire wait` ищет запущенный AppHost под текущим каталогом, и из `docs/` его не находит, а из корня и из `infra/` находит.
+
+Для человека `aspire run` остаётся интерактивной командой с dashboard. Агент в worktree использует `aspire start --non-interactive --isolated`, ждёт ресурсы через `aspire wait` и штатно останавливает тот же AppHost. На холодном дереве сборка всех компонентов идёт дольше 120 секунд, которые CLI по умолчанию ждёт AppHost, поэтому первый `aspire start` падает, хотя граф исправен: помогает `ASPIRE_CLI_START_TIMEOUT=600`.
 
 `just aspire-smoke [профиль]` проходит этот lifecycle одной командой: ждёт конечного состояния всех ресурсов, делает доменный вызов к каждому gRPC-сервису с общим `x-request-id`, проверяет топологию JetStream и останавливает AppHost. Код возврата 0 означает, что все проверки прошли. Флаг `--keep` оставляет AppHost для ручных проверок, а `sh tools/apphost/smoke.sh --attach` проверяет уже запущенный — например, после `aspire resource <имя> restart`. Проба здоровья одна не годится: в PER-7 Identity отвечал `SERVING`, пока каждый `ResolveIdentity` отвергался схемой. Проба спрашивает готовность по имени основного gRPC-сервиса, а не пустое имя: пустое имя отвечает liveness и базу не проверяет ([ADR-054](../decisions/ADR-054-storage-unavailability-visible-outside.md)). При остановленной базе шаг ожидания ресурсов `--attach` не пройдёт, пока сервисы `Unhealthy`, поэтому его запускают после `aspire resource postgres start`.
 
@@ -34,7 +35,7 @@ AppHost объявляет граф узлов и их связи, а профи
 
 ## Профили
 
-Профиль — это данные: секция `Topology:Profiles` в `infra/apphost/appsettings.json`. Он перечисляет узлы, которыми AppHost владеет в запуске, и не требует правки кода. Текущий состав:
+Профиль — это данные: секция `Topology:Profiles` в `infra/apphost/AppHost/appsettings.json`. Он перечисляет узлы, которыми AppHost владеет в запуске, и не требует правки кода. Текущий состав:
 
 | Профиль | Инфраструктура | Компоненты |
 |---|---|---|
@@ -61,15 +62,15 @@ AppHost объявляет граф узлов и их связи, а профи
 `notifications-observability` — отдельный локальный профиль для разбора молчащего reminder'а: Aspire поднимает Loki 3.7.0 и Grafana 13.1.6 вместе с Notifications, а сервис отправляет логи одновременно в Aspire Dashboard и Loki через OTLP/HTTP. Обычные профили этих контейнеров не поднимают. Адрес Grafana выдаёт Aspire (`aspire describe --format Json`), панель **Notifications reminders** и источник Loki загружаются автоматически из `infra/observability/`. Для агента в рабочем дереве:
 
 ```powershell
-aspire start --isolated --non-interactive --apphost infra/apphost/AppHost.csproj -- --profile notifications-observability
-aspire wait notifications --apphost infra/apphost/AppHost.csproj --non-interactive
-aspire wait grafana --apphost infra/apphost/AppHost.csproj --non-interactive
-aspire stop --apphost infra/apphost/AppHost.csproj --non-interactive
+aspire start --isolated --non-interactive -- --profile notifications-observability
+aspire wait notifications --non-interactive
+aspire wait grafana --non-interactive
+aspire stop --non-interactive
 ```
 
 Встроенный вход Grafana для локального контейнера — `admin/admin`; профиль не предназначен для публикации в сеть. Запросы и толкование признаков описаны в [Notifications](../services/notifications.md#как-заметить-молчащее-напоминание). Остановленный сервис не выдаёт heartbeat; пустую панель при самом первом запуске следует отличать от здорового нуля после первого тика.
 
-**В рабочем дереве `aspire run` запускают с `--apphost`.** Деревья лежат в `.claude/worktrees/` внутри основного клона, поэтому поиск AppHost вверх по дереву каталогов находит `infra/apphost` родителя, а не свой. Симптом обманчив: запуск падает на `Unknown topology profile` с перечнем профилей основного клона, и выглядит это как ошибка в своей правке `appsettings.json`. Правильная форма — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile <name>`.
+**Рабочее дерево находит свой AppHost через `aspire.config.json`.** Деревья лежат в `.claude/worktrees/` внутри основного клона, и раньше поиск AppHost вверх по каталогам находил проект родителя. Симптом был обманчив: запуск падал на `Unknown topology profile` с перечнем профилей основного клона, и это выглядело как ошибка в своей правке `appsettings.json`. Теперь CLI берёт ближайший `aspire.config.json`, а у дерева он свой, в корне. Симптом вернётся в дереве, ответвлённом от ветки, где этого файла ещё нет; тогда помогает явный `--apphost infra/apphost/AppHost/AppHost.csproj`.
 
 **Тома данных принадлежат рабочему дереву.** PostgreSQL и NATS получают том с именем `solguficky-<каталог дерева>-<хэш пути>-postgres-data` и `…-nats-data`: имя каталога делает том узнаваемым в `docker volume ls`, хэш полного пути различает два клона с одинаковым именем каталога. Общий том ломал запуски двумя способами. Одновременный: второй PostgreSQL на том же каталоге данных удалял `postmaster.pid`, и первый уходил в immediate shutdown ([PER-174](https://linear.app/anticnvm/issue/per-174)). Последовательный: AppHost чужой ветки применял на общем томе свои миграции, и Identity из `develop` отказывал в регистрации по триггеру, которого в его коде нет ([PER-7](https://linear.app/anticnvm/issue/per-7)). Теперь повторный запуск из того же дерева видит данные прошлого, а другое дерево начинает с пустого тома. Владельца тома задаёт путь, а не само дерево: `git worktree move` или переименование каталога дают новый пустой том, а прежний остаётся под старым именем. Том переживает снятие дерева: после `git worktree remove` его удаляют руками — `docker volume ls --filter name=solguficky-` показывает все, имя каталога называет владельца. Тома `solguficky-postgres-data` и `solguficky-nats-data` от запусков до [PER-340](https://linear.app/anticnvm/issue/per-340) больше никем не подключаются; нужные с них данные переносят руками, остальное удаляют.
 
@@ -90,8 +91,8 @@ just aspire infra
 Вход в тестовую среду описан [ADR-046](../decisions/ADR-046-telegram-test-contour.md): клиент Telegram переключается на тестовые дата-центры, аккаунт заводится синтетическим номером вида `99966XYYYY`, токен тестового бота выдаёт тестовый BotFather. Токен кладётся в user-secrets AppHost и в репозиторий не попадает. Порядок важен: среда `test` спрашивает другой параметр, и неинтерактивный запуск на отсутствующем `telegram-bot-test-token` падает вместо приглашения ввести значение.
 
 ```powershell
-dotnet user-secrets --project infra/apphost/AppHost.csproj set "Parameters:telegram-bot-test-token" "<токен тестового бота>"
-aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "Parameters:telegram-bot-test-token" "<токен тестового бота>"
+aspire run -- --profile hub --telegram-environment test
 ```
 
 В логе бота строка `telegram-bot starting` несёт поле `telegram_environment`: в какой Telegram ушёл запуск, видно до первого сообщения, а не по отсутствию ответа.
@@ -134,13 +135,13 @@ just aspire hub -- --skip-services telegram-bot
 
 Срез не подтягивает соседний сервис из зависимостей: узел вне среза остаётся владельцу. Баннер называет такие зависимости поимённо.
 
-Имена узлов и их связи объявлены в `infra/apphost/Program.cs`, форма кода — в skill `proj-write-aspire-apphost`.
+Имена узлов и их связи объявлены в `infra/apphost/AppHost/Program.cs`, форма кода — в skill `proj-write-aspire-apphost`.
 
 ## Проверенный локальный gate
 
 Механика графа, без Docker — эти пункты отрабатывают до старта ресурсов:
 
-1. `dotnet restore` и `dotnet build` для `infra/apphost` успешны.
+1. `dotnet restore` и `dotnet build` для `infra/apphost/AppHost` успешны.
 2. Неизвестный профиль отвергается и через `--profile`, и через `TOPOLOGY__PROFILE`, с перечнем допустимых значений.
 3. Профиль, перечисляющий незарегистрированный узел, падает до построения графа.
 4. `--run-services telegram-bot` оставляет в запуске только бота, а баннер называет `identity` как объявленную, но не принадлежащую профилю зависимость.
@@ -238,7 +239,7 @@ just aspire hub -- --skip-services telegram-bot
 
 Доставка уведомления о новой сходке в Telegram подтверждена только записью бота `notification delivered` в прогоне PER-7 (пункт 37). Отключение категории кнопкой из уведомления живым прогоном не проверялось. Потребление с журналом, повтор после потерянного ack, отказ заблокированного получателя и повтор временного отказа подтверждены интеграционным тестом бота на настоящем JetStream с отправителем-заглушкой ([PER-217](https://linear.app/anticnvm/issue/per-217)). Путь «опубликовал сходку — подписчик получил сообщение и отключил категорию кнопкой» требует полного `hub` с локальным ботом и двух Telegram-клиентов, как у прогона PER-5.
 
-Тестовая среда Telegram живым прогоном не проверена: полный `hub` прогнан в продакшн-среде отдельным локальным ботом, а с `--telegram-environment test` проверка доходит только до отказа графа на неизвестном имени. Закрывающая команда — `aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-environment test` с токеном тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)); регулярный прогон тестового контура ведёт [PER-9](https://linear.app/anticnvm/issue/per-9). Отрисовку ответа бота подтверждает клиент владельца (пункт 20), а не лог: запись границы говорит, что update обработан, но не то, как ответ выглядит у человека. В прогоне PER-228 бот писал успех на `debug`, и записи не было вовсе; с [PER-351](https://linear.app/anticnvm/issue/per-351) она на `info`.
+Тестовая среда Telegram живым прогоном не проверена: полный `hub` прогнан в продакшн-среде отдельным локальным ботом, а с `--telegram-environment test` проверка доходит только до отказа графа на неизвестном имени. Закрывающая команда — `aspire run -- --profile hub --telegram-environment test` с токеном тестового BotFather в `Parameters:telegram-bot-test-token` ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)); регулярный прогон тестового контура ведёт [PER-9](https://linear.app/anticnvm/issue/per-9). Отрисовку ответа бота подтверждает клиент владельца (пункт 20), а не лог: запись границы говорит, что update обработан, но не то, как ответ выглядит у человека. В прогоне PER-228 бот писал успех на `debug`, и записи не было вовсе; с [PER-351](https://linear.app/anticnvm/issue/per-351) она на `info`.
 
 Тома разведены по деревьям, но не по запускам внутри дерева: два `aspire start --isolated` из одного и того же дерева по-прежнему делят том и повторяют отказ PER-174. Одно дерево — один запуск с PostgreSQL. Разведение тома не лечит и второй симптом из прогона PER-5 (пункт 28): упавший контейнер PostgreSQL Aspire сам не поднимает.
 

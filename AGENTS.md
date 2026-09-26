@@ -28,8 +28,8 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/auction/` — Auction на Scala 3 и Apache Pekko: пока языковой контур, а не сервис. Сборка sbt, кодогенерация ScalaPB из `contracts/proto` внутри `compile`, HTTP-граница с health на Pekko HTTP и тесты ScalaTest; в графе Aspire — узел с базой, запущенный голой JVM. Торгов и persistence в нём нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке, стиль и совместимость схем держат `buf lint` и `buf breaking` в CI.
 - `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
-- `infra/apphost/` — локальная оркестрация .NET Aspire.
-- `infra/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Лежит соседним каталогом, а не внутри `infra/apphost/`: SDK-проект глобит `.cs` рекурсивно и втянул бы тесты в сам AppHost. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
+- `infra/apphost/` — локальная оркестрация .NET Aspire, разложенная как компонент: проект `AppHost/` и его тесты `AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`.
+- `infra/apphost/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL` внешнему потребителю, `Contour.Contracts` держит generated-only C#-клиента Identity. Рецепты `just contour-test`, `just contour-up` и `just contour-contracts-check`; в `verify` набор не входит и гоняется джобой `contour` в CI.
 - `tools/git-hooks/` — POSIX sh скрипты локальных хуков. Сейчас их два: `check-commit-message.sh` вызывает только хук `commit-msg`, `sync-skillshare-targets.sh` — хуки `post-checkout` и `post-merge`, чтобы таргеты skillshare не отставали от источника после смены ветки, pull и создания дерева.
@@ -126,10 +126,11 @@ just check-verify-selection
 # Нужны Docker и PostgreSQL для Identity; в verify не входит
 just test-all
 
-# Локальная оркестрация — из infra/apphost/
+# Локальная оркестрация — AppHost называет aspire.config.json в корне;
+# wait/describe/stop к запущенному AppHost — из корня
 aspire run
 
-# Профили топологии — данные в Topology:Profiles (infra/apphost/appsettings.json)
+# Профили топологии — данные в Topology:Profiles (infra/apphost/AppHost/appsettings.json)
 TOPOLOGY__PROFILE=infra aspire run
 aspire run -- --profile hub
 
@@ -225,7 +226,7 @@ cd tools/nats-tester && nats-tester --help
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just telegram-bot-proto` после правки `contracts/proto/**` и `just sync-mcp && just sync-commands` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify-changed` перед сдачей нужен в любом случае.
 
-Что именно подтверждено живым прогоном Aspire — в [руководстве](docs/development/local-development.md); оно единственный владелец этого факта, и перечень профилей сюда не копируется. Полный `hub` с Telegram Bot прогнан отдельным локальным ботом в продакшн-среде Telegram; непроверенной остаётся тестовая среда Telegram. Токен бота сообщества способом проверки не является — живой бот начал бы отвечать реальным людям, и второй polling-экземпляр получает `409 Conflict`. Профиль владеет узлом, и зарегистрированный узел обязан быть назван хотя бы одним профилем: граф отвергает запуск до старта ресурсов, если владельца нет, поэтому регистрация узла едет одним изменением с профилем. В рабочем дереве `aspire run` запускают с `--apphost`: иначе он находит AppHost основного клона. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны там же.
+Что именно подтверждено живым прогоном Aspire — в [руководстве](docs/development/local-development.md); оно единственный владелец этого факта, и перечень профилей сюда не копируется. Полный `hub` с Telegram Bot прогнан отдельным локальным ботом в продакшн-среде Telegram; непроверенной остаётся тестовая среда Telegram. Токен бота сообщества способом проверки не является — живой бот начал бы отвечать реальным людям, и второй polling-экземпляр получает `409 Conflict`. Профиль владеет узлом, и зарегистрированный узел обязан быть назван хотя бы одним профилем: граф отвергает запуск до старта ресурсов, если владельца нет, поэтому регистрация узла едет одним изменением с профилем. Рабочее дерево находит свой AppHost через собственный корневой `aspire.config.json`, поэтому `--apphost` в дереве больше не нужен. Aspire — единственный способ локальной оркестрации: compose-файлы удалены вместе с сервисами предыдущего поколения. Production-like `aspire publish` и production-топология не подтверждены; граница и повторяемый gate описаны там же.
 
 CodeRabbit не ревьюит pull request автоматически; запуск — комментарием `@coderabbitai review`. Активную конфигурацию показывает `@coderabbitai configuration`. Его находки помогают владельцу при ревью, но не становятся гейтом мержа.
 
