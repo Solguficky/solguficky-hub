@@ -19,8 +19,9 @@ const MeetupCategorySchema = z.enum([
   "reminder",
   "organizer",
 ]);
-// Категории, о которых приходит уведомление по конкретной сходке. Напоминание и
-// сообщения организатора канал пока не рисует, и кнопки для них нет.
+// Категории, о которых приходит уведомление по конкретной сходке. Напоминание
+// выключается глобально (`v1:notify:off:reminder`): по сходке оно приходит один
+// раз. Сообщения организатора канал пока не рисует, и кнопки для них нет.
 const NotifiedMeetupCategorySchema = z.enum(["changes", "material"]);
 export type NotifiedMeetupCategory = z.infer<
   typeof NotifiedMeetupCategorySchema

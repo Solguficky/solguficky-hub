@@ -227,6 +227,10 @@ describe("notification callbacks", () => {
       kind: "notify-disable-global",
       category: "published",
     });
+    expect(parseCallback("v1:notify:off:reminder")).toEqual({
+      kind: "notify-disable-global",
+      category: "reminder",
+    });
     expect(parseCallback("v1:notify:off:unknown")).toEqual({
       kind: "malformed",
     });
