@@ -302,36 +302,6 @@ public class NotificationPreferencesTests
         code.ShouldBe(StatusCode.InvalidArgument);
     }
 
-    [Fact]
-    public async Task When_BroadcastRequested_Expect_Unimplemented()
-    {
-        await using var service = await PreferencesUnderTest.Start();
-
-        // Отказ, а не заглушка-«принято»: поле id рассылки — одновременно
-        // идентификатор и ключ идемпотентности, и приняв команду, которую никто
-        // не исполнит, сервис на настоящем повторе ответил бы created = false,
-        // то есть соврал бы, что сообщение уже ушло.
-        var toSubscribers = await Code(() => service.Client.BroadcastToMeetupSubscribersAsync(
-            new BroadcastToMeetupSubscribersRequest
-            {
-                IdentityId = Guid.CreateVersion7().ToString("D"),
-                MeetupId = Guid.CreateVersion7().ToString("D"),
-                Id = Guid.CreateVersion7().ToString("D"),
-                Body = "текст",
-            }).ResponseAsync);
-
-        var toCommunity = await Code(() => service.Client.BroadcastToCommunityAsync(
-            new BroadcastToCommunityRequest
-            {
-                IdentityId = Guid.CreateVersion7().ToString("D"),
-                Id = Guid.CreateVersion7().ToString("D"),
-                Body = "текст",
-            }).ResponseAsync);
-
-        toSubscribers.ShouldBe(StatusCode.Unimplemented);
-        toCommunity.ShouldBe(StatusCode.Unimplemented);
-    }
-
     private static bool Enabled(IEnumerable<CategoryPreference> categories, NotificationCategory category) =>
         categories.Single(preference => preference.Category == category).Enabled;
 

@@ -28,12 +28,22 @@
   </ItemGroup>
 
   <!-- Чужие факты, из которых собирается реплика (PER-215). Берутся только
-       файлы событий и их значений: сервисы Meetups и Identity в кодогенерацию
-       не попадают, ради этого producers и держат события отдельными файлами. -->
+       файлы событий и их значений: реплике сервисы Meetups и Identity не нужны,
+       ради этого producers и держат события отдельными файлами. -->
   <ItemGroup>
     <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
     <Protobuf Include="..\..\..\contracts\proto\identity\v1\roles.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
     <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
+  <!-- Владельцы права на ручную рассылку (ADR-028 §7, ADR-051). Клиенты, а не
+       серверы: право на рассылку по сходке Notifications спрашивает у Meetups,
+       право на объявление сообществу — у Identity, на самой команде и без
+       реплики. Остальные методы обоих сервисов генерируются вместе с файлом,
+       но сервисом не вызываются. -->
+  <ItemGroup>
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
   </ItemGroup>
 
 </Project>

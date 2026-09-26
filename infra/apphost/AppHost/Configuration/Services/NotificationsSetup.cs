@@ -8,9 +8,7 @@ internal static class NotificationsSetup
     public static IResourceBuilder<ProjectResource> Configure(ServiceGraphContext context)
     {
         // Форма повторяет MeetupsSetup: тот же h2c-endpoint и та же проба по
-        // grpc.health.v1. Реализаций gRPC-сервиса в сервисе пока нет (PER-71),
-        // но транспорт и проба существуют с первого дня, иначе появление
-        // command plane меняло бы и сервис, и узел AppHost сразу.
+        // grpc.health.v1: command plane подписок, настроек и рассылок слушает h2c.
         //
         // Портов силоса Orleans здесь нет намеренно: они штатные, а переопределяет
         // их только тот, кто поднимает второй силос на той же машине.
@@ -38,6 +36,12 @@ internal static class NotificationsSetup
                 AppHostNames.Resources.Nats,
                 "NOTIFICATIONS_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"))
+            // Владельцы права на ручную рассылку: по сходке отвечает Meetups, на
+            // объявление сообществу — Identity (ADR-028 §7, ADR-051). Профиль
+            // `notifications` соседей не поднимает, bind молчит, и обе рассылки
+            // честно отвечают UNAVAILABLE — остальному сервису они не нужны.
+            .BindEndpoint(context, AppHostNames.Resources.Meetups, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_MEETUPS_GRPC_URL")
+            .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_IDENTITY_GRPC_URL")
             .BindEndpoint(
                 context,
                 AppHostNames.Resources.Loki,

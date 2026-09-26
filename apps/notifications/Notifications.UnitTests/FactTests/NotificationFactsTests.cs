@@ -205,6 +205,45 @@ public class NotificationFactsTests
         notification.HasRequestId.ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Повод ручной рассылки — команда: ссылка на её id, отправитель
+    /// внутренним идентификатором, авторский текст дословно и цепочка команды.
+    /// </summary>
+    [Fact]
+    public void OrganizerMessage_AcceptedBroadcast_ReferencesCommandAndCarriesCardAndBody()
+    {
+        var broadcastId = Guid.CreateVersion7();
+        var senderId = Guid.CreateVersion7();
+        var card = Decode(EventFactory.Meetup(EventFactory.NewId(), version: 2, title: "Пятничная")).Card;
+
+        var notification = NotificationFacts.OrganizerMessage(
+            NotificationId, RecipientId, broadcastId, senderId, card, " Текст как есть ", "req-1", Now, NotAfter);
+
+        notification.Cause.CommandRequestId.ShouldBe(broadcastId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.OrganizerMessage);
+        notification.OrganizerMessage.Meetup.ShouldBe(card);
+        notification.OrganizerMessage.SenderId.ShouldBe(senderId.ToString());
+        notification.OrganizerMessage.Body.ShouldBe(" Текст как есть ");
+        notification.RequestId.ShouldBe("req-1");
+        notification.NotAfter.ShouldBe("2026-09-26T10:15:30Z");
+    }
+
+    [Fact]
+    public void CommunityAnnouncement_WithoutChain_CarriesNoMeetupAndNoRequestId()
+    {
+        var broadcastId = Guid.CreateVersion7();
+        var senderId = Guid.CreateVersion7();
+
+        var notification = NotificationFacts.CommunityAnnouncement(
+            NotificationId, RecipientId, broadcastId, senderId, "Общий сбор", requestId: null, Now, NotAfter);
+
+        notification.Cause.CommandRequestId.ShouldBe(broadcastId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.CommunityAnnouncement);
+        notification.CommunityAnnouncement.SenderId.ShouldBe(senderId.ToString());
+        notification.CommunityAnnouncement.Body.ShouldBe("Общий сбор");
+        notification.HasRequestId.ShouldBeFalse();
+    }
+
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>
         ReplicaMapping.Meetup(EventFactory.Bytes(message))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<MeetupFact>();

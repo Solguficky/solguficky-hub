@@ -94,6 +94,47 @@ public class RequestValidationTests
             .ShouldBe(NotificationCategory.MeetupReminder);
     }
 
+    [Fact]
+    public void BroadcastId_NotUuidV7_IsRejected()
+    {
+        Code(() => RequestValidation.BroadcastId("01932b3c-4d5e-4f80-8123-456789abcdef"))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void Body_Empty_IsRejected()
+    {
+        Code(() => RequestValidation.Body(string.Empty)).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void Body_AtLimit_IsAccepted()
+    {
+        var body = new string('я', RequestValidation.MaxBodyLength);
+
+        RequestValidation.Body(body).ShouldBe(body);
+    }
+
+    [Fact]
+    public void Body_OverLimit_IsRejected()
+    {
+        Code(() => RequestValidation.Body(new string('я', RequestValidation.MaxBodyLength + 1)))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void Body_WithNul_IsRejected()
+    {
+        Code(() => RequestValidation.Body("a\0b")).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    /// <summary>Что писать, решает автор: граница пробелы не отвергает и не обрезает.</summary>
+    [Fact]
+    public void Body_Whitespace_IsAcceptedVerbatim()
+    {
+        RequestValidation.Body("  ").ShouldBe("  ");
+    }
+
     /// <summary>
     /// Код объявленного отказа. Неожиданное исключение наружу не глотается:
     /// тест, поймавший всё подряд, зеленел бы и на сломанной границе.
