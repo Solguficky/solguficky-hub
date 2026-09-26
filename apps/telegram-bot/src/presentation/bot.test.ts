@@ -854,7 +854,10 @@ describe("presentation adapter", () => {
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
-    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(calls[0]).toMatchObject({
+      method: "answerCallbackQuery",
+      payload: { text: "Загружаю…" },
+    });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -1275,6 +1278,13 @@ describe("presentation adapter", () => {
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    // Ожидание — подсказка клиента, а не экран: после сбоя соседа заменять
+    // нечего, и последним человек видит кадр E-05.
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[0]).toMatchObject({ payload: { text: "Загружаю…" } });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -2400,9 +2410,12 @@ describe("presentation adapter", () => {
 
   it("logs malformed callback data without its payload", async () => {
     const counted = vi.spyOn(failures, "countFailure");
-    const { bot, records } = createHarness(resolvedIdentity());
+    const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:view:short"));
+    // Соседей нечитаемая кнопка не зовёт, ждать нечего: ack без «Загружаю…».
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(calls[0]?.payload).not.toHaveProperty("text");
     expect(records).toHaveLength(1);
     expectBoundary(records[0], {
       level: "warn",
