@@ -3850,6 +3850,9 @@ describe("broadcast frames", () => {
         ([request]) => request.intent === "send-broadcast",
       ),
     ).toBe(false);
+    // Сходку читают при вопросе и не перечитывают на ответе: сбой Meetups в
+    // этот момент не должен стоить человеку набранного текста.
+    expect(execute).toHaveBeenCalledTimes(1);
     const preview = calls.at(-2);
     const confirmation = calls.at(-1);
     // Предпросмотр — ровно текст рассылки, без заголовка и числа получателей.

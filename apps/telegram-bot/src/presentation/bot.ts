@@ -237,6 +237,9 @@ type PendingPublishMoment = {
 type PendingBroadcastBody = {
   kind: "broadcast-body";
   audience: BroadcastAudience;
+  // Только для текста кадра подтверждения: сходку читают при вопросе, и её
+  // название здесь — подпись, а не факт, по которому что-то решается.
+  meetupTitle?: string;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -569,39 +572,18 @@ async function handleMessage(
         };
         return;
       }
-      // Сходку перечитывают перед предпросмотром: кадр подтверждения называет
-      // её по имени, а исчезнувшая за время набора сходка отвечает E-03, а не
-      // подтверждением рассылки в пустоту.
-      let meetupTitle: string | undefined;
-      if (meetupId !== undefined) {
-        const current = await runtime.dispatcher.execute({
-          identity: identity.person,
-          intent: "view-meetup",
-          meetupId,
-          ...rpcCall(ctx, useCase),
-        });
-        if (current.kind !== "meetup-card") {
-          questions.delete(questionKey(ctx.chat?.id, replyId));
-          await renderMeetupCard(
-            ctx,
-            current,
-            false,
-            runtime.presentation ?? "rich",
-            true,
-          );
-          outcome = screenBoundary(current, {
-            ok: ["meetup-card"],
-            okMessage: "broadcast meetup reread",
-            rejectedMessage: "broadcast meetup rejected",
-            useCase,
-            meetupId,
-          });
-          return;
-        }
-        meetupTitle = current.meetup.title;
-      }
+      // Сходку здесь не перечитывают: сбой Meetups на этом шаге стоил бы
+      // человеку набранного текста. Название для кадра записано при вопросе, а
+      // сходку, исчезнувшую за время набора, отклонит Notifications на отправке.
+      // Вопрос снимается только после кадров: упавшая отправка оставляет его
+      // ждать того же ответа.
+      await sendBroadcastConfirmation(
+        ctx,
+        audience,
+        checked.body,
+        pending.meetupTitle,
+      );
       questions.delete(questionKey(ctx.chat?.id, replyId));
-      await sendBroadcastConfirmation(ctx, audience, checked.body, meetupTitle);
       outcome = {
         level: "info",
         message: "broadcast confirmation sent",
@@ -1597,6 +1579,7 @@ async function handleCallback(
         return;
       }
       let question = communityBroadcastPrompt;
+      let meetupTitle: string | undefined;
       if (meetupId !== undefined) {
         const current = await runtime.dispatcher.execute({
           identity: person,
@@ -1621,7 +1604,8 @@ async function handleCallback(
           });
           return;
         }
-        question = meetupBroadcastPrompt(current.meetup.title);
+        meetupTitle = current.meetup.title;
+        question = meetupBroadcastPrompt(meetupTitle);
       }
       const prompt = await ctx.reply(question, {
         reply_markup: { force_reply: true, selective: true },
@@ -1629,6 +1613,7 @@ async function handleCallback(
       questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
         kind: "broadcast-body",
         audience,
+        ...(meetupTitle === undefined ? {} : { meetupTitle }),
         telegramUserId: ctx.from?.id ?? 0,
         expiresAt: Date.now() + questionTtlMs,
       });
