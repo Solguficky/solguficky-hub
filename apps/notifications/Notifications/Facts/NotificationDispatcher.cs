@@ -1,8 +1,8 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using NATS.Client.JetStream;
 using Notifications.Infrastructure;
+using Notifications.Observability;
 using Notifications.Replica;
 
 namespace Notifications.Facts;
@@ -120,8 +120,9 @@ public sealed class NotificationDispatcher(
         Exception? exception,
         int expired)
     {
-        // Та же форма, что у replica_apply и снимка sweeper'а: JSON в теле
-        // строки с каркасом docs/standards/observability/logging.md.
+        // Та же форма, что у replica_apply и снимка sweeper'а
+        // (Observability/OperationLog), с каркасом
+        // docs/standards/observability/logging.md.
         var fields = new Dictionary<string, object>
         {
             ["service"] = NotificationsHost.ServiceId,
@@ -140,7 +141,7 @@ public sealed class NotificationDispatcher(
             fields["error"] = error ?? errorCategory;
         }
 
-        logger.Log(level, exception, "{notification_dispatch}", JsonSerializer.Serialize(fields));
+        OperationLog.Write(logger, level, exception, fields);
     }
 
     private static async Task<bool> Tick(PeriodicTimer timer, CancellationToken stoppingToken)

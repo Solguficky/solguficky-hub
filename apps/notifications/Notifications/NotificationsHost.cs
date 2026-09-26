@@ -234,8 +234,9 @@ public static class NotificationsHost
         builder.Services.AddSingleton<PreferenceOperations>();
 
         // Сам gRPC-стек. Без него не поднимаются ни проба, ни рефлексия: обе
-        // маппятся как gRPC-сервисы.
-        builder.Services.AddGrpc();
+        // маппятся как gRPC-сервисы. Интерцептор пишет запись границы с
+        // request_id и use_case из метаданных вызова, как Identity и Meetups.
+        builder.Services.AddGrpc(options => options.Interceptors.Add<BoundaryLogInterceptor>());
 
         // Мост из health checks, зарегистрированных ServiceDefaults, в grpc.health.v1.
         // Источником состояния остаётся ServiceDefaults, gRPC — только его витрина.
