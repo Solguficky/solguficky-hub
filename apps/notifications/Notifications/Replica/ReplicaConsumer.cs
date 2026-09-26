@@ -1,10 +1,10 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using NATS.Client.JetStream;
 using Notifications.Facts;
 using Notifications.Grains;
 using Notifications.Infrastructure;
+using Notifications.Observability;
 
 namespace Notifications.Replica;
 
@@ -194,8 +194,8 @@ public sealed class ReplicaConsumer(
         Exception? exception,
         ProducedFacts? produced = null)
     {
-        // JSON в теле строки — та же форма, что у снимка sweeper'а: LogQL
-        // получает числовые поля без привязки к раскладке атрибутов OTLP.
+        // Форма записи — Observability/OperationLog: поля атрибутами и JSON
+        // в теле, как у снимка sweeper'а.
         // use_case опущен, а не пуст: сообщение шины человек не начинал.
         // request_id пишется, когда его несёт конверт сходки; у Identity его
         // в конверте нет.
@@ -257,7 +257,7 @@ public sealed class ReplicaConsumer(
             fields["error"] = error ?? errorCategory;
         }
 
-        logger.Log(level, exception, "{replica_apply}", JsonSerializer.Serialize(fields));
+        OperationLog.Write(logger, level, exception, fields);
     }
 
     private async Task Pause(TimeSpan delay, CancellationToken stoppingToken)

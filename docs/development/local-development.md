@@ -100,11 +100,13 @@ aspire run --apphost infra/apphost/AppHost.csproj -- --profile hub --telegram-en
 
 ## Сквозной идентификатор в логах
 
-Telegram Bot создаёт `request_id` на каждый update и передаёт его Identity и Meetups в gRPC-заголовке `x-request-id`. Рядом уходит `use_case` в `x-use-case`: одно действие человека даёт одно и то же значение во всех трёх сервисах. В Aspire dashboard открой **Structured logs**, возьми `request_id` из записи `telegram-bot` и добавь фильтр по точному значению поля `request_id`: один фильтр показывает записи границ всех сервисов, затронутых update. Поиск по тексту сообщения для этого не используется, а backend логов контрактом приложения не является.
+Telegram Bot создаёт `request_id` на каждый update и передаёт его Identity, Meetups и Notifications в gRPC-заголовке `x-request-id`. Рядом уходит `use_case` в `x-use-case`: одно действие человека даёт одно и то же значение во всех сервисах, которые оно задело. Через шину `request_id` едет полем конверта: Notifications берёт его из события Meetups и пишет в записи `replica_apply`. В Aspire dashboard открой **Structured logs**, возьми `request_id` из записи `telegram-bot` и добавь фильтр по точному значению поля `request_id`: один фильтр показывает записи границ всех сервисов, затронутых update. Поиск по тексту сообщения для этого не используется, а backend логов контрактом приложения не является.
 
 Для открытия списка и deep link сходки ожидаются записи `telegram-bot`, Identity и Meetups с одним `request_id` и одним `use_case`. Чистый `/start` без payload вызывает Identity и не ходит в Meetups. Каждый следующий ответ формы создания сходки — новый Telegram update и поэтому новая цепочка со своим `request_id`; `use_case` при этом остаётся сценарием создания. Health checks идут без пользовательского сценария: без `request_id` и без `use_case`.
 
-Все три сервиса отправляют логи в dashboard по OTLP и пишут успешную запись границы на `info`, то есть она видна при уровне по умолчанию. Meetups получает OTLP-переменные от AppHost как проект .NET, бот — от `AddJavaScriptApp`, Identity — явным `WithOtlpExporter()` в его setup. Консольный JSON остаётся у Identity и бота рядом с OTLP: Structured logs его не разбирает, фильтр по полю работает только на записях, пришедших по OTLP. Успешную пробу здоровья Identity пишет на `debug`, Meetups не пишет вовсе, поэтому при уровне по умолчанию пробы Structured logs не засоряют. Подтверждено прогоном PER-351 (ниже).
+Все четыре сервиса отправляют логи в dashboard по OTLP и пишут успешную запись границы на `info`, то есть она видна при уровне по умолчанию. Meetups и Notifications получают OTLP-переменные от AppHost как проекты .NET, бот — от `AddJavaScriptApp`, Identity — явным `WithOtlpExporter()` в его setup. Консольный JSON остаётся у Identity и бота рядом с OTLP: Structured logs его не разбирает, фильтр по полю работает только на записях, пришедших по OTLP. Успешную пробу здоровья Identity пишет на `debug`, Meetups и Notifications не пишут вовсе, поэтому при уровне по умолчанию пробы Structured logs не засоряют. Подтверждено прогоном PER-351 (ниже) для бота, Identity и Meetups.
+
+Записи Notifications — граница gRPC, `replica_apply`, `notification_dispatch`, `reminder_sweep` и `bus_connection` — несут поля в двух формах: каждое отдельным атрибутом, по которому работает фильтр Structured logs, и все вместе JSON-строкой в теле. Тело читают панели Grafana профиля `notifications-observability` через `| json`, поэтому его форма не меняется вместе с атрибутами ([PER-363](https://linear.app/anticnvm/issue/per-363)).
 
 ## Потеря шины у потребителя
 
@@ -112,7 +114,7 @@ Telegram Bot создаёт `request_id` на каждый update и перед�
 
 У обоих потребителей запись одна на переход, с `operation` = `nats.connection`:
 
-- потеря — `warn`, `result` = `error`, `duration_us` = 0, `error_category` = `dependency_unavailable`, сообщение `bus connection lost` у бота и `{bus_connection}` с JSON в теле у Notifications ([PER-363](https://linear.app/anticnvm/issue/per-363));
+- потеря — `warn`, `result` = `error`, `duration_us` = 0, `error_category` = `dependency_unavailable`, сообщение `bus connection lost` у бота, а у Notifications — поля атрибутами и JSON в теле, как у остальных его записей;
 - восстановление — `info`, `result` = `ok`, а `duration_us` — длительность простоя.
 
 Попытки переподключения записей не дают: клиент переподключается без предела, и запись на попытку засыпала бы лог за минуту простоя. Первое открытие соединения на старте и штатная остановка сервиса тоже молчат. Сервис, остановленный во время простоя, оставляет запись о потере без пары: конец простоя для него — запись о собственной остановке. Потеря увеличивает `solguficky.failures` с `error_category` = `dependency_unavailable`; восстановление счётчик не трогает. Накопленные за простой сообщения потребитель дочитывает с позиции своего durable, как и раньше.
