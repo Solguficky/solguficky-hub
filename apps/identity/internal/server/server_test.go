@@ -30,11 +30,6 @@ func TestHealthCheckServing(t *testing.T) {
 	}
 }
 
-func newIdentityClient(t *testing.T) identityv1.IdentityServiceClient {
-	t.Helper()
-	return identityv1.NewIdentityServiceClient(newConn(t))
-}
-
 func newConn(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 	return newConnWith(t, new(sql.DB))

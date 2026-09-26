@@ -34,6 +34,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL` внешнему потребителю, `Contour.Contracts` держит generated-only C#-клиента Identity. Рецепты `just contour-test`, `just contour-up` и `just contour-contracts-check`; в `verify` набор не входит и гоняется джобой `contour` в CI.
 - `tools/git-hooks/` — POSIX sh скрипты проверок. Сейчас это `check-commit-message.sh`, его вызывает только локальный хук `commit-msg`.
 - `tools/skillshare/` — два скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первый вызывают `just check-agent-tools` и CI, второй — `just skillshare-install`.
+- `tools/identity/` — прогоны Identity. Сейчас это `test-integration.sh`: он гоняет тесты под тегом сборки `integration` и роняет прогон на пропуске, которого `go test` сам не ловит. Его вызывает `just identity-test-integration`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
 - `tools/contour/` — проверки сквозного контура. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта контура. Его вызывают `just contour-contracts-check` и CI.
@@ -118,6 +119,10 @@ just verify
 # Выбор verify-changed совпадает с картой путей CI и с составом verify
 just check-verify-selection
 
+# Все уровни тестов (unit, интеграционные, сквозной); падает на пропуске.
+# Нужны Docker и PostgreSQL для Identity; в verify не входит
+just test-all
+
 # Локальная оркестрация — из infra/apphost/
 aspire run
 
@@ -137,10 +142,12 @@ just identity-tools
 just identity-proto
 just identity-build
 just identity-test
+just identity-test-integration
 just identity-lint
 just identity-run
-# IDENTITY_DATABASE_URL обязателен и для identity-run, и для identity-test: умолчания
-# на 127.0.0.1:5432 нет, без переменной identity-test отказывает до go test
+# IDENTITY_DATABASE_URL обязателен для identity-run и identity-test-integration: умолчания
+# на 127.0.0.1:5432 нет, без переменной рецепт отказывает до go test. identity-test —
+# unit без базы; тесты с PostgreSQL лежат под тегом сборки integration
 
 # Community site API — зависимости, typecheck, линт и тесты
 just community-site-api-tools
@@ -155,12 +162,16 @@ just telegram-bot-proto
 just telegram-bot-build
 just telegram-bot-typecheck
 just telegram-bot-test
+just telegram-bot-test-integration
 just telegram-bot-lint
 just telegram-bot-run
+# telegram-bot-test — без Docker; *.integration.test.ts с Testcontainers идут в
+# telegram-bot-test-integration
 
 # Meetups — кодогенерация C#, сборка gRPC-сервиса, тесты и формат
 just meetups-build
 just meetups-test
+just meetups-test-integration
 just meetups-contracts-check
 just meetups-run
 just meetups-format
@@ -170,10 +181,11 @@ just meetups-format-check
 # Notifications — сборка силоса, тесты, гейт контрактов и запуск
 just notifications-build
 just notifications-test
+just notifications-test-integration
 just notifications-contracts-check
 just notifications-run
-# NOTIFICATIONS_DATABASE_URL обязателен для notifications-run; интеграционные тесты
-# поднимают PostgreSQL через Testcontainers и без Docker пропускаются, кроме CI
+# NOTIFICATIONS_DATABASE_URL обязателен для notifications-run. *-test — unit без Docker;
+# *-test-integration поднимает PostgreSQL через Testcontainers и без Docker падает
 
 # Auction — зависимости, кодогенерация, сборка, тесты, формат и запуск
 just auction-tools

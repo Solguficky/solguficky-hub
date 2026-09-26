@@ -18,7 +18,7 @@
 | L3 Живой | топология целиком, наблюдаемость, поведение при отказе зависимости, путь через настоящий Telegram | Aspire и агент через Aspire MCP; выделенная тестовая среда Telegram | по требованию |
 | L4 Свойства и симуляция | инварианты домена на пространстве последовательностей и на последовательностях команд | seed, управляемые часы и подменяемое хранилище, без внешних систем | CI |
 
-Таблица описывает принятое устройство, а не сегодняшнее состояние репозитория, и расхождение стоит назвать прямо. L1 пока гоняется внутри `just verify`, границу переносит [PER-269](https://linear.app/anticnvm/issue/per-269). L2 введён на половину: сквозной контур поднимается `Aspire.Hosting.Testing` в `tests/contour/` и гоняется джобой `contour` в CI ([PER-270](https://linear.app/anticnvm/issue/per-270)), но проверяет пока один дымовой сценарий через Identity и Meetups; провод бота на нём добавляет [PER-271](https://linear.app/anticnvm/issue/per-271). В обязательных проверках ветки джоба не числится: перевод идёт по правилу периода наблюдения ниже. Рецепта `just test-all` ещё нет, набор запускается своим `just contour-test`. L3 доступен как процедура — Aspire MCP подключён, — но полный профиль с ботом ни разу не прогонялся: [PER-5](https://linear.app/anticnvm/issue/per-5) и [PER-174](https://linear.app/anticnvm/issue/per-174). У L4 при подробно описанном в [fsharp.md](fsharp.md) стеке нет ни одной ссылки на FsCheck в коде. Стек Scala с появлением [Auction](../../../apps/auction/README.md) перестал быть только выбором: ScalaTest и мост ScalaCheck работают в коде, но целиком на L0 — L1 для Scala появится вместе с persistence. Путь через настоящий Telegram не покрыт ничем и вводится [ADR-046](../../decisions/ADR-046-telegram-test-contour.md) на выделенной тестовой среде. Отсутствие уровня — состояние репозитория, а не разрешение обходиться без него.
+Таблица описывает принятое устройство, а не сегодняшнее состояние репозитория, и расхождение стоит назвать прямо. L1 вынесен из `just verify` в CI и `just test-all` ([PER-269](https://linear.app/anticnvm/issue/per-269)): у .NET уровень выбирается тест-проектом, у Identity — тегом сборки `integration`, у Telegram Bot — суффиксом `*.integration.test.ts` и отдельным конфигом vitest. Падение на пропуске в `just test-all` пока исполняют только наборы .NET и Identity: у vitest и ScalaTest пропуск даёт код 0 ([PER-358](https://linear.app/anticnvm/issue/per-358)), а у Go нет порога числа тестов, и CI пропуск не ловит ([PER-359](https://linear.app/anticnvm/issue/per-359), [PER-356](https://linear.app/anticnvm/issue/per-356)). L2 введён на половину: сквозной контур поднимается `Aspire.Hosting.Testing` в `tests/contour/` и гоняется джобой `contour` в CI ([PER-270](https://linear.app/anticnvm/issue/per-270)), но проверяет пока один дымовой сценарий через Identity и Meetups; провод бота на нём добавляет [PER-271](https://linear.app/anticnvm/issue/per-271). В обязательных проверках ветки джоба не числится: перевод идёт по правилу периода наблюдения ниже. Локально набор запускается своим `just contour-test` и входит в `just test-all`. L3 доступен как процедура — Aspire MCP подключён, — но полный профиль с ботом ни разу не прогонялся: [PER-5](https://linear.app/anticnvm/issue/per-5) и [PER-174](https://linear.app/anticnvm/issue/per-174). У L4 при подробно описанном в [fsharp.md](fsharp.md) стеке нет ни одной ссылки на FsCheck в коде. Стек Scala с появлением [Auction](../../../apps/auction/README.md) перестал быть только выбором: ScalaTest и мост ScalaCheck работают в коде, но целиком на L0 — L1 для Scala появится вместе с persistence. Путь через настоящий Telegram не покрыт ничем и вводится [ADR-046](../../decisions/ADR-046-telegram-test-contour.md) на выделенной тестовой среде. Отсутствие уровня — состояние репозитория, а не разрешение обходиться без него.
 
 Прежний уровень Actor не отменён, а распределён по уровням. Actor runtime остался за границей Meetups ([ADR-024](../../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md)) и появляется в аукционе на Scala и Apache Pekko ([ADR-045](../../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)); инструменты уровня выбраны владельцем ([PER-274](https://linear.app/anticnvm/issue/per-274)) и описаны в разделе [«Стек Scala»](#стек-scala). Синхронная часть TestKit ничего не поднимает, а настоящее хранилище и рестарт процесса принадлежат L1. Принцип от стека не зависит: отделённая чистая логика проверяется на L0, TestKit берётся только для инфраструктуры самого актора.
 
@@ -27,7 +27,7 @@
 - Изменение поведения приходит с тестом: новое правило домена, новая ветка отказа и новый use case не сдаются без теста минимального честного уровня в том же pull request. Разовый скрипт тестом не считается.
 - Не проверяй бизнес-инвариант на L2, если его можно детерминированно проверить на L0.
 - Пропуск не равен прохождению. Проверка обязана отличать «тест прошёл» от «тест не запускался», и зелёный результат при пропущенных тестах считается сбоем проверки, а не нормой. Механизм отбора уровня — тег сборки или отдельный рецепт, а не `t.Skip`, `testing.Short()` и `Assert.Skip`: пропуск и есть тот механизм, который даёт ложно-зелёный гейт. Для .NET порог задаётся `--minimum-expected-tests` и поднимается вручную вместе с набором; выведенный из текущего прогона порог сравнивает набор сам с собой и правило не исполняет. Ведёт [PER-241](https://linear.app/anticnvm/issue/per-241).
-- Механический гейт `just verify` держит только L0. L1 и L2 живут в обязательных проверках CI и в рецепте `just test-all`, который гоняет все уровни и падает на пропуске. Основание: гейт вызывается по каждой правке, и тяжёлый уровень в нём означает либо долгий цикл, либо привычку гейт обходить. Размен назван вслух: локально перестают ловиться миграции, ограничения SQL, настоящий Kestrel и gRPC, атомарность записи и конкурентные записи. Границу переносит [PER-269](https://linear.app/anticnvm/issue/per-269).
+- Механический гейт `just verify` держит только L0. L1 и L2 живут в обязательных проверках CI и в рецепте `just test-all`, который гоняет все уровни и падает на пропуске. Основание: гейт вызывается по каждой правке, и тяжёлый уровень в нём означает либо долгий цикл, либо привычку гейт обходить. Размен назван вслух: локально перестают ловиться миграции, ограничения SQL, настоящий Kestrel и gRPC, атомарность записи и конкурентные записи. Границу перенёс [PER-269](https://linear.app/anticnvm/issue/per-269).
 - Новый сквозной уровень входит в обязательные проверки pull request после периода наблюдения за его стабильностью, а не сразу: недетерминированное падение на поднятой топологии вероятнее, чем на любом другом уровне, и гейт, которому перестали верить, хуже отсутствующего. Основание перевода — наблюдаемая стабильность, а не истечение срока.
 - Уровень, зависящий от внешней системы, не входит в обязательные проверки pull request ни при какой наблюдаемой стабильности: правило периода наблюдения выше к нему не применяется, потому что наблюдать нечего — источник недетерминизма снаружи и нам не подконтролен, а его недоступность ничего не говорит о качестве изменения. Для контура Telegram это записано [ADR-046](../../decisions/ADR-046-telegram-test-contour.md): флуд-лимиты выделенной тестовой среды по документации Telegram не смягчены и временами строже продакшна.
 - Для Event Sourcing отдельно проверяй решение команды, применение события и recovery.
@@ -95,20 +95,33 @@
 
 ## Текущие команды
 
-```bash
-# Identity (Go) — из корня репозитория
-just identity-test
-just identity-lint
-# интеграционные тесты схемы требуют PostgreSQL; в CI поднимается сервис postgres:16-alpine
+Все команды — из корня репозитория. Из тестов `just verify` гоняет только L0: unit-проекты .NET и файлы Identity без тега `integration`, поэтому Docker и PostgreSQL ему не нужны. Состав гейта перечислен один раз — в комментарии над рецептом в `justfile`.
 
-# Telegram Bot (TypeScript) — из корня репозитория
-just telegram-bot-test
+```bash
+# Все уровни (L0, L1, L2); пропуск роняет прогон. Нужны Docker и PostgreSQL для Identity
+just test-all
+
+# Identity (Go)
+just identity-test               # L0, файлы без тега; база не нужна
+just identity-test-integration   # всё под тегом integration; нужен PostgreSQL (IDENTITY_DATABASE_URL)
+just identity-lint               # два прогона: с тегом и без него
+# в CI поднимается сервис postgres:16-alpine, тесты идут с -tags=integration
+
+# Meetups и Notifications (.NET) — уровень выбирается проектом
+just meetups-test                        # Meetups.UnitTests
+just meetups-test-integration            # Meetups.IntegrationTests, нужен Docker
+just notifications-test                  # Notifications.UnitTests
+just notifications-test-integration      # Notifications.IntegrationTests, нужен Docker
+
+# Сквозной контур (L2)
+just contour-test
+
+# Telegram Bot (TypeScript) — уровень выбирается конфигом vitest по суффиксу файла
+just telegram-bot-test                   # unit и component tests без Telegram credentials и Docker
+just telegram-bot-test-integration       # *.integration.test.ts, Testcontainers, нужен Docker
 just telegram-bot-lint
 just telegram-bot-typecheck
-# unit и component tests без Telegram credentials; coverage — npm run coverage без порога
-
-# .NET — из папки проекта
-dotnet build && dotnet test
+# coverage — npm run coverage без порога
 ```
 
 Команды и библиотеки конкретного сервиса уточняются в его README/AGENTS. Для F# действует [отдельный standard](fsharp.md), именование тестов во всех стеках задаёт [naming.md](naming.md). Стек Scala выбран до сервиса и описан в разделе [«Стек Scala»](#стек-scala); Kotlin-сервис получает стек после создания.

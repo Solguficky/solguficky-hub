@@ -1,3 +1,5 @@
+//go:build integration
+
 package relay_test
 
 import (
