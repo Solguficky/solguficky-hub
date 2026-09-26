@@ -2164,6 +2164,127 @@ describe("presentation adapter", () => {
     expect(calls).toEqual([]);
   });
 
+  it("opens the archive from the menu command with a new message", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "archived-meetup-list",
+      meetups: [],
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/archive"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "list-archived-meetups" }),
+    );
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+    expect(sendMessageText(calls[0])).toContain("Архив пока пуст");
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      use_case: "find_meetup",
+    });
+  });
+
+  it("opens global notification settings from the menu command", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "global-notification-settings",
+      categories: [{ category: "published", enabled: true }],
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/notifications"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "view-global-notifications" }),
+    );
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+    expect(sendMessageText(calls[0])).toContain("Уведомления: общие настройки");
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      use_case: "manage_notifications",
+    });
+  });
+
+  it("answers a menu command with E-05 when Meetups is unavailable", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/meetups"));
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+    expect(calls[0]).toMatchObject({
+      payload: {
+        text: expect.stringContaining("Не получилось загрузить сходки"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+          ],
+        },
+      },
+    });
+  });
+
+  it("applies the hub access policy to menu commands", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"], true),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/meetups"));
+    expect(sendMessageText(calls[0])).toBe(blockedHubAccessText);
+    expect(execute).not.toHaveBeenCalled();
+    expect(records[0]?.fields.error).toBe("hub_access_blocked");
+  });
+
+  it("runs a menu command sent as a reply to a pending question", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+      if (request.intent === "view-meetup") {
+        return { kind: "meetup-card", meetup };
+      }
+      if (request.intent === "list-visible-meetups") {
+        return { kind: "meetup-list", meetups: [] };
+      }
+      return { kind: "meetup-updated", meetup: { ...meetup, venue: "Зал" } };
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:field:AZLzpLXGfY6fChssPU5fYA:venue"),
+    );
+    const question = calls.find((call) => call.method === "sendMessage");
+    expect(question).toBeDefined();
+    const replyTo = (text: string) =>
+      replyUpdate({ text, fromId: 42, replyMessageId: 102, replyFromId: 1 });
+
+    await bot.handleUpdate(replyTo("/meetups"));
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "list-visible-meetups" }),
+    );
+
+    await bot.handleUpdate(replyTo("Зал"));
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "update-meetup-field", value: "Зал" }),
+    );
+  });
+
+  it("does not resolve identity for an unknown command", async () => {
+    const resolve = vi.fn(resolvedIdentity().resolve);
+    const { bot, calls } = createHarness({ resolve });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/help"));
+    expect(resolve).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
   it("replies fail-closed when identity rpc exceeds the deadline", async () => {
     const identity = createIdentityResolver({
       resolveIdentity: () =>
