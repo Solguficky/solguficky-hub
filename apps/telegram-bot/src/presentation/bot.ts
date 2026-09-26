@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Bot, type Context, InlineKeyboard } from "grammy";
+import {
+  broadcastBodyLimit,
+  checkBroadcastBody,
+} from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import {
   decideHubAccess,
@@ -12,6 +16,7 @@ import {
   formatSchedule,
 } from "../application/meetup-form.js";
 import type {
+  BroadcastAudience,
   ExecuteResult,
   FormField,
   MeetupStateAction,
@@ -36,6 +41,7 @@ import type {
 } from "../meetups/port.js";
 import type { NotificationCategory } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
+import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
 import {
   editQuestion,
@@ -121,7 +127,8 @@ type ProductUseCase =
   | "find_meetup"
   | "view_meetup"
   | "manage_community"
-  | "manage_notifications";
+  | "manage_notifications"
+  | "send_broadcast";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 const materialPageSize = 8;
@@ -224,12 +231,22 @@ type PendingPublishMoment = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Текст рассылки ждёт ответа на вопрос, как название материала. Дальше он
+// живёт уже не здесь, а в сообщении предпросмотра: запись снимается, как только
+// кадр подтверждения отправлен.
+type PendingBroadcastBody = {
+  kind: "broadcast-body";
+  audience: BroadcastAudience;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput =
   | PendingQuestion
   | PendingPublishMoment
   | PendingUsername
   | PendingMaterialInput
-  | PendingMaterialTitle;
+  | PendingMaterialTitle
+  | PendingBroadcastBody;
 
 type UpdateContext = Context & {
   requestId?: string;
@@ -499,6 +516,102 @@ async function handleMessage(
       };
       return;
     }
+    if (replyId !== undefined && pending?.kind === "broadcast-body") {
+      useCase = "send_broadcast";
+      const audience = pending.audience;
+      const meetupId =
+        audience.kind === "meetup" ? audience.meetupId : undefined;
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign broadcast answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!identity.person.globalRoles.includes("admin")) {
+        questions.delete(questionKey(ctx.chat?.id, replyId));
+        await ctx.reply(broadcastForbiddenText[audience.kind]);
+        outcome = broadcastForbiddenOutcome(identity.person, meetupId);
+        return;
+      }
+      // Фото, стикер и прочее без текста — тот же пустой ввод: рассылка несёт
+      // только текст автора, а вопрос остаётся ждать настоящего ответа.
+      const checked = checkBroadcastBody(ctx.message?.text ?? "");
+      if (checked.kind !== "ok") {
+        questions.delete(questionKey(ctx.chat?.id, replyId));
+        const prompt = await ctx.reply(broadcastBodyRetryText[checked.kind], {
+          reply_markup: { force_reply: true, selective: true },
+        });
+        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+          ...pending,
+          expiresAt: Date.now() + questionTtlMs,
+        });
+        evictOldestQuestions(questions);
+        outcome = {
+          level: "info",
+          message: "broadcast body rejected",
+          result: "ok",
+          use_case: useCase,
+          ...(meetupId === undefined ? {} : { meetup_id: meetupId }),
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
+      // Сходку перечитывают перед предпросмотром: кадр подтверждения называет
+      // её по имени, а исчезнувшая за время набора сходка отвечает E-03, а не
+      // подтверждением рассылки в пустоту.
+      let meetupTitle: string | undefined;
+      if (meetupId !== undefined) {
+        const current = await runtime.dispatcher.execute({
+          identity: identity.person,
+          intent: "view-meetup",
+          meetupId,
+          ...rpcCall(ctx, useCase),
+        });
+        if (current.kind !== "meetup-card") {
+          questions.delete(questionKey(ctx.chat?.id, replyId));
+          await renderMeetupCard(
+            ctx,
+            current,
+            false,
+            runtime.presentation ?? "rich",
+            true,
+          );
+          outcome = screenBoundary(current, {
+            ok: ["meetup-card"],
+            okMessage: "broadcast meetup reread",
+            rejectedMessage: "broadcast meetup rejected",
+            useCase,
+            meetupId,
+          });
+          return;
+        }
+        meetupTitle = current.meetup.title;
+      }
+      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await sendBroadcastConfirmation(ctx, audience, checked.body, meetupTitle);
+      outcome = {
+        level: "info",
+        message: "broadcast confirmation sent",
+        result: "ok",
+        use_case: useCase,
+        ...(meetupId === undefined ? {} : { meetup_id: meetupId }),
+        identity_id: identity.person.identityId,
+      };
+      return;
+    }
     if (
       replyId !== undefined &&
       pending !== undefined &&
@@ -732,6 +845,7 @@ async function handleMessage(
       case "conflict":
       case "material-attached":
       case "material-removed":
+      case "broadcast-accepted":
       case "meetup-list":
       case "meetup-notification-settings":
       case "global-notification-settings":
@@ -1460,16 +1574,157 @@ async function handleCallback(
       });
       return;
     }
+    if (
+      action.kind === "begin-meetup-broadcast" ||
+      action.kind === "begin-community-broadcast"
+    ) {
+      const audience: BroadcastAudience =
+        action.kind === "begin-meetup-broadcast"
+          ? { kind: "meetup", meetupId: tokenToUuid(action.token) }
+          : { kind: "community" };
+      const meetupId =
+        audience.kind === "meetup" ? audience.meetupId : undefined;
+      // Кнопка входа есть только у администратора, но `callback_data` можно
+      // прислать и без неё. Отказ приходит до набора текста, а окончательное
+      // решение о праве всё равно принимает Notifications на отправке.
+      if (!person.globalRoles.includes("admin")) {
+        await editScreen(
+          ctx,
+          broadcastForbiddenText[audience.kind],
+          broadcastBackKeyboard(audience),
+        );
+        outcome = broadcastForbiddenOutcome(person, meetupId);
+        return;
+      }
+      let question = communityBroadcastPrompt;
+      if (meetupId !== undefined) {
+        const current = await runtime.dispatcher.execute({
+          identity: person,
+          intent: "view-meetup",
+          meetupId,
+          ...rpcCall(ctx, useCase),
+        });
+        if (current.kind !== "meetup-card") {
+          await renderMeetupCard(
+            ctx,
+            current,
+            true,
+            runtime.presentation ?? "rich",
+            true,
+          );
+          outcome = screenBoundary(current, {
+            ok: ["meetup-card"],
+            okMessage: "broadcast meetup reread",
+            rejectedMessage: "broadcast meetup rejected",
+            useCase,
+            meetupId,
+          });
+          return;
+        }
+        question = meetupBroadcastPrompt(current.meetup.title);
+      }
+      const prompt = await ctx.reply(question, {
+        reply_markup: { force_reply: true, selective: true },
+      });
+      questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+        kind: "broadcast-body",
+        audience,
+        telegramUserId: ctx.from?.id ?? 0,
+        expiresAt: Date.now() + questionTtlMs,
+      });
+      evictOldestQuestions(questions);
+      outcome = {
+        level: "info",
+        message: "broadcast body requested",
+        result: "ok",
+        use_case: useCase,
+        ...(meetupId === undefined ? {} : { meetup_id: meetupId }),
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (action.kind === "cancel-broadcast") {
+      await editScreen(
+        ctx,
+        "Не отправлено. Текст никуда не ушёл.",
+        new InlineKeyboard().text("К списку", "v1:nav:hub"),
+      );
+      outcome = {
+        level: "info",
+        message: "broadcast cancelled",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (
+      action.kind === "confirm-meetup-broadcast" ||
+      action.kind === "confirm-community-broadcast"
+    ) {
+      const audience: BroadcastAudience =
+        action.kind === "confirm-meetup-broadcast"
+          ? { kind: "meetup", meetupId: tokenToUuid(action.token) }
+          : { kind: "community" };
+      const meetupId =
+        audience.kind === "meetup" ? audience.meetupId : undefined;
+      const body = parseBroadcastPreview(ctx.callbackQuery?.message, ctx.me.id);
+      if (body === undefined) {
+        await editScreen(
+          ctx,
+          "Этот экран подтверждения устарел, и текста рассылки в нём больше нет. Начни рассылку заново. Ничего не отправлено.",
+          broadcastBackKeyboard(audience),
+        );
+        outcome = {
+          level: "warn",
+          message: "broadcast confirmation malformed",
+          result: "error",
+          use_case: useCase,
+          ...(meetupId === undefined ? {} : { meetup_id: meetupId }),
+          identity_id: person.identityId,
+          error_category: "invariant",
+          error: "broadcast confirmation failed validation",
+        };
+        return;
+      }
+      // Права бот здесь не проверяет: вход он уже скрыл, а отказ по праву
+      // обязан прийти от Notifications, чтобы вызов мимо кадра отклонялся тем
+      // же путём, что и нажатие в нём.
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "send-broadcast",
+        audience,
+        broadcastId: tokenToUuid(action.broadcastToken),
+        body,
+        ...rpcCall(ctx, useCase),
+      });
+      await renderBroadcastResult(ctx, result, audience, retryCallback);
+      outcome = {
+        ...screenBoundary(result, {
+          ok: ["broadcast-accepted"],
+          okMessage: "broadcast accepted",
+          rejectedMessage: "broadcast rejected",
+          useCase,
+          ...(meetupId === undefined ? {} : { meetupId }),
+        }),
+        identity_id: person.identityId,
+      };
+      return;
+    }
     if (action.kind === "manage-menu") {
       const id = createUuidV7();
-      await ctx.reply("Управление сходками", {
-        reply_markup: new InlineKeyboard()
-          .text("Создать сходку", `v1:manage:new:${uuidToToken(id)}`)
-          .row()
-          .text("Скрытые сходки", "v1:manage:hidden")
-          .row()
-          .text("Состав сообщества", "v1:community:list"),
-      });
+      const keyboard = new InlineKeyboard()
+        .text("Создать сходку", `v1:manage:new:${uuidToToken(id)}`)
+        .row()
+        .text("Скрытые сходки", "v1:manage:hidden")
+        .row()
+        .text("Состав сообщества", "v1:community:list");
+      // Объявление видит только администратор: сервис откажет остальным и так,
+      // но вход, который ведёт в отказ после набора текста, хуже его отсутствия.
+      if (person.globalRoles.includes("admin")) {
+        keyboard.row().text("Объявление сообществу", "v1:bc:c");
+      }
+      await ctx.reply("Управление сходками", { reply_markup: keyboard });
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -1897,6 +2152,143 @@ function materialForbiddenOutcome(
     error_category: "authorization",
     error: "material_action_forbidden",
   };
+}
+
+// Кадры рассылки. Числа получателей в них нет намеренно: `BroadcastAccepted`
+// подтверждает приём, а не доставку (docs/architecture/integration.md), и кадр
+// называет круг адресатов словами, а не цифрой, которую прочли бы как «дошло».
+const broadcastForbiddenText: Record<BroadcastAudience["kind"], string> = {
+  meetup: "Писать подписчикам может только организатор сходки.",
+  community: "Объявления сообществу доступны администратору.",
+};
+const broadcastBodyRetryText: Record<
+  Exclude<ReturnType<typeof checkBroadcastBody>["kind"], "ok">,
+  string
+> = {
+  empty: "Нужен текст сообщения. Пришли его ответом на это сообщение.",
+  "too-long": `Текст длиннее ${broadcastBodyLimit} символов, а столько Telegram одним сообщением не отправит. Сократи его и пришли ответом на это сообщение.`,
+  nul: "В тексте есть символ, который нельзя отправить. Пришли текст заново ответом на это сообщение.",
+};
+const communityBroadcastPrompt =
+  "Что написать сообществу? Пришли текст объявления ответом на это сообщение. До отправки я покажу, как он выглядит, и спрошу подтверждение.";
+const broadcastIrreversibleText =
+  "Отменить отправку будет нельзя: отозвать сообщение у получателей невозможно.";
+
+function meetupBroadcastPrompt(title: string): string {
+  return `Что написать подписчикам сходки «${meetupTitleLabel(title)}»? Пришли текст ответом на это сообщение. До отправки я покажу, как он выглядит, и спрошу подтверждение.`;
+}
+
+function broadcastBackKeyboard(
+  audience: BroadcastAudience,
+  keyboard = new InlineKeyboard(),
+): InlineKeyboard {
+  return audience.kind === "meetup"
+    ? keyboard.text(
+        "Открыть сходку",
+        `v1:view:${uuidToToken(audience.meetupId)}`,
+      )
+    : keyboard.text("К управлению", "v1:manage:menu");
+}
+
+function broadcastForbiddenOutcome(
+  person: Person,
+  meetupId: string | undefined,
+): BoundaryOutcome {
+  return {
+    level: "warn",
+    message: "broadcast rejected",
+    result: "error",
+    use_case: "send_broadcast",
+    ...(meetupId === undefined ? {} : { meetup_id: meetupId }),
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "broadcast_forbidden",
+  };
+}
+
+// Предпросмотр — сам текст отдельным сообщением, без заголовка и разметки:
+// ровно то, что уйдёт получателям, и ровно то, что кнопка подтверждения потом
+// прочтёт обратно. Кадр подтверждения отвечает на него и несёт ключ рассылки.
+async function sendBroadcastConfirmation(
+  ctx: UpdateContext,
+  audience: BroadcastAudience,
+  body: string,
+  meetupTitle: string | undefined,
+): Promise<void> {
+  const preview = await ctx.reply(body);
+  const broadcastToken = uuidToToken(createUuidV7());
+  const confirm =
+    audience.kind === "meetup"
+      ? `v1:bc:ms:${uuidToToken(audience.meetupId)}:${broadcastToken}`
+      : `v1:bc:cs:${broadcastToken}`;
+  const recipients =
+    audience.kind === "meetup"
+      ? `Выше — текст для подписчиков сходки «${meetupTitleLabel(meetupTitle ?? "")}». Его получат те из них, у кого включены сообщения организатора.`
+      : "Выше — текст объявления. Его получат участники сообщества, у которых включены объявления.";
+  await ctx.reply(`${recipients}\n\n${broadcastIrreversibleText}`, {
+    reply_parameters: { message_id: preview.message_id },
+    reply_markup: new InlineKeyboard()
+      .text("Отправить", confirm)
+      .text("Не отправлять", "v1:bc:no"),
+  });
+}
+
+// Отказ Notifications отвечает кадром из принятого набора: E-01 по праву, E-05
+// при недоступности, E-09 на повторе. «Повторить» после сбоя несёт тот же ключ
+// рассылки, поэтому второго сообщения повтор не создаст.
+async function renderBroadcastResult(
+  ctx: UpdateContext,
+  result: ExecuteResult,
+  audience: BroadcastAudience,
+  retry: string,
+): Promise<void> {
+  const back = broadcastBackKeyboard(audience);
+  if (result.kind === "broadcast-accepted") {
+    await editScreen(
+      ctx,
+      result.repeated === true
+        ? "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт."
+        : audience.kind === "meetup"
+          ? "Сообщение принято к отправке подписчикам сходки."
+          : "Объявление принято к отправке участникам сообщества.",
+      back,
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
+    await editScreen(
+      ctx,
+      `${broadcastForbiddenText[audience.kind]} Ничего не отправлено.`,
+      back,
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "invalid") {
+    await editScreen(
+      ctx,
+      `Сообщение не принято: ${result.message}. Ничего не отправлено.`,
+      back,
+    );
+    return;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "conflict") {
+    await editScreen(
+      ctx,
+      "С этой кнопки уже отправлен другой текст. Начни рассылку заново.",
+      back,
+    );
+    return;
+  }
+  // Сбой и истёкший срок ответа не говорят, принята ли рассылка: повтор с тем
+  // же ключом это выяснит и второй раз её не разошлёт.
+  await editScreen(
+    ctx,
+    "Не получилось подтвердить отправку. Это на моей стороне.\n\nНажми «Повторить» через минуту: второй раз сообщение не уйдёт.",
+    broadcastBackKeyboard(
+      audience,
+      new InlineKeyboard().text("Повторить", retry).row(),
+    ),
+  );
 }
 
 async function renderCommunity(
@@ -2361,6 +2753,11 @@ async function renderMeetupCard(
           `v1:mm:list:${token}`,
         )
         .row();
+    }
+    // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
+    // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.
+    if (manageable) {
+      keyboard.text("Написать подписчикам", `v1:bc:m:${token}`).row();
     }
     for (const [index, material] of result.meetup.materials
       .slice(0, materialCardLimit)
@@ -3263,7 +3660,12 @@ function callbackUseCase(
     | "confirm-attach-material"
     | "remove-material"
     | "confirm-remove-material"
-    | "open-material-file",
+    | "open-material-file"
+    | "begin-meetup-broadcast"
+    | "begin-community-broadcast"
+    | "confirm-meetup-broadcast"
+    | "confirm-community-broadcast"
+    | "cancel-broadcast",
 ): ProductUseCase {
   switch (kind) {
     case "view-meetup":
@@ -3297,6 +3699,12 @@ function callbackUseCase(
       return "update_meetup";
     case "open-material-file":
       return "view_meetup";
+    case "begin-meetup-broadcast":
+    case "begin-community-broadcast":
+    case "confirm-meetup-broadcast":
+    case "confirm-community-broadcast":
+    case "cancel-broadcast":
+      return "send_broadcast";
     case "community":
     case "ask-allowed-username":
     case "admit-member":

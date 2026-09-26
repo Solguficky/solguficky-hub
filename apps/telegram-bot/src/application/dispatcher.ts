@@ -1,6 +1,7 @@
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
+import { createBroadcasts } from "./broadcasts.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
@@ -26,6 +27,8 @@ export function createDispatcher(
       : createNotificationSettings(meetups, notifications);
   const materials =
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
+  const broadcasts =
+    notifications === undefined ? undefined : createBroadcasts(notifications);
   return {
     async execute(request) {
       switch (request.intent) {
@@ -125,6 +128,10 @@ export function createDispatcher(
           return materials === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : materials(request);
+        case "send-broadcast":
+          return broadcasts === undefined
+            ? { kind: "rejected", reason: "notifications-not-configured" }
+            : broadcasts(request);
         default: {
           const _exhaustive: never = request;
           return { kind: "rejected", reason: String(_exhaustive) };

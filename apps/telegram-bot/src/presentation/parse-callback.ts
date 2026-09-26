@@ -91,6 +91,15 @@ export type CallbackAction =
   | { kind: "confirm-remove-material"; token: string; materialToken: string }
   | { kind: "open-material-file"; token: string; materialToken: string }
   | { kind: "view-meetup"; token: string }
+  // Рассылка: вход из карточки сходки или из управления, затем подтверждение.
+  // Ключ рассылки рождается в кнопке подтверждения, как ключ создания сходки,
+  // а текст едет не в кнопке, а в сообщении предпросмотра, на которое кадр
+  // подтверждения отвечает: 64 байта его не вместят.
+  | { kind: "begin-meetup-broadcast"; token: string }
+  | { kind: "begin-community-broadcast" }
+  | { kind: "confirm-meetup-broadcast"; token: string; broadcastToken: string }
+  | { kind: "confirm-community-broadcast"; broadcastToken: string }
+  | { kind: "cancel-broadcast" }
   | { kind: "notify-global" }
   | {
       kind: "notify-set-global";
@@ -205,6 +214,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts[1] === "notify") {
     return parseNotify(parts);
   }
+  if (parts[1] === "bc") {
+    return parseBroadcast(parts);
+  }
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success || parts[1] !== "manage") {
     return { kind: "malformed" };
@@ -272,6 +284,32 @@ export function parseCallback(raw: unknown): CallbackAction {
 /// проверяет её тем же путём, что и ответ текстом.
 function pastScheduleValue(digits: string): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
+}
+
+function parseBroadcast(parts: readonly string[]): CallbackAction {
+  if (parts.length === 3 && parts[2] === "c") {
+    return { kind: "begin-community-broadcast" };
+  }
+  if (parts.length === 3 && parts[2] === "no") {
+    return { kind: "cancel-broadcast" };
+  }
+  const first = TokenSchema.safeParse(parts[3]);
+  if (!first.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "m") {
+    return { kind: "begin-meetup-broadcast", token: first.data };
+  }
+  if (parts.length === 4 && parts[2] === "cs") {
+    return { kind: "confirm-community-broadcast", broadcastToken: first.data };
+  }
+  const second = TokenSchema.safeParse(parts[4]);
+  if (parts.length === 5 && parts[2] === "ms" && second.success) {
+    return {
+      kind: "confirm-meetup-broadcast",
+      token: first.data,
+      broadcastToken: second.data,
+    };
+  }
+  return { kind: "malformed" };
 }
 
 function parseNotify(parts: readonly string[]): CallbackAction {
