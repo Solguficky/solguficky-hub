@@ -197,6 +197,56 @@ public class MeetupReminderTests
         await Eventually(() => Task.FromResult(env.Live()), task => task is not null);
     }
 
+    /// <summary>
+    /// Задание, отставшее от реплики, не срабатывает вхолостую: сходку скрыли,
+    /// а вызов грина ещё не дошёл, — срабатывание сначала догоняет реплику и
+    /// снимает задание. Иначе возврат на тот же момент увидел бы «уже
+    /// срабатывало» и не напомнил бы ни разу.
+    /// </summary>
+    [Fact]
+    public async Task When_TaskFiresBehindHiddenReplica_Expect_CancelledAndRestoredOnReturn()
+    {
+        await using var env = await BusScenario.Start(Waiting);
+        var subscriber = await Person(env.Db, "member");
+        await Subscribe(env.Db, subscriber, env.MeetupId);
+        await Preference(env.Db, subscriber, null, "meetup_reminder", enabled: true);
+        var day = Day();
+
+        await env.Publish(PublishedSubject, env.Event(version: 2, Start(day, 19, 30)));
+        var first = await Eventually(() => Task.FromResult(env.Live()), task => task is not null);
+
+        await Execute(env.Db, "UPDATE meetup_replica SET visibility = 'hidden' WHERE meetup_id = @Id;", new { Id = Guid.Parse(env.MeetupId) });
+        ReminderProbe.MoveDueToPast(env.Db.ConnectionString, env.MeetupId);
+
+        (await env.Grain.FireDue()).ShouldBeFalse();
+        env.Tasks().Single(task => task.TaskId == first!.TaskId).State.ShouldBe("cancelled");
+        (await env.Facts(NotificationFacts.MeetupReminderType)).ShouldBe(0);
+
+        var returned = env.Event(version: 3, Start(day, 19, 30));
+        returned.MeetupRepublished = new Meetups.V1.MeetupRepublished();
+        await env.Publish(RepublishedSubject, returned);
+
+        await Eventually(() => Task.FromResult(env.Live()), task => task is not null);
+    }
+
+    /// <summary>
+    /// Сходке, которая уже началась, напоминать не о чем: задание, рождённое
+    /// событием после начала, срабатывает без фактов.
+    /// </summary>
+    [Fact]
+    public async Task When_EventArrivesAfterStart_Expect_NoReminder()
+    {
+        await using var env = await BusScenario.Start(Firing);
+        var subscriber = await Person(env.Db, "member");
+        await Subscribe(env.Db, subscriber, env.MeetupId);
+        await Preference(env.Db, subscriber, null, "meetup_reminder", enabled: true);
+
+        await env.Publish(PublishedSubject, env.Event(version: 2, Start(Day(daysAhead: -1), 19, 30)));
+
+        env.Tasks().ShouldHaveSingleItem().State.ShouldBe("fired");
+        (await env.Facts(NotificationFacts.MeetupReminderType)).ShouldBe(0);
+    }
+
     private static Schedule Start(DateOnly day, int hours, int minutes) =>
         new()
         {

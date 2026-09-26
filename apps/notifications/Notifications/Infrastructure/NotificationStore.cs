@@ -254,7 +254,10 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// (docs/services/notifications.md): отписка и выключение категории задания
     /// не трогают, человек просто не попадает в разворот. Сходке, которую
     /// реплика уже не показывает или отменила, напоминать не о чем — задание
-    /// всё равно сработало, но фактов не дало.
+    /// всё равно сработало, но фактов не дало. То же со сходкой, которая уже
+    /// началась: такое задание рождает возврат или правка после начала, и
+    /// напоминание о прошедшем было бы шумом, который релей всё равно снял бы
+    /// по сроку.
     /// </remarks>
     internal static async Task<FactCount> AddMeetupReminder(
         UnitOfWork work,
@@ -264,7 +267,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        if (!await work.Scalar(AnnounceableSql, new { MeetupId = meetupId }, cancellationToken)
+        if (startsAt <= now
+            || !await work.Scalar(AnnounceableSql, new { MeetupId = meetupId }, cancellationToken)
             || await ReplicaStore.Meetup(work, meetupId, cancellationToken) is not { } state)
         {
             return FactCount.None;

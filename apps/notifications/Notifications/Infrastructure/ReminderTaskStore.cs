@@ -274,13 +274,11 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry
             new { OccasionId = Guid.NewGuid(), task.TaskId, Now = now.UtcDateTime },
             cancellationToken);
 
-        var facts = await NotificationStore.AddMeetupReminder(
-            work,
-            task.TaskId,
-            Guid.Parse(meetupId),
-            task.StartsAt,
-            now,
-            cancellationToken);
+        // Ключ, который не сходка, задание завести может — ApplySchedule
+        // принимает любую строку, — но адресовать такому поводу некого.
+        var facts = Guid.TryParse(meetupId, out var meetup)
+            ? await NotificationStore.AddMeetupReminder(work, task.TaskId, meetup, task.StartsAt, now, cancellationToken)
+            : FactCount.None;
 
         await work.Commit(cancellationToken);
         telemetry.Fire();

@@ -66,10 +66,9 @@ public sealed class MeetupNotificationGrain(
         // у сходки один, поэтому вызов, пришедший позже, всегда видит не
         // более старую реплику, чем пришедший раньше: два экземпляра сервиса,
         // применившие v5 и v6 и дошедшие сюда в обратном порядке, оба
-        // приводят задание к последнему слову, а не откатывают его.
-        var state = await replica.Meetup(Guid.Parse(this.GetPrimaryKeyString()), CancellationToken.None);
-
-        await ApplySchedule(state is null ? null : community.StartsAt(state));
+        // приводят задание к последнему слову, а не откатывают его. Сходки,
+        // которой реплика не знает, для напоминания нет.
+        await ApplySchedule((await CurrentStart())?.Moment);
     }
 
     public async Task ApplySchedule(DateTimeOffset? startsAt)
@@ -167,6 +166,18 @@ public sealed class MeetupNotificationGrain(
             return false;
         }
 
+        // Задание могло отстать от реплики: консьюмер коммитит реплику раньше,
+        // чем зовёт грин, а упавший вызов ждёт повтора после Nak. Исполнить
+        // такое задание значило бы напомнить о моменте, которого уже нет, или
+        // сработать вхолостую по скрытой сходке и тем закрыть напоминание её
+        // возврату на тот же момент. Поэтому сначала задание догоняет реплику;
+        // если момент по-прежнему наступил, ApplySchedule исполнит его сам.
+        if (await CurrentStart() is { } current && current.Moment != live.StartsAt)
+        {
+            await ApplySchedule(current.Moment);
+            return false;
+        }
+
         var produced = await tasks.Fire(live, meetupId, Now(), token);
         var fired = produced is not null;
 
@@ -194,6 +205,25 @@ public sealed class MeetupNotificationGrain(
     public Task ReceiveReminder(string reminderName, TickStatus status) => FireDue();
 
     private DateTimeOffset Now() => clock.GetUtcNow();
+
+    /// <summary>
+    /// Момент начала по реплике в точности хранения, если реплика о сходке
+    /// знает. <c>null</c> — сверять не с чем: ключ не сходка или строки нет, и
+    /// задание заведено не по реплике, а напрямую через <see cref="ApplySchedule" />.
+    /// Внутри — <c>null</c>-момент: реплика говорит, что напоминать не о чем.
+    /// </summary>
+    private async Task<CurrentMoment?> CurrentStart()
+    {
+        if (!Guid.TryParse(this.GetPrimaryKeyString(), out var meetupId)
+            || await replica.Meetup(meetupId, CancellationToken.None) is not { } state)
+        {
+            return null;
+        }
+
+        return new CurrentMoment(community.StartsAt(state) is { } start ? ReminderPlan.ToStoredPrecision(start) : null);
+    }
+
+    private sealed record CurrentMoment(DateTimeOffset? Moment);
 
     /// <summary>
     /// Просит рантайм разбудить грин к моменту срабатывания. Reminder — только
