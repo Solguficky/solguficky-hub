@@ -1,0 +1,137 @@
+import { create, toBinary } from "@bufbuild/protobuf";
+import { describe, expect, it } from "vitest";
+import {
+  MeetupMaterialSchema,
+  MeetupPublishedSchema,
+  type Notification,
+  NotificationSchema,
+} from "../../gen/notifications/v1/notifications_pb.js";
+import { decodeNotification } from "./notification.js";
+
+const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf";
+
+// Готовое сообщение правится на месте: у oneof в форме инициализации нет
+// частичного вида, а тесту нужна одна испорченная деталь, а не новый факт.
+function published(
+  adjust: (message: Notification) => void = () => {},
+): Uint8Array {
+  const message = create(NotificationSchema, {
+    notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+    recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    createdAt: "2026-09-26T10:00:00Z",
+    requestId: "req-1",
+    type: {
+      case: "meetupPublished",
+      value: {
+        meetup: {
+          id: meetupId,
+          title: "Настолки у Лёши",
+          venue: "Циферблат",
+          schedule: {
+            form: {
+              case: "fixed",
+              value: {
+                precision: {
+                  case: "dayStart",
+                  value: {
+                    date: { year: 2026, month: 8, day: 12 },
+                    time: { hours: 19, minutes: 0 },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  adjust(message);
+  return toBinary(NotificationSchema, message);
+}
+
+describe("decodeNotification", () => {
+  it("decodes a published meetup with its schedule and request id", () => {
+    expect(decodeNotification(published())).toEqual({
+      kind: "ok",
+      notification: {
+        notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+        recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        requestId: "req-1",
+        content: {
+          kind: "meetup-published",
+          meetup: {
+            id: meetupId,
+            title: "Настолки у Лёши",
+            venue: "Циферблат",
+            when: {
+              kind: "day-start",
+              tentative: false,
+              at: { year: 2026, month: 8, day: 12, hours: 19, minutes: 0 },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("keeps a type the channel cannot render as an explicit variant", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        message.type = {
+          case: "meetupMaterial",
+          value: create(MeetupMaterialSchema),
+        };
+      }),
+    );
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "unrendered", type: "meetupMaterial" },
+      },
+    });
+  });
+
+  it("parses the deadline", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        message.notAfter = "2026-09-27T10:00:00Z";
+      }),
+    );
+    expect(decoded.kind === "ok" && decoded.notification.notAfter).toEqual(
+      new Date("2026-09-27T10:00:00Z"),
+    );
+  });
+
+  it("rejects a notification without a recipient or an id", () => {
+    const without = (field: "recipientId" | "notificationId") =>
+      decodeNotification(
+        published((message) => {
+          message[field] = "";
+        }),
+      ).kind;
+    expect(without("recipientId")).toBe("malformed");
+    expect(without("notificationId")).toBe("malformed");
+  });
+
+  // Пустой oneof расписания — не «без даты», а нарушение контракта: форма
+  // no_date существует для этого отдельно.
+  it("rejects a published meetup without a schedule form", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        message.type = {
+          case: "meetupPublished",
+          value: create(MeetupPublishedSchema, {
+            meetup: { id: meetupId, title: "x", schedule: {} },
+          }),
+        };
+      }),
+    );
+    expect(decoded.kind).toBe("malformed");
+  });
+
+  it("rejects bytes that are not a notification", () => {
+    expect(decodeNotification(new Uint8Array([0xff, 0xff, 0xff])).kind).toBe(
+      "malformed",
+    );
+  });
+});

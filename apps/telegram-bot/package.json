@@ -22,6 +22,9 @@
     "@bufbuild/protobuf": "^2.14.1",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2",
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/kv": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/api-logs": "^0.200.0",
     "@opentelemetry/exporter-logs-otlp-grpc": "^0.200.0",
@@ -37,6 +40,7 @@
     "@bufbuild/protoc-gen-es": "^2.14.1",
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "^4.1.11",
+    "testcontainers": "^12.1.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   }

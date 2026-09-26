@@ -12,6 +12,8 @@ import type {
   IdentityResolver,
   ResolveIdentityInput,
   ResolveIdentityResult,
+  TelegramRecipientResolver,
+  TelegramRecipientResult,
 } from "./port.js";
 
 export const identityRpcTimeoutMs = 3_000;
@@ -25,6 +27,10 @@ export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
   "resolveIdentity"
 >;
+export type TelegramRecipientRpc = Pick<
+  Client<typeof IdentityService>,
+  "resolveTelegramUserId"
+>;
 type IdentityAdminRpc = Pick<
   Client<typeof IdentityService>,
   | "listCommunityMembers"
@@ -36,6 +42,7 @@ type IdentityAdminRpc = Pick<
 >;
 
 export type IdentityClient = IdentityResolver &
+  TelegramRecipientResolver &
   CommunityAdministrator & {
     close(): void;
   };
@@ -53,8 +60,11 @@ export function createIdentityClient(
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
   const administrator = createCommunityAdministrator(client, timeoutMs);
+  const recipients = createTelegramRecipientResolver(client, timeoutMs);
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
+    resolveTelegramUserId: (identityId, meta) =>
+      recipients.resolveTelegramUserId(identityId, meta),
     ...administrator,
     close() {
       sessionManager.abort();
@@ -191,6 +201,39 @@ export function createIdentityResolver(
       }
     },
   };
+}
+
+export function createTelegramRecipientResolver(
+  rpc: TelegramRecipientRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): TelegramRecipientResolver {
+  return {
+    async resolveTelegramUserId(identityId, meta) {
+      try {
+        const response = await rpc.resolveTelegramUserId(
+          { identityId },
+          { timeoutMs, ...callHeaders(meta) },
+        );
+        return { kind: "resolved", telegramUserId: response.telegramUserId };
+      } catch (cause) {
+        return classifyRecipientFailure(cause);
+      }
+    },
+  };
+}
+
+// NOT_FOUND и FAILED_PRECONDITION контракт отдал двум окончательным исходам
+// (contracts/proto/identity/v1/identity_service.proto); остальные постоянные
+// коды — рассинхрон схемы, а не свойство получателя.
+function classifyRecipientFailure(cause: unknown): TelegramRecipientResult {
+  if (cause instanceof ConnectError) {
+    if (cause.code === Code.NotFound) return { kind: "not-found" };
+    if (cause.code === Code.FailedPrecondition) return { kind: "blocked" };
+    if (permanentCodes.has(cause.code)) {
+      return { kind: "rejected", code: Code[cause.code], cause };
+    }
+  }
+  return { kind: "unavailable", cause };
 }
 
 // Отказ, который не пройдёт и со второй попытки: нарушение контракта, рассинхрон

@@ -1,5 +1,6 @@
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
+using NATS.Client.KeyValueStore;
 
 namespace AppHost.Configuration.Infrastructure;
 
@@ -51,7 +52,28 @@ internal static class JetStreamTopology
     public static readonly IReadOnlyList<ConsumerStreams> Consumers =
     [
         new("notifications", ["MEETUPS_EVENTS", "IDENTITY_EVENTS"]),
+
+        // Канал доставки (PER-217). Durable свой у каждого канала: общий на все
+        // каналы сделал бы их конкурентами за одно сообщение.
+        new("telegram-bot", ["NOTIFICATIONS_EVENTS"]),
         new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "NOTIFICATIONS_EVENTS"]),
+    ];
+
+    /// <summary>
+    /// Журнал попыток доставки Telegram-бота (ADR-052): ключ — notification_id,
+    /// значение — последнее состояние доставки. Объявлен здесь по тому же
+    /// правилу, что durable: хранилищем владеет платформа, бот к нему только
+    /// привязывается.
+    /// </summary>
+    /// <remarks>
+    /// Запись обязана пережить любую повторную выдачу своего сообщения, а стрим
+    /// держит сообщение <see cref="MaxAge" />. Поэтому срок жизни записи —
+    /// окно стрима с запасом в сутки: при равных сроках запись могла бы истечь
+    /// раньше последней повторной выдачи.
+    /// </remarks>
+    public static readonly IReadOnlyList<KeyValueSpec> KeyValueBuckets =
+    [
+        new("telegram-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>
@@ -106,8 +128,29 @@ internal static class JetStreamTopology
         {
             await js.CreateOrUpdateConsumerAsync(durable.Stream, ToConfig(durable), cancellationToken);
         }
+
+        var kv = new NatsKVContext(js);
+        foreach (var bucket in KeyValueBuckets)
+        {
+            await kv.CreateOrUpdateStoreAsync(ToConfig(bucket), cancellationToken);
+        }
     }
+
+    /// <summary>
+    /// На диске, одна версия на ключ: журналу нужно последнее состояние доставки,
+    /// а не история переходов.
+    /// </summary>
+    public static NatsKVConfig ToConfig(KeyValueSpec spec) =>
+        new(spec.Bucket)
+        {
+            History = 1,
+            MaxAge = spec.MaxAge,
+            Storage = NatsKVStorageType.File,
+            NumberOfReplicas = 1,
+        };
 }
+
+internal sealed record KeyValueSpec(string Bucket, TimeSpan MaxAge);
 
 internal sealed record StreamSpec(string Name, string Subject);
 

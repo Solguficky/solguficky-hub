@@ -39,6 +39,24 @@ export type IdentityResolver = {
   ): Promise<ResolveIdentityResult>;
 };
 
+// Обратный путь для канала доставки: уведомление несёт внутренний идентификатор,
+// а писать можно только по Telegram id. Отсутствующий и заблокированный профиль
+// — разные исходы: оба окончательные, но в журнале и логах различимы, а
+// недоступность Identity, в отличие от них, лечится повтором.
+export type TelegramRecipientResult =
+  | { kind: "resolved"; telegramUserId: bigint }
+  | { kind: "not-found" }
+  | { kind: "blocked" }
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; code: string; cause: unknown };
+
+export type TelegramRecipientResolver = {
+  resolveTelegramUserId(
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<TelegramRecipientResult>;
+};
+
 export type IdentityActor = {
   identityId: string;
   globalRoles: readonly string[];

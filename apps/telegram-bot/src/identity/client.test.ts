@@ -7,6 +7,7 @@ import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   createIdentityClient,
   createIdentityResolver,
+  createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
 } from "./client.js";
@@ -238,5 +239,55 @@ describe("identity client", () => {
     identity.close();
     expect(abort).toHaveBeenCalledOnce();
     abort.mockRestore();
+  });
+});
+
+describe("telegram recipient resolver", () => {
+  const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+
+  function failing(cause: unknown) {
+    return createTelegramRecipientResolver({
+      resolveTelegramUserId: () => Promise.reject(cause),
+    });
+  }
+
+  it("returns the Telegram id of a known profile", async () => {
+    const rpc = vi.fn().mockResolvedValue({ telegramUserId: 42n });
+    const recipients = createTelegramRecipientResolver({
+      resolveTelegramUserId: rpc,
+    });
+    await expect(
+      recipients.resolveTelegramUserId(identityId, { requestId: "req-1" }),
+    ).resolves.toEqual({ kind: "resolved", telegramUserId: 42n });
+    expect(rpc).toHaveBeenCalledWith(
+      { identityId },
+      expect.objectContaining({ headers: { [requestIdHeader]: "req-1" } }),
+    );
+  });
+
+  it("tells an unknown profile from a blocked one", async () => {
+    await expect(
+      failing(new ConnectError("unknown", Code.NotFound)).resolveTelegramUserId(
+        identityId,
+      ),
+    ).resolves.toEqual({ kind: "not-found" });
+    await expect(
+      failing(
+        new ConnectError("blocked", Code.FailedPrecondition),
+      ).resolveTelegramUserId(identityId),
+    ).resolves.toEqual({ kind: "blocked" });
+  });
+
+  it("keeps unavailability apart from a contract violation", async () => {
+    await expect(
+      failing(new ConnectError("down", Code.Unavailable)).resolveTelegramUserId(
+        identityId,
+      ),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(
+      failing(
+        new ConnectError("bad id", Code.InvalidArgument),
+      ).resolveTelegramUserId(identityId),
+    ).resolves.toMatchObject({ kind: "rejected", code: "InvalidArgument" });
   });
 });
