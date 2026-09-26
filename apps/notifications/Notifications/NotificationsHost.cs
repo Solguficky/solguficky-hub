@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
+using Notifications.Broadcasts;
 using Notifications.Facts;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
@@ -51,7 +52,18 @@ public static class NotificationsHost
     /// Сам сервис без адреса не стартует — это решает <c>Program</c>, а не
     /// эта функция.
     /// </param>
-    public static WebApplication Build(string[] args, string databaseUrl, string? natsUrl = null)
+    /// <param name="configure">
+    /// Дописывает регистрации последними и потому перекрывает их. Шов нужен
+    /// одному: интеграционный тест подставляет владельцев права на рассылку, не
+    /// поднимая Meetups и Identity, и проверяет остальной composition root как
+    /// есть. Запуск его не использует — тот же приём, что <c>Host.buildWith</c>
+    /// у Meetups.
+    /// </param>
+    public static WebApplication Build(
+        string[] args,
+        string databaseUrl,
+        string? natsUrl = null,
+        Action<IServiceCollection>? configure = null)
     {
         var builder = WebApplication.CreateBuilder(args);
         var connectionString = Migrations.ConnectionString(databaseUrl);
@@ -233,6 +245,20 @@ public static class NotificationsHost
         builder.Services.AddSingleton<PreferenceStore>();
         builder.Services.AddSingleton<PreferenceOperations>();
 
+        // Ручные рассылки (PER-225). Право спрашивается у владельца ресурса на
+        // самой команде: у Meetups — на рассылку по сходке, у Identity — на
+        // объявление сообществу (ADR-028 §7, ADR-051). Адрес не задан — сервис
+        // поднимается, а рассылка отвечает UNAVAILABLE: профиль `notifications`
+        // соседей не поднимает, и отправка без проверки была бы хуже отказа.
+        var meetupsUrl = builder.Configuration[OwnerAuthority.MeetupsUrlVariable];
+        var identityUrl = builder.Configuration[OwnerAuthority.IdentityUrlVariable];
+        builder.Services.AddSingleton<IBroadcastAuthority>(services => new OwnerAuthority(
+            string.IsNullOrEmpty(meetupsUrl) ? null : OwnerAuthority.ConnectMeetups(meetupsUrl),
+            string.IsNullOrEmpty(identityUrl) ? null : OwnerAuthority.ConnectIdentity(identityUrl),
+            services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton<BroadcastStore>();
+        builder.Services.AddSingleton<BroadcastOperations>();
+
         // Сам gRPC-стек. Без него не поднимаются ни проба, ни рефлексия: обе
         // маппятся как gRPC-сервисы. Интерцептор пишет запись границы с
         // request_id и use_case из метаданных вызова, как Identity и Meetups.
@@ -246,14 +272,14 @@ public static class NotificationsHost
         // ручная проверка grpcurl требует -import-path и -proto.
         builder.Services.AddGrpcReflection();
 
+        configure?.Invoke(builder.Services);
+
         var app = builder.Build();
 
         app.MapGrpcHealthChecksService();
         app.MapGrpcReflectionService();
 
-        // Command plane подписок и настроек. Обе ручные рассылки контракта
-        // отвечают Unimplemented: они принадлежат блоку обращения к подписчикам
-        // и требуют синхронной проверки права у владельца ресурса.
+        // Command plane подписок, настроек и обеих ручных рассылок.
         app.MapGrpcService<NotificationsGrpcService>();
 
         return app;

@@ -31,10 +31,19 @@ public static class NotificationFacts
     public const string MeetupReminderType = "meetup_reminder";
 
     /// <inheritdoc cref="MeetupPublishedType" />
+    public const string OrganizerMessageType = "organizer_message";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string CommunityAnnouncementType = "community_announcement";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string ReminderTaskCause = "reminder_task";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string CommandRequestCause = "command_request";
 
     /// <summary>
     /// Причины снятия неотправленного факта в колонке
@@ -64,6 +73,12 @@ public static class NotificationFacts
 
     /// <summary>Категория напоминания. Единственная выключенная по умолчанию.</summary>
     public const NotificationCategory MeetupReminderCategory = NotificationCategory.MeetupReminder;
+
+    /// <summary>Категория рассылки по сходке. Требует подписки на сходку.</summary>
+    public const NotificationCategory OrganizerMessageCategory = NotificationCategory.OrganizerMessage;
+
+    /// <summary>Категория объявления сообществу. Настраивается только глобально.</summary>
+    public const NotificationCategory CommunityAnnouncementCategory = NotificationCategory.CommunityAnnouncement;
 
     /// <summary>
     /// Роли круга <c>member</c>, который принимает хаб (ADR-043). Identity
@@ -175,6 +190,59 @@ public static class NotificationFacts
         return notification;
     }
 
+    /// <summary>Сообщение организатора одному подписчику сходки.</summary>
+    /// <param name="broadcastId">Рассылка — повод факта; её <c>id</c> дал вызывающий.</param>
+    /// <param name="card">Карточка сходки на момент приёма рассылки.</param>
+    /// <param name="requestId">
+    /// <c>x-request-id</c> команды: цепочку начал человек, и факт относится к
+    /// ней. Своего id Notifications не рождает.
+    /// </param>
+    public static Notification OrganizerMessage(
+        Guid notificationId,
+        Guid recipientId,
+        Guid broadcastId,
+        Guid senderId,
+        MeetupCard card,
+        string body,
+        string? requestId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(notificationId, recipientId, Broadcast(broadcastId), requestId, now, notAfter);
+        notification.OrganizerMessage = new V1.OrganizerMessage
+        {
+            Meetup = card.Clone(),
+            SenderId = senderId.ToString(),
+            Body = body,
+        };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Объявление сообществу одному человеку круга хаба. Повод и цепочка — как у
+    /// <see cref="OrganizerMessage" />; сходки у объявления нет.
+    /// </summary>
+    public static Notification CommunityAnnouncement(
+        Guid notificationId,
+        Guid recipientId,
+        Guid broadcastId,
+        Guid senderId,
+        string body,
+        string? requestId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(notificationId, recipientId, Broadcast(broadcastId), requestId, now, notAfter);
+        notification.CommunityAnnouncement = new V1.CommunityAnnouncement
+        {
+            SenderId = senderId.ToString(),
+            Body = body,
+        };
+
+        return notification;
+    }
+
     /// <summary>RFC 3339 в UTC, как остальные моменты контрактов.</summary>
     public static string Instant(DateTimeOffset moment) =>
         moment.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", System.Globalization.CultureInfo.InvariantCulture);
@@ -203,6 +271,8 @@ public static class NotificationFacts
             fact.RequestId,
             now,
             notAfter);
+
+    private static Cause Broadcast(Guid broadcastId) => new() { CommandRequestId = broadcastId.ToString() };
 
     private static Notification Envelope(
         Guid notificationId,

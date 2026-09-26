@@ -21,8 +21,9 @@ namespace Notifications.Infrastructure;
 /// </remarks>
 public sealed class NotificationStore(NpgsqlDataSource source)
 {
-    // Настройка берётся глобальная: у «новой сходки» переопределения по
-    // сходке нет и быть не может (ограничение notification_preference_scope).
+    // Настройка берётся глобальная: у «новой сходки» и «объявления сообществу»
+    // переопределения по сходке нет и быть не может (ограничение
+    // notification_preference_scope).
     // Отсутствие строки — значение продукта, которое приходит параметром из
     // словаря категорий, а не литералом: иначе правило жило бы в двух местах.
     private const string AudienceSql = """
@@ -325,15 +326,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             return FactCount.None;
         }
 
-        var audience = await work.Query<AudienceRow>(
-            AudienceSql,
-            new
-            {
-                Default = NotificationFacts.MeetupPublishedByDefault,
-                Category = NotificationCategories.Storage(NotificationFacts.MeetupPublishedCategory),
-                Circle = NotificationFacts.HubCircle.ToArray(),
-            },
-            cancellationToken);
+        var audience = await Community(work, NotificationFacts.MeetupPublishedCategory, cancellationToken);
 
         return await Insert(
             work,
@@ -367,6 +360,81 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         return await Insert(work, FactCause.Of(fact, type), audience, build, now, notAfter, cancellationToken);
     }
+
+    /// <summary>
+    /// Разворачивает сообщение организатора на подписчиков сходки и пишет факты
+    /// в транзакции <paramref name="work" /> — той же, что приняла ключ
+    /// рассылки.
+    /// </summary>
+    /// <param name="card">Карточка сходки из реплики на момент приёма.</param>
+    /// <remarks>
+    /// Видимость и жизненный цикл сходки разворот не фильтрует: право на
+    /// рассылку уже подтвердил Meetups, а сообщить подписчикам об отменённой
+    /// или скрытой сходке — ровно то, ради чего автор может писать. Круг хаба,
+    /// блокировка и категория действуют, как у автоматических поводов.
+    /// </remarks>
+    internal static async Task<FactCount> AddOrganizerMessage(
+        UnitOfWork work,
+        AcceptedBroadcast broadcast,
+        Guid meetupId,
+        MeetupCard card,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var audience = await Subscribers(work, meetupId, NotificationFacts.OrganizerMessageCategory, cancellationToken);
+
+        return await Insert(
+            work,
+            FactCause.Of(broadcast, NotificationFacts.OrganizerMessageType, meetupId),
+            audience,
+            (id, recipient) => NotificationFacts.OrganizerMessage(
+                id, recipient, broadcast.Id, broadcast.AuthorId, card, broadcast.Body, broadcast.RequestId, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Разворачивает объявление сообществу на круг хаба и пишет факты в
+    /// транзакции <paramref name="work" />. Круг задаёт сервис, а не
+    /// отправитель: рассылки «всем профилям» нет (ADR-043).
+    /// </summary>
+    internal static async Task<FactCount> AddCommunityAnnouncement(
+        UnitOfWork work,
+        AcceptedBroadcast broadcast,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var audience = await Community(work, NotificationFacts.CommunityAnnouncementCategory, cancellationToken);
+
+        return await Insert(
+            work,
+            FactCause.Of(broadcast, NotificationFacts.CommunityAnnouncementType, meetupId: null),
+            audience,
+            (id, recipient) => NotificationFacts.CommunityAnnouncement(
+                id, recipient, broadcast.Id, broadcast.AuthorId, broadcast.Body, broadcast.RequestId, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    // Круг хаба с глобальной настройкой категории. Категория обязана быть
+    // глобальной: переопределения по сходке запрос не читает.
+    private static Task<IReadOnlyList<AudienceRow>> Community(
+        UnitOfWork work,
+        NotificationCategory category,
+        CancellationToken cancellationToken) =>
+        work.Query<AudienceRow>(
+            AudienceSql,
+            new
+            {
+                Default = NotificationCategories.DefaultEnabled(category),
+                Category = NotificationCategories.Storage(category),
+                Circle = NotificationFacts.HubCircle.ToArray(),
+            },
+            cancellationToken);
 
     private static Task<IReadOnlyList<AudienceRow>> Subscribers(
         UnitOfWork work,
@@ -505,11 +573,15 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     }
 
     // Повод строки: тип факта, ссылка на то, что его породило, сходка и цепочка.
-    // Отдельно от MeetupFact, потому что у сработавшего напоминания события нет.
-    private sealed record FactCause(string Type, string CauseKind, string CauseId, Guid MeetupId, string? RequestId)
+    // Отдельно от MeetupFact, потому что у сработавшего напоминания и у ручной
+    // рассылки события нет. Сходки нет у объявления сообществу.
+    private sealed record FactCause(string Type, string CauseKind, string CauseId, Guid? MeetupId, string? RequestId)
     {
         public static FactCause Of(MeetupFact fact, string type) =>
             new(type, NotificationFacts.MeetupEventCause, fact.EventId.ToString(), fact.MeetupId, fact.RequestId);
+
+        public static FactCause Of(AcceptedBroadcast broadcast, string type, Guid? meetupId) =>
+            new(type, NotificationFacts.CommandRequestCause, broadcast.Id.ToString(), meetupId, broadcast.RequestId);
     }
 
     // Классы, а не позиционные записи: Dapper сопоставляет колонки со

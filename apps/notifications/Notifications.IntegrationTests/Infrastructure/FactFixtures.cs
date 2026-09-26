@@ -31,6 +31,26 @@ public static class FactFixtures
         return id;
     }
 
+    /// <summary>
+    /// Сходка в реплике Meetups: опубликованная, без даты. Карточке рассылки
+    /// большего не нужно, а путь события в реплику — предмет других сценариев.
+    /// </summary>
+    public static async Task<string> Meetup(IsolatedDatabase db, string title = "Сходка")
+    {
+        var id = Guid.CreateVersion7();
+        await Execute(
+            db,
+            """
+            INSERT INTO meetup_replica (
+                meetup_id, version, author, title, description, venue, kind, calendar_link,
+                lifecycle, visibility, schedule_form, occurred_at, applied_at)
+            VALUES (@Id, 1, @Id, @Title, 'Описание', 'Бар', 'встреча', '', 'planned', 'visible', 'no_date', now(), now());
+            """,
+            new { Id = id, Title = title });
+
+        return id.ToString();
+    }
+
     public static Task Subscribe(IsolatedDatabase db, Guid person, string meetupId) =>
         Execute(
             db,

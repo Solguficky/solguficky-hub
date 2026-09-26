@@ -23,6 +23,20 @@ public static class RequestValidation
     public static Guid MeetupId(string value) => UuidV7("meetup_id", value);
 
     /// <summary>
+    /// Идентификатор рассылки. Его генерирует вызывающий, и он же ключ
+    /// идемпотентности, поэтому форма та же, что у остальных идентификаторов.
+    /// </summary>
+    public static Guid BroadcastId(string value) => UuidV7("id", value);
+
+    /// <summary>
+    /// Авторский текст рассылки. Пустая строка отвергается: у этого поля, в
+    /// отличие от атрибутов Meetups, нет тотального значения «не указано».
+    /// Пробелы текстом считаются — что писать, решает автор, а не граница.
+    /// </summary>
+    public static string Body(string value) =>
+        value.Length > 0 ? value : throw Invalid("body", "must not be empty");
+
+    /// <summary>
     /// Категория из словаря. Неизвестное значение отвергается, а не
     /// отбрасывается: категория здесь и есть цель команды, поэтому тихо принять
     /// команду, которая ничего не меняет, нельзя.
