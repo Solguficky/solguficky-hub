@@ -1,6 +1,6 @@
 # JetStream: стримы, durable consumers и повторы
 
-Шина репозитория — NATS, и до PER-208 она ничего не хранила: сообщение, которое никто не слушал в момент публикации, исчезало. Файл объясняет, что добавляет к этому JetStream — стрим как журнал, durable consumer как позицию на сервере, подтверждение и повторную доставку, — на коде топологии из `infra/apphost/Configuration/Infrastructure/JetStreamTopology.cs`, на команде `consume` из `tools/nats-tester/nats_tester/cli.py` и на выводе экспериментов против nats-server 2.10.29 из локального стека.
+Шина репозитория — NATS, и до PER-208 она ничего не хранила: сообщение, которое никто не слушал в момент публикации, исчезало. Файл объясняет, что добавляет к этому JetStream — стрим как журнал, durable consumer как позицию на сервере, подтверждение и повторную доставку, — на коде топологии из `infra/apphost/AppHost/Configuration/Infrastructure/JetStreamTopology.cs`, на команде `consume` из `tools/nats-tester/nats_tester/cli.py` и на выводе экспериментов против nats-server 2.10.29 из локального стека.
 
 ## Механика
 
@@ -141,7 +141,7 @@ sequenceDiagram
 
 ## Проверь себя
 
-Все команды — против локального стека: `aspire start --isolated --apphost infra/apphost/AppHost.csproj -- --profile infra`, адрес шины — по [README nats-tester](../../../tools/nats-tester/README.md#проверка-топологии-jetstream).
+Все команды — против локального стека: `aspire start --isolated -- --profile infra`, адрес шины — по [README nats-tester](../../../tools/nats-tester/README.md#проверка-топологии-jetstream).
 
 1. **Сколько сообщений окажется в стриме после двух `nats-tester publish` одного файла подряд, а сколько после третьего с `--no-msg-id`?** Ответ: одно и два — второй отбросило окно `Nats-Msg-Id`. Проверка: `nats-tester streams`, строка `messages`.
 2. **Что покажет `consume --drain`, запущенный дважды подряд без новых публикаций?** Ответ: второй запуск — `Applied 0`: позиция подтверждена на сервере. Проверка: сама команда.

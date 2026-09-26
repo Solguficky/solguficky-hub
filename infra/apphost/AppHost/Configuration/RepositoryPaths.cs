@@ -8,7 +8,7 @@ namespace AppHost.Configuration;
 internal static class RepositoryPaths
 {
     public static string Root(IDistributedApplicationBuilder builder) =>
-        Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../.."));
+        Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../../.."));
 
     public static string App(IDistributedApplicationBuilder builder, string name) =>
         Path.Combine(Root(builder), "apps", name);

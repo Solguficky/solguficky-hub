@@ -23,7 +23,7 @@ public class DataVolumesTests
         {
             Args = [],
             DisableDashboard = true,
-            ProjectDirectory = Path.Combine(Trees, tree, "infra", "apphost"),
+            ProjectDirectory = Path.Combine(Trees, tree, "infra", "apphost", "AppHost"),
         });
 
     private static ServiceGraphContext Context(string tree) =>
