@@ -7,6 +7,7 @@ import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
 import { createBot, parseTelegramEnvironment } from "./presentation/bot.js";
+import { registerCommands } from "./presentation/commands.js";
 import {
   createNotificationApi,
   createNotificationSender,
@@ -153,6 +154,9 @@ async function main(): Promise<number> {
       service: serviceName,
       telegram_environment: environment,
     });
+    // Меню пишется без ожидания: медленный или отказавший Telegram не должен
+    // задерживать polling и остановку, а отказ registerCommands пишет в лог сам.
+    void registerCommands(bot.api, logger);
     try {
       await bot.start({
         onStart: () => {
