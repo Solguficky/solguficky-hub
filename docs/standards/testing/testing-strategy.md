@@ -114,7 +114,8 @@ just notifications-test                  # Notifications.UnitTests
 just notifications-test-integration      # Notifications.IntegrationTests, нужен Docker
 
 # Сквозной контур (L2)
-just contour-test
+just contour-test                        # дымовой сценарий Identity и Meetups
+just contour-bot-test                    # провод бота против настоящих Identity и Meetups
 
 # Telegram Bot (TypeScript) — уровень выбирается конфигом vitest по суффиксу файла
 just telegram-bot-test                   # unit и component tests без Telegram credentials и Docker

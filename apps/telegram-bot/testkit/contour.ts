@@ -90,14 +90,22 @@ export function openDirectClients(environment: ContourEnvironment) {
     meetups,
     /** Готовность — настоящий RPC, а не health: health-контракт в `contracts/proto/` не входит. */
     async waitUntilReachable(): Promise<void> {
-      // Пустой запрос: любой ответ, кроме UNAVAILABLE, значит, что сервис
+      // Пустой запрос: любой ответ, кроме «не дозвонился», значит, что сервис
       // принял вызов. Состояние от этого не меняется — сервис отвергает
-      // запрос до хранилища.
-      await retryWhileUnavailable("Identity", environment.identityUrl, () =>
-        identity.checkGlobalRole({}),
+      // запрос до хранилища. Бюджет общий на оба сервиса, чтобы он заведомо
+      // укладывался в hookTimeout и отказ называл адрес, а не хук vitest.
+      const deadline = Date.now() + readinessBudgetMs;
+      await retryWhileUnreachable(
+        "Identity",
+        environment.identityUrl,
+        deadline,
+        () => identity.checkGlobalRole({}),
       );
-      await retryWhileUnavailable("Meetups", environment.meetupsUrl, () =>
-        meetups.getMeetup({}),
+      await retryWhileUnreachable(
+        "Meetups",
+        environment.meetupsUrl,
+        deadline,
+        () => meetups.getMeetup({}),
       );
     },
     /**
@@ -106,12 +114,27 @@ export function openDirectClients(environment: ContourEnvironment) {
      */
     async grantAdmin(telegramUserId: bigint): Promise<string> {
       const resolved = await identity.resolveIdentity({ telegramUserId });
-      await identity.grantAdminRole(
-        { identityId: resolved.identityId },
-        {
-          headers: { authorization: `Bearer ${environment.maintainerToken}` },
-        },
-      );
+      try {
+        await identity.grantAdminRole(
+          { identityId: resolved.identityId },
+          {
+            headers: {
+              authorization: `Bearer ${environment.maintainerToken}`,
+            },
+          },
+        );
+      } catch (cause) {
+        // Токен чеканится на каждый подъём контура: dotenv от прошлого
+        // `just contour-up` несёт чужой, и без этой строки отказ читался бы
+        // как дефект Identity.
+        if (ConnectError.from(cause).code === Code.Unauthenticated) {
+          throw new Error(
+            "Identity не принял токен maintainer'а: переменные окружения от другого подъёма контура",
+            { cause },
+          );
+        }
+        throw cause;
+      }
       return resolved.identityId;
     },
     async readAsAdmin(identityId: string, meetupId: string) {
@@ -133,24 +156,31 @@ export function openDirectClients(environment: ContourEnvironment) {
   };
 }
 
-async function retryWhileUnavailable(
+// DEADLINE_EXCEEDED тоже не ответ: вызов не дождался сервиса, и засчитать его
+// готовностью значило бы уронить набор дальше с посторонней причиной.
+const unreachableCodes: ReadonlySet<Code> = new Set([
+  Code.Unavailable,
+  Code.DeadlineExceeded,
+]);
+
+async function retryWhileUnreachable(
   service: string,
   url: string,
+  deadline: number,
   call: () => Promise<unknown>,
 ): Promise<void> {
-  const deadline = Date.now() + readinessBudgetMs;
   for (;;) {
     try {
       await call();
       return;
     } catch (cause) {
       const error = ConnectError.from(cause);
-      if (error.code !== Code.Unavailable) {
+      if (!unreachableCodes.has(error.code)) {
         return;
       }
       if (Date.now() >= deadline) {
         throw new Error(
-          `${service} по ${url} отвечает UNAVAILABLE дольше ${readinessBudgetMs / 1_000} с`,
+          `${service} по ${url} недоступен дольше ${readinessBudgetMs / 1_000} с: ${Code[error.code]}`,
           { cause },
         );
       }

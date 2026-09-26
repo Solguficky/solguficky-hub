@@ -7,17 +7,19 @@ import { botInfo, type RecordedCall } from "./harness.js";
 // собираются здесь, поэтому сценарий уровня L2 их не знает вовсе
 // (telegram-bot.md, «Угловые случаи», пункт 10).
 
+type Button = { text: string; data: string };
+
 type Screen = {
   messageId: number;
   text: string;
-  buttons: readonly { text: string; data: string }[];
+  buttons: readonly Button[];
   asksForReply: boolean;
 };
 
 export type Person = {
   /** Пишет боту. Висит вопрос формы — это ответ на него, как в клиенте Telegram. */
   says(text: string): Promise<void>;
-  /** Нажимает кнопку с этой подписью на последнем экране, где она есть. */
+  /** Нажимает кнопку с этой подписью на последнем изменённом экране, где она сейчас есть. */
   presses(label: string): Promise<void>;
   /** Текст последнего экрана: нового сообщения или правки. */
   sees(): string;
@@ -34,11 +36,7 @@ export function startConversation(
   let updateId = 0;
   let messageId = 0;
 
-  const screens = (): Screen[] =>
-    calls.flatMap((call, index) => {
-      const screen = readScreen(call, index);
-      return screen === undefined ? [] : [screen];
-    });
+  const screens = (): Screen[] => readScreens(calls, userId);
 
   const lastScreen = (): Screen => {
     const all = screens();
@@ -118,40 +116,68 @@ export function meetupIdFromStartLink(text: string): string {
   return tokenToUuid(token);
 }
 
-function readScreen(call: RecordedCall, index: number): Screen | undefined {
-  if (call.method !== "sendMessage" && call.method !== "editMessageText") {
-    return undefined;
-  }
-  const payload = call.payload as {
-    text?: unknown;
-    message_id?: unknown;
-    reply_markup?: {
-      force_reply?: boolean;
-      inline_keyboard?: { text: string; callback_data?: string }[][];
-    };
+type ScreenPayload = {
+  chat_id?: unknown;
+  text?: unknown;
+  message_id?: unknown;
+  reply_markup?: {
+    force_reply?: boolean;
+    inline_keyboard?: { text: string; callback_data?: string }[][];
   };
-  if (typeof payload.text !== "string") {
-    return undefined;
-  }
-  // Номер сообщения повторяет запись харнесса: отправленное сообщение
-  // получает `100 + порядковый номер вызова`, правка несёт свой.
-  const messageId =
-    call.method === "sendMessage"
-      ? 100 + index + 1
-      : typeof payload.message_id === "number"
-        ? payload.message_id
-        : 0;
-  const buttons = (payload.reply_markup?.inline_keyboard ?? [])
+};
+
+/**
+ * Экраны чата в том виде, в каком их сейчас видит человек: одно сообщение —
+ * один экран с последним текстом и последней клавиатурой, по порядку
+ * последнего изменения. Правка без клавиатуры клавиатуру снимает, как в
+ * Telegram, поэтому кнопку с уже переписанного экрана нажать нельзя. Чужие
+ * чаты отсекаются: записи харнесса общие на весь файл.
+ */
+function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
+  const current = new Map<number, Screen>();
+  calls.forEach((call, index) => {
+    const payload = call.payload as ScreenPayload;
+    if (payload.chat_id !== chatId) return;
+    // Номер сообщения повторяет запись харнесса: отправленное сообщение
+    // получает `100 + порядковый номер вызова`, правка несёт свой.
+    const messageId =
+      call.method === "sendMessage"
+        ? 100 + index + 1
+        : typeof payload.message_id === "number"
+          ? payload.message_id
+          : undefined;
+    if (messageId === undefined) return;
+    const previous = current.get(messageId);
+    let next: Screen | undefined;
+    if (
+      (call.method === "sendMessage" || call.method === "editMessageText") &&
+      typeof payload.text === "string"
+    ) {
+      next = {
+        messageId,
+        text: payload.text,
+        buttons: readButtons(payload),
+        asksForReply: payload.reply_markup?.force_reply === true,
+      };
+    } else if (
+      call.method === "editMessageReplyMarkup" &&
+      previous !== undefined
+    ) {
+      next = { ...previous, buttons: readButtons(payload) };
+    }
+    if (next === undefined) return;
+    current.delete(messageId);
+    current.set(messageId, next);
+  });
+  return [...current.values()];
+}
+
+function readButtons(payload: ScreenPayload): Button[] {
+  return (payload.reply_markup?.inline_keyboard ?? [])
     .flat()
     .flatMap((button) =>
       button.callback_data === undefined
         ? []
         : [{ text: button.text, data: button.callback_data }],
     );
-  return {
-    messageId,
-    text: payload.text,
-    buttons,
-    asksForReply: payload.reply_markup?.force_reply === true,
-  };
 }

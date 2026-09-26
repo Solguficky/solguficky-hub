@@ -38,6 +38,6 @@ describe("провод бота при недоступном Meetups", () => {
     await person.presses("Ближайшие сходки");
 
     expect(person.sees()).toContain("Не получилось загрузить сходки");
-    expect(person.sees()).not.toContain("пока нет");
+    expect(person.sees()).not.toContain("Пока ни одной запланированной сходки");
   });
 });
