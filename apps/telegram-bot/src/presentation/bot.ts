@@ -30,6 +30,7 @@ import type { LogFields, Logger } from "../logging.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
+  MeetupSchedule,
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
@@ -575,6 +576,7 @@ async function handleMessage(
           "published",
           "meetup-updated",
           "edit-unavailable",
+          "confirm-past-schedule",
         ],
         okMessage: "meetup form answer handled",
         rejectedMessage: "meetup form answer rejected",
@@ -689,6 +691,7 @@ async function handleMessage(
       case "ask":
       case "edit-ask":
       case "preview":
+      case "confirm-past-schedule":
       case "published":
       case "ask-publish-moment":
       case "publication-scheduled":
@@ -764,6 +767,15 @@ async function handleCallback(
       return;
     }
     useCase = callbackUseCase(action.kind);
+    // Вопрос о прошедшей дате задают и в форме создания, и в правке: сценарий
+    // тот же, что у ответа текстом, который его породил.
+    if (
+      (action.kind === "manage-confirm-past-schedule" ||
+        action.kind === "manage-retry-past-schedule") &&
+      !action.editing
+    ) {
+      useCase = "create_meetup";
+    }
     await ctx.answerCallbackQuery();
     const retryCallback =
       action.kind === "outdated"
@@ -1195,7 +1207,8 @@ async function handleCallback(
       action.kind === "manage-hold" ||
       action.kind === "manage-publish" ||
       action.kind === "manage-publish-later" ||
-      action.kind === "manage-unschedule"
+      action.kind === "manage-unschedule" ||
+      action.kind === "manage-retry-past-schedule"
     ) {
       const meetupId = tokenToUuid(action.token);
       const current = await runtime.dispatcher.execute({
@@ -1241,7 +1254,7 @@ async function handleCallback(
       if (action.kind === "manage-edit") {
         await editScreen(
           ctx,
-          `Что изменить в сходке «${meetup.title}»?`,
+          `Что изменить в сходке «${meetupTitleLabel(meetup.title)}»?`,
           new InlineKeyboard()
             .text("Название", `v1:manage:field:${token}:title`)
             .text("Дата и время", `v1:manage:field:${token}:schedule`)
@@ -1257,6 +1270,20 @@ async function handleCallback(
           {
             kind: "edit-ask",
             field: action.field,
+            meetup,
+          },
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      } else if (action.kind === "manage-retry-past-schedule") {
+        // Кадр подтверждения одноразовый: после любого ответа его кнопки
+        // снимаются, иначе старое «Сохранить дату» откатило бы дату позже.
+        await clearCallbackKeyboard(ctx);
+        await renderFormResult(
+          ctx,
+          {
+            kind: action.editing ? "edit-ask" : "ask",
+            field: "schedule",
             meetup,
           },
           questions,
@@ -1379,11 +1406,60 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "manage-confirm-past-schedule") {
+      // Кнопки снимаются до команды: второе нажатие того же кадра или нажатие
+      // после «Ввести другую» не должно переписать дату ещё раз.
+      await clearCallbackKeyboard(ctx);
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: action.editing ? "update-meetup-field" : "set-meetup-field",
+        field: "schedule",
+        value: action.value,
+        meetupId,
+        confirmedPast: true,
+        ...rpcCall(ctx, useCase),
+      });
+      await renderFormResult(
+        ctx,
+        result,
+        questions,
+        runtime.presentation ?? "rich",
+      );
+      outcome = screenBoundary(result, {
+        ok: ["ask", "edit-ask", "meetup-updated", "edit-unavailable"],
+        okMessage: "past meetup date confirmed",
+        rejectedMessage: "past meetup date rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (action.kind === "manage-hidden") {
+      // Отдельного запроса нет: правило видимости ADR-022 уже отдало скрытые
+      // сходки только тем, кому их можно видеть, и экран лишь выбирает их из
+      // того же списка. Постороннему раздел поэтому показывает пустоту.
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-visible-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderHiddenMeetupList(ctx, result);
+      outcome = screenBoundary(result, {
+        ok: ["meetup-list"],
+        okMessage: "hidden meetup list sent",
+        rejectedMessage: "hidden meetup list rejected",
+        useCase,
+      });
+      return;
+    }
     if (action.kind === "manage-menu") {
       const id = createUuidV7();
       await ctx.reply("Управление сходками", {
         reply_markup: new InlineKeyboard()
           .text("Создать сходку", `v1:manage:new:${uuidToToken(id)}`)
+          .row()
+          .text("Скрытые сходки", "v1:manage:hidden")
           .row()
           .text("Состав сообщества", "v1:community:list"),
       });
@@ -1870,11 +1946,55 @@ async function renderMeetupList(
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
-    await editScreen(
-      ctx,
-      `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
-      new InlineKeyboard().text("Повторить", "v1:nav:hub"),
+    await renderMeetupListFailure(ctx, "v1:nav:hub");
+  }
+}
+
+// «Ближайшие сходки» и «Скрытые сходки» читают один и тот же список, поэтому и
+// отказ у них один; различается только экран, на который ведёт повтор.
+async function renderMeetupListFailure(
+  ctx: UpdateContext,
+  retry: string,
+): Promise<void> {
+  await editScreen(
+    ctx,
+    `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
+    new InlineKeyboard().text("Повторить", retry),
+  );
+}
+
+async function renderHiddenMeetupList(
+  ctx: UpdateContext,
+  result: Awaited<ReturnType<Dispatcher["execute"]>>,
+): Promise<void> {
+  if (result.kind === "meetup-list") {
+    const hidden = result.meetups.filter(
+      (meetup) => meetup.visibility === "hidden",
     );
+    const keyboard = new InlineKeyboard();
+    for (const meetup of hidden) {
+      keyboard
+        .text(
+          meetupTitleLabel(meetup.title),
+          `v1:view:${uuidToToken(meetup.id)}`,
+        )
+        .row();
+    }
+    keyboard.text("Обновить", "v1:manage:hidden").row();
+    keyboard.text("Назад", "v1:manage:menu");
+    // Незаконченный черновик и снятая с публикации сходка в контракте не
+    // различаются, поэтому раздел говорит о скрытых, а не о черновиках.
+    const text =
+      hidden.length === 0
+        ? "Скрытых сходок нет.\n\nЗдесь появляются черновики и сходки, снятые с публикации."
+        : ["Скрытые сходки", hidden.map(meetupListLine).join("\n")].join(
+            "\n\n",
+          );
+    await editScreen(ctx, text, keyboard);
+    return;
+  }
+  if (result.kind === "dependency-rejected" || result.kind === "rejected") {
+    await renderMeetupListFailure(ctx, "v1:manage:hidden");
   }
 }
 
@@ -1964,7 +2084,9 @@ function homeKeyboard(): InlineKeyboard {
 function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const meetup of meetups) {
-    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+    keyboard
+      .text(meetupTitleLabel(meetup.title), `v1:view:${uuidToToken(meetup.id)}`)
+      .row();
   }
   return keyboard
     .text("Обновить", "v1:nav:hub")
@@ -1987,9 +2109,10 @@ function archiveListText(meetups: readonly ArchivedMeetupSummary[]): string {
 function archivedMeetupListLine(meetup: ArchivedMeetupSummary): string {
   const label = scheduleLabel(meetup.schedule);
   const status = archiveStatusLabel(meetup.status);
+  const title = meetupTitleLabel(meetup.title);
   return label === undefined
-    ? `• ${meetup.title} (${status})`
-    : `• ${label} — ${meetup.title} (${status})`;
+    ? `• ${title} (${status})`
+    : `• ${label} — ${title} (${status})`;
 }
 
 function archiveStatusLabel(status: ArchivedMeetupSummary["status"]): string {
@@ -2008,7 +2131,9 @@ function archiveListKeyboard(
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const meetup of meetups) {
-    keyboard.text(meetup.title, `v1:view:${uuidToToken(meetup.id)}`).row();
+    keyboard
+      .text(meetupTitleLabel(meetup.title), `v1:view:${uuidToToken(meetup.id)}`)
+      .row();
   }
   return keyboard
     .text("Обновить", "v1:nav:archive")
@@ -2403,7 +2528,7 @@ function meetupCardText(
     meetup.publishAt === undefined
       ? ""
       : `\nПубликация назначена на ${formatLocalMoment(meetup.publishAt)}`;
-  const card = `${meetup.title}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  const card = `${meetupTitleLabel(meetup.title)}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
   if (!includeMaterials || meetup.materials.length === 0) return card;
   const materials = meetup.materials
     .slice(0, materialCardLimit)
@@ -2461,9 +2586,20 @@ function buttonText(value: string): string {
 
 function meetupListLine(meetup: MeetupSummary): string {
   const label = scheduleLabel(meetup.schedule);
+  const title = meetupTitleLabel(meetup.title);
+  // Скрытую сходку видят только автор и администратор (ADR-022); без пометки
+  // она читалась бы в общем списке как опубликованная.
+  const hidden = meetup.visibility === "hidden" ? " (скрыта)" : "";
   return label === undefined
-    ? `• ${meetup.title}`
-    : `• ${label} — ${meetup.title}`;
+    ? `• ${title}${hidden}`
+    : `• ${label} — ${title}${hidden}`;
+}
+
+// Черновик получает название вторым шагом формы, и брошенный на первом вопросе
+// остаётся с пустым: Telegram не принимает кнопку без текста, а строка списка
+// и карточка без подписи не читаются.
+function meetupTitleLabel(title: string): string {
+  return title.trim() === "" ? "Без названия" : title;
 }
 
 function scheduleLabel(
@@ -2577,6 +2713,13 @@ function replyQuestion(ctx: UpdateContext, question: QuestionMessage) {
   });
 }
 
+/// Прошедшая дата цифрами `ДДММГГГГЧЧММ` для данных кнопки подтверждения;
+/// обратно её собирает разбор кнопки.
+function pastScheduleDigits(value: MeetupSchedule): string {
+  const pad = (part: number, width = 2) => String(part).padStart(width, "0");
+  return `${pad(value.day)}${pad(value.month)}${pad(value.year, 4)}${pad(value.hours)}${pad(value.minutes)}`;
+}
+
 async function renderFormResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
@@ -2666,8 +2809,32 @@ async function renderFormResult(
     evictOldestQuestions(questions);
     return;
   }
+  if (result.kind === "confirm-past-schedule") {
+    // Кадр подтверждения, а не отказ: сходку с прошедшей датой завести можно,
+    // но она сразу окажется в архиве, и чаще такая дата — опечатка (PER-342).
+    const token = uuidToToken(result.meetup.id);
+    const mode = result.editing === true ? "e" : "c";
+    const value = formatLocalMoment(result.schedule);
+    await ctx.reply(
+      `Дата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Ближайших сходках». Сохранить её?`,
+      {
+        reply_markup: new InlineKeyboard()
+          .text(
+            "Сохранить дату",
+            `v1:manage:past:${token}:${mode}:${pastScheduleDigits(result.schedule)}`,
+          )
+          .row()
+          .text("Ввести другую", `v1:manage:past-retry:${token}:${mode}`),
+      },
+    );
+    return;
+  }
   if (result.kind === "meetup-updated") {
-    await ctx.reply("Изменение сохранено.");
+    await ctx.reply(
+      result.archived === true
+        ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Ближайших сходках»."
+        : "Изменение сохранено.",
+    );
     await renderMeetupCard(
       ctx,
       { kind: "meetup-card", meetup: result.meetup },
@@ -2765,10 +2932,16 @@ async function renderFormResult(
   if (result.kind === "published") {
     // Результат нажатия — правкой предпросмотра: одновременный двойной клик
     // пишет тот же текст в то же сообщение, и Telegram отвечает «not modified».
+    // С прошедшей датой сходка сразу в архиве: ответ не обещает её в списке
+    // «Ближайших», где её нет (PER-342).
     const meetupId = result.meetup.id;
+    const created =
+      result.archived === true
+        ? "Сходка создана. Её дата уже прошла, поэтому она сразу в архиве, а не в «Ближайших сходках»."
+        : "Сходка создана. Теперь она видна в списке.";
     await editScreen(
       ctx,
-      `Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
+      `${created}\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
       new InlineKeyboard()
         .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
         .text("К управлению", "v1:manage:menu"),
@@ -2836,6 +3009,7 @@ function callbackUseCase(
     | "outdated"
     | "view-meetup"
     | "manage-menu"
+    | "manage-hidden"
     | "community"
     | "ask-allowed-username"
     | "admit-member"
@@ -2861,6 +3035,8 @@ function callbackUseCase(
     | "manage-publish-later"
     | "manage-unschedule"
     | "manage-confirm-unschedule"
+    | "manage-confirm-past-schedule"
+    | "manage-retry-past-schedule"
     | "manage-materials"
     | "begin-attach-material"
     | "confirm-attach-material"
@@ -2871,6 +3047,8 @@ function callbackUseCase(
   switch (kind) {
     case "view-meetup":
       return "view_meetup";
+    case "manage-hidden":
+      return "find_meetup";
     case "create-meetup":
     case "publish-meetup":
     case "manage-menu":
@@ -2888,6 +3066,8 @@ function callbackUseCase(
     case "manage-publish-later":
     case "manage-unschedule":
     case "manage-confirm-unschedule":
+    case "manage-confirm-past-schedule":
+    case "manage-retry-past-schedule":
     case "manage-materials":
     case "begin-attach-material":
     case "confirm-attach-material":

@@ -28,13 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Notifications\Notifications.csproj" />
-  </ItemGroup>
-
-  <!-- Валидные события источников — один файл на оба набора, ссылкой, а не
-       копией: иначе unit- и интеграционный тест разошлись бы в том, что
-       считать правильным событием. -->
-  <ItemGroup>
-    <Compile Include="..\Notifications.UnitTests\TestUtilities\EventFactory.cs" Link="Infrastructure\EventFactory.cs" />
+    <ProjectReference Include="..\Notifications.TestKit\Notifications.TestKit.csproj" />
   </ItemGroup>
 
 </Project>

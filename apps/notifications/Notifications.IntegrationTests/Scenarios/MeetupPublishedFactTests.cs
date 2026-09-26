@@ -3,7 +3,7 @@ using Meetups.V1;
 using Notifications.Facts;
 using Notifications.IntegrationTests.Infrastructure;
 using Notifications.Replica;
-using Notifications.Tests;
+using Notifications.TestKit;
 using Npgsql;
 using Shouldly;
 using Xunit;
@@ -63,7 +63,7 @@ public class MeetupPublishedFactTests
             messageId.ShouldBe(fact.NotificationId);
             fact.Cause.MeetupEventId.ShouldBe(published.EventId);
             fact.RequestId.ShouldBe("req-216");
-            fact.HasNotAfter.ShouldBeFalse();
+            fact.HasNotAfter.ShouldBeTrue();
             fact.MeetupPublished.Meetup.Id.ShouldBe(meetupId);
             fact.MeetupPublished.Meetup.Title.ShouldBe("Пятничная");
         }

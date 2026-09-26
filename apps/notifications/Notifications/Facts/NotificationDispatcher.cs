@@ -69,7 +69,7 @@ public sealed class NotificationDispatcher(
                 // Отказ базы: таблица на месте, следующий проход повторит.
                 telemetry.DispatchFailed();
                 ReplicaTelemetry.Fail("dependency_unavailable");
-                Log(LogLevel.Error, startedAt, 0, "dependency_unavailable", ex.Message, ex);
+                Log(LogLevel.Error, startedAt, 0, "dependency_unavailable", ex.Message, ex, 0);
             }
         }
         while (await Tick(timer, stoppingToken));
@@ -79,6 +79,8 @@ public sealed class NotificationDispatcher(
     {
         var pass = await store.Dispatch(options.Value.BatchSize, Publish, clock.GetUtcNow(), stoppingToken);
         telemetry.Dispatch(pass.Published);
+        telemetry.RecordWithdrawn(NotificationFacts.WithdrawnExpired, pass.Expired);
+        var expired = pass.Expired.Sum(facts => facts.Count);
 
         var oldest = await store.OldestPending(stoppingToken);
         telemetry.ObserveOldestPending(oldest is { } moment ? (clock.GetUtcNow() - moment).TotalSeconds : 0);
@@ -87,14 +89,14 @@ public sealed class NotificationDispatcher(
         {
             telemetry.DispatchFailed();
             ReplicaTelemetry.Fail("dependency_unavailable");
-            Log(LogLevel.Error, startedAt, pass.Published, "dependency_unavailable", failure.Message, failure);
+            Log(LogLevel.Error, startedAt, pass.Published, "dependency_unavailable", failure.Message, failure, expired);
         }
-        else if (pass.Published > 0)
+        else if (pass.Published > 0 || expired > 0)
         {
             // Пустой проход не пишется: он повторяется раз в секунду, и лог
             // состоял бы из них. Молчащий релей виден по возрасту старейшего
             // неотправленного факта, а не по тишине в логе.
-            Log(LogLevel.Information, startedAt, pass.Published, null, null, null);
+            Log(LogLevel.Information, startedAt, pass.Published, null, null, null, expired);
         }
     }
 
@@ -109,7 +111,14 @@ public sealed class NotificationDispatcher(
         ack.EnsureSuccess();
     }
 
-    private void Log(LogLevel level, long startedAt, int published, string? errorCategory, string? error, Exception? exception)
+    private void Log(
+        LogLevel level,
+        long startedAt,
+        int published,
+        string? errorCategory,
+        string? error,
+        Exception? exception,
+        int expired)
     {
         // Та же форма, что у replica_apply и снимка sweeper'а: JSON в теле
         // строки с каркасом docs/standards/observability/logging.md.
@@ -120,6 +129,9 @@ public sealed class NotificationDispatcher(
             ["result"] = errorCategory is null ? "ok" : "error",
             ["duration_us"] = (long)Stopwatch.GetElapsedTime(startedAt).TotalMicroseconds,
             ["published"] = published,
+
+            // Снятые по сроку годности: в шину не вынесены и не потеряны.
+            ["expired"] = expired,
         };
 
         if (errorCategory is not null)

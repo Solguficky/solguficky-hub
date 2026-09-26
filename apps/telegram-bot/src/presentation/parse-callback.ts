@@ -30,6 +30,13 @@ const GlobalCategorySchema = z.enum([
 // Кнопка несёт целевое состояние, а не переворот: у двух человек, нажавших на
 // одну отрисовку, результат обязан совпасть.
 const TargetStateSchema = z.enum(["0", "1"]);
+// Режим формы, в которой спросили о прошедшей дате: `c` — создание, `e` —
+// правка. От него зависит следующий шаг после ответа.
+const FormModeSchema = z.enum(["c", "e"]);
+// Прошедшая дата едет в кнопке подтверждения цифрами `ДДММГГГГЧЧММ`: так
+// ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
+// правки, восстановимые по сущностям сообщения.
+const PastScheduleSchema = z.string().regex(/^\d{12}$/);
 
 // Ник едет в `callback_data` как есть, и обратно он доезжает только в этом
 // алфавите и в этой длине: у Telegram на данные кнопки 64 байта, а длиннее 32
@@ -42,6 +49,7 @@ export type CallbackAction =
   | { kind: "hub" }
   | { kind: "archive" }
   | { kind: "manage-menu" }
+  | { kind: "manage-hidden" }
   | { kind: "community" }
   | { kind: "ask-allowed-username" }
   | { kind: "admit-member"; token: string }
@@ -62,6 +70,13 @@ export type CallbackAction =
   | { kind: "manage-publish-later"; token: string }
   | { kind: "manage-unschedule"; token: string }
   | { kind: "manage-confirm-unschedule"; token: string }
+  | {
+      kind: "manage-confirm-past-schedule";
+      token: string;
+      editing: boolean;
+      value: string;
+    }
+  | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
   | { kind: "confirm-attach-material"; token: string; materialToken: string }
@@ -92,6 +107,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   const parts = parsed.data.split(":");
   if (parts[0] !== "v1") return { kind: "outdated" };
   if (parsed.data === "v1:manage:menu") return { kind: "manage-menu" };
+  if (parsed.data === "v1:manage:hidden") return { kind: "manage-hidden" };
   if (parsed.data === "v1:community:list") return { kind: "community" };
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
@@ -186,6 +202,28 @@ export function parseCallback(raw: unknown): CallbackAction {
       ? { kind: "manage-field", token: token.data, field: field.data }
       : { kind: "malformed" };
   }
+  if (parts.length === 6 && parts[2] === "past") {
+    const mode = FormModeSchema.safeParse(parts[4]);
+    const digits = PastScheduleSchema.safeParse(parts[5]);
+    return mode.success && digits.success
+      ? {
+          kind: "manage-confirm-past-schedule",
+          token: token.data,
+          editing: mode.data === "e",
+          value: pastScheduleValue(digits.data),
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && parts[2] === "past-retry") {
+    const mode = FormModeSchema.safeParse(parts[4]);
+    return mode.success
+      ? {
+          kind: "manage-retry-past-schedule",
+          token: token.data,
+          editing: mode.data === "e",
+        }
+      : { kind: "malformed" };
+  }
   if (parts.length === 4 && parts[2] === "status")
     return { kind: "manage-status", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
@@ -209,6 +247,12 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "confirm-unschedule")
     return { kind: "manage-confirm-unschedule", token: token.data };
   return { kind: "malformed" };
+}
+
+/// Цифры кнопки обратно в тот вид, в котором дату вводят: форма разбирает и
+/// проверяет её тем же путём, что и ответ текстом.
+function pastScheduleValue(digits: string): string {
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
 }
 
 function parseNotify(parts: readonly string[]): CallbackAction {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { communityLocalTime, parseTimeZone } from "./community-time.js";
+import {
+  communityDay,
+  communityLocalTime,
+  isBeforeDay,
+  parseTimeZone,
+} from "./community-time.js";
 
 describe("community time zone", () => {
   it("accepts an IANA zone and rejects a missing or unknown one", () => {
@@ -28,5 +33,28 @@ describe("community time zone", () => {
 
   it("refuses a value that is not an instant instead of dropping it", () => {
     expect(() => communityLocalTime("tomorrow", "Europe/Moscow")).toThrow();
+  });
+
+  it("takes today's date in the community zone, not in UTC", () => {
+    const lateEvening = new Date("2026-09-23T21:30:00Z");
+    expect(communityDay(lateEvening, "Europe/Moscow")).toEqual({
+      year: 2026,
+      month: 9,
+      day: 24,
+    });
+    expect(communityDay(lateEvening, "UTC")).toEqual({
+      year: 2026,
+      month: 9,
+      day: 23,
+    });
+  });
+
+  it("treats only an earlier calendar day as before today", () => {
+    const today = { year: 2026, month: 9, day: 24 };
+    expect(isBeforeDay({ year: 2026, month: 9, day: 23 }, today)).toBe(true);
+    expect(isBeforeDay({ year: 2026, month: 8, day: 30 }, today)).toBe(true);
+    expect(isBeforeDay({ year: 2025, month: 12, day: 31 }, today)).toBe(true);
+    expect(isBeforeDay(today, today)).toBe(false);
+    expect(isBeforeDay({ year: 2026, month: 10, day: 1 }, today)).toBe(false);
   });
 });

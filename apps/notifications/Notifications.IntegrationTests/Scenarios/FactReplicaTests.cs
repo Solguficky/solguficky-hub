@@ -3,7 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Notifications.Infrastructure;
 using Notifications.IntegrationTests.Infrastructure;
 using Notifications.Replica;
-using Notifications.Tests;
+using Notifications.TestKit;
 using Npgsql;
 using Shouldly;
 using Xunit;

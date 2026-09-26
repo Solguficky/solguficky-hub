@@ -1,3 +1,8 @@
+import {
+  type CommunityDay,
+  communityDay,
+  isBeforeDay,
+} from "../community-time.js";
 import type {
   MeetupSchedule,
   MeetupSnapshot,
@@ -12,7 +17,19 @@ import type {
   Person,
 } from "./types.js";
 
-export function createMeetupForm(meetups: Meetups) {
+/// Сегодняшний день сообщества на момент запроса. Часы внедряются снаружи:
+/// граница «прошедшей» даты должна совпадать с той, по которой Meetups
+/// уводит сходку в архив, а в тестах — не зависеть от дня прогона.
+export type CommunityToday = () => CommunityDay;
+
+export function utcToday(): CommunityDay {
+  return communityDay(new Date(), "UTC");
+}
+
+export function createMeetupForm(
+  meetups: Meetups,
+  today: CommunityToday = utcToday,
+) {
   return async (
     request: Extract<
       ExecuteRequest,
@@ -63,6 +80,18 @@ export function createMeetupForm(meetups: Meetups) {
                 "Не получилось разобрать дату. Напиши, например: 21.09.2026 19:30",
             };
           }
+          // Прошедшую дату Meetups принимает: архив — производное правило
+          // чтения, и сходка просто сразу окажется в нём. Бот не запрещает
+          // такую дату, а спрашивает, потому что чаще это опечатка (PER-342).
+          const past = isBeforeDay(schedule, today());
+          if (past && request.confirmedPast !== true) {
+            return {
+              kind: "confirm-past-schedule",
+              meetup: current.meetup,
+              schedule,
+              ...(editing ? { editing: true as const } : {}),
+            };
+          }
           const scheduled = await meetups.setSchedule(
             request.identity,
             current.meetup,
@@ -85,9 +114,14 @@ export function createMeetupForm(meetups: Meetups) {
             });
           }
           if (editing) {
-            return scheduled.kind === "ok"
-              ? { kind: "meetup-updated", meetup: scheduled.meetup }
-              : failure(scheduled);
+            if (scheduled.kind !== "ok") return failure(scheduled);
+            return past
+              ? {
+                  kind: "meetup-updated",
+                  meetup: scheduled.meetup,
+                  archived: true,
+                }
+              : { kind: "meetup-updated", meetup: scheduled.meetup };
           }
           return map(scheduled, "venue");
         }
@@ -143,7 +177,7 @@ export function createMeetupForm(meetups: Meetups) {
         if (published.kind === "conflict") {
           return conflict(meetups, request);
         }
-        return mapPublished(published, repeated);
+        return mapPublished(published, repeated, today());
       }
       case "schedule-publication": {
         const current = await currentSnapshot(meetups, request);
@@ -389,11 +423,19 @@ function map(
 function mapPublished(
   result: Awaited<ReturnType<Meetups["publish"]>>,
   repeated: boolean,
+  today: CommunityDay,
 ): ExecuteResult {
   if (result.kind !== "ok") return failure(result);
-  return repeated
-    ? { kind: "published", meetup: result.meetup, repeated: true }
-    : { kind: "published", meetup: result.meetup };
+  // Ответ о публикации не обещает место в «Ближайших», которого у сходки нет:
+  // с прошедшей датой она сразу в архиве (PER-342).
+  const schedule = result.meetup.schedule;
+  const archived = schedule !== undefined && isBeforeDay(schedule, today);
+  return {
+    kind: "published",
+    meetup: result.meetup,
+    ...(repeated ? { repeated: true as const } : {}),
+    ...(archived ? { archived: true as const } : {}),
+  };
 }
 
 function failure(

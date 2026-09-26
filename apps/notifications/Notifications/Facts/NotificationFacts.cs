@@ -6,8 +6,8 @@ namespace Notifications.Facts;
 
 /// <summary>
 /// Адресный факт в форме контракта <c>notifications.v1.Notification</c>. Чистые
-/// функции: идентификатор и момент приходят снаружи, поэтому форма сообщения
-/// проверяется на L0, без базы и часов.
+/// функции: идентификатор, момент порождения и срок годности приходят снаружи,
+/// поэтому форма сообщения проверяется на L0, без базы и часов.
 /// </summary>
 /// <remarks>
 /// Готового текста и <c>chat_id</c> факт не несёт по построению: в сообщении
@@ -29,6 +29,16 @@ public static class NotificationFacts
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
+
+    /// <summary>
+    /// Причины снятия неотправленного факта в колонке
+    /// <c>notification.withdrawal_reason</c>: сходку отменили, пока факт ждал
+    /// релея, либо он пролежал в очереди дольше срока годности.
+    /// </summary>
+    public const string WithdrawnOnCancellation = "meetup_cancelled";
+
+    /// <inheritdoc cref="WithdrawnOnCancellation" />
+    public const string WithdrawnExpired = "expired";
 
     /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
@@ -59,17 +69,13 @@ public static class NotificationFacts
 
     /// <summary>Факт «новая опубликованная сходка» одному получателю.</summary>
     /// <param name="fact">Событие первой публикации.</param>
-    public static Notification MeetupPublished(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now)
+    public static Notification MeetupPublished(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
     {
         Require(fact, MeetupOccasion.FirstPublication);
 
-        var notification = Addressed(notificationId, recipientId, fact, now);
+        var notification = Addressed(notificationId, recipientId, fact, now, notAfter);
         notification.MeetupPublished = new V1.MeetupPublished { Meetup = fact.Card.Clone() };
 
-        // not_after не ставится ни здесь, ни у остальных типов: у вести о
-        // сходке нет момента, после которого она теряет смысл, а начало сходки —
-        // местное время без зоны, и превращать его в момент значило бы решать
-        // за канал.
         return notification;
     }
 
@@ -80,7 +86,8 @@ public static class NotificationFacts
         Guid recipientId,
         MeetupFact fact,
         IReadOnlyList<MeetupAspect> changed,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
     {
         if (changed.Count == 0)
         {
@@ -90,7 +97,7 @@ public static class NotificationFacts
         var body = new V1.MeetupChanged { Meetup = fact.Card.Clone() };
         body.ChangedAspects.Add(changed);
 
-        var notification = Addressed(notificationId, recipientId, fact, now);
+        var notification = Addressed(notificationId, recipientId, fact, now, notAfter);
         notification.MeetupChanged = body;
 
         return notification;
@@ -98,13 +105,13 @@ public static class NotificationFacts
 
     /// <summary>Факт «новый материал» одному получателю.</summary>
     /// <param name="fact">Событие появления материала.</param>
-    public static Notification MeetupMaterial(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now)
+    public static Notification MeetupMaterial(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
     {
         Require(fact, MeetupOccasion.MaterialAttached);
         var material = fact.Material
             ?? throw new ArgumentException("the event names no material", nameof(fact));
 
-        var notification = Addressed(notificationId, recipientId, fact, now);
+        var notification = Addressed(notificationId, recipientId, fact, now, notAfter);
         notification.MeetupMaterial = new V1.MeetupMaterial
         {
             Meetup = fact.Card.Clone(),
@@ -117,11 +124,11 @@ public static class NotificationFacts
 
     /// <summary>Служебное сообщение о снятии с публикации одному получателю.</summary>
     /// <param name="fact">Событие снятия с публикации.</param>
-    public static Notification MeetupUnpublished(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now)
+    public static Notification MeetupUnpublished(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
     {
         Require(fact, MeetupOccasion.Unpublication);
 
-        var notification = Addressed(notificationId, recipientId, fact, now);
+        var notification = Addressed(notificationId, recipientId, fact, now, notAfter);
         notification.MeetupUnpublished = new V1.MeetupUnpublished { Meetup = fact.Card.Clone() };
 
         return notification;
@@ -139,16 +146,19 @@ public static class NotificationFacts
         }
     }
 
-    // Общее для всех типов: получатель, момент и ссылка на событие-повод.
+    // Общее для всех типов: получатель, момент, срок годности и ссылка на
+    // событие-повод. Срок ставится каждому типу: вести о сходке, пролежавшей
+    // в очереди дольше срока, доставлять уже не нужно (FactOptions.StaleAfter).
     // Карточка копируется в каждый факт: один повод разворачивается на многих
     // получателей, и правка одного сообщения не должна задевать другие.
-    private static Notification Addressed(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now)
+    private static Notification Addressed(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
     {
         var notification = new Notification
         {
             NotificationId = notificationId.ToString(),
             RecipientId = recipientId.ToString(),
             CreatedAt = Instant(now),
+            NotAfter = Instant(notAfter),
             Cause = new Cause { MeetupEventId = fact.EventId.ToString() },
         };
 

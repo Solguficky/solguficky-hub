@@ -32,6 +32,8 @@
 
 Стек задан [standards/testing/testing-strategy.md](../../docs/standards/testing/testing-strategy.md): xUnit v3 на Microsoft.Testing.Platform, Shouldly, Moq. Форма имени — [standards/testing/naming.md](../../docs/standards/testing/naming.md).
 
+Утилита, нужная обоим наборам, живёт в `Notifications.TestKit` и подключается ссылкой на проект, а не на файл соседа и не копией. Сейчас там одна `EventFactory` — валидные события Meetups и Identity, в которых тест правит ровно проверяемое поле: два набора не должны расходиться в том, что считать правильным событием. Утилита одного набора в TestKit не переезжает — фикстуры базы, шины и силоса остаются в `Notifications.IntegrationTests/Infrastructure/`. TestKit ссылается только на `Notifications.Contracts`, поэтому Orleans и composition root сервиса в него не попадают.
+
 Интеграционные тесты поднимают PostgreSQL через Testcontainers и без Docker роняют прогон — и локально, и в CI ([PER-241](https://linear.app/anticnvm/issue/per-241)). Не превращай этот отказ в пропуск: зелёный прогон на пропущенных тестах хуже отсутствия тестов.
 
 Тесты реплики поднимают ещё и JetStream (`Infrastructure/NatsUnderTest`) — свой контейнер на тест, потому что позиция durable живёт на сервере и два теста на одном durable делили бы поток. Внутрипроцессному силосу шина нужна, только если тест её просит: `SiloUnderTest.StartOnBus` регистрирует потребителей, `Start` — нет. Дочерний процесс — настоящий вход сервиса и без шины не стартует, поэтому `ServiceProcess.Start` требует адрес. Повтор события публикуется под другим `Nats-Msg-Id`: с тем же заголовком его отсекает сервер внутри окна дедупликации, и тест проверял бы шину, а не потребителя.
