@@ -59,7 +59,19 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// шина не нужна, контейнер NATS не нужен тоже.
     /// </summary>
     public static Task<SiloUnderTest> StartOnBus(string connectionString, string natsUrl, params string[] settings) =>
-        Retry(SiloEndpoint.Allocate, endpoint => Launch(connectionString, natsUrl, endpoint, settings));
+        Retry(SiloEndpoint.Allocate, endpoint => Launch(connectionString, natsUrl, endpoint, configure: null, settings));
+
+    /// <summary>
+    /// То же, что <see cref="Start(string, string[])" />, но с регистрациями
+    /// <paramref name="configure" /> поверх composition root. Нужно сценариям
+    /// рассылок: владельцы права — Meetups и Identity — подставляются, а не
+    /// поднимаются.
+    /// </summary>
+    public static Task<SiloUnderTest> StartWith(
+        string connectionString,
+        Action<IServiceCollection> configure,
+        params string[] settings) =>
+        Retry(SiloEndpoint.Allocate, endpoint => Launch(connectionString, natsUrl: null, endpoint, configure, settings));
 
     /// <summary>
     /// Силос на заданном адресе — ровно одна попытка.
@@ -71,7 +83,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// наружу: повтор подменил бы проверяемый сценарий другим.
     /// </remarks>
     public static Task<SiloUnderTest> StartAt(string connectionString, SiloEndpoint endpoint, params string[] settings) =>
-        Launch(connectionString, natsUrl: null, endpoint, settings);
+        Launch(connectionString, natsUrl: null, endpoint, configure: null, settings);
 
     /// <summary>
     /// Старт с повтором, в котором пары портов выдаёт <paramref name="endpoints" />.
@@ -80,7 +92,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// </summary>
     public static Task<SiloUnderTest> Start(
         string connectionString, Func<SiloEndpoint> endpoints, params string[] settings) =>
-        Retry(endpoints, endpoint => Launch(connectionString, natsUrl: null, endpoint, settings));
+        Retry(endpoints, endpoint => Launch(connectionString, natsUrl: null, endpoint, configure: null, settings));
 
     /// <summary>
     /// Пояс сообщества в тестах — тот же, что задаёт AppHost: сценарии считают
@@ -112,7 +124,11 @@ public sealed class SiloUnderTest : IAsyncDisposable
     }
 
     private static async Task<SiloUnderTest> Launch(
-        string connectionString, string? natsUrl, SiloEndpoint endpoint, string[] settings)
+        string connectionString,
+        string? natsUrl,
+        SiloEndpoint endpoint,
+        Action<IServiceCollection>? configure,
+        string[] settings)
     {
         var app = NotificationsHost.Build(
             [
@@ -122,7 +138,8 @@ public sealed class SiloUnderTest : IAsyncDisposable
                 .. settings,
             ],
             connectionString,
-            natsUrl);
+            natsUrl,
+            configure);
 
         try
         {
