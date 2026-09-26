@@ -247,7 +247,7 @@ describe("deliver notification", () => {
     await expect(
       deliver(
         notification({
-          content: { kind: "unrendered", type: "meetupReminder" },
+          content: { kind: "unrendered", type: "organizerMessage" },
         }),
         1,
       ),

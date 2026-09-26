@@ -12,6 +12,7 @@ import {
   createNotificationSender,
   disableMeetupCategoryCallback,
   disablePublishedCallback,
+  disableReminderCallback,
   renderNotification,
 } from "./notification-message.js";
 
@@ -135,6 +136,25 @@ describe("renderNotification", () => {
 
   it("keeps the disable button within the 64-byte budget", () => {
     expect(Buffer.byteLength(disablePublishedCallback)).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("reminder notification", () => {
+  it("names the meetup, when and where, and offers to stop reminders", () => {
+    const message = renderNotification({ kind: "meetup-reminder", meetup });
+    expect(message.text).toBe(
+      "Напоминание: Настолки у Лёши\n12.08.2026 19:00\nМесто: Циферблат",
+    );
+    const rows = message.keyboard?.inline_keyboard ?? [];
+    expect(rows[0]?.[0]).toMatchObject({
+      text: "Открыть сходку",
+      callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+    });
+    expect(rows[1]?.[0]).toMatchObject({
+      text: "Не присылать напоминания",
+      callback_data: disableReminderCallback,
+    });
+    expect(Buffer.byteLength(disableReminderCallback)).toBeLessThanOrEqual(64);
   });
 });
 
