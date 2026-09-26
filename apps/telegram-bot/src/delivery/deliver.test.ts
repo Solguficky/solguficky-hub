@@ -35,6 +35,7 @@ function notification(
         id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
         title: "Настолки у Лёши",
         venue: "Циферблат",
+        kind: "",
         when: { kind: "no-date" },
       },
     },
@@ -246,7 +247,7 @@ describe("deliver notification", () => {
     await expect(
       deliver(
         notification({
-          content: { kind: "unrendered", type: "meetupChanged" },
+          content: { kind: "unrendered", type: "meetupReminder" },
         }),
         1,
       ),

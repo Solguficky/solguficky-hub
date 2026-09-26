@@ -1,8 +1,14 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
-  MeetupMaterialSchema,
+  MeetupLifecycle,
+  MeetupVisibility,
+} from "../../gen/meetups/v1/meetups_pb.js";
+import {
+  MeetupAspect,
+  type MeetupCard,
   MeetupPublishedSchema,
+  MeetupReminderSchema,
   type Notification,
   NotificationSchema,
 } from "../../gen/notifications/v1/notifications_pb.js";
@@ -63,6 +69,7 @@ describe("decodeNotification", () => {
             id: meetupId,
             title: "Настолки у Лёши",
             venue: "Циферблат",
+            kind: "",
             when: {
               kind: "day-start",
               tentative: false,
@@ -78,15 +85,130 @@ describe("decodeNotification", () => {
     const decoded = decodeNotification(
       published((message) => {
         message.type = {
-          case: "meetupMaterial",
-          value: create(MeetupMaterialSchema),
+          case: "meetupReminder",
+          value: create(MeetupReminderSchema),
         };
       }),
     );
     expect(decoded).toMatchObject({
       kind: "ok",
       notification: {
-        content: { kind: "unrendered", type: "meetupMaterial" },
+        content: { kind: "unrendered", type: "meetupReminder" },
+      },
+    });
+  });
+
+  describe("a change", () => {
+    const changed = (
+      aspects: MeetupAspect[],
+      card: Partial<MeetupCard> = {},
+    ): Uint8Array =>
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        const meetup = message.type.value.meetup;
+        message.type = {
+          case: "meetupChanged",
+          value: {
+            $typeName: "notifications.v1.MeetupChanged",
+            meetup: meetup === undefined ? meetup : { ...meetup, ...card },
+            changedAspects: aspects,
+          },
+        };
+      });
+    const planned = {
+      lifecycle: MeetupLifecycle.PLANNED,
+      visibility: MeetupVisibility.VISIBLE,
+    };
+
+    it("carries what changed and the state of the meetup now", () => {
+      const decoded = decodeNotification(
+        changed([MeetupAspect.VENUE, MeetupAspect.LIFECYCLE], {
+          lifecycle: MeetupLifecycle.CANCELLED,
+          visibility: MeetupVisibility.VISIBLE,
+        }),
+      );
+      expect(decoded).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: {
+            kind: "meetup-changed",
+            meetup: { id: meetupId, venue: "Циферблат" },
+            aspects: ["venue", "lifecycle"],
+            lifecycle: "cancelled",
+            visibility: "visible",
+          },
+        },
+      });
+    });
+
+    // Контракт обещает непустой список без UNSPECIFIED: иначе канал не знает,
+    // о чём сообщать, и это дефект издателя, а не повод для пустого текста.
+    it("rejects an empty or unspecified aspect list", () => {
+      expect(decodeNotification(changed([], planned)).kind).toBe("malformed");
+      expect(
+        decodeNotification(changed([MeetupAspect.UNSPECIFIED], planned)).kind,
+      ).toBe("malformed");
+    });
+
+    it("rejects a card without its state", () => {
+      expect(decodeNotification(changed([MeetupAspect.TITLE])).kind).toBe(
+        "malformed",
+      );
+    });
+
+    // Аспект из схемы новее этой сборки — не дефект: изменение случилось, и
+    // доставка не должна падать из-за того, что канал отстал от контракта.
+    it("keeps an aspect from a newer schema as another detail", () => {
+      const decoded = decodeNotification(
+        changed([MeetupAspect.TITLE, 99 as MeetupAspect], planned),
+      );
+      expect(decoded).toMatchObject({
+        kind: "ok",
+        notification: { content: { aspects: ["title", "other"] } },
+      });
+    });
+  });
+
+  it("decodes new material with its title", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        message.type = {
+          case: "meetupMaterial",
+          value: {
+            $typeName: "notifications.v1.MeetupMaterial",
+            meetup: message.type.value.meetup,
+            materialId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+            materialTitle: "Правила",
+          },
+        };
+      }),
+    );
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "meetup-material", materialTitle: "Правила" },
+      },
+    });
+  });
+
+  it("decodes an unpublished meetup", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        message.type = {
+          case: "meetupUnpublished",
+          value: {
+            $typeName: "notifications.v1.MeetupUnpublished",
+            meetup: message.type.value.meetup,
+          },
+        };
+      }),
+    );
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "meetup-unpublished", meetup: { id: meetupId } },
       },
     });
   });

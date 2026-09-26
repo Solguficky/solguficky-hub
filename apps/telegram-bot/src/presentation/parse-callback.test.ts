@@ -235,6 +235,28 @@ describe("notification callbacks", () => {
     });
   });
 
+  it("parses disabling a category of one meetup from a notification", () => {
+    expect(parseCallback(`v1:notify:moff:${token}:changes`)).toEqual({
+      kind: "notify-disable-meetup",
+      token,
+      category: "changes",
+    });
+    expect(parseCallback(`v1:notify:moff:${token}:material`)).toEqual({
+      kind: "notify-disable-meetup",
+      token,
+      category: "material",
+    });
+    // Категорий, о которых уведомления по сходке не приходит, кнопка не несёт.
+    for (const category of ["reminder", "organizer", "published"]) {
+      expect(parseCallback(`v1:notify:moff:${token}:${category}`)).toEqual({
+        kind: "malformed",
+      });
+    }
+    expect(parseCallback(`v1:notify:moff:${token}:changes:0`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses meetup notification actions matching the brief", () => {
     expect(parseCallback(`v1:notify:settings:${token}`)).toEqual({
       kind: "notify-settings",
@@ -301,6 +323,9 @@ describe("notification callbacks", () => {
       ...categories.map((category) => `v1:notify:off:${category}`),
       ...["changes", "material", "reminder", "organizer"].map(
         (category) => `v1:notify:set:${token}:${category}:1`,
+      ),
+      ...["changes", "material"].map(
+        (category) => `v1:notify:moff:${token}:${category}`,
       ),
     ];
     for (const data of callbacks) {

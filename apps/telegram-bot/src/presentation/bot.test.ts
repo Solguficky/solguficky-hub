@@ -2994,6 +2994,74 @@ describe("notification frames", () => {
     });
   });
 
+  describe("disabling a meetup category from a change notification", () => {
+    const off = `v1:notify:moff:${token}:changes`;
+    const notification = {
+      text: "Изменения в сходке: Настолки у Лёши\nИзменилось: место",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+          [{ text: "Не присылать изменения этой сходки", callback_data: off }],
+        ],
+      },
+    };
+
+    // Настройка у сходки сильнее общей: общий выключатель не остановил бы
+    // изменения, если у этой сходки категория включена явно.
+    it("turns the category off for this meetup and keeps the notification text", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-notification-settings",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: false, differsFromGlobal: true },
+        ],
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, notification));
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-meetup-category",
+          meetupId: meetup.id,
+          category: "changes",
+          enabled: false,
+        }),
+      );
+      expect(calls[1]?.method).toBe("editMessageText");
+      const payload = screen(calls[1]);
+      expect(payload.text).toContain(notification.text);
+      expect(payload.text).toContain(
+        "Больше не присылаю по этой сходке изменения данных и статуса, включая снятие с публикации",
+      );
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+        [
+          {
+            text: "Уведомления сходки",
+            callback_data: `v1:notify:settings:${token}`,
+          },
+        ],
+      ]);
+    });
+
+    it("reports a meetup that is gone in a new message and keeps the notification", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-not-found",
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, notification));
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "sendMessage",
+      ]);
+      expect(screen(calls[1]).text).toContain(
+        "пока её снова не опубликуют, уведомлений по ней не будет",
+      );
+    });
+  });
+
   // E-05: отказ Notifications приходит кадром о сбое, а не пустым списком
   // категорий, который человек прочитал бы как «всё выключено».
   it("renders a Notifications refusal as E-05 instead of an empty frame", async () => {

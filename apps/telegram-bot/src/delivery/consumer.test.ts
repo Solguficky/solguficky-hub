@@ -20,7 +20,7 @@ function message(
       notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
       recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
       createdAt: "2026-09-26T10:00:00Z",
-      type: { case: "meetupChanged", value: {} },
+      type: { case: "meetupReminder", value: {} },
     }),
   ),
   deliveryCount = 1,
