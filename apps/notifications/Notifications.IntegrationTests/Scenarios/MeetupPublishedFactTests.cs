@@ -7,6 +7,7 @@ using Notifications.TestKit;
 using Npgsql;
 using Shouldly;
 using Xunit;
+using static Notifications.IntegrationTests.Infrastructure.FactFixtures;
 
 namespace Notifications.IntegrationTests.Scenarios;
 
@@ -27,8 +28,6 @@ public class MeetupPublishedFactTests
     private const string MeetupUnpublishedSubject = "events.meetups.meetup_unpublished";
     private const string MeetupRepublishedSubject = "events.meetups.meetup_republished";
 
-    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
-
     [Fact]
     public async Task When_MeetupPublished_Expect_OneFactPerPersonWithCategoryOn()
     {
@@ -41,8 +40,8 @@ public class MeetupPublishedFactTests
         var switchedOff = await Person(db, "member");
         var auctionOnly = await Person(db, "public");
         var blocked = await Person(db, blocked: true, "member");
-        await Preference(db, explicitlyOn, enabled: true);
-        await Preference(db, switchedOff, enabled: false);
+        await Preference(db, explicitlyOn, null, "meetup_published", enabled: true);
+        await Preference(db, switchedOff, null, "meetup_published", enabled: false);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var telemetry = silo.Service<FactTelemetry>();
@@ -223,32 +222,6 @@ public class MeetupPublishedFactTests
         (await Facts(db)).ShouldBe(0);
     }
 
-    private static async Task<Guid> Person(IsolatedDatabase db, params string[] roles) =>
-        await Person(db, blocked: false, roles);
-
-    private static async Task<Guid> Person(IsolatedDatabase db, bool blocked, params string[] roles)
-    {
-        var id = Guid.CreateVersion7();
-        await Execute(
-            db,
-            """
-            INSERT INTO identity_replica (identity_id, version, global_roles, blocked, occurred_at, applied_at)
-            VALUES (@Id, 1, @Roles, @Blocked, now(), now());
-            """,
-            new { Id = id, Roles = roles, Blocked = blocked });
-
-        return id;
-    }
-
-    private static Task Preference(IsolatedDatabase db, Guid person, bool enabled) =>
-        Execute(
-            db,
-            """
-            INSERT INTO notification_preference (identity_id, meetup_id, category, enabled, updated_at)
-            VALUES (@Person, NULL, 'meetup_published', @Enabled, now());
-            """,
-            new { Person = person, Enabled = enabled });
-
     private static Task<long> Facts(IsolatedDatabase db) => Scalar(db, "SELECT count(*) FROM notification;");
 
     private static Task<long> Pending(IsolatedDatabase db) =>
@@ -258,32 +231,5 @@ public class MeetupPublishedFactTests
     {
         await using var connection = new NpgsqlConnection(db.ConnectionString);
         return await connection.ExecuteScalarAsync<long>(sql);
-    }
-
-    private static async Task Execute(IsolatedDatabase db, string sql, object parameters)
-    {
-        await using var connection = new NpgsqlConnection(db.ConnectionString);
-        await connection.ExecuteAsync(sql, parameters);
-    }
-
-    private static async Task<T> Eventually<T>(Func<Task<T>> probe, Func<T, bool> done)
-    {
-        var deadline = DateTime.UtcNow + Patience;
-
-        while (true)
-        {
-            var value = await probe();
-            if (done(value))
-            {
-                return value;
-            }
-
-            if (DateTime.UtcNow > deadline)
-            {
-                throw new TimeoutException($"condition not reached within {Patience}; last value: {value}");
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
-        }
     }
 }

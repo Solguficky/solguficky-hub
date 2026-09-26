@@ -8,6 +8,7 @@ using Notifications.V1;
 using Npgsql;
 using Shouldly;
 using Xunit;
+using static Notifications.IntegrationTests.Infrastructure.FactFixtures;
 
 namespace Notifications.IntegrationTests.Scenarios;
 
@@ -32,8 +33,6 @@ public class MeetupChangeFactTests
     private const string MeetupCancelledSubject = "events.meetups.meetup_cancelled";
     private const string MeetupUnpublishedSubject = "events.meetups.meetup_unpublished";
     private const string MaterialAttachedSubject = "events.meetups.meetup_material_attached";
-
-    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Одна категория продукта, два вида факта: правка сведений и отмена
@@ -318,73 +317,11 @@ public class MeetupChangeFactTests
     private static async Task<IReadOnlyList<Notification>> OfType(NatsUnderTest nats, Notification.TypeOneofCase type) =>
         (await nats.PublishedFacts()).Select(fact => fact.Fact).Where(fact => fact.TypeCase == type).ToArray();
 
-    private static async Task<Guid> Person(IsolatedDatabase db, params string[] roles) =>
-        await Person(db, blocked: false, roles);
-
-    private static async Task<Guid> Person(IsolatedDatabase db, bool blocked, params string[] roles)
-    {
-        var id = Guid.CreateVersion7();
-        await Execute(
-            db,
-            """
-            INSERT INTO identity_replica (identity_id, version, global_roles, blocked, occurred_at, applied_at)
-            VALUES (@Id, 1, @Roles, @Blocked, now(), now());
-            """,
-            new { Id = id, Roles = roles, Blocked = blocked });
-
-        return id;
-    }
-
-    private static Task Subscribe(IsolatedDatabase db, Guid person, string meetupId) =>
-        Execute(
-            db,
-            """
-            INSERT INTO meetup_subscription (identity_id, meetup_id, subscribed_at)
-            VALUES (@Person, @MeetupId, now());
-            """,
-            new { Person = person, MeetupId = Guid.Parse(meetupId) });
-
-    private static Task Preference(IsolatedDatabase db, Guid person, string? meetupId, string category, bool enabled) =>
-        Execute(
-            db,
-            """
-            INSERT INTO notification_preference (identity_id, meetup_id, category, enabled, updated_at)
-            VALUES (@Person, @MeetupId, @Category, @Enabled, now());
-            """,
-            new { Person = person, MeetupId = meetupId is null ? (Guid?)null : Guid.Parse(meetupId), Category = category, Enabled = enabled });
-
     private static async Task<long> Facts(IsolatedDatabase db, string type)
     {
         await using var connection = new NpgsqlConnection(db.ConnectionString);
         return await connection.ExecuteScalarAsync<long>(
             "SELECT count(*) FROM notification WHERE type = @Type;",
             new { Type = type });
-    }
-
-    private static async Task Execute(IsolatedDatabase db, string sql, object parameters)
-    {
-        await using var connection = new NpgsqlConnection(db.ConnectionString);
-        await connection.ExecuteAsync(sql, parameters);
-    }
-
-    private static async Task<T> Eventually<T>(Func<Task<T>> probe, Func<T, bool> done)
-    {
-        var deadline = DateTime.UtcNow + Patience;
-
-        while (true)
-        {
-            var value = await probe();
-            if (done(value))
-            {
-                return value;
-            }
-
-            if (DateTime.UtcNow > deadline)
-            {
-                throw new TimeoutException($"condition not reached within {Patience}; last value: {value}");
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
-        }
     }
 }
