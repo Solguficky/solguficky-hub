@@ -13,6 +13,8 @@ function adapter(overrides: Partial<Rpc>) {
     setMeetupCategoryPreference: vi.fn(),
     getGlobalNotificationPreferences: vi.fn(),
     getMeetupNotificationPreferences: vi.fn(),
+    broadcastToMeetupSubscribers: vi.fn(),
+    broadcastToCommunity: vi.fn(),
     ...overrides,
   } as unknown as Rpc);
 }
@@ -154,6 +156,53 @@ describe("notifications client", () => {
     });
 
     const result = await notifications.getGlobalPreferences("identity-id");
+
+    expect(result.kind).toBe(kind);
+  });
+
+  it("sends the broadcast key as the request id and reports a repeat", async () => {
+    const broadcastToMeetupSubscribers = vi
+      .fn()
+      .mockResolvedValue({ id: "b", acceptedAt: "t", created: false });
+    const notifications = adapter({ broadcastToMeetupSubscribers });
+
+    const result = await notifications.broadcastToMeetupSubscribers({
+      identityId: "identity-id",
+      meetupId: "meetup-id",
+      broadcastId: "broadcast-id",
+      body: "Переносим на час позже",
+    });
+
+    expect(result).toEqual({ kind: "ok", created: false });
+    expect(broadcastToMeetupSubscribers).toHaveBeenCalledWith(
+      {
+        identityId: "identity-id",
+        meetupId: "meetup-id",
+        id: "broadcast-id",
+        body: "Переносим на час позже",
+      },
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    [Code.PermissionDenied, "forbidden"],
+    [Code.AlreadyExists, "conflict"],
+    [Code.InvalidArgument, "invalid"],
+    [Code.Unavailable, "unavailable"],
+    [Code.DeadlineExceeded, "timeout"],
+  ])("maps a community announcement refusal %s to %s", async (code, kind) => {
+    const notifications = adapter({
+      broadcastToCommunity: vi
+        .fn()
+        .mockRejectedValue(new ConnectError("refused", code)),
+    });
+
+    const result = await notifications.broadcastToCommunity({
+      identityId: "identity-id",
+      broadcastId: "broadcast-id",
+      body: "Сбор в субботу",
+    });
 
     expect(result.kind).toBe(kind);
   });

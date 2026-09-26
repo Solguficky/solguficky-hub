@@ -114,7 +114,27 @@ export type ExecuteRequest =
       requestId?: string;
       useCase?: string;
     }
-  | NotificationRequest;
+  | NotificationRequest
+  | BroadcastRequest;
+
+// Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
+// кругу сообщества, который разворачивает Notifications. Списка получателей
+// поверхность не видит и не передаёт.
+export type BroadcastAudience =
+  | { kind: "meetup"; meetupId: string }
+  | { kind: "community" };
+
+// `broadcastId` — ключ идемпотентности, рождённый в кнопке подтверждения:
+// двойное нажатие и повтор после сбоя несут один и тот же ключ.
+export type BroadcastRequest = {
+  identity: Person;
+  intent: "send-broadcast";
+  audience: BroadcastAudience;
+  broadcastId: string;
+  body: string;
+  requestId?: string;
+  useCase?: string;
+};
 
 // Подписка и категории — две независимые плоскости, и намерения их не смешивают:
 // «слежу за этой сходкой» не выводится из набора категорий и не выводит его.
@@ -240,6 +260,13 @@ export type ExecuteResult =
       kind: "meetup-state-unchanged";
       reason: "already-cancelled" | "already-hidden" | "not-scheduled";
       meetup: MeetupSnapshot;
+    }
+  // Рассылка принята, а не доставлена. `repeated` — этот ключ уже был принят
+  // раньше, и второй раз сообщение не уходит (E-09).
+  | {
+      kind: "broadcast-accepted";
+      audience: BroadcastAudience;
+      repeated?: true;
     }
   | { kind: "material-attached"; meetup: MeetupSnapshot }
   | { kind: "material-removed"; meetup: MeetupSnapshot }

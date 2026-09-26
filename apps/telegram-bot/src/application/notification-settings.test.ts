@@ -41,6 +41,8 @@ function notificationsStub(overrides: Partial<Notifications>): Notifications {
     setSubscription: vi.fn(),
     setGlobalCategory: vi.fn(),
     setMeetupCategory: vi.fn(),
+    broadcastToMeetupSubscribers: vi.fn(),
+    broadcastToCommunity: vi.fn(),
     ...overrides,
   };
 }

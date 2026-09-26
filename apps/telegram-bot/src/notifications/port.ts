@@ -45,6 +45,21 @@ export type MeetupPreferencesResult =
   | { kind: "ok"; preferences: MeetupPreferences }
   | NotificationFailure;
 
+// Приём, а не доставка: `BroadcastAccepted` не несёт ни числа получателей, ни
+// отметки о доставке, и «отобрано 7» автор прочёл бы как «получили 7»
+// (docs/architecture/integration.md). `created` ложен на повторе того же `id`.
+export type BroadcastResult =
+  | { kind: "ok"; created: boolean }
+  | NotificationFailure;
+
+// Автор, ключ и текст. Круга адресатов в команде нет: его разворачивает сервис,
+// и право на рассылку он проверяет сам, какой бы ни была поверхность.
+export type Broadcast = {
+  identityId: string;
+  broadcastId: string;
+  body: string;
+};
+
 // Каждая команда несёт целевое состояние, а не переворот текущего, и возвращает
 // снимок области, к которой относится. Операции снятия переопределения в
 // контракте нет: «наследовать глобальное» на проводе не выражается
@@ -78,4 +93,12 @@ export type Notifications = {
     enabled: boolean,
     meta?: RpcMetadata,
   ): Promise<MeetupPreferencesResult>;
+  broadcastToMeetupSubscribers(
+    broadcast: Broadcast & { meetupId: string },
+    meta?: RpcMetadata,
+  ): Promise<BroadcastResult>;
+  broadcastToCommunity(
+    broadcast: Broadcast,
+    meta?: RpcMetadata,
+  ): Promise<BroadcastResult>;
 };

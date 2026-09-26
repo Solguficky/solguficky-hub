@@ -10,6 +10,7 @@ import {
 } from "../../gen/notifications/v1/notifications_service_pb.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
 import type {
+  BroadcastResult,
   CategoryState,
   GlobalPreferences,
   GlobalPreferencesResult,
@@ -29,6 +30,8 @@ type NotificationsRpc = Pick<
   | "setMeetupCategoryPreference"
   | "getGlobalNotificationPreferences"
   | "getMeetupNotificationPreferences"
+  | "broadcastToMeetupSubscribers"
+  | "broadcastToCommunity"
 >;
 
 export type NotificationsClient = Notifications & { close(): void };
@@ -84,7 +87,34 @@ export function createNotificationsAdapter(
       return toFailure(cause);
     }
   };
+  const broadcast = async (
+    operation: () => Promise<{ created: boolean }>,
+  ): Promise<BroadcastResult> => {
+    try {
+      const response = await operation();
+      return { kind: "ok", created: response.created };
+    } catch (cause) {
+      return toFailure(cause);
+    }
+  };
   return {
+    broadcastToMeetupSubscribers: (
+      { identityId, meetupId, broadcastId, body },
+      meta,
+    ) =>
+      broadcast(() =>
+        rpc.broadcastToMeetupSubscribers(
+          { identityId, meetupId, id: broadcastId, body },
+          options(meta),
+        ),
+      ),
+    broadcastToCommunity: ({ identityId, broadcastId, body }, meta) =>
+      broadcast(() =>
+        rpc.broadcastToCommunity(
+          { identityId, id: broadcastId, body },
+          options(meta),
+        ),
+      ),
     getGlobalPreferences: (identityId, meta) =>
       global(() =>
         rpc.getGlobalNotificationPreferences({ identityId }, options(meta)),
@@ -133,8 +163,9 @@ function toFailure(cause: unknown): NotificationFailure {
   ) {
     return { kind: "invalid", message: cause.message };
   }
-  // ALREADY_EXISTS приходит только на рассылках, которых у бота нет. Если он
-  // всё же доехал, это конфликт команды, а не недоступность зависимости.
+  // ALREADY_EXISTS приходит только на рассылке: тот же `id` уже принят с другим
+  // текстом, сходкой или автором. Это конфликт команды, а не недоступность
+  // зависимости, и повтор с тем же ключом его не вылечит.
   if (cause instanceof ConnectError && cause.code === Code.AlreadyExists) {
     return { kind: "conflict" };
   }

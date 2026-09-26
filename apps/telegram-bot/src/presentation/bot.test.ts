@@ -3751,3 +3751,297 @@ describe("past meetup date", () => {
     ).toBe(true);
   });
 });
+
+describe("broadcast frames", () => {
+  const meetupToken = "AZLzpLXGfY6fChssPU5fYA";
+  const broadcastToken = "AZnA3gAAAAAAAABfP4Lqmw";
+  const body = "Переносим начало на вечер.";
+
+  function previewConfirmation(text = body, fromId = 1) {
+    return {
+      text: "Выше — текст для подписчиков сходки «Настолки».",
+      reply_to_message: {
+        message_id: 8,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: fromId, is_bot: fromId === 1, first_name: "stub" },
+        text,
+      },
+    };
+  }
+
+  it("shows the broadcast entry on the card to an admin only", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const admin = createHarness(resolvedIdentity(["admin"]), { execute });
+    const member = createHarness(resolvedIdentity(["member"]), { execute });
+    await admin.bot.init();
+    await member.bot.init();
+
+    await admin.bot.handleUpdate(callbackUpdate(`v1:view:${meetupToken}`));
+    await member.bot.handleUpdate(callbackUpdate(`v1:view:${meetupToken}`));
+
+    expect(JSON.stringify(admin.calls)).toContain(`v1:bc:m:${meetupToken}`);
+    expect(JSON.stringify(member.calls)).not.toContain("v1:bc:");
+  });
+
+  it("offers the community announcement in management to an admin only", async () => {
+    const admin = createHarness(resolvedIdentity(["admin"]));
+    const member = createHarness(resolvedIdentity(["member"]));
+    await admin.bot.init();
+    await member.bot.init();
+
+    await admin.bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    await member.bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    expect(JSON.stringify(admin.calls)).toContain("v1:bc:c");
+    expect(JSON.stringify(member.calls)).not.toContain("v1:bc:c");
+  });
+
+  it("does not ask a non-admin for broadcast text", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"]),
+      { execute },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${meetupToken}`));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: "Писать подписчикам может только организатор сходки." },
+    });
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "send_broadcast",
+    });
+  });
+
+  it("previews the text and warns of irreversibility before anything is sent", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${meetupToken}`));
+    expect(sendMessageText(calls.at(-1))).toContain("«Настолки»");
+    await bot.handleUpdate(
+      replyUpdate({
+        text: `  ${body}  `,
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(
+      execute.mock.calls.some(
+        ([request]) => request.intent === "send-broadcast",
+      ),
+    ).toBe(false);
+    // Сходку читают при вопросе и не перечитывают на ответе: сбой Meetups в
+    // этот момент не должен стоить человеку набранного текста.
+    expect(execute).toHaveBeenCalledTimes(1);
+    const preview = calls.at(-2);
+    const confirmation = calls.at(-1);
+    // Предпросмотр — ровно текст рассылки, без заголовка и числа получателей.
+    expect(sendMessageText(preview)).toBe(body);
+    const text = sendMessageText(confirmation) ?? "";
+    expect(text).toContain("Отменить отправку будет нельзя");
+    expect(text).toContain("«Настолки»");
+    expect(text).not.toMatch(/\d/);
+    expect(confirmation?.payload).toMatchObject({
+      reply_parameters: { message_id: expect.any(Number) },
+    });
+    expect(JSON.stringify(confirmation?.payload)).toMatch(
+      new RegExp(`v1:bc:ms:${meetupToken}:[A-Za-z0-9_-]{22}`),
+    );
+    expect(JSON.stringify(confirmation?.payload)).toContain("v1:bc:no");
+  });
+
+  it("asks again when the answer is too long to send", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:bc:c"));
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "я".repeat(4097),
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    const retry = calls.at(-1);
+    expect(sendMessageText(retry)).toContain("длиннее 4096 символов");
+    expect(retry?.payload).toMatchObject({
+      reply_markup: { force_reply: true },
+    });
+  });
+
+  it("sends the previewed text with the key from the button once confirmed", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "broadcast-accepted",
+      audience: { kind: "community" },
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        `v1:bc:cs:${broadcastToken}`,
+        previewConfirmation(),
+      ),
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "send-broadcast",
+        audience: { kind: "community" },
+        broadcastId: tokenToUuid(broadcastToken),
+        body,
+      }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: "Объявление принято к отправке участникам сообщества." },
+    });
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "send_broadcast",
+    });
+  });
+
+  // Бот не проверяет право на подтверждении: вызов мимо кадра получает отказ
+  // Notifications, и человек видит E-01, а не отправленную рассылку.
+  it("answers a Notifications refusal with the permission frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "forbidden",
+    });
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"]),
+      { execute },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        `v1:bc:ms:${meetupToken}:${broadcastToken}`,
+        previewConfirmation(),
+      ),
+    );
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "send-broadcast" }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "Писать подписчикам может только организатор сходки. Ничего не отправлено.",
+      },
+    });
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "send_broadcast",
+    });
+  });
+
+  it("tells a repeated confirmation that nothing is sent twice", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "broadcast-accepted",
+      audience: { kind: "community" },
+      repeated: true,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        `v1:bc:cs:${broadcastToken}`,
+        previewConfirmation(),
+      ),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт.",
+      },
+    });
+  });
+
+  it("offers a retry with the same key when Notifications does not answer", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    const data = `v1:bc:ms:${meetupToken}:${broadcastToken}`;
+
+    await bot.handleUpdate(callbackMessageUpdate(data, previewConfirmation()));
+
+    const frame = calls.at(-1);
+    expect(frame?.method).toBe("editMessageText");
+    expect(JSON.stringify(frame?.payload)).toContain(data);
+    expect(JSON.stringify(frame?.payload)).toContain(
+      "второй раз сообщение не уйдёт",
+    );
+  });
+
+  it("refuses a confirmation whose preview is not the bot's own message", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        `v1:bc:cs:${broadcastToken}`,
+        previewConfirmation(body, 42),
+      ),
+    );
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:bc:cs:${broadcastToken}`, {
+        text: "без ответа",
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    const frames = calls.filter((call) => call.method === "editMessageText");
+    expect(frames).toHaveLength(2);
+    expect(JSON.stringify(frames)).toContain("Ничего не отправлено");
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "invariant",
+      use_case: "send_broadcast",
+    });
+  });
+});

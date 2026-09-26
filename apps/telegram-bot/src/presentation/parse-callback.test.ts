@@ -337,4 +337,42 @@ describe("notification callbacks", () => {
       expect(parseCallback(data).kind).not.toBe("malformed");
     }
   });
+
+  it("parses the broadcast entries, confirmations and cancel within the byte budget", () => {
+    const meetup = "AZLzpLXGfY6fChssPU5fYA";
+    const broadcast = "AZjypHwefTqbIU-OEqs0zg";
+    const cases = [
+      [`v1:bc:m:${meetup}`, { kind: "begin-meetup-broadcast", token: meetup }],
+      ["v1:bc:c", { kind: "begin-community-broadcast" }],
+      [
+        `v1:bc:ms:${meetup}:${broadcast}`,
+        {
+          kind: "confirm-meetup-broadcast",
+          token: meetup,
+          broadcastToken: broadcast,
+        },
+      ],
+      [
+        `v1:bc:cs:${broadcast}`,
+        { kind: "confirm-community-broadcast", broadcastToken: broadcast },
+      ],
+      ["v1:bc:no", { kind: "cancel-broadcast" }],
+    ] as const;
+    for (const [data, expected] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(expected);
+    }
+  });
+
+  it("rejects broadcast callbacks with a broken token or shape", () => {
+    for (const data of [
+      "v1:bc:m:short",
+      "v1:bc:ms:AZLzpLXGfY6fChssPU5fYA",
+      "v1:bc:ms:AZLzpLXGfY6fChssPU5fYA:short",
+      "v1:bc:cs:AZLzpLXGfY6fChssPU5fYA:extra",
+      "v1:bc:send",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
 });
