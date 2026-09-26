@@ -19,7 +19,7 @@
 | `Contour.Environment` | подъём топологии, предусловия, ожидание готовности, адреса, сбор логов |
 | `Contour.E2ETests` | один дымовой сценарий через настоящие Identity и Meetups |
 | `Contour.Host` | отдаёт `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL` внешнему потребителю |
-| `Contour.Contracts` | generated-only C#-клиент Identity; сам Identity генерирует только Go |
+| `Contour.Contracts` | generated-only точка C#-клиентов Identity и Meetups; клиенты генерирует `Meetups.Contracts`, сам Identity генерирует только Go |
 
 ### Предусловия
 

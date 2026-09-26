@@ -83,6 +83,44 @@ public class ReplicaMappingTests
                 new TimeOnly(2, 0)));
     }
 
+    /// <summary>
+    /// Карточка сработавшего напоминания собирается из реплики, а не из
+    /// события. Разбор и обратное отображение обязаны сходиться на каждой
+    /// форме расписания: иначе канал рисовал бы напоминание не той сходкой,
+    /// о которой пришла «новая сходка».
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Schedules))]
+    public void Card_FromReplicaColumns_RepeatsCardOfTheEvent(string form, Schedule schedule)
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2);
+        message.State.Schedule = schedule;
+        message.State.Lifecycle = MeetupLifecycle.Cancelled;
+        message.State.Visibility = MeetupVisibility.Hidden;
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        var card = ReplicaMapping.Card(fact.MeetupId, fact.State);
+
+        card.ShouldBe(fact.Card, form);
+    }
+
+    public static TheoryData<string, Schedule> Schedules() => new()
+    {
+        { "no_date", new Schedule { NoDate = new NoDate() } },
+        { "tentative day", new Schedule { Tentative = new DateValue { Day = new CalendarDate { Year = 2026, Month = 10, Day = 15 } } } },
+        { "fixed day_start", new Schedule { Fixed = new DateValue { DayStart = At(2026, 10, 15, 19, 30) } } },
+        {
+            "fixed interval",
+            new Schedule
+            {
+                Fixed = new DateValue
+                {
+                    Interval = new LocalInterval { Start = At(2026, 10, 15, 19, 0), End = At(2026, 10, 16, 2, 0) },
+                },
+            }
+        },
+    };
+
     [Theory]
     [MemberData(nameof(BrokenMeetups))]
     public void Meetup_ContractViolation_BecomesPoison(string violation, Action<MeetupEvent> breakIt)

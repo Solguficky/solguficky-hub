@@ -61,6 +61,29 @@ module Inbound =
 
     let meetupId (value: string) : Result<MeetupId, InvalidRequest> = uuidV7 "id" value |> Result.map MeetupId
 
+    /// Человек, о котором спрашивает другой сервис, приходит одним идентификатором —
+    /// без ролей: их Meetups спрашивает у Identity сам (ADR-051).
+    let identityId (value: string) : Result<PersonId, InvalidRequest> =
+        uuidV7 "identity_id" value |> Result.map PersonId
+
+    /// Принимаемые отношения, в отличие от ролей смотрящего, неизвестного значения
+    /// не прощают: пустой набор, UNSPECIFIED и значение вне словаря — ошибка
+    /// вызывающего, и молчаливый отказ спрятал бы её (ADR-051, п. 2). Отбросить
+    /// неизвестное здесь значило бы сузить набор, который вызывающий объявил.
+    let acceptedRelations (values: Meetups.V1.MeetupRelation seq) : Result<Set<MeetupRelation>, InvalidRequest> =
+        let field = "accepted_relations"
+
+        let relation (value: Meetups.V1.MeetupRelation) =
+            match value with
+            | Meetups.V1.MeetupRelation.CommunityAdministrator -> Some CommunityAdministrator
+            | _ -> None
+
+        let parsed = values |> Seq.map relation |> List.ofSeq
+
+        if List.isEmpty parsed then Error(invalid field "must not be empty")
+        elif List.contains None parsed then Error(invalid field "must contain only known relations")
+        else Ok(parsed |> List.choose id |> Set.ofList)
+
     let materialId (value: string) : Result<MaterialId, InvalidRequest> =
         uuidV7 "material_id" value
         |> Result.map MaterialId

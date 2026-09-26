@@ -55,6 +55,7 @@
     <Compile Include="Observability/IncomingMetadata.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
+    <Compile Include="Transport/IdentityRoleClient.fs" />
     <Compile Include="Transport/NatsEventPublisher.fs" />
     <Compile Include="Transport/OutboxDispatchWorker.fs" />
     <Compile Include="Transport/DuePublicationWorker.fs" />

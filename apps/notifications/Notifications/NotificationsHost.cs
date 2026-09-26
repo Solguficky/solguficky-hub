@@ -178,6 +178,11 @@ public static class NotificationsHost
         // от часов машины, а период прохода sweeper'а иначе нечем двигать.
         builder.Services.AddSingleton(TimeProvider.System);
 
+        // Пояс сообщества разбирается здесь, при сборке хоста, а не при первом
+        // событии: пустое и неизвестное имя роняют старт, а не каждое
+        // применение сходки. Program проверяет то же раньше ради внятной строки.
+        builder.Services.AddSingleton(CommunityTime.Parse(builder.Configuration[CommunityTime.TimeZoneVariable]));
+
         builder.Services.Configure<MeetupReminderOptions>(
             builder.Configuration.GetSection(MeetupReminderOptions.SectionName));
 
@@ -209,6 +214,10 @@ public static class NotificationsHost
             builder.Services.AddSingleton(_ => new NatsConnection(new NatsOpts { Url = natsUrl, Name = ServiceId }));
             builder.Services.AddSingleton<INatsJSContext>(services =>
                 new NatsJSContext(services.GetRequiredService<NatsConnection>()));
+
+            // Раньше потребителей: соединение открывается лениво, на первом их
+            // обращении, и подписка на его события должна его опередить.
+            builder.Services.AddHostedService<BusConnectionWatcher>();
 
             // AddSingleton, а не AddHostedService: тот регистрирует через
             // TryAddEnumerable по типу реализации, и второй потребитель того же

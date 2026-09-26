@@ -28,7 +28,13 @@ public static class NotificationFacts
     public const string MeetupUnpublishedType = "meetup_unpublished";
 
     /// <inheritdoc cref="MeetupPublishedType" />
+    public const string MeetupReminderType = "meetup_reminder";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string ReminderTaskCause = "reminder_task";
 
     /// <summary>
     /// Причины снятия неотправленного факта в колонке
@@ -55,6 +61,9 @@ public static class NotificationFacts
 
     /// <summary>Категория нового материала.</summary>
     public const NotificationCategory MeetupMaterialCategory = NotificationCategory.MeetupMaterial;
+
+    /// <summary>Категория напоминания. Единственная выключенная по умолчанию.</summary>
+    public const NotificationCategory MeetupReminderCategory = NotificationCategory.MeetupReminder;
 
     /// <summary>
     /// Роли круга <c>member</c>, который принимает хаб (ADR-043). Identity
@@ -134,6 +143,38 @@ public static class NotificationFacts
         return notification;
     }
 
+    /// <summary>Напоминание о сходке одному получателю.</summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="card">Карточка на момент срабатывания.</param>
+    /// <param name="notAfter">
+    /// Момент начала сходки: напоминание, не ушедшее до начала, уже шум, и релей
+    /// снимет его по сроку.
+    /// </param>
+    /// <remarks>
+    /// <c>request_id</c> у факта нет: у срабатывания таймера нет цепочки, которую
+    /// начал человек, а своего id Notifications не рождает
+    /// (docs/architecture/integration.md, «Notifications NATS»).
+    /// </remarks>
+    public static Notification MeetupReminder(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        MeetupCard card,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.MeetupReminder = new V1.MeetupReminder { Meetup = card.Clone() };
+
+        return notification;
+    }
+
     /// <summary>RFC 3339 в UTC, как остальные моменты контрактов.</summary>
     public static string Instant(DateTimeOffset moment) =>
         moment.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", System.Globalization.CultureInfo.InvariantCulture);
@@ -151,7 +192,25 @@ public static class NotificationFacts
     // в очереди дольше срока, доставлять уже не нужно (FactOptions.StaleAfter).
     // Карточка копируется в каждый факт: один повод разворачивается на многих
     // получателей, и правка одного сообщения не должна задевать другие.
-    private static Notification Addressed(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
+    //
+    // Факт из события переносит его request_id без изменений и своего не
+    // рождает (docs/architecture/integration.md, «Notifications NATS»).
+    private static Notification Addressed(Guid notificationId, Guid recipientId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter) =>
+        Envelope(
+            notificationId,
+            recipientId,
+            new Cause { MeetupEventId = fact.EventId.ToString() },
+            fact.RequestId,
+            now,
+            notAfter);
+
+    private static Notification Envelope(
+        Guid notificationId,
+        Guid recipientId,
+        Cause cause,
+        string? requestId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
     {
         var notification = new Notification
         {
@@ -159,12 +218,10 @@ public static class NotificationFacts
             RecipientId = recipientId.ToString(),
             CreatedAt = Instant(now),
             NotAfter = Instant(notAfter),
-            Cause = new Cause { MeetupEventId = fact.EventId.ToString() },
+            Cause = cause,
         };
 
-        // Факт из события переносит его request_id без изменений и своего не
-        // рождает (docs/architecture/integration.md, «Notifications NATS»).
-        if (fact.RequestId is { } requestId)
+        if (requestId is not null)
         {
             notification.RequestId = requestId;
         }

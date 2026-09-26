@@ -33,6 +33,11 @@ internal static class MeetupsSetup
             // `Host.build` падает на старте, а не на первом запросе. Значение
             // общее с ботом (CommunityTime).
             .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
+            // Источник права для CheckMeetupAuthority: роль администратора Meetups
+            // спрашивает у Identity сам (ADR-051). Профиль без identity оставляет
+            // переменную пустой, и метод честно отвечает UNAVAILABLE — остальные
+            // операции Identity не нужны, поэтому профиль `meetups` его не поднимает.
+            .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "MEETUPS_IDENTITY_GRPC_URL")
             // Адрес шины для адаптера публикации из журнала. Узла nats в запуске
             // нет — bind молчит, и Meetups поднимается с ненастроенным портом:
             // события копятся в журнале и уйдут, когда адрес появится. WaitFor

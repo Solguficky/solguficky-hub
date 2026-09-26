@@ -17,7 +17,10 @@ open Microsoft.Extensions.Hosting
 open Npgsql
 open OpenTelemetry.Metrics
 
-let build (args: string array) : WebApplication =
+/// `configure` дописывает регистрации последними и потому перекрывает их. Шов нужен
+/// одному: интеграционный тест подставляет порт Identity, не поднимая Identity, и
+/// проверяет остальной composition root как есть. Запуск его не использует.
+let buildWith (configure: IServiceCollection -> unit) (args: string array) : WebApplication =
     let builder = WebApplication.CreateBuilder(args)
 
     builder.AddServiceDefaults() |> ignore
@@ -137,6 +140,23 @@ let build (args: string array) : WebApplication =
         )
         |> ignore
 
+    // Источник права для CheckMeetupAuthority (ADR-051). Ветка по конфигурации, как
+    // у шины: без адреса хост поднимается, а метод отвечает UNAVAILABLE — профиль
+    // `meetups` Identity не поднимает намеренно. Недоступный Identity при заданном
+    // адресе — тот же UNAVAILABLE, но уже ответом на вызов, а не молчаливым отключением.
+    match builder.Configuration[IdentityRoleClient.UrlVariable] with
+    | null
+    | "" ->
+        builder.Services.AddSingleton<CheckMeetupAuthority.Port>(CheckMeetupAuthority.Port.Unconfigured)
+        |> ignore
+    | url ->
+        let send = IdentityRoleClient.connect url
+
+        builder.Services.AddSingleton<CheckMeetupAuthority.Port>(
+            CheckMeetupAuthority.Port.Connected(IdentityRoleClient.ask send IdentityRoleClient.defaultDeadline)
+        )
+        |> ignore
+
     builder.Services.AddHostedService<OutboxDispatchWorker>()
     |> ignore
 
@@ -164,6 +184,8 @@ let build (args: string array) : WebApplication =
     )
     |> ignore
 
+    configure builder.Services
+
     let app = builder.Build()
 
     // MapDefaultEndpoints намеренно не вызывается: /health и /alive недостижимы
@@ -173,3 +195,5 @@ let build (args: string array) : WebApplication =
     app.MapGrpcReflectionService() |> ignore
 
     app
+
+let build (args: string array) : WebApplication = buildWith ignore args

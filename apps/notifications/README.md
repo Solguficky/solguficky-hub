@@ -2,7 +2,7 @@
 
 Сервис отвечает на вопрос «кому и что положено прислать». На вопрос «дошло ли» он не отвечает и отвечать отказывается: ответственность, границы и две плоскости взаимодействия описаны в [docs/services/notifications.md](../../docs/services/notifications.md), решения — в [ADR-028](../../docs/decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) и [ADR-029](../../docs/decisions/ADR-029-notifications-orleans-stack.md).
 
-Сейчас сервис умеет подписки и настройки категорий — шесть синхронных операций контракта поверх своей схемы — и напоминание за сутки: материализованное задание со sweeper'ом. Обе ручные рассылки отвечают `Unimplemented`, реплика чужих фактов не начата. Что есть и чего намеренно нет — ниже.
+Сейчас сервис умеет подписки и настройки категорий — шесть синхронных операций контракта поверх своей схемы — и напоминание за сутки: материализованное задание со sweeper'ом, которое ведёт поток событий Meetups и которое на срабатывании разворачивается на подписчиков адресными фактами `meetup_reminder`. Обе ручные рассылки отвечают `Unimplemented`, реплика чужих фактов не начата. Что есть и чего намеренно нет — ниже.
 
 ## Раскладка
 
@@ -40,7 +40,7 @@
 
 `reminder_task` — материализованное задание напоминания, одно на сходку и её момент начала ([PER-221](https://linear.app/anticnvm/issue/per-221)). Состояний четыре: `scheduled`, `fired`, `cancelled`, `superseded`. Живое задание на сходку ровно одно, и это частичный уникальный индекс, а не соглашение в коде; завершённые остаются строками и копят историю переносов.
 
-`notification_occasion` — повод, порождённый сработавшим заданием, один на задание. Разворот на получателей и публикация в шину — PER-72.
+`notification_occasion` — повод, порождённый сработавшим заданием, один на задание. Разворот на получателей идёт той же транзакцией строками `notification`, в шину их выносит общий релей ([PER-364](https://linear.app/anticnvm/issue/per-364)).
 
 Рядом живут таблицы Orleans: `orleansquery`, `orleansmembershiptable`, `orleansmembershipversiontable`, `orleansreminderstable`. Их заводят вендорные скрипты `001_orleans_main.sql`, `002_orleans_clustering.sql` и `005_orleans_reminders.sql` — копии из `dotnet/orleans` на теге `v10.3.1`, адаптированные на идемпотентность; список правок стоит в шапке каждого файла.
 
@@ -64,10 +64,10 @@ HTTP-эндпоинтов health у сервиса нет: Kestrel слушае�
 aspire run -- --profile notifications
 ```
 
-Вне Aspire нужна своя база; адрес берётся из `NOTIFICATIONS_DATABASE_URL` и принимает обе формы — готовую строку Npgsql и URI `postgres://…`:
+Вне Aspire нужна своя база; адрес берётся из `NOTIFICATIONS_DATABASE_URL` и принимает обе формы — готовую строку Npgsql и URI `postgres://…`. Пояс сообщества `NOTIFICATIONS_COMMUNITY_TIME_ZONE` (IANA) обязателен: без него процесс не стартует:
 
 ```bash
-NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notifications just notifications-run
+NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notifications NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow just notifications-run
 ```
 
 Миграции применяются при старте процесса, до подъёма силоса: без таблиц membership силос не поднимется.

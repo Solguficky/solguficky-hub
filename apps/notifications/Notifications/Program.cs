@@ -1,4 +1,5 @@
 using Notifications;
+using Notifications.Reminders;
 
 var databaseUrl = Environment.GetEnvironmentVariable(Migrations.DatabaseUrlVariable);
 
@@ -16,6 +17,19 @@ var natsUrl = Environment.GetEnvironmentVariable(NotificationsHost.NatsUrlVariab
 if (string.IsNullOrEmpty(natsUrl))
 {
     Console.Error.WriteLine($"{NotificationsHost.NatsUrlVariable} is not set");
+    return 1;
+}
+
+// Пояс сообщества обязателен: в нём реплика хранит расписание, и без него
+// момент напоминания не посчитать. Неизвестное имя — тот же отказ старта, а не
+// UTC молча.
+try
+{
+    CommunityTime.Parse(Environment.GetEnvironmentVariable(CommunityTime.TimeZoneVariable));
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
     return 1;
 }
 

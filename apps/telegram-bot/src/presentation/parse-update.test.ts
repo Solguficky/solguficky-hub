@@ -111,6 +111,39 @@ describe("parseUpdate", () => {
     ).toBe("ignored");
   });
 
+  it("maps menu commands to their existing screens", () => {
+    expect(messageText("/meetups")).toEqual({
+      kind: "screen",
+      screen: "hub",
+      telegramUserId: 42n,
+    });
+    expect(messageText("/archive")).toMatchObject({ screen: "archive" });
+    expect(messageText("/notifications")).toMatchObject({
+      screen: "notify-global",
+    });
+  });
+
+  it("accepts a menu command with a bot mention, any case and a tail", () => {
+    expect(messageText("/ARCHIVE@Stub_Bot")).toMatchObject({
+      kind: "screen",
+      screen: "archive",
+    });
+    expect(messageText("/meetups whatever")).toMatchObject({
+      kind: "screen",
+      screen: "hub",
+    });
+  });
+
+  it("ignores a menu command mentioned for another bot", () => {
+    expect(messageText("/meetups@other_bot")).toEqual({ kind: "ignored" });
+  });
+
+  it("ignores unknown commands, including prototype property names", () => {
+    for (const text of ["/help", "/constructor", "/toString", "/__proto__"]) {
+      expect(messageText(text)).toEqual({ kind: "ignored" });
+    }
+  });
+
   it("treats garbage as malformed", () => {
     const cases: unknown[] = [
       null,

@@ -36,6 +36,7 @@ import type {
 } from "../meetups/port.js";
 import type { NotificationCategory } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
+import type { NavScreen } from "./commands.js";
 import {
   editQuestion,
   parseEditQuestion,
@@ -292,7 +293,14 @@ async function handleMessage(
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
   try {
-    const replyId = ctx.message?.reply_to_message?.message_id;
+    const parsed = parseUpdate(ctx.update, ctx.me.username);
+    // Команда меню, выбранная, пока клиент держит режим ответа на вопрос,
+    // приходит ответом на него. Это команда, а не значение поля: разбор ответа
+    // её не видит, а вопрос остаётся ждать настоящего ответа.
+    const command = parsed.kind === "start" || parsed.kind === "screen";
+    const replyId = command
+      ? undefined
+      : ctx.message?.reply_to_message?.message_id;
     removeExpiredQuestions(questions, Date.now());
     const storedPending =
       replyId === undefined
@@ -606,7 +614,6 @@ async function handleMessage(
       };
       return;
     }
-    const parsed = parseUpdate(ctx.update, ctx.me.username);
     if (parsed.kind === "malformed") {
       outcome = {
         level: "warn",
@@ -626,7 +633,12 @@ async function handleMessage(
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
-    useCase = deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
+    useCase =
+      parsed.kind === "screen"
+        ? navScreenUseCase(parsed.screen)
+        : deepLink?.kind === "meetup"
+          ? "view_meetup"
+          : "find_meetup";
     const resolved = await runtime.identity.resolve(
       toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
       rpcCall(ctx, useCase),
@@ -650,6 +662,18 @@ async function handleMessage(
     );
     if (denied !== undefined) {
       outcome = denied;
+      return;
+    }
+    // Команда меню проходит тот же путь, что /start, — Identity и политику
+    // поверхности, — и открывает тот же экран, что и кнопка с тем же именем.
+    if (parsed.kind === "screen") {
+      outcome = await openNavScreen(
+        ctx,
+        runtime,
+        identity,
+        parsed.screen,
+        useCase,
+      );
       return;
     }
     const result = await runtime.dispatcher.execute(
@@ -1150,33 +1174,11 @@ async function handleCallback(
       return;
     }
     if (action.kind === "hub" || action.kind === "outdated") {
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "list-visible-meetups",
-        ...rpcCall(ctx, useCase),
-      });
-      await renderMeetupList(ctx, result);
-      outcome = screenBoundary(result, {
-        ok: ["meetup-list"],
-        okMessage: "meetup list sent",
-        rejectedMessage: "meetup list rejected",
-        useCase,
-      });
+      outcome = await openNavScreen(ctx, runtime, person, "hub", useCase);
       return;
     }
     if (action.kind === "archive") {
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "list-archived-meetups",
-        ...rpcCall(ctx, useCase),
-      });
-      await renderArchiveList(ctx, result);
-      outcome = screenBoundary(result, {
-        ok: ["archived-meetup-list"],
-        okMessage: "archive list sent",
-        rejectedMessage: "archive list rejected",
-        useCase,
-      });
+      outcome = await openNavScreen(ctx, runtime, person, "archive", useCase);
       return;
     }
     if (action.kind === "view-meetup") {
@@ -1534,25 +1536,24 @@ async function handleCallback(
       });
       return;
     }
-    if (
-      action.kind === "notify-global" ||
-      action.kind === "notify-set-global"
-    ) {
-      const result = await runtime.dispatcher.execute(
-        action.kind === "notify-global"
-          ? {
-              identity: person,
-              intent: "view-global-notifications",
-              ...rpcCall(ctx, useCase),
-            }
-          : {
-              identity: person,
-              intent: "set-global-category",
-              category: action.category,
-              enabled: action.enabled,
-              ...rpcCall(ctx, useCase),
-            },
+    if (action.kind === "notify-global") {
+      outcome = await openNavScreen(
+        ctx,
+        runtime,
+        person,
+        "notify-global",
+        useCase,
       );
+      return;
+    }
+    if (action.kind === "notify-set-global") {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "set-global-category",
+        category: action.category,
+        enabled: action.enabled,
+        ...rpcCall(ctx, useCase),
+      });
       await renderNotificationSettings(ctx, result, "v1:notify:global");
       outcome = screenBoundary(result, {
         ok: ["global-notification-settings"],
@@ -2108,6 +2109,12 @@ async function editScreen(
   text: string,
   keyboard: InlineKeyboard,
 ): Promise<void> {
+  // Экран, открытый командой, править нечем: кнопки под сообщением нет, и
+  // попытка правки дала бы два заведомо неудачных вызова Bot API.
+  if (ctx.callbackQuery === undefined) {
+    await ctx.reply(text, { reply_markup: keyboard });
+    return;
+  }
   try {
     const message = ctx.callbackQuery?.message;
     if (
@@ -2152,6 +2159,83 @@ function meetupSection(
   return meetups.length === 0
     ? undefined
     : `${heading}\n${meetups.map(meetupListLine).join("\n")}`;
+}
+
+// Экраны, куда ведут и кнопки навигации, и команды меню. Кнопка правит своё
+// сообщение, команда отвечает новым — это решает editScreen, а не вызывающий.
+async function openNavScreen(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  screen: NavScreen,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  switch (screen) {
+    case "hub": {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-visible-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderMeetupList(ctx, result);
+      return screenBoundary(result, {
+        ok: ["meetup-list"],
+        okMessage: "meetup list sent",
+        rejectedMessage: "meetup list rejected",
+        useCase,
+      });
+    }
+    case "archive": {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "list-archived-meetups",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderArchiveList(ctx, result);
+      return screenBoundary(result, {
+        ok: ["archived-meetup-list"],
+        okMessage: "archive list sent",
+        rejectedMessage: "archive list rejected",
+        useCase,
+      });
+    }
+    case "notify-global": {
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-global-notifications",
+        ...rpcCall(ctx, useCase),
+      });
+      await renderNotificationSettings(ctx, result, "v1:notify:global");
+      return screenBoundary(result, {
+        ok: ["global-notification-settings"],
+        okMessage: "global notification settings sent",
+        rejectedMessage: "global notification settings rejected",
+        useCase,
+      });
+    }
+    default: {
+      const _exhaustive: never = screen;
+      return unexpectedOutcome(
+        `unhandled navigation screen ${String(_exhaustive)}`,
+        undefined,
+        useCase,
+      );
+    }
+  }
+}
+
+function navScreenUseCase(screen: NavScreen): ProductUseCase {
+  switch (screen) {
+    case "hub":
+    case "archive":
+      return "find_meetup";
+    case "notify-global":
+      return "manage_notifications";
+    default: {
+      const _exhaustive: never = screen;
+      return _exhaustive;
+    }
+  }
 }
 
 // Главный экран — ответ на /start. Возврат на него с других экранов правит то

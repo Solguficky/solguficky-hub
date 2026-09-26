@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using NATS.Client.JetStream;
 using Notifications.Facts;
+using Notifications.Grains;
 using Notifications.Infrastructure;
 
 namespace Notifications.Replica;
@@ -21,6 +22,14 @@ namespace Notifications.Replica;
 /// durable — поломка развёртывания, и сервис на ней падает, а не молча
 /// заводит свой с другими настройками (docs/architecture/integration.md).
 ///
+/// Задание напоминания приводится в соответствие после коммита и до
+/// подтверждения, на каждое событие сходки — и на применённое, и на
+/// устаревшее, и на повтор. Повтор здесь несущий: ключ уже записан, поэтому
+/// сообщение, возвращённое после упавшего вызова грина, придёт как
+/// <see cref="ReplicaOutcome.Duplicate" />, и только этот вызов доведёт
+/// задание до реплики. Грин решает по реплике, а не по событию, поэтому
+/// повторный вызов ничего не портит.
+///
 /// Консьюмер — граница сервиса (docs/standards/observability/logging.md):
 /// каждое сообщение даёт ровно одну запись с каркасом, и отказ пишется здесь
 /// же, а не в хранилище под ним.
@@ -31,6 +40,7 @@ public sealed class ReplicaConsumer(
     ReplicaStore store,
     ReplicaTelemetry telemetry,
     FactTelemetry facts,
+    IGrainFactory grains,
     IOptions<ReplicaOptions> options,
     TimeProvider clock,
     ILogger<ReplicaConsumer> logger) : BackgroundService
@@ -143,6 +153,30 @@ public sealed class ReplicaConsumer(
         {
             facts.Record(produced.Type, produced.Facts);
             facts.RecordWithdrawn(NotificationFacts.WithdrawnOnCancellation, produced.Withdrawn ?? []);
+        }
+
+        if (fact is MeetupFact meetup)
+        {
+            try
+            {
+                await grains.GetGrain<IMeetupNotificationGrain>(meetup.MeetupId.ToString()).ApplyReplica();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Без подтверждения: реплика уже записана, а задание приведёт
+                // повтор, который придёт следующему запуску.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Эффект реплики зафиксирован, поэтому исход остаётся своим, а
+                // отказ называется отдельно: сообщение возвращается в шину ради
+                // задания, а не ради реплики.
+                ReplicaTelemetry.Fail("dependency_unavailable");
+                await message.NakAsync(delay: options.Value.RetryDelay, cancellationToken: stoppingToken);
+                Log(LogLevel.Error, message, startedAt, fact, outcomeName, "dependency_unavailable", "reminder schedule failed; message returned to the stream", ex, application.Facts);
+                return;
+            }
         }
 
         await message.AckAsync(cancellationToken: stoppingToken);

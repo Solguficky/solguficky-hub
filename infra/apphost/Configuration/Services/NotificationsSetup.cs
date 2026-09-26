@@ -18,6 +18,9 @@ internal static class NotificationsSetup
             .AddProject<Projects.Notifications>(AppHostNames.Resources.Notifications)
             .WithHttpEndpoint(name: AppHostNames.Endpoints.Grpc)
             .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc, AppHostNames.Readiness.Notifications)
+            // В этом поясе реплика хранит расписание, и в нём же момент начала
+            // становится мгновением, от которого считается напоминание.
+            .WithEnvironment("NOTIFICATIONS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             // Notifications — .NET, поэтому берёт готовую строку Npgsql, как Meetups.
             // Миграции применяет сам сервис при старте, до подъёма силоса: таблицы
             // membership Orleans заводит тот же DbUp.
