@@ -28,7 +28,7 @@
 
 ## Решение
 
-Топология шины — таблица данных в AppHost (`infra/apphost/Configuration/Infrastructure/JetStreamTopology.cs`), и применяет её AppHost на готовности узла `nats`. Узел получает том `solguficky-nats-data`.
+Топология шины — таблица данных в AppHost (`infra/apphost/AppHost/Configuration/Infrastructure/JetStreamTopology.cs`), и применяет её AppHost на готовности узла `nats`. Узел получает том `solguficky-nats-data`.
 
 - Стрим — один на домен-producer: `MEETUPS_EVENTS` на `events.meetups.>`, `IDENTITY_EVENTS` на `events.identity.>`. Retention `limits`, `max_age` 7 дней, `discard old`, хранение `file`, окно дедупликации 2 минуты.
 - Durable consumer принадлежит потребителю, а создаёт его топология. Имя — `<потребитель>-<стрим в нижнем регистре через дефис>`, один durable на пару «потребитель, стрим», pull, `ack_policy=explicit`, `deliver_policy=all`. Сервис привязывается к своему durable по имени и не заводит его. У `tools/nats-tester` свои durable, чтобы ручная проверка не сдвигала позицию продуктового.

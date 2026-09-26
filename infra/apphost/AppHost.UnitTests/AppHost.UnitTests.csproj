@@ -21,7 +21,7 @@
   <!-- IsAspireProjectResource="false": AppHost здесь предмет прогона, а не ресурс
        внутри чужого графа. Форма повторяет tests/contour/Contour.Environment. -->
   <ItemGroup>
-    <ProjectReference Include="..\apphost\AppHost.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\AppHost\AppHost.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
 </Project>

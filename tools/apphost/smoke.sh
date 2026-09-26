@@ -23,7 +23,7 @@
 
 set -eu
 
-APPHOST=infra/apphost/AppHost.csproj
+APPHOST=infra/apphost/AppHost/AppHost.csproj
 ATTACH=no
 KEEP=no
 while [ $# -gt 0 ]; do
@@ -36,9 +36,8 @@ done
 PROFILE=${1:-hub}
 [ $# -gt 0 ] && shift
 
-# `aspire` finds the AppHost by walking up from the current directory, and a
-# worktree lives inside the main clone: from anywhere but the root it would
-# pick the parent's AppHost.
+# APPHOST is relative to the repository root. `aspire.config.json` there names
+# the same AppHost, but the explicit `--apphost` below does not depend on it.
 cd "$(git rev-parse --show-toplevel)"
 
 for tool in aspire grpcurl python3; do

@@ -176,10 +176,10 @@ tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools a
 # --- Локальная оркестрация -------------------------------------------------
 
 # AppHost поднимает узлы, которыми владеет профиль. Профили — данные:
-# секция Topology:Profiles в infra/apphost/appsettings.json, там же их список.
+# секция Topology:Profiles в infra/apphost/AppHost/appsettings.json, там же их список.
 # Срез внутри профиля: `just aspire hub -- --run-services identity`.
 aspire profile="hub" *args="":
-    cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run {{args}}
+    TOPOLOGY__PROFILE={{profile}} aspire run {{args}}
 
 # Живой smoke-test профиля: ресурсы доходят до конечного состояния, каждый
 # gRPC-сервис отвечает доменным вызовом, а не только пробой здоровья. Нужны
@@ -190,7 +190,7 @@ aspire-smoke *args="":
 
 # Сборка Aspire AppHost
 apphost-build:
-    cd infra/apphost && dotnet build --nologo
+    dotnet build infra/apphost/AppHost/AppHost.csproj --nologo
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
@@ -206,7 +206,7 @@ APPHOST_TEST_THRESHOLD := "32"
 # с contour-test, где `dotnet test` глотает stdout набора.
 apphost-test:
     @echo "apphost-test: минимум {{APPHOST_TEST_THRESHOLD}} тестов — добавил тест, подними APPHOST_TEST_THRESHOLD в этом рецепте тем же изменением"
-    dotnet run --project infra/AppHost.UnitTests/AppHost.UnitTests.csproj -- --fail-skips on --minimum-expected-tests {{APPHOST_TEST_THRESHOLD}}
+    dotnet run --project infra/apphost/AppHost.UnitTests/AppHost.UnitTests.csproj -- --fail-skips on --minimum-expected-tests {{APPHOST_TEST_THRESHOLD}}
 
 # --- Identity (Go) ---------------------------------------------------------
 #

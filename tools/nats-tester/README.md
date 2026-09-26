@@ -201,7 +201,7 @@ nats-tester/
 
 **`nats not found`** — установите NATS CLI и добавьте `$(go env GOPATH)/bin` в `PATH`.
 
-**`Failed to connect to NATS`** — сервер не поднят. Локально NATS запускает AppHost: `cd infra/apphost && aspire run`.
+**`Failed to connect to NATS`** — сервер не поднят. Локально NATS запускает AppHost: `aspire run` из корня репозитория.
 
 **`Unknown message type for subject`** — subject не зарегистрирован в `registry.py`; см. «Добавление типа сообщения».
 

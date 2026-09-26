@@ -24,7 +24,7 @@
 apps/                         компоненты платформы: Identity, Meetups, Telegram Bot
 contracts/proto/              Protobuf-контракты NATS и gRPC
 docs/                         продукт, архитектура, решения и руководства
-infra/apphost/                локальная оркестрация .NET Aspire
+infra/apphost/                локальная оркестрация .NET Aspire: AppHost и его тесты
 infra/observability/          конфигурация Loki, Promtail и Grafana
 shared/dotnet/                общая обвязка .NET-сервисов (ServiceDefaults)
 tools/git-hooks/              скрипты проверок для хуков и CI
@@ -47,9 +47,10 @@ lefthook install
 Основная точка входа — AppHost:
 
 ```bash
-cd infra/apphost
 aspire run
 ```
+
+Какой AppHost запускать, CLI читает из корневого `aspire.config.json`, поэтому команда работает из любого каталога клона.
 
 Профиль перечисляет узлы, которыми AppHost владеет в запуске, и задаётся данными в `Topology:Profiles`; сейчас определены `infra`, `identity`, `meetups`, `notifications` и `hub`. Что подтверждено живым прогоном, а что нет, вместе с командами, переменными и известными ограничениями описано в [руководстве по локальной разработке](docs/development/local-development.md).
 
