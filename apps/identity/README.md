@@ -39,9 +39,12 @@ just aspire hub
 
 ```bash
 grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
+grpcurl -plaintext -d '{"service": "identity.v1.IdentityService"}'   localhost:50051 grpc.health.v1.Health/Check
 grpcurl -plaintext -d '{"telegram_user_id": 1}' \
   localhost:50051 identity.v1.IdentityService/ResolveIdentity
 ```
+
+Пустое имя в пробе отвечает liveness и базу не спрашивает; имя `identity.v1.IdentityService` отвечает готовностью и при недоступной базе даёт `NOT_SERVING`. Недоступная база отвечает доменному вызову `UNAVAILABLE` за одну-две секунды: предел подключения сервис ставит сам, если `IDENTITY_DATABASE_URL` не задал `connect_timeout` ([ADR-054](../../docs/decisions/ADR-054-storage-unavailability-visible-outside.md)).
 
 Повторный вызов с тем же `telegram_user_id` возвращает тот же `identity_id`. Reflection включена, чтобы `grpcurl` работал без локальных `.proto`.
 

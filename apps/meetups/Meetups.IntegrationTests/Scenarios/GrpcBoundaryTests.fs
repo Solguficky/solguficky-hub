@@ -163,6 +163,49 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         test <@ actual = HealthCheckResponse.Types.ServingStatus.Serving @>
 
+    /// Готовность спрашивает базу, и у этого хоста её нет: проба называет причину
+    /// NOT_SERVING, а не висит и не отвечает SERVING. Liveness выше остаётся
+    /// SERVING — процесс обслуживает gRPC.
+    [<Fact>]
+    member _.``Readiness is not serving while the database is unreachable``() =
+        let health = Health.HealthClient(host.Channel)
+
+        let actual =
+            health
+                .Check(
+                    HealthCheckRequest(Service = MeetupsService.Descriptor.FullName),
+                    deadline = System.DateTime.UtcNow.AddSeconds 3.0
+                )
+                .Status
+
+        test <@ actual = HealthCheckResponse.Types.ServingStatus.NotServing @>
+
+    /// Критерий PER-361: недоступная база отвечает клиенту Unavailable раньше его
+    /// дедлайна — у бота три секунды, — а запись границы несёт тот же код и
+    /// категорию dependency_unavailable.
+    [<Fact>]
+    member _.``An unreachable database is refused as Unavailable before the client deadline``() =
+        let headers = Metadata()
+        headers.Add("x-request-id", "unreachable-database")
+
+        let actual =
+            Rpc.codeOf (fun () ->
+                client.GetMeetup(
+                    GetMeetupRequest(Viewer = viewer, Id = id),
+                    headers,
+                    deadline = System.DateTime.UtcNow.AddSeconds 3.0
+                )
+                |> ignore
+            )
+
+        let frame =
+            host.Records
+            |> List.tryFind (fun entry -> entry.Fields.TryFind "request_id" = Some "unreachable-database")
+            |> Option.map (fun entry -> entry.Fields.TryFind "grpc_code", entry.Fields.TryFind "error_category")
+
+        test <@ actual = Some StatusCode.Unavailable @>
+        test <@ frame = Some(Some "Unavailable", Some "dependency_unavailable") @>
+
     /// Объявленный отказ — часть контракта, а не сбой сервиса: Warning без stack и
     /// код транспорта в своём поле, а не в result. До этой задачи такого отказа у
     /// сервиса не существовало, и правило проверялось только in-process.

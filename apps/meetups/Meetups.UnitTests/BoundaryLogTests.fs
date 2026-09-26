@@ -188,3 +188,55 @@ let ``The readiness probe stays silent even when a use case header arrives`` () 
 
     test <@ records = [] @>
     test <@ thrown = None @>
+
+/// Недоступное хранилище отдаётся клиенту Unavailable, а не Unknown: повтор позже
+/// может пройти, и код один у всех сервисов (ADR-054).
+[<Fact>]
+let ``An unreachable database is refused as Unavailable and recorded as dependency_unavailable`` () =
+    let unreachable = Npgsql.NpgsqlException "Failed to connect to 127.0.0.1:1"
+
+    let records, thrown =
+        intercept product (fun () -> Task.FromException<string> unreachable)
+
+    let record = only records
+
+    test <@ record.Level = LogLevel.Error @>
+    test <@ record.Fields.TryFind "grpc_code" = Some "Unavailable" @>
+    test <@ record.Fields.TryFind "error_category" = Some "dependency_unavailable" @>
+
+    test
+        <@
+            match thrown with
+            | Some(:? RpcException as refused) -> refused.StatusCode = StatusCode.Unavailable
+            | _ -> false
+        @>
+
+/// Ответ живого сервера на дефект SQL недоступностью не считается: Unavailable
+/// пригласил бы клиента повторять отказ, который повторится детерминированно.
+[<Fact>]
+let ``A SQL defect stays an unexpected failure`` () =
+    let defect = Npgsql.PostgresException("duplicate key", "ERROR", "ERROR", "23505")
+
+    let records, thrown =
+        intercept product (fun () -> Task.FromException<string> defect)
+
+    let record = only records
+
+    test <@ record.Fields.TryFind "grpc_code" = Some "Unknown" @>
+    test <@ record.Fields.TryFind "error_category" = Some "unexpected" @>
+    test <@ thrown = Some(defect :> exn) @>
+
+/// Отказ соединения после истечения дедлайна вызова — timeout: клиент уже видит
+/// свой DeadlineExceeded, и запись называет его, а не Unavailable.
+[<Fact>]
+let ``An unreachable database after the deadline is recorded as a timeout`` () =
+    let context =
+        FakeServerCallContext(product, CancellationToken.None, DateTime.UtcNow.AddSeconds -1.0)
+
+    let records, _ =
+        interceptWithContext context (fun () -> Task.FromException<string>(Npgsql.NpgsqlException "timeout"))
+
+    let record = only records
+
+    test <@ record.Fields.TryFind "grpc_code" = Some "DeadlineExceeded" @>
+    test <@ record.Fields.TryFind "error_category" = Some "timeout" @>

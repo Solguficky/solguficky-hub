@@ -504,7 +504,8 @@ Read model вводится, когда query-нагрузка, UX или изо
 
 - структурные логи без персональных данных и Telegram authentication material;
 - correlation/operation id через межсервисный путь;
-- health и readiness checks;
+- health и readiness checks: пустое имя в `grpc.health.v1` отвечает liveness и базу не спрашивает, полное имя основного gRPC-сервиса отвечает readiness и `SERVING` только при отвечающей базе ([ADR-054](../decisions/ADR-054-storage-unavailability-visible-outside.md));
+- недоступность собственной базы сервис отдаёт кодом `UNAVAILABLE` раньше дедлайна вызывающего, а запись границы несёт тот же `grpc_code` и `error_category: dependency_unavailable`; дефект SQL на живом соединении этим кодом не отвечает ([ADR-054](../decisions/ADR-054-storage-unavailability-visible-outside.md));
 - метрики ошибок, latency и delivery attempts;
 - trace первого вертикального среза Telegram Bot → Identity → Meetups;
 - операторский способ увидеть и повторить неуспешное действие без ручной правки БД.

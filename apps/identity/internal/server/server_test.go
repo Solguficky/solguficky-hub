@@ -7,7 +7,6 @@ import (
 	"net"
 	"testing"
 
-	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -15,13 +14,13 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-func TestHealthCheckServing(t *testing.T) {
+// Пустое имя отвечает liveness и базу не спрашивает: сервер на пустом пуле
+// SERVING. Готовность с базой проверяют тесты в unavailable_test.go.
+func TestHealthLivenessServingWithoutDatabase(t *testing.T) {
 	t.Parallel()
 
 	conn := newConn(t)
-	resp, err := healthgrpc.NewHealthClient(conn).Check(t.Context(), &healthgrpc.HealthCheckRequest{
-		Service: identityv1.IdentityService_ServiceDesc.ServiceName,
-	})
+	resp, err := healthgrpc.NewHealthClient(conn).Check(t.Context(), &healthgrpc.HealthCheckRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ open System
 open Meetups.Observability
 open Meetups.Slices
 open Meetups.Transport
+open Meetups.V1
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Server.Kestrel.Core
@@ -66,9 +67,38 @@ let build (args: string array) : WebApplication =
     builder.Services.AddSingleton<TimeZoneInfo> communityZone
     |> ignore
 
-    // Мост из health checks, зарегистрированных ServiceDefaults, в grpc.health.v1.
-    // Источником состояния остаётся ServiceDefaults, gRPC — только его витрина.
-    builder.Services.AddGrpcHealthChecks() |> ignore
+    // Готовность — отвечает ли база. Проверка идёт на каждый Check пробы, а не
+    // фоном: кэш результатов в мосте выключен по умолчанию, и статус не отстаёт
+    // от базы на период публикации.
+    builder.Services
+        .AddHealthChecks()
+        .AddCheck<Meetups.Infrastructure.Readiness.DatabaseReadiness>(
+            "postgres",
+            Nullable(),
+            [ Meetups.Infrastructure.Readiness.Tag ],
+            Meetups.Infrastructure.Readiness.Timeout
+        )
+    |> ignore
+
+    // Мост из health checks в grpc.health.v1. Пустое имя отвечает liveness и базу
+    // не спрашивает, имя сервиса — readiness, и её спрашивает проба AppHost.
+    // Умолчание моста отдало бы пустому имени все проверки сразу, поэтому
+    // сопоставление задано явно.
+    builder.Services.AddGrpcHealthChecks(fun options ->
+        options.Services.Clear()
+
+        options.Services.Map("", (fun check -> Seq.contains Meetups.Infrastructure.Readiness.LiveTag check.Tags))
+        |> ignore
+
+        options.Services.Map(
+            MeetupsService.Descriptor.FullName,
+            fun check ->
+                Seq.contains Meetups.Infrastructure.Readiness.LiveTag check.Tags
+                || Seq.contains Meetups.Infrastructure.Readiness.Tag check.Tags
+        )
+        |> ignore
+    )
+    |> ignore
 
     // Reflection включён безусловно, как в Identity: иначе каждая ручная проверка
     // grpcurl требует -import-path и -proto.

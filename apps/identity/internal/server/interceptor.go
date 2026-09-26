@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -50,7 +53,43 @@ func (e *internalError) Error() string { return e.op + ": " + e.err.Error() }
 
 func (e *internalError) Unwrap() error { return e.err }
 
-func (e *internalError) GRPCStatus() *status.Status { return status.New(codes.Internal, "internal") }
+// GRPCStatus отдаёт недоступность хранилища кодом Unavailable, а остальной отказ —
+// Internal. Разница для клиента: Unavailable обещает, что повтор позже может
+// пройти, поэтому дефекту SQL, который повторится детерминированно, он не
+// достаётся.
+func (e *internalError) GRPCStatus() *status.Status {
+	if storeUnavailable(e.err) {
+		return status.New(codes.Unavailable, "storage unavailable")
+	}
+	return status.New(codes.Internal, "internal")
+}
+
+// storeUnavailable отвечает, отказало ли хранилище на уровне соединения, а не
+// запроса: соединение не установилось, оборвалось или сервер его закрыл. Сюда
+// входят SQLSTATE класса 08 и 57P01–57P03 — последний PostgreSQL отдаёт первые
+// секунды после старта. Ошибка SQL на живом соединении недоступностью не
+// считается. Истёкший дедлайн самого вызова этот предикат не отличает: pgx
+// заворачивает свой предел подключения в тот же context.DeadlineExceeded, поэтому
+// его различает failureCategory по контексту вызова.
+func storeUnavailable(err error) bool {
+	if _, ok := errors.AsType[*pgconn.ConnectError](err); ok {
+		return true
+	}
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		switch pgErr.Code {
+		case "57P01", "57P02", "57P03":
+			return true
+		default:
+			return strings.HasPrefix(pgErr.Code, "08")
+		}
+	}
+	if _, ok := errors.AsType[*net.OpError](err); ok {
+		return true
+	}
+	return errors.Is(err, driver.ErrBadConn) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
+}
 
 // logText отдаёт границе операцию и распознанную причину, но не текст самой
 // ошибки. Драйвер печатает в нём то, на чём отказ произошёл: PostgreSQL — значения
@@ -76,6 +115,11 @@ func causeText(err error) string {
 			text += ", constraint " + pgErr.ConstraintName
 		}
 		return text
+	}
+	// Текст ConnectError несёт хост, пользователя и базу, поэтому граница его не
+	// пересказывает, а называет слой.
+	if _, ok := errors.AsType[*pgconn.ConnectError](err); ok {
+		return "postgres unreachable"
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -180,7 +224,7 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 		slog.String("operation", method),
 		slog.String("result", result),
 		slog.Int64("duration_us", time.Since(start).Microseconds()),
-		slog.String("grpc_code", status.Code(err).String()),
+		slog.String("grpc_code", responseCode(ctx, err).String()),
 	}
 	if id := requestID(ctx); id != "" {
 		attrs = append(attrs, slog.String("request_id", id))
@@ -221,8 +265,8 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	}
 
 	level := slog.LevelWarn
-	category := failureCategory(err)
-	if serverFault(status.Code(err)) {
+	category := failureCategory(ctx, err)
+	if serverFault(responseCode(ctx, err)) {
 		level = slog.LevelError
 	}
 	countFailure(ctx, category)
@@ -263,12 +307,37 @@ func countFailure(ctx context.Context, category string) {
 	))
 }
 
-func failureCategory(err error) string {
-	if _, ok := errors.AsType[*internalError](err); ok {
-		if errors.Is(err, context.DeadlineExceeded) {
+// responseCode — код, который получил вызывающий. Отказ хранилища после
+// истечения дедлайна вызова клиент уже не видит: у него свой DeadlineExceeded,
+// и запись границы называет его, а не код, ушедший в закрытый поток. Так
+// категория и код записи не расходятся.
+func responseCode(ctx context.Context, err error) codes.Code {
+	if _, ok := errors.AsType[*internalError](err); ok && callExpired(ctx) {
+		return codes.DeadlineExceeded
+	}
+	return status.Code(err)
+}
+
+func callExpired(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+// failureCategory относит отказ хранилища к недоступности только на уровне
+// соединения. Дедлайн определяется по контексту вызова, а не по цепочке ошибки:
+// pgx заворачивает в context.DeadlineExceeded и собственный предел подключения,
+// и по цепочке недоступная база неотличима от истёкшего дедлайна клиента.
+func failureCategory(ctx context.Context, err error) string {
+	if internalErr, ok := errors.AsType[*internalError](err); ok {
+		switch {
+		case callExpired(ctx):
 			return failureTimeout
+		case storeUnavailable(internalErr.err):
+			return failureDependencyUnavailable
+		case errors.Is(err, context.DeadlineExceeded):
+			return failureTimeout
+		default:
+			return failureUnexpected
 		}
-		return failureDependencyUnavailable
 	}
 	switch status.Code(err) {
 	case codes.PermissionDenied, codes.Unauthenticated:
