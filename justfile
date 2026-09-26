@@ -399,7 +399,7 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "194"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "198"
 NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "87"
 
 # Unit-тесты (L0): Docker не нужен.

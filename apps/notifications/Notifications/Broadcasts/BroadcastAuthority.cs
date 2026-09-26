@@ -170,12 +170,14 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, T
             _ => Common("identity", status),
         };
 
-    // Недоступность и истёкший срок — «право не подтверждено»: авторизация
-    // рассылки fail-closed, и ни один отказ не становится разрешением. Всё
-    // остальное, включая INVALID_ARGUMENT, — дефект одной из сторон: граница
-    // уже отвергла бы то, что владелец сочтёт неверным.
+    // Недоступность, истёкший срок и отмена — «право не подтверждено»:
+    // авторизация рассылки fail-closed, и ни один отказ не становится
+    // разрешением. Отмена приходит, когда вызывающий ушёл или его срок истёк
+    // раньше нашего: это штатный таймаут, а не поломка проверки. Всё остальное,
+    // включая INVALID_ARGUMENT, — дефект одной из сторон: граница уже отвергла
+    // бы то, что владелец сочтёт неверным.
     private static AuthorityAnswer Common(string owner, Status status) =>
-        status.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded
+        status.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded or StatusCode.Cancelled
             ? new AuthorityAnswer(AuthorityVerdict.Unavailable, $"{owner} {status.StatusCode}")
             : new AuthorityAnswer(AuthorityVerdict.Failed, $"{owner} {status.StatusCode}");
 

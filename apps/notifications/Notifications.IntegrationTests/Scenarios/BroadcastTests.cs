@@ -208,15 +208,7 @@ public class BroadcastTests
         early.StatusCode.ShouldBe(StatusCode.Unavailable);
         (await env.Accepted()).ShouldBe(0);
 
-        await Execute(
-            env.Db,
-            """
-            INSERT INTO meetup_replica (
-                meetup_id, version, author, title, description, venue, kind, calendar_link,
-                lifecycle, visibility, schedule_form, occurred_at, applied_at)
-            VALUES (@Id, 1, @Id, 'Сходка', '', '', '', '', 'planned', 'visible', 'no_date', now(), now());
-            """,
-            new { Id = Guid.Parse(meetupId) });
+        await Meetup(env.Db, meetupId: meetupId);
 
         var later = await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, id), Plain);
         later.Created.ShouldBeTrue();

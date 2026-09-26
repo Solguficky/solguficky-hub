@@ -46,7 +46,7 @@ public sealed class BroadcastOperations(
         return await Accept(
             answer,
             new AcceptedBroadcast(broadcastId, NotificationFacts.OrganizerMessageType, authorId, meetupId, body, forwarded.RequestId),
-            forwarded.Cancellation);
+            forwarded);
     }
 
     /// <summary>Объявление сообществу. Круг задаёт сервис, а не автор.</summary>
@@ -61,14 +61,19 @@ public sealed class BroadcastOperations(
         return await Accept(
             answer,
             new AcceptedBroadcast(broadcastId, NotificationFacts.CommunityAnnouncementType, authorId, null, body, forwarded.RequestId),
-            forwarded.Cancellation);
+            forwarded);
     }
 
     private async Task<BroadcastResult> Accept(
         AuthorityAnswer answer,
         AcceptedBroadcast broadcast,
-        CancellationToken cancellationToken)
+        Forwarded forwarded)
     {
+        // Команду начал человек, поэтому записи о ней несут цепочку: request_id
+        // и use_case пришли заголовками границы (standards/observability/logging.md).
+        // Отсутствующее поле не пишется, а не заполняется заглушкой.
+        using var scope = logger.BeginScope(Chain(forwarded));
+
         if (answer.Verdict != AuthorityVerdict.Granted)
         {
             logger.LogInformation(
@@ -87,7 +92,7 @@ public sealed class BroadcastOperations(
             broadcast,
             clock.GetUtcNow(),
             factOptions.Value.StaleAfter,
-            cancellationToken);
+            forwarded.Cancellation);
 
         if (outcome is BroadcastOutcome.Accepted accepted)
         {
@@ -114,5 +119,22 @@ public sealed class BroadcastOperations(
         }
 
         return new BroadcastResult(answer, outcome);
+    }
+
+    private static Dictionary<string, object> Chain(Forwarded forwarded)
+    {
+        var fields = new Dictionary<string, object>(StringComparer.Ordinal);
+
+        if (forwarded.RequestId is { } requestId)
+        {
+            fields["request_id"] = requestId;
+        }
+
+        if (forwarded.UseCase is { } useCase)
+        {
+            fields["use_case"] = useCase;
+        }
+
+        return fields;
     }
 }

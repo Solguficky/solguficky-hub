@@ -29,12 +29,43 @@ public static class RequestValidation
     public static Guid BroadcastId(string value) => UuidV7("id", value);
 
     /// <summary>
+    /// Предел длины текста рассылки — предел сообщения Telegram, в тех же
+    /// UTF-16-единицах, которыми его считает Telegram.
+    /// </summary>
+    public const int MaxBodyLength = 4096;
+
+    /// <summary>
     /// Авторский текст рассылки. Пустая строка отвергается: у этого поля, в
     /// отличие от атрибутов Meetups, нет тотального значения «не указано».
     /// Пробелы текстом считаются — что писать, решает автор, а не граница.
     /// </summary>
-    public static string Body(string value) =>
-        value.Length > 0 ? value : throw Invalid("body", "must not be empty");
+    /// <remarks>
+    /// Длина ограничена, потому что это первый повод, чей размер задаёт
+    /// человек: факт больше предела шины отвергался бы релеем всегда, а релей
+    /// останавливается на первом отказе, и одна рассылка держала бы все
+    /// уведомления до конца срока годности. Символ NUL отвергается здесь, а не
+    /// базой: <c>text</c> PostgreSQL его не хранит, и вставка упала бы уже
+    /// после проверки права.
+    /// </remarks>
+    public static string Body(string value)
+    {
+        if (value.Length == 0)
+        {
+            throw Invalid("body", "must not be empty");
+        }
+
+        if (value.Length > MaxBodyLength)
+        {
+            throw Invalid("body", $"must not be longer than {MaxBodyLength} characters");
+        }
+
+        if (value.Contains('\0'))
+        {
+            throw Invalid("body", "must not contain NUL");
+        }
+
+        return value;
+    }
 
     /// <summary>
     /// Категория из словаря. Неизвестное значение отвергается, а не

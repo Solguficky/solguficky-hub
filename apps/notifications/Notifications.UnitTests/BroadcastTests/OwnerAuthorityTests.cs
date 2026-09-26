@@ -76,6 +76,7 @@ public class OwnerAuthorityTests
     [InlineData(StatusCode.NotFound, AuthorityVerdict.Denied)]
     [InlineData(StatusCode.Unavailable, AuthorityVerdict.Unavailable)]
     [InlineData(StatusCode.DeadlineExceeded, AuthorityVerdict.Unavailable)]
+    [InlineData(StatusCode.Cancelled, AuthorityVerdict.Unavailable)]
     [InlineData(StatusCode.InvalidArgument, AuthorityVerdict.Failed)]
     [InlineData(StatusCode.Internal, AuthorityVerdict.Failed)]
     public async Task MeetupBroadcast_MeetupsRefuses_MapsStatusToVerdict(StatusCode code, AuthorityVerdict expected)
