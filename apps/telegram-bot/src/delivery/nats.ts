@@ -3,6 +3,7 @@ import { Kvm } from "@nats-io/kv";
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import type { Logger } from "../logging.js";
 import { serviceName } from "../logging.js";
+import { watchBusStatus } from "./bus-status.js";
 import {
   type NotificationDelivery,
   notificationDurable,
@@ -54,6 +55,11 @@ export async function startNatsDelivery(options: {
     name: serviceName,
     maxReconnectAttempts: -1,
   });
+  // Итератор кончается с закрытием соединения, поэтому наблюдатель живёт ровно
+  // столько, сколько клиент, и отдельной остановки не требует. Отказ самой
+  // записи не должен ронять процесс необработанным отказом промиса: бот без
+  // этой записи продолжает и отвечать людям, и доставлять.
+  void watchBusStatus(nats.status(), options.logger).catch(() => {});
   try {
     const consumer = await jetstream(nats).consumers.get(
       notificationStream,
