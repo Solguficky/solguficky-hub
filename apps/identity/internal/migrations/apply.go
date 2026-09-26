@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 )
@@ -18,19 +20,45 @@ var files embed.FS
 const (
 	maxOpenConns    = 16
 	connMaxLifetime = 30 * time.Minute
+
+	// ConnectTimeout — предел установления соединения, если DSN не задал свой
+	// connect_timeout. Без него недоступная база держит вызов до дедлайна
+	// клиента, и тот видит общий DeadlineExceeded вместо Unavailable (ADR-054).
+	// pgx применяет предел к каждому адресу хоста, а localhost раскрывается в
+	// два, поэтому худший случай вдвое больше и всё равно меньше трёх секунд
+	// дедлайна бота.
+	ConnectTimeout = time.Second
 )
 
+// Open собирает пул и проверяет, что база отвечает: сервис без базы не стартует.
 func Open(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("pgx", dsn)
+	db, err := Pool(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(maxOpenConns)
-	db.SetConnMaxLifetime(connMaxLifetime)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
+	return db, nil
+}
+
+// Pool собирает пул с настройками сервиса, не подключаясь: соединения
+// открываются при первом обращении. Тесты берут его, чтобы проверить отказ
+// недоступной базы с тем же пределом подключения, что и у сервиса.
+func Pool(dsn string) (*sql.DB, error) {
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	// Ноль у pgx значит «без предела», и явный connect_timeout=0 в DSN — выбор
+	// развёртывания, а не отсутствие ключа. Поэтому признак — сам ключ.
+	if config.ConnectTimeout == 0 && !strings.Contains(dsn, "connect_timeout") {
+		config.ConnectTimeout = ConnectTimeout
+	}
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetConnMaxLifetime(connMaxLifetime)
 	return db, nil
 }
 

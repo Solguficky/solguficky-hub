@@ -7,8 +7,8 @@ open System.Threading.Tasks
 open Grpc.Core
 open Grpc.Core.Interceptors
 open Microsoft.Extensions.Logging
-open Npgsql
 open Meetups
+open Meetups.Infrastructure
 
 /// Транспортная граница сервиса: заполняет каркас записи об операции из
 /// docs/standards/observability/logging.md. Каркас заполняет граница, а не
@@ -153,6 +153,48 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
 
                     rethrow cancelled
                     return Unchecked.defaultof<'TResponse>
+                // Недоступное хранилище — не дефект сервиса и не таймаут клиента:
+                // клиент получает Unavailable раньше своего дедлайна, и повтор позже
+                // может пройти. Дефекту SQL этот код не достаётся, он идёт ниже
+                // неожиданным отказом. Истёк ли к этому моменту дедлайн вызова,
+                // решает контекст вызова: тогда клиент уже видит свой
+                // DeadlineExceeded, и запись называет его.
+                | storage when Db.unavailable storage ->
+                    if context.Deadline <= DateTime.UtcNow then
+                        countFailure "timeout"
+
+                        write
+                            LogLevel.Warning
+                            None
+                            (frame
+                                context
+                                "error"
+                                (elapsedMicroseconds ())
+                                (string StatusCode.DeadlineExceeded)
+                                [ "error_category", box "timeout" ])
+
+                        rethrow storage
+                        return Unchecked.defaultof<'TResponse>
+                    else
+                        countFailure "dependency_unavailable"
+
+                        // Stack норматив держит для неожиданного отказа, а недоступность
+                        // ожидаема: запись называет причину текстом, как у Identity.
+                        write
+                            LogLevel.Error
+                            None
+                            (frame
+                                context
+                                "error"
+                                (elapsedMicroseconds ())
+                                (string StatusCode.Unavailable)
+                                [
+                                    "error_category", box "dependency_unavailable"
+                                    "error", box storage.Message
+                                ])
+
+                        return
+                            raise (RpcException(Status(StatusCode.Unavailable, "storage unavailable"), storage.Message))
                 // Неожиданный отказ записывает та граница, на которой он стал
                 // наблюдаемым. Исключение идёт отдельным аргументом ради
                 // типизованной причины в OTLP, а error и stack — полями, потому
@@ -161,7 +203,6 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                     let category =
                         match unexpected with
                         | :? TimeoutException -> "timeout"
-                        | :? NpgsqlException -> "dependency_unavailable"
                         | _ -> "unexpected"
 
                     countFailure category

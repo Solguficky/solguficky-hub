@@ -39,6 +39,7 @@
     <Compile Include="InfrastructureTests/MeetupRowTests.fs" />
     <Compile Include="InfrastructureTests/MeetupEventPayloadTests.fs" />
     <Compile Include="InfrastructureTests/MeetupReadingTests.fs" />
+    <Compile Include="InfrastructureTests/DbTests.fs" />
     <Compile Include="SliceTests/ContractTests.fs" />
     <Compile Include="SliceTests/CreateMeetupDraftWorkflowTests.fs" />
     <Compile Include="SliceTests/SetMeetupScheduleWorkflowTests.fs" />

@@ -1,3 +1,4 @@
+using Grpc.Health.V1;
 using Grpc.Net.Client;
 using Notifications.Preferences;
 using Notifications.V1;
@@ -24,9 +25,13 @@ public sealed class PreferencesUnderTest : IAsyncDisposable
         this.silo = silo;
         this.channel = channel;
         Client = new NotificationsService.NotificationsServiceClient(channel);
+        Health = new Health.HealthClient(channel);
     }
 
     public NotificationsService.NotificationsServiceClient Client { get; }
+
+    /// <summary>Проба grpc.health.v1 по тому же каналу, что и команды.</summary>
+    public Health.HealthClient Health { get; }
 
     /// <summary>
     /// Операции сервиса напрямую, в обход контракта. Нужны единственному

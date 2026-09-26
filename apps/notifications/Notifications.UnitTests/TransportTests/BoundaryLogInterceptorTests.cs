@@ -143,19 +143,71 @@ public class BoundaryLogInterceptorTests
         record.Attributes.ShouldNotContainKey("error_category");
     }
 
+    /// <summary>
+    /// Недоступная база отдаётся Unavailable раньше дедлайна клиента (ADR-054).
+    /// Отказ подключения Npgsql приходит NpgsqlException с TimeoutException
+    /// внутри — так выглядит остановленный PostgreSQL за прокси DCP.
+    /// </summary>
     [Fact]
-    public async Task UnaryServerHandler_NpgsqlCommandTimeout_RecordsTimeout()
+    public async Task UnaryServerHandler_UnreachableDatabase_RefusesWithUnavailable()
     {
         var (logger, interceptor) = Create();
         var context = new FakeServerCallContext(Product);
+
+        var thrown = await Should.ThrowAsync<RpcException>(
+            () => interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (_, _) => throw new NpgsqlException("The operation has timed out", new TimeoutException())));
+
+        thrown.StatusCode.ShouldBe(StatusCode.Unavailable);
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Error);
+        record.Exception.ShouldBeNull();
+        record.Attributes["grpc_code"].ShouldBe("Unavailable");
+        record.Attributes["error_category"].ShouldBe("dependency_unavailable");
+        record.Attributes.ShouldNotContainKey("stack");
+    }
+
+    /// <summary>
+    /// Ответ живого сервера на дефект SQL недоступностью не считается: Unavailable
+    /// пригласил бы повторять отказ, который повторится детерминированно.
+    /// </summary>
+    [Fact]
+    public async Task UnaryServerHandler_SqlDefect_RecordsUnexpectedFailure()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product);
+        var defect = new PostgresException("duplicate key", "ERROR", "ERROR", "23505");
+
+        var thrown = await Should.ThrowAsync<PostgresException>(
+            () => interceptor.UnaryServerHandler<string, string>("request", context, (_, _) => throw defect));
+
+        thrown.ShouldBeSameAs(defect);
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["grpc_code"].ShouldBe("Unknown");
+        record.Attributes["error_category"].ShouldBe("unexpected");
+    }
+
+    /// <summary>
+    /// Отказ базы после истечения дедлайна — timeout: клиент уже видит свой
+    /// DeadlineExceeded, и запись называет его, а не Unavailable.
+    /// </summary>
+    [Fact]
+    public async Task UnaryServerHandler_UnreachableDatabaseAfterDeadline_RecordsTimeout()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product) { DeadlineAt = DateTime.UtcNow.AddSeconds(-1) };
 
         await Should.ThrowAsync<NpgsqlException>(
             () => interceptor.UnaryServerHandler<string, string>(
                 "request",
                 context,
-                (_, _) => throw new NpgsqlException("Exception while reading from stream", new TimeoutException())));
+                (_, _) => throw new NpgsqlException("The operation has timed out", new TimeoutException())));
 
-        logger.Records.ShouldHaveSingleItem().Attributes["error_category"].ShouldBe("timeout");
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["grpc_code"].ShouldBe("DeadlineExceeded");
+        record.Attributes["error_category"].ShouldBe("timeout");
     }
 
     [Fact]
@@ -195,7 +247,10 @@ public class BoundaryLogInterceptorTests
 
         protected override string PeerCore => "ipv4:127.0.0.1:50000";
 
-        protected override DateTime DeadlineCore => DateTime.MaxValue;
+        /// <summary>Дедлайн вызова; по умолчанию его нет.</summary>
+        public DateTime DeadlineAt { get; init; } = DateTime.MaxValue;
+
+        protected override DateTime DeadlineCore => DeadlineAt;
 
         protected override Metadata RequestHeadersCore => requestHeaders;
 

@@ -54,7 +54,9 @@ gRPC-сервер на Kestrel в h2c. Реализованы все восем�
 
 Команда предъявляет только `identity_id`. Ролей в запросах нет намеренно: свои подписки и настройки человек меняет себе, и решения о доступе по ролям сервис не принимает — разбор в [каталоге интеграций](../../docs/architecture/integration.md).
 
-HTTP-эндпоинтов health у сервиса нет: Kestrel слушает только HTTP/2, как у Meetups.
+HTTP-эндпоинтов health у сервиса нет: Kestrel слушает только HTTP/2, как у Meetups. Пустое имя в `grpc.health.v1` отвечает liveness и базу не спрашивает; имя `notifications.v1.NotificationsService` отвечает готовностью с `select 1` через пул сервиса (`Infrastructure/DatabaseReadiness.cs`), и его спрашивает проба Aspire.
+
+Каждый gRPC-вызов записывает граница `Transport/BoundaryLogInterceptor.cs` ([PER-363](https://linear.app/anticnvm/issue/per-363)). Недоступная база отвечает `Unavailable` с `error_category: dependency_unavailable`: пул сервиса получает `Timeout=2`, если строка подключения не задала свой, а clustering и reminders Orleans остаются на своих пределах. Правило общее для трёх сервисов — [ADR-054](../../docs/decisions/ADR-054-storage-unavailability-visible-outside.md).
 
 ## Запуск
 

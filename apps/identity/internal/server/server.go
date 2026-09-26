@@ -42,7 +42,7 @@ func New(log *slog.Logger, db *sql.DB, maintainerToken string) *Server {
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthSrv.SetServingStatus(identityv1.IdentityService_ServiceDesc.ServiceName, healthgrpc.HealthCheckResponse_SERVING)
-	healthgrpc.RegisterHealthServer(srv, healthSrv)
+	healthgrpc.RegisterHealthServer(srv, readiness{Server: healthSrv, db: db})
 	reflection.Register(srv)
 
 	return &Server{grpc: srv, health: healthSrv}

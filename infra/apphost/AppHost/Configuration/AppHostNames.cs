@@ -42,4 +42,17 @@ public static class AppHostNames
         public const string Grpc = "grpc";
         public const string Http = "http";
     }
+
+    /// <summary>
+    /// Имя сервиса в <c>grpc.health.v1</c>, под которым компонент отвечает
+    /// готовностью: его база отвечает. Пустое имя у тех же компонентов —
+    /// liveness, и базу оно не спрашивает. Имя — полное имя основного
+    /// gRPC-сервиса контракта, как его ждёт спецификация grpc.health.
+    /// </summary>
+    public static class Readiness
+    {
+        public const string Identity = "identity.v1.IdentityService";
+        public const string Meetups = "meetups.v1.MeetupsService";
+        public const string Notifications = "notifications.v1.NotificationsService";
+    }
 }

@@ -66,7 +66,7 @@ internal static class IdentitySetup
             .WithEnvironment(
                 "IDENTITY_GRPC_ADDR",
                 ReferenceExpression.Create($":{grpc.Property(EndpointProperty.TargetPort)}"))
-            .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc);
+            .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc, AppHostNames.Readiness.Identity);
 
         return identity;
     }

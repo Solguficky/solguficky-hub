@@ -198,13 +198,19 @@ call() {
 }
 has() { python3 -c 'import sys; sys.exit(0 if sys.argv[1] in sys.stdin.read() else 1)' "$1"; }
 
-for pair in "identity $IDENTITY" "meetups $MEETUPS" "notifications $NOTIFICATIONS"; do
-  set -- $pair
-  [ $# -eq 2 ] || continue
-  if grpcurl -plaintext -max-time 10 "$2" grpc.health.v1.Health/Check 2>&1 | has SERVING; then
-    ok "$1 health: SERVING"
+# Readiness is asked by the service name: the empty name only answers liveness
+# and never checks the database. The status is compared whole, because
+# NOT_SERVING contains SERVING as a substring.
+for triple in "identity identity.v1.IdentityService $IDENTITY" \
+              "meetups meetups.v1.MeetupsService $MEETUPS" \
+              "notifications notifications.v1.NotificationsService $NOTIFICATIONS"; do
+  set -- $triple
+  [ $# -eq 3 ] || continue
+  if grpcurl -plaintext -max-time 10 -d "{\"service\": \"$2\"}" "$3" grpc.health.v1.Health/Check 2>&1 \
+      | has '"status": "SERVING"'; then
+    ok "$1 readiness: SERVING"
   else
-    fail "$1 health is not SERVING"
+    fail "$1 readiness is not SERVING"
   fi
 done
 

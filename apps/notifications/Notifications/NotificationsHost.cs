@@ -9,6 +9,7 @@ using Notifications.Preferences;
 using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.Transport;
+using Notifications.V1;
 using Npgsql;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Logs;
@@ -175,7 +176,13 @@ public static class NotificationsHost
         // контейнер утилизирует только то, что создал сам, поэтому переданный
         // ему извне NpgsqlDataSource пережил бы остановку хоста вместе со своим
         // пулом соединений. Meetups регистрирует свой источник тем же способом.
-        builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
+        //
+        // Предел подключения ставится пулу сервиса, а не общей строке: clustering
+        // и reminders Orleans живут на своих пределах. Пул сервиса делят gRPC,
+        // грин и фоновые пути, поэтому быстрее отказывают все они; фоновые
+        // повторяются следующим тиком или повтором сообщения, и это приемлемо.
+        builder.Services.AddSingleton(_ =>
+            NpgsqlDataSource.Create(StorageAvailability.WithConnectTimeout(connectionString)));
         builder.Services.AddSingleton<GrainActivationStore>();
         builder.Services.AddSingleton<ReminderTaskStore>();
 
@@ -264,9 +271,28 @@ public static class NotificationsHost
         // request_id и use_case из метаданных вызова, как Identity и Meetups.
         builder.Services.AddGrpc(options => options.Interceptors.Add<BoundaryLogInterceptor>());
 
-        // Мост из health checks, зарегистрированных ServiceDefaults, в grpc.health.v1.
-        // Источником состояния остаётся ServiceDefaults, gRPC — только его витрина.
-        builder.Services.AddGrpcHealthChecks();
+        // Готовность — отвечает ли база. Проверка идёт на каждый Check пробы, а не
+        // фоном: кэш результатов в мосте выключен по умолчанию, и статус не
+        // отстаёт от базы на период публикации.
+        builder.Services.AddHealthChecks()
+            .AddCheck<DatabaseReadiness>(
+                "postgres",
+                failureStatus: null,
+                tags: [DatabaseReadiness.Tag],
+                timeout: DatabaseReadiness.Timeout);
+
+        // Мост из health checks в grpc.health.v1. Пустое имя отвечает liveness и
+        // базу не спрашивает, имя сервиса — readiness, и её спрашивает проба
+        // AppHost. Умолчание моста отдало бы пустому имени все проверки сразу,
+        // поэтому сопоставление задано явно.
+        builder.Services.AddGrpcHealthChecks(options =>
+        {
+            options.Services.Clear();
+            options.Services.Map("", check => check.Tags.Contains(DatabaseReadiness.LiveTag));
+            options.Services.Map(
+                NotificationsService.Descriptor.FullName,
+                check => check.Tags.Contains(DatabaseReadiness.LiveTag) || check.Tags.Contains(DatabaseReadiness.Tag));
+        });
 
         // Reflection включён безусловно, как в Identity и Meetups: иначе каждая
         // ручная проверка grpcurl требует -import-path и -proto.

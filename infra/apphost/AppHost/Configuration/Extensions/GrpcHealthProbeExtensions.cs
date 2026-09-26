@@ -8,7 +8,9 @@ namespace AppHost.Configuration.Extensions;
 /// <summary>
 /// Готовность gRPC-сервиса по стандартному <c>grpc.health.v1.Health/Check</c>.
 /// Проба отвечает на вопрос «сервис обслуживает вызовы», а не «процесс живёт»:
-/// прокси DCP принимает TCP раньше, чем сервер начинает слушать.
+/// прокси DCP принимает TCP раньше, чем сервер начинает слушать, а сервис с
+/// недоступной базой вызов не выполнит. Поэтому проба спрашивает имя сервиса —
+/// readiness с базой, — а не пустое имя, которое у компонентов отвечает liveness.
 /// </summary>
 internal static class GrpcHealthProbeExtensions
 {
@@ -23,9 +25,14 @@ internal static class GrpcHealthProbeExtensions
     /// Имя проверки собирается из имени ресурса и endpoint-а, поэтому совпадает
     /// с тем, что показывает дашборд.
     /// </summary>
+    /// <param name="readinessService">
+    /// Имя сервиса в grpc.health.v1, под которым компонент отвечает готовностью —
+    /// константа из <see cref="AppHostNames.Readiness"/>.
+    /// </param>
     public static IResourceBuilder<T> WithGrpcHealthProbe<T>(
         this IResourceBuilder<T> resource,
-        string endpointName)
+        string endpointName,
+        string readinessService)
         where T : IResourceWithEndpoints
     {
         var resourceName = resource.Resource.Name;
@@ -34,7 +41,7 @@ internal static class GrpcHealthProbeExtensions
 
         resource.ApplicationBuilder.Services.AddHealthChecks().AddAsyncCheck(
             checkName,
-            cancellationToken => CheckAsync(resourceName, endpoint, cancellationToken),
+            cancellationToken => CheckAsync(resourceName, endpoint, readinessService, cancellationToken),
             timeout: ProbeTimeout);
 
         return resource.WithHealthCheck(checkName);
@@ -45,6 +52,7 @@ internal static class GrpcHealthProbeExtensions
     private static async Task<HealthCheckResult> CheckAsync(
         string resourceName,
         EndpointReference endpoint,
+        string readinessService,
         CancellationToken cancellationToken)
     {
         try
@@ -58,7 +66,7 @@ internal static class GrpcHealthProbeExtensions
             using var channel = GrpcChannel.ForAddress(address);
             var client = new Health.HealthClient(channel);
             var response = await client.CheckAsync(
-                new HealthCheckRequest(),
+                new HealthCheckRequest { Service = readinessService },
                 deadline: DateTime.UtcNow.Add(ProbeDeadline),
                 cancellationToken: cancellationToken);
 

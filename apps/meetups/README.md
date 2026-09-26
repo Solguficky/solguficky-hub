@@ -152,7 +152,9 @@ Dapper не знает `DateOnly` и `TimeOnly` как параметры, хо�
 Kestrel настроен на h2c: gRPC без TLS требует HTTP/2, а plaintext-endpoint без ALPN не умеет договариваться о версии. Отсюда два следствия:
 
 - `MapDefaultEndpoints` из ServiceDefaults не вызывается — `/health` и `/alive` на таком endpoint недостижимы;
-- готовность сервис отдаёт по `grpc.health.v1`. Источником состояния остаётся реестр health checks из ServiceDefaults, gRPC-сервис — только его витрина. Ту же пробу использует Aspire.
+- готовность сервис отдаёт по `grpc.health.v1`. Источником состояния остаётся реестр health checks, gRPC-сервис — только его витрина. Пустое имя отвечает liveness — проверкой `self` из ServiceDefaults, базу оно не спрашивает. Имя `meetups.v1.MeetupsService` отвечает готовностью: к `self` добавляется `select 1` через пул сервиса (`Infrastructure/Readiness.fs`), и при недоступной базе проба даёт `NOT_SERVING`. Имя сервиса спрашивает и проба Aspire.
+
+Недоступная база отвечает доменному вызову `Unavailable`, а не `Unknown` через 15 секунд: пул получает `Timeout=2`, если строка подключения не задала свой, а граница отличает отказ соединения от дефекта SQL (`Db.unavailable`). Правило общее для трёх сервисов — [ADR-054](../../docs/decisions/ADR-054-storage-unavailability-visible-outside.md).
 
 Reflection включена безусловно, как в Identity: без неё каждая ручная проверка `grpcurl` требует `-import-path` и `-proto`.
 

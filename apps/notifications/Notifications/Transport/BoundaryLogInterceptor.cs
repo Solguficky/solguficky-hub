@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
-using Npgsql;
+using Notifications.Infrastructure;
 using Notifications.Observability;
 using Notifications.Replica;
 
@@ -15,7 +15,9 @@ namespace Notifications.Transport;
 /// Каркас заполняет граница, а не вызываемый код, поэтому запись о вызове
 /// рождается здесь и больше нигде. <c>request_id</c> и <c>use_case</c> приходят
 /// заголовками <c>x-request-id</c> и <c>x-use-case</c> с края цепочки; граница
-/// их не выдумывает и, не получив, опускает.
+/// их не выдумывает и, не получив, опускает. Недоступная база отдаётся клиенту
+/// <c>Unavailable</c> раньше его дедлайна (ADR-054), а не <c>Unknown</c> через
+/// предел Npgsql.
 /// </remarks>
 public sealed class BoundaryLogInterceptor(ILogger<BoundaryLogInterceptor> logger) : Interceptor
 {
@@ -82,17 +84,42 @@ public sealed class BoundaryLogInterceptor(ILogger<BoundaryLogInterceptor> logge
             throw;
         }
 
+        // Недоступная база — не дефект сервиса и не уход клиента: клиент получает
+        // Unavailable раньше своего дедлайна, и повтор позже может пройти (ADR-054).
+        // Отказ подключения Npgsql и истёкший таймаут команды по типу неотличимы —
+        // оба NpgsqlException с TimeoutException внутри, — и оба идут сюда: первый
+        // и есть недоступность, а второй дольше дедлайна клиента. Истёк ли дедлайн
+        // к моменту отказа, решает контекст вызова: тогда клиент уже видит свой
+        // DeadlineExceeded, и запись называет его.
+        catch (Exception storage) when (StorageAvailability.IsUnavailable(storage))
+        {
+            if (context.Deadline <= DateTime.UtcNow)
+            {
+                ReplicaTelemetry.Fail("timeout");
+
+                var expired = Frame(context, "error", startedAt, StatusCode.DeadlineExceeded);
+                expired["error_category"] = "timeout";
+                Write(LogLevel.Warning, null, expired);
+                throw;
+            }
+
+            // Stack норматив держит для неожиданного отказа, а недоступность
+            // ожидаема: запись называет причину текстом, как у Identity.
+            ReplicaTelemetry.Fail("dependency_unavailable");
+
+            var fields = Frame(context, "error", startedAt, StatusCode.Unavailable);
+            fields["error_category"] = "dependency_unavailable";
+            fields["error"] = storage.Message;
+            Write(LogLevel.Error, null, fields);
+            throw new RpcException(new Status(StatusCode.Unavailable, "storage unavailable", storage));
+        }
+
         // Неожиданный отказ записывает граница, на которой он стал наблюдаемым.
+        // Дефект SQL на живом соединении сюда и попадает: недоступностью он не
+        // является, и Unavailable пригласил бы повторять детерминированный отказ.
         catch (Exception unexpected)
         {
-            var category = unexpected switch
-            {
-                // Таймаут команды Npgsql приходит NpgsqlException с TimeoutException
-                // внутри: это истёкшее ожидание, а не отказ базы обслужить вызов.
-                TimeoutException or NpgsqlException { InnerException: TimeoutException } => "timeout",
-                NpgsqlException => "dependency_unavailable",
-                _ => "unexpected",
-            };
+            var category = unexpected is TimeoutException ? "timeout" : "unexpected";
             ReplicaTelemetry.Fail(category);
 
             var fields = Frame(context, "error", startedAt, StatusCode.Unknown);

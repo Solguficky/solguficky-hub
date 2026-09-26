@@ -20,6 +20,7 @@
     <Compile Include="RequestId.fs" />
     <Compile Include="Migrations.fs" />
     <Compile Include="Infrastructure/Db.fs" />
+    <Compile Include="Infrastructure/Readiness.fs" />
     <Compile Include="Infrastructure/CommunityTime.fs" />
     <Compile Include="Infrastructure/MeetupRow.fs" />
     <Compile Include="Infrastructure/MeetupEventPayload.fs" />
