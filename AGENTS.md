@@ -38,6 +38,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
 - `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
 - `tools/contour/` — проверки сквозного контура. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта контура. Его вызывают `just contour-contracts-check` и CI.
+- `tools/apphost/` — живой smoke-test профиля AppHost. Сейчас это `smoke.sh`: он ждёт конечного состояния всех ресурсов, делает доменный вызов каждого gRPC-сервиса с общим `x-request-id` и проверяет топологию JetStream. Его вызывает `just aspire-smoke`; в `verify` и CI он не входит, потому что нужны Docker и живой AppHost.
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — механические проверки документации. Сейчас их три. `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога; его вызывают `just check-document-numbers` и джоба `document-numbers` в CI. `check-adr-applicability.sh`: у не-Active ADR баннер применимости стоит первой строкой после заголовка и совпадает со строкой индекса; его вызывают `just check-adr-applicability` и джоба `adr-applicability` в CI. `check-doc-links.py`: относительная ссылка из `docs/**/*.md` на `.md` ведёт в существующий файл, а якорь — на заголовок со slug по правилам GitHub; внешние URL пропускаются. Написан на Python, потому что slug переводит кириллицу в нижний регистр, а байтовый awk этого не умеет без UTF-8 локали. Его вызывают `just check-doc-links` и джоба `doc-links` в CI.
 - `tools/verify/` — сужение механического гейта. `select-recipes.sh` выбирает рецепты `verify` по изменённым путям, читая карту из джобы `changes` в `.github/workflows/ci.yml`; его вызывает `just verify-changed`. Фикстуры `select-recipes-test.sh` держат выбор равным составу `verify` на правке `justfile`; их вызывают `just check-verify-selection` и джоба `repo-hygiene` в CI.
@@ -132,6 +133,9 @@ aspire run -- --profile hub
 
 # Срез внутри профиля
 aspire run -- --profile hub --run-services identity
+
+# Живой smoke-test профиля; нужны Docker, grpcurl и python3
+just aspire-smoke hub
 
 # AppHost — сборка и тесты графа и профилей; Docker не нужен
 just apphost-build

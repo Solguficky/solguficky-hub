@@ -181,6 +181,13 @@ tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools a
 aspire profile="hub" *args="":
     cd infra/apphost && TOPOLOGY__PROFILE={{profile}} aspire run {{args}}
 
+# Живой smoke-test профиля: ресурсы доходят до конечного состояния, каждый
+# gRPC-сервис отвечает доменным вызовом, а не только пробой здоровья. Нужны
+# Docker, aspire, grpcurl и python3; в verify не входит. Флаги — в шапке скрипта:
+# `just aspire-smoke --keep hub` оставляет AppHost для ручных проверок.
+aspire-smoke *args="":
+    sh tools/apphost/smoke.sh {{args}}
+
 # Сборка Aspire AppHost
 apphost-build:
     cd infra/apphost && dotnet build --nologo
