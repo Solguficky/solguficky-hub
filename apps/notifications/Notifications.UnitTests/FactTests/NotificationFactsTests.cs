@@ -184,6 +184,27 @@ public class NotificationFactsTests
     public void HubCircle_PublicRole_IsOutside() =>
         NotificationFacts.HubCircle.ShouldBe(["admin", "maintainer", "member"], ignoreOrder: true);
 
+    /// <summary>
+    /// Повод напоминания — задание, а не событие: ссылка на него, карточка на
+    /// момент срабатывания и никакой чужой цепочки.
+    /// </summary>
+    [Fact]
+    public void MeetupReminder_FiredTask_ReferencesTaskAndCarriesCard()
+    {
+        var taskId = Guid.CreateVersion7();
+        var card = Decode(EventFactory.Meetup(EventFactory.NewId(), version: 2, title: "Пятничная")).Card;
+        var startsAt = Now.AddHours(24);
+
+        var notification = NotificationFacts.MeetupReminder(NotificationId, RecipientId, taskId, card, Now, startsAt);
+
+        notification.RecipientId.ShouldBe(RecipientId.ToString());
+        notification.Cause.ReminderTaskId.ShouldBe(taskId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.MeetupReminder);
+        notification.MeetupReminder.Meetup.ShouldBe(card);
+        notification.NotAfter.ShouldBe("2026-09-26T10:15:30Z");
+        notification.HasRequestId.ShouldBeFalse();
+    }
+
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>
         ReplicaMapping.Meetup(EventFactory.Bytes(message))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<MeetupFact>();

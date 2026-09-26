@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Notifications.Facts;
 using Notifications.Infrastructure;
 using Notifications.Reminders;
 using Orleans.Runtime;
@@ -9,6 +10,9 @@ namespace Notifications.Grains;
 public sealed class MeetupNotificationGrain(
     GrainActivationStore activations,
     ReminderTaskStore tasks,
+    ReplicaStore replica,
+    CommunityTime community,
+    FactTelemetry facts,
     IOptions<MeetupReminderOptions> options,
     TimeProvider clock,
     ILocalSiloDetails silo,
@@ -55,6 +59,18 @@ public sealed class MeetupNotificationGrain(
 
     public Task<ActivationRecord> Describe() =>
         Task.FromResult(record ?? throw new InvalidOperationException("grain is not activated"));
+
+    public async Task ApplyReplica()
+    {
+        // Реплика читается здесь, внутри хода грина, а не у вызывающего. Ход
+        // у сходки один, поэтому вызов, пришедший позже, всегда видит не
+        // более старую реплику, чем пришедший раньше: два экземпляра сервиса,
+        // применившие v5 и v6 и дошедшие сюда в обратном порядке, оба
+        // приводят задание к последнему слову, а не откатывают его.
+        var state = await replica.Meetup(Guid.Parse(this.GetPrimaryKeyString()), CancellationToken.None);
+
+        await ApplySchedule(state is null ? null : community.StartsAt(state));
+    }
 
     public async Task ApplySchedule(DateTimeOffset? startsAt)
     {
@@ -151,11 +167,18 @@ public sealed class MeetupNotificationGrain(
             return false;
         }
 
-        var fired = await tasks.Fire(live.TaskId, Now(), token);
+        var produced = await tasks.Fire(live, meetupId, Now(), token);
+        var fired = produced is not null;
 
-        if (fired)
+        if (produced is not null)
         {
-            logger.LogInformation("Reminder fired {meetup_id} {task_id}", meetupId, live.TaskId);
+            facts.Record(NotificationFacts.MeetupReminderType, produced);
+            logger.LogInformation(
+                "Reminder fired {meetup_id} {task_id} {facts_created} {facts_suppressed}",
+                meetupId,
+                live.TaskId,
+                produced.Created,
+                produced.Suppressed);
         }
 
         // Reminder снимается в обоих исходах. Задание перестало быть живым и

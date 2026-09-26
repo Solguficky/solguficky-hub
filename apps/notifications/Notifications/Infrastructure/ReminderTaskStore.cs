@@ -1,5 +1,6 @@
 using Dapper;
 using Npgsql;
+using Notifications.Facts;
 using Notifications.Reminders;
 
 namespace Notifications.Infrastructure;
@@ -234,8 +235,9 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry
     }
 
     /// <summary>
-    /// Исполняет задание: переводит в «сработало» и порождает повод. Возвращает
-    /// <c>true</c>, если исполнил именно этот вызов.
+    /// Исполняет задание: переводит в «сработало», порождает повод и
+    /// разворачивает его на подписчиков адресными фактами. Возвращает число
+    /// фактов, если исполнил именно этот вызов, и <c>null</c>, если нет.
     /// </summary>
     /// <remarks>
     /// Идемпотентность держится условием <c>state = 'scheduled'</c>, а не
@@ -245,35 +247,44 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry
     /// берётся исполнение «немедленно» для уже наступившего момента: никакого
     /// отдельного пути для просроченного задания нет, оно просто попадает в
     /// ближайшую выборку.
+    ///
+    /// Факты пишутся той же транзакцией, что и захват: сработавшее задание без
+    /// фактов или факты без сработавшего задания означали бы потерянное или
+    /// дважды отправленное напоминание. Отдельного журнала отправленного нет —
+    /// его роль играет само задание (docs/services/notifications.md).
     /// </remarks>
-    public async Task<bool> Fire(Guid taskId, DateTimeOffset now, CancellationToken cancellationToken)
+    public async Task<FactCount?> Fire(
+        LiveReminderTask task,
+        string meetupId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
-        var claimed = await connection.ExecuteAsync(
-            new CommandDefinition(
-                FireSql,
-                new { TaskId = taskId, Now = now.UtcDateTime },
-                transaction,
-                cancellationToken: cancellationToken));
+        var claimed = await work.Execute(FireSql, new { task.TaskId, Now = now.UtcDateTime }, cancellationToken);
 
         if (claimed == 0)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return false;
+            // Ничего не записано, фиксировать нечего: откат при разборе.
+            return null;
         }
 
-        await connection.ExecuteAsync(
-            new CommandDefinition(
-                OccasionSql,
-                new { OccasionId = Guid.NewGuid(), TaskId = taskId, Now = now.UtcDateTime },
-                transaction,
-                cancellationToken: cancellationToken));
+        await work.Execute(
+            OccasionSql,
+            new { OccasionId = Guid.NewGuid(), task.TaskId, Now = now.UtcDateTime },
+            cancellationToken);
 
-        await transaction.CommitAsync(cancellationToken);
+        var facts = await NotificationStore.AddMeetupReminder(
+            work,
+            task.TaskId,
+            Guid.Parse(meetupId),
+            task.StartsAt,
+            now,
+            cancellationToken);
+
+        await work.Commit(cancellationToken);
         telemetry.Fire();
-        return true;
+        return facts;
     }
 
     // Имена полей совпадают с колонками: Dapper сопоставляет по имени.
