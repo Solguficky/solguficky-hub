@@ -267,14 +267,17 @@ jobs:
       # команды идут без working-directory.
       - run: dotnet tool restore
       - run: dotnet fantomas --check apps/meetups
+      - uses: extractions/setup-just@v4
       - run: dotnet build Meetups.sln --nologo
         working-directory: apps/meetups
-      # Runner — Microsoft.Testing.Platform (ключ `test` в global.json). Решение он
-      # принимает через --solution, проект — через --project, а --nologo не
-      # понимает: с ним прогон находит ноль тестов и падает кодом 1. Здесь идёт
-      # всё решение: unit и integration вместе, Docker на ubuntu-latest есть.
-      - run: dotnet test --solution Meetups.sln --no-build
-        working-directory: apps/meetups
+      # Оба уровня через рецепты, а не прямым dotnet test: порог числа тестов и
+      # --fail-skips живут в justfile, и копия здесь разошлась бы с локальным
+      # гейтом молча. Рецепт собирает проект сам; после шага выше это
+      # инкрементальная сборка без изменений, и --no-build в рецепт не
+      # пробрасывается, чтобы у рецепта осталась одна форма вызова. Docker для
+      # интеграционного уровня на ubuntu-latest есть.
+      - run: just meetups-test
+      - run: just meetups-test-integration
 
   notifications:
     needs: changes
@@ -293,14 +296,17 @@ jobs:
       - run: sh tools/notifications/check-contracts-generated.sh
       # Гейта форматирования здесь нет: Fantomas C# не форматирует, а своего
       # гейта для C# в репозитории нет ни у AppHost, ни у ServiceDefaults.
+      - uses: extractions/setup-just@v4
       - run: dotnet build Notifications.sln --nologo
         working-directory: apps/notifications
+      # Через рецепты по той же причине, что у Meetups: порог и --fail-skips
+      # живут в justfile, а повторная сборка внутри рецепта инкрементальна.
       # Интеграционные тесты поднимают PostgreSQL через Testcontainers. Docker на
       # ubuntu-latest есть, поэтому они выполняются, а не пропускаются: фикстура
-      # под GITHUB_ACTIONS превращает отсутствие контейнера в отказ, иначе джоба
-      # зеленела бы на пропущенных тестах.
-      - run: dotnet test --solution Notifications.sln --no-build
-        working-directory: apps/notifications
+      # под GITHUB_ACTIONS превращает отсутствие контейнера в отказ, а
+      # --fail-skips рецепта ловит любой другой пропуск.
+      - run: just notifications-test
+      - run: just notifications-test-integration
 
   telegram-bot:
     needs: changes
