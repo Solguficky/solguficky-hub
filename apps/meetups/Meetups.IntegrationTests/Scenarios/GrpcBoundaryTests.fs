@@ -68,18 +68,31 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         test <@ actual = List.replicate 4 (Some StatusCode.PermissionDenied) @>
 
-    /// Проверка права отвечает постороннему тем же правилом и в той же точке, что
-    /// команды: до соединения с хранилищем, которого у этого хоста и нет. Ответ
-    /// поэтому не может зависеть от того, существует ли сходка (PER-224).
+    /// Проверка права спрашивает Identity раньше хранилища, которого у этого хоста и
+    /// нет. Identity здесь недостижим, и ответ — «право не подтверждено», а не отказ
+    /// и не падение на базе: так настоящий адаптер доказывает и порядок, и сведение
+    /// отказа транспорта (ADR-051).
     [<Fact>]
-    member _.``The authority check refuses an ordinary viewer before touching storage``() =
+    member _.``The authority check reports an unreachable Identity as UNAVAILABLE before touching storage``() =
+        let request = CheckMeetupAuthorityRequest(IdentityId = viewer.IdentityId, Id = id)
+
+        request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
+
+        let actual = Rpc.codeOf (fun () -> client.CheckMeetupAuthority(request) |> ignore)
+
+        test <@ actual = Some StatusCode.Unavailable @>
+
+    /// Набор отношений без значений — ошибка вызывающего, и отвечает на неё разбор,
+    /// до Identity: иначе недостижимый Identity спрятал бы её за UNAVAILABLE.
+    [<Fact>]
+    member _.``The authority check refuses an empty set of relations with INVALID_ARGUMENT``() =
         let actual =
             Rpc.codeOf (fun () ->
-                client.CheckMeetupAuthority(CheckMeetupAuthorityRequest(Viewer = viewer, Id = id))
+                client.CheckMeetupAuthority(CheckMeetupAuthorityRequest(IdentityId = viewer.IdentityId, Id = id))
                 |> ignore
             )
 
-        test <@ actual = Some StatusCode.PermissionDenied @>
+        test <@ actual = Some StatusCode.InvalidArgument @>
 
     /// Новые роли контракта и значение вне словаря не отвергают запрос по разбору:
     /// перевод в домен их отбрасывает, а отказ приходит от правила по праву.

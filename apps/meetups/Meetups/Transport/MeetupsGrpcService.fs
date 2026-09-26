@@ -121,4 +121,13 @@ type MeetupsGrpcService() =
 
     override _.CheckMeetupAuthority(request: CheckMeetupAuthorityRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
-        CheckMeetupAuthority.Api.handle (CheckMeetupAuthority.Composition.buildLoad services) request
+
+        let forwarded: CheckMeetupAuthority.Forwarded =
+            {
+                RequestId = IncomingMetadata.requestId context
+                UseCase = IncomingMetadata.useCase context
+                Deadline = context.Deadline
+                Cancellation = context.CancellationToken
+            }
+
+        CheckMeetupAuthority.Api.handle (CheckMeetupAuthority.Composition.buildDeps services forwarded) request

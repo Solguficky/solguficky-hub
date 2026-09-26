@@ -24,13 +24,32 @@ service MeetupsService {
   rpc CheckMeetupAuthority(CheckMeetupAuthorityRequest) returns (MeetupAuthority);
 }
 
-// Deliberately carries no description of the caller's scenario: the question is
-// only whether the viewer may act on behalf of the meetup.
+// Deliberately carries no description of the caller's scenario and no roles of
+// the person: the question is only whether the person stands in one of the
+// accepted relations to the meetup, and Meetups establishes the relation itself.
 message CheckMeetupAuthorityRequest {
-  Viewer viewer = 1;
+  // The caller once supplied the person's roles here; Meetups no longer trusts
+  // roles it did not ask Identity for.
+  reserved 1;
+  reserved "viewer";
 
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens of the person to check.
+  string identity_id = 3;
+
+  // Relations the calling surface accepts; holding any one of them grants.
+  // Must not be empty and must not contain MEETUP_RELATION_UNSPECIFIED.
+  repeated MeetupRelation accepted_relations = 4;
+}
+
+enum MeetupRelation {
+  // No value: the field is unset or the relation is unknown to the receiver.
+  MEETUP_RELATION_UNSPECIFIED = 0;
+
+  // Community administrator; the relation holds for every meetup.
+  MEETUP_RELATION_COMMUNITY_ADMINISTRATOR = 1;
 }
 
 // Deliberately empty: the call status is the whole answer, and there is no

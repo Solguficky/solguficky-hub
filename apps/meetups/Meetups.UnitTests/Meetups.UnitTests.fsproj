@@ -65,6 +65,7 @@
     <Compile Include="DispatchTelemetryTests.fs" />
     <Compile Include="OutboxDispatchWorkerTests.fs" />
     <Compile Include="NatsEventPublisherTests.fs" />
+    <Compile Include="IdentityRoleClientTests.fs" />
     <Compile Include="MigrationsTests.fs" />
   </ItemGroup>
 

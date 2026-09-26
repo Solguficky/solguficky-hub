@@ -104,13 +104,22 @@ let ``Service exposes exactly the sixteen slice operations`` () =
     test <@ actual = expected @>
 
 /// Служебное перечисление состояния смотрящего не принимает намеренно (PER-211),
-/// поэтому оно исключено здесь по имени, а его собственную форму проверяет тест
-/// ниже: молчаливый пропуск был бы неотличим от забытого поля.
+/// а проверка права другими сервисами — тоже (ADR-051): роли ей приносит не
+/// вызывающий, их спрашивает Meetups. Поэтому обе исключены здесь по имени, а их
+/// собственную форму проверяют тесты ниже: молчаливый пропуск был бы неотличим от
+/// забытого поля.
 [<Fact>]
 let ``Every human operation carries the viewer as field one`` () =
+    let services =
+        set
+            [
+                "ListMeetupStatesRequest"
+                "CheckMeetupAuthorityRequest"
+            ]
+
     let requests =
         requestTypes
-        |> List.filter (fun request -> request.Name <> "ListMeetupStatesRequest")
+        |> List.filter (fun request -> not (services.Contains request.Name))
 
     let actual = requests |> List.map firstField
 
@@ -152,16 +161,22 @@ let ``Cancelling a scheduled publication takes only the viewer and the id`` () =
 
     test <@ actual = set [ "viewer"; "id"; "expected_version" ] @>
 
-/// Вопрос о праве не несёт сценария вызывающей стороны, а ответ — готового
+/// Вопрос о праве не несёт ни сценария вызывающей стороны, ни ролей человека —
+/// роль Meetups спрашивает у Identity сам (ADR-051), — а ответ не несёт готового
 /// разрешения для кэша: решение передаёт статус, тело пустое (PER-224).
 [<Fact>]
-let ``The authority check asks about a meetup and answers with the status alone`` () =
+let ``The authority check asks about a person and a meetup and answers with the status alone`` () =
     let request = fieldNames CheckMeetupAuthorityRequest.Descriptor
     let response = fieldNames MeetupAuthority.Descriptor
 
     test
         <@
-            request = set [ "viewer"; "id" ]
+            request = set
+                [
+                    "id"
+                    "identity_id"
+                    "accepted_relations"
+                ]
             && response = Set.empty
         @>
 
@@ -274,13 +289,14 @@ let ``The value types live apart from the service schema`` () =
         @>
 
 [<Fact>]
-let ``Schema declares only the lifecycle and visibility enums`` () =
+let ``Schema declares only the lifecycle, visibility and relation enums`` () =
     let actual = enums |> List.map (fun e -> e.Name) |> Set.ofList
 
     let expected =
         [
             "MeetupLifecycle"
             "MeetupVisibility"
+            "MeetupRelation"
         ]
         |> set
 

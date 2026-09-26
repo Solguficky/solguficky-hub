@@ -10,24 +10,15 @@
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.28.3" />
     <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
-    <PackageReference Include="Grpc.Tools" Version="2.67.0">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
   </ItemGroup>
 
-  <!-- Meetups.Contracts уже генерирует identity/v1/roles.proto в namespace
-       Identity.V1 и клиента Meetups. Ссылка, а не вторая генерация: два
-       сгенерированных GlobalRole в одном решении дали бы CS0433. -->
+  <!-- Meetups.Contracts генерирует и identity/v1/roles.proto, и клиента
+       Identity: Meetups сам его вызывает в CheckMeetupAuthority (ADR-051).
+       Своей генерации здесь поэтому нет: два сгенерированных Identity.V1 в одном
+       решении дали бы CS0433. Проект остаётся точкой, через которую контур
+       получает клиентов, и не тянет тесты в зависимость от проекта сервиса. -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\apps\meetups\Meetups.Contracts\Meetups.Contracts.csproj" />
-  </ItemGroup>
-
-  <!-- roles.proto здесь не перечислен намеренно: protoc разрешает import через
-       ProtoRoot и без него, а C# для него уже есть в Meetups.Contracts.
-       GrpcServices="Client": сервер Identity живёт в Go, C# его не реализует. -->
-  <ItemGroup>
-    <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
   </ItemGroup>
 
 </Project>

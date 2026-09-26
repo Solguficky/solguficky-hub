@@ -292,7 +292,7 @@ JetStream участвует в первой границе, но не заме�
 |---|---|
 | Meetups | полнота и самодостаточность словаря событий: событие — данные, а не сигнал |
 | Meetups | событие снятия публикации несёт минимальный снимок для идентификации сходки |
-| Meetups | синхронный метод проверки права действовать от имени сходки — реализован как `MeetupsService.CheckMeetupAuthority` ([integration.md](../architecture/integration.md), [PER-224](https://linear.app/anticnvm/issue/per-224)); вход меняется на набор принимаемых отношений по [ADR-051](../decisions/ADR-051-meetup-relation-check-at-resource-owner.md) |
+| Meetups | синхронный метод проверки права действовать от имени сходки — реализован как `MeetupsService.CheckMeetupAuthority` ([integration.md](../architecture/integration.md), [PER-224](https://linear.app/anticnvm/issue/per-224)); вход — набор принимаемых отношений по [ADR-051](../decisions/ADR-051-meetup-relation-check-at-resource-owner.md), реализован в [PER-349](https://linear.app/anticnvm/issue/per-349) |
 | Meetups | вне MVP: метод перечисления состояния сходок, когда понадобится наполнение и пересборка реплики |
 | Identity | outbox и события о регистрации, смене ролей и блокировке |
 | Identity | вне MVP: метод перечисления состава, когда понадобится наполнение и пересборка реплики |
