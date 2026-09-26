@@ -392,7 +392,11 @@ function toSummary(
     ReturnType<MeetupsRpc["listVisibleMeetups"]>
   >["meetups"][number],
 ): MeetupSummary {
-  const summary: MeetupSummary = { id: value.id, title: value.title };
+  const summary: MeetupSummary = {
+    id: value.id,
+    title: value.title,
+    visibility: toVisibility(value.visibility),
+  };
   const date = scheduleDate(value.schedule);
   return date === undefined ? summary : { ...summary, schedule: date };
 }

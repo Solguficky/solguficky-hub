@@ -25,6 +25,12 @@ describe("callback parser", () => {
     });
   });
 
+  it("parses the hidden meetups section of management", () => {
+    expect(parseCallback("v1:manage:hidden")).toEqual({
+      kind: "manage-hidden",
+    });
+  });
+
   it("parses the home, hub and archive navigation actions", () => {
     expect(parseCallback("v1:nav:start")).toEqual({ kind: "home" });
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });

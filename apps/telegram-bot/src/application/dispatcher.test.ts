@@ -44,6 +44,7 @@ describe("dispatcher", () => {
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
           title: "Настолки",
+          visibility: "visible" as const,
         },
       ],
     });
@@ -82,6 +83,7 @@ describe("dispatcher", () => {
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
           title: "Настолки",
+          visibility: "visible",
         },
       ],
     });
@@ -97,6 +99,7 @@ describe("dispatcher", () => {
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
           title: "Настолки",
+          visibility: "visible" as const,
           status: "past" as const,
         },
       ],
@@ -133,6 +136,7 @@ describe("dispatcher", () => {
         {
           id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
           title: "Настолки",
+          visibility: "visible",
           status: "past",
         },
       ],

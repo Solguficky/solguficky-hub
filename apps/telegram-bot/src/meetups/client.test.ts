@@ -62,6 +62,7 @@ describe("Meetups client", () => {
           create(MeetupSummarySchema, {
             id: "meetup-with-date",
             title: "Настолки",
+            visibility: MeetupVisibility.VISIBLE,
             schedule: {
               form: {
                 case: "fixed",
@@ -77,6 +78,7 @@ describe("Meetups client", () => {
           create(MeetupSummarySchema, {
             id: "meetup-without-date",
             title: "Без даты",
+            visibility: MeetupVisibility.HIDDEN,
             schedule: { form: { case: "noDate", value: {} } },
           }),
         ],
@@ -93,8 +95,13 @@ describe("Meetups client", () => {
           id: "meetup-with-date",
           title: "Настолки",
           schedule: { year: 2026, month: 8, day: 15 },
+          visibility: "visible",
         },
-        { id: "meetup-without-date", title: "Без даты" },
+        {
+          id: "meetup-without-date",
+          title: "Без даты",
+          visibility: "hidden",
+        },
       ],
     });
     expect(listVisibleMeetups).toHaveBeenCalledWith(
@@ -435,16 +442,19 @@ describe("Meetups client", () => {
             id: "held-meetup",
             title: "Состоявшаяся",
             lifecycle: MeetupLifecycle.HELD,
+            visibility: MeetupVisibility.VISIBLE,
           }),
           create(MeetupSummarySchema, {
             id: "cancelled-meetup",
             title: "Отменённая",
             lifecycle: MeetupLifecycle.CANCELLED,
+            visibility: MeetupVisibility.VISIBLE,
           }),
           create(MeetupSummarySchema, {
             id: "past-meetup",
             title: "Прошедшая",
             lifecycle: MeetupLifecycle.PLANNED,
+            visibility: MeetupVisibility.VISIBLE,
           }),
         ],
       }),
@@ -454,9 +464,24 @@ describe("Meetups client", () => {
     await expect(meetups.listArchived(person)).resolves.toEqual({
       kind: "ok",
       meetups: [
-        { id: "held-meetup", title: "Состоявшаяся", status: "held" },
-        { id: "cancelled-meetup", title: "Отменённая", status: "cancelled" },
-        { id: "past-meetup", title: "Прошедшая", status: "past" },
+        {
+          id: "held-meetup",
+          title: "Состоявшаяся",
+          visibility: "visible",
+          status: "held",
+        },
+        {
+          id: "cancelled-meetup",
+          title: "Отменённая",
+          visibility: "visible",
+          status: "cancelled",
+        },
+        {
+          id: "past-meetup",
+          title: "Прошедшая",
+          visibility: "visible",
+          status: "past",
+        },
       ],
     });
     expect(rpc.listArchivedMeetups).toHaveBeenCalledWith(
