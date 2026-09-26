@@ -165,9 +165,10 @@ public static class NotificationsHost
         // ему извне NpgsqlDataSource пережил бы остановку хоста вместе со своим
         // пулом соединений. Meetups регистрирует свой источник тем же способом.
         //
-        // Предел подключения ставится только пулу сервиса, а не общей строке:
-        // clustering и reminders Orleans живут на своих пределах, и ускорять их
-        // отказы ради ответа клиенту незачем.
+        // Предел подключения ставится пулу сервиса, а не общей строке: clustering
+        // и reminders Orleans живут на своих пределах. Пул сервиса делят gRPC,
+        // грин и фоновые пути, поэтому быстрее отказывают все они; фоновые
+        // повторяются следующим тиком или повтором сообщения, и это приемлемо.
         builder.Services.AddSingleton(_ =>
             NpgsqlDataSource.Create(StorageAvailability.WithConnectTimeout(connectionString)));
         builder.Services.AddSingleton<GrainActivationStore>();

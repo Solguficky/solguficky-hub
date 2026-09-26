@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,7 +51,9 @@ func Pool(dsn string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
-	if config.ConnectTimeout == 0 {
+	// Ноль у pgx значит «без предела», и явный connect_timeout=0 в DSN — выбор
+	// развёртывания, а не отсутствие ключа. Поэтому признак — сам ключ.
+	if config.ConnectTimeout == 0 && !strings.Contains(dsn, "connect_timeout") {
 		config.ConnectTimeout = ConnectTimeout
 	}
 	db := stdlib.OpenDB(*config)

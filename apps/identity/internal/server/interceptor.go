@@ -264,6 +264,14 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 		return
 	}
 
+	// Клиент, закрывший вызов, пока хранилище отвечало, не оставляет в журнале
+	// сервиса отказа: pgx заворачивает отмену в ConnectError, и без этой ветки она
+	// читалась бы недоступностью базы. Так же отмену пишет граница Meetups.
+	if _, ok := errors.AsType[*internalError](err); ok && errors.Is(ctx.Err(), context.Canceled) {
+		log.WarnContext(ctx, "rpc failed", attrs...)
+		return
+	}
+
 	level := slog.LevelWarn
 	category := failureCategory(ctx, err)
 	if serverFault(responseCode(ctx, err)) {
@@ -308,12 +316,12 @@ func countFailure(ctx context.Context, category string) {
 }
 
 // responseCode — код, который получил вызывающий. Отказ хранилища после
-// истечения дедлайна вызова клиент уже не видит: у него свой DeadlineExceeded,
-// и запись границы называет его, а не код, ушедший в закрытый поток. Так
-// категория и код записи не расходятся.
+// истечения дедлайна или отмены вызова клиент уже не видит: у него свой
+// DeadlineExceeded или Canceled, и запись границы называет его, а не код,
+// ушедший в закрытый поток. Так категория и код записи не расходятся.
 func responseCode(ctx context.Context, err error) codes.Code {
-	if _, ok := errors.AsType[*internalError](err); ok && callExpired(ctx) {
-		return codes.DeadlineExceeded
+	if _, ok := errors.AsType[*internalError](err); ok && ctx.Err() != nil {
+		return status.FromContextError(ctx.Err()).Code()
 	}
 	return status.Code(err)
 }

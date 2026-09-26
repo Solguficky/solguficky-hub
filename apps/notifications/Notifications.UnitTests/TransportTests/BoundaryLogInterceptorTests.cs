@@ -26,6 +26,7 @@ public class BoundaryLogInterceptorTests
         record.Level.ShouldBe(LogLevel.Error);
         record.Fields["grpc_code"].ShouldBe("Unavailable");
         record.Fields["error_category"].ShouldBe("dependency_unavailable");
+        record.Fields.ContainsKey("stack").ShouldBeFalse();
         thrown.ShouldBeOfType<RpcException>().StatusCode.ShouldBe(StatusCode.Unavailable);
     }
 

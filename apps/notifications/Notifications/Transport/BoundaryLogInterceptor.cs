@@ -77,14 +77,15 @@ public sealed class BoundaryLogInterceptor(ILogger<BoundaryLogInterceptor> logge
                 throw;
             }
 
+            // Stack норматив держит для неожиданного отказа, а недоступность
+            // ожидаема: запись называет причину текстом, как у Identity.
             ReplicaTelemetry.Fail("dependency_unavailable");
             Write(
                 LogLevel.Error,
-                storage,
+                null,
                 Frame(context, "error", started, StatusCode.Unavailable,
                     ("error_category", "dependency_unavailable"),
-                    ("error", storage.Message),
-                    ("stack", storage.StackTrace)));
+                    ("error", storage.Message)));
             throw new RpcException(new Status(StatusCode.Unavailable, "storage unavailable", storage));
         }
         // Неожиданный отказ записывает та граница, на которой он стал наблюдаемым.

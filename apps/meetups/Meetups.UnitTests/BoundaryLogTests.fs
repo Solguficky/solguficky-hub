@@ -203,6 +203,7 @@ let ``An unreachable database is refused as Unavailable and recorded as dependen
     test <@ record.Level = LogLevel.Error @>
     test <@ record.Fields.TryFind "grpc_code" = Some "Unavailable" @>
     test <@ record.Fields.TryFind "error_category" = Some "dependency_unavailable" @>
+    test <@ record.Fields.ContainsKey "stack" = false @>
 
     test
         <@

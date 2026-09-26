@@ -194,6 +194,33 @@ func TestUnaryLoggingExpiredCallIsTimeout(t *testing.T) {
 	}
 }
 
+// Клиент отменил вызов, пока pgx подключался: это не недоступность базы и не
+// отказ сервиса. Запись называет Canceled и категории не несёт, как у Meetups.
+func TestUnaryLoggingCanceledCallIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	cause := connectError(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	logs := &capture{}
+	info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
+	_, _ = unaryLogging(slog.New(logs))(ctx, nil, info,
+		func(context.Context, any) (any, error) { return nil, internal("begin transaction", cause) })
+
+	rec := logs.sole(t)
+	assertRecord(t, rec, slog.LevelWarn, "rpc failed")
+	if got := attrValue(t, rec, "grpc_code").String(); got != codes.Canceled.String() {
+		t.Fatalf("grpc_code: got %q want %s", got, codes.Canceled)
+	}
+	rec.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error_category" {
+			t.Fatalf("canceled call carries error_category %q", a.Value)
+		}
+		return true
+	})
+}
+
 type fakePinger struct {
 	mu    sync.Mutex
 	err   error

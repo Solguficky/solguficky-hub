@@ -178,9 +178,11 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                     else
                         countFailure "dependency_unavailable"
 
+                        // Stack норматив держит для неожиданного отказа, а недоступность
+                        // ожидаема: запись называет причину текстом, как у Identity.
                         write
                             LogLevel.Error
-                            (Some storage)
+                            None
                             (frame
                                 context
                                 "error"
@@ -189,7 +191,6 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
                                 [
                                     "error_category", box "dependency_unavailable"
                                     "error", box storage.Message
-                                    "stack", box storage.StackTrace
                                 ])
 
                         return
