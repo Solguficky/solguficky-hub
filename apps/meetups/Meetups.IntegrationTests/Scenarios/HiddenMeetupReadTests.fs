@@ -208,35 +208,65 @@ type HiddenMeetupReadTests() =
     /// Проверка права — тоже вопрос о сходке, и ответ на него не должен выдавать
     /// скрытую: посторонний получает один и тот же отказ для скрытой и отсутствующей,
     /// а администратор — право и на свою, и на заведённую другим (PER-224).
+    ///
+    /// Identity здесь подменён портом, а не поднят: сведение его ответов проверено
+    /// unit-тестами адаптера, а этот сценарий держит путь «граница — срез — база».
+    /// Порт отвечает «да» только администраторам и только на роль Administrator —
+    /// так же, как ответил бы Identity на вопрос, который задаёт Meetups.
     [<Fact>]
     member _.``The authority check neither exposes a hidden meetup nor withholds it from administrators``() =
-        use live = new LiveMeetupsHost()
+        let administrators =
+            set
+                [
+                    "0199c0de-0000-7000-8000-00000000000a"
+                    "0199c0de-0000-7000-8000-00000000000d"
+                ]
+
+        let identity: Meetups.Slices.CheckMeetupAuthority.AskRoles =
+            fun (Meetups.Domain.PersonId person) roles ->
+                Threading.Tasks.Task.FromResult(
+                    Ok(
+                        administrators.Contains(person.ToString "D")
+                        && roles.Contains Meetups.Domain.Administrator
+                    )
+                )
+
+        let configure (services: Microsoft.Extensions.DependencyInjection.IServiceCollection) =
+            Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<
+                Meetups.Slices.CheckMeetupAuthority.Port
+             >(
+                services,
+                Meetups.Slices.CheckMeetupAuthority.Port.Connected(fun _ -> identity)
+            )
+            |> ignore
+
+        use live = new LiveMeetupsHost(configure)
         let client = MeetupsService.MeetupsServiceClient(live.Channel)
         let hiddenId, _ = createDraft client
         let missingId = (Guid.CreateVersion7()).ToString "D"
 
-        let anotherAdministrator =
-            Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000d")
+        let check (identityId: string) meetupId =
+            let request = CheckMeetupAuthorityRequest(IdentityId = identityId, Id = meetupId)
 
-        anotherAdministrator.GlobalRoles.Add Identity.V1.GlobalRole.Admin
+            request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
 
-        let check viewer meetupId =
             try
-                client.CheckMeetupAuthority(CheckMeetupAuthorityRequest(Viewer = viewer, Id = meetupId))
-                |> ignore
-
+                client.CheckMeetupAuthority(request) |> ignore
                 None
             with :? RpcException as refused ->
                 Some refused.Status
 
-        let outsiderOnHidden = check (ordinary ()) hiddenId
-        let outsiderOnMissing = check (ordinary ()) missingId
+        let outsider = (ordinary ()).IdentityId
+        let author = (administrator ()).IdentityId
+        let anotherAdministrator = "0199c0de-0000-7000-8000-00000000000d"
+        let outsiderOnHidden = check outsider hiddenId
+        let outsiderOnMissing = check outsider missingId
 
         test
             <@
                 outsiderOnHidden = outsiderOnMissing
-                && outsiderOnMissing = Some(Status(StatusCode.PermissionDenied, "an administrator role is required"))
-                && check (administrator ()) hiddenId = None
+                && outsiderOnMissing = Some(Status(StatusCode.PermissionDenied, "none of the accepted relations holds"))
+                && check author hiddenId = None
                 && check anotherAdministrator hiddenId = None
                 && check anotherAdministrator missingId = Some(Status(StatusCode.NotFound, "meetup not found"))
             @>

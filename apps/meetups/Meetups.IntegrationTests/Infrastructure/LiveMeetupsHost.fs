@@ -19,7 +19,9 @@ open Microsoft.Extensions.Logging
 /// конструктора class fixture xUnit показывает падением класса, и прогон на машине
 /// без Docker покраснел бы. Поэтому хост создаётся в теле теста через use — тем же
 /// приёмом, что и в тестах схемы.
-type LiveMeetupsHost() =
+///
+/// `configure` перекрывает регистрации хоста; пустой — хост как при запуске.
+type LiveMeetupsHost(configure: IServiceCollection -> unit) =
     let db = new IsolatedDatabase()
     let records = ConcurrentQueue<LogRecord>()
 
@@ -28,7 +30,8 @@ type LiveMeetupsHost() =
             Meetups.Migrations.apply db.ConnectionString
 
             // Порт 0: адрес назначает система, параллельные прогоны не конфликтуют.
-            Meetups.Host.build
+            Meetups.Host.buildWith
+                configure
                 [|
                     "--urls=http://127.0.0.1:0"
                     $"--{Meetups.Migrations.DatabaseUrlVariable}={db.ConnectionString}"
@@ -57,6 +60,8 @@ type LiveMeetupsHost() =
             (app :> IAsyncDisposable).DisposeAsync().AsTask().GetAwaiter().GetResult()
             (db :> IDisposable).Dispose()
             reraise ()
+
+    new() = new LiveMeetupsHost(ignore)
 
     member _.Channel = channel
 
