@@ -19,6 +19,12 @@ const MeetupCategorySchema = z.enum([
   "reminder",
   "organizer",
 ]);
+// Категории, о которых приходит уведомление по конкретной сходке. Напоминание и
+// сообщения организатора канал пока не рисует, и кнопки для них нет.
+const NotifiedMeetupCategorySchema = z.enum(["changes", "material"]);
+export type NotifiedMeetupCategory = z.infer<
+  typeof NotifiedMeetupCategorySchema
+>;
 const GlobalCategorySchema = z.enum([
   "published",
   "changes",
@@ -94,6 +100,14 @@ export type CallbackAction =
   // тот перерисовывает сообщение в экран настроек, и текст уведомления пропал
   // бы вместе с ним.
   | { kind: "notify-disable-global"; category: NotificationCategory }
+  // То же отключение из уведомления об изменении или материале, но у одной
+  // сходки: эти категории получают её подписчики, и настройка сходки сильнее
+  // общей.
+  | {
+      kind: "notify-disable-meetup";
+      token: string;
+      category: NotifiedMeetupCategory;
+    }
   | { kind: "notify-settings"; token: string }
   | { kind: "notify-subscription"; token: string; subscribed: boolean }
   | {
@@ -281,6 +295,16 @@ function parseNotify(parts: readonly string[]): CallbackAction {
   if (!token.success) return { kind: "malformed" };
   if (parts.length === 4 && parts[2] === "settings") {
     return { kind: "notify-settings", token: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "moff") {
+    const category = NotifiedMeetupCategorySchema.safeParse(parts[4]);
+    return category.success
+      ? {
+          kind: "notify-disable-meetup",
+          token: token.data,
+          category: category.data,
+        }
+      : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "sub") {
     const state = TargetStateSchema.safeParse(parts[4]);

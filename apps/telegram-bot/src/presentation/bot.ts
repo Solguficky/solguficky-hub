@@ -57,6 +57,7 @@ import {
 } from "./meetup-deep-link.js";
 import {
   type CallbackAction,
+  type NotifiedMeetupCategory,
   parseCallback,
   removableUsernamePattern,
 } from "./parse-callback.js";
@@ -1571,7 +1572,10 @@ async function handleCallback(
         ...rpcCall(ctx, useCase),
       });
       if (result.kind === "global-notification-settings") {
-        await confirmCategoryDisabled(ctx, action.category);
+        await confirmCategoryDisabled(ctx, {
+          note: globalCategoryDisabledNote(action.category),
+          settings: { text: "Настроить уведомления", data: "v1:notify:global" },
+        });
       } else {
         await ctx.reply(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
@@ -1584,6 +1588,51 @@ async function handleCallback(
         okMessage: "notification category disabled",
         rejectedMessage: "notification category disable rejected",
         useCase,
+      });
+      return;
+    }
+    // То же, что отключение из уведомления о новой сходке, но у одной сходки:
+    // результат дописывается под уведомлением, отказ и исчезнувшая сходка
+    // приходят отдельным сообщением, а текст уведомления остаётся.
+    if (action.kind === "notify-disable-meetup") {
+      const meetupId = tokenToUuid(action.token);
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "set-meetup-category",
+        meetupId,
+        category: action.category,
+        enabled: false,
+        ...rpcCall(ctx, useCase),
+      });
+      if (result.kind === "meetup-notification-settings") {
+        await confirmCategoryDisabled(ctx, {
+          note: meetupCategoryDisabledNote(action.category),
+          settings: {
+            text: "Уведомления сходки",
+            data: `v1:notify:settings:${action.token}`,
+          },
+        });
+      } else if (result.kind === "meetup-not-found") {
+        // Настройка пишется раньше, чем читается карточка, поэтому «не
+        // найдена» не значит «не выключено»: сходку могли скрыть между
+        // уведомлением и нажатием. Текст не обещает ни того, ни другого, а
+        // говорит то, что верно в обоих случаях.
+        await ctx.reply(
+          "Сходка больше недоступна: пока её снова не опубликуют, уведомлений по ней не будет.",
+        );
+      } else {
+        await ctx.reply(
+          result.kind === "dependency-rejected" && result.reason === "forbidden"
+            ? "Notifications не разрешил это действие."
+            : unavailableText,
+        );
+      }
+      outcome = screenBoundary(result, {
+        ok: ["meetup-notification-settings"],
+        okMessage: "meetup notification category disabled",
+        rejectedMessage: "meetup notification category disable rejected",
+        useCase,
+        meetupId,
       });
       return;
     }
@@ -2376,11 +2425,27 @@ async function renderNotificationSettings(
   await renderNotificationFailure(ctx, result, retry);
 }
 
+function globalCategoryDisabledNote(category: NotificationCategory): string {
+  return `Больше не присылаю: ${categoryLabels[category].toLowerCase()}. Включить снова можно в настройках уведомлений.`;
+}
+
+// Изменения и снятие с публикации идут по одной категории, поэтому
+// подтверждение говорит и о снятии: иначе его отсутствие стало бы сюрпризом.
+function meetupCategoryDisabledNote(category: NotifiedMeetupCategory): string {
+  return category === "changes"
+    ? "Больше не присылаю по этой сходке изменения данных и статуса, включая снятие с публикации. Включить снова можно в уведомлениях сходки."
+    : "Больше не присылаю по этой сходке новые связанные сообщения. Включить снова можно в уведомлениях сходки.";
+}
+
+type CategoryDisabledConfirmation = {
+  note: string;
+  settings: { text: string; data: string };
+};
+
 async function confirmCategoryDisabled(
   ctx: UpdateContext,
-  category: NotificationCategory,
+  { note, settings }: CategoryDisabledConfirmation,
 ): Promise<void> {
-  const note = `Больше не присылаю: ${categoryLabels[category].toLowerCase()}. Включить снова можно в настройках уведомлений.`;
   const message = ctx.callbackQuery?.message;
   const pressed = ctx.callbackQuery?.data;
   // Кнопки уведомления, кроме нажатой, остаются: «Открыть сходку» по-прежнему
@@ -2395,7 +2460,7 @@ async function confirmCategoryDisabled(
     .filter((row) => row.length > 0);
   const keyboard = InlineKeyboard.from(rows)
     .row()
-    .text("Настроить уведомления", "v1:notify:global");
+    .text(settings.text, settings.data);
   const original =
     message !== undefined && "text" in message ? message.text : undefined;
   const text =
@@ -3089,6 +3154,7 @@ function callbackUseCase(
     | "notify-global"
     | "notify-set-global"
     | "notify-disable-global"
+    | "notify-disable-meetup"
     | "notify-settings"
     | "notify-subscription"
     | "notify-set-meetup"
@@ -3147,6 +3213,7 @@ function callbackUseCase(
     case "notify-global":
     case "notify-set-global":
     case "notify-disable-global":
+    case "notify-disable-meetup":
     case "notify-settings":
     case "notify-subscription":
     case "notify-set-meetup":
