@@ -40,6 +40,19 @@ public static class FactFixtures
             """,
             new { Person = person, MeetupId = Guid.Parse(meetupId) });
 
+    /// <summary>
+    /// Настройка категории: без <paramref name="meetupId" /> — глобальная,
+    /// с ним — переопределение на одну сходку.
+    /// </summary>
+    public static Task Preference(IsolatedDatabase db, Guid person, string? meetupId, string category, bool enabled) =>
+        Execute(
+            db,
+            """
+            INSERT INTO notification_preference (identity_id, meetup_id, category, enabled, updated_at)
+            VALUES (@Person, @MeetupId, @Category, @Enabled, now());
+            """,
+            new { Person = person, MeetupId = meetupId is null ? (Guid?)null : Guid.Parse(meetupId), Category = category, Enabled = enabled });
+
     public static async Task Execute(IsolatedDatabase db, string sql, object parameters)
     {
         await using var connection = new NpgsqlConnection(db.ConnectionString);
