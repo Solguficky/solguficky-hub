@@ -189,6 +189,13 @@ public static class NotificationsHost
         // Адресные факты (PER-216). Порождаются в транзакции реплики, а в шину
         // их выносит релей — он есть только там, где есть шина.
         builder.Services.AddSingleton<NotificationStore>();
+        // Отрицательный срок молча снял бы каждый факт, а огромный переполнил
+        // бы момент и уронил применение каждого события сходки: оба ловятся на
+        // старте, а не на первом поводе.
+        builder.Services.AddOptions<FactOptions>()
+            .Bind(builder.Configuration.GetSection(FactOptions.SectionName))
+            .Validate(FactOptions.IsValid, FactOptions.ValidationMessage)
+            .ValidateOnStart();
         builder.Services.Configure<DispatchOptions>(builder.Configuration.GetSection(DispatchOptions.SectionName));
 
         if (natsUrl is not null)

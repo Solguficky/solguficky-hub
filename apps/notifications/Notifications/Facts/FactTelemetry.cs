@@ -5,7 +5,7 @@ namespace Notifications.Facts;
 
 /// <summary>
 /// Низкокардинальные сигналы адресных фактов: сколько порождено, сколько
-/// отсечено настройками и как идёт вынос в шину.
+/// отсечено настройками, сколько снято до выноса и как идёт вынос в шину.
 /// </summary>
 /// <remarks>
 /// Разбивка на один повод живёт не здесь, а в записи <c>replica_apply</c> того
@@ -20,6 +20,7 @@ public sealed class FactTelemetry
     private static readonly Meter Meter = new(MeterName);
     private static readonly Counter<long> Created = Meter.CreateCounter<long>("notifications.facts.created");
     private static readonly Counter<long> Suppressed = Meter.CreateCounter<long>("notifications.facts.suppressed");
+    private static readonly Counter<long> Withdrawn = Meter.CreateCounter<long>("notifications.facts.withdrawn");
     private static readonly Counter<long> Dispatched = Meter.CreateCounter<long>("notifications.facts.dispatched");
     private static readonly Counter<long> DispatchFailures = Meter.CreateCounter<long>("notifications.facts.dispatch_failures");
     private static readonly Gauge<double> OldestPendingAge = Meter.CreateGauge<double>(
@@ -50,6 +51,24 @@ public sealed class FactTelemetry
             // вовсе, а не отсекаются: им факт не был положен.
             Suppressed.Add(facts.Suppressed, tag, new KeyValuePair<string, object?>("reason", "preference"));
             Add("suppressed", facts.Suppressed);
+        }
+    }
+
+    /// <summary>
+    /// Учитывает факты, снятые до выноса в шину. Отдельный счётчик, а не
+    /// разновидность отказа: снятый факт не потерян, его не нужно было
+    /// доставлять.
+    /// </summary>
+    /// <param name="reason">Причина из <c>notification.withdrawal_reason</c>.</param>
+    public void RecordWithdrawn(string reason, IReadOnlyList<WithdrawnFacts> withdrawn)
+    {
+        foreach (var facts in withdrawn)
+        {
+            Withdrawn.Add(
+                facts.Count,
+                new KeyValuePair<string, object?>("type", facts.Type),
+                new KeyValuePair<string, object?>("reason", reason));
+            Add("withdrawn", facts.Count);
         }
     }
 

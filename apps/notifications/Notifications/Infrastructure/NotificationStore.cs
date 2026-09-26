@@ -86,10 +86,32 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     private const string InsertSql = """
         INSERT INTO notification (
-            notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at)
-        SELECT id, recipient, @Type, @CauseKind, @CauseId, @MeetupId, payload, @RequestId, @Now
+            notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
+            not_after)
+        SELECT id, recipient, @Type, @CauseKind, @CauseId, @MeetupId, payload, @RequestId, @Now, @NotAfter
         FROM unnest(@Ids, @Recipients, @Payloads) AS fact (id, recipient, payload)
         ON CONFLICT DO NOTHING;
+        """;
+
+    // Снятие при отмене: неотправленное этой сходки больше не нужно — человек
+    // пошёл бы по ссылке на то, чего уже нет. Служебное сообщение о снятии с
+    // публикации не снимается: отмена скрытой сходки своего факта не даёт, и
+    // подписчик остался бы вовсе без вести.
+    //
+    // Без SKIP LOCKED намеренно. Строку, которую держит релей, UPDATE ждёт до
+    // его коммита, а потом PostgreSQL заново проверяет WHERE по новой версии:
+    // вынесенная в шину строка условию уже не отвечает и остаётся вынесенной.
+    // SKIP LOCKED пропустил бы строку, на которой релей споткнулся, и она ушла
+    // бы в шину после отмены. Цена ожидания — одна пачка релея, а при лежащей
+    // шине ещё и таймаут публикации, на котором проход споткнётся.
+    private const string WithdrawOnCancellationSql = """
+        UPDATE notification
+        SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        WHERE meetup_id = @MeetupId
+            AND dispatched_at IS NULL
+            AND withdrawn_at IS NULL
+            AND type = ANY(@Types)
+        RETURNING type;
         """;
 
     // SKIP LOCKED: второй экземпляр сервиса берёт другие строки, а не ждёт
@@ -99,20 +121,38 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // неё же. Виден такой затор по возрасту старейшего неотправленного факта;
     // dead-letter — PER-72.
     private const string PendingSql = """
-        SELECT notification_id AS NotificationId, payload AS Payload
+        SELECT notification_id AS NotificationId, type AS Type, not_after AS NotAfter, payload AS Payload
         FROM notification
-        WHERE dispatched_at IS NULL
+        WHERE dispatched_at IS NULL AND withdrawn_at IS NULL
         ORDER BY created_at
         LIMIT @Limit
         FOR UPDATE SKIP LOCKED;
         """;
 
+    // Условие на withdrawn_at здесь не решает гонку — строку держит этот же
+    // проход, — а повторяет инвариант схемы notification_withdrawn_not_dispatched.
     private const string MarkSql = """
         UPDATE notification SET dispatched_at = @Now
-        WHERE notification_id = @NotificationId AND dispatched_at IS NULL;
+        WHERE notification_id = @NotificationId AND dispatched_at IS NULL AND withdrawn_at IS NULL;
         """;
 
-    private const string OldestPendingSql = "SELECT MIN(created_at) FROM notification WHERE dispatched_at IS NULL;";
+    private const string ExpireSql = """
+        UPDATE notification SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        WHERE notification_id = @NotificationId AND dispatched_at IS NULL AND withdrawn_at IS NULL;
+        """;
+
+    // Снятое в очередь не входит: его возраст означал бы затор, которого нет.
+    private const string OldestPendingSql =
+        "SELECT MIN(created_at) FROM notification WHERE dispatched_at IS NULL AND withdrawn_at IS NULL;";
+
+    // Типы, которые отмена снимает. Всё, что связано со сходкой, кроме
+    // служебного сообщения о снятии с публикации (см. WithdrawOnCancellationSql).
+    private static readonly string[] WithdrawnOnCancellationTypes =
+    [
+        NotificationFacts.MeetupPublishedType,
+        NotificationFacts.MeetupChangedType,
+        NotificationFacts.MeetupMaterialType,
+    ];
 
     /// <summary>
     /// Разворачивает повод события Meetups на получателей и пишет факты в
@@ -122,17 +162,28 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// <param name="changed">
     /// Разница снимка с репликой; пуста, если реплика событием не сдвинута.
     /// </param>
+    /// <param name="staleAfter">Срок годности факта от момента порождения.</param>
     internal static async Task<ProducedFacts?> AddForMeetupEvent(
         UnitOfWork work,
         MeetupFact fact,
         IReadOnlyList<MeetupAspect> changed,
         DateTimeOffset now,
-        CancellationToken cancellationToken) =>
-        fact.Occasion switch
+        TimeSpan staleAfter,
+        CancellationToken cancellationToken)
+    {
+        var notAfter = now + staleAfter;
+
+        // Снятие идёт до вставки: после неё оно задело бы и факт самой отмены,
+        // а о ней подписчик как раз должен узнать.
+        var withdrawn = IsCancellation(fact, changed)
+            ? await WithdrawOnCancellation(work, fact.MeetupId, now, cancellationToken)
+            : null;
+
+        var produced = fact.Occasion switch
         {
             MeetupOccasion.FirstPublication => new ProducedFacts(
                 NotificationFacts.MeetupPublishedType,
-                await AddMeetupPublished(work, fact, now, cancellationToken)),
+                await AddMeetupPublished(work, fact, now, notAfter, cancellationToken)),
 
             // Снятие не трогает подписки (docs/services/notifications.md),
             // поэтому здесь их ровно столько, сколько было до него.
@@ -144,25 +195,33 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     HiddenSql,
                     NotificationFacts.MeetupChangedCategory,
                     NotificationFacts.MeetupUnpublishedType,
-                    (id, recipient) => NotificationFacts.MeetupUnpublished(id, recipient, fact, now),
+                    (id, recipient) => NotificationFacts.MeetupUnpublished(id, recipient, fact, now, notAfter),
                     now,
+                    notAfter,
                     cancellationToken)),
 
+            // Материал адресуется только неотменённой сходке: отмена снимает
+            // неотправленный материал, и материал, пришедший уже после неё —
+            // повтор после Nak, — не должен уйти только из-за порядка
+            // доставки. Отменённую сходку Meetups не редактирует.
             MeetupOccasion.MaterialAttached => new ProducedFacts(
                 NotificationFacts.MeetupMaterialType,
                 await AddForSubscribers(
                     work,
                     fact,
-                    VisibleSql,
+                    AnnounceableSql,
                     NotificationFacts.MeetupMaterialCategory,
                     NotificationFacts.MeetupMaterialType,
-                    (id, recipient) => NotificationFacts.MeetupMaterial(id, recipient, fact, now),
+                    (id, recipient) => NotificationFacts.MeetupMaterial(id, recipient, fact, now, notAfter),
                     now,
+                    notAfter,
                     cancellationToken)),
 
             // Остальные поводы различаются не типом, а разницей: пустая — не
             // повод (ADR-031), непустая — изменение сведений, состояния или
-            // того и другого.
+            // того и другого. Следующее изменение прежний неотправленный факт
+            // не снимает: каждый несёт свои аспекты, а слить их в одно
+            // сообщение — группировка, которой в MVP нет (PER-73).
             _ when changed.Count > 0 => new ProducedFacts(
                 NotificationFacts.MeetupChangedType,
                 await AddForSubscribers(
@@ -171,17 +230,48 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     VisibleSql,
                     NotificationFacts.MeetupChangedCategory,
                     NotificationFacts.MeetupChangedType,
-                    (id, recipient) => NotificationFacts.MeetupChanged(id, recipient, fact, changed, now),
+                    (id, recipient) => NotificationFacts.MeetupChanged(id, recipient, fact, changed, now, notAfter),
                     now,
+                    notAfter,
                     cancellationToken)),
 
             _ => null,
         };
 
+        return produced is null ? null : produced with { Withdrawn = withdrawn };
+    }
+
+    // Отмена — это сдвиг реплики в «отменена»: запоздавшее событие отмены
+    // разницы не даёт и ничего не снимает, но и снимать ему нечего — то, что
+    // сдвинуло реплику раньше, уже сняло.
+    private static bool IsCancellation(MeetupFact fact, IReadOnlyList<MeetupAspect> changed) =>
+        changed.Contains(MeetupAspect.Lifecycle) && fact.State.Lifecycle == "cancelled";
+
+    private static async Task<IReadOnlyList<WithdrawnFacts>> WithdrawOnCancellation(
+        UnitOfWork work,
+        Guid meetupId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var types = await work.Query<string>(
+            WithdrawOnCancellationSql,
+            new
+            {
+                MeetupId = meetupId,
+                Now = now.UtcDateTime,
+                Reason = NotificationFacts.WithdrawnOnCancellation,
+                Types = WithdrawnOnCancellationTypes,
+            },
+            cancellationToken);
+
+        return WithdrawnFacts.ByType(types);
+    }
+
     private static async Task<FactCount> AddMeetupPublished(
         UnitOfWork work,
         MeetupFact fact,
         DateTimeOffset now,
+        DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
         if (!await work.Scalar(AnnounceableSql, new { fact.MeetupId }, cancellationToken))
@@ -204,8 +294,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             fact,
             NotificationFacts.MeetupPublishedType,
             audience,
-            (id, recipient) => NotificationFacts.MeetupPublished(id, recipient, fact, now),
+            (id, recipient) => NotificationFacts.MeetupPublished(id, recipient, fact, now, notAfter),
             now,
+            notAfter,
             cancellationToken);
     }
 
@@ -219,6 +310,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         string type,
         Func<Guid, Guid, Notification> build,
         DateTimeOffset now,
+        DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
         if (!await work.Scalar(addressableSql, new { fact.MeetupId }, cancellationToken))
@@ -237,7 +329,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             },
             cancellationToken);
 
-        return await Insert(work, fact, type, audience, build, now, cancellationToken);
+        return await Insert(work, fact, type, audience, build, now, notAfter, cancellationToken);
     }
 
     private static async Task<FactCount> Insert(
@@ -247,6 +339,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         IReadOnlyList<AudienceRow> audience,
         Func<Guid, Guid, Notification> build,
         DateTimeOffset now,
+        DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
         var recipients = audience.Where(person => person.Enabled).Select(person => person.IdentityId).ToArray();
@@ -274,6 +367,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 fact.MeetupId,
                 fact.RequestId,
                 Now = now.UtcDateTime,
+                NotAfter = notAfter.UtcDateTime,
                 Ids = ids,
                 Recipients = recipients,
                 Payloads = payloads,
@@ -285,7 +379,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     /// <summary>
     /// Один проход релея: берёт пачку неотправленного, отдаёт каждую строку
-    /// <paramref name="publish" /> и отмечает подтверждённое.
+    /// <paramref name="publish" /> и отмечает подтверждённое. Строку с
+    /// истёкшим сроком не публикует, а снимает.
     /// </summary>
     /// <remarks>
     /// Отметка ставится сразу за подтверждением, а коммит — в конце пачки или на
@@ -305,10 +400,29 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         var pending = await work.Query<PendingNotification>(PendingSql, new { Limit = limit }, cancellationToken);
 
         var published = 0;
+        var expired = new List<string>();
         Exception? failure = null;
 
         foreach (var notification in pending)
         {
+            // Истёкший факт не публикуется, а снимается с причиной: так он
+            // отличим и от вынесенного, и от застрявшего. Проверка здесь, а не
+            // в выборке, чтобы строка не висела в очереди вечно.
+            if (notification.NotAfter is { } notAfter && notAfter <= now.UtcDateTime)
+            {
+                await work.Execute(
+                    ExpireSql,
+                    new
+                    {
+                        notification.NotificationId,
+                        Now = now.UtcDateTime,
+                        Reason = NotificationFacts.WithdrawnExpired,
+                    },
+                    cancellationToken);
+                expired.Add(notification.Type);
+                continue;
+            }
+
             try
             {
                 await publish(notification, cancellationToken);
@@ -325,7 +439,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         await work.Commit(cancellationToken);
 
-        return new DispatchPass(published, failure);
+        return new DispatchPass(published, WithdrawnFacts.ByType(expired), failure);
     }
 
     /// <summary>Момент появления самого старого неотправленного факта.</summary>
@@ -354,9 +468,17 @@ public sealed class PendingNotification
 {
     public Guid NotificationId { get; init; }
 
+    public string Type { get; init; } = "";
+
+    /// <summary>Срок годности в UTC; пусто у фактов без срока.</summary>
+    public DateTime? NotAfter { get; init; }
+
     /// <summary>Сериализованный <c>notifications.v1.Notification</c>.</summary>
     public byte[] Payload { get; init; } = [];
 }
 
-/// <summary>Итог прохода релея: сколько подтверждено и на чём остановился.</summary>
-public sealed record DispatchPass(int Published, Exception? Failure);
+/// <summary>
+/// Итог прохода релея: сколько подтверждено, сколько снято по сроку и на чём
+/// остановился.
+/// </summary>
+public sealed record DispatchPass(int Published, IReadOnlyList<WithdrawnFacts> Expired, Exception? Failure);

@@ -142,6 +142,7 @@ public sealed class ReplicaConsumer(
         if (application.Facts is { } produced)
         {
             facts.Record(produced.Type, produced.Facts);
+            facts.RecordWithdrawn(NotificationFacts.WithdrawnOnCancellation, produced.Withdrawn ?? []);
         }
 
         await message.AckAsync(cancellationToken: stoppingToken);
@@ -201,6 +202,14 @@ public sealed class ReplicaConsumer(
             fields["occasion"] = produced.Type;
             fields["facts_created"] = produced.Facts.Created;
             fields["facts_suppressed"] = produced.Facts.Suppressed;
+
+            // Неотправленные факты той же сходки, которые сняла отмена. У
+            // остальных поводов поля нет: ноль здесь значит «отмена была, снимать
+            // было нечего», а не «правило не запускалось».
+            if (produced.Withdrawn is { } withdrawn)
+            {
+                fields["facts_withdrawn"] = withdrawn.Sum(facts => facts.Count);
+            }
         }
 
         if (telemetry.AgeSeconds(feed.Source) is { } age)
