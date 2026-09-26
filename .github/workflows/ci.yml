@@ -223,12 +223,23 @@ jobs:
       - run: buf generate --template apps/identity/buf.gen.yaml
       - run: go build ./...
         working-directory: apps/identity
-      - run: go test ./...
+      # Тег integration включает тесты с PostgreSQL: без него `go test`
+      # компилирует одни unit-файлы, и джоба молча теряла бы уровень L1.
+      # Под тегом unit-файлы компилируются тоже, поэтому прогон полный.
+      - run: go test -tags=integration ./...
         working-directory: apps/identity
       # Отдельным шагом: -race требует cgo и на Windows-машине разработчика
       # не запускается без toolchain C, поэтому детектор гонок живёт в CI.
-      - run: go test -race ./...
+      - run: go test -race -tags=integration ./...
         working-directory: apps/identity
+      # Два прогона, как у `just identity-lint`: с тегом линтер видит тесты с
+      # базой, без тега `unused` ловит помощник, нужный только им.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v${{ steps.tools.outputs.golangci }}
+          working-directory: apps/identity
+          install-mode: goinstall
+          args: --timeout 5m --build-tags=integration
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v${{ steps.tools.outputs.golangci }}
@@ -259,8 +270,9 @@ jobs:
       - run: dotnet build Meetups.sln --nologo
         working-directory: apps/meetups
       # Runner — Microsoft.Testing.Platform (ключ `test` в global.json). Решение он
-      # принимает только через --solution, а --nologo не понимает: с ним прогон
-      # находит ноль тестов и падает кодом 1.
+      # принимает через --solution, проект — через --project, а --nologo не
+      # понимает: с ним прогон находит ноль тестов и падает кодом 1. Здесь идёт
+      # всё решение: unit и integration вместе, Docker на ubuntu-latest есть.
       - run: dotnet test --solution Meetups.sln --no-build
         working-directory: apps/meetups
 
@@ -323,6 +335,10 @@ jobs:
       - run: npm run lint
         working-directory: apps/telegram-bot
       - run: npm test
+        working-directory: apps/telegram-bot
+      # Наборы с Testcontainers — отдельным шагом: `npm test` их исключает, чтобы
+      # `just verify` не требовал Docker. На ubuntu-latest Docker есть.
+      - run: npm run test:integration
         working-directory: apps/telegram-bot
       - run: npm run build
         working-directory: apps/telegram-bot

@@ -60,6 +60,13 @@ linters:
     generated: lax
     paths:
       - (^|/)gen/
+    rules:
+      # RPC снятия блокировки ещё не заведён, и метод вызывают только тесты с
+      # базой под тегом integration. Линт без тега их не видит и считает метод
+      # мёртвым; правило снимается вместе с появлением обработчика.
+      - path: internal/server/blocking\.go
+        linters: [unused]
+        text: unblockIdentity
   settings:
     errcheck:
       check-type-assertions: true

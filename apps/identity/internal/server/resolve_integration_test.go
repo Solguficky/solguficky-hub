@@ -1,3 +1,5 @@
+//go:build integration
+
 package server_test
 
 import (
@@ -306,6 +308,11 @@ func migratedDB(t *testing.T) *sql.DB {
 		t.Fatalf("apply: %v", err)
 	}
 	return db
+}
+
+func newIdentityClient(t *testing.T) identityv1.IdentityServiceClient {
+	t.Helper()
+	return identityv1.NewIdentityServiceClient(newConn(t))
 }
 
 func resolveClient(t *testing.T, db *sql.DB) identityv1.IdentityServiceClient {

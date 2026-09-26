@@ -14,11 +14,14 @@ just telegram-bot-proto
 just telegram-bot-build
 just telegram-bot-typecheck
 just telegram-bot-test
+just telegram-bot-test-integration
 just telegram-bot-lint
 just telegram-bot-run
 ```
 
 `just telegram-bot-tools` ставит зависимости через `npm ci`. Без него кодогенерация не находит `protoc-gen-es`.
+
+`just telegram-bot-test` гоняет unit и component tests без Docker: наборы `*.integration.test.ts` исключены в `vitest.config.ts`. Их, с Testcontainers, гоняет `just telegram-bot-test-integration` по `vitest.integration.config.ts`; он входит в `just test-all` и CI, а в `just verify` — нет.
 
 Токен бота — `TELEGRAM_BOT_TOKEN` (обязателен для процесса). Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`; адрес Notifications — `NOTIFICATIONS_GRPC_URL`, по умолчанию `http://127.0.0.1:50053`. Уровень лога — `TELEGRAM_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При заданном `OTEL_EXPORTER_OTLP_ENDPOINT` (его выставляет AppHost) записи уходят ещё и по OTLP в Structured logs dashboard, с тем же порогом; stdout остаётся.
 

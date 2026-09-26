@@ -75,9 +75,10 @@ NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notificat
 ```bash
 just notifications-build
 just notifications-test
+just notifications-test-integration
 just notifications-contracts-check
 ```
 
-Интеграционные тесты требуют Docker: без него они пропускаются локально и красят джобу в CI.
+`just notifications-test` гоняет только `Notifications.UnitTests` и Docker не требует. Интеграционные тесты требуют Docker: без него `just notifications-test-integration` падает — пропуск роняет прогон и локально, и в CI.
 
-Сценарий «кластер лежал в момент срабатывания» поднимает сервис настоящим дочерним процессом и убивает его деревом, поэтому требует собранного `Notifications` рядом с тестовым проектом — `just notifications-build` перед прогоном, или просто `just notifications-test`, который собирает решение целиком.
+Сценарий «кластер лежал в момент срабатывания» поднимает сервис настоящим дочерним процессом и убивает его деревом, поэтому требует собранного `Notifications` рядом с тестовым проектом — `just notifications-build` перед прогоном, или просто `just notifications-test-integration`, который собирает интеграционный проект вместе с сервисом.

@@ -13,6 +13,7 @@ just identity-tools
 just identity-proto
 just identity-build
 just identity-test
+just identity-test-integration
 just identity-lint
 just identity-run
 ```
@@ -30,7 +31,7 @@ just aspire hub
 
 Адрес NATS для релея outbox — `IDENTITY_NATS_URL`. Без него релей не запускается: сервис работает, а события копятся в таблице `identity_outbox` и уйдут, когда адрес появится. С адресом процесс раз в секунду публикует очередь в стрим `IDENTITY_EVENTS`; устройство и поля лога тика — [бриф](../../docs/services/identity.md#outbox-и-релей).
 
-Интеграционные тесты схемы и разрешения поднимают изолированную базу на PostgreSQL из `IDENTITY_DATABASE_URL`. Умолчания у адреса нет: прежнее `127.0.0.1:5432` отдавало вердикт тому, что слушает общий порт машины, и посторонний PostgreSQL с другим паролем ронял гейт. Без переменной `just identity-test` отказывает до `go test` и называет это отказом среды; локально подойдёт одноразовый контейнер, например `docker run -d --rm -p 55439:5432 -e POSTGRES_PASSWORD=postgres postgres:17-alpine` и `IDENTITY_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/postgres?sslmode=disable` — порт выбирай свободный, соседние сессии занимают свои. Без доступной базы прогон падает и локально, и в CI. Пропуска `internal/testdb` не даёт намеренно: зелёный прогон на пропущенных тестах неотличим от проверки ([PER-241](https://linear.app/anticnvm/issue/per-241)). Тесты релея поднимают встроенный `nats-server` в процессе теста, поэтому ни Docker, ни внешний NATS им не нужны. Фикстуры с состоянием мимо сервиса выключают триггеры схемы в своей транзакции через `session_replication_role`, поэтому пользователь из `IDENTITY_DATABASE_URL` должен быть суперпользователем — `postgres` одноразового контейнера и CI им и открываются.
+Интеграционные тесты схемы и разрешения лежат в `*_integration_test.go` под тегом сборки `integration` и идут рецептом `just identity-test-integration`; `just identity-test` гоняет только unit-файлы и базы не требует. Интеграционные тесты поднимают изолированную базу на PostgreSQL из `IDENTITY_DATABASE_URL`. Умолчания у адреса нет: прежнее `127.0.0.1:5432` отдавало вердикт тому, что слушает общий порт машины, и посторонний PostgreSQL с другим паролем ронял гейт. Без переменной `just identity-test-integration` отказывает до `go test` и называет это отказом среды; локально подойдёт одноразовый контейнер, например `docker run -d --rm -p 55439:5432 -e POSTGRES_PASSWORD=postgres postgres:17-alpine` и `IDENTITY_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55439/postgres?sslmode=disable` — порт выбирай свободный, соседние сессии занимают свои. Без доступной базы прогон падает и локально, и в CI. Пропуска `internal/testdb` не даёт намеренно: зелёный прогон на пропущенных тестах неотличим от проверки ([PER-241](https://linear.app/anticnvm/issue/per-241)). Тесты релея поднимают встроенный `nats-server` в процессе теста, поэтому ни Docker, ни внешний NATS им не нужны. Фикстуры с состоянием мимо сервиса выключают триггеры схемы в своей транзакции через `session_replication_role`, поэтому пользователь из `IDENTITY_DATABASE_URL` должен быть суперпользователем — `postgres` одноразового контейнера и CI им и открываются.
 
 `just identity-tools` ставит buf, плагины кодогенерации и golangci-lint закреплённых в `justfile` версий; без него `just verify` падает на линте.
 

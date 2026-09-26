@@ -151,7 +151,7 @@ contracts-codegen-buf:
 check-verify-selection:
     sh tools/verify/select-recipes-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и тесты
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
 verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
@@ -161,6 +161,14 @@ verify: check-agent-tools check-mcp check-commands check-published-pages check-d
 # все джобы, и здесь выбирается весь verify. Выбор печатается до прогона.
 verify-changed:
     @recipes=$(sh tools/verify/select-recipes.sh) && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes
+
+# Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет
+# прогон — у .NET флагом --fail-skips, у Identity скриптом поверх `go test -v`.
+# Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
+# умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
+# `identity-test-integration` гоняет под тегом и unit-тесты, поэтому
+# `identity-test` здесь не повторяется.
+test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test contour-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -186,8 +194,9 @@ APPHOST_TEST_THRESHOLD := "30"
 # ветка отказа, у которой нет симптома, — «узел без владеющего профиля» —
 # проверяется здесь, а не живым прогоном.
 #
-# `dotnet run`, а не `dotnet test`: solution-файла у AppHost нет, а runner
-# Microsoft.Testing.Platform требует `--solution`. Форма та же, что у contour-test.
+# Runner Microsoft.Testing.Platform принимает и `--project`, так что
+# `dotnet test` здесь тоже работал бы; `dotnet run` оставлен ради одной формы
+# с contour-test, где `dotnet test` глотает stdout набора.
 apphost-test:
     @echo "apphost-test: минимум {{APPHOST_TEST_THRESHOLD}} тестов — добавил тест, подними APPHOST_TEST_THRESHOLD в этом рецепте тем же изменением"
     dotnet run --project infra/AppHost.UnitTests/AppHost.UnitTests.csproj -- --fail-skips on --minimum-expected-tests {{APPHOST_TEST_THRESHOLD}}
@@ -217,17 +226,23 @@ identity-proto:
 identity-build: identity-proto
     cd apps/identity && go build ./...
 
-# Проверка контракта, схемы и разрешения Identity. База обязательна: без
-# доступного PostgreSQL тесты падают, а не пропускаются — иначе неполная среда
-# даёт зелёный прогон (правило «пропуск не равен прохождению»).
+# Unit-тесты Identity (L0): база не нужна. Тесты с PostgreSQL лежат в
+# `*_integration_test.go` под тегом сборки `integration` и в этот прогон не
+# компилируются вовсе — уровень выбирается тегом, а не пропуском.
+identity-test: identity-proto
+    cd apps/identity && go test ./...
+
+# Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
+# прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не
+# пропускает его, а скрипт роняет прогон, если пропуск всё же случился.
 # Адрес базы задаётся только явно: умолчание на общий порт машины отдавало
 # вердикт тому, что там слушает, и посторонний PostgreSQL с другим паролем
 # ронял гейт на правке, которая Identity не трогала. Без адреса рецепт
 # отказывает до go test и называет это отказом среды, а не красным тестом.
-identity-test: identity-proto
-    @[ -n "${IDENTITY_DATABASE_URL:-}" ] || { echo 'identity-test: отказ среды, а не красный тест — IDENTITY_DATABASE_URL не задан; задай адрес PostgreSQL, на котором тесты вправе создавать базы' >&2; exit 1; }
-    @echo "identity-test: база обязательна, недоступный PostgreSQL роняет прогон"
-    cd apps/identity && go test ./...
+identity-test-integration: identity-proto
+    @[ -n "${IDENTITY_DATABASE_URL:-}" ] || { echo 'identity-test-integration: отказ среды, а не красный тест — IDENTITY_DATABASE_URL не задан; задай адрес PostgreSQL, на котором тесты вправе создавать базы' >&2; exit 1; }
+    @echo "identity-test-integration: база обязательна, недоступный PostgreSQL роняет прогон"
+    sh tools/identity/test-integration.sh
 
 # Линт Identity закреплённой версией; чужая версия читает тот же
 # .golangci.yml иначе, поэтому расхождение — ошибка, а не предупреждение
@@ -235,9 +250,13 @@ identity-test: identity-proto
 # временных файлов пользователя, а не рабочего дерева, и параллельный прогон в
 # соседнем дереве ронял гейт кодом 3 без единой находки. Кэш флаг не портит:
 # два одновременных прогона на холодном кэше дают тот же результат.
+# Два прогона: с тегом integration линтер видит тесты с базой, без тега ловит
+# помощник, которым пользуются только тегированные файлы, — `unused` в обычной
+# сборке видит лишь второй прогон.
 identity-lint: identity-proto
     @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
     cd apps/identity && golangci-lint run --allow-parallel-runners ./...
+    cd apps/identity && golangci-lint run --allow-parallel-runners --build-tags=integration ./...
 
 # Локальный запуск; адрес — IDENTITY_GRPC_ADDR, база — IDENTITY_DATABASE_URL
 identity-run: identity-proto
@@ -260,8 +279,15 @@ telegram-bot-build: telegram-bot-proto
 telegram-bot-typecheck: telegram-bot-proto
     cd apps/telegram-bot && npm run typecheck
 
+# Unit и component tests (L0): Docker не нужен, наборы `*.integration.test.ts`
+# исключены в vitest.config.ts
 telegram-bot-test: telegram-bot-proto
     cd apps/telegram-bot && npm test
+
+# Наборы с Testcontainers (L1): нужен Docker. В `verify` не входит — его гоняют
+# CI и `test-all`
+telegram-bot-test-integration: telegram-bot-proto
+    cd apps/telegram-bot && npm run test:integration
 
 telegram-bot-lint: telegram-bot-proto
     cd apps/telegram-bot && npm run lint
@@ -309,23 +335,31 @@ community-site-serve:
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Порог числа тестов: 613 = 491 unit + 122 integration. Поднимается вручную
-# вместе с набором — добавил тест, обнови число здесь тем же изменением.
+# Пороги числа тестов по уровням, в сумме 643. Поднимаются вручную вместе с
+# набором — добавил тест, обнови число своего уровня здесь тем же изменением.
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_TEST_THRESHOLD := "643"
+MEETUPS_UNIT_TEST_THRESHOLD := "513"
+MEETUPS_INTEGRATION_TEST_THRESHOLD := "130"
 
-# Форма контракта и заглушки плюс интеграционный прогон: он поднимает настоящий
-# Kestrel на свободном порту и ходит в него настоящим gRPC-каналом, а тесты
-# схемы применяют миграции к PostgreSQL. Пропуск теста роняет прогон: неполная
-# среда видна отказом, а не зелёным результатом. Разрешённых пропусков внутри
-# уровня нет — уровень выбирается отдельным рецептом, это вводит PER-269.
-# Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
+# Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
+# а не пропуском: проекты решения названы по уровню.
+# Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
+# и `--solution`, и `--project`.
 meetups-test:
     @echo "meetups-test: пропуск теста роняет прогон, разрешённых пропусков нет"
-    @echo "meetups-test: минимум {{MEETUPS_TEST_THRESHOLD}} тестов — добавил тест, подними MEETUPS_TEST_THRESHOLD в этом рецепте тем же изменением"
-    dotnet test --solution apps/meetups/Meetups.sln --fail-skips on --minimum-expected-tests {{MEETUPS_TEST_THRESHOLD}}
+    @echo "meetups-test: минимум {{MEETUPS_UNIT_TEST_THRESHOLD}} тестов — добавил тест, подними MEETUPS_UNIT_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet test --project apps/meetups/Meetups.UnitTests/Meetups.UnitTests.fsproj --fail-skips on --minimum-expected-tests {{MEETUPS_UNIT_TEST_THRESHOLD}}
+
+# Интеграционный прогон (L1): настоящий Kestrel на свободном порту, настоящий
+# gRPC-канал и миграции на PostgreSQL из Testcontainers. Нужен Docker. Пропуск
+# теста роняет прогон: неполная среда видна отказом, а не зелёным результатом.
+# В `verify` не входит — его гоняют CI и `test-all`.
+meetups-test-integration:
+    @echo "meetups-test-integration: пропуск теста роняет прогон, разрешённых пропусков нет"
+    @echo "meetups-test-integration: минимум {{MEETUPS_INTEGRATION_TEST_THRESHOLD}} тестов — добавил тест, подними MEETUPS_INTEGRATION_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet test --project apps/meetups/Meetups.IntegrationTests/Meetups.IntegrationTests.fsproj --fail-skips on --minimum-expected-tests {{MEETUPS_INTEGRATION_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: это условие обратимости из ADR-025
 meetups-contracts-check:
@@ -354,19 +388,29 @@ meetups-format-check: dotnet-tools
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Порог числа тестов Notifications: 185 = unit + integration. Поднимается вручную
-# вместе с набором — добавил тест, обнови число здесь тем же изменением. Порог
-# держит исчезновение тестов из набора; частичный пропуск ловит --fail-skips.
-NOTIFICATIONS_TEST_THRESHOLD := "185"
+# Пороги числа тестов Notifications по уровням, в сумме 185. Поднимаются вручную
+# вместе с набором — добавил тест, обнови число своего уровня здесь тем же
+# изменением. Порог держит исчезновение тестов из набора; частичный пропуск
+# ловит --fail-skips.
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "127"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "58"
 
-# Unit-тесты идут всегда. Интеграционные поднимают PostgreSQL через Testcontainers;
-# пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри
-# уровня нет, а зелёный прогон на пропущенных тестах выглядит как проверка.
-# Runner — Microsoft.Testing.Platform (опция `test` в global.json), он требует `--solution`.
+# Unit-тесты (L0): Docker не нужен.
+# Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
+# и `--solution`, и `--project`.
 notifications-test:
     @echo "notifications-test: пропуск теста роняет прогон, разрешённых пропусков нет"
-    @echo "notifications-test: минимум {{NOTIFICATIONS_TEST_THRESHOLD}} тестов — добавил тест, подними NOTIFICATIONS_TEST_THRESHOLD в этом рецепте тем же изменением"
-    dotnet test --solution apps/notifications/Notifications.sln --fail-skips on --minimum-expected-tests {{NOTIFICATIONS_TEST_THRESHOLD}}
+    @echo "notifications-test: минимум {{NOTIFICATIONS_UNIT_TEST_THRESHOLD}} тестов — добавил тест, подними NOTIFICATIONS_UNIT_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet test --project apps/notifications/Notifications.UnitTests/Notifications.UnitTests.csproj --fail-skips on --minimum-expected-tests {{NOTIFICATIONS_UNIT_TEST_THRESHOLD}}
+
+# Интеграционный прогон (L1): PostgreSQL через Testcontainers, нужен Docker.
+# Пропуск теста роняет прогон и локально, и в CI: разрешённых пропусков внутри
+# уровня нет, а зелёный прогон на пропущенных тестах выглядит как проверка.
+# В `verify` не входит — его гоняют CI и `test-all`.
+notifications-test-integration:
+    @echo "notifications-test-integration: пропуск теста роняет прогон, разрешённых пропусков нет"
+    @echo "notifications-test-integration: минимум {{NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD}} тестов — добавил тест, подними NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD в этом рецепте тем же изменением"
+    dotnet test --project apps/notifications/Notifications.IntegrationTests/Notifications.IntegrationTests.csproj --fail-skips on --minimum-expected-tests {{NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD}}
 
 # Контрактный проект остаётся generated-only: то же условие обратимости, что у Meetups
 notifications-contracts-check:
@@ -473,13 +517,13 @@ telegram-rich-probe:
 
 # Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
 # AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —
-# стандарт держит в механическом гейте только L0. Агрегатор всех уровней
-# (`test-all`) заводит PER-269 и дописывает туда `contour-test` одной строкой.
+# стандарт держит в механическом гейте только L0. Входит в `test-all`.
 #
 # Нужны Docker, `go` и `buf` в PATH: узел Identity в графе сначала генерирует
 # Go-код и собирает бинарник. Недоступность среды даёт отказ с именем
 # инструмента, а не пропуск; порог --minimum-expected-tests ловит и случай,
-# когда набор не обнаружил ни одного теста.
+# когда набор не обнаружил ни одного теста, а --fail-skips — пропуск внутри
+# набора, как у остальных рецептов `test-all`.
 #
 # Порог задаётся руками и поднимается вместе с набором: выведенный из
 # текущего прогона сравнивал бы набор сам с собой. Он ловит и случай, когда
@@ -495,7 +539,7 @@ telegram-rich-probe:
 #
 # Дымовой прогон сквозного контура; в verify не входит
 contour-test:
-    dotnet run --project tests/contour/Contour.E2ETests/Contour.E2ETests.csproj -- --minimum-expected-tests 1
+    dotnet run --project tests/contour/Contour.E2ETests/Contour.E2ETests.csproj -- --fail-skips on --minimum-expected-tests 1
 
 # Адреса уходят в окружение дочерней команды и, если указан путь, в
 # dotenv-файл. Этим входом пользуется набор провода бота (PER-271), который
