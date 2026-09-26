@@ -2,190 +2,189 @@ using System.Diagnostics;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using Notifications.Infrastructure;
+using Notifications.Observability;
 using Notifications.Replica;
 
 namespace Notifications.Transport;
 
 /// <summary>
 /// Транспортная граница сервиса: заполняет каркас записи об операции из
-/// docs/standards/observability/logging.md. Запись рождается здесь и больше
-/// нигде.
+/// docs/standards/observability/logging.md, как интерцепторы Identity и Meetups.
 /// </summary>
 /// <remarks>
-/// Форма повторяет границу Meetups, и поля пишутся именованными местами шаблона,
-/// а не JSON-строкой в теле: иначе фильтр structured logs по
-/// <c>error_category</c> и <c>request_id</c> запись не найдёт. Недоступная база
-/// отдаётся клиенту <c>Unavailable</c> раньше его дедлайна (ADR-054), а не
-/// <c>Unknown</c> через предел Npgsql.
+/// Каркас заполняет граница, а не вызываемый код, поэтому запись о вызове
+/// рождается здесь и больше нигде. <c>request_id</c> и <c>use_case</c> приходят
+/// заголовками <c>x-request-id</c> и <c>x-use-case</c> с края цепочки; граница
+/// их не выдумывает и, не получив, опускает. Недоступная база отдаётся клиенту
+/// <c>Unavailable</c> раньше его дедлайна (ADR-054), а не <c>Unknown</c> через
+/// предел Npgsql.
 /// </remarks>
 public sealed class BoundaryLogInterceptor(ILogger<BoundaryLogInterceptor> logger) : Interceptor
 {
     /// <summary>
-    /// Предел <c>request_id</c> совпадает с пределом соседей: значение, которое
-    /// одна граница приняла, приняла бы и другая.
+    /// Предел совпадает с Meetups: значение приходит недоверенным заголовком, и
+    /// слишком длинное трактуется как отсутствующее, а не обрезается.
     /// </summary>
-    private const int RequestIdMaxLength = 128;
+    public const int MaxRequestIdLength = 128;
 
     public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(
         TRequest request,
         ServerCallContext context,
         UnaryServerMethod<TRequest, TResponse> continuation)
     {
-        // Проба готовности не начата человеком и сценария не имеет. Она идёт
-        // каждые несколько секунд, поэтому её запись была бы шумом, а не журналом.
-        if (context.Method.StartsWith("/grpc.health.v1.Health/", StringComparison.Ordinal))
+        // Проба готовности не начата человеком и идёт каждые несколько секунд:
+        // её запись была бы шумом, а не журналом.
+        if (IsProbe(context.Method))
         {
             return await continuation(request, context);
         }
 
-        var started = Stopwatch.GetTimestamp();
+        var startedAt = Stopwatch.GetTimestamp();
 
         try
         {
             var response = await continuation(request, context);
-            Write(LogLevel.Information, null, Frame(context, "ok", started, StatusCode.OK));
+            Write(LogLevel.Information, null, Frame(context, "ok", startedAt, StatusCode.OK));
             return response;
         }
-        // Отказ, который сервис объявил сам, — часть контракта, а не сбой:
-        // Warning и никакого stack.
+
+        // Отказ, который сервис объявил сам, — часть контракта, а не сбой
+        // сервиса: Warning и без stack.
         catch (RpcException declined)
         {
             var category = DeclaredCategory(declined.StatusCode);
             ReplicaTelemetry.Fail(category);
-            Write(
-                LogLevel.Warning,
-                null,
-                Frame(context, "error", started, declined.StatusCode,
-                    ("error_category", category),
-                    ("error", declined.Status.Detail)));
+
+            var fields = Frame(context, "error", startedAt, declined.StatusCode);
+            fields["error_category"] = category;
+            fields["error"] = declined.Status.Detail;
+            Write(LogLevel.Warning, null, fields);
             throw;
         }
-        // Отмена клиентом и истёкший дедлайн. Клиент, закрывший канал, не должен
-        // оставлять в журнале сервиса ошибку.
-        catch (OperationCanceledException)
+
+        // Отмена клиентом и истёкший deadline: оба отменяют токен вызова. Клиент,
+        // закрывший канал, не должен оставлять в журнале сервиса ошибку. Отмена
+        // при живом токене вызова — чужой токен внутри обработчика, клиент
+        // получает Unknown, и это неожиданный отказ ниже, а не уход клиента.
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
-            WriteCancellation(context, started);
+            if (context.Deadline <= DateTime.UtcNow)
+            {
+                ReplicaTelemetry.Fail("timeout");
+
+                var fields = Frame(context, "error", startedAt, StatusCode.DeadlineExceeded);
+                fields["error_category"] = "timeout";
+                Write(LogLevel.Warning, null, fields);
+            }
+            else
+            {
+                Write(LogLevel.Warning, null, Frame(context, "error", startedAt, StatusCode.Cancelled));
+            }
+
             throw;
         }
+
+        // Недоступная база — не дефект сервиса и не уход клиента: клиент получает
+        // Unavailable раньше своего дедлайна, и повтор позже может пройти (ADR-054).
+        // Отказ подключения Npgsql и истёкший таймаут команды по типу неотличимы —
+        // оба NpgsqlException с TimeoutException внутри, — и оба идут сюда: первый
+        // и есть недоступность, а второй дольше дедлайна клиента. Истёк ли дедлайн
+        // к моменту отказа, решает контекст вызова: тогда клиент уже видит свой
+        // DeadlineExceeded, и запись называет его.
         catch (Exception storage) when (StorageAvailability.IsUnavailable(storage))
         {
-            // Истёк дедлайн вызова — клиент уже видит свой DeadlineExceeded, и
-            // запись называет его, а не Unavailable, ушедший в закрытый поток.
-            if (Expired(context))
+            if (context.Deadline <= DateTime.UtcNow)
             {
-                WriteCancellation(context, started);
+                ReplicaTelemetry.Fail("timeout");
+
+                var expired = Frame(context, "error", startedAt, StatusCode.DeadlineExceeded);
+                expired["error_category"] = "timeout";
+                Write(LogLevel.Warning, null, expired);
                 throw;
             }
 
             // Stack норматив держит для неожиданного отказа, а недоступность
             // ожидаема: запись называет причину текстом, как у Identity.
             ReplicaTelemetry.Fail("dependency_unavailable");
-            Write(
-                LogLevel.Error,
-                null,
-                Frame(context, "error", started, StatusCode.Unavailable,
-                    ("error_category", "dependency_unavailable"),
-                    ("error", storage.Message)));
+
+            var fields = Frame(context, "error", startedAt, StatusCode.Unavailable);
+            fields["error_category"] = "dependency_unavailable";
+            fields["error"] = storage.Message;
+            Write(LogLevel.Error, null, fields);
             throw new RpcException(new Status(StatusCode.Unavailable, "storage unavailable", storage));
         }
-        // Неожиданный отказ записывает та граница, на которой он стал наблюдаемым.
+
+        // Неожиданный отказ записывает граница, на которой он стал наблюдаемым.
+        // Дефект SQL на живом соединении сюда и попадает: недоступностью он не
+        // является, и Unavailable пригласил бы повторять детерминированный отказ.
         catch (Exception unexpected)
         {
             var category = unexpected is TimeoutException ? "timeout" : "unexpected";
             ReplicaTelemetry.Fail(category);
-            Write(
-                LogLevel.Error,
-                unexpected,
-                Frame(context, "error", started, StatusCode.Unknown,
-                    ("error_category", category),
-                    ("error", unexpected.Message),
-                    ("stack", unexpected.StackTrace)));
+
+            var fields = Frame(context, "error", startedAt, StatusCode.Unknown);
+            fields["error_category"] = category;
+            fields["error"] = unexpected.Message;
+            fields["stack"] = unexpected.StackTrace ?? string.Empty;
+            Write(LogLevel.Error, unexpected, fields);
             throw;
         }
     }
 
-    private static bool Expired(ServerCallContext context) => context.Deadline <= DateTime.UtcNow;
-
-    private void WriteCancellation(ServerCallContext context, long started)
+    /// <summary>Значение заголовка; пустое и отсутствующее — одно и то же.</summary>
+    private static string? Header(ServerCallContext context, string name)
     {
-        if (Expired(context))
-        {
-            ReplicaTelemetry.Fail("timeout");
-            Write(
-                LogLevel.Warning,
-                null,
-                Frame(context, "error", started, StatusCode.DeadlineExceeded, ("error_category", "timeout")));
-        }
-        else
-        {
-            Write(LogLevel.Warning, null, Frame(context, "error", started, StatusCode.Cancelled));
-        }
+        var value = context.RequestHeaders.GetValue(name);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
-    private static string DeclaredCategory(StatusCode code) =>
-        code switch
-        {
-            StatusCode.PermissionDenied or StatusCode.Unauthenticated => "authorization",
-            StatusCode.InvalidArgument
-                or StatusCode.FailedPrecondition
-                or StatusCode.Aborted
-                or StatusCode.AlreadyExists
-                or StatusCode.NotFound
-                or StatusCode.OutOfRange => "invariant",
-            StatusCode.DeadlineExceeded => "timeout",
-            StatusCode.Unavailable => "dependency_unavailable",
-            _ => "unexpected",
-        };
+    private static string? RequestId(ServerCallContext context) =>
+        Header(context, "x-request-id") is { Length: <= MaxRequestIdLength } value ? value : null;
 
-    private static List<(string Name, object? Value)> Frame(
+    private static bool IsProbe(string method) => method.StartsWith("/grpc.health.v1.Health/", StringComparison.Ordinal);
+
+    private static string DeclaredCategory(StatusCode code) => code switch
+    {
+        StatusCode.PermissionDenied or StatusCode.Unauthenticated => "authorization",
+        StatusCode.InvalidArgument
+            or StatusCode.FailedPrecondition
+            or StatusCode.Aborted
+            or StatusCode.AlreadyExists
+            or StatusCode.NotFound
+            or StatusCode.OutOfRange => "invariant",
+        StatusCode.DeadlineExceeded => "timeout",
+        StatusCode.Unavailable => "dependency_unavailable",
+        _ => "unexpected",
+    };
+
+    private static Dictionary<string, object> Frame(
         ServerCallContext context,
         string result,
-        long started,
-        StatusCode code,
-        params (string Name, object? Value)[] extras)
+        long startedAt,
+        StatusCode code)
     {
-        var fields = new List<(string Name, object? Value)>
+        var fields = new Dictionary<string, object>
         {
-            ("service", NotificationsHost.ServiceId),
-            ("operation", context.Method),
-            ("result", result),
-            ("duration_us", (long)Stopwatch.GetElapsedTime(started).TotalMicroseconds),
-            ("grpc_code", code.ToString()),
+            ["service"] = NotificationsHost.ServiceId,
+            ["operation"] = context.Method,
+            ["result"] = result,
+            ["duration_us"] = (long)Stopwatch.GetElapsedTime(startedAt).TotalMicroseconds,
+            ["grpc_code"] = code.ToString(),
         };
 
-        // Пустой заголовок не превращается в значение: logging.md требует опускать
-        // то, что граница не получила. Слишком длинный id отбрасывается так же.
-        if (Header(context, "x-request-id") is { Length: <= RequestIdMaxLength } requestId)
+        if (RequestId(context) is { } requestId)
         {
-            fields.Add(("request_id", requestId));
+            fields["request_id"] = requestId;
         }
 
         if (Header(context, "x-use-case") is { } useCase)
         {
-            fields.Add(("use_case", useCase));
+            fields["use_case"] = useCase;
         }
 
-        fields.AddRange(extras);
         return fields;
     }
 
-    private static string? Header(ServerCallContext context, string name) =>
-        context.RequestHeaders
-            .FirstOrDefault(entry =>
-                string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(entry.Value))
-            ?.Value;
-
-    private void Write(LogLevel level, Exception? error, List<(string Name, object? Value)> fields)
-    {
-        // Шаблон собирается из имён полей: каждое поле становится именованным
-        // местом, и структурный лог получает его атрибутом, а не строкой в теле.
-#pragma warning disable CA2254 // Шаблон стабилен по составу полей, а не константа.
-        logger.Log(
-            level,
-            error,
-            "gRPC boundary " + string.Join(" ", fields.Select(field => "{" + field.Name + "}")),
-            fields.Select(field => field.Value).ToArray());
-#pragma warning restore CA2254
-    }
+    private void Write(LogLevel level, Exception? exception, Dictionary<string, object> fields) =>
+        OperationLog.Write(logger, level, exception, fields);
 }

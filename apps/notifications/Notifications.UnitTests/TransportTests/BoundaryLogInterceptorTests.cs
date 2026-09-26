@@ -1,175 +1,283 @@
 using Grpc.Core;
 using Microsoft.Extensions.Logging;
-using Notifications.Transport;
 using Npgsql;
+using Notifications.Transport;
+using Notifications.UnitTests.TestUtilities;
 using Shouldly;
 using Xunit;
 
 namespace Notifications.UnitTests.TransportTests;
 
-/// <summary>
-/// Граница записывает каждый вызов один раз, полями, а не строкой, и отдаёт
-/// недоступную базу клиенту кодом <c>Unavailable</c>.
-/// </summary>
 public class BoundaryLogInterceptorTests
 {
     private const string Product = "/notifications.v1.NotificationsService/GetGlobalNotificationPreferences";
 
     [Fact]
-    public async Task Intercept_UnreachableDatabase_Expect_UnavailableAndDependencyUnavailableRecord()
+    public async Task UnaryServerHandler_CallWithMetadata_RecordsRequestIdAndUseCase()
     {
-        var (records, thrown) = await Intercept(
-            new FakeServerCallContext(Product),
-            () => throw new NpgsqlException("Failed to connect to 127.0.0.1:1"));
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product, ("x-request-id", "req-bot-frame"), ("x-use-case", "view_meetup"));
 
-        var record = records.ShouldHaveSingleItem();
-        record.Level.ShouldBe(LogLevel.Error);
-        record.Fields["grpc_code"].ShouldBe("Unavailable");
-        record.Fields["error_category"].ShouldBe("dependency_unavailable");
-        record.Fields.ContainsKey("stack").ShouldBeFalse();
-        thrown.ShouldBeOfType<RpcException>().StatusCode.ShouldBe(StatusCode.Unavailable);
-    }
+        await interceptor.UnaryServerHandler("request", context, (_, _) => Task.FromResult("answer"));
 
-    [Fact]
-    public async Task Intercept_SqlDefect_Expect_UnexpectedFailureRethrown()
-    {
-        var defect = new PostgresException("duplicate key", "ERROR", "ERROR", "23505");
-
-        var (records, thrown) = await Intercept(new FakeServerCallContext(Product), () => throw defect);
-
-        var record = records.ShouldHaveSingleItem();
-        record.Fields["grpc_code"].ShouldBe("Unknown");
-        record.Fields["error_category"].ShouldBe("unexpected");
-        thrown.ShouldBeSameAs(defect);
-    }
-
-    [Fact]
-    public async Task Intercept_UnreachableDatabaseAfterDeadline_Expect_TimeoutRecord()
-    {
-        var context = new FakeServerCallContext(Product, deadline: DateTime.UtcNow.AddSeconds(-1));
-
-        var (records, _) = await Intercept(context, () => throw new NpgsqlException("timeout"));
-
-        var record = records.ShouldHaveSingleItem();
-        record.Fields["grpc_code"].ShouldBe("DeadlineExceeded");
-        record.Fields["error_category"].ShouldBe("timeout");
-    }
-
-    [Fact]
-    public async Task Intercept_DeclaredRefusal_Expect_WarningWithoutStack()
-    {
-        var (records, thrown) = await Intercept(
-            new FakeServerCallContext(Product),
-            () => throw new RpcException(new Status(StatusCode.InvalidArgument, "identity_id is not a UUIDv7")));
-
-        var record = records.ShouldHaveSingleItem();
-        record.Level.ShouldBe(LogLevel.Warning);
-        record.Fields["error_category"].ShouldBe("invariant");
-        record.Fields.ContainsKey("stack").ShouldBeFalse();
-        thrown.ShouldBeOfType<RpcException>().StatusCode.ShouldBe(StatusCode.InvalidArgument);
-    }
-
-    [Fact]
-    public async Task Intercept_Success_Expect_StructuredFrameWithRequestId()
-    {
-        var headers = new Metadata { { "x-request-id", "request-42" }, { "x-use-case", "open_settings" } };
-
-        var (records, thrown) = await Intercept(new FakeServerCallContext(Product, headers: headers), () => "ok");
-
-        thrown.ShouldBeNull();
-        var record = records.ShouldHaveSingleItem();
+        var record = logger.Records.ShouldHaveSingleItem();
         record.Level.ShouldBe(LogLevel.Information);
-        record.Fields["service"].ShouldBe("notifications");
-        record.Fields["operation"].ShouldBe(Product);
-        record.Fields["result"].ShouldBe("ok");
-        record.Fields["grpc_code"].ShouldBe("OK");
-        record.Fields["request_id"].ShouldBe("request-42");
-        record.Fields["use_case"].ShouldBe("open_settings");
+        record.Attributes["service"].ShouldBe(NotificationsHost.ServiceId);
+        record.Attributes["operation"].ShouldBe(Product);
+        record.Attributes["result"].ShouldBe("ok");
+        record.Attributes["grpc_code"].ShouldBe("OK");
+        record.Attributes["request_id"].ShouldBe("req-bot-frame");
+        record.Attributes["use_case"].ShouldBe("view_meetup");
+        record.Attributes.ShouldContainKey("duration_us");
     }
 
     [Fact]
-    public async Task Intercept_ReadinessProbe_Expect_NoRecord()
+    public async Task UnaryServerHandler_CallWithoutMetadata_OmitsRequestIdAndUseCase()
     {
-        var (records, _) = await Intercept(new FakeServerCallContext("/grpc.health.v1.Health/Check"), () => "serving");
+        // Поле, которое граница не получила, опускается, а не пишется пустым.
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product, ("x-request-id", " "));
 
-        records.ShouldBeEmpty();
+        await interceptor.UnaryServerHandler("request", context, (_, _) => Task.FromResult("answer"));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["operation"].ShouldBe(Product);
+        record.Attributes.ShouldNotContainKey("request_id");
+        record.Attributes.ShouldNotContainKey("use_case");
     }
 
-    private static async Task<(List<Record> Records, Exception? Thrown)> Intercept(
-        ServerCallContext context,
-        Func<string> continuation)
+    [Fact]
+    public async Task UnaryServerHandler_RequestIdOverLimit_OmitsIt()
     {
-        var logger = new RecordingLogger();
-        var interceptor = new BoundaryLogInterceptor(logger);
+        var (logger, interceptor) = Create();
+        var tooLong = new string('r', BoundaryLogInterceptor.MaxRequestIdLength + 1);
+        var context = new FakeServerCallContext(Product, ("x-request-id", tooLong));
 
-        try
-        {
-            await interceptor.UnaryServerHandler<string, string>(
+        await interceptor.UnaryServerHandler("request", context, (_, _) => Task.FromResult("answer"));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["operation"].ShouldBe(Product);
+        record.Attributes.ShouldNotContainKey("request_id");
+    }
+
+    [Fact]
+    public async Task UnaryServerHandler_DeclaredRefusal_RecordsWarningAndRethrows()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product, ("x-request-id", "req-1"));
+        var refusal = new RpcException(new Status(StatusCode.InvalidArgument, "identity_id: must be a UUIDv7"));
+
+        var thrown = await Should.ThrowAsync<RpcException>(
+            () => interceptor.UnaryServerHandler<string, string>("request", context, (_, _) => throw refusal));
+
+        thrown.ShouldBeSameAs(refusal);
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Warning);
+        record.Exception.ShouldBeNull();
+        record.Attributes["result"].ShouldBe("error");
+        record.Attributes["grpc_code"].ShouldBe("InvalidArgument");
+        record.Attributes["error_category"].ShouldBe("invariant");
+        record.Attributes["error"].ShouldBe("identity_id: must be a UUIDv7");
+        record.Attributes["request_id"].ShouldBe("req-1");
+        record.Attributes.ShouldNotContainKey("stack");
+    }
+
+    [Fact]
+    public async Task UnaryServerHandler_UnexpectedFailure_RecordsErrorWithStack()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product);
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => interceptor.UnaryServerHandler<string, string>(
                 "request",
                 context,
-                (_, _) => Task.FromResult(continuation()));
-            return (logger.Records, null);
-        }
-        catch (Exception thrown)
-        {
-            return (logger.Records, thrown);
-        }
+                (_, _) => throw new InvalidOperationException("boom")));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Error);
+        record.Exception.ShouldBeOfType<InvalidOperationException>();
+        record.Attributes["grpc_code"].ShouldBe("Unknown");
+        record.Attributes["error_category"].ShouldBe("unexpected");
+        record.Attributes["error"].ShouldBe("boom");
+        record.Attributes.ShouldContainKey("stack");
     }
 
-    private sealed record Record(LogLevel Level, IReadOnlyDictionary<string, object?> Fields);
+    [Fact]
+    public async Task UnaryServerHandler_CancellationWithLiveCallToken_RecordsUnexpectedFailure()
+    {
+        // Токен вызова жив, значит клиент не уходил: отмена пришла изнутри
+        // обработчика, и клиент получит Unknown, а не Cancelled.
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product);
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (_, _) => throw new OperationCanceledException()));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Error);
+        record.Attributes["grpc_code"].ShouldBe("Unknown");
+        record.Attributes["error_category"].ShouldBe("unexpected");
+    }
+
+    [Fact]
+    public async Task UnaryServerHandler_ClientCancelled_RecordsCancelledWithoutCategory()
+    {
+        var (logger, interceptor) = Create();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        var context = new FakeServerCallContext(Product, cancelled.Token);
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (_, _) => throw new OperationCanceledException(cancelled.Token)));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Warning);
+        record.Attributes["grpc_code"].ShouldBe("Cancelled");
+        record.Attributes.ShouldNotContainKey("error_category");
+    }
 
     /// <summary>
-    /// Снимает поля записи так, как их увидит структурный лог: именованными
-    /// значениями шаблона, а не текстом сообщения.
+    /// Недоступная база отдаётся Unavailable раньше дедлайна клиента (ADR-054).
+    /// Отказ подключения Npgsql приходит NpgsqlException с TimeoutException
+    /// внутри — так выглядит остановленный PostgreSQL за прокси DCP.
     /// </summary>
-    private sealed class RecordingLogger : ILogger<BoundaryLogInterceptor>
+    [Fact]
+    public async Task UnaryServerHandler_UnreachableDatabase_RefusesWithUnavailable()
     {
-        public List<Record> Records { get; } = [];
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product);
 
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
+        var thrown = await Should.ThrowAsync<RpcException>(
+            () => interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (_, _) => throw new NpgsqlException("The operation has timed out", new TimeoutException())));
 
-        public bool IsEnabled(LogLevel logLevel) => true;
+        thrown.StatusCode.ShouldBe(StatusCode.Unavailable);
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Error);
+        record.Exception.ShouldBeNull();
+        record.Attributes["grpc_code"].ShouldBe("Unavailable");
+        record.Attributes["error_category"].ShouldBe("dependency_unavailable");
+        record.Attributes.ShouldNotContainKey("stack");
+    }
 
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            var fields = new Dictionary<string, object?>(StringComparer.Ordinal);
-            if (state is IEnumerable<KeyValuePair<string, object?>> values)
-            {
-                foreach (var (key, value) in values)
-                {
-                    fields[key] = value;
-                }
-            }
+    /// <summary>
+    /// Ответ живого сервера на дефект SQL недоступностью не считается: Unavailable
+    /// пригласил бы повторять отказ, который повторится детерминированно.
+    /// </summary>
+    [Fact]
+    public async Task UnaryServerHandler_SqlDefect_RecordsUnexpectedFailure()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product);
+        var defect = new PostgresException("duplicate key", "ERROR", "ERROR", "23505");
 
-            Records.Add(new Record(logLevel, fields));
-        }
+        var thrown = await Should.ThrowAsync<PostgresException>(
+            () => interceptor.UnaryServerHandler<string, string>("request", context, (_, _) => throw defect));
+
+        thrown.ShouldBeSameAs(defect);
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["grpc_code"].ShouldBe("Unknown");
+        record.Attributes["error_category"].ShouldBe("unexpected");
+    }
+
+    /// <summary>
+    /// Отказ базы после истечения дедлайна — timeout: клиент уже видит свой
+    /// DeadlineExceeded, и запись называет его, а не Unavailable.
+    /// </summary>
+    [Fact]
+    public async Task UnaryServerHandler_UnreachableDatabaseAfterDeadline_RecordsTimeout()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product) { DeadlineAt = DateTime.UtcNow.AddSeconds(-1) };
+
+        await Should.ThrowAsync<NpgsqlException>(
+            () => interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (_, _) => throw new NpgsqlException("The operation has timed out", new TimeoutException())));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["grpc_code"].ShouldBe("DeadlineExceeded");
+        record.Attributes["error_category"].ShouldBe("timeout");
+    }
+
+    [Fact]
+    public async Task UnaryServerHandler_HealthProbe_LeavesNoRecord()
+    {
+        // Проба идёт каждые несколько секунд и сценария не имеет.
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext("/grpc.health.v1.Health/Check");
+
+        await interceptor.UnaryServerHandler("request", context, (_, _) => Task.FromResult("answer"));
+
+        logger.Records.ShouldBeEmpty();
+    }
+
+    private static (RecordingLogger<BoundaryLogInterceptor> Logger, BoundaryLogInterceptor Interceptor) Create()
+    {
+        var logger = new RecordingLogger<BoundaryLogInterceptor>();
+        return (logger, new BoundaryLogInterceptor(logger));
     }
 
     private sealed class FakeServerCallContext(
         string method,
-        DateTime? deadline = null,
-        Metadata? headers = null) : ServerCallContext
+        CancellationToken cancellationToken,
+        params (string Key, string Value)[] headers)
+        : ServerCallContext
     {
-        protected override string MethodCore => method;
-        protected override string HostCore => "localhost";
-        protected override string PeerCore => "ipv4:127.0.0.1:0";
-        protected override DateTime DeadlineCore { get; } = deadline ?? DateTime.UtcNow.AddMinutes(1);
-        protected override Metadata RequestHeadersCore { get; } = headers ?? [];
-        protected override CancellationToken CancellationTokenCore => CancellationToken.None;
-        protected override Metadata ResponseTrailersCore { get; } = [];
-        protected override Status StatusCore { get; set; }
-        protected override WriteOptions? WriteOptionsCore { get; set; }
-        protected override AuthContext AuthContextCore => new(null, []);
+        public FakeServerCallContext(string method, params (string Key, string Value)[] headers)
+            : this(method, CancellationToken.None, headers)
+        {
+        }
 
-        protected override Task WriteResponseHeadersAsyncCore(Metadata responseHeaders) => Task.CompletedTask;
+        private readonly Metadata requestHeaders = Build(headers);
+
+        protected override string MethodCore => method;
+
+        protected override string HostCore => "localhost";
+
+        protected override string PeerCore => "ipv4:127.0.0.1:50000";
+
+        /// <summary>Дедлайн вызова; по умолчанию его нет.</summary>
+        public DateTime DeadlineAt { get; init; } = DateTime.MaxValue;
+
+        protected override DateTime DeadlineCore => DeadlineAt;
+
+        protected override Metadata RequestHeadersCore => requestHeaders;
+
+        protected override CancellationToken CancellationTokenCore => cancellationToken;
+
+        protected override Metadata ResponseTrailersCore { get; } = [];
+
+        protected override Status StatusCore { get; set; }
+
+        protected override WriteOptions? WriteOptionsCore { get; set; }
+
+        protected override AuthContext AuthContextCore { get; } = new(null, []);
 
         protected override ContextPropagationToken CreatePropagationTokenCore(ContextPropagationOptions? options) =>
             throw new NotSupportedException();
+
+        protected override Task WriteResponseHeadersAsyncCore(Metadata responseHeaders) => Task.CompletedTask;
+
+        private static Metadata Build((string Key, string Value)[] headers)
+        {
+            var metadata = new Metadata();
+            foreach (var (key, value) in headers)
+            {
+                metadata.Add(key, value);
+            }
+
+            return metadata;
+        }
     }
 }

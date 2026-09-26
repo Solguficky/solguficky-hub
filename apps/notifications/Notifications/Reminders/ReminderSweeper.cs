@@ -1,8 +1,8 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Notifications.Grains;
 using Notifications.Infrastructure;
+using Notifications.Observability;
 
 namespace Notifications.Reminders;
 
@@ -178,8 +178,8 @@ public sealed class ReminderSweeper(
         string requestId,
         long startedAt)
     {
-        // JSON в теле строки даёт LogQL числовые поля без привязки к тому,
-        // как OTLP разложит атрибуты ILogger по structured metadata Loki.
+        // Поля идут атрибутами и JSON в теле (Observability/OperationLog):
+        // панели reminders читают тело через | json.
         var fields = new Dictionary<string, object>
         {
             ["service"] = NotificationsHost.ServiceId,
@@ -207,6 +207,6 @@ public sealed class ReminderSweeper(
             fields["error"] = "Reminder sweep incomplete";
         }
 
-        logger.LogInformation("{reminder_sweep_snapshot}", JsonSerializer.Serialize(fields));
+        OperationLog.Write(logger, LogLevel.Information, null, fields);
     }
 }

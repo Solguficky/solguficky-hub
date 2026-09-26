@@ -1,5 +1,5 @@
-using System.Text.Json;
 using NATS.Client.Core;
+using Notifications.Observability;
 using Notifications.Replica;
 
 namespace Notifications.Infrastructure;
@@ -84,9 +84,9 @@ public sealed class BusConnectionWatcher(
         return ValueTask.CompletedTask;
     }
 
-    // JSON в теле строки — та же форма, что у записей реплики и релея.
+    // Та же форма, что у записей реплики и релея (Observability/OperationLog).
     private void Write(LogLevel level, Dictionary<string, object> fields) =>
-        logger.Log(level, "{bus_connection}", JsonSerializer.Serialize(fields));
+        OperationLog.Write(logger, level, null, fields);
 }
 
 /// <summary>
