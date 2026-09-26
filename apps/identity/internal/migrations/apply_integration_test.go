@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
@@ -105,8 +106,8 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 	}
 
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3601"
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4001, 'roles')`, identityID)
+	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ($1, 4001, 'roles')`)
 
 	roles := []string{"maintainer", "admin", "member", "public"}
 	grantIDs := []string{
@@ -122,7 +123,8 @@ func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
 		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3615",
 	}
 	for i, role := range roles {
-		execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role,
+			`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, grantIDs[i], identityID, role)
 
 		err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
@@ -139,8 +141,8 @@ func TestRoleDictionaryRejectsUnknownRole(t *testing.T) {
 	}
 
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3621"
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4002, 'roles')`, identityID)
+	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
+		VALUES ($1, 4002, 'roles')`)
 
 	err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3622', $1, 'unknown', TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, identityID)
@@ -158,7 +160,7 @@ func TestAccessJournalIsAppendOnly(t *testing.T) {
 		identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3711"
 		journalID  = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3712"
 	)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`, identityID)
+	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`)
 	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, performed_by, action, role, occurred_at)
 		VALUES ($1, $2, NULL, 'grant', 'admin', now())`, journalID, identityID)
 
@@ -181,8 +183,11 @@ func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
 		unblockedID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3722"
 		revokedID   = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3723"
 	)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9202)`, unblockedID)
+	// Профиль, созданный сразу заблокированным, сервис создать не может: регистрация
+	// приходит незаблокированной. Щит роли проверяется на состоянии, оставленном
+	// мимо сервиса.
+	testdb.ExecBypassingShields(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
+	registerProfile(t, db, unblockedID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9202)`)
 
 	const insertRole = `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 		VALUES ($1, $2, 'admin', now(), NULL)`
@@ -190,7 +195,8 @@ func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
 	assertPgErrorCode(t, execMigration(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3724", blockedID), "ID003")
 
 	// Отозванная строка щиту не мешает: ограничение держит только активные выдачи.
-	execMigrationTest(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by, revoked_at)
+	testdb.ExecAnnounced(t, db, blockedID, outbox.RoleRevoked, adminRole,
+		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by, revoked_at)
 		VALUES ($1, $2, 'admin', now() - interval '1 day', NULL, now())`, revokedID, blockedID)
 
 	// Возврат доступа снятием отметки отзыва закрыт тем же щитом.
@@ -198,7 +204,8 @@ func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
 		`UPDATE identity_roles SET revoked_at = NULL WHERE id = $1`, revokedID), "ID003")
 
 	// Незаблокированный профиль активную выдачу принимает.
-	execMigrationTest(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
+	testdb.ExecAnnounced(t, db, unblockedID, outbox.RoleGranted, adminRole,
+		insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
 }
 
 // TestBlockedGuardWaitsForConcurrentBlock проверяет, что щит читает blocked под
@@ -216,7 +223,7 @@ func TestBlockedGuardWaitsForConcurrentBlock(t *testing.T) {
 		identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3741"
 		roleID     = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3742"
 	)
-	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9203)`, identityID)
+	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9203)`)
 
 	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
@@ -225,6 +232,9 @@ func TestBlockedGuardWaitsForConcurrentBlock(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, identityID); err != nil {
 		t.Fatalf("block profile: %v", err)
+	}
+	if err := outbox.Append(t.Context(), tx, identityID, outbox.ProfileBlocked, ""); err != nil {
+		t.Fatalf("announce block: %v", err)
 	}
 
 	result := make(chan error, 1)
@@ -362,6 +372,13 @@ func activeRoleCount(t *testing.T, db *sql.DB, identityID string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+// registerProfile создаёт профиль запросом теста и пишет его регистрацию той же
+// транзакцией, как это делает сервис: без события профиль не фиксируется.
+func registerProfile(t *testing.T, db *sql.DB, identityID, query string) {
+	t.Helper()
+	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileRegistered, "", query, identityID)
 }
 
 func execMigrationTest(t *testing.T, db *sql.DB, query string, args ...any) {

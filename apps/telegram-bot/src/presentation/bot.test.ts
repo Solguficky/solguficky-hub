@@ -3155,3 +3155,175 @@ describe("deferred publication frames", () => {
     });
   });
 });
+
+describe("past meetup date", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const pastSchedule = {
+    year: 2026,
+    month: 9,
+    day: 21,
+    hours: 19,
+    minutes: 30,
+  };
+
+  it("answers a past date with a confirmation frame that carries the date", async () => {
+    const meetup = draftMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "create-meetup"
+        ? { kind: "ask", field: "schedule", meetup }
+        : { kind: "confirm-past-schedule", meetup, schedule: pastSchedule },
+    );
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:new:${token}`));
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "21.09.2026 19:30",
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("21.09.2026 19:30 уже прошла"),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Сохранить дату",
+                callback_data: `v1:manage:past:${token}:c:210920261930`,
+              },
+            ],
+            [
+              {
+                text: "Ввести другую",
+                callback_data: `v1:manage:past-retry:${token}:c`,
+              },
+            ],
+          ],
+        },
+      },
+    });
+    expect(sendMessageText(calls.at(-1))).toContain("уйдёт в архив");
+    expectBoundary(records.at(-1), {
+      level: "info",
+      result: "ok",
+      use_case: "create_meetup",
+    });
+  });
+
+  it("saves the confirmed date through the same form step", async () => {
+    const meetup = draftMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "ask",
+      field: "venue",
+      meetup,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate(`v1:manage:past:${token}:c:210920261930`),
+    );
+
+    expect(calls.map((call) => call.method)).toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(execute).toHaveBeenLastCalledWith({
+      identity: {
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+        globalRoles: ["admin"],
+      },
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "21.09.2026 19:30",
+      meetupId: meetup.id,
+      confirmedPast: true,
+      requestId: expect.any(String),
+      useCase: "create_meetup",
+    });
+    expectBoundary(records.at(-1), {
+      level: "info",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
+  });
+
+  it("asks the date again within the edit flow on retry", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:past-retry:${token}:e`));
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
+    expect(calls.map((call) => call.method)).toContain(
+      "editMessageReplyMarkup",
+    );
+    const question = calls.at(-1);
+    expect(question?.method).toBe("sendMessage");
+    expect(sendMessageText(question)).toContain("Сейчас: дата не задана");
+    expect(question?.payload).toMatchObject({
+      reply_markup: { force_reply: true },
+    });
+  });
+
+  it("does not promise a place in the list for a meetup published into the archive", async () => {
+    const meetup = { ...publishedMeetup(), schedule: pastSchedule };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "published",
+      meetup,
+      archived: true,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:publish:${token}`));
+
+    const edited = calls.find((call) => call.method === "editMessageText");
+    expect(edited?.payload).toMatchObject({
+      text: expect.stringContaining("сразу в архиве"),
+    });
+    expect(edited?.payload).not.toMatchObject({
+      text: expect.stringContaining("видна в списке"),
+    });
+  });
+
+  it("says an edited past date moved the meetup to the archive", async () => {
+    const meetup = { ...publishedMeetup(), schedule: pastSchedule };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-updated",
+      meetup,
+      archived: true,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate(`v1:manage:past:${token}:e:210920261930`),
+    );
+
+    expect(
+      calls.some((call) =>
+        sendMessageText(call)?.startsWith(
+          "Изменение сохранено. Дата сходки уже прошла",
+        ),
+      ),
+    ).toBe(true);
+  });
+});

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -83,7 +85,8 @@ func TestGrantAdminRoleRejectsBlockedProfileDistinctFromMissing(t *testing.T) {
 	conn := newConnWithToken(t, db, maintainerToken)
 	client := identityv1.NewIdentityServiceClient(conn)
 	profile := resolve(t, client, 7201, nil)
-	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, profile.GetIdentityId())
+	testdb.ExecAnnounced(t, db, profile.GetIdentityId(), outbox.ProfileBlocked, "",
+		`UPDATE profiles SET blocked = true WHERE id = $1`, profile.GetIdentityId())
 	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
 
 	_, blockedErr := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})

@@ -12,6 +12,7 @@
 | `Notifications.Contracts` | generated-only: C# из `contracts/proto/notifications/v1` и импортируемого `meetups/v1` |
 | `Notifications.UnitTests` | словарь категорий, вывод действующего значения, разбор входящих полей, решение по заданию напоминания, раскладка миграций и строка подключения; базы не требует |
 | `Notifications.IntegrationTests` | ограничения схемы, команды через настоящий gRPC-канал, рестарт силоса, жизненный цикл задания и простой кластера на PostgreSQL через Testcontainers |
+| `Notifications.TestKit` | утилиты обоих тестовых наборов: `EventFactory` — валидные события Meetups и Identity; ссылается только на `Notifications.Contracts` |
 
 Внутри `Notifications`: `Migrations.cs` и `Migrations/*.sql` — схема; `NotificationsHost.cs` — composition root; `Domain/` — словарь категорий и вывод действующего значения, без ввода-вывода; `Preferences/` — операции подписок и настроек; `Reminders/` — чистое решение по заданию напоминания, его настройки и sweeper; `Infrastructure/` — доступ к данным; `Transport/` — граница gRPC; `Grains/` — грины.
 

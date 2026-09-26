@@ -19,6 +19,8 @@ public static class AppHostNames
         public const string MeetupsDbName = "meetups";
         public const string NotificationsDb = "notifications-db";
         public const string NotificationsDbName = "notifications";
+        public const string AuctionDb = "auction-db";
+        public const string AuctionDbName = "auction";
 
         public const string Nats = "nats";
         public const string Loki = "loki";
@@ -28,6 +30,7 @@ public static class AppHostNames
         public const string Meetups = "meetups";
         public const string Notifications = "notifications";
         public const string TelegramBot = "telegram-bot";
+        public const string Auction = "auction";
     }
 
     /// <summary>

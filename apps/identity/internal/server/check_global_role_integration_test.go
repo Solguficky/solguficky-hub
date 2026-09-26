@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -71,15 +72,15 @@ func TestCheckGlobalRoleRefusesBlockedRoleHolder(t *testing.T) {
 	assertGranted(t, client, target.GetIdentityId(), announcementRoles, false)
 }
 
-// Блокировка мимо ядра оставляет роль активной: щит стоит только на
-// identity_roles. Проверка читает отметку сама и отказывает при расхождении.
+// Блокировка мимо ядра — до outbox или в обход щитов схемы — оставляет роль
+// активной. Проверка читает отметку сама и отказывает при расхождении.
 func TestCheckGlobalRoleRefusesBlockedProfileWithRoleLeftActive(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
 	client := resolveClient(t, db)
 	profile := resolve(t, client, 9301, nil)
 	insertAdminRole(t, db, profile.GetIdentityId())
-	mustExec(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, profile.GetIdentityId())
+	testdb.ExecBypassingShields(t, db, `UPDATE profiles SET blocked = true WHERE id = $1`, profile.GetIdentityId())
 	assertActiveRoleCount(t, db, profile.GetIdentityId(), 1)
 
 	assertGranted(t, client, profile.GetIdentityId(), announcementRoles, false)

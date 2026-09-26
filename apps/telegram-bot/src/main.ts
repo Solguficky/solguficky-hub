@@ -1,5 +1,5 @@
 import { createDispatcher } from "./application/dispatcher.js";
-import { parseTimeZone } from "./community-time.js";
+import { communityDay, parseTimeZone } from "./community-time.js";
 import { createDeliverNotification } from "./delivery/deliver.js";
 import { startNatsDelivery } from "./delivery/nats.js";
 import { createIdentityClient } from "./identity/client.js";
@@ -78,7 +78,11 @@ async function main(): Promise<number> {
   const meetups = createMeetupsClient(meetupsUrl, communityTimeZone);
   const notifications = createNotificationsClient(notificationsUrl);
   const metrics = startMetrics();
-  const dispatcher = createDispatcher(meetups, notifications);
+  // День сообщества считается тем же поясом, что и у Meetups: иначе граница
+  // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
+  const dispatcher = createDispatcher(meetups, notifications, () =>
+    communityDay(new Date(), communityTimeZone),
+  );
   const identity = createIdentityClient(identityUrl);
   const bot = createBot({
     token,

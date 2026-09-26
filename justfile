@@ -161,7 +161,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "24"
+APPHOST_TEST_THRESHOLD := "30"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -202,7 +202,12 @@ identity-build: identity-proto
 # Проверка контракта, схемы и разрешения Identity. База обязательна: без
 # доступного PostgreSQL тесты падают, а не пропускаются — иначе неполная среда
 # даёт зелёный прогон (правило «пропуск не равен прохождению»).
+# Адрес базы задаётся только явно: умолчание на общий порт машины отдавало
+# вердикт тому, что там слушает, и посторонний PostgreSQL с другим паролем
+# ронял гейт на правке, которая Identity не трогала. Без адреса рецепт
+# отказывает до go test и называет это отказом среды, а не красным тестом.
 identity-test: identity-proto
+    @[ -n "${IDENTITY_DATABASE_URL:-}" ] || { echo 'identity-test: отказ среды, а не красный тест — IDENTITY_DATABASE_URL не задан; задай адрес PostgreSQL, на котором тесты вправе создавать базы' >&2; exit 1; }
     @echo "identity-test: база обязательна, недоступный PostgreSQL роняет прогон"
     cd apps/identity && go test ./...
 
@@ -399,6 +404,16 @@ auction-format:
 # Локальный запуск вне Aspire; адрес — AUCTION_HTTP_HOST и AUCTION_HTTP_PORT
 auction-run:
     cd apps/auction && sbt -batch run
+
+# Узел `auction-build` AppHost зовёт этот рецепт, а не sbt напрямую: на Windows
+# `sbt` — это sbt.bat, и cmd.exe разбирает кавычки и скобки выражения `set` как
+# свой синтаксис. Задача объявляется на одну сессию, build.sbt её не держит:
+# classpath нужен только графу, который запускает сервис голой JVM вместо
+# `sbt run` — форкнутая JVM переживает остановленный sbt.
+#
+# Компиляция и runtime classpath в apps/auction/target/aspire-classpath
+auction-classpath:
+    cd apps/auction && sbt -batch 'set TaskKey[Unit]("aspireClasspath") := IO.write(target.value / "aspire-classpath", (Runtime / fullClasspath).value.files.mkString(java.io.File.pathSeparator))' aspireClasspath
 
 # В `verify` входит именно этот рецепт, а не три отдельных: каждый вызов sbt
 # поднимает свою JVM, и три холодных старта добавили бы к гейту около двух
