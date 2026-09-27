@@ -114,6 +114,9 @@ else
   log ".NET SDK $DOTNET_SDK_VERSION already installed"
 fi
 $SUDO ln -sf "$DOTNET_DIR/dotnet" /usr/local/bin/dotnet
+# The AppHost build (AspireUseCliBundle) finds dnx on PATH and installs the
+# Aspire CLI of its own SDK version through it; without dnx it fails ASPIRE009.
+$SUDO ln -sf "$DOTNET_DIR/dnx" /usr/local/bin/dnx
 
 # --- protoc ------------------------------------------------------------------
 
