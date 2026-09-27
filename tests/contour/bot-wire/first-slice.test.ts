@@ -1,0 +1,113 @@
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  freshTelegramUserId,
+  it,
+  openBotWire,
+  openDirectClients,
+  readContourEnvironment,
+  startConversation,
+  unusedMeetupId,
+  usernameFor,
+} from "../../../apps/telegram-bot/testkit/index.js";
+import { fillsMeetupForm, titleFor } from "./steps.js";
+
+// Сценарий первого среза целиком (first-slice.md, «Сценарий») и его
+// отрицательная половина: до публикации сходка для солегуфика не наблюдаема ни
+// списком, ни прямой ссылкой. Плюс кадр E-01: отказ в праве приходит от
+// Meetups, а не от проверки в боте.
+const environment = readContourEnvironment();
+const direct = openDirectClients(environment);
+const wire = openBotWire(environment);
+
+beforeAll(async () => {
+  await direct.waitUntilReachable();
+});
+
+afterAll(() => {
+  wire.close();
+  direct.close();
+});
+
+/** Солегуфик: ник заранее в whitelist, роль `member` он получит на `/start`. */
+async function memberAllowedBy(adminId: string) {
+  const telegramUserId = freshTelegramUserId();
+  const username = usernameFor(telegramUserId);
+  await direct.allowUsername(adminId, username);
+  const person = startConversation(wire.bot, wire.calls, telegramUserId, {
+    username,
+  });
+  return { telegramUserId, person };
+}
+
+describe("сценарий первого среза", () => {
+  it("солегуфик не видит черновик ни списком, ни ссылкой, а опубликованную сходку видит", async () => {
+    const organizerTelegramId = freshTelegramUserId();
+    const adminId = await direct.grantAdmin(organizerTelegramId);
+    const organizer = startConversation(
+      wire.bot,
+      wire.calls,
+      organizerTelegramId,
+    );
+    const { telegramUserId, person: member } = await memberAllowedBy(adminId);
+    const title = titleFor("Срез", telegramUserId);
+
+    await member.says("/start");
+    await member.presses("Ближайшие сходки");
+    expect(member.sees()).not.toContain(title);
+
+    await organizer.says("/start");
+    await organizer.presses("Управление сходками");
+    await organizer.presses("Создать сходку");
+    await fillsMeetupForm(organizer, title);
+    expect(organizer.sees()).toContain("Проверь сходку");
+    const [draftId] = (await direct.journalOf(adminId)).meetupIds;
+    if (draftId === undefined) throw new Error("черновик не заведён");
+
+    // Отрицательная половина: черновик уже в Meetups, но для солегуфика его нет.
+    await member.presses("Обновить");
+    expect(member.sees()).not.toContain(title);
+    expect(member.buttons()).not.toContain(title);
+    await member.opensLink(draftId);
+    const hiddenAnswer = member.sees();
+    await member.opensLink(unusedMeetupId());
+    expect(hiddenAnswer).toBe(member.sees());
+    // Совпадение двух ответов ничего не доказывает, если оба — кадр сбоя.
+    expect(hiddenAnswer).toContain("не найдена");
+    expect(hiddenAnswer).not.toContain(title);
+
+    await organizer.presses("Опубликовать");
+    expect(organizer.sees()).toContain("Сходка создана");
+
+    // P-03 и P-04: тот же человек видит сходку в списке и её карточку.
+    await member.says("/start");
+    await member.presses("Ближайшие сходки");
+    expect(member.buttons()).toContain(title);
+    await member.presses(title);
+    expect(member.sees()).toContain(title);
+    expect(member.sees()).toContain("Циферблат");
+    expect(member.sees()).toContain("Берём свои игры");
+    expect(await direct.readAsAdmin(adminId, draftId)).toMatchObject({
+      visible: true,
+    });
+  });
+
+  it("E-01: создать сходку не-администратору отказывает Meetups, и журнал не растёт", async () => {
+    const adminId = await direct.grantAdmin(freshTelegramUserId());
+    const { telegramUserId, person: member } = await memberAllowedBy(adminId);
+
+    // Вход в управление бот не прячет: право решает Meetups.
+    await member.says("/start");
+    await member.presses("Управление сходками");
+    await member.presses("Создать сходку");
+
+    expect(member.sees()).toBe("Meetups не разрешил это действие.");
+    const memberId = await direct.identityOf(telegramUserId);
+    expect(await direct.journalOf(memberId)).toEqual({
+      meetupIds: [],
+      events: 0,
+    });
+  });
+});

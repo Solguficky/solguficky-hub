@@ -1,5 +1,8 @@
-import type { Message, Update } from "grammy/types";
-import { tokenToUuid } from "../src/presentation/meetup-deep-link.js";
+import type { Message, MessageEntity, Update } from "grammy/types";
+import {
+  tokenToUuid,
+  uuidToToken,
+} from "../src/presentation/meetup-deep-link.js";
 import { botInfo, type RecordedCall } from "./harness.js";
 
 // Разговор человека с ботом словами сценария: «написал», «нажал кнопку»,
@@ -12,6 +15,7 @@ type Button = { text: string; data: string };
 type Screen = {
   messageId: number;
   text: string;
+  entities: readonly MessageEntity[];
   buttons: readonly Button[];
   asksForReply: boolean;
 };
@@ -19,20 +23,41 @@ type Screen = {
 export type Person = {
   /** Пишет боту. Висит вопрос формы — это ответ на него, как в клиенте Telegram. */
   says(text: string): Promise<void>;
+  /**
+   * Отвечает на `number`-й по счёту вопрос бота в этом чате, а не на
+   * последний: так в клиенте выбирают «Ответить» на старом сообщении.
+   */
+  answers(number: number, text: string): Promise<void>;
   /** Нажимает кнопку с этой подписью на последнем изменённом экране, где она сейчас есть. */
   presses(label: string): Promise<void>;
+  /** Два нажатия одной кнопки, быстрее, чем бот успевает ответить на первое. */
+  pressesTwice(label: string): Promise<void>;
+  /** Нажимает кнопку экрана, отрисованного прошлым релизом бота. */
+  pressesFromOlderRelease(label: string): Promise<void>;
+  /** Открывает ссылку на сходку из чата сообщества. */
+  opensLink(meetupId: string): Promise<void>;
   /** Текст последнего экрана: нового сообщения или правки. */
   sees(): string;
+  /** Подписи кнопок последнего экрана. */
+  buttons(): string[];
+  /** Сколько сообщений бота в чате: правка экрана их не прибавляет. */
+  messages(): number;
 };
 
 export function startConversation(
   bot: { handleUpdate(update: Update): Promise<unknown> },
   calls: readonly RecordedCall[],
   telegramUserId: bigint,
+  options: { username?: string } = {},
 ): Person {
   const userId = Number(telegramUserId);
   const chat = { id: userId, type: "private" as const, first_name: "tester" };
-  const from = { id: userId, is_bot: false, first_name: "tester" };
+  const from = {
+    id: userId,
+    is_bot: false,
+    first_name: "tester",
+    ...(options.username === undefined ? {} : { username: options.username }),
+  };
   let updateId = 0;
   let messageId = 0;
 
@@ -47,62 +72,115 @@ export function startConversation(
     return last;
   };
 
+  const write = async (text: string, replyTo?: Screen): Promise<void> => {
+    messageId += 1;
+    const message: Message.TextMessage = {
+      message_id: messageId,
+      date: 0,
+      chat,
+      from,
+      text,
+      ...(replyTo === undefined
+        ? {}
+        : {
+            reply_to_message: {
+              message_id: replyTo.messageId,
+              date: 0,
+              chat,
+              from: { id: botInfo.id, is_bot: true, first_name: "stub" },
+              text: replyTo.text,
+              // Telegram возвращает сущности вопроса в ответе: по ним бот
+              // после рестарта восстанавливает шаг точечной правки.
+              entities: [...replyTo.entities],
+              // ReplyMessage в grammY пересекает Message с обязательным
+              // `undefined`-полем, и под exactOptionalPropertyTypes такой тип
+              // не населён.
+            } as never,
+          }),
+    };
+    updateId += 1;
+    await bot.handleUpdate({ update_id: updateId, message } as Update);
+  };
+
+  const findButton = (label: string): { screen: Screen; button: Button } => {
+    const screen = screens()
+      .reverse()
+      .find((candidate) =>
+        candidate.buttons.some((button) => button.text === label),
+      );
+    const button = screen?.buttons.find(
+      (candidate) => candidate.text === label,
+    );
+    if (screen === undefined || button === undefined) {
+      throw new Error(
+        `кнопки «${label}» нет; последний экран: ${JSON.stringify(lastScreen())}`,
+      );
+    }
+    return { screen, button };
+  };
+
+  const press = (screen: Screen, data: string): Promise<unknown> => {
+    updateId += 1;
+    return bot.handleUpdate({
+      update_id: updateId,
+      callback_query: {
+        id: `callback-${updateId}`,
+        chat_instance: `chat-${userId}`,
+        from,
+        data,
+        message: { message_id: screen.messageId, date: 0, chat },
+      },
+    });
+  };
+
   return {
     async says(text) {
       const last = screens().at(-1);
-      messageId += 1;
-      const message: Message.TextMessage = {
-        message_id: messageId,
-        date: 0,
-        chat,
-        from,
-        text,
-        ...(last?.asksForReply === true
-          ? {
-              reply_to_message: {
-                message_id: last.messageId,
-                date: 0,
-                chat,
-                from: { id: botInfo.id, is_bot: true, first_name: "stub" },
-                text: last.text,
-                // ReplyMessage в grammY пересекает Message с обязательным
-                // `undefined`-полем, и под exactOptionalPropertyTypes такой тип
-                // не населён.
-              } as never,
-            }
-          : {}),
-      };
-      updateId += 1;
-      await bot.handleUpdate({ update_id: updateId, message } as Update);
+      await write(text, last?.asksForReply === true ? last : undefined);
     },
-    async presses(label) {
-      const screen = screens()
-        .reverse()
-        .find((candidate) =>
-          candidate.buttons.some((button) => button.text === label),
-        );
-      const button = screen?.buttons.find(
-        (candidate) => candidate.text === label,
-      );
-      if (screen === undefined || button === undefined) {
+    async answers(number, text) {
+      // Вопрос с ForceReply бот не правит, поэтому его номер сообщения растёт
+      // в порядке, в котором вопросы задавались.
+      const questions = screens()
+        .filter((screen) => screen.asksForReply)
+        .sort((left, right) => left.messageId - right.messageId);
+      const question = questions[number - 1];
+      if (question === undefined) {
         throw new Error(
-          `кнопки «${label}» нет; последний экран: ${JSON.stringify(lastScreen())}`,
+          `вопроса №${number} нет: бот задал ${questions.length}`,
         );
       }
-      updateId += 1;
-      await bot.handleUpdate({
-        update_id: updateId,
-        callback_query: {
-          id: `callback-${updateId}`,
-          chat_instance: `chat-${userId}`,
-          from,
-          data: button.data,
-          message: { message_id: screen.messageId, date: 0, chat },
-        },
-      });
+      await write(text, question);
+    },
+    async presses(label) {
+      const { screen, button } = findButton(label);
+      await press(screen, button.data);
+    },
+    async pressesTwice(label) {
+      const { screen, button } = findButton(label);
+      await Promise.all([
+        press(screen, button.data),
+        press(screen, button.data),
+      ]);
+    },
+    async pressesFromOlderRelease(label) {
+      const { screen, button } = findButton(label);
+      // Версия — первый сегмент данных кнопки; релиз, которого этот бот не
+      // знает, отличается только ею.
+      const [, ...rest] = button.data.split(":");
+      await press(screen, ["v0", ...rest].join(":"));
+    },
+    async opensLink(meetupId) {
+      await write(`/start m_${uuidToToken(meetupId)}`);
     },
     sees() {
       return lastScreen().text;
+    },
+    buttons() {
+      return lastScreen().buttons.map((button) => button.text);
+    },
+    messages() {
+      return screens().length;
     },
   };
 }
@@ -119,6 +197,8 @@ export function meetupIdFromStartLink(text: string): string {
 type ScreenPayload = {
   chat_id?: unknown;
   text?: unknown;
+  rich_message?: { html?: unknown };
+  entities?: MessageEntity[];
   message_id?: unknown;
   reply_markup?: {
     force_reply?: boolean;
@@ -140,22 +220,29 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
     if (payload.chat_id !== chatId) return;
     // Номер сообщения повторяет запись харнесса: отправленное сообщение
     // получает `100 + порядковый номер вызова`, правка несёт свой.
-    const messageId =
-      call.method === "sendMessage"
-        ? 100 + index + 1
-        : typeof payload.message_id === "number"
-          ? payload.message_id
-          : undefined;
+    const sent =
+      call.method === "sendMessage" || call.method === "sendRichMessage";
+    const messageId = sent
+      ? 100 + index + 1
+      : typeof payload.message_id === "number"
+        ? payload.message_id
+        : undefined;
     if (messageId === undefined) return;
     const previous = current.get(messageId);
-    let next: Screen | undefined;
-    if (
-      (call.method === "sendMessage" || call.method === "editMessageText") &&
+    // Карточка сходки рисуется богатым сообщением (ADR-034): его текст — HTML
+    // в `rich_message`, а не в `text`.
+    const text =
       typeof payload.text === "string"
-    ) {
+        ? payload.text
+        : typeof payload.rich_message?.html === "string"
+          ? payload.rich_message.html
+          : undefined;
+    let next: Screen | undefined;
+    if ((sent || call.method === "editMessageText") && text !== undefined) {
       next = {
         messageId,
-        text: payload.text,
+        text,
+        entities: payload.entities ?? [],
         buttons: readButtons(payload),
         asksForReply: payload.reply_markup?.force_reply === true,
       };

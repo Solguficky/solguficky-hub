@@ -1,9 +1,10 @@
-import { randomInt } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import type { Update } from "grammy/types";
 import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import { MeetupVisibility } from "../gen/meetups/v1/meetups_pb.js";
@@ -12,7 +13,7 @@ import { createDispatcher } from "../src/application/dispatcher.js";
 import { communityDay } from "../src/community-time.js";
 import { createIdentityClient } from "../src/identity/client.js";
 import { createMeetupsClient } from "../src/meetups/client.js";
-import { createHarness } from "./harness.js";
+import { createHarness, type RecordedCall } from "./harness.js";
 
 // Провод бота против настоящих Identity и Meetups (уровень L2). Среду поднимает
 // Contour.Host (`just contour-bot-test`), а этот модуль ею не владеет: он
@@ -137,9 +138,25 @@ export function openDirectClients(environment: ContourEnvironment) {
       }
       return resolved.identityId;
     },
+    /**
+     * Человек из сценария среза: ник заранее внесён администратором в
+     * whitelist, и роль `member` он получает на первом `/start` сам — тем же
+     * путём, что в продукте, а не выдачей в обход Identity.
+     */
+    async allowUsername(adminId: string, username: string): Promise<void> {
+      await identity.addAllowedUsername({
+        actor: { identityId: adminId, globalRoles: [GlobalRole.ADMIN] },
+        username,
+      });
+    },
+    /** Профиль, который Identity уже завёл для этого Telegram id. */
+    async identityOf(telegramUserId: bigint): Promise<string> {
+      const resolved = await identity.resolveIdentity({ telegramUserId });
+      return resolved.identityId;
+    },
     async readAsAdmin(identityId: string, meetupId: string) {
       const snapshot = await meetups.getMeetup({
-        viewer: { identityId, globalRoles: [GlobalRole.ADMIN] },
+        viewer: asAdmin(identityId),
         id: meetupId,
       });
       return {
@@ -149,11 +166,92 @@ export function openDirectClients(environment: ContourEnvironment) {
         visible: snapshot.visibility === MeetupVisibility.VISIBLE,
       };
     },
+    /** Прямой вызов Meetups с ключом, как его передал бы бот. */
+    async createDraftAsAdmin(identityId: string, meetupId: string) {
+      const snapshot = await meetups.createMeetupDraft({
+        viewer: asAdmin(identityId),
+        id: meetupId,
+      });
+      return { id: snapshot.id, version: snapshot.version };
+    },
+    /** Правка мимо бота: экран, отрисованный до неё, устаревает. */
+    async renameAsAdmin(
+      identityId: string,
+      meetupId: string,
+      title: string,
+    ): Promise<void> {
+      const viewer = asAdmin(identityId);
+      const current = await meetups.getMeetup({ viewer, id: meetupId });
+      await meetups.changeMeetupAttributes({
+        viewer,
+        id: meetupId,
+        title,
+        description: current.description,
+        venue: current.venue,
+        kind: current.kind,
+        calendarLink: current.calendarLink,
+        expectedVersion: current.version,
+      });
+    },
+    /** Снятие с публикации мимо бота: E-03, сходку сняли между списком и нажатием. */
+    async unpublishAsAdmin(identityId: string, meetupId: string) {
+      const viewer = asAdmin(identityId);
+      const current = await meetups.getMeetup({ viewer, id: meetupId });
+      await meetups.unpublishMeetup({
+        viewer,
+        id: meetupId,
+        expectedVersion: current.version,
+      });
+    },
+    /**
+     * Журнал событий автора, прочитанный из состояния Meetups мимо бота:
+     * двойное нажатие и успех снаружи неотличимы, поэтому идемпотентность
+     * проверяется здесь, а не по экрану.
+     *
+     * Таблицы журнала контур наружу не отдаёт, а RPC её не читает. Счёт
+     * выводится из служебного `ListMeetupStates`, который отдаёт полные снимки
+     * без фильтра видимости: состояние и событие пишутся одной транзакцией
+     * (ADR-024), а `meetup_events` держит `UNIQUE (meetup_id, version)` с
+     * версиями от 1, поэтому сумма версий сходок автора равна числу его строк
+     * в журнале. Число сходок ловит второй объект, которого версия одной
+     * сходки не видит. Событие, не поднимающее версию, этот счёт пропустил бы:
+     * такого события в модели Meetups сейчас нет.
+     */
+    async journalOf(authorId: string): Promise<AuthorJournal> {
+      const own: { id: string; version: bigint }[] = [];
+      let pageToken = "";
+      do {
+        const page = await meetups.listMeetupStates({
+          pageToken,
+          pageSize: 100,
+        });
+        own.push(
+          ...page.meetups.filter((meetup) => meetup.author === authorId),
+        );
+        pageToken = page.nextPageToken;
+      } while (pageToken !== "");
+      return {
+        // UUIDv7 упорядочен по времени: первым идёт черновик с ранним ключом.
+        meetupIds: own.map((meetup) => meetup.id).sort(),
+        events: own.reduce((sum, meetup) => sum + Number(meetup.version), 0),
+      };
+    },
     close(): void {
       identitySessions.abort();
       meetupsSessions.abort();
     },
   };
+}
+
+export type AuthorJournal = {
+  /** Сходки автора, от ранней к поздней. */
+  meetupIds: string[];
+  /** Число записей журнала по этим сходкам. */
+  events: number;
+};
+
+function asAdmin(identityId: string) {
+  return { identityId, globalRoles: [GlobalRole.ADMIN] };
 }
 
 // DEADLINE_EXCEEDED тоже не ответ: вызов не дождался сервиса, и засчитать его
@@ -203,9 +301,22 @@ export function openBotWire(endpoints: {
   const dispatcher = createDispatcher(meetups, undefined, () =>
     communityDay(new Date(), contourTimeZone),
   );
-  const harness = createHarness(identity, dispatcher);
+  const calls: RecordedCall[] = [];
+  let current = createHarness(identity, dispatcher, calls);
   return {
-    ...harness,
+    // Разговор держит этот вход, а не сам бот: после рестарта он говорит уже
+    // с новым процессом, а история чата остаётся прежней.
+    bot: {
+      handleUpdate: (update: Update) => current.bot.handleUpdate(update),
+    },
+    calls,
+    /**
+     * Рестарт процесса бота: память о висящих вопросах теряется, Meetups и
+     * история сообщений у человека остаются.
+     */
+    restart(): void {
+      current = createHarness(identity, dispatcher, calls);
+    },
     close(): void {
       identity.close();
       meetups.close();
@@ -220,6 +331,25 @@ export function openBotWire(endpoints: {
  */
 export function freshTelegramUserId(): bigint {
   return 7_000_000_000n + BigInt(randomInt(0, 2 ** 31));
+}
+
+/** Ник Telegram, свой на каждый id: запись whitelist гасится первым `/start`. */
+export function usernameFor(telegramUserId: bigint): string {
+  return `contour${telegramUserId}`;
+}
+
+/**
+ * UUIDv7, которого Meetups ещё не видел: ключ новой сходки или ссылка на
+ * несуществующую. Форма та же, что у настоящего ключа, иначе ответ на
+ * несуществующую сходку отличался бы разбором, а не видимостью.
+ */
+export function unusedMeetupId(): string {
+  const bytes = randomBytes(16);
+  bytes.writeUIntBE(Date.now(), 0, 6);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Порт, на котором заведомо никто не слушает: Meetups «упал». */
