@@ -87,6 +87,9 @@ jobs:
               - '.github/workflows/ci.yml'
             apphost:
               - 'infra/apphost/**'
+              # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
+              - 'aspire.config.json'
+              - 'tools/apphost/**'
               - 'shared/dotnet/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
@@ -410,6 +413,9 @@ jobs:
         with:
           global-json-file: global.json
       - uses: extractions/setup-just@v4
+      # До сборки: битый путь в aspire.config.json называет проверка, а не
+      # поздний отказ CLI у человека.
+      - run: just apphost-config-check
       - run: dotnet build infra/apphost/AppHost/AppHost.csproj --nologo
       # Docker джобе не нужен: тесты проверяют валидацию графа и материализацию
       # модели, а они отрабатывают до старта ресурсов. Через `just`, а не прямым

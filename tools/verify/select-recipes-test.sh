@@ -57,6 +57,8 @@ assert_selects "identity selects identity" \
     "$always identity-build identity-test identity-lint" apps/identity/cmd/identity/main.go
 assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
+assert_selects "aspire.config.json selects apphost" \
+    "$always apphost-config-check apphost-build apphost-test" aspire.config.json
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md
 
 # A CI filter without local recipes and a glob form the selector does not
