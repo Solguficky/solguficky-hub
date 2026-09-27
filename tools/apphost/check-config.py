@@ -12,7 +12,8 @@ point at a .csproj that declares Aspire.AppHost.Sdk in any of the three
 MSBuild forms: the `Sdk` attribute of `<Project>`
 (`Microsoft.NET.Sdk;Aspire.AppHost.Sdk/13.5.3`), an element
 `<Sdk Name="Aspire.AppHost.Sdk" ... />` or `<Import Sdk="Aspire.AppHost.Sdk" ...>`,
-the last two as direct children of `<Project>`. A file-based
+the last two as direct children of `<Project>`; the `<Import>` may also sit
+directly in an `<ImportGroup>` that is a direct child. A file-based
 AppHost (apphost.cs) is not a project and is rejected; the repository has
 none, and adopting one is a decision that updates this check.
 
@@ -50,14 +51,21 @@ def declares_apphost_sdk(project):
         return False
     if names_sdk(root.get("Sdk", "")):
         return True
-    # Only direct children of <Project> count: MSBuild does not evaluate
-    # nested XML such as <ProjectExtensions>, so an Sdk there declares nothing.
+    # Only direct children of <Project> count, plus an <Import> directly in an
+    # <ImportGroup> that is itself a direct child: MSBuild does not evaluate
+    # nested XML such as <ProjectExtensions>, so an Sdk there declares nothing,
+    # and it does not allow <Sdk> inside <ImportGroup>.
     for el in root:
         tag = local_name(el.tag) if isinstance(el.tag, str) else ""
         if tag == "Sdk" and names_sdk(el.get("Name", "")):
             return True
         if tag == "Import" and names_sdk(el.get("Sdk", "")):
             return True
+        if tag == "ImportGroup":
+            for child in el:
+                child_tag = local_name(child.tag) if isinstance(child.tag, str) else ""
+                if child_tag == "Import" and names_sdk(child.get("Sdk", "")):
+                    return True
     return False
 
 

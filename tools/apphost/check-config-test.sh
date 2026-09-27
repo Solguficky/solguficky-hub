@@ -22,6 +22,11 @@ apphost_attribute='<Project Sdk="Microsoft.NET.Sdk;Aspire.AppHost.Sdk/13.5.3">
 apphost_import='<Project>
   <Import Project="Sdk.props" Sdk="aspire.apphost.sdk" Version="13.5.3" />
 </Project>'
+apphost_import_group='<Project>
+  <ImportGroup>
+    <Import Project="Sdk.props" Sdk="Aspire.AppHost.Sdk" />
+  </ImportGroup>
+</Project>'
 plain_project='<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
 </Project>'
@@ -89,6 +94,8 @@ assert_fails "project without Aspire.AppHost.Sdk" "not an AppHost" \
 assert_fails "path outside the repository" "leaves the repository" \
     "$(tree outside ../AppHost.csproj "$apphost_element")"
 assert_passes "Import Sdk, name in another case" "$(tree import "$good" "$apphost_import")"
+assert_passes "Import Sdk inside ImportGroup" \
+    "$(tree import_group "$good" "$apphost_import_group")"
 assert_fails "Sdk nested below Project" "not an AppHost" \
     "$(tree nested "$good" "$nested_sdk")"
 # CI checks out on a case-sensitive file system
