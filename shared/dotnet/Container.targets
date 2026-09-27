@@ -26,7 +26,7 @@
        проходит. -->
   <Target Name="ValidateContainerBaseImageDigest" BeforeTargets="ComputeContainerBaseImage">
     <Error Code="SOLG0001"
-           Condition="'$(ContainerBaseImage)' == '' or !$(ContainerBaseImage.Contains('@sha256:'))"
+           Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ContainerBaseImage)', '@sha256:[0-9a-f]{64}$'))"
            Text="ContainerBaseImage должен быть закреплён по digest (образ@sha256:...), получено: '$(ContainerBaseImage)'. Тег не является identity образа." />
   </Target>
 

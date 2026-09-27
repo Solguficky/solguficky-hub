@@ -45,6 +45,11 @@ jobs:
 
   publish:
     if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' }}
+    # Публикации по очереди: тег sha-<коммит> одного прогона не должен
+    # перевесить другой, пока первый читает digest и аттестует его.
+    concurrency:
+      group: image-meetups-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write

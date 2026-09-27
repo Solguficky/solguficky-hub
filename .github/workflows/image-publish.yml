@@ -71,14 +71,17 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: ${{ inputs.builder == 'dotnet-sdk' }}
         with:
           global-json-file: global.json
 
       # Негативный путь критерия приёмки: база по тегу обязана ронять сборку
       # ошибкой SOLG0001 из shared/dotnet/Container.targets. Ненулевой код без
       # этого кода — не доказательство: сборка могла упасть по другой причине.
-      # Проверка идёт до скачивания базы, сети не требует.
+      # Проверка срабатывает до скачивания базы; restore и сборка проекта перед
+      # ней идут как обычно, и их отказ шаг называет отдельно.
       - name: База по тегу отклоняется
+        if: ${{ inputs.builder == 'dotnet-sdk' }}
         run: |
           set +e
           dotnet publish "$PROJECT" -t:PublishContainer --nologo \
@@ -91,18 +94,22 @@ jobs:
           grep -q SOLG0001 "$RUNNER_TEMP/rejected.log" || { echo "::error::сборка упала, но не проверкой digest"; exit 1; }
 
       - name: Сборка в архив
-        if: ${{ !inputs.publish }}
+        if: ${{ inputs.builder == 'dotnet-sdk' && !inputs.publish }}
         run: |
           dotnet publish "$PROJECT" -t:PublishContainer --nologo \
             -p:ContainerRepository="$IMAGE_NAME" -p:ContainerImageTags=candidate \
             -p:ContainerArchiveOutputPath="$RUNNER_TEMP/image.tar.gz"
-          podman load -i "$RUNNER_TEMP/image.tar.gz"
-          # podman кладёт образ без реестра под localhost/: короткое имя он
-          # разрешал бы по списку реестров.
-          echo "IMAGE=localhost/$IMAGE_NAME:candidate" >> "$GITHUB_ENV"
+          # Имя берётся из вывода load, а не собирается заранее: podman сам
+          # решает, под каким реестром положить образ без реестра в имени.
+          loaded=$(podman load -i "$RUNNER_TEMP/image.tar.gz" | sed -En 's/^Loaded image(\(s\))?: *//p' | head -1)
+          [ -n "$loaded" ] || { echo "::error::podman load не назвал образ"; exit 1; }
+          echo "IMAGE=$loaded" >> "$GITHUB_ENV"
 
+      # Публикация идёт до проверок: SDK не пушит собранный архив, а пересборка
+      # дала бы другой digest. Образ, не прошедший проверки, остаётся в GHCR
+      # под тегом, но без attestation, и выкатка его не примет.
       - name: Публикация в GHCR
-        if: ${{ inputs.publish }}
+        if: ${{ inputs.builder == 'dotnet-sdk' && inputs.publish }}
         env:
           SDK_CONTAINER_REGISTRY_UNAME: ${{ github.actor }}
           SDK_CONTAINER_REGISTRY_PWORD: ${{ github.token }}
@@ -141,9 +148,14 @@ jobs:
       # из реестра, без неё — по архиву сборки.
       - name: Образ запускается не от root
         run: |
-          uid=$(podman run --rm "$IMAGE" id -u)
-          echo "uid=$uid"
-          [ "$uid" != 0 ] || { echo "::error::образ запускается от root"; exit 1; }
+          # Буквально команда критерия приёмки, вывод — в логе прогона.
+          out=$(podman run --rm "$IMAGE" id)
+          echo "$out"
+          case "$out" in
+            uid=0\(*) echo "::error::образ запускается от root"; exit 1 ;;
+            uid=*) ;;
+            *) echo "::error::неожиданный вывод id"; exit 1 ;;
+          esac
 
       - name: В образе нет .NET SDK
         if: ${{ inputs.builder == 'dotnet-sdk' }}
@@ -192,7 +204,8 @@ jobs:
           push-to-registry: true
 
       # Та же команда, которой хост проверит образ перед выкаткой: подписант —
-      # этот workflow, а не вызывающий.
+      # этот workflow, а не вызывающий, и только с develop. Без --source-ref
+      # проверку прошёл бы образ, опубликованный этим же файлом из любой ветки.
       - name: Проверка attestation
         if: ${{ inputs.publish }}
         env:
@@ -200,4 +213,4 @@ jobs:
         run: |
           gh attestation verify "oci://$IMAGE" \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml"             --source-ref refs/heads/develop

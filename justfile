@@ -403,7 +403,7 @@ meetups-format-check: dotnet-tools
     dotnet fantomas --check apps/meetups
 
 # Production-образ в архив apps/meetups/Meetups/bin/container/, без реестра и
-# демона: `docker load` или `podman load` поднимает его как meetups:local. Публикацию в GHCR делает только CI
+# демона: `docker load` поднимает его как meetups:local. Публикацию в GHCR делает только CI
 # (.github/workflows/image-meetups.yml); база по тегу роняет сборку с SOLG0001
 meetups-image:
     dotnet publish apps/meetups/Meetups -t:PublishContainer --nologo -p:ContainerImageTags=local -p:ContainerArchiveOutputPath=bin/container/meetups.tar.gz
