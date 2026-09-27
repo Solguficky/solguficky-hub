@@ -433,7 +433,7 @@ PER-80 должен дать владельцу практику безопас�
 - dev, agents, test и production на первом этапе размещаются на одном хосте с зафиксированным остаточным риском;
 - отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-039;
 - production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии; объектное хранилище того же регистратора, что VPS, этим условием не является;
-- object storage, как и регистратор, выбирается операционно и в платформу не входит. Годится провайдер, который принимает доступный владельцу способ оплаты и даёт: отдельные writer и maintenance credentials, где writer не удаляет данные; versioning и Object Lock в governance mode; lifecycle для noncurrent versions. Delete для writer только на префиксе `locks/`, выраженный bucket policy, требуется, если restic останется в контуре: при декларативном ops-репозитории нужен ли файловый бэкап, решает инвентаризация состояния (PER-382). Хранилище, выбранное без этого критерия, при появлении restic перепроверяется или получает отдельный bucket под restic. Сравнение кандидатов ведётся в задаче PER-234, а не в этом документе;
+- object storage, как и регистратор, выбирается операционно и в платформу не входит. Годится провайдер, который принимает доступный владельцу способ оплаты и даёт: отдельные writer и maintenance credentials, где writer не удаляет данные; versioning и Object Lock в governance mode; lifecycle для noncurrent versions. Delete для writer только на префиксе `locks/`, выраженный bucket policy, требуется, если restic останется в контуре: при декларативном ops-репозитории нужен ли файловый бэкап, решает инвентаризация состояния (PER-382). Хранилище, выбранное без этого критерия, при появлении restic перепроверяется или получает отдельный bucket под restic. Срез сравнения кандидатов — в приложении «Кандидаты object storage» в конце документа; выбор делает владелец, и в документ он не записывается;
 - алерты этого RFC и внешний dead-man's switch исполняет облачный бэкенд наблюдаемости, а на хосте работает только Collector: сервисы шлют OTLP в него, бэкенд — Better Stack ([ADR-053](../decisions/ADR-053-production-observability-otlp-better-stack.md)). Журнал хоста хранит логи прод-контура дольше трёх дней окна бэкенда; сам срок остаётся открытым в строке Metrics/logs таблицы хранения и фиксируется при подключении на хосте.
 
 ### Решения владельца до реализации
@@ -473,3 +473,48 @@ PER-80 должен дать владельцу практику безопас�
 - restore и migration runbooks с журналом ежемесячных/квартальных drills;
 - measured capacity, RPO/RTO и cost record;
 - обновлённые architecture, local-development, CI и operations docs после появления фактической реализации.
+
+## Приложение: кандидаты object storage
+
+Срез на 27.09.2026 из PER-234. Это варианты под критерии из «Принято владельцем», а не выбор: провайдер выбирается операционно. Цены и возможности меняются, поэтому перед выбором их сверяют заново.
+
+### Посылки
+
+- Оплата только картой РФ или СБП. Если появится иностранная карта, в сравнение возвращаются Hetzner и Wasabi.
+- Writer не удаляет готовые данные ни у одного клиента бэкапа. pgBackRest получает `expire-auto=n`. CloudNativePG с Barman Cloud не получает `retentionPolicy`: retention там исполняет `barman-cloud-backup-delete` теми же credentials, что и архив. Prune в обоих случаях идёт отдельным maintenance credential.
+- Delete только на префиксе `locks/` нужен одному restic: `backup` снимает свой lock сам. Для pgBackRest и Barman этот критерий не действует.
+- Object Lock у всех финалистов работает только на bucket с versioning.
+
+### Финалисты
+
+| | Selectel S3 | Yandex Object Storage | Cloud.ru Evolution |
+|---|---|---|---|
+| Writer ≠ prune | service users с ролью `s3.bucket.user`, права задаёт только bucket policy | сервисные аккаунты; роль `storage.uploader` пишет, но не удаляет | сервисные аккаунты в группах IAM |
+| Delete только на `locks/` | задокументировано: Deny побеждает Allow, ресурс `bucket/<prefix>`, лимит policy 20 KB | из документации не выводится: Deny в policy передаёт проверку ACL объекта, Allow не срабатывает на запросе, не прошедшем IAM или ACL бакета | методы policy заявлены, семантика Deny не описана |
+| Object Lock в governance | да; bypass — роль `member` или `s3:BypassGovernance` в policy; отключить нельзя | да; bypass только у `storage.admin`; включается на существующем bucket | методы заявлены, режимы не описаны |
+| Lifecycle noncurrent versions | не подтверждён | `NoncurrentVersionExpiration` | заявлен |
+| Цена за ~50 ГБ standard | от 2,56 ₽/ГБ, около 130 ₽/мес плюс запросы | около 60 ₽/мес, цифра из калькулятора не подтверждена | 1,83915 ₽/ГБ, 15 ГБ бесплатно, около 65 ₽/мес |
+| Ограничения | для pgBackRest нужна vHosted-адресация | класс Ice — минимум 12 месяцев хранения | в cold и ice минимальный объект 128 КБ |
+| ЦОД | Санкт-Петербург, Москва, Новосибирск | РФ | Москва |
+
+Рекомендация исследования:
+- **Selectel** — если нужна уверенность без проб. Это единственный финалист, у которого документация подтверждает все критерии, включая `locks/`. Есть официальная инструкция для pgBackRest ([Selectel: pgBackRest](https://docs.selectel.ru/en/s3/tools/pgbackrest/)).
+- **Yandex** — если restic в контуре не останется: критерий `locks/` тогда не нужен, а роль `storage.uploader` не удаляет ничего без всякой policy.
+- **Cloud.ru** — самый дешёвый, но семантику policy и режимы Object Lock подтверждает только проба.
+
+Источники: [Selectel bucket policy](https://docs.selectel.ru/en/cloud/object-storage/containers/bucket-policy/about-bucket-policy/), [Selectel Object Lock](https://docs.selectel.ru/s3/buckets/object-lock/), [Selectel роли](https://docs.selectel.ru/en/s3/about/manage-access/), [Yandex bucket policy](https://yandex.cloud/en/docs/storage/concepts/policy), [Yandex порядок проверки доступа](https://yandex.cloud/en/docs/storage/security/overview), [Yandex Object Lock](https://yandex.cloud/en/docs/storage/concepts/object-lock), [Cloud.ru методы S3](https://cloud.ru/docs/s3e/ug/topics/api__methods), [Cloud.ru тарифы](https://cloud.ru/docs/s3e/ug/topics/pricing).
+
+### Отвергнуты
+
+- **Timeweb Cloud S3** — тот же регистратор, что у вероятного VPS: общий аккаунт и failure domain. Отдельный аккаунт закрывает блокировку аккаунта, но не отказ провайдера. Object Lock не найден.
+- **Backblaze B2** — bucket policy нет, а `namePrefix` ограничивает ключ целиком, а не отдельное действие. Кроме того, HeadBucket ломает barman ([cloudnative-pg#7105](https://github.com/cloudnative-pg/cloudnative-pg/issues/7105)). Оплата из РФ тоже недоступна.
+- **Cloudflare R2** — нет прав по префиксу.
+- **Hetzner Object Storage** — договоры с клиентами с адресом в РФ расторгнуты с 31.01.2024.
+- **Wasabi** — в договоре требование не находиться в санкционной стране, оплата через Stripe.
+- **VK Cloud** — регистрация физлица не подтверждена.
+
+### Проверить пробным bucket до первого production repository
+
+- writer не удаляет объект данных, а prune удаляет, в governance — с bypass;
+- удаляет ли pgBackRest файлы при очистке прерванного backup и что делает следующий backup без права delete;
+- включённые по умолчанию CRC-чексуммы новых AWS SDK не ломают загрузку; иначе — `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`.
