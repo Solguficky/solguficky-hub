@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MemoryStorage, TelegramClient } from "@mtcute/node";
 
@@ -26,19 +27,28 @@ export type LiveSecrets = {
   botUsername: string;
 };
 
-export class MissingSecretError extends Error {
-  readonly key: string;
+export type SecretProblem = "missing" | "invalid";
 
-  constructor(key: string) {
+const secretProblems: Record<SecretProblem, string> = {
+  missing: "нет секрета",
+  invalid: "неверный секрет",
+};
+
+export class SecretError extends Error {
+  readonly key: string;
+  readonly problem: SecretProblem;
+
+  constructor(key: string, problem: SecretProblem) {
     super(
-      `нет секрета ${key}: dotnet user-secrets --project ` +
+      `${secretProblems[problem]} ${key}: dotnet user-secrets --project ` +
         `infra/apphost/AppHost/AppHost.csproj set "${key}" "<значение>"` +
         (key === secretKeys.session
           ? "; строку сессии пишет just telegram-live-login"
           : ""),
     );
-    this.name = "MissingSecretError";
+    this.name = "SecretError";
     this.key = key;
+    this.problem = problem;
   }
 }
 
@@ -55,9 +65,13 @@ export function parseSecretsListing(output: string): Record<string, string> {
       "dotnet user-secrets list --json: нет маркеров //BEGIN и //END",
     );
   }
-  const parsed: unknown = JSON.parse(
-    output.slice(begin + "//BEGIN".length, end),
-  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output.slice(begin + "//BEGIN".length, end));
+  } catch {
+    // Сообщение SyntaxError цитирует разбираемый текст, а в нём секреты.
+    throw new Error("dotnet user-secrets list --json: JSON не разбирается");
+  }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("dotnet user-secrets list --json: ожидался объект");
   }
@@ -70,27 +84,32 @@ export function parseSecretsListing(output: string): Record<string, string> {
   return secrets;
 }
 
+function readSecret(store: Record<string, string>, key: string): string {
+  const value = store[key];
+  if (value === undefined || value === "") {
+    throw new SecretError(key, "missing");
+  }
+  return value;
+}
+
+/** Пара приложения с my.telegram.org — общая у прогона и входа. */
+export function pickApiCredentials(store: Record<string, string>): {
+  apiId: number;
+  apiHash: string;
+} {
+  const apiId = Number(readSecret(store, secretKeys.apiId));
+  if (!Number.isSafeInteger(apiId) || apiId <= 0) {
+    throw new SecretError(secretKeys.apiId, "invalid");
+  }
+  return { apiId, apiHash: readSecret(store, secretKeys.apiHash) };
+}
+
 /** Выбирает секреты контура и называет первый отсутствующий. */
 export function pickLiveSecrets(store: Record<string, string>): LiveSecrets {
-  const read = (key: string): string => {
-    const value = store[key];
-    if (value === undefined || value === "") {
-      throw new MissingSecretError(key);
-    }
-    return value;
-  };
-  const rawApiId = read(secretKeys.apiId);
-  const apiId = Number(rawApiId);
-  if (!Number.isSafeInteger(apiId) || apiId <= 0) {
-    throw new Error(
-      `секрет ${secretKeys.apiId} — не целое положительное число`,
-    );
-  }
   return {
-    apiId,
-    apiHash: read(secretKeys.apiHash),
-    session: read(secretKeys.session),
-    botUsername: read(secretKeys.botUsername).replace(/^@/, ""),
+    ...pickApiCredentials(store),
+    session: readSecret(store, secretKeys.session),
+    botUsername: readSecret(store, secretKeys.botUsername).replace(/^@/, ""),
   };
 }
 
@@ -140,15 +159,7 @@ export function syntheticLoginCode(phone: string): string {
 
 async function login(phone: string): Promise<void> {
   const code = syntheticLoginCode(phone);
-  const store = readSecretStore();
-  const apiId = Number(store[secretKeys.apiId]);
-  const apiHash = store[secretKeys.apiHash];
-  if (!Number.isSafeInteger(apiId) || apiId <= 0) {
-    throw new MissingSecretError(secretKeys.apiId);
-  }
-  if (apiHash === undefined || apiHash === "") {
-    throw new MissingSecretError(secretKeys.apiHash);
-  }
+  const { apiId, apiHash } = pickApiCredentials(readSecretStore());
   const client = new TelegramClient({
     apiId,
     apiHash,
@@ -170,7 +181,17 @@ async function login(phone: string): Promise<void> {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Сравнение по realpath: дерево за junction или иной регистр диска дали бы
+// разные строки, и вход молча завершился бы с кодом 0, не записав сессию.
+function isEntryPoint(): boolean {
+  const script = process.argv[1];
+  return (
+    script !== undefined &&
+    realpathSync(script) === realpathSync(fileURLToPath(import.meta.url))
+  );
+}
+
+if (isEntryPoint()) {
   const [command, phone] = process.argv.slice(2);
   if (command !== "login" || phone === undefined) {
     console.error("использование: session.ts login <99966XYYYY>");

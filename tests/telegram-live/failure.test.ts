@@ -1,7 +1,7 @@
 import { MtTimeoutError, TransportError, tl } from "@mtcute/node";
 import { describe, expect, it } from "../../apps/telegram-bot/testkit/index.js";
 import { classifyFailure, TelegramLiveFailure } from "./failure.js";
-import { MissingSecretError } from "./session.js";
+import { SecretError } from "./session.js";
 
 // Классификатор проверяется на настоящих объектах ошибок mtcute: живой прогон
 // редок, и разобранная не так ошибка иначе всплыла бы только у владельца.
@@ -20,6 +20,24 @@ describe("classifyFailure", () => {
 
     expect(failure.kind).toBe("flood-wait");
     expect(failure.message).toContain("37 с");
+  });
+
+  it("считает флуд-лимитом любой код 420", () => {
+    const slowmode = classifyFailure(rpcError(420, "SLOWMODE_WAIT_12"));
+    const testPhone = classifyFailure(
+      rpcError(420, "FLOOD_TEST_PHONE_WAIT_30"),
+    );
+
+    expect(slowmode.kind).toBe("flood-wait");
+    expect(slowmode.message).toContain("12 с");
+    expect(testPhone.kind).toBe("flood-wait");
+    expect(testPhone.message).toContain("30 с");
+  });
+
+  it("отличает неверный секрет от отсутствующего", () => {
+    expect(
+      classifyFailure(new SecretError("TelegramLive:ApiId", "invalid")).kind,
+    ).toBe("invalid-secret");
   });
 
   it("отличает отозванную сессию", () => {
@@ -55,7 +73,7 @@ describe("classifyFailure", () => {
 
   it("передаёт отсутствующий секрет с именем ключа", () => {
     const failure = classifyFailure(
-      new MissingSecretError("TelegramLive:Session"),
+      new SecretError("TelegramLive:Session", "missing"),
     );
 
     expect(failure.kind).toBe("missing-secret");

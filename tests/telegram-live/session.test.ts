@@ -1,8 +1,8 @@
 import { describe, expect, it } from "../../apps/telegram-bot/testkit/index.js";
 import {
-  MissingSecretError,
   parseSecretsListing,
   pickLiveSecrets,
+  SecretError,
   secretKeys,
   syntheticLoginCode,
 } from "./session.js";
@@ -21,6 +21,13 @@ describe("parseSecretsListing", () => {
     expect(parseSecretsListing(listing)).toEqual({
       [secretKeys.session]: "a=b==",
     });
+  });
+
+  it("не цитирует секрет из неразобранного JSON", () => {
+    const listing = '//BEGIN\n{ "k": secret-value }\n//END';
+
+    expect(() => parseSecretsListing(listing)).toThrow(/не разбирается/);
+    expect(() => parseSecretsListing(listing)).not.toThrow(/secret-value/);
   });
 
   it("падает без маркеров, не печатая вывод", () => {
@@ -44,7 +51,7 @@ describe("pickLiveSecrets", () => {
   it("называет отсутствующий ключ", () => {
     const { [secretKeys.session]: _, ...withoutSession } = complete;
 
-    expect(() => pickLiveSecrets(withoutSession)).toThrow(MissingSecretError);
+    expect(() => pickLiveSecrets(withoutSession)).toThrow(SecretError);
     expect(() => pickLiveSecrets(withoutSession)).toThrow(secretKeys.session);
   });
 

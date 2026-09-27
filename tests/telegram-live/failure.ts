@@ -1,5 +1,5 @@
 import { MtTimeoutError, TransportError, tl } from "@mtcute/node";
-import { MissingSecretError } from "./session.js";
+import { SecretError } from "./session.js";
 
 // Живой контур падает с названной причиной, а не пропускается
 // (testing-strategy.md, «Пропуск не равен прохождению»): владелец по первой
@@ -8,6 +8,7 @@ import { MissingSecretError } from "./session.js";
 
 export type FailureKind =
   | "missing-secret"
+  | "invalid-secret"
   | "flood-wait"
   | "session-invalid"
   | "telegram-unreachable"
@@ -48,8 +49,12 @@ const networkErrorCodes = new Set([
   "EAI_AGAIN",
 ]);
 
+// Сетевой код лежит в `cause` одной-двух обёрток; предел держит обход конечным
+// на циклической цепочке причин.
+const maxCauseDepth = 5;
+
 function networkCode(error: unknown): string | undefined {
-  for (let current = error, depth = 0; depth < 5; depth += 1) {
+  for (let current = error, depth = 0; depth < maxCauseDepth; depth += 1) {
     if (typeof current !== "object" || current === null) {
       return undefined;
     }
@@ -62,21 +67,36 @@ function networkCode(error: unknown): string | undefined {
   return undefined;
 }
 
+function floodSeconds(error: tl.RpcError): number | undefined {
+  const parsed: unknown = (error as { seconds?: unknown }).seconds;
+  if (typeof parsed === "number") {
+    return parsed;
+  }
+  const match = /_(\d+)$/.exec(error.text);
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
 /** Переводит отказ драйвера в причину, которую печатает упавший прогон. */
 export function classifyFailure(error: unknown): TelegramLiveFailure {
   if (error instanceof TelegramLiveFailure) {
     return error;
   }
-  if (error instanceof MissingSecretError) {
-    return new TelegramLiveFailure("missing-secret", error.message, {
-      cause: error,
-    });
+  if (error instanceof SecretError) {
+    return new TelegramLiveFailure(
+      error.problem === "missing" ? "missing-secret" : "invalid-secret",
+      error.message,
+      { cause: error },
+    );
   }
   if (tl.RpcError.is(error)) {
-    if (error.is("FLOOD_WAIT_%d")) {
+    // Код 420 — любой флуд-лимит: FLOOD_WAIT, FLOOD_PREMIUM_WAIT, SLOWMODE_WAIT
+    // и FLOOD_TEST_PHONE_WAIT; последний mtcute в `seconds` не разбирает.
+    if (error.code === tl.RpcError.FLOOD) {
+      const seconds = floodSeconds(error);
       return new TelegramLiveFailure(
         "flood-wait",
-        `Telegram требует подождать ${error.seconds} с; повтор раньше продлит ограничение`,
+        `${error.text}: Telegram требует подождать ${seconds ?? "неизвестно сколько"} с; ` +
+          "повтор раньше продлит ограничение",
         { cause: error },
       );
     }
