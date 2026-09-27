@@ -78,8 +78,9 @@ just tools
 # Готовность среды к контуру по контракту из agent-execution-loop.md: называет
 # отсутствующий и неавторизованный инструмент поимённо. Харнесс — claude, codex,
 # cursor, opencode или copilot. Код 0 — готова, 1 — не готова, 3 — не проверено
-# (в десктопе Claude Code и в харнессах без команды состояния MCP Linear
-# подтверждает get_issue из сессии). В verify входят только её фикстуры
+# (в Claude Code вне терминального CLI и в харнессах без команды состояния MCP
+# Linear подтверждает get_issue из сессии), 2 — не отработала сама проверка.
+# В verify входят только её фикстуры
 just agent-ready claude
 just check-agent-ready
 

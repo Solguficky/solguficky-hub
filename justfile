@@ -57,8 +57,8 @@ setup:
 skillshare-install:
     sh tools/skillshare/install.sh
 
-# Контракт — docs/development/agent-execution-loop.md. Харнесс — claude, codex,
-# cursor, opencode или copilot. Код 3 — «не проверено», зелёным не считается.
+# Контракт, состояния и коды возврата — docs/development/agent-execution-loop.md;
+# допустимые харнессы печатает сам скрипт. Коды 2 и 3 зелёными не считаются.
 # В `verify` не входит: ответ зависит от логинов машины и ходит в сеть.
 # Готовность среды к контуру: инструмент поимённо, «не объявлен» отдельно от «не авторизован»
 agent-ready harness:

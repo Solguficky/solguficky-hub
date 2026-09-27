@@ -30,24 +30,11 @@
 #      the change did not pass it.
 # Optional tools never change the exit code.
 #
-# Why Linear MCP is read through the harness CLI and not from the session:
-# OAuth tokens of a remote MCP server live in the harness, and a shell cannot
-# see them without reading its secret store. Codex reports the fact in
-# `codex mcp list --json` (auth_status). Claude Code reports it in
-# `claude mcp get`, but only for the terminal CLI: measured on 2026-09-26, the
-# desktop app ran Linear MCP in a session while the CLI in the same worktree
-# said "Pending approval", because the app keeps approvals where the CLI does
-# not read them. That case, and harnesses without such a command, are
-# unverified; the loop confirms Linear there with a `get_issue` call from the
-# session, which the capture step makes anyway.
-#
 # The rows follow the contract table in docs/development/agent-execution-loop.md
 # (section «Контракт среды»); a tool added there is added here in the same
-# change.
-#
-# Not checked here: component tooling (`just tools` installs it and the gate
-# names what is missing), push rights to origin, and write access to Linear —
-# the capture step proves it by writing the status.
+# change. The same section says why Linear MCP is asked of the harness CLI,
+# why a Claude Code host other than the terminal CLI is unverified, and what
+# this check does not cover.
 #
 # AGENT_ENV_ROOT overrides the repository root; only the fixture test sets it.
 
@@ -113,30 +100,45 @@ check_cli() {
 }
 
 # gh prints the account and a masked token; neither is echoed here, only the
-# verdict. A failure that is not a login failure (network, timeout) is
-# unverified: an offline host is not a logged-out one.
+# verdict. Only the active github.com account counts: a stale token on another
+# host or a second account does not stop a pull request here. Offline,
+# `gh auth status` prints the same "Failed to log in ... token is invalid" as
+# a revoked token, so that answer is settled by a second call: the API says
+# "Bad credentials" only when it was reached. An offline host is unverified,
+# not logged out.
 check_gh() {
     if ! command -v gh > /dev/null; then
         report missing deliver gh "not in PATH; needed for: pull request"
         return
     fi
-    if out=$(probe gh auth status 2>&1); then
+    if out=$(probe gh auth status --active --hostname github.com 2>&1); then
         report ok deliver gh "logged in"
         return
     fi
     case $out in
-        *"not logged in"* | *"not logged into"* | *"Failed to log in"*)
-            report unauthorized deliver gh "installed, not logged in: gh auth login" ;;
+        *"not logged in"* | *"not logged into"*)
+            report unauthorized deliver gh "installed, not logged in: gh auth login"
+            return ;;
+    esac
+    api=$(probe gh api --hostname github.com rate_limit 2>&1) || true
+    case $api in
+        *"Bad credentials"*)
+            report unauthorized deliver gh "installed, the token is rejected: gh auth login" ;;
         *)
-            report unverified deliver gh "gh auth status failed without naming a login problem" ;;
+            report unverified deliver gh "gh auth status failed and GitHub was not reached" ;;
     esac
 }
 
+# The CLI answers for itself: outside a session, or inside a terminal CLI
+# session. Any other Claude Code host (desktop app, IDE, SDK) may keep MCP
+# approval where the CLI does not read it, so its answer would be a guess.
 linear_in_claude() {
-    if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = claude-desktop ]; then
-        report unverified open linear "the desktop app keeps MCP approval where the CLI cannot read it; confirm with get_issue from the session"
-        return
-    fi
+    case ${CLAUDE_CODE_ENTRYPOINT:-} in
+        "" | cli) ;;
+        *)
+            report unverified open linear "claude host '$CLAUDE_CODE_ENTRYPOINT' keeps MCP approval where the CLI may not read it; confirm with get_issue from the session"
+            return ;;
+    esac
     if ! command -v claude > /dev/null; then
         report missing open linear "claude is not in PATH, nothing runs the server"
         return
@@ -156,8 +158,10 @@ linear_in_claude() {
     esac
 }
 
-# `codex mcp list --json` prints one object per server with name, enabled and
-# auth_status. A missing or unknown value is unverified, not ok.
+# `codex mcp list --json` prints an indented array, one object per server, with
+# name, enabled and auth_status four spaces deep. Only that depth is read: the
+# same keys nested in a server's env or headers must not be taken for its own.
+# Output without an array, or in another layout, is unverified, not ok.
 linear_in_codex() {
     if ! command -v codex > /dev/null; then
         report missing open linear "codex is not in PATH, nothing runs the server"
@@ -167,26 +171,41 @@ linear_in_codex() {
         report unverified open linear "codex mcp list --json failed"
         return
     }
+    case $out in
+        *"["*) ;;
+        *)
+            report unverified open linear "codex mcp list --json printed no server list"
+            return ;;
+    esac
     fields=$(printf '%s\n' "$out" | tr -d '\r' | sed -n \
-        -e 's/^[[:space:]]*"name":[[:space:]]*"\([^"]*\)".*/name \1/p' \
-        -e 's/^[[:space:]]*"enabled":[[:space:]]*\([a-z]*\).*/enabled \1/p' \
-        -e 's/^[[:space:]]*"auth_status":[[:space:]]*"\([^"]*\)".*/auth \1/p')
-    current= enabled= auth=
+        -e 's/^    "name": *"\([^"]*\)".*/name \1/p' \
+        -e 's/^    "enabled": *\([a-z]*\).*/enabled \1/p' \
+        -e 's/^    "auth_status": *"\([^"]*\)".*/auth \1/p')
+    current= servers=0 listed=no enabled= auth=
     while read -r key value; do
         case $key in
-            name) current=$value ;;
+            name)
+                current=$value
+                servers=$((servers + 1))
+                [ "$value" = linear ] && listed=yes ;;
             enabled) [ "$current" = linear ] && enabled=$value ;;
             auth) [ "$current" = linear ] && auth=$value ;;
         esac
     done << EOF
 $fields
 EOF
-    if [ -z "$enabled$auth" ]; then
-        if printf '%s' "$out" | grep -q '"linear"'; then
-            report unverified open linear "codex lists linear in a form this check does not read"
+    # An empty array lists no servers. A non-empty one where no server name was
+    # read at the expected depth is a layout this check does not know.
+    if [ "$listed" = no ]; then
+        if [ "$servers" -eq 0 ] && printf '%s' "$out" | grep -q '"name"'; then
+            report unverified open linear "codex lists servers in a layout this check does not read"
         else
             report missing open linear "declared in the repository, not in codex: .codex/config.toml is not loaded"
         fi
+        return
+    fi
+    if [ -z "$enabled" ] || [ -z "$auth" ]; then
+        report unverified open linear "codex lists linear without enabled or auth_status"
         return
     fi
     if [ "$enabled" = false ]; then
@@ -200,8 +219,10 @@ EOF
     esac
 }
 
+# The server is declared when "linear" opens a line as a key; a commented-out
+# entry or the word as a value elsewhere does not count.
 check_linear() {
-    if ! grep -q '"linear"' "$mcp_source" 2> /dev/null; then
+    if ! grep -Eq '^[[:space:]]*"linear"[[:space:]]*:' "$mcp_source" 2> /dev/null; then
         report missing open linear "not declared in .rulesync/mcp.jsonc"
         return
     fi

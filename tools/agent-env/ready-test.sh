@@ -25,9 +25,11 @@ trap 'rm -rf "$scratch"' EXIT
 
 declared="$scratch/declared"
 undeclared="$scratch/undeclared"
-mkdir -p "$declared/.rulesync" "$undeclared/.rulesync"
-printf '{ "mcpServers": { "linear": { "type": "http" } } }\n' > "$declared/.rulesync/mcp.jsonc"
-printf '{ "mcpServers": { "aspire": { "command": "aspire" } } }\n' > "$undeclared/.rulesync/mcp.jsonc"
+commented="$scratch/commented"
+mkdir -p "$declared/.rulesync" "$undeclared/.rulesync" "$commented/.rulesync"
+printf '{\n  "mcpServers": {\n    "linear": { "type": "http" }\n  }\n}\n' > "$declared/.rulesync/mcp.jsonc"
+printf '{\n  "mcpServers": {\n    "aspire": { "command": "aspire" }\n  }\n}\n' > "$undeclared/.rulesync/mcp.jsonc"
+printf '{\n  "mcpServers": {\n    // "linear": { "type": "http" },\n    "aspire": { "command": "aspire", "args": ["linear"] }\n  }\n}\n' > "$commented/.rulesync/mcp.jsonc"
 
 stub() {
     printf '#!/bin/sh\n%s\n' "$2" > "$1"
@@ -45,12 +47,19 @@ make_bin() {
     for tool in git just skillshare lefthook aspire; do
         stub "$bin/$tool" 'exit 0'
     done
+    # Offline and with a revoked token gh auth status prints the same failure;
+    # only gh api tells them apart (seen live on 2026-09-26).
     stub "$bin/gh" '
-case ${STUB_GH:-ok} in
-    ok) echo "  Logged in to github.com account fixture"; exit 0 ;;
-    out) echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2; exit 1 ;;
-    net) echo "error connecting to api.github.com" >&2; exit 1 ;;
-esac'
+failed="  X Failed to log in to github.com account fixture (keyring)
+  - The token in keyring is invalid."
+case $1:${STUB_GH:-ok} in
+    auth:ok) echo "  Logged in to github.com account fixture"; exit 0 ;;
+    auth:out) echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2; exit 1 ;;
+    auth:revoked | auth:net) echo "$failed" >&2; exit 1 ;;
+    api:revoked) printf "{\n  \"message\": \"Bad credentials\"\n}\ngh: Bad credentials (HTTP 401)\n" >&2; exit 1 ;;
+    api:net) echo "Get \"https://api.github.com/rate_limit\": dial tcp: connection refused" >&2; exit 1 ;;
+esac
+exit 1'
     stub "$bin/claude" '
 case ${STUB_CLAUDE:-connected} in
     connected) printf "linear:\n  Status: \342\234\224 Connected\n" ;;
@@ -59,10 +68,14 @@ case ${STUB_CLAUDE:-connected} in
     absent) echo "No MCP server named \"linear\" found." >&2; exit 1 ;;
     silent) exit 0 ;;
 esac'
+    # The layout copies the real one: keys of a server four spaces deep, its
+    # transport and env deeper, where the same key names may appear again.
     stub "$bin/codex" '
-server() { printf "  {\n    \"name\": \"%s\",\n    \"enabled\": %s,\n    \"transport\": {\n      \"type\": \"streamable_http\"\n    },\n    \"auth_status\": \"%s\"\n  }" "$1" "$2" "$3"; }
+server() { printf "  {\n    \"name\": \"%s\",\n    \"enabled\": %s,\n    \"transport\": {\n      \"type\": \"streamable_http\",\n      \"env\": {\n        \"name\": \"linear\",\n        \"auth_status\": \"o_auth\"\n      }\n    },\n    \"auth_status\": \"%s\"\n  }" "$1" "$2" "$3"; }
 case ${STUB_CODEX:-o_auth} in
     absent) printf "[\n"; server aspire true unsupported; printf "\n]\n" ;;
+    empty) printf "[]\n" ;;
+    compact) printf "[{\"name\":\"linear\",\"enabled\":true,\"auth_status\":\"o_auth\"}]\n" ;;
     disabled) printf "[\n"; server linear false o_auth; printf "\n]\n" ;;
     silent) ;;
     *) printf "[\n"; server aspire true unsupported; printf ",\n"; server linear true "${STUB_CODEX:-o_auth}"; printf "\n]\n" ;;
@@ -133,14 +146,18 @@ expect 'codex has the server disabled' 1 "$(row unauthorized open linear)" codex
 
 # Linear is not declared: in the repository, in the harness, or no harness.
 expect 'repository does not declare linear' 1 'not declared in .rulesync/mcp.jsonc' codex AGENT_ENV_ROOT="$undeclared"
+expect 'a commented-out declaration does not count' 1 'not declared in .rulesync/mcp.jsonc' cursor AGENT_ENV_ROOT="$commented"
 expect 'claude does not know the server' 1 "$(row missing open linear)" claude STUB_CLAUDE=absent
 expect 'codex does not list the server' 1 "$(row missing open linear)" codex STUB_CODEX=absent
-expect 'codex lists nothing' 1 "$(row missing open linear)" codex STUB_CODEX=silent
+expect 'codex lists no servers' 1 "$(row missing open linear)" codex STUB_CODEX=empty
 expect 'claude is not installed' 1 "$(row missing open linear)" claude -- claude
 
 # The state is not visible: never green, never red.
 expect 'desktop session' 3 "$(row unverified open linear)" claude CLAUDE_CODE_ENTRYPOINT=claude-desktop
+expect 'another claude host' 3 "$(row unverified open linear)" claude CLAUDE_CODE_ENTRYPOINT=sdk-ts
 expect 'claude answers without a status' 3 "$(row unverified open linear)" claude STUB_CLAUDE=silent
+expect 'codex prints nothing' 3 "$(row unverified open linear)" codex STUB_CODEX=silent
+expect 'codex prints a layout the check does not read' 3 "$(row unverified open linear)" codex STUB_CODEX=compact
 expect 'codex reports an unknown auth status' 3 "$(row unverified open linear)" codex STUB_CODEX=unsupported
 expect 'harness without an MCP command' 3 "$(row unverified open linear)" cursor
 expect 'gh cannot reach github' 3 "$(row unverified deliver gh)" codex STUB_GH=net
@@ -150,6 +167,7 @@ expect 'git is not installed' 1 "$(row missing open git)" codex -- git
 expect 'just is not installed' 1 "$(row missing deliver just)" codex -- just
 expect 'gh is not installed' 1 "$(row missing deliver gh)" codex -- gh
 expect 'gh is logged out' 1 "$(row unauthorized deliver gh)" codex STUB_GH=out
+expect 'gh token is revoked' 1 "$(row unauthorized deliver gh)" codex STUB_GH=revoked
 expect 'optional aspire is not installed' 0 "$(row missing optional aspire)" codex -- aspire
 
 expect 'unknown harness' 2 "unknown harness 'zed'" zed
