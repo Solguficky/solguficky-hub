@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "skills": {
+    "_aspire-skills": {
+      "source": "https://github.com/microsoft/aspire-skills.git",
+      "commit": "a83ca78b9d35b8238f9c4fdba72cb779defe2a90"
+    },
+    "akka-streams": {
+      "source": "github.com/alexandru/skills/skills/akka-streams",
+      "commit": "012aa1702fc60aba3eed7b91577652f723453095",
+      "tree_hash": "5441d11e688c3d1c54c9ec42e715357b37a4adca"
+    },
+    "cli-for-agents": {
+      "source": "github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents",
+      "commit": "68836ddaf5697224520f1847d90cdb90ca8babaa",
+      "tree_hash": "732b15173f44c2dc3129cd010e2b2f6113d066e0"
+    },
+    "find-skills": {
+      "source": "https://github.com/vercel-labs/skills/find-skills",
+      "commit": "435076e78988e1e6ec40d00b0b1d76bdbbc5419a",
+      "tree_hash": "76a98a285cb0434f3d39e1a873823556330e398b"
+    },
+    "frontend-design-deslop": {
+      "source": "github.com/samber/cc-skills/skills/frontend-design-deslop",
+      "commit": "f6dad7c07bad369d25912cfa9f0b21790f431066",
+      "tree_hash": "b58e00aadbd480faf40307e7c5502d70e7b2e36a"
+    },
+    "golang/_golang": {
+      "source": "https://github.com/samber/cc-skills-golang.git",
+      "commit": "19a0626ae8565d27a7b7bdf59d8d99d94d7e284c"
+    },
+    "mattpocock/_skills": {
+      "source": "https://github.com/mattpocock/skills.git",
+      "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
+    },
+    "orca-linear": {
+      "source": "https://github.com/stablyai/orca/skills/orca-linear",
+      "commit": "77cd61df396f25ec91ee2d5ddcbd1f55aa94f818",
+      "tree_hash": "2b0b3b3d422f0d9cdb88574e955c345ed4370ea8"
+    },
+    "orleans": {
+      "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
+      "commit": "bcd48ab508df1f71b2e1b7f9601c2c35be900c4e",
+      "tree_hash": "ee0c9cd2ac4479b3a2b4bbb8132d988db4268382"
+    },
+    "playwright-cli": {
+      "source": "github.com/microsoft/playwright-cli/skills/playwright-cli",
+      "commit": "12228454ed024c9ac89abd59df3b706ed9135fd9",
+      "tree_hash": "10104bd92881e5ca5688f0a2cd1372e3c0e413a9"
+    },
+    "presentation-design": {
+      "source": "github.com/jwynia/agent-skills/skills/general/communication/presentation-design",
+      "commit": "e02ec7e226a6e4f8419fd3b88a1d8e472d421b32",
+      "tree_hash": "aedcd4f65747154d4efe3e1c8577fb453828831f"
+    },
+    "show-me": {
+      "source": "https://github.com/humanlayer/skills/plugins/show-me/skills/show-me",
+      "commit": "3c2629142c5d437428269b1b722b08c0b87f574d",
+      "tree_hash": "0bdb821a21e793a4f6f82a7078c052154447e5cc"
+    },
+    "skillshare": {
+      "source": "https://github.com/runkids/skillshare/skills/skillshare",
+      "commit": "da95f9cb15738222b9cc6f4e465924e03d616bb4",
+      "tree_hash": "dcb133f6e77de01735157ac4068855a416ef8433"
+    },
+    "unslop-ui": {
+      "source": "github.com/jcarterjohnson/vibecoded-design-tells/skill",
+      "commit": "f7c4aefc2c797a66e55b49354a93917ab60d33ac",
+      "tree_hash": "9bdb5422b1081707a62144bdcce3bbb7b3ce42c4"
+    },
+    "verify-this": {
+      "source": "github.com/cursor/plugins/cursor-team-kit/skills/verify-this",
+      "commit": "68836ddaf5697224520f1847d90cdb90ca8babaa",
+      "tree_hash": "11c9aa1407bc647693437c510bcf5a508244c738"
+    }
+  }
+}

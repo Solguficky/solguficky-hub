@@ -37,7 +37,7 @@ PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad
 # версии .NET, Go и JDK скрипт берёт из global.json, go.mod и .java-version.
 JUST_VERSION := "1.58.0"
 LEFTHOOK_VERSION := "2.1.10"
-SKILLSHARE_VERSION := "0.20.29"
+SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
 
 # Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.

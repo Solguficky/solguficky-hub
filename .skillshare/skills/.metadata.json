@@ -1,189 +1,85 @@
 {
   "version": 1,
   "entries": {
+    "_aspire-skills": {
+      "source": "https://github.com/microsoft/aspire-skills.git",
+      "tracked": true,
+      "branch": "main"
+    },
     "akka-streams": {
       "source": "github.com/alexandru/skills/skills/akka-streams",
       "type": "github-subdir",
-      "installed_at": "2026-09-22T00:15:17.5737574+03:00",
+      "installed_at": "2026-09-27T14:49:38.771781673Z",
       "repo_url": "https://github.com/alexandru/skills.git",
       "subdir": "skills/akka-streams",
       "version": "012aa17",
       "tree_hash": "5441d11e688c3d1c54c9ec42e715357b37a4adca",
+      "commit": "012aa1702fc60aba3eed7b91577652f723453095",
       "file_hashes": {
-        "SKILL.md": "sha256:ff2323ac740e7e574c4591e02fb5ad6ac619b59ccf914c15eeba1d1200fdec91",
-        "references/akka-streams.md": "sha256:98495b566fc20e6744e6fa21402daca85a17770ab6be4fd835a08f9d5b456ccc",
-        "references/best-practices.md": "sha256:d432910d86d010d0234bec4e1e5189583ef6d01ab9ba2fbfe2e4fffc6dccbd45",
-        "references/testing.md": "sha256:6c467c1ba2dd517783ccc73bf4bbc381ef9805fcf9246614d655a2ef5f39172e"
-      }
-    },
-    "aspire": {
-      "source": "github.com/microsoft/aspire-skills/skills/aspire",
-      "type": "github-subdir",
-      "installed_at": "2026-09-04T00:15:29.0468156+03:00",
-      "repo_url": "https://github.com/microsoft/aspire-skills.git",
-      "subdir": "skills/aspire",
-      "version": "c9d042e",
-      "tree_hash": "1e3094e0517f6f2019eca2e0caab7e5bb4a409f7",
-      "file_hashes": {
-        "SKILL.md": "sha256:c1e89c96e8575339212f8db5bdec5c7d641ae07d362fea553491930e69c5f7c6",
-        "evals/eval.yaml": "sha256:4c37d3a8892e02b6accd75e548e63e3b3a34f4bfe0ba32e1421f829680da726e",
-        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
-        "references/aspire-13-3-breaking-changes.md": "sha256:4da654f928a2808aa5c71e0381bc0edf21edc66bba72e0b7e0f9ef6a1ee81e18",
-        "references/aspire-13-5-breaking-changes.md": "sha256:d9e83ce2bc2fa262707b262852bc065bca92492d24b00e5a962aeb8743eaf186"
-      }
-    },
-    "aspire-deployment": {
-      "source": "github.com/microsoft/aspire-skills/skills/aspire-deployment",
-      "type": "github-subdir",
-      "installed_at": "2026-09-15T15:45:59.0469216+03:00",
-      "repo_url": "https://github.com/microsoft/aspire-skills.git",
-      "subdir": "skills/aspire-deployment",
-      "version": "27f3b61",
-      "tree_hash": "7c337887ae734fcd862844004485e00c824e2304",
-      "file_hashes": {
-        "SKILL.md": "sha256:404909db89b097ea45849a091136350ca41963469adde8c7d0e74dadda5a924f",
-        "evals/eval.yaml": "sha256:e6549aea81197a1f79ad5e1d016e9a3bb6ccd6ca61c07d3ea7c084dd45445064",
-        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
-        "references/aws.md": "sha256:8a9b2659a7f4a31d33f0b3a6cab4196b3276f12e78e865e1715a7397528d2b03",
-        "references/azure.md": "sha256:c07304d9b5cb5163d32011673d5df5ea724f15a4549184587c6ea90068ed854b",
-        "references/cicd.md": "sha256:2cd5af0e375fd555bdc0f2eedeaa45e06654f3f2d4104a14753fdca07bad4c6e",
-        "references/docker-compose.md": "sha256:d65fc8c26ac693b9c2f53c0c4886afd1cac66e11b25778feef4a9ceb4c802291",
-        "references/github-actions-azure-csharp.yml": "sha256:f750970df019cd63cf8f80a66294c4cf388ea2241cad424546eb26d8b546ed39",
-        "references/github-actions-azure-typescript.yml": "sha256:b3a62693d3f3b90cc79bd657e8300f76506e4fcf96171d9bfce2dd7e546d3480",
-        "references/javascript.md": "sha256:e890b460742a7deba0de2ddf765972849aa95cc70dc4a42819f568638f3aa154",
-        "references/kubernetes.md": "sha256:efd92bc819f37e8f77d663ca857c953ef5824f052de9a057cb0d2df4a5aab09b",
-        "references/preflight.md": "sha256:ddeb01a4e2c4016dac8b3036dbd69488b3f6c8c4d55e34c96c22a27770e94513"
-      }
-    },
-    "aspire-init": {
-      "source": "https://github.com/microsoft/aspire-skills.git/skills/aspire-init",
-      "type": "github-subdir",
-      "installed_at": "2026-09-15T15:43:17.5208679+03:00",
-      "repo_url": "https://github.com/microsoft/aspire-skills.git",
-      "subdir": "skills/aspire-init",
-      "version": "27f3b61",
-      "tree_hash": "7d0b03ac1ca36bc53e89d08656150fe93e9b4a67",
-      "file_hashes": {
-        "SKILL.md": "sha256:9777f24aa0da62dd955301d67360b12ef2273ebda2892668e55dc83fa3886c51",
-        "evals/eval.yaml": "sha256:41e59203af883db8ce6787a9e7ede7fe1897b52072e52fb80d62557dbdf6558c",
-        "references/init-workflow.md": "sha256:22ac51276687e0815871fc7b7510ea03f4dc85b7a693b21addaa00d9d2099897",
-        "references/templates.md": "sha256:cf2d0610d148616bb75effdf900cd55f090fd5cf09a33a9f10014c007ac40e22"
-      }
-    },
-    "aspire-monitoring": {
-      "source": "github.com/microsoft/aspire-skills/skills/aspire-monitoring",
-      "type": "github-subdir",
-      "installed_at": "2026-09-02T22:29:21.5133777+03:00",
-      "repo_url": "https://github.com/microsoft/aspire-skills.git",
-      "subdir": "skills/aspire-monitoring",
-      "version": "c9d042e",
-      "tree_hash": "8d99c214aafb6180cc1f284f25baa346d9cb4467",
-      "file_hashes": {
-        "SKILL.md": "sha256:506ae49ab0292e7e71a25a4596af2b0501d6299aa79a551d4d47a29fa6dd0d88",
-        "evals/eval.yaml": "sha256:4548571576f32360eeb753bba538cfb9982592776f043b7b46320ca03f527eaa",
-        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
-        "references/diagnostics-bridge.md": "sha256:2d3be1f910d36dd5cef41e232e37efc1dd75f40bfe35e89b4c514cdcf28ba97f",
-        "references/monitoring.md": "sha256:ab8d70d50914e7b9dd6e2747f40c6f91ac99cd4ff72b84752da1810c02c240f5",
-        "references/playwright-handoff.md": "sha256:171b137f5c9963f764f9a3e61413dcbcb3a7afb68e8dc76cfe2d92ebb4c6614c"
-      }
-    },
-    "aspire-orchestration": {
-      "source": "github.com/microsoft/aspire-skills/skills/aspire-orchestration",
-      "type": "github-subdir",
-      "installed_at": "2026-09-13T20:13:24.0222573+03:00",
-      "repo_url": "https://github.com/microsoft/aspire-skills.git",
-      "subdir": "skills/aspire-orchestration",
-      "version": "7f3dca0",
-      "tree_hash": "1acf3680894cd7863ec4ad61dc840b26996c1d94",
-      "file_hashes": {
-        "SKILL.md": "sha256:622bd7059bca7cf15ff3c4ae83a167bc6531d71d657c5204256139b69f6a7da9",
-        "evals/eval.yaml": "sha256:2b74a4da0b446c183f223ba048d3572ae9c72e143cf84c3e2b1fdb5a26057711",
-        "evals/fixtures": "sha256:6c5200bf980bff598405ca4eedd6e61734dd1bdaa0975663fb245c73e658371f",
-        "references/agent-workflows.md": "sha256:ba0c2b83e371b710b1b3f4625e9c1b2509d6104b3abd83d1e5eff4a1622b85c4",
-        "references/app-commands.md": "sha256:fa21342df7065a09f5c2589ce27bdb72a33a8b3cad1f1a44006dad0ef663d19a",
-        "references/detection.md": "sha256:84c5a49633cdf803dfbfe1d62dcbef0218a5d4dd7ed26c644bdc931520e8b2ec",
-        "references/resource-management.md": "sha256:5058b4e2009f98a1f6e5a6c0d8b15aa17d33087e54502953d5428034557ed629",
-        "references/safety-guardrails.md": "sha256:92088f091bbb810fbe6e98f6dc61d19fd0edcf82689a3a2aa271a2cb4a42a98f"
-      }
-    },
-    "aspireify": {
-      "source": "https://github.com/microsoft/aspire-skills.git/skills/aspireify",
-      "type": "github-subdir",
-      "installed_at": "2026-09-15T15:43:18.2554966+03:00",
-      "repo_url": "https://github.com/microsoft/aspire-skills.git",
-      "subdir": "skills/aspireify",
-      "version": "27f3b61",
-      "tree_hash": "80b84ecdf6f7c5d54d529e1124a1c3fe18cac4a3",
-      "file_hashes": {
-        "SKILL.md": "sha256:06486e28d403fa77ab4f26f94a6ddc9947749fa457a8fe725da69ba66568344c",
-        "evals/eval.yaml": "sha256:a99af2c9b2329871a3814d4dc1c4db4fde2f5167daa9b07b0175791c097958ae",
-        "references/apphost-wiring.md": "sha256:00b7cb88e0c8ee24a545f7a21b63c2b28b518220cac073c494b78fd1763f66c3",
-        "references/csharp-authoring.md": "sha256:bf2479c712688ec6e0cbd227cead270af2f3583c74962c6414ac8315557e6fb7",
-        "references/docker-compose.md": "sha256:f1de0210164abbdaad9396132349a45ecdb7a0fd6bca053cc07828539f4d4089",
-        "references/full-solution-apphosts.md": "sha256:e561361e7071ac70f3a046e52f62fcc7d949ab69aab8777dce84f0822beb35a3",
-        "references/javascript-apps.md": "sha256:97d2412e2d8ca439c1799e1dc5e326e3e5f4d0ff36d6816ad896ebe84a926339",
-        "references/opentelemetry.md": "sha256:d51deb7a30e0279f93fcc17182797bd0c4eb25ba55b9bd68283614add82dd3d8",
-        "references/scan-and-propose.md": "sha256:c132e4a98f549551adf8f6922f4061b38a66a09b57a63b2d7736654e398ce31d",
-        "references/service-defaults.md": "sha256:795b5dcb66a101b98c1d806023b199be2f8fc3c39fcebf9820aff4068a1c34e1",
-        "references/typescript-authoring.md": "sha256:5c71426de96ada576c2820538bd99175a5ff8fda766ffb5436a07584a0154cb2",
-        "references/validation.md": "sha256:4009d9f0f41e4430488e69202061a035493bae3e2e0ce8a4512f16cf50d49bc4"
+        "SKILL.md": "sha256:f5bfffaed3358550217e0b55d991b5da0585ad0463864c1839ba4a24f7e7a595",
+        "references/akka-streams.md": "sha256:68f9b1ccd4efbadbcc7b71c42aa442be75f41214b1b41ad5faf2b9137a95711c",
+        "references/best-practices.md": "sha256:18cd085501b1b902e2df52fa362501e24ae5931149012fe3064b4785cc9173f3",
+        "references/testing.md": "sha256:0f771fdf357edc662903e683acc9185ba5c01ea2066c860823177348869cccd0"
       }
     },
     "cli-for-agents": {
-      "source": "github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents",
+      "source": "https://github.com/cursor/plugins.git/cli-for-agent/skills/cli-for-agents",
       "type": "github-subdir",
-      "installed_at": "2026-08-28T22:04:03.5732665+03:00",
+      "installed_at": "2026-09-27T14:49:12.628911776Z",
       "repo_url": "https://github.com/cursor/plugins.git",
       "subdir": "cli-for-agent/skills/cli-for-agents",
       "version": "68836dd",
       "tree_hash": "732b15173f44c2dc3129cd010e2b2f6113d066e0",
+      "commit": "68836ddaf5697224520f1847d90cdb90ca8babaa",
       "file_hashes": {
-        "SKILL.md": "sha256:446670e3200df30dacc91667837e56f6d55b589eb457f617933874b11e05d423"
+        "SKILL.md": "sha256:1cddd028d24ece48cd538fc1d84e49f5922dc8d04ee88caf12666b0557575e09"
       }
     },
     "find-skills": {
       "source": "https://github.com/vercel-labs/skills/find-skills",
       "type": "github-subdir",
-      "installed_at": "2026-08-27T03:45:29.7020151+03:00",
+      "installed_at": "2026-09-27T14:49:21.626217275Z",
       "repo_url": "https://github.com/vercel-labs/skills.git",
       "subdir": "skills/find-skills",
       "version": "435076e",
       "tree_hash": "76a98a285cb0434f3d39e1a873823556330e398b",
+      "commit": "435076e78988e1e6ec40d00b0b1d76bdbbc5419a",
       "file_hashes": {
-        "SKILL.md": "sha256:c1d9628984991d7ed59ab3a7bf6a4dad3d731ef68c71f409f64a0ca258e8028e"
+        "SKILL.md": "sha256:c00eeea0e13e74fe4a9d84ba0a8542205a1b736d65f13134fe1a6647eb14976f"
       }
     },
     "frontend-design-deslop": {
       "source": "github.com/samber/cc-skills/skills/frontend-design-deslop",
       "type": "github-subdir",
-      "installed_at": "2026-09-08T02:01:59.7886877+03:00",
+      "installed_at": "2026-09-27T14:49:27.315713779Z",
       "repo_url": "https://github.com/samber/cc-skills.git",
       "subdir": "skills/frontend-design-deslop",
       "version": "f6dad7c",
       "tree_hash": "b58e00aadbd480faf40307e7c5502d70e7b2e36a",
+      "commit": "f6dad7c07bad369d25912cfa9f0b21790f431066",
       "file_hashes": {
-        "SKILL.md": "sha256:d5023c2b0152ea3a245a34ea0f564f1c061e9daf96281132e91fd7308663536b",
-        "evals/evals.json": "sha256:97fc08e850f0ababca40f7ebe9394c584ba207407fdfac0f578862b8cd433399",
-        "references/accessibility.md": "sha256:6d9842a1df7c642d2a3d758020e32963881e225d664f1495f09ca0eeeeb512b3",
-        "references/adapters.md": "sha256:f788df9f1d7ffe9e7b8182f94eefadafbfbef366ce0e5b844804864abf965f2d",
-        "references/aesthetics-library.md": "sha256:96275043a099972099b607910305b99c16bd1e51fd0943da9603c0e3e4849af2",
-        "references/artifact-types.md": "sha256:6dd202ca1973cf2660db279843683f7149872880fb65adc52dccf4755881ed81",
-        "references/catalogs.md": "sha256:218af0a635ba78fb6fb728de992b0adddc80e472776116e7b46e832418901bc7",
-        "references/color-oklch.md": "sha256:6529aa73733b248aa3ec248c38a0c4e3b99f73cb7b5720c90c4cf027c35dadff",
-        "references/components.md": "sha256:061446bdf7a867255f15a64b1ab8c4ed2201146a5e7cfdf27288c58abf87c588",
-        "references/dark-mode.md": "sha256:d156bb78850c30716436a7634b04ddf0326d14f096b8792bc28c3badcf304fa7",
-        "references/design-md.md": "sha256:732ef3edbb41c93d2acce01154952a9fe9b9a101379ac2ab2ffa5ee3ceb65aee",
-        "references/design-theory.md": "sha256:76ccd7777676cc645969f5152845310cee9c701cee0b4a69cd826e6485a1156a",
-        "references/discovery.md": "sha256:754f6899d66f9f403a45b6f2ca16dd7600d5d0b1b0c11f1d5bcda548b1495943",
-        "references/divergence.md": "sha256:f0e699be9945a4d8c851d00acb0b84dae7a8431e9a25cdd6a0f9aa8c12289d1b",
-        "references/iconography.md": "sha256:1a0f3ed4b2f0b929021b36394ecf37179cd2b35b5c0d59c24c317a7b31aaef85",
-        "references/imagery.md": "sha256:1e4a3891e80327041e569cd8c353e3a9506ecfa061feb65468018327aeff842d",
-        "references/layout.md": "sha256:063713c85f80a435a0e231148da40c1434fab721f3f458dc2a48a58b7fef9d7c",
-        "references/motion.md": "sha256:879fa944ed5eb5376a73c3ffef527d2044433ce64f90d32acbd019e5650ac029",
-        "references/slop-checklist.md": "sha256:13193c25af62edc2e6fe0f94a41fafc4716a583a06303b0664b319e7ad823ccc",
-        "references/token-core.css": "sha256:630a7a63d5edc392d5af750e656e1f752b410b0c29421c7ada23cc8d31a0f426",
-        "references/token-sets.md": "sha256:e555192f28bb5cab792abd4a5017bdd20b983d1f83ce3c11751aeabfd0796b08",
-        "references/typography.md": "sha256:8bd1324b5293d8d7f39cce04c02227289221d11b814856e8255427eb1ccaf778"
+        "SKILL.md": "sha256:653c74f73b2961133871cb0c1e7a18923032bb4090a1d942f16725c4997bd345",
+        "evals/evals.json": "sha256:198820d59b6bc7fb2636274783e7b1b90c320e59955d4839f57163da1c3c3056",
+        "references/accessibility.md": "sha256:3b70c3be5b750d1ba8f6f6fb080716d35fb0c856435463244a1b8a8e50e9ad21",
+        "references/adapters.md": "sha256:87aef721acf570bb321f30e969e911e6a750d4a08be7191fb25969cabed48089",
+        "references/aesthetics-library.md": "sha256:d227d450bd74026d2e0efeecaacbc6da672995d4b7a53caaf9ccae79fb0766d2",
+        "references/artifact-types.md": "sha256:240aed8c5082afa4c4d0e55cc1f3779e928aa55a4ab395b2612f41d10295123f",
+        "references/catalogs.md": "sha256:b148619f5f1729f11a32f71c1165035702abffb3fa862d371b8a4a4611fb195f",
+        "references/color-oklch.md": "sha256:4d5c958781aeec2059b4a6dbf0a3d8de8a4b6d04dbff0b629106ab1039eb29b6",
+        "references/components.md": "sha256:a36e189d7569ac1e9f12bff653fd618046ccf9c06f6274453292c3473d42cbd8",
+        "references/dark-mode.md": "sha256:14ccc335640b1ebecb4ca7c4dd1c78590eb20b87785b4a020ca85ee6153c313f",
+        "references/design-md.md": "sha256:50a76de914e975ae33862e79a1547694054c93d23ccaa28c0d1517d91e4508fd",
+        "references/design-theory.md": "sha256:0809e9bfc0b88ab810e699d774d956af47727f78af0b0a99644da21c3be3e262",
+        "references/discovery.md": "sha256:249efacc367a8b2a0414d65e73a9944271add545d54529f208765687c79b699e",
+        "references/divergence.md": "sha256:bc6befd24d55b79ded61e88619b34d23b2c1a801b732ff924f47db6eddbd5737",
+        "references/iconography.md": "sha256:d431d8f26afe8e34b5f448618e20d96fb7ec4f546272577e255319230e1f2f27",
+        "references/imagery.md": "sha256:857767bb5008969053c014950262e368faf63d0343c59e91c6c058a5f80a08c6",
+        "references/layout.md": "sha256:edb69bf64ec126ec820f73c104ec0c364a22792cfc89b052272556f01c00fac7",
+        "references/motion.md": "sha256:2b0fafa7055f04cd4ad776f411c263f0bcab25e3a5f9bf0cd7ebc1fe39c00bd5",
+        "references/slop-checklist.md": "sha256:a84f39fafe014e290fdb3c1836a0ce5ad9390cd52c29fb5fc528abd7bb4a9054",
+        "references/token-core.css": "sha256:2fd1243e7c77c71a820fe7ec4ab209c02a985a391d53b721bd4b804e8415e771",
+        "references/token-sets.md": "sha256:8316313cd1b64abc4cc81ad684096ad1d65a9c7e16f33a3ce2d90b0a3d14ef2b",
+        "references/typography.md": "sha256:26d68bd065023e07e2f2d976c51e05ea0c8ad9f83df41523dfe43f5e7900dfa4"
       }
     },
     "golang/_golang": {
@@ -201,11 +97,12 @@
     "orca-linear": {
       "source": "https://github.com/stablyai/orca/skills/orca-linear",
       "type": "github-subdir",
-      "installed_at": "2026-09-17T05:18:03.8661273+03:00",
+      "installed_at": "2026-09-27T14:49:47.465742126Z",
       "repo_url": "https://github.com/stablyai/orca.git",
       "subdir": "skills/orca-linear",
-      "version": "77cd61df",
+      "version": "77cd61d",
       "tree_hash": "2b0b3b3d422f0d9cdb88574e955c345ed4370ea8",
+      "commit": "77cd61df396f25ec91ee2d5ddcbd1f55aa94f818",
       "file_hashes": {
         "SKILL.md": "sha256:85ee0d4d3cfadfec301e3a852c8ff959a1f366ac51b9c312cf463f050e427e72"
       }
@@ -213,128 +110,144 @@
     "orleans": {
       "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
       "type": "github-subdir",
-      "installed_at": "2026-09-21T23:36:19.4850821+03:00",
+      "installed_at": "2026-09-27T14:49:41.992760746Z",
       "repo_url": "https://github.com/managedcode/dotnet-skills.git",
       "subdir": "catalog/Frameworks/Orleans/skills/orleans",
       "version": "bcd48ab",
       "tree_hash": "ee0c9cd2ac4479b3a2b4bbb8132d988db4268382",
+      "commit": "bcd48ab508df1f71b2e1b7f9601c2c35be900c4e",
       "file_hashes": {
-        "SKILL.md": "sha256:b3200f6eb219cff34a8971b2c503120a443d07445e25c91c220fed22b7b114f2",
-        "manifest.json": "sha256:ed2f4615000329c4a52d0265bbdc20b42e9caef0f1c27df7b13193647cd72acf",
-        "references/anti-patterns.md": "sha256:f3e0b83973af5d920f1a58901210cecd509d53703da9034094566d38b0550ed9",
-        "references/configuration-api.md": "sha256:ad177ea9b2c1cc1a65bbc57d11b29987ccfd47a43f365039e770a3f5eceffb86",
-        "references/examples.md": "sha256:ba857547f9ff1e3a86401b0b20d12175e5e16ef1c80459e0678bcc8ffbdfd705",
-        "references/grain-api.md": "sha256:a78609d1f8ced2292233649a62e040ff2af93c2eb3b01c5438bca6cf330ffe40",
-        "references/grains.md": "sha256:fbd61a6dd37269eb3ee464573ae1ae31cc0acfac9859938133af0df7026f555f",
-        "references/hosting.md": "sha256:bd4b6d865d7d3c0a231ca7604b63f1b6f197ab944c45fa2a06f5a5ac0f360dd6",
-        "references/implementation.md": "sha256:25dad244af9c490d174af32b4d4a34ee7b2ff1f159f15e8a5f893557d3378e09",
-        "references/official-docs-index.md": "sha256:95d27afc1f2f180d7b74cf9f3e25d0b2438a62301e41ad74d811d00207ccabf3",
-        "references/patterns.md": "sha256:d7e5c11b0b3b7ebdc20641dc69f4f5ecacff32b0ac65066f14a753d50b2d10b7",
-        "references/persistence-api.md": "sha256:709dbaac3d308d82e84a6c8fcbee5afe909ed392c99250d75af5f909511e096a",
-        "references/scheduling-and-services.md": "sha256:4107b8751249e2fef5c199ef44312a261254e9f1320dc132070256a86717e19f",
-        "references/serialization-api.md": "sha256:c3c0410178ef9f2b7e1b7abf2ee79370594663e106a2e57c7367b91181ad9d10",
-        "references/streaming-api.md": "sha256:06905b79217f4eb5f69f39daf98a42a24d7142be3aa9b2f86e993e0571c0dab0",
-        "references/testing-patterns.md": "sha256:af4b8c4470c19606af4d1c3043b3fb6c080ee1417b08eb08570549cab0f49685"
+        "SKILL.md": "sha256:ebed7e76aeeb99e477eb9466f49553e21335283e8d06537f44f5318ddb1f2cde",
+        "manifest.json": "sha256:10d2bf47541bd2d532a1221c4f23bcbd25d7d7621adaab79040ea5b37c83fe3a",
+        "references/anti-patterns.md": "sha256:5661db87b9c2a6d80f67faf655ad568be91a79a4c84b88bc6979bd5fea947109",
+        "references/configuration-api.md": "sha256:e0e29d4009d851f2e85d384206b37ea8ce075beafa35bcc0e7fe367b238c38d6",
+        "references/examples.md": "sha256:4460f4adb17fcd72c6ffa3e86ada0cea2bc04546d03b064b1d65d7849d3cd6a4",
+        "references/grain-api.md": "sha256:5d2517caa61e58531412dfd723072f3a6b8322021d9e36871aafc622e4c05373",
+        "references/grains.md": "sha256:63dff1108389591283c1ab7e2ede23fbc45c80c56263e40e15add15fd05a8337",
+        "references/hosting.md": "sha256:641f66f7f324401df8932fb27cb684ee52970ea4f1d5935e09d90ec03c71372e",
+        "references/implementation.md": "sha256:a20261d65d77ba45355d3eab76470f0f81069e68d716b287b469f0e84935768c",
+        "references/official-docs-index.md": "sha256:e64b8d6b551d37e4708e7ea3e58d90c58c98db67ac91c743ee6895a1dabf9932",
+        "references/patterns.md": "sha256:98c32af168f9de0004512545355e8f9aba1a7b1e0448f2d6d7fc9625e591a7b7",
+        "references/persistence-api.md": "sha256:e6a1a35b13cbd9549f506031909e238f28906a9bd1a17caaea41dfdfa7308c92",
+        "references/scheduling-and-services.md": "sha256:7eda56aae573732b81f56443ac246e4a32cdeac8c3a0171b435e9fa93b2c2b03",
+        "references/serialization-api.md": "sha256:206e08d03fcf9e85d494727819a5ddd2ec0cde1f9bf2df500b4763175f20ff29",
+        "references/streaming-api.md": "sha256:b4f6cece138c04c66af3bc0940061435808e67019d6db72f432a7af04dfdb002",
+        "references/testing-patterns.md": "sha256:deae0357c12c7742a2b6d05746d872d543339158c90b23f348d3da4574b7ccd2"
       }
     },
     "playwright-cli": {
       "source": "github.com/microsoft/playwright-cli/skills/playwright-cli",
       "type": "github-subdir",
-      "installed_at": "2026-09-17T04:39:42.9638114+03:00",
+      "installed_at": "2026-09-27T14:49:36.280949074Z",
       "repo_url": "https://github.com/microsoft/playwright-cli.git",
       "subdir": "skills/playwright-cli",
       "version": "1222845",
       "tree_hash": "10104bd92881e5ca5688f0a2cd1372e3c0e413a9",
+      "commit": "12228454ed024c9ac89abd59df3b706ed9135fd9",
       "file_hashes": {
-        "SKILL.md": "sha256:0ce19770409b7dbae7285c4634497f17e977405cd0dea846752cd47f83040c16",
-        "references/element-attributes.md": "sha256:f9ccaf85f43b7fa522a48ece60e3f18f10d43cb509ebd48a010eefbd0cd4f47a",
-        "references/playwright-tests.md": "sha256:8da5c537cf6335c1e7590d5418b9a68c9007fd5851aa58331530e09f6ec06b78",
-        "references/pr-attachments.md": "sha256:3f3be9d08e21125ff1b29f03fe6957d3ba8804da650b13cdeee1e5965f0999ce",
-        "references/request-mocking.md": "sha256:f1f6e6360309394bd457e1a9f78a66b1abd016a29d463a1e1215f168458a6fcd",
-        "references/running-code.md": "sha256:511fab7eab47171768d9f73048febe99fcbf6c7d9311984f9abeb2759ae47c07",
-        "references/session-management.md": "sha256:be81d12b1113f0a0fa5523a61e6a9adec02400359137d09269deeb6f90559622",
-        "references/storage-state.md": "sha256:463a013d7f895773235f324c3adeaa261426269e5c55b194e64fa81ccb12bd79",
-        "references/test-generation.md": "sha256:15f1185a3ffd28a004fdcc41cd89442a1ce942dca06d878e3c6485f9d76ce937",
-        "references/tracing.md": "sha256:ffedf46640bed3a1d32e29c9a8a4cbc6d5ffa5d2de42ab6dcbf1071c8fb966f2",
-        "references/video-recording.md": "sha256:2071e176ed3e02fd18f689f56ace450f7126202072a683e4b0ad25642df2e1f3"
+        "SKILL.md": "sha256:862ddb356d81e6cc652fb3427232e4282d7fffcc554c852658fef6f15615c8d1",
+        "references/element-attributes.md": "sha256:bf19aa4671e0a50a0fefa9c790f39124e803060eefe395042b723c29fcb7faa2",
+        "references/playwright-tests.md": "sha256:c5b0719fef2cfdff50bd744051b2f9afc119775db4b48e9b2882c1cf3886797c",
+        "references/pr-attachments.md": "sha256:24b118e74598be72e73e24fe223d295b9099c85b1860a7c8f6e5690c9038fa2a",
+        "references/request-mocking.md": "sha256:54e801c9663fc2b6d68ceb058cb1c360724c2499f42acc7852a68e83e5b5f37c",
+        "references/running-code.md": "sha256:d95c539a5990b71d02d8bdf1d9414df16191eb6cff95b0063820518b7a13dcb2",
+        "references/session-management.md": "sha256:a4f16271f95d3eec7bc56e659d8adbb8f6ad7d603a6fa15efdcdd071a50c6ce3",
+        "references/storage-state.md": "sha256:9ac47f9ae4a1aedcd2077f8ac9ab1ba6bee1962cb83ff51adcd36fb6d83b5ec6",
+        "references/test-generation.md": "sha256:12f54cfa718d9e559bad918120a4ca4f11c933167713d1b9c5f99872eddaf749",
+        "references/tracing.md": "sha256:ef73e71bee792e341df9cd4f60529c929ade48b538ac76e033f4f20843e8dbda",
+        "references/video-recording.md": "sha256:66a1f83444f285282e590d3e0b2d9896a3394518ee7304c6d708bba6c0d9abc7"
       }
     },
     "presentation-design": {
       "source": "github.com/jwynia/agent-skills/skills/general/communication/presentation-design",
       "type": "github-subdir",
-      "installed_at": "2026-09-08T02:02:32.4312219+03:00",
+      "installed_at": "2026-09-27T14:49:30.778140898Z",
       "repo_url": "https://github.com/jwynia/agent-skills.git",
       "subdir": "skills/general/communication/presentation-design",
       "version": "e02ec7e",
       "tree_hash": "aedcd4f65747154d4efe3e1c8577fb453828831f",
+      "commit": "e02ec7e226a6e4f8419fd3b88a1d8e472d421b32",
       "file_hashes": {
-        "SKILL.md": "sha256:9eea0a7887839db724264da64484f78bc9fafee12fdb888312d20f7e1d4d9b9a"
+        "SKILL.md": "sha256:00ea7fd7fb33358e7959ddde8c42ebc97a752427be545e89f5f12d11ab875f71"
       }
     },
     "show-me": {
       "source": "https://github.com/humanlayer/skills/plugins/show-me/skills/show-me",
       "type": "github-subdir",
-      "installed_at": "2026-08-28T17:24:54.787378+03:00",
+      "installed_at": "2026-09-27T14:49:24.345068306Z",
       "repo_url": "https://github.com/humanlayer/skills.git",
       "subdir": "plugins/show-me/skills/show-me",
       "version": "3c26291",
       "tree_hash": "0bdb821a21e793a4f6f82a7078c052154447e5cc",
+      "commit": "3c2629142c5d437428269b1b722b08c0b87f574d",
       "file_hashes": {
-        "SKILL.md": "sha256:2b5635cce0185faee035df02e058ab8f50d7e3b495e84d68efce135b4c550662"
+        "SKILL.md": "sha256:bea6da70a58096730b9aeb0bae293ddf4726103a98efc9ce13c481619942a810"
       }
     },
     "skillshare": {
       "source": "https://github.com/runkids/skillshare/skills/skillshare",
       "type": "github-subdir",
-      "installed_at": "2026-08-27T03:36:27.2109925+03:00",
+      "installed_at": "2026-09-27T14:49:15.720741297Z",
       "repo_url": "https://github.com/runkids/skillshare.git",
       "subdir": "skills/skillshare",
-      "version": "06429ce",
-      "tree_hash": "4a841ea0a8cf1d04f8b9c82fd00a67fcd466658c",
+      "version": "da95f9c",
+      "tree_hash": "dcb133f6e77de01735157ac4068855a416ef8433",
+      "commit": "da95f9cb15738222b9cc6f4e465924e03d616bb4",
       "file_hashes": {
-        "SKILL.md": "sha256:190d20890ce97c2ef3bcd7f2ab8e94f7e5edd8adf5e1460a92fa28de25760aef",
-        "references/TROUBLESHOOTING.md": "sha256:963ef806ee223dd4abe9e5cdf3911dc21d8cbba6ca545c3c72d18fb925d767ec",
-        "references/audit.md": "sha256:27c64924222212ca383a6426d842339c998a5b04a6ba8955de7af1108d854850",
-        "references/backup.md": "sha256:1b7833a3e0b4d9cb5cc1f9ba8b9aa49f85d04ddf2e3849e8b20fd3fe0ae3e0f1",
-        "references/extras.md": "sha256:b65949421b11428ac35a948841fa8245afe93bf246ed62d66d93df59d845adbc",
-        "references/init.md": "sha256:2afba29bbaa6ea2d6b373f4e14cfdd6a1c93d53339226d42dd95902cbcd7b145",
-        "references/install.md": "sha256:ac2f33a33d790f5a51e64072af138329a10c98b718524efc26280989e7755fa2",
-        "references/log.md": "sha256:882d3f3f94f8b3534cacfe4c9958c2649dccd84a80bca64392d6a77bddedf0c8",
-        "references/status.md": "sha256:f25c597ae1c169afdd20e3469760b6f5fa4e826bde39a879a87729e31caa5745",
-        "references/sync.md": "sha256:30cba80c9932cdffc0263e6b735323299e05547f7c83de3fd7d0a93ba26c1000",
-        "references/targets.md": "sha256:e918e52b19baf4c93e4e9920070dc9f67173213a5d4e94cca920afc8cb5d077e",
-        "references/trash.md": "sha256:e4d00cab0541297d2773aac41660ecc95416721bfc3c7fac4e7677f000cafccf",
-        "scripts/run.sh": "sha256:ce5532a4ab4fc64f3fcc24a6af1775508020bcd0c5c1c3c20e023b65f5ce3131"
+        "SKILL.md": "sha256:3ea759b30b3c446620b0c79a147f2d53b65cfc2deb7313009e3a9647b3b8042e",
+        "references/TROUBLESHOOTING.md": "sha256:6103f13f7a364ca2ce8d71e7b9771ba64ab225942d49c6a60323f2f61ca862ae",
+        "references/audit.md": "sha256:890b84f79fb73cf704fe3cf9c2b0b87cdd3aa7ca1720cf6f08e19d5720a3506e",
+        "references/backup.md": "sha256:5041f950e0f060f38333223e59c730ff5beb12b43ec9be130da2687818644290",
+        "references/extras.md": "sha256:c237b7ae6e55e0aafa71fe1a46e0678956653d38007b1b82b2aef3847d353596",
+        "references/init.md": "sha256:ac99a757d7e9a077e4ff8d0fe3009a5b93167f0843e8a000fc89a03e24fa2d82",
+        "references/install.md": "sha256:3f75bf0576273d63e7cb6c67c3c736c66d3fab006a8dcbbcf2f9123929f7dbf1",
+        "references/log.md": "sha256:f726e59328ac1cb367cd7d5eaa257149d7f56ef5c650d9e0f9c7a091c0f9c442",
+        "references/mcp.md": "sha256:49b494808a6257641fa9eb83c35b8f115f1aa37299f08ef448a841f6a5a57189",
+        "references/native-agents.md": "sha256:352d78cb64722717b5660655978afcef3d18638669ab96e0f2325f28d563576e",
+        "references/plugins.md": "sha256:ee9eab630991e32a254e00d6fa91d58fbe8e4f8a43b8814d25ff761c9cd3fb29",
+        "references/status.md": "sha256:8e86ab71130cec45327bfff9d896e0c043d4281107b6beca973bf23a519a66ec",
+        "references/sync.md": "sha256:015dcaad15c8e69cd872709aac44fcd642cd54945940723fb29b10b1a41738c1",
+        "references/targets.md": "sha256:af644ce92b407d175ac8a14dcaad9db187aa3ce8a439d85f4aa2f93f1a024b2b",
+        "references/trash.md": "sha256:9ffc23f6440e20bd1405b17f6124efdb1ad457b998fd2adf8352192916a5c5db",
+        "scripts/run.sh": "sha256:e434ebdb7d3ae0b37c00ddc36687bc975da9e766b8cb863f9aed9a624ebbdfa9"
       }
     },
     "unslop-ui": {
       "source": "github.com/jcarterjohnson/vibecoded-design-tells/skill",
       "type": "github-subdir",
-      "installed_at": "2026-09-08T02:03:03.0056279+03:00",
+      "installed_at": "2026-09-27T14:49:33.314349366Z",
       "repo_url": "https://github.com/jcarterjohnson/vibecoded-design-tells.git",
       "subdir": "skill",
       "version": "f7c4aef",
       "tree_hash": "9bdb5422b1081707a62144bdcce3bbb7b3ce42c4",
+      "commit": "f7c4aefc2c797a66e55b49354a93917ab60d33ac",
       "file_hashes": {
-        "README.md": "sha256:61e632b3c5c210557a0bfe7f3dd09674af58bf63af8d5fe42a57b9a720c23f50",
-        "SKILL.md": "sha256:cdcc3861449ebda5199919646b31d98862ec0e8e6272fb3a926af4d8e6e3241b",
-        "references/choosing-a-look.md": "sha256:b1c6439603ab720107c53ff8ac005107e0ffc2d07b665b170f5211cf9316a2de",
-        "references/tells.md": "sha256:835d36a1b0c8f1ce7ecce3b59fe4d8935a40cc80de23749e369c79aed3bf541c",
-        "scripts/devibe_scan.py": "sha256:601508223a87f2e891128dbe098e0aa75013e3a8fade327793f9323676fe1533",
+        "README.md": "sha256:16709c15d8cf9346aa69391c9929fb53fd4953adb3f58cbea5176213866c616b",
+        "SKILL.md": "sha256:e3f2f97441f8faffab7421dfef43f145155e1fbc06edc27813c04929174f6450",
+        "references/choosing-a-look.md": "sha256:1c83902d1bde857cfc33da43e6ae8683574a6734e821892565dce53cbcef0da4",
+        "references/tells.md": "sha256:032176c6d9b2951769abc4f7ff618ff0219f2d052ba2599a6c1c27a827d72856",
+        "scripts/devibe_scan.py": "sha256:6e516bea614831349525b608549257f97723315437cdbf52436f97213db48090",
         "unslop-ui.skill": "sha256:5e06b32541c7e3ec8a96d0b9cc8602f00e6115d3c9c45517a78e578954ba7512"
       }
     },
     "verify-this": {
-      "source": "github.com/cursor/plugins/cursor-team-kit/skills/verify-this",
+      "source": "https://github.com/cursor/plugins.git/cursor-team-kit/skills/verify-this",
       "type": "github-subdir",
-      "installed_at": "2026-08-28T22:04:03.9590418+03:00",
+      "installed_at": "2026-09-27T14:49:12.667231274Z",
       "repo_url": "https://github.com/cursor/plugins.git",
       "subdir": "cursor-team-kit/skills/verify-this",
       "version": "68836dd",
       "tree_hash": "11c9aa1407bc647693437c510bcf5a508244c738",
+      "commit": "68836ddaf5697224520f1847d90cdb90ca8babaa",
       "file_hashes": {
-        "SKILL.md": "sha256:0d3879e17df701eebc0c3580218328b85d204ddbc79dbbfafbaab55594e679bb"
+        "SKILL.md": "sha256:c1c7b27c1133085bd3409c601ea12b6e6f61b4b23debcd52bc248fc01907e7de"
       }
     }
+  },
+  "audit_accepted": {
+    "_aspire-skills": [
+      "30c05cef9467b6f41201f4d072ecefd5700247b3fa8405d704b8296a01ae3508",
+      "747e033e42b2b7c989f720456ad4ff42c8ae2998342e8b96359ae0d24190b4a1"
+    ]
   }
 }
