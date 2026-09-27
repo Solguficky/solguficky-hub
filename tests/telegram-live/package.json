@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@mtcute/node": "0.32.2"
+  }
+}

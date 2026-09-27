@@ -97,7 +97,24 @@ aspire run -- --profile hub --telegram-environment test
 
 В логе бота строка `telegram-bot starting` несёт поле `telegram_environment`: в какой Telegram ушёл запуск, видно до первого сообщения, а не по отсутствию ответа.
 
-Границы контура заданы тем же решением. Диплинки `t.me/<bot>?start=<payload>` из тестовой среды ведут в продакшн, поэтому сценарий по ссылке проверяется отправкой `/start <payload>` напрямую. Флуд-лимиты тестовой среды строже продакшна, и прогон может упасть по внешней причине: контур принадлежит уровню L3, в `just verify` не входит и ни одного Telegram-секрета не требует.
+Границы контура заданы тем же решением. Диплинки `t.me/<bot>?start=<payload>` из тестовой среды ведут в продакшн, поэтому сценарий по ссылке проверяется отправкой `/start <payload>` напрямую. Флуд-лимиты тестовой среды строже продакшна, и прогон может упасть по внешней причине: контур принадлежит уровню L3, в `just verify` не входит, и гейт ни одного Telegram-секрета не требует.
+
+### Живой прогон `/start`
+
+`/start` от пользователя до ответа бота проверяет драйвер на [mtcute](../decisions/ADR-046-telegram-test-contour.md#выбор-mtproto-клиента) из `tests/telegram-live/`: синтетический аккаунт тестового DC пишет боту и ждёт ответа с домашней клавиатурой. Бота драйвер не поднимает — это делает запуск выше с `--telegram-environment test`, — поэтому второго поллера рядом с работающим профилем не появляется. Режим тестовых DC зашит в драйвер, а после соединения он сверяет `testMode` в конфигурации сервера: уйти в продакшн-DC прогон не может.
+
+Секреты лежат в том же user-secrets AppHost, что и токен тестового бота, под ключами `TelegramLive:*`. `api_id` и `api_hash` заводятся на my.telegram.org, имя бота — то, что выдал тестовый BotFather. Строку сессии пишет `just telegram-live-login`: он входит синтетическим номером `99966XYYYY`, код подтверждения выводит из цифры дата-центра и кладёт сессию в user-secrets через stdin, не печатая её.
+
+```powershell
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "TelegramLive:ApiId" "<api_id>"
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "TelegramLive:ApiHash" "<api_hash>"
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "TelegramLive:BotUsername" "<имя тестового бота>"
+just telegram-live-login 99966XYYYY
+aspire run -- --profile hub --telegram-environment test
+just telegram-live-test
+```
+
+Прогон не пропускается ни по одной причине: отказ роняет его с ненулевым кодом, и первое слово сообщения называет причину — `missing-secret` с именем ключа, `flood-wait` со сроком ожидания, `telegram-unreachable`, `session-invalid`, `not-test-environment` или `bot-no-reply`. Флуд-лимит драйвер не пережидает: повтор раньше срока его продлевает. `telegram-live-test` не входит ни в `just verify`, ни в `just test-all`, ни в CI; код драйвера при этом проходит typecheck, lint и L0-тесты бота, и CI держит их в джобе `telegram-bot`.
 
 ## Сквозной идентификатор в логах
 

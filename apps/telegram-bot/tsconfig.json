@@ -23,6 +23,7 @@
     "src/**/*.ts",
     "gen/**/*.ts",
     "testkit/**/*.ts",
-    "../../tests/contour/bot-wire/**/*.ts"
+    "../../tests/contour/bot-wire/**/*.ts",
+    "../../tests/telegram-live/**/*.ts"
   ]
 }
