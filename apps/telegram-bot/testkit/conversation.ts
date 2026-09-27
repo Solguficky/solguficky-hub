@@ -197,6 +197,7 @@ export function meetupIdFromStartLink(text: string): string {
 type ScreenPayload = {
   chat_id?: unknown;
   text?: unknown;
+  parse_mode?: unknown;
   rich_message?: { html?: unknown };
   entities?: MessageEntity[];
   message_id?: unknown;
@@ -205,6 +206,37 @@ type ScreenPayload = {
     inline_keyboard?: { text: string; callback_data?: string }[][];
   };
 };
+
+const namedEntities: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+/**
+ * Видимый текст HTML карточки сходки. Разметку собирает бот сам
+ * (`meetupCardHtml`, `meetupCardPlainHtml`): `<h1>`, `<p>`, `<br>`, `<b>` и
+ * `<a href>`, а сущности — только те, что даёт его `escapeHtml`. `<br>` и
+ * конец блока дают перевод строки, остальные теги снимаются. Сущности
+ * раскрываются одним проходом после снятия тегов: так `&amp;lt;` остаётся
+ * `&lt;`, а экранированный `&lt;b&gt;` — текстом, а не тегом.
+ */
+function visibleHtmlText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>|<\/(?:p|h[1-6])>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+      const lower = name.toLowerCase();
+      if (!lower.startsWith("#")) return namedEntities[lower] ?? entity;
+      const code = lower.startsWith("#x")
+        ? Number.parseInt(lower.slice(2), 16)
+        : Number.parseInt(lower.slice(1), 10);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    })
+    .replace(/\n+$/, "");
+}
 
 /**
  * Экраны чата в том виде, в каком их сейчас видит человек: одно сообщение —
@@ -230,12 +262,17 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
     if (messageId === undefined) return;
     const previous = current.get(messageId);
     // Карточка сходки рисуется богатым сообщением (ADR-034): его текст — HTML
-    // в `rich_message`, а не в `text`.
+    // в `rich_message`, а не в `text`. Запасная карточка приходит в `text` с
+    // `parse_mode: "HTML"`. Человек видит оба без разметки, поэтому экран
+    // хранит видимый текст, а entities богатого экрана остаются пустыми: DSL
+    // читает их только у вопросов ForceReply.
     const text =
       typeof payload.text === "string"
-        ? payload.text
+        ? payload.parse_mode === "HTML"
+          ? visibleHtmlText(payload.text)
+          : payload.text
         : typeof payload.rich_message?.html === "string"
-          ? payload.rich_message.html
+          ? visibleHtmlText(payload.rich_message.html)
           : undefined;
     let next: Screen | undefined;
     if ((sent || call.method === "editMessageText") && text !== undefined) {
