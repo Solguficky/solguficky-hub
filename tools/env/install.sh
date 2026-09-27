@@ -133,7 +133,8 @@ fi
 
 # --- Node.js -----------------------------------------------------------------
 
-node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9]*\)\..*/\1/p')"
+# `|| true`: under pipefail a missing binary would abort the script here.
+node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9]*\)\..*/\1/p' || true)"
 if [ -z "$node_major" ] || [ "$node_major" -lt "$NODE_MAJOR" ]; then
   log "Installing Node.js $NODE_MAJOR"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | $SUDO bash -
@@ -145,7 +146,7 @@ fi
 
 # --- JDK and sbt -------------------------------------------------------------
 
-java_major="$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1)"
+java_major="$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1 || true)"
 if [ "$java_major" != "$JAVA_MAJOR" ]; then
   log "Installing Temurin JDK $JAVA_MAJOR"
   if [ ! -f /etc/apt/keyrings/adoptium.gpg ]; then
@@ -190,8 +191,14 @@ fi
 
 if ! skillshare version 2>/dev/null | grep -q "v${SKILLSHARE_VERSION}"; then
   log "Installing skillshare $SKILLSHARE_VERSION"
-  go install "github.com/runkids/skillshare/cmd/skillshare@v${SKILLSHARE_VERSION}"
-  $SUDO ln -sf "$GOBIN_DIR/skillshare" /usr/local/bin/skillshare
+  # Not `go install`: the module declares its path as `skillshare`, so only the
+  # release archive installs; it is checked against the release checksums.
+  archive="skillshare_${SKILLSHARE_VERSION}_linux_amd64.tar.gz"
+  release="https://github.com/runkids/skillshare/releases/download/v${SKILLSHARE_VERSION}"
+  curl -fsSL -o "/tmp/$archive" "$release/$archive"
+  curl -fsSL -o /tmp/skillshare-checksums.txt "$release/checksums.txt"
+  (cd /tmp && grep " ${archive}\$" skillshare-checksums.txt | sha256sum -c -)
+  $SUDO tar -C /usr/local/bin -xzf "/tmp/$archive" skillshare
 else
   log "skillshare $SKILLSHARE_VERSION already installed"
 fi
