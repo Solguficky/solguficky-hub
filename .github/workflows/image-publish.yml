@@ -213,4 +213,5 @@ jobs:
         run: |
           gh attestation verify "oci://$IMAGE" \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml"             --source-ref refs/heads/develop
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml" \
+            --source-ref refs/heads/develop
