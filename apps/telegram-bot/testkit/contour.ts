@@ -231,7 +231,8 @@ export function openDirectClients(environment: ContourEnvironment) {
         pageToken = page.nextPageToken;
       } while (pageToken !== "");
       return {
-        // UUIDv7 упорядочен по времени: первым идёт черновик с ранним ключом.
+        // Сортировка даёт сравнимый набор, а не порядок создания: два ключа
+        // одной миллисекунды UUIDv7 друг от друга не упорядочивает.
         meetupIds: own.map((meetup) => meetup.id).sort(),
         events: own.reduce((sum, meetup) => sum + Number(meetup.version), 0),
       };
@@ -244,7 +245,7 @@ export function openDirectClients(environment: ContourEnvironment) {
 }
 
 export type AuthorJournal = {
-  /** Сходки автора, от ранней к поздней. */
+  /** Сходки автора, отсортированные по идентификатору. */
   meetupIds: string[];
   /** Число записей журнала по этим сходкам. */
   events: number;

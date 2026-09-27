@@ -3,14 +3,13 @@ import {
   beforeAll,
   describe,
   expect,
-  freshTelegramUserId,
   it,
   openBotWire,
   openDirectClients,
   readContourEnvironment,
-  startConversation,
   unusedMeetupId,
 } from "../../../apps/telegram-bot/testkit/index.js";
+import { organizerAtStart } from "./steps.js";
 
 // Висящие вопросы формы — угловые случаи 7 и 8. Черновик живёт в Meetups, а
 // привязка вопроса к черновику — в памяти процесса бота (ADR-030), поэтому
@@ -28,25 +27,24 @@ afterAll(() => {
   direct.close();
 });
 
-async function organizer() {
-  const telegramUserId = freshTelegramUserId();
-  const adminId = await direct.grantAdmin(telegramUserId);
-  const person = startConversation(wire.bot, wire.calls, telegramUserId);
-  await person.says("/start");
-  return { adminId, person };
-}
+const organizer = () => organizerAtStart(wire, direct);
 
 describe("висящие вопросы формы", () => {
   it("случай 7: ответ на вопрос первого из двух черновиков попадает в первый", async () => {
     const { adminId, person } = await organizer();
     await person.presses("Управление сходками");
     await person.presses("Создать сходку");
+    // Первый черновик запоминается до второго: ключи двух меню могут попасть в
+    // одну миллисекунду, и порядок UUIDv7 их тогда не различит.
+    const [first] = (await direct.journalOf(adminId)).meetupIds;
     await person.presses("Управление сходками");
     await person.presses("Создать сходку");
 
     await person.answers(1, "Первый черновик");
 
-    const [first, second] = (await direct.journalOf(adminId)).meetupIds;
+    const second = (await direct.journalOf(adminId)).meetupIds.find(
+      (id) => id !== first,
+    );
     if (first === undefined || second === undefined) {
       throw new Error("черновиков меньше двух");
     }

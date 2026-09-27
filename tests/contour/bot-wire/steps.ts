@@ -1,7 +1,44 @@
-import type { Person } from "../../../apps/telegram-bot/testkit/index.js";
+import {
+  freshTelegramUserId,
+  type openBotWire,
+  type openDirectClients,
+  type Person,
+  startConversation,
+  usernameFor,
+} from "../../../apps/telegram-bot/testkit/index.js";
 
 // Шаги, которые сценарии провода проходят одинаково. Файл не `*.test.ts`, и
 // vitest его как набор не собирает.
+
+type Wire = ReturnType<typeof openBotWire>;
+type Direct = ReturnType<typeof openDirectClients>;
+
+/** Администратор с настоящей ролью, уже открывший бота. */
+export async function organizerAtStart(wire: Wire, direct: Direct) {
+  const telegramUserId = freshTelegramUserId();
+  const adminId = await direct.grantAdmin(telegramUserId);
+  const person = startConversation(wire.bot, wire.calls, telegramUserId);
+  await person.says("/start");
+  return { telegramUserId, adminId, person };
+}
+
+/**
+ * Солегуфик из сценария среза: ник заранее внесён администратором в
+ * whitelist, и роль `member` он получит на своём первом `/start`.
+ */
+export async function memberAllowedBy(
+  wire: Wire,
+  direct: Direct,
+  adminId: string,
+) {
+  const telegramUserId = freshTelegramUserId();
+  const username = usernameFor(telegramUserId);
+  await direct.allowUsername(adminId, username);
+  const person = startConversation(wire.bot, wire.calls, telegramUserId, {
+    username,
+  });
+  return { telegramUserId, person };
+}
 
 /**
  * Администратор отвечает на вопросы формы создания и доходит до предпросмотра.

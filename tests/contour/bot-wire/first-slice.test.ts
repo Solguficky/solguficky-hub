@@ -8,11 +8,14 @@ import {
   openBotWire,
   openDirectClients,
   readContourEnvironment,
-  startConversation,
   unusedMeetupId,
-  usernameFor,
 } from "../../../apps/telegram-bot/testkit/index.js";
-import { fillsMeetupForm, titleFor } from "./steps.js";
+import {
+  fillsMeetupForm,
+  memberAllowedBy,
+  organizerAtStart,
+  titleFor,
+} from "./steps.js";
 
 // Сценарий первого среза целиком (first-slice.md, «Сценарий») и его
 // отрицательная половина: до публикации сходка для солегуфика не наблюдаема ни
@@ -31,34 +34,20 @@ afterAll(() => {
   direct.close();
 });
 
-/** Солегуфик: ник заранее в whitelist, роль `member` он получит на `/start`. */
-async function memberAllowedBy(adminId: string) {
-  const telegramUserId = freshTelegramUserId();
-  const username = usernameFor(telegramUserId);
-  await direct.allowUsername(adminId, username);
-  const person = startConversation(wire.bot, wire.calls, telegramUserId, {
-    username,
-  });
-  return { telegramUserId, person };
-}
-
 describe("сценарий первого среза", () => {
   it("солегуфик не видит черновик ни списком, ни ссылкой, а опубликованную сходку видит", async () => {
-    const organizerTelegramId = freshTelegramUserId();
-    const adminId = await direct.grantAdmin(organizerTelegramId);
-    const organizer = startConversation(
-      wire.bot,
-      wire.calls,
-      organizerTelegramId,
+    const { adminId, person: organizer } = await organizerAtStart(wire, direct);
+    const { telegramUserId, person: member } = await memberAllowedBy(
+      wire,
+      direct,
+      adminId,
     );
-    const { telegramUserId, person: member } = await memberAllowedBy(adminId);
     const title = titleFor("Срез", telegramUserId);
 
     await member.says("/start");
     await member.presses("Ближайшие сходки");
     expect(member.sees()).not.toContain(title);
 
-    await organizer.says("/start");
     await organizer.presses("Управление сходками");
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, title);
@@ -96,7 +85,11 @@ describe("сценарий первого среза", () => {
 
   it("E-01: создать сходку не-администратору отказывает Meetups, и журнал не растёт", async () => {
     const adminId = await direct.grantAdmin(freshTelegramUserId());
-    const { telegramUserId, person: member } = await memberAllowedBy(adminId);
+    const { telegramUserId, person: member } = await memberAllowedBy(
+      wire,
+      direct,
+      adminId,
+    );
 
     // Вход в управление бот не прячет: право решает Meetups.
     await member.says("/start");

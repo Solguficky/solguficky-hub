@@ -8,11 +8,14 @@ import {
   openBotWire,
   openDirectClients,
   readContourEnvironment,
-  startConversation,
   unusedMeetupId,
-  usernameFor,
 } from "../../../apps/telegram-bot/testkit/index.js";
-import { fillsMeetupForm, titleFor } from "./steps.js";
+import {
+  fillsMeetupForm,
+  memberAllowedBy,
+  organizerAtStart,
+  titleFor,
+} from "./steps.js";
 
 // Кнопки на старых экранах — угловые случаи 4 и 5, кадры E-03 и E-04. Состояние
 // меняется мимо бота, прямым вызовом Meetups, поэтому экран, который видит
@@ -35,15 +38,12 @@ afterAll(() => {
  * Смотрит не администратор: ему видна и снятая с публикации сходка.
  */
 async function memberLookingAtPublishedMeetup(scenario: string) {
-  const organizerTelegramId = freshTelegramUserId();
-  const adminId = await direct.grantAdmin(organizerTelegramId);
-  const organizer = startConversation(
-    wire.bot,
-    wire.calls,
-    organizerTelegramId,
-  );
-  const title = titleFor(scenario, organizerTelegramId);
-  await organizer.says("/start");
+  const {
+    telegramUserId,
+    adminId,
+    person: organizer,
+  } = await organizerAtStart(wire, direct);
+  const title = titleFor(scenario, telegramUserId);
   await organizer.presses("Управление сходками");
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
@@ -51,12 +51,7 @@ async function memberLookingAtPublishedMeetup(scenario: string) {
   const [meetupId] = (await direct.journalOf(adminId)).meetupIds;
   if (meetupId === undefined) throw new Error("сходка не заведена");
 
-  const memberTelegramId = freshTelegramUserId();
-  const username = usernameFor(memberTelegramId);
-  await direct.allowUsername(adminId, username);
-  const member = startConversation(wire.bot, wire.calls, memberTelegramId, {
-    username,
-  });
+  const { person: member } = await memberAllowedBy(wire, direct, adminId);
   await member.says("/start");
   await member.presses("Ближайшие сходки");
   expect(member.buttons()).toContain(title);
@@ -94,16 +89,14 @@ describe("кнопки на старых экранах", () => {
 
   it("случай 5: кнопка прошлого релиза не роняет обработку и открывает актуальный экран", async () => {
     const adminId = await direct.grantAdmin(freshTelegramUserId());
-    const telegramUserId = freshTelegramUserId();
-    const username = usernameFor(telegramUserId);
-    await direct.allowUsername(adminId, username);
-    const member = startConversation(wire.bot, wire.calls, telegramUserId, {
-      username,
-    });
+    const { person: member } = await memberAllowedBy(wire, direct, adminId);
     await member.says("/start");
 
-    await member.pressesFromOlderRelease("Ближайшие сходки");
+    // Кнопка, чей обычный экран — меню управления, а не список: иначе
+    // исполненная как обычная она дала бы тот же экран, что и устаревшая.
+    await member.pressesFromOlderRelease("Управление сходками");
     expect(member.buttons()).toContain("Обновить");
+    expect(member.buttons()).not.toContain("Создать сходку");
 
     // Процесс жив: следующее нажатие обрабатывается как обычно.
     await member.presses("Назад");

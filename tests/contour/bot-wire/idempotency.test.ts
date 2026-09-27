@@ -8,10 +8,9 @@ import {
   openBotWire,
   openDirectClients,
   readContourEnvironment,
-  startConversation,
   unusedMeetupId,
 } from "../../../apps/telegram-bot/testkit/index.js";
-import { fillsMeetupForm, titleFor } from "./steps.js";
+import { fillsMeetupForm, organizerAtStart, titleFor } from "./steps.js";
 
 // Идемпотентность записи — угловые случаи 1–3 и кадр E-09. Итог читается из
 // журнала Meetups, а не с экрана: двойное нажатие и успех снаружи неотличимы.
@@ -29,10 +28,11 @@ afterAll(() => {
 });
 
 async function organizerInManagement() {
-  const telegramUserId = freshTelegramUserId();
-  const adminId = await direct.grantAdmin(telegramUserId);
-  const organizer = startConversation(wire.bot, wire.calls, telegramUserId);
-  await organizer.says("/start");
+  const {
+    telegramUserId,
+    adminId,
+    person: organizer,
+  } = await organizerAtStart(wire, direct);
   await organizer.presses("Управление сходками");
   return { telegramUserId, adminId, organizer };
 }
