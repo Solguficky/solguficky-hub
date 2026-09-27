@@ -27,7 +27,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/notifications/` — Notifications на C# и Orleans. Силос co-hosted с gRPC-сервером, своя база PostgreSQL, миграции при старте одним DbUp — им же применяются вендорные скрипты кластеризации и reminders Orleans, — грин на сходку, материализованное задание напоминания со sweeper'ом и тестовые проекты `Notifications.UnitTests`, `Notifications.IntegrationTests` и общий `Notifications.TestKit`. Grain storage не зарегистрирован намеренно: источник истины остаётся в PostgreSQL, и отсутствие провайдера делает это правило исполнимым, а не пунктом на review. Reminders, наоборот, зарегистрированы, и правила они не ослабляют: reminder будит грин к моменту срабатывания, но момент лежит строкой в `reminder_task`, а пропущенный за время простоя тик подбирает sweeper по той же таблице. Подписки и gRPC — PER-71, реплика чужих фактов — PER-215, адресный факт о новой сходке с релеем outbox в шину — PER-216, факты изменения, материала и снятия с публикации — PER-218, канал доставки — PER-217.
 - `apps/auction/` — Auction на Scala 3 и Apache Pekko: пока языковой контур, а не сервис. Сборка sbt, кодогенерация ScalaPB из `contracts/proto` внутри `compile`, HTTP-граница с health на Pekko HTTP и тесты ScalaTest; в графе Aspire — узел с базой, запущенный голой JVM. Торгов и persistence в нём нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке, стиль и совместимость схем держат `buf lint` и `buf breaking` в CI.
-- `shared/dotnet/` — общий код .NET-сервисов; сейчас это ServiceDefaults, его потребляют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
+- `shared/dotnet/` — общий код .NET-сервисов: ServiceDefaults, его потребляют Meetups и Notifications, и `Container.targets` — правила production-образа SDK-контейнером с отказом сборки на базе без digest, его импортирует Meetups. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `infra/apphost/` — локальная оркестрация .NET Aspire, разложенная как компонент: проект `AppHost/` и его тесты `AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`.
 - `infra/apphost/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
@@ -194,6 +194,7 @@ just meetups-contracts-check
 just meetups-run
 just meetups-format
 just meetups-format-check
+just meetups-image
 # Fantomas берётся из .config/dotnet-tools.json; `just dotnet-tools` восстанавливает его
 
 # Notifications — сборка силоса, тесты, гейт контрактов и запуск

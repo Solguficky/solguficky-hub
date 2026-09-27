@@ -1,0 +1,203 @@
+name: Image publish
+
+# Переиспользуемая сборка production-образа: сборка, публикация в GHCR,
+# registry digest, SBOM, скан и artifact attestation (RFC-010, «CI, registry и
+# supply chain»). Образ каждого сервиса вызывает её со своим способом сборки.
+#
+# Собирает и пушит сам этот workflow, а не вызывающий: кто публикует, тот и
+# аттестует, поэтому у всех образов один подписант, и хост проверяет его одним
+# `gh attestation verify --signer-workflow`.
+#
+# Входы:
+#   image-name — имя образа в GHCR, `ghcr.io/<владелец>/<image-name>`.
+#   builder    — способ сборки. Сейчас есть `dotnet-sdk` (SDK-контейнер .NET по
+#                `project`); ветку Containerfile добавит первый её потребитель.
+#   project    — путь к проекту для `dotnet-sdk`.
+#   publish    — false: собрать в архив и проверить, в GHCR ничего не пишется;
+#                true: опубликовать, снять SBOM, просканировать, аттестовать.
+# Выходы (только при publish): digest — `sha256:...`, ref — `образ@digest`.
+# Тег `sha-<коммит>` — метка для человека; выкатка идёт по ref.
+#
+# Права workflow не объявляет и наследует от вызывающей джобы. Проверке без
+# публикации хватает `contents: read`; публикации нужны ещё `packages: write`,
+# `id-token: write`, `attestations: write` и `artifact-metadata: write`.
+#
+# Actions закреплены полным SHA коммита (RFC-010): тег перевешивается, а у этого
+# workflow право писать в реестр и подписывать. Версия — в комментарии рядом.
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        type: string
+        required: true
+      builder:
+        type: string
+        required: true
+      project:
+        type: string
+        required: false
+        default: ''
+      publish:
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      digest:
+        value: ${{ jobs.image.outputs.digest }}
+      ref:
+        value: ${{ jobs.image.outputs.ref }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+      ref: ${{ steps.digest.outputs.ref }}
+    env:
+      BUILDER: ${{ inputs.builder }}
+      PROJECT: ${{ inputs.project }}
+      IMAGE_NAME: ${{ inputs.image-name }}
+    steps:
+      - name: Способ сборки известен
+        run: |
+          case "$BUILDER" in
+            dotnet-sdk) [ -n "$PROJECT" ] || { echo "::error::builder dotnet-sdk требует project"; exit 1; } ;;
+            *) echo "::error::неизвестный builder '$BUILDER'"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      # Негативный путь критерия приёмки: база по тегу обязана ронять сборку
+      # ошибкой SOLG0001 из shared/dotnet/Container.targets. Ненулевой код без
+      # этого кода — не доказательство: сборка могла упасть по другой причине.
+      # Проверка идёт до скачивания базы, сети не требует.
+      - name: База по тегу отклоняется
+        run: |
+          set +e
+          dotnet publish "$PROJECT" -t:PublishContainer --nologo \
+            -p:ContainerBaseImage=mcr.microsoft.com/dotnet/aspnet:10.0 \
+            -p:ContainerArchiveOutputPath="$RUNNER_TEMP/rejected.tar.gz" > "$RUNNER_TEMP/rejected.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/rejected.log"
+          [ "$code" -ne 0 ] || { echo "::error::сборка с базой по тегу прошла"; exit 1; }
+          grep -q SOLG0001 "$RUNNER_TEMP/rejected.log" || { echo "::error::сборка упала, но не проверкой digest"; exit 1; }
+
+      - name: Сборка в архив
+        if: ${{ !inputs.publish }}
+        run: |
+          dotnet publish "$PROJECT" -t:PublishContainer --nologo \
+            -p:ContainerRepository="$IMAGE_NAME" -p:ContainerImageTags=candidate \
+            -p:ContainerArchiveOutputPath="$RUNNER_TEMP/image.tar.gz"
+          podman load -i "$RUNNER_TEMP/image.tar.gz"
+          # podman кладёт образ без реестра под localhost/: короткое имя он
+          # разрешал бы по списку реестров.
+          echo "IMAGE=localhost/$IMAGE_NAME:candidate" >> "$GITHUB_ENV"
+
+      - name: Публикация в GHCR
+        if: ${{ inputs.publish }}
+        env:
+          SDK_CONTAINER_REGISTRY_UNAME: ${{ github.actor }}
+          SDK_CONTAINER_REGISTRY_PWORD: ${{ github.token }}
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "REPOSITORY=ghcr.io/$owner/$IMAGE_NAME" >> "$GITHUB_ENV"
+          dotnet publish "$PROJECT" -t:PublishContainer --nologo \
+            -p:ContainerRegistry=ghcr.io -p:ContainerRepository="$owner/$IMAGE_NAME" \
+            -p:ContainerImageTags="sha-$GITHUB_SHA"
+
+      # Digest берётся из реестра, а не из вывода сборки: identity образа — то,
+      # что лежит в GHCR, и по нему же выкатка делает pull.
+      - name: Registry digest
+        id: digest
+        if: ${{ inputs.publish }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          digest=$(skopeo inspect --creds "$GITHUB_ACTOR:$TOKEN" --format '{{.Digest}}' "docker://$REPOSITORY:sha-$GITHUB_SHA")
+          echo "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "::error::не digest: '$digest'"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "ref=$REPOSITORY@$digest" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=$REPOSITORY@$digest" >> "$GITHUB_ENV"
+          echo "$REPOSITORY@$digest"
+          echo "Образ: \`$REPOSITORY@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Вход в GHCR
+        if: ${{ inputs.publish }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          echo "$TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # Проверки идут по тому образу, который уедет: при публикации — по digest
+      # из реестра, без неё — по архиву сборки.
+      - name: Образ запускается не от root
+        run: |
+          uid=$(podman run --rm "$IMAGE" id -u)
+          echo "uid=$uid"
+          [ "$uid" != 0 ] || { echo "::error::образ запускается от root"; exit 1; }
+
+      - name: В образе нет .NET SDK
+        if: ${{ inputs.builder == 'dotnet-sdk' }}
+        run: |
+          podman run --rm "$IMAGE" dotnet --list-runtimes
+          sdks=$(podman run --rm "$IMAGE" dotnet --list-sdks)
+          [ -z "$sdks" ] || { echo "::error::в образе есть SDK: $sdks"; exit 1; }
+
+      - name: SBOM
+        if: ${{ inputs.publish }}
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ steps.digest.outputs.ref }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ github.token }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/sbom.spdx.json
+          artifact-name: ${{ inputs.image-name }}.spdx.json
+          upload-release-assets: false
+
+      # Report-only (RFC-010): находка видна в логе и не останавливает сборку,
+      # пока нет практики их разбирать.
+      - name: Скан зависимостей
+        if: ${{ inputs.publish }}
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: ${{ runner.temp }}/sbom.spdx.json
+          fail-build: false
+          output-format: table
+
+      - name: Attestation происхождения
+        if: ${{ inputs.publish }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REPOSITORY }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attestation SBOM
+        if: ${{ inputs.publish }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REPOSITORY }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+
+      # Та же команда, которой хост проверит образ перед выкаткой: подписант —
+      # этот workflow, а не вызывающий.
+      - name: Проверка attestation
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify "oci://$IMAGE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml"
