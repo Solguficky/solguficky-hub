@@ -40,6 +40,11 @@ export type Person = {
   sees(): string;
   /** Подписи кнопок последнего экрана. */
   buttons(): string[];
+  /**
+   * Подписи кнопок, которые сейчас можно нажать на любом экране чата, начиная
+   * с последнего. Только подписи: `callback_data` сценарий не видит.
+   */
+  pressable(): string[];
   /** Сколько сообщений бота в чате: правка экрана их не прибавляет. */
   messages(): number;
 };
@@ -178,6 +183,12 @@ export function startConversation(
     },
     buttons() {
       return lastScreen().buttons.map((button) => button.text);
+    },
+    pressable() {
+      const labels = screens()
+        .reverse()
+        .flatMap((screen) => screen.buttons.map((button) => button.text));
+      return [...new Set(labels)];
     },
     messages() {
       return screens().length;

@@ -4,6 +4,9 @@
 // vitest отдаётся отсюда, а `grammy` — нет: сценарий L2 не видит структур
 // Telegram по построению, а не по договорённости.
 export { afterAll, beforeAll, describe, expect, it } from "vitest";
+// Словарь категорий отказа и форма записи лога — для оракулов исследующего
+// прогона (`explore/`): словарь один, копия в наборе разошлась бы молча.
+export { failureCategories } from "../src/failures.js";
 export {
   type AuthorJournal,
   type ContourEnvironment,
@@ -20,3 +23,4 @@ export {
   type Person,
   startConversation,
 } from "./conversation.js";
+export type { LogRecord } from "./harness.js";
