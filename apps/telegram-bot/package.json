@@ -15,9 +15,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:contour": "vitest run --config vitest.contour.config.ts",
     "coverage": "vitest run --coverage",
-    "lint": "biome check .",
-    "format": "biome format --write ."
+    "lint": "biome check . ../../tests/contour/bot-wire",
+    "format": "biome format --write . ../../tests/contour/bot-wire"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.14.1",

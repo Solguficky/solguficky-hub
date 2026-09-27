@@ -15,9 +15,14 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node"],
-    "rootDir": ".",
+    "rootDir": "../..",
     "outDir": "dist",
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "gen/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "gen/**/*.ts",
+    "testkit/**/*.ts",
+    "../../tests/contour/bot-wire/**/*.ts"
+  ]
 }

@@ -1,7 +1,14 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Api, BotError, Context, type Transformer } from "grammy";
-import type { Update, UserFromGetMe } from "grammy/types";
+import type { Update } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  botInfo,
+  createCapturingLogger,
+  createHarness,
+  type LogRecord,
+  type RecordedCall,
+} from "../../testkit/harness.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import {
@@ -14,7 +21,6 @@ import type {
   CommunityAdministrator,
   IdentityResolver,
 } from "../identity/port.js";
-import type { LogFields, Logger } from "../logging.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import {
   createBot,
@@ -23,36 +29,6 @@ import {
 } from "./bot.js";
 import { publishMomentQuestion } from "./edit-question.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
-
-const botInfo: UserFromGetMe = {
-  id: 1,
-  is_bot: true,
-  first_name: "stub",
-  username: "stub_bot",
-  can_join_groups: false,
-  can_read_all_group_messages: false,
-  supports_inline_queries: false,
-  can_connect_to_business: false,
-  has_main_web_app: false,
-  has_topics_enabled: false,
-  allows_users_to_create_topics: false,
-  can_manage_bots: false,
-  supports_join_request_queries: false,
-};
-
-type ApiMethod = Parameters<Transformer>[1];
-type ApiPayload = Parameters<Transformer>[2];
-
-type RecordedCall = {
-  method: ApiMethod;
-  payload: ApiPayload;
-};
-
-type LogRecord = {
-  level: "debug" | "info" | "warn" | "error";
-  message: string;
-  fields: LogFields;
-};
 
 function messageUpdate(text = "/start"): Update {
   return {
@@ -176,28 +152,6 @@ function replyUpdate(options: {
   };
 }
 
-function recordCall(method: ApiMethod, payload: ApiPayload): RecordedCall {
-  return { method, payload };
-}
-
-function createCapturingLogger(): { logger: Logger; records: LogRecord[] } {
-  const records: LogRecord[] = [];
-  const push =
-    (level: LogRecord["level"]): Logger[LogRecord["level"]] =>
-    (message, fields) => {
-      records.push({ level, message, fields: fields ?? {} });
-    };
-  return {
-    records,
-    logger: {
-      debug: push("debug"),
-      info: push("info"),
-      warn: push("warn"),
-      error: push("error"),
-    },
-  };
-}
-
 function publishedMeetup() {
   return {
     id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -233,37 +187,6 @@ function resolvedIdentity(
       blocked,
     }),
   };
-}
-
-function createHarness(
-  identity: IdentityResolver & Partial<CommunityAdministrator>,
-  dispatcher: Dispatcher = createDispatcher(),
-) {
-  const { logger, records } = createCapturingLogger();
-  const bot = createBot({
-    token: "111:test-token",
-    dispatcher,
-    identity,
-    logger,
-  });
-  bot.botInfo = botInfo;
-  const calls: RecordedCall[] = [];
-  const recorder: Transformer = (_prev, method, payload) => {
-    calls.push(recordCall(method, payload));
-    if (method === "sendMessage") {
-      return Promise.resolve({
-        ok: true,
-        result: {
-          message_id: 100 + calls.length,
-          date: 0,
-          chat: { id: 42, type: "private", first_name: "tester" },
-        } as never,
-      });
-    }
-    return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult depends on method; fixture never calls prev
-  };
-  bot.api.config.use(recorder);
-  return { bot, calls, records };
 }
 
 function sendMessageEntities(call: RecordedCall | undefined): unknown {
