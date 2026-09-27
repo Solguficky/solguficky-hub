@@ -74,6 +74,16 @@ NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notificat
 
 Миграции применяются при старте процесса, до подъёма силоса: без таблиц membership силос не поднимется.
 
+В поде силос объявляет себя не адресом пода, а постоянным адресом Service ([PER-387](https://linear.app/anticnvm/issue/per-387)), и слушает все интерфейсы пода. Режим включается переменной `KUBERNETES_SERVICE_HOST`, которую Kubernetes задаёт сам, или любой из трёх ниже, и тогда обязательны все три — без любой процесс не стартует и печатает её имя:
+
+| Переменная | Значение |
+|---|---|
+| `NOTIFICATIONS_SILO_ADVERTISED_HOST` | имя или адрес Service силоса; имя разрешается в IPv4 один раз при старте |
+| `NOTIFICATIONS_CLUSTER_ID` | кластер среды, разный у теста и прода |
+| `NOTIFICATIONS_SERVICE_ID` | сервис среды; у живой среды не меняется — им ключуются reminders Orleans |
+
+Локально ни одна из них не задаётся: силос объявляет петлю под `solguficky`/`notifications`.
+
 ## Проверки
 
 ```bash
