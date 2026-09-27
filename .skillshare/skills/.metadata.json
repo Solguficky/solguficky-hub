@@ -94,19 +94,6 @@
       "group": "mattpocock",
       "branch": "main"
     },
-    "orca-linear": {
-      "source": "https://github.com/stablyai/orca/skills/orca-linear",
-      "type": "github-subdir",
-      "installed_at": "2026-09-27T14:49:47.465742126Z",
-      "repo_url": "https://github.com/stablyai/orca.git",
-      "subdir": "skills/orca-linear",
-      "version": "77cd61d",
-      "tree_hash": "2b0b3b3d422f0d9cdb88574e955c345ed4370ea8",
-      "commit": "77cd61df396f25ec91ee2d5ddcbd1f55aa94f818",
-      "file_hashes": {
-        "SKILL.md": "sha256:85ee0d4d3cfadfec301e3a852c8ff959a1f366ac51b9c312cf463f050e427e72"
-      }
-    },
     "orleans": {
       "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
       "type": "github-subdir",

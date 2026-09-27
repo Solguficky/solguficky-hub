@@ -33,11 +33,6 @@
       "source": "https://github.com/mattpocock/skills.git",
       "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
     },
-    "orca-linear": {
-      "source": "https://github.com/stablyai/orca/skills/orca-linear",
-      "commit": "77cd61df396f25ec91ee2d5ddcbd1f55aa94f818",
-      "tree_hash": "2b0b3b3d422f0d9cdb88574e955c345ed4370ea8"
-    },
     "orleans": {
       "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
       "commit": "bcd48ab508df1f71b2e1b7f9601c2c35be900c4e",

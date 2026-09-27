@@ -51,8 +51,6 @@ skills:
     source: github.com/alexandru/skills/skills/akka-streams
   - name: orleans
     source: github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans
-  - name: orca-linear
-    source: https://github.com/stablyai/orca/skills/orca-linear
 ignore:
   - .DS_Store
   - .git/
