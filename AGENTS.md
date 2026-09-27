@@ -42,6 +42,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
 - `tools/docs/` — механические проверки документации. Сейчас их три. `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога; его вызывают `just check-document-numbers` и джоба `document-numbers` в CI. `check-adr-applicability.sh`: у не-Active ADR баннер применимости стоит первой строкой после заголовка и совпадает со строкой индекса; его вызывают `just check-adr-applicability` и джоба `adr-applicability` в CI. `check-doc-links.py`: относительная ссылка из `docs/**/*.md` на `.md` ведёт в существующий файл, а якорь — на заголовок со slug по правилам GitHub; внешние URL пропускаются. Написан на Python, потому что slug переводит кириллицу в нижний регистр, а байтовый awk этого не умеет без UTF-8 локали. Его вызывают `just check-doc-links` и джоба `doc-links` в CI.
 - `tools/agent-env/` — готовность среды агента к контуру. `ready.sh` проверяет инструменты из контракта среды в [agent-execution-loop.md](docs/development/agent-execution-loop.md#контракт-среды) и называет каждый поимённо с состоянием `ok`, `missing`, `unauthorized` или `unverified`. Авторизацию Linear MCP он спрашивает у CLI названного харнесса; где харнесс её не сообщает, ответ — `unverified`, а не зелёный. Его вызывает `just agent-ready <харнесс>`. Фикстуры `ready-test.sh` гоняют его на заглушках в PATH, без сети и харнесса; их вызывают `just check-agent-ready` и джоба `repo-hygiene` в CI.
+- `tools/env/` — установка среды на образе Debian/Ubuntu. `install.sh` ставит системный тулинг — Go, .NET, protoc, Node, JDK, sbt, `just`, lefthook, skillshare — и затем зовёт `just tools`, `just setup` и `just skillshare-install`, после чего `just verify` проходит без ручных шагов. Своих констант версий у скрипта нет: он читает их из `justfile`, `global.json`, `go.mod` и `.java-version`. Каждый шаг сверяет установленную версию, поэтому повторный запуск ничего не переустанавливает. Его вызывает облачный агент Cursor через `.cursor/environment.json`; CI его не запускает.
 - `tools/verify/` — сужение механического гейта. `select-recipes.sh` выбирает рецепты `verify` по изменённым путям, читая карту из джобы `changes` в `.github/workflows/ci.yml`; его вызывает `just verify-changed`. Фикстуры `select-recipes-test.sh` держат выбор равным составу `verify` на правке `justfile`; их вызывают `just check-verify-selection` и джоба `repo-hygiene` в CI.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
 - `.rulesync/` — источник правды по MCP-серверам и командам агента: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из `.rulesync/mcp.jsonc`, а `.claude/commands/` и `.opencode/commands/` — из `.rulesync/commands/`.
@@ -74,6 +75,11 @@ skillshare sync --all -p
 # красный по окружению, а не по правке, и гоняет он все компоненты, даже
 # когда правка только в docs/.
 just tools
+
+# Среда целиком на чистом образе Debian/Ubuntu: системные инструменты
+# закреплённых версий, затем just tools, хуки и скиллы. Повторный запуск
+# ничего не переустанавливает
+bash tools/env/install.sh
 
 # Готовность среды к контуру по контракту из agent-execution-loop.md: называет
 # отсутствующий и неавторизованный инструмент поимённо. Харнесс — claude, codex,
@@ -221,7 +227,8 @@ just auction-test
 just auction-lint
 just auction-format
 just auction-run
-# Нужны JDK версии из apps/auction/.java-version и sbt; репозиторий их не ставит.
+# Нужны JDK версии из apps/auction/.java-version и sbt; на Linux их ставит
+# tools/env/install.sh, на остальных машинах — владелец.
 # Кодогенерация входит в сборку: auction-proto нужен только отдельным шагом
 
 # Сквозной контур (L2) — дымовой прогон, провод бота, среда наружу, гейт контрактов

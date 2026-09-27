@@ -31,6 +31,14 @@ PROTOC_VERSION := "33.0"
 # джоба nats-tester, и версия без суммы не отличает свой бинарник от чужого.
 PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad8f"
 
+# Инструменты среды, которые ставит tools/env/install.sh: рецепты их не
+# вызывают, скрипт читает значения через `just --evaluate`. Мажор Node тот же,
+# что у setup-node в CI; версии .NET, Go и JDK скрипт берёт из global.json,
+# go.mod и .java-version, а не отсюда.
+LEFTHOOK_VERSION := "2.1.10"
+SKILLSHARE_VERSION := "0.20.29"
+NODE_MAJOR := "22"
+
 # Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.
 # Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
 # и затёр бы редакторские настройки репозитория.
