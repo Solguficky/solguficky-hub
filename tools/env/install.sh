@@ -7,10 +7,9 @@
 # Usage: bash tools/env/install.sh
 #
 # Versions are not constants here. Each one is read from the file that already
-# pins it: the justfile (protoc, lefthook, skillshare, Node), global.json (.NET
-# SDK), apps/identity/go.mod (Go), apps/auction/.java-version (JDK); sbt
+# pins it: the justfile (just, protoc, lefthook, skillshare, Node), global.json
+# (.NET SDK), apps/identity/go.mod (Go), apps/auction/.java-version (JDK); sbt
 # downloads the version from apps/auction/project/build.properties itself.
-# `just` is the one unpinned tool: without it the justfile cannot be read.
 #
 # Idempotent: every step first checks the installed version and skips when it
 # matches, so a second run installs nothing new. Repository recipes at the end
@@ -54,18 +53,10 @@ fi
 
 $SUDO install -d -m 0755 /etc/apt/keyrings
 
-# --- just --------------------------------------------------------------------
+# Read the way CI reads them, so that `just` itself can be pinned too.
+pinned() { sed -n "s/^$1 *:= *\"\\([^\"]*\\)\".*/\\1/p" justfile; }
 
-if ! command -v just >/dev/null 2>&1; then
-  log "Installing just"
-  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | \
-    $SUDO bash -s -- --to /usr/local/bin
-else
-  log "just already installed"
-fi
-
-pinned() { just --justfile "$REPO_ROOT/justfile" --evaluate "$1"; }
-
+JUST_VERSION="$(pinned JUST_VERSION)"
 PROTOC_VERSION="$(pinned PROTOC_VERSION)"
 PROTOC_SHA256="$(pinned PROTOC_SHA256)"
 LEFTHOOK_VERSION="$(pinned LEFTHOOK_VERSION)"
@@ -74,6 +65,25 @@ NODE_MAJOR="$(pinned NODE_MAJOR)"
 DOTNET_SDK_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' global.json | head -n 1)"
 GO_VERSION="$(awk '/^go [0-9]/ {print $2; exit}' apps/identity/go.mod)"
 JAVA_MAJOR="$(tr -d '[:space:]' < apps/auction/.java-version)"
+
+for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR; do
+  if [ -z "${!version}" ]; then
+    echo "install.sh: $version is not pinned where this script reads it" >&2
+    exit 1
+  fi
+done
+
+# --- just --------------------------------------------------------------------
+
+# --tag skips the installer's GitHub API lookup of the latest release, which
+# anonymous clients hit a rate limit on.
+if [ "$(just --version 2>/dev/null | awk '{print $2}')" != "$JUST_VERSION" ]; then
+  log "Installing just $JUST_VERSION"
+  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | \
+    $SUDO bash -s -- --tag "$JUST_VERSION" --to /usr/local/bin --force
+else
+  log "just $JUST_VERSION already installed"
+fi
 
 # --- Go ----------------------------------------------------------------------
 

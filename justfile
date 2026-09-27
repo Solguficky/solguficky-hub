@@ -32,9 +32,10 @@ PROTOC_VERSION := "33.0"
 PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad8f"
 
 # Инструменты среды, которые ставит tools/env/install.sh: рецепты их не
-# вызывают, скрипт читает значения через `just --evaluate`. Мажор Node тот же,
-# что у setup-node в CI; версии .NET, Go и JDK скрипт берёт из global.json,
-# go.mod и .java-version, а не отсюда.
+# вызывают, скрипт читает значения тем же grep-разбором строки, что и CI, —
+# поэтому закреплён и сам just. Мажор Node тот же, что у setup-node в CI;
+# версии .NET, Go и JDK скрипт берёт из global.json, go.mod и .java-version.
+JUST_VERSION := "1.58.0"
 LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.20.29"
 NODE_MAJOR := "22"
