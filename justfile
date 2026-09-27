@@ -57,6 +57,13 @@ setup:
 skillshare-install:
     sh tools/skillshare/install.sh
 
+# Контракт, состояния и коды возврата — docs/development/agent-execution-loop.md;
+# допустимые харнессы печатает сам скрипт. Коды 2 и 3 зелёными не считаются.
+# В `verify` не входит: ответ зависит от логинов машины и ходит в сеть.
+# Готовность среды к контуру: инструмент поимённо, «не объявлен» отдельно от «не авторизован»
+agent-ready harness:
+    sh tools/agent-env/ready.sh {{harness}}
+
 # --- Раскладка agent tooling -----------------------------------------------
 #
 # Скиллы и агентов раскладывает skillshare (`skillshare sync --all -p`, см.
@@ -151,8 +158,12 @@ contracts-codegen-buf:
 check-verify-selection:
     sh tools/verify/select-recipes-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Проверка готовности среды на заглушках: без сети и без харнесса
+check-agent-ready:
+    sh tools/agent-env/ready-test.sh
+
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь

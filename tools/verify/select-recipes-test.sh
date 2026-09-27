@@ -15,7 +15,7 @@ failed=0
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection"
+always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
 verify_deps=$(tr -d '\r' < "$root/justfile" | sed -n 's/^verify:[[:space:]]*//p')
 
 [ -n "$verify_deps" ] || { echo "no verify recipe in justfile" >&2; exit 1; }

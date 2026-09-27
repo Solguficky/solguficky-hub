@@ -28,7 +28,7 @@ workflow=${VERIFY_SELECT_WORKFLOW:-$root/.github/workflows/ci.yml}
 # Recipes per CI filter, in the order of `verify`. A filter of ci.yml missing
 # here fails the selection: a new CI job without local recipes is a decision,
 # not a default. `contour` is not part of `verify` and is skipped on purpose.
-always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection"
+always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
 groups="contracts identity telegram-bot community-site-api apphost meetups notifications auction nats-tester"
 skipped_filters="contour"
 
