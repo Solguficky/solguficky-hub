@@ -38,7 +38,7 @@ recipes_of() {
         identity) echo "identity-build identity-test identity-lint" ;;
         telegram-bot) echo "telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build" ;;
         community-site-api) echo "community-site-api-typecheck community-site-api-lint community-site-api-test" ;;
-        apphost) echo "apphost-build apphost-test" ;;
+        apphost) echo "apphost-config-check apphost-build apphost-test" ;;
         meetups) echo "meetups-contracts-check meetups-build meetups-test meetups-format-check" ;;
         notifications) echo "notifications-contracts-check notifications-build notifications-test" ;;
         auction) echo "auction-verify" ;;

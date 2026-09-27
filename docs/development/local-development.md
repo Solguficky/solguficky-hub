@@ -25,7 +25,7 @@ SDK закреплён в корневом `global.json`: базовая вер�
 aspire run
 ```
 
-Проект AppHost лежит в `infra/apphost/AppHost/`, его тесты — рядом, в `infra/apphost/AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`, поэтому `aspire run` и `aspire start` работают из любого каталога клона или рабочего дерева без `--apphost`. Команды к уже запущенному AppHost (`wait`, `describe`, `logs`, `stop`) запускают из корня: на CLI 13.5.3 `aspire wait` ищет запущенный AppHost под текущим каталогом, и из `docs/` его не находит, а из корня и из `infra/` находит.
+Проект AppHost лежит в `infra/apphost/AppHost/`, его тесты — рядом, в `infra/apphost/AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`, поэтому `aspire run` и `aspire start` работают из любого каталога клона или рабочего дерева без `--apphost`. Что этот путь ведёт на существующий проект с `Aspire.AppHost.Sdk`, проверяет `just apphost-config-check`: он входит в `verify` и в джобу `apphost` в CI. Команды к уже запущенному AppHost (`wait`, `describe`, `logs`, `stop`) запускают из корня: на CLI 13.5.3 `aspire wait` ищет запущенный AppHost под текущим каталогом, и из `docs/` его не находит, а из корня и из `infra/` находит.
 
 Для человека `aspire run` остаётся интерактивной командой с dashboard. Агент в worktree использует `aspire start --non-interactive --isolated`, ждёт ресурсы через `aspire wait` и штатно останавливает тот же AppHost. На холодном дереве сборка всех компонентов идёт дольше 120 секунд, которые CLI по умолчанию ждёт AppHost, поэтому первый `aspire start` падает, хотя граф исправен: помогает `ASPIRE_CLI_START_TIMEOUT=600`.
 
