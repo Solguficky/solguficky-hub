@@ -90,7 +90,7 @@ NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notificat
 just notifications-image
 ```
 
-Production-образ собирает SDK-контейнер .NET — `dotnet publish -t:PublishContainer` по свойствам `Container*` в `Notifications.csproj`, без Containerfile, тем же путём, что `aspire do push`. Правила общие с Meetups и лежат в `shared/dotnet/Container.targets`: база `aspnet` по digest, без SDK, а база пустая или по тегу роняет сборку ошибкой `SOLG0001`; запуск от uid 1654; команда приложения в CMD, поэтому `podman run --rm <образ> id` исполняет `id`, а конфигурация идёт только переменными окружения. База та же, что у Meetups, и обновляется у обоих заменой digest целиком.
+Production-образ собирает SDK-контейнер .NET — `dotnet publish -t:PublishContainer` по свойствам `Container*` в `Notifications.csproj`, без Containerfile, тем же путём, что `aspire do push`. Правила общие с Meetups и лежат в `shared/dotnet/Container.targets`: база `aspnet` по digest, без SDK, а база пустая или по тегу роняет сборку ошибкой `SOLG0001`; запуск от uid 1654; команда приложения в CMD, поэтому `podman run --rm <образ> id` исполняет `id`, а конфигурация идёт только переменными окружения. Сейчас база та же, что у Meetups, но digest записан в каждом проекте отдельно, и их совпадение ничем не проверяется: обновляя базу, меняй digest в обоих.
 
 Наружу образ открывает один порт — `8080`, HTTP/2 Kestrel с gRPC и `grpc.health.v1`. Порты силоса и gateway (11111 и 30000) в образе не объявлены: в поде они слушают петлю, и открывать их некому.
 
