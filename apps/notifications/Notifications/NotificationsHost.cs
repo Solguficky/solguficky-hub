@@ -60,12 +60,21 @@ public static class NotificationsHost
     /// есть. Запуск его не использует — тот же приём, что <c>Host.buildWith</c>
     /// у Meetups.
     /// </param>
+    /// <param name="placement">
+    /// Адрес и идентификаторы силоса. Без него — <see cref="SiloPlacement.Local" />:
+    /// так тесты и локальный запуск не передают ничего. Из окружения его
+    /// разбирает <c>Program</c>, до миграций, чтобы неверно настроенный под не
+    /// трогал базу.
+    /// </param>
     public static WebApplication Build(
         string[] args,
         string databaseUrl,
         string? natsUrl = null,
-        Action<IServiceCollection>? configure = null)
+        Action<IServiceCollection>? configure = null,
+        SiloPlacement? placement = null)
     {
+        placement ??= SiloPlacement.Local;
+
         var builder = WebApplication.CreateBuilder(args);
         var connectionString = Migrations.ConnectionString(databaseUrl);
 
@@ -113,43 +122,49 @@ public static class NotificationsHost
         {
             silo.Configure<ClusterOptions>(options =>
             {
-                options.ClusterId = ClusterId;
-                options.ServiceId = ServiceId;
+                options.ClusterId = placement.ClusterId;
+                options.ServiceId = placement.ServiceId;
             });
 
             // Восстановление после неснятого падения держится на том, что
-            // поднявшийся силос занимает тот же адрес, что и умерший.
+            // поднявшийся силос объявляет тот же адрес, что и умерший.
             //
             // Orleans при входе в кластер пингует все записи в состоянии Active
             // и без ответа не входит, а запись убитого силоса остаётся Active —
             // закрыть её было некому. Записи того же логического силоса (тот же
             // адрес, другое поколение) проверка пропускает, поэтому рестарт на
-            // прежнем порту проходит, а на новом — нет: новый порт делает силос
+            // прежнем адресе проходит, а на новом — нет: новый адрес делает силос
             // другим логическим силосом, и он пять минут ждёт ответа от
             // покойника, после чего падает с OrleansClusterConnectivityCheckFailed.
             //
             // Отключить проверку в Orleans 10 нечем: флага ValidateInitialConnectivity
-            // здесь больше нет. Порты и так берутся из конфигурации со штатными
-            // умолчаниями — Aspire их не переопределяет, — поэтому рестарт
-            // развёртывания попадает на прежний адрес сам собой. Переопределяет
-            // их только тот, кто поднимает второй силос на той же машине.
-
-            // Силос слушает петлю: Aspire запускает сервис локальным процессом,
-            // а адрес из membership переживает рестарт и указывал бы на чужой
-            // интерфейс, если бы силос объявил адрес LAN.
-            //
-            // Порты берутся из конфигурации, а не зашиты: два силоса на одной
-            // машине — это и параллельные рабочие деревья, и тест рестарта,
-            // который поднимает второй хост. Умолчания — штатные для Orleans,
-            // поэтому Aspire ничего не передаёт.
+            // здесь больше нет. Поэтому объявленный адрес постоянен в обоих
+            // режимах: локально это петля, в поде — адрес Service, а не пода
+            // (SiloPlacement). Порты берутся из конфигурации со штатными
+            // умолчаниями — ни Aspire, ни чарт их не переопределяют. Переопределяет
+            // их только тот, кто поднимает второй силос на той же машине:
+            // параллельные рабочие деревья и тест рестарта.
             var siloPort = builder.Configuration.GetValue(SiloPortKey, EndpointOptions.DEFAULT_SILO_PORT);
             var gatewayPort = builder.Configuration.GetValue(GatewayPortKey, EndpointOptions.DEFAULT_GATEWAY_PORT);
 
             silo.Configure<EndpointOptions>(options =>
             {
-                options.AdvertisedIPAddress = IPAddress.Loopback;
+                options.AdvertisedIPAddress = placement.AdvertisedAddress;
                 options.SiloPort = siloPort;
                 options.GatewayPort = gatewayPort;
+
+                // Адрес Service не принадлежит поду, и слушать его нельзя:
+                // объявленный адрес остаётся только именем силоса в membership.
+                // Листенеры встают на петлю, а не на интерфейсы пода: силос в
+                // среде один, свой объявленный адрес не набирает — вызовы внутри
+                // силоса и co-hosted клиента идут мимо сети, — и входящие
+                // соединения ему не нужны. Интерфейсы пода открыли бы порты
+                // силоса и gateway соседям по сети кластера.
+                if (placement.ListeningAddress is { } listening)
+                {
+                    options.SiloListeningEndpoint = new IPEndPoint(listening, siloPort);
+                    options.GatewayListeningEndpoint = new IPEndPoint(listening, gatewayPort);
+                }
             });
 
             silo.UseAdoNetClustering(options =>

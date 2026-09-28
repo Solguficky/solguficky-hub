@@ -177,8 +177,9 @@ verify-changed:
 # прогон — у .NET флагом --fail-skips, у Identity скриптом поверх `go test -v`.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
 # умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
-# `identity-test-integration` гоняет под тегом и unit-тесты, поэтому
-# `identity-test` здесь не повторяется.
+# Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
+# секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
+# unit-тесты, поэтому `identity-test` здесь не повторяется.
 test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
@@ -292,8 +293,12 @@ identity-run: identity-proto
 # Кодогенерация — часть сборки. Рецепты собирают grammY-скелет,
 # клиент Identity и проверяют границу юзкейса без Telegram.
 
+# Пакет живого контура ставится здесь же: его код типизирует, линтует и
+# гоняет на L0 конфиг бота, а mtcute боту не принадлежит (ADR-046). Скрипты
+# установки не нужны: сессия в памяти, нативный better-sqlite3 не строится
 telegram-bot-tools:
     cd apps/telegram-bot && npm ci
+    cd tests/telegram-live && npm ci --ignore-scripts
 
 telegram-bot-proto:
     buf generate {{ if path_exists("apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template apps/telegram-bot/buf.gen.yaml" } else { error("нужен protoc-gen-es: just telegram-bot-tools") } }}
@@ -319,6 +324,25 @@ telegram-bot-lint: telegram-bot-proto
 
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
+
+# Живой контур (L3, ADR-046): `/start` от синтетического аккаунта тестового DC
+# до ответа бота через настоящий Telegram. Бота поднимает владелец —
+# `aspire run -- --profile hub --telegram-environment test`; рецепт его не
+# запускает, чтобы не завести второй поллер. Секреты — `TelegramLive:*` в
+# user-secrets AppHost. Недоступный Telegram, флуд-лимит и отсутствующий секрет
+# роняют прогон с названной причиной. В verify, test-all и CI не входит ни при
+# какой стабильности: источник отказа внешний.
+#
+# Живой `/start` через тестовую среду Telegram; в verify и test-all не входит
+telegram-live-test: telegram-bot-proto
+    cd apps/telegram-bot && npm run test:live
+
+# Строка сессии синтетического аккаунта `99966XYYYY` в user-secrets AppHost; код
+# подтверждения выводится из номера. Аккаунт в тестовой среде заводит владелец.
+#
+# Войти синтетическим аккаунтом и записать строку сессии в user-secrets
+telegram-live-login phone:
+    cd tests/telegram-live && node --experimental-strip-types session.ts login {{phone}}
 
 # --- Community site API (TypeScript) ---------------------------------------
 #
@@ -423,8 +447,8 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "211"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "88"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "226"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "93"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

@@ -86,6 +86,14 @@ public sealed class SiloUnderTest : IAsyncDisposable
         Launch(connectionString, natsUrl: null, endpoint, configure: null, settings);
 
     /// <summary>
+    /// То же, но силос объявляет себя расположением развёртывания, а не петлёй:
+    /// сценарии пода, в которых объявленный адрес силосу не принадлежит.
+    /// </summary>
+    public static Task<SiloUnderTest> StartAt(
+        string connectionString, SiloEndpoint endpoint, SiloPlacement placement, params string[] settings) =>
+        Launch(connectionString, natsUrl: null, endpoint, configure: null, settings, placement);
+
+    /// <summary>
     /// Старт с повтором, в котором пары портов выдаёт <paramref name="endpoints" />.
     /// Штатно это <see cref="SiloEndpoint.Allocate" />; своя выдача нужна тесту,
     /// который ставит проигранную гонку за порт заранее.
@@ -128,7 +136,8 @@ public sealed class SiloUnderTest : IAsyncDisposable
         string? natsUrl,
         SiloEndpoint endpoint,
         Action<IServiceCollection>? configure,
-        string[] settings)
+        string[] settings,
+        SiloPlacement? placement = null)
     {
         var app = NotificationsHost.Build(
             [
@@ -139,7 +148,8 @@ public sealed class SiloUnderTest : IAsyncDisposable
             ],
             connectionString,
             natsUrl,
-            configure);
+            configure,
+            placement);
 
         try
         {
