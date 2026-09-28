@@ -68,8 +68,10 @@ jobs:
             telegram-bot:
               - 'contracts/proto/**'
               - 'apps/telegram-bot/**'
-              # Сценарии провода бота типизирует и линтует конфиг бота.
+              # Сценарии провода бота и живого контура типизирует и линтует
+              # конфиг бота; живой прогон (L3) CI не гоняет никогда.
               - 'tests/contour/bot-wire/**'
+              - 'tests/telegram-live/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction:
@@ -330,7 +332,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/telegram-bot/package-lock.json
+          cache-dependency-path: |
+            apps/telegram-bot/package-lock.json
+            tests/telegram-live/package-lock.json
       - id: tools
         run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       # setup_only: действие только ставит buf. Без него дефолты buf-action
@@ -342,6 +346,10 @@ jobs:
           github_token: ${{ github.token }}
       - run: npm ci
         working-directory: apps/telegram-bot
+      # mtcute живого контура: код драйвера проходит typecheck, lint и L0 бота.
+      # Скрипты не нужны — сессия в памяти, нативный better-sqlite3 не строится.
+      - run: npm ci --ignore-scripts
+        working-directory: tests/telegram-live
       - run: buf generate --template apps/telegram-bot/buf.gen.yaml
       - run: npm run typecheck
         working-directory: apps/telegram-bot
