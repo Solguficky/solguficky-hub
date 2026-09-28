@@ -9,7 +9,7 @@
 
 Из-за этого у топологии два описания: граф AppHost для локального запуска ([ADR-021](ADR-021-aspire-local-orchestration.md)) и рукописные unit для прода. Их соответствие держалось бы одинаковыми environment contracts и smoke-тестами. Генератора Quadlet у Aspire 13.5 нет. Kubernetes-цель есть: `aspire publish` с `Aspire.Hosting.Kubernetes` генерирует Helm-чарт из того же графа, который затем ставится `helm` или CI. Реализации на Quadlet в репозитории нет ни строки, поэтому смена рантайма сейчас ничего не выбрасывает.
 
-Граф AppHost в нынешнем виде в чарт не отображается. Identity запускается цепочкой `AddExecutable` (buf generate, go build, бинарник), PostgreSQL и NATS — контейнерами Aspire, которые в проде заменяет своя инфраструктура. Все четыре сервиса применяют миграции при старте, а бот держит единственный long-polling экземпляр на токен.
+Граф AppHost в нынешнем виде в чарт не отображается. Identity запускается цепочкой `AddExecutable` (buf generate, go build, бинарник), PostgreSQL и NATS — контейнерами Aspire, которые в проде заменяет своя инфраструктура. Identity, Meetups и Notifications применяют миграции при старте, бот держит единственный long-polling экземпляр на токен, а топологию JetStream — стримы, durable-консьюмеры и bucket журнала доставки — создаёт хук AppHost на готовности контейнера NATS.
 
 Владелец выбрал k3s и чарт из AppHost. Этот документ записывает решение и развилки, которые владелец закрыл 2026-09-28.
 
@@ -40,18 +40,20 @@
 
 **Рантайм прода — k3s на том же VPS.** Один VPS из ADR-039 остаётся: этот документ заменяет только его выбор рантайма. Test и prod — namespace'ы одного k3s с NetworkPolicy default-deny; межсервисную аутентификацию решает [PER-265](https://linear.app/anticnvm/issue/per-265), а до неё временную границу держат политики.
 
-**Топология прода генерируется из графа AppHost.** Режим публикации отображает ресурсы через `ExecutionContext.IsPublishMode`: Identity становится образом вместо цепочки `AddExecutable`, PostgreSQL и NATS — `AddConnectionString` на инфраструктуру кластера. Aspire остаётся локальной оркестрацией по ADR-021; публикация добавляется к inner loop, а не заменяет его. Чарт публикуется в GHCR как OCI-артефакт.
+**Топология прода генерируется из графа AppHost.** Режим публикации отображает ресурсы через `ExecutionContext.IsPublishMode`: Identity и бот становятся образами вместо `AddExecutable` и `AddJavaScriptApp`, PostgreSQL и NATS — `AddConnectionString` на инфраструктуру кластера. Публикуется только состав MVP: Auction остаётся вне чарта. Ветка публикации — часть того же графа, а не второе описание, но у неё своё расхождение: строки подключения, которые локально строятся из свойств контейнерного ресурса (`UriExpression` с `sslmode=disable` у Identity), в режиме публикации нужно выразить заново. Какой профиль публикуется и как ветка устроена по ресурсам, решает [PER-370](https://linear.app/anticnvm/issue/per-370). Топологию JetStream в кластере хук AppHost не создаёт: её переносит [PER-375](https://linear.app/anticnvm/issue/per-375). Aspire остаётся локальной оркестрацией по ADR-021; публикация добавляется к inner loop, а не заменяет его. Чарт публикуется в GHCR как OCI-артефакт.
 
-**Доставка — GitOps на Flux.** HelmRelease тянет OCI-чарт из GHCR, kustomize-controller расшифровывает SOPS/age, промоушн из test в prod — PR в приватный ops-репозиторий, где лежат values и манифесты. Ставятся source-, helm- и kustomize-controller; notification- и image-automation-controller не ставятся. Происхождение образа проверяет CI ops-репозитория: промоушн-PR прогоняет `gh attestation verify` по каждому digest до мержа. Admission-контроллер проверки подписи в кластере в первый срез не входит.
+**Доставка — GitOps на Flux.** HelmRelease тянет OCI-чарт из GHCR, kustomize-controller расшифровывает SOPS/age, промоушн из test в prod — PR в приватный ops-репозиторий, где лежат values и манифесты. Ставятся source-, helm- и kustomize-controller; notification- и image-automation-controller не ставятся. Происхождение проверяет CI ops-репозитория на каждом изменении, в test и в prod одинаково: он рендерит итоговые values и прогоняет `gh attestation verify` по каждому digest образа, который в них оказался, а чарт ссылается только по digest. Изменение, в котором не нашлось ни одного digest образа, проверку не проходит: пустой список — не «всё проверено». Автоматический rollback HelmRelease выключен: откат после применённой миграции поднимает старый образ на новой схеме, и запрет RFC-010 на такой откат автоматика Flux не удерживает — откат идёт через ops-репозиторий по runbook. Admission-контроллер проверки подписи в кластере в первый срез не входит.
 
 **PostgreSQL — CloudNativePG, один кластер на среду**, базы сервисов внутри кластера своей среды. PITR идёт в object storage у другого провайдера средствами CNPG (Barman Cloud), а не pgBackRest.
 
-**Образы собирает только CI**, тем же способом, что `aspire do push`: Identity и бот — своими Containerfile, Meetups и Notifications — SDK-контейнером .NET по [Container.targets](../../shared/dotnet/Container.targets). Деплой ссылается на образ только по digest.
+**Образы собирает только CI**: Meetups и Notifications — SDK-контейнером .NET по [Container.targets](../../shared/dotnet/Container.targets), тем же путём, каким их собрал бы `aspire do push`; Identity и бот — своими Containerfile, потому что их кодогенерации нужен корень репозитория. Деплой ссылается на образ только по digest.
 
 **Правила кластера.**
 
 - dev и coding agents остаются Unix-пользователями хоста вне кластера и не получают kubeconfig;
-- API k3s наружу закрыт и слушает только localhost хоста;
+- API k3s наружу закрыт firewall'ом хоста; адрес API не сужается до localhost, потому что внутрикластерные клиенты — Flux и оператор CNPG — ходят к нему через адрес узла;
+- встроенные Traefik и ServiceLB k3s выключены: снаружи хоста по-прежнему открыт только SSH, а правила kube-proxy не должны обходить firewall;
+- default-deny сопровождается явными разрешениями на каждую среду: DNS кластера, оператор CNPG к инстансам, выход к Telegram API, object storage и Collector. Их состав — работа [PER-371](https://linear.app/anticnvm/issue/per-371) и [PER-380](https://linear.app/anticnvm/issue/per-380);
 - каждый из четырёх сервисов — одна реплика со стратегией `Recreate`: Identity, Meetups и Notifications применяют миграции при старте, а бот держит единственный poller на токен, и два экземпляра одновременно недопустимы.
 
 **Что из RFC-010 отменяется:** Quadlet units и systemd user services как рантайм приложений; forced command на SSH-ключе service account и перезапуск через user manager systemd; утверждение «Aspire в эту схему не публикуется»; pgBackRest как инструмент PITR.
@@ -80,16 +82,18 @@ Namespace'ы вместо второго кластера — из-за памя
 ### Что становится сложнее
 
 - containerd работает от root рядом с агентами: компрометация рантайма даёт root на хосте, а не пользователя среды. Агенты по-прежнему не получают ни сокета, ни kubeconfig;
-- служебные компоненты кластера — k3s, оператор CNPG, контроллеры Flux, Collector — занимают память общего хоста, где нижняя граница 8 GB;
+- без kubeconfig агент не управляет кластером, но сеть кластера ему доступна: процесс хоста достаёт до ClusterIP и адресов подов, а NetworkPolicy трафик с самого узла обычно не режет. Rootless-сети Podman разных пользователей друг друга не видели, и эта граница утрачена. До межсервисной аутентификации ([PER-265](https://linear.app/anticnvm/issue/per-265)) её держат правила firewall хоста по владельцу процесса и отрицательный тест из [PER-371](https://linear.app/anticnvm/issue/per-371): агент не достаёт до gRPC и NATS ни одной среды;
+- раздельные age identity test и prod остаются разными ключами, но оба держит один kustomize-controller: его компрометация раскрывает секреты обеих сред;
+- служебные компоненты кластера — k3s, оператор CNPG, контроллеры Flux, Collector — занимают память общего хоста. На 8 GB операционного запаса RAM в таблице RFC-010 нет, поэтому их память берётся из потолков dev, agents и test, а не из reservation production;
 - генератор Aspire для Kubernetes в этом репозитории не проверен: отображение режима публикации и сам чарт — работа [PER-370](https://linear.app/anticnvm/issue/per-370);
 - `Recreate` означает простой на каждой выкатке: старый под останавливается до старта нового;
 - откат на предыдущий digest после применённой миграции по-прежнему удерживается runbook, а не автоматикой;
-- логи подов собираются не из journald; как их забирает Collector, фиксирует лист телеметрии ([PER-378](https://linear.app/anticnvm/issue/per-378)), граница [ADR-053](ADR-053-production-observability-otlp-better-stack.md) «OTLP через Collector» не меняется;
+- логи подов не попадают в journald, а ADR-053 держал в журнале хоста архив логов дольше трёх дней бэкенда. Как Collector забирает логи подов, где он запущен и чем заменяется этот архив, фиксирует лист телеметрии ([PER-378](https://linear.app/anticnvm/issue/per-378)); граница [ADR-053](ADR-053-production-observability-otlp-better-stack.md) «OTLP через Collector» не меняется;
 - учебный материал о Quadlet ([словарь self-hosting](../learning/self-hosting/vocabulary.md)) описывает отменённый рантайм.
 
 ## Предсказание и пересмотр
 
-Ожидается, что служебные компоненты кластера на пустом хосте займут меньше 1,2 GB и рантайм уложится в таблицу 8/16 GB из ADR-039 без ужатия production reservation. Замер — в [PER-233](https://linear.app/anticnvm/issue/per-233) на пустом кластере и в [PER-371](https://linear.app/anticnvm/issue/per-371) после установки.
+Ожидается, что служебные компоненты кластера на пустом хосте займут меньше 1,2 GB: на 8 GB эта память вычитается из потолков dev, agents и test, а reservation production и хоста сохраняется. Замер — в [PER-233](https://linear.app/anticnvm/issue/per-233) на пустом кластере и в [PER-371](https://linear.app/anticnvm/issue/per-371) после установки.
 
 Решение пересматривается в пользу Quadlet, если выполняется хотя бы одно:
 
