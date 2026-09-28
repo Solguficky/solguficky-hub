@@ -619,6 +619,17 @@ contour-up *args="":
 contour-bot-test: telegram-bot-proto
     dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/telegram-bot run test:contour
 
+# Исследующий прогон RFC-012 (роль 3, PER-273): случайные последовательности
+# действий человека поверх провода бота, оракулы — каркас записи логов. Не
+# гейт и не входит ни в verify, ни в test-all, ни в CI: недетерминированный
+# источник падений обесценил бы гейт. Кандидаты печатаются и пишутся в
+# .work/explore/, прогон падает только на отказе среды. Параметры окружением:
+# EXPLORE_SEED, EXPLORE_RUNS, EXPLORE_STEPS, EXPLORE_REPLAY=<файл>#<i>.
+#
+# Исследующий прогон провода бота; не гейт, вне verify, test-all и CI
+contour-bot-explore: telegram-bot-proto
+    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/telegram-bot run explore:contour
+
 # Контрактный проект контура остаётся generated-only (ADR-025)
 contour-contracts-check:
     sh tools/contour/check-contracts-generated.sh

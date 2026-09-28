@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Уровень L2: провод бота против настоящих Identity и Meetups. Сценарии лежат
 // в `tests/contour/bot-wire` — набор пересекает несколько деплоимых единиц и
@@ -10,6 +10,10 @@ export default defineConfig({
     environment: "node",
     dir: "../../tests/contour/bot-wire",
     include: ["**/*.test.ts"],
+    // Исследующий прогон — не гейт (vitest.explore.config.ts). Суффикс
+    // `.explore.ts` его уже не подхватывает; исключение держит границу и при
+    // переименовании файла.
+    exclude: [...configDefaults.exclude, "explore/**"],
     // Файлы делят одну топологию и одну базу: параллельный прогон смешал бы
     // их записи и сделал бы красный невоспроизводимым.
     fileParallelism: false,

@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:contour": "vitest run --config vitest.contour.config.ts",
+    "explore:contour": "vitest run --config vitest.explore.config.ts",
     "test:live": "vitest run --config vitest.live.config.ts",
     "coverage": "vitest run --coverage",
     "lint": "biome check . ../../tests/contour/bot-wire ../../tests/telegram-live",
