@@ -117,10 +117,6 @@ const formPrompts: Record<FormField, string> = {
 const conflictText =
   "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.";
 const materialForbiddenText = "Это действие доступно организатору сходки.";
-// Подсказка клиента гаснет сама, поэтому ожидание не остаётся навсегда поверх
-// результата или кадра E-05, которые приходят правкой после соседей. Сколько
-// она висит, решает клиент: медленный ответ может её пережить.
-const waitingAckText = "Загружаю…";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -901,7 +897,11 @@ async function handleCallback(
     ) {
       useCase = "create_meetup";
     }
-    await ctx.answerCallbackQuery({ text: waitingAckText });
+    // Ack без текста: он только гасит индикатор на кнопке, а результат или кадр
+    // E-05 приходит правкой экрана, и всплывающее окно поверх неё ничего не
+    // добавляет (PER-400). Текст здесь уместен только там, где он несёт смысл,
+    // которого на экране нет.
+    await ctx.answerCallbackQuery();
     const retryCallback =
       action.kind === "outdated"
         ? "v1:nav:hub"
