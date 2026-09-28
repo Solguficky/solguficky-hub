@@ -777,10 +777,9 @@ describe("presentation adapter", () => {
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
-    expect(calls[0]).toMatchObject({
-      method: "answerCallbackQuery",
-      payload: { text: "Загружаю…" },
-    });
+    // Переход по меню приходит правкой экрана, всплывающего окна нет.
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(calls[0]?.payload).not.toHaveProperty("text");
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -1201,13 +1200,13 @@ describe("presentation adapter", () => {
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
-    // Ожидание — подсказка клиента, а не экран: после сбоя соседа заменять
-    // нечего, и последним человек видит кадр E-05.
+    // Экран на время ожидания не правится: после сбоя соседа заменять нечего,
+    // и последним человек видит кадр E-05.
     expect(calls.map((call) => call.method)).toEqual([
       "answerCallbackQuery",
       "editMessageText",
     ]);
-    expect(calls[0]).toMatchObject({ payload: { text: "Загружаю…" } });
+    expect(calls[0]?.payload).not.toHaveProperty("text");
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -2457,7 +2456,6 @@ describe("presentation adapter", () => {
     const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:view:short"));
-    // Соседей нечитаемая кнопка не зовёт, ждать нечего: ack без «Загружаю…».
     expect(calls[0]?.method).toBe("answerCallbackQuery");
     expect(calls[0]?.payload).not.toHaveProperty("text");
     expect(records).toHaveLength(1);
@@ -2803,6 +2801,9 @@ describe("notification frames", () => {
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
+    // Карточка открывается правкой экрана, всплывающего окна нет.
+    expect(calls[0]?.method).toBe("answerCallbackQuery");
+    expect(calls[0]?.payload).not.toHaveProperty("text");
     const keyboard = screen(calls[1]).reply_markup;
     expect(keyboard?.inline_keyboard[0]).toEqual([
       { text: "Подписаться", callback_data: `v1:notify:sub:${token}:1` },
