@@ -508,8 +508,8 @@ auction-build:
     cd apps/auction && sbt -batch Test/compile
 
 # Сьюты `*IntegrationSpec` отбирает переменная в build.sbt, а не тег ScalaTest:
-# контейнер сьюта стартует до фильтра тегов. Без Docker сьют падает, а не
-# пропускается.
+# тег исключает тесты, но не конструктор сьюта, где может стартовать контейнер.
+# Без Docker сьют падает, а не пропускается.
 #
 # Прогон ScalaTest L0, включая property-проверку каркаса лога; Docker не нужен
 auction-test:
