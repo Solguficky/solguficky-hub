@@ -92,7 +92,7 @@ fi
 # GOTOOLCHAIN pins the compiler to go.mod even when the image ships a newer Go
 # (docs/learning/go/service-layout.md); a missing Go is installed at that version.
 # A Go older than 1.21 does not know GOTOOLCHAIN, so it counts as missing.
-go_minor="$(GOTOOLCHAIN=local go version 2>/dev/null | sed -n 's/.* go1\.\([0-9]*\).*//p' || true)"
+go_minor="$(GOTOOLCHAIN=local go version 2>/dev/null | sed -n 's/.* go1\.\([0-9]*\).*/\1/p' || true)"
 export GOTOOLCHAIN="go${GO_VERSION}"
 if [ -z "$go_minor" ] || [ "$go_minor" -lt 21 ]; then
   log "Installing Go $GO_VERSION"
