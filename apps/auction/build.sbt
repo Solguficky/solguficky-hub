@@ -15,6 +15,19 @@ val scalaTestVersion = "3.2.19"
 val scalaCheckBridgeVersion = "3.2.19.0"
 val logbackVersion = "1.5.18"
 val logstashEncoderVersion = "8.1"
+val pekkoPersistenceJdbcVersion = "1.3.0"
+val postgresqlVersion = "42.7.13"
+val flywayVersion = "13.8.0"
+val testcontainersScalaVersion = "0.44.1"
+
+// Интеграционный уровень (L1) поднимает PostgreSQL в Docker и в `just verify`
+// не входит (testing-strategy.md). Отбор идёт по имени сьюта, а не по тегу
+// ScalaTest: тег исключает тесты, но сьют всё равно создаётся, и контейнер
+// или ActorTestKit в его конструкторе стартуют и требуют Docker от гейта (beforeAll
+// при этом пропускается — проверено прогоном). PostgresFixture стартует базу
+// лениво, и с ним тег бы справился; отбор по имени не зависит от того, как
+// следующий L1-сьют её поднимает.
+lazy val integrationTests = sys.env.get("AUCTION_INTEGRATION_TESTS").contains("1")
 
 // Корень buf-модуля потребитель не переносит: пути в import считаются от
 // contracts/proto. Вход сужается каталогом домена — тем же фильтром, что
@@ -50,13 +63,26 @@ lazy val auction = (project in file("."))
       // Pekko на старте ActorSystem отказывается работать со смешанными
       // версиями своих модулей. Модуль поднимается до общей версии явно.
       "org.apache.pekko" %% "pekko-discovery" % pekkoVersion,
+      "org.apache.pekko" %% "pekko-cluster-typed" % pekkoVersion,
+      "org.apache.pekko" %% "pekko-cluster-sharding-typed" % pekkoVersion,
+      "org.apache.pekko" %% "pekko-persistence-typed" % pekkoVersion,
+      // Плагин JDBC собран против более ранней Pekko и тянет её модули своей
+      // версии; query поднимается до общей явно по той же причине, что и
+      // discovery выше.
+      "org.apache.pekko" %% "pekko-persistence-query" % pekkoVersion,
+      "org.apache.pekko" %% "pekko-persistence-jdbc" % pekkoPersistenceJdbcVersion,
+      "org.postgresql" % "postgresql" % postgresqlVersion,
+      "org.flywaydb" % "flyway-core" % flywayVersion,
+      "org.flywaydb" % "flyway-database-postgresql" % flywayVersion,
       "ch.qos.logback" % "logback-classic" % logbackVersion,
       "net.logstash.logback" % "logstash-logback-encoder" % logstashEncoderVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
       "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-http-testkit" % pekkoHttpVersion % Test,
       "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
-      "org.scalatestplus" %% "scalacheck-1-18" % scalaCheckBridgeVersion % Test
+      "org.scalatestplus" %% "scalacheck-1-18" % scalaCheckBridgeVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
+      "com.dimafeng" %% "testcontainers-scala-scalatest" % testcontainersScalaVersion % Test
     ),
     Compile / PB.protoSources := Seq(contractsRoot.value),
     // sbt-protoc кладёт protoSources ещё и в каталоги ресурсов, и без этой
@@ -101,5 +127,8 @@ lazy val auction = (project in file("."))
     // процессор. Последовательный прогон делает порядок воспроизводимым: иначе
     // один и тот же код зелёный отдельным вызовом и красный в полном гейте.
     Test / parallelExecution := false,
+    // L1-сьют называется `*IntegrationSpec`; `AUCTION_INTEGRATION_TESTS=1`
+    // оставляет только их, без переменной — только остальные.
+    Test / testOptions += Tests.Filter(suite => suite.endsWith("IntegrationSpec") == integrationTests),
     run / fork := true
   )

@@ -1,24 +1,39 @@
 package auction.boundary
 
+import auction.Readiness
 import org.apache.pekko.http.scaladsl.model.ContentTypes
 import org.apache.pekko.http.scaladsl.model.HttpEntity
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 
+import scala.concurrent.Future
+
 /**
- * Health-эндпоинт сервиса.
+ * Health-эндпоинт сервиса — проба готовности.
  *
- * Отвечает только за живость процесса и HTTP-границы. Готовность зависимостей он не проверяет: у сервиса их пока нет, а
- * признак, который всегда возвращает «да», неотличим от неработающей проверки.
+ * `200` отвечает только узел, который может принять команду агрегата: кластер поднят и журнал отвечает. Иначе `503` с
+ * причиной, и граница записывает его категорией `dependency_unavailable`. Отдельного liveness нет: его пока некому
+ * читать, а проба AppHost спрашивает этот путь.
  */
 object HealthRoutes {
 
   private val okBody = """{"status":"ok"}"""
 
-  val route: Route =
+  def route(readiness: () => Future[Readiness]): Route =
     path("health") {
       get {
-        complete(HttpEntity(ContentTypes.`application/json`, okBody))
+        onSuccess(readiness()) {
+          case Readiness.Ready => complete(HttpEntity(ContentTypes.`application/json`, okBody))
+          case Readiness.ClusterNotUp => notReady("cluster")
+          case Readiness.JournalUnavailable => notReady("journal")
+        }
       }
     }
+
+  private def notReady(reason: String): Route =
+    complete(
+      StatusCodes.ServiceUnavailable,
+      HttpEntity(ContentTypes.`application/json`, s"""{"status":"not ready","reason":"$reason"}""")
+    )
 }
