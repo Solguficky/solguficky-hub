@@ -20,12 +20,19 @@ export const connectDeadlineMs = 20_000;
 export const replyDeadlineMs = 15_000;
 
 export type BotReply = {
+  messageId: number;
   text: string;
   callbackData: string[];
 };
 
 export type LiveDriver = {
   sendStart(payload?: string): Promise<BotReply>;
+  /**
+   * Нажимает inline-кнопку под сообщением бота и ждёт правки **этого же**
+   * сообщения: так бот отвечает на кнопку, и новое сообщение вместо правки —
+   * тоже отказ, а не ответ.
+   */
+  press(reply: BotReply, callbackData: string): Promise<BotReply>;
   close(): Promise<void>;
 };
 
@@ -55,6 +62,14 @@ function callbackDataOf(message: Message): string[] {
     .flatMap(({ type }) =>
       type._ === "inlineButtonTypeCallback" ? [decoder.decode(type.data)] : [],
     );
+}
+
+function replyOf(message: Message): BotReply {
+  return {
+    messageId: message.id,
+    text: message.text,
+    callbackData: callbackDataOf(message),
+  };
 }
 
 function sessionRejected(): never {
@@ -138,39 +153,65 @@ export async function openLiveDriver(
     await client.destroy();
     throw classifyFailure(error);
   }
-  return {
-    async sendStart(payload) {
-      const conversation = new Conversation(client, bot.id);
-      try {
-        return await conversation.with(async () => {
-          const sent = await conversation.sendText(
-            payload === undefined ? "/start" : `/start ${payload}`,
-          );
-          let reply: Message;
-          try {
-            reply = await conversation.waitForNewMessage(
-              (message) => message.sender.id === bot.id && message.id > sent.id,
-              replyDeadlineMs,
-            );
-          } catch (error) {
-            // Только таймаут ожидания ответа значит молчащего бота; таймаут
-            // отправки остаётся недоступностью Telegram.
-            if (error instanceof MtTimeoutError) {
-              throw new TelegramLiveFailure(
-                "bot-no-reply",
-                `@${secrets.botUsername} не ответил за ${replyDeadlineMs / 1000} с: ` +
-                  "запущен ли hub с --telegram-environment test?",
-                { cause: error },
-              );
-            }
-            throw error;
-          }
-          return { text: reply.text, callbackData: callbackDataOf(reply) };
-        });
-      } catch (error) {
-        throw classifyFailure(error);
+  // Только таймаут ожидания ответа значит молчащего бота; таймаут отправки
+  // остаётся недоступностью Telegram.
+  async function awaitBot(waiting: Promise<Message>): Promise<BotReply> {
+    try {
+      return replyOf(await waiting);
+    } catch (error) {
+      if (error instanceof MtTimeoutError) {
+        throw new TelegramLiveFailure(
+          "bot-no-reply",
+          `@${secrets.botUsername} не ответил за ${replyDeadlineMs / 1000} с: ` +
+            "запущен ли hub с --telegram-environment test?",
+          { cause: error },
+        );
       }
-    },
+      throw error;
+    }
+  }
+
+  async function inConversation(
+    work: (conversation: Conversation) => Promise<BotReply>,
+  ): Promise<BotReply> {
+    const conversation = new Conversation(client, bot.id);
+    try {
+      return await conversation.with(() => work(conversation));
+    } catch (error) {
+      throw classifyFailure(error);
+    }
+  }
+
+  return {
+    sendStart: (payload) =>
+      inConversation(async (conversation) => {
+        const sent = await conversation.sendText(
+          payload === undefined ? "/start" : `/start ${payload}`,
+        );
+        return awaitBot(
+          conversation.waitForNewMessage(
+            (message) => message.sender.id === bot.id && message.id > sent.id,
+            replyDeadlineMs,
+          ),
+        );
+      }),
+    press: (reply, callbackData) =>
+      // Разговор открыт до нажатия: правку, пришедшую раньше ответа на
+      // callback, он запоминает, и ожидание её не пропустит.
+      inConversation(async (conversation) => {
+        await client.getCallbackAnswer({
+          chatId: bot.id,
+          message: reply.messageId,
+          data: callbackData,
+          timeout: replyDeadlineMs,
+        });
+        return awaitBot(
+          conversation.waitForEdit(undefined, {
+            message: reply.messageId,
+            timeout: replyDeadlineMs,
+          }),
+        );
+      }),
     close: () => client.destroy(),
   };
 }

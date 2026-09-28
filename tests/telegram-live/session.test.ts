@@ -2,6 +2,7 @@ import { describe, expect, it } from "../../apps/telegram-bot/testkit/index.js";
 import {
   parseSecretsListing,
   pickLiveSecrets,
+  pickMeetupPayloads,
   SecretError,
   secretKeys,
   syntheticLoginCode,
@@ -59,6 +60,35 @@ describe("pickLiveSecrets", () => {
     expect(() =>
       pickLiveSecrets({ ...complete, [secretKeys.apiId]: "abc" }),
     ).toThrow(secretKeys.apiId);
+  });
+});
+
+describe("pickMeetupPayloads", () => {
+  const token = "AAECAwQFBgcICQoLDA0ODw";
+
+  it("берёт payload из ссылки для чата и из голого payload", () => {
+    expect(
+      pickMeetupPayloads({
+        [secretKeys.publishedMeetup]: `https://t.me/solguficky_test_bot?start=m_${token}`,
+        [secretKeys.hiddenMeetup]: ` m_${token}
+`,
+      }),
+    ).toEqual({ published: `m_${token}`, hidden: `m_${token}` });
+  });
+
+  it("отвергает сырой UUID: бот принял бы его за чистый /start", () => {
+    expect(() =>
+      pickMeetupPayloads({
+        [secretKeys.publishedMeetup]: `m_${token}`,
+        [secretKeys.hiddenMeetup]: "m_00010203-0405-0607-0809-0a0b0c0d0e0f",
+      }),
+    ).toThrow(secretKeys.hiddenMeetup);
+  });
+
+  it("называет отсутствующую сходку", () => {
+    expect(() =>
+      pickMeetupPayloads({ [secretKeys.hiddenMeetup]: `m_${token}` }),
+    ).toThrow(secretKeys.publishedMeetup);
   });
 });
 
