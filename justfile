@@ -14,7 +14,10 @@
 # Единственное место, где закреплены версии buf и golangci-lint. Джобы
 # identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
 # ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
-# identity-lint отказывается работать на другой версии. Версии
+# identity-lint отказывается работать на другой версии. Образ bufbuild/buf в
+# apps/telegram-bot/Containerfile закреплён по digest и потому несёт версию
+# литералом; tools/image/check-containerfile.sh роняет сборку, если она
+# разошлась с BUF_VERSION. Версии
 # protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
@@ -324,6 +327,27 @@ telegram-bot-lint: telegram-bot-proto
 
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
+
+# Production-образ в локальное хранилище движка как telegram-bot:local и те же
+# проверки, что в CI: база по digest, нет токена Bot API, нет пакетов разработки.
+# Движок — IMAGE_ENGINE, podman по умолчанию; docker находит список контекста
+# Containerfile.dockerignore сам. Публикацию в GHCR делает только CI
+# (.github/workflows/image-telegram-bot.yml)
+telegram-bot-image:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${IMAGE_ENGINE:-podman}
+    ignore=
+    case "$engine" in *podman*) ignore="--ignorefile apps/telegram-bot/Containerfile.dockerignore" ;; esac
+    sh tools/image/check-containerfile.sh apps/telegram-bot/Containerfile
+    "$engine" build -f apps/telegram-bot/Containerfile $ignore -t telegram-bot:local .
+    sh tools/image/check-no-token.sh telegram-bot:local
+    sh tools/image/check-node-runtime.sh telegram-bot:local apps/telegram-bot/package-lock.json /app
+
+# Негативный путь проверок образа: база по тегу, токен в слое и токен в
+# аргументе сборки роняют проверки их кодами. Нужен движок, как у telegram-bot-image
+image-checks-test:
+    sh tools/image/check-test.sh apps/telegram-bot/Containerfile
 
 # Живой контур (L3, ADR-046): `/start` от синтетического аккаунта тестового DC
 # до ответа бота через настоящий Telegram. Бота поднимает владелец —

@@ -21,7 +21,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 
 - `apps/` — деплоимые компоненты платформы. Что сюда попадает — в [apps/README.md](apps/README.md).
 - `apps/identity/` — Identity на Go: gRPC-сервер с `ResolveIdentity` поверх PostgreSQL и outbox исходящих событий с релеем в JetStream; изменение состояния доступа без события той же транзакции схема не коммитит.
-- `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY.
+- `apps/telegram-bot/` — скелет Telegram Bot на TypeScript + grammY. Production-образ собирается по его `Containerfile` из контекста корня репозитория, а публикует его CI веткой `containerfile` общего `image-publish.yml`.
 - `apps/community-site-api/` — serverless-функции сайта сообщества на TypeScript; сейчас одна: `/api/notes` держит заметки страницы «Аукцион 2026» в Netlify Blobs, с ревизиями и откатом к зафиксированной версии.
 - `apps/meetups/` — Meetups на F#: доменное ядро среза в `Domain/`, команды записи и запросы чтения в `Slices/`, доступ к PostgreSQL в `Infrastructure/`, gRPC-сервер, C#-проект кодогенерации, миграции состояния сходки и журнала событий и тестовые проекты `Meetups.UnitTests`, `Meetups.IntegrationTests` и общий `Meetups.TestKit`; состояние и событие пишутся одной транзакцией, а продуктовые запросы идут через единый viewer-aware reader.
 - `apps/notifications/` — Notifications на C# и Orleans. Силос co-hosted с gRPC-сервером, своя база PostgreSQL, миграции при старте одним DbUp — им же применяются вендорные скрипты кластеризации и reminders Orleans, — грин на сходку, материализованное задание напоминания со sweeper'ом и тестовые проекты `Notifications.UnitTests`, `Notifications.IntegrationTests` и общий `Notifications.TestKit`. Grain storage не зарегистрирован намеренно: источник истины остаётся в PostgreSQL, и отсутствие провайдера делает это правило исполнимым, а не пунктом на review. Reminders, наоборот, зарегистрированы, и правила они не ослабляют: reminder будит грин к моменту срабатывания, но момент лежит строкой в `reminder_task`, а пропущенный за время простоя тик подбирает sweeper по той же таблице. Подписки и gRPC — PER-71, реплика чужих фактов — PER-215, адресный факт о новой сходке с релеем outbox в шину — PER-216, факты изменения, материала и снятия с публикации — PER-218, канал доставки — PER-217.
@@ -36,6 +36,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `tools/skillshare/` — два скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первый вызывают `just check-agent-tools` и CI, второй — `just skillshare-install`.
 - `tools/identity/` — прогоны Identity. Сейчас это `test-integration.sh`: он гоняет тесты под тегом сборки `integration` и роняет прогон на пропуске, которого `go test` сам не ловит. Его вызывает `just identity-test-integration`.
 - `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
+- `tools/image/` — проверки production-образов по Containerfile. `check-containerfile.sh` требует digest у каждой внешней базы, `check-no-token.sh` ищет токен Bot API в слоях и конфиге образа, `check-node-runtime.sh` — пакеты разработки и исходники TypeScript в Node-образе, `check-test.sh` доказывает, что первые две ловят дефект своим кодом. Их вызывают `just telegram-bot-image`, `just image-checks-test` и ветка `containerfile` в `image-publish.yml`.
 - `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
 - `tools/contour/` — проверки сквозного контура. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта контура. Его вызывают `just contour-contracts-check` и CI.
 - `tools/apphost/` — проверки AppHost. Сейчас их две. `smoke.sh` — живой smoke-test профиля: он ждёт конечного состояния всех ресурсов, делает доменный вызов каждого gRPC-сервиса с общим `x-request-id` и проверяет топологию JetStream. Его вызывает `just aspire-smoke`; в `verify` и CI он не входит, потому что нужны Docker и живой AppHost. `check-config.py` статически проверяет, что `appHost.path` в корневом `aspire.config.json` ведёт на существующий проект с `Aspire.AppHost.Sdk`: путь читает только Aspire CLI, и без проверки опечатка в нём проходит зелёной. Его и фикстуры `check-config-test.sh` вызывают `just apphost-config-check` и джоба `apphost` в CI.
@@ -183,6 +184,9 @@ just telegram-bot-test
 just telegram-bot-test-integration
 just telegram-bot-lint
 just telegram-bot-run
+just telegram-bot-image
+just image-checks-test
+# telegram-bot-image и image-checks-test — движок IMAGE_ENGINE, podman по умолчанию.
 # telegram-bot-test — без Docker; *.integration.test.ts с Testcontainers идут в
 # telegram-bot-test-integration
 
