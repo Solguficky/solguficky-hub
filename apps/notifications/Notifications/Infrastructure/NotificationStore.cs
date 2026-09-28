@@ -26,6 +26,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // notification_preference_scope).
     // Отсутствие строки — значение продукта, которое приходит параметром из
     // словаря категорий, а не литералом: иначе правило жило бы в двух местах.
+    // Исполнитель повода адресатом не считается ни здесь, ни у подписчиков: о
+    // собственном действии человеку не сообщают. NULL — исполнителя нет, и
+    // исключать некого.
     private const string AudienceSql = """
         SELECT person.identity_id AS IdentityId, COALESCE(preference.enabled, @Default) AS Enabled
         FROM identity_replica AS person
@@ -35,6 +38,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND preference.category = @Category
         WHERE NOT person.blocked
             AND person.global_roles && @Circle
+            AND person.identity_id IS DISTINCT FROM @Performer
         ORDER BY person.identity_id;
         """;
 
@@ -59,6 +63,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         WHERE subscription.meetup_id = @MeetupId
             AND NOT person.blocked
             AND person.global_roles && @Circle
+            AND person.identity_id IS DISTINCT FROM @Performer
         ORDER BY person.identity_id;
         """;
 
@@ -276,7 +281,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         }
 
         var card = ReplicaMapping.Card(meetupId, state);
-        var audience = await Subscribers(work, meetupId, NotificationFacts.MeetupReminderCategory, cancellationToken);
+        var audience = await Subscribers(work, meetupId, NotificationFacts.MeetupReminderCategory, performer: null, cancellationToken);
 
         return await Insert(
             work,
@@ -326,7 +331,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             return FactCount.None;
         }
 
-        var audience = await Community(work, NotificationFacts.MeetupPublishedCategory, cancellationToken);
+        var audience = await Community(work, NotificationFacts.MeetupPublishedCategory, fact.PerformedBy, cancellationToken);
 
         return await Insert(
             work,
@@ -356,7 +361,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             return FactCount.None;
         }
 
-        var audience = await Subscribers(work, fact.MeetupId, category, cancellationToken);
+        var audience = await Subscribers(work, fact.MeetupId, category, fact.PerformedBy, cancellationToken);
 
         return await Insert(work, FactCause.Of(fact, type), audience, build, now, notAfter, cancellationToken);
     }
@@ -382,7 +387,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        var audience = await Subscribers(work, meetupId, NotificationFacts.OrganizerMessageCategory, cancellationToken);
+        var audience = await Subscribers(work, meetupId, NotificationFacts.OrganizerMessageCategory, broadcast.AuthorId, cancellationToken);
 
         return await Insert(
             work,
@@ -407,7 +412,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        var audience = await Community(work, NotificationFacts.CommunityAnnouncementCategory, cancellationToken);
+        var audience = await Community(work, NotificationFacts.CommunityAnnouncementCategory, broadcast.AuthorId, cancellationToken);
 
         return await Insert(
             work,
@@ -425,6 +430,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     private static Task<IReadOnlyList<AudienceRow>> Community(
         UnitOfWork work,
         NotificationCategory category,
+        Guid? performer,
         CancellationToken cancellationToken) =>
         work.Query<AudienceRow>(
             AudienceSql,
@@ -433,6 +439,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 Default = NotificationCategories.DefaultEnabled(category),
                 Category = NotificationCategories.Storage(category),
                 Circle = NotificationFacts.HubCircle.ToArray(),
+                Performer = performer,
             },
             cancellationToken);
 
@@ -440,6 +447,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         UnitOfWork work,
         Guid meetupId,
         NotificationCategory category,
+        Guid? performer,
         CancellationToken cancellationToken) =>
         work.Query<AudienceRow>(
             SubscribersSql,
@@ -449,6 +457,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 Default = NotificationCategories.DefaultEnabled(category),
                 Category = NotificationCategories.Storage(category),
                 Circle = NotificationFacts.HubCircle.ToArray(),
+                Performer = performer,
             },
             cancellationToken);
 

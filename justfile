@@ -413,7 +413,7 @@ meetups-build:
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "538"
+MEETUPS_UNIT_TEST_THRESHOLD := "539"
 MEETUPS_INTEGRATION_TEST_THRESHOLD := "133"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
@@ -471,8 +471,8 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "226"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "93"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "229"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "96"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

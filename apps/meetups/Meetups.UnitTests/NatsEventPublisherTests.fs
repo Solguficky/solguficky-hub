@@ -143,6 +143,26 @@ let ``The request id of the row travels in the envelope and its absence stays un
             && not withoutId.HasRequestId
         @>
 
+/// Исполнитель команды переносится из строки журнала, а у публикации по часам поле
+/// остаётся unset: её значение в строке человеку не принадлежит.
+[<Fact>]
+let ``The performer of the row travels in the envelope and the clock stays unset`` () =
+    let byPerson = Envelope.ofPending (pending "meetup_changed" Sample.titled None)
+
+    let (PersonId clock) = PublishDueMeetups.clockPerformer
+
+    let byClock =
+        Envelope.ofPending
+            { pending "meetup_published" Sample.published None with
+                PerformedBy = clock
+            }
+
+    test
+        <@
+            byPerson.PerformedBy = "0199c0de-0000-7000-8000-000000000001"
+            && not byClock.HasPerformedBy
+        @>
+
 [<Fact>]
 let ``A material occasion without a material id is refused as a defect`` () =
     let error =
