@@ -14,7 +14,10 @@
 # Единственное место, где закреплены версии buf и golangci-lint. Джобы
 # identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
 # ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
-# identity-lint отказывается работать на другой версии. Версии
+# identity-lint отказывается работать на другой версии. Образ bufbuild/buf в
+# apps/telegram-bot/Containerfile закреплён по digest и потому несёт версию
+# литералом; tools/image/check-containerfile.sh роняет сборку, если она
+# разошлась с BUF_VERSION. Версии
 # protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
@@ -335,7 +338,7 @@ telegram-bot-image:
     set -eu
     engine=${IMAGE_ENGINE:-podman}
     ignore=
-    [ "$engine" != podman ] || ignore="--ignorefile apps/telegram-bot/Containerfile.dockerignore"
+    case "$engine" in *podman*) ignore="--ignorefile apps/telegram-bot/Containerfile.dockerignore" ;; esac
     sh tools/image/check-containerfile.sh apps/telegram-bot/Containerfile
     "$engine" build -f apps/telegram-bot/Containerfile $ignore -t telegram-bot:local .
     sh tools/image/check-no-token.sh telegram-bot:local

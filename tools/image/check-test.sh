@@ -3,7 +3,8 @@
 # and fail with its own code. A non-zero exit alone proves nothing: the check
 # might have failed for an unrelated reason and would then pass real defects.
 #
-#   - check-containerfile.sh on a base pinned by tag must print SOLG-IMG-TAG;
+#   - check-containerfile.sh on a base pinned by tag must print SOLG-IMG-TAG,
+#     and on a buf image other than BUF_VERSION must print SOLG-IMG-BUF;
 #   - check-no-token.sh must print SOLG-IMG-TOKEN on two canary images: one
 #     with a token in a layer that a later layer deletes, one with a token
 #     passed only as a build argument.
@@ -41,6 +42,10 @@ expect_code() {
 printf 'FROM docker.io/library/node:22-bookworm-slim\n' >"$work/Containerfile.tag"
 expect_code SOLG-IMG-TAG "$work/tag.log" sh "$here/check-containerfile.sh" "$work/Containerfile.tag"
 
+# --- buf other than BUF_VERSION ----------------------------------------------
+printf 'FROM docker.io/bufbuild/buf:0.0.0@sha256:%064d AS buf\n' 0 >"$work/Containerfile.buf"
+expect_code SOLG-IMG-BUF "$work/buf.log" sh "$here/check-containerfile.sh" "$work/Containerfile.buf"
+
 # --- token in a layer and in a build argument ---------------------------------
 base=$(awk 'toupper($1) == "FROM" { i = 2; while ($i ~ /^--/) i++; ref = $i } END { print ref }' "$containerfile")
 case "$base" in
@@ -48,7 +53,10 @@ case "$base" in
     *) echo "::error::final base of $containerfile is not pinned: '$base'"; exit 1 ;;
 esac
 
-token="1$(od -An -N4 -tu4 /dev/urandom | tr -d ' \n' | cut -c1-8):$(tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 35)"
+# The bot id is always nine digits: a random number printed as is may be short
+# enough to fall outside the pattern, and the negative test would then flake.
+id=$(printf '1%08d' $(( $(od -An -N4 -tu4 /dev/urandom | tr -d ' \n') % 100000000 )))
+token="$id:$(tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 35)"
 
 mkdir "$work/layer"
 printf '%s\n' "$token" >"$work/layer/leak"
@@ -69,4 +77,4 @@ EOF
 "$engine" build -q -t solg-canary-arg --build-arg "TELEGRAM_BOT_TOKEN=$token" -f "$work/arg/Containerfile" "$work/arg" >/dev/null
 expect_code SOLG-IMG-TOKEN "$work/arg.log" sh "$here/check-no-token.sh" solg-canary-arg
 
-echo "Image checks reject a tag-pinned base, a token in a layer and a token in a build argument."
+echo "Image checks reject a tag-pinned base, a stray buf version, a token in a layer and a token in a build argument."

@@ -109,10 +109,12 @@ jobs:
           [ "$code" -ne 0 ] || { echo "::error::сборка с базой по тегу прошла"; exit 1; }
           grep -q SOLG0001 "$RUNNER_TEMP/rejected.log" || { echo "::error::сборка упала, но не проверкой digest"; exit 1; }
 
-      # Ветка containerfile проверяет образ до публикации, а не после, как
-      # dotnet-sdk: podman пушит уже собранный образ, пересборки нет, и образ
-      # с токеном в GHCR не попадает вовсе. Проверки печатают свой код,
-      # SOLG-IMG-*, по которому негативный шаг отличает их отказ от любого другого.
+      # Ветка containerfile проверяет базы, токен и состав /app до публикации, а
+      # не после, как dotnet-sdk: podman пушит уже собранный образ, пересборки
+      # нет, и образ с токеном или пакетами разработки в GHCR не попадает вовсе.
+      # uid проверяет общий шаг ниже, по опубликованному digest. Проверки
+      # печатают свой код, SOLG-IMG-*, по которому негативный шаг отличает их
+      # отказ от любого другого.
       - name: Внешние базы Containerfile закреплены по digest
         if: ${{ inputs.builder == 'containerfile' }}
         run: sh tools/image/check-containerfile.sh "$CONTAINERFILE"
@@ -128,8 +130,12 @@ jobs:
         if: ${{ inputs.builder == 'containerfile' }}
         run: sh tools/image/check-no-token.sh "$IMAGE"
 
-      # Негативный путь критерия приёмки: база по тегу, токен в слое и токен в
-      # аргументе сборки обязаны ронять проверки их кодами. Идёт после сборки:
+      - name: В образе нет пакетов разработки и исходников TypeScript
+        if: ${{ inputs.node-lock != '' }}
+        run: sh tools/image/check-node-runtime.sh "$IMAGE" "$NODE_LOCK" /app
+
+      # Негативный путь критерия приёмки: база по тегу, чужая версия buf, токен
+      # в слое и токен в аргументе сборки обязаны ронять проверки их кодами. Идёт после сборки:
       # канарейки собираются на её базе, уже скачанной.
       - name: Проверки образа ловят дефекты
         if: ${{ inputs.builder == 'containerfile' }}
@@ -142,7 +148,9 @@ jobs:
         run: |
           owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           echo "REPOSITORY=ghcr.io/$owner/$IMAGE_NAME" >> "$GITHUB_ENV"
-          podman push --creds "$GITHUB_ACTOR:$TOKEN" "$IMAGE" "docker://ghcr.io/$owner/$IMAGE_NAME:sha-$GITHUB_SHA"
+          # Вход через stdin, а не --creds: аргументы процесса видны в его argv.
+          echo "$TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          podman push "$IMAGE" "docker://ghcr.io/$owner/$IMAGE_NAME:sha-$GITHUB_SHA"
 
       - name: Сборка в архив
         if: ${{ inputs.builder == 'dotnet-sdk' && !inputs.publish }}
@@ -214,10 +222,6 @@ jobs:
           podman run --rm "$IMAGE" dotnet --list-runtimes
           sdks=$(podman run --rm "$IMAGE" dotnet --list-sdks)
           [ -z "$sdks" ] || { echo "::error::в образе есть SDK: $sdks"; exit 1; }
-
-      - name: В образе нет пакетов разработки и исходников TypeScript
-        if: ${{ inputs.node-lock != '' }}
-        run: sh tools/image/check-node-runtime.sh "$IMAGE" "$NODE_LOCK" /app
 
       - name: SBOM
         if: ${{ inputs.publish }}

@@ -12,12 +12,15 @@
 #     lives in the image config.
 #
 # `<engine> save` writes the layers and the config as files of one archive, so
-# one pass over every file of it covers both. Layers compressed with gzip are
-# decompressed first; everything else is searched as bytes.
+# one pass over every file of it covers both. podman and docker save layers
+# uncompressed; a layer that is gzip anyway is decompressed first, and any other
+# compression (zstd) would be searched as opaque bytes and pass unseen.
 #
-# The pattern is the Bot API token format, `<bot id>:<35 chars>`. Other kinds
-# of secrets are out of scope. A hit prints SOLG-IMG-TOKEN, the code the
-# negative test matches; the token itself is never printed.
+# The pattern is the Bot API token format, `<bot id>:<35 chars>`, bounded on
+# both sides by a character that cannot belong to a token, so a longer run of
+# the same alphabet in a binary is not taken for one. Other kinds of secrets
+# are out of scope. A hit prints SOLG-IMG-TOKEN, the code the negative test
+# matches; the token itself is never printed.
 #
 # Usage: check-no-token.sh <image>. IMAGE_ENGINE picks podman (default) or docker.
 
@@ -25,7 +28,7 @@ set -eu
 
 image=${1:?usage: check-no-token.sh <image>}
 engine=${IMAGE_ENGINE:-podman}
-pattern='[0-9]{8,10}:[A-Za-z0-9_-]{35}'
+pattern='(^|[^A-Za-z0-9_-])[0-9]{8,10}:[A-Za-z0-9_-]{35}([^A-Za-z0-9_-]|$)'
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

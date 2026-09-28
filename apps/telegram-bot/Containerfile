@@ -4,8 +4,9 @@
 #
 # Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
 # роняет сборку на теге. Тег рядом с digest только читается человеком, pull
-# идёт по digest; обновить базу — заменить digest целиком. Версия buf совпадает
-# с BUF_VERSION в justfile, которой генерирует код локальная сборка и CI.
+# идёт по digest; обновить базу — заменить digest целиком. Версия buf обязана
+# совпадать с BUF_VERSION в justfile: иначе та же проверка роняет сборку кодом
+# SOLG-IMG-BUF. Меняется BUF_VERSION — здесь меняются тег и digest вместе с ней.
 
 FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756b37f121ec858fb0407a168c269 AS buf
 
