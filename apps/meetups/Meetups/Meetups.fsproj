@@ -4,6 +4,14 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
+  <!-- Production-образ: правила и проверка digest — shared/dotnet/Container.targets.
+       Обновить базу — заменить digest целиком: тег рядом с ним только читается
+       человеком, pull идёт по digest. -->
+  <PropertyGroup>
+    <ContainerRepository>meetups</ContainerRepository>
+    <ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:10.0-noble@sha256:2d584d8147faddb0d678c5748d47953e5b8e18621ed4fb7049a91381d9d7746f</ContainerBaseImage>
+  </PropertyGroup>
+
   <!-- Порядок Compile — направление зависимостей: файл видит только объявленное
        выше. Domain/ стоит первым и потому не способен увидеть транспорт.
        Slices/ и Infrastructure/ появятся вместе с записью и gRPC-слоем. -->
@@ -77,5 +85,7 @@
     <ProjectReference Include="..\Meetups.Contracts\Meetups.Contracts.csproj" />
     <ProjectReference Include="..\..\..\shared\dotnet\ServiceDefaults\ServiceDefaults.csproj" />
   </ItemGroup>
+
+  <Import Project="..\..\..\shared\dotnet\Container.targets" />
 
 </Project>
