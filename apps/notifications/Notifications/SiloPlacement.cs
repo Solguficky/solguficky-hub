@@ -14,9 +14,16 @@ namespace Notifications;
 /// адрес; на другом адресе он пять минут ждёт ответа от покойника и падает с
 /// <c>OrleansClusterConnectivityCheckFailedException</c>. Поэтому в развёртывании
 /// силос объявляет не адрес пода, который меняется при каждом пересоздании, а
-/// постоянный адрес Service, и слушает все интерфейсы пода. Корректность этого
-/// держится на инварианте «силос один на среду»: второго силоса под тем же
-/// адресом быть не может, и объявленный адрес никто не набирает.
+/// постоянный адрес Service. Корректность этого держится на инварианте «силос
+/// один на среду»: второго силоса под тем же адресом быть не может, и
+/// объявленный адрес никто не набирает.
+/// <para>
+/// Слушает силос в поде петлю, а не интерфейсы пода. Свой объявленный адрес он
+/// не набирает: вызовы внутри силоса и co-hosted клиента идут мимо сети. Других
+/// силосов в среде нет, поэтому входящие соединения на порты силоса и gateway
+/// ему не нужны, а интерфейсы пода открыли бы их соседям по сети кластера.
+/// Service нужен только ради постоянного адреса, публиковать эти порты ему не нужно.
+/// </para>
 /// </remarks>
 public sealed record SiloPlacement(
     string ClusterId,
@@ -76,7 +83,7 @@ public sealed record SiloPlacement(
         var clusterId = Required(environment, ClusterIdVariable);
         var serviceId = Required(environment, ServiceIdVariable);
 
-        return new SiloPlacement(clusterId, serviceId, Resolve(host, resolve), IPAddress.Any);
+        return new SiloPlacement(clusterId, serviceId, Resolve(host, resolve), IPAddress.Loopback);
     }
 
     private static string Required(Func<string, string?> environment, string name)

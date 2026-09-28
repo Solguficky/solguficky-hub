@@ -154,8 +154,12 @@ public static class NotificationsHost
                 options.GatewayPort = gatewayPort;
 
                 // Адрес Service не принадлежит поду, и слушать его нельзя:
-                // листенеры встают на интерфейсы пода, а объявленный адрес
-                // остаётся только именем силоса в membership.
+                // объявленный адрес остаётся только именем силоса в membership.
+                // Листенеры встают на петлю, а не на интерфейсы пода: силос в
+                // среде один, свой объявленный адрес не набирает — вызовы внутри
+                // силоса и co-hosted клиента идут мимо сети, — и входящие
+                // соединения ему не нужны. Интерфейсы пода открыли бы порты
+                // силоса и gateway соседям по сети кластера.
                 if (placement.ListeningAddress is { } listening)
                 {
                     options.SiloListeningEndpoint = new IPEndPoint(listening, siloPort);

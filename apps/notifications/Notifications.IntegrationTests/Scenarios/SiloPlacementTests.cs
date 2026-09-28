@@ -16,8 +16,9 @@ namespace Notifications.IntegrationTests.Scenarios;
 /// Объявленный адрес — из TEST-NET-1 (RFC 5737): он гарантированно не
 /// принадлежит машине и никуда не маршрутизируется. Если бы силос хоть раз
 /// набрал свой объявленный адрес, сценарий повис бы на таймауте, а не прошёл.
-/// Слушает силос петлю, поэтому смена интерфейса между запусками моделирует
-/// новый адрес пода, а объявленный адрес остаётся прежним — адресом Service.
+/// Слушает силос петлю, как и в поде, поэтому адрес пода в membership не
+/// участвует вовсе: новый под моделируется новым процессом, а объявленный
+/// адрес остаётся прежним — адресом Service.
 /// </remarks>
 public class SiloPlacementTests
 {
@@ -71,9 +72,10 @@ public class SiloPlacementTests
         killedSilo.ShouldBe($"{ServiceAddress}:{sameEndpoint.SiloPort}");
         ServiceProcess.Silos(db.ConnectionString, ServiceProcess.Active, placement.ClusterId).ShouldBe([killedSilo]);
 
-        // Преемник слушает другой интерфейс — это новый под, — но объявляет
-        // тот же адрес Service. Будь он другим логическим силосом, старт ждал
-        // бы ответа от покойника пять минут и упал.
+        // Преемник — новый под: новый процесс с новым поколением, который
+        // объявляет тот же адрес Service на том же порту — штатном порту
+        // развёртывания. Будь он другим логическим силосом, старт ждал бы
+        // ответа от покойника пять минут и упал.
         await using var successor = await SiloUnderTest.StartAt(db.ConnectionString, sameEndpoint, placement);
 
         await successor.Grains.GetGrain<IMeetupNotificationGrain>(Guid.NewGuid().ToString()).Describe();

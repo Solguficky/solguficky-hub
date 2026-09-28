@@ -26,12 +26,16 @@ public class SiloPlacementTests
             new SiloPlacement(NotificationsHost.ClusterId, NotificationsHost.ServiceId, IPAddress.Loopback, null));
     }
 
+    /// <summary>
+    /// Слушает силос в поде петлю: входящих соединений на порты силоса и
+    /// gateway ему не нужно, и открывать их сети кластера незачем.
+    /// </summary>
     [Fact]
     public void FromEnvironment_PodWithAllVariables_TakesAddressAndIdsFromEnvironment()
     {
         var placement = SiloPlacement.FromEnvironment(Environment(Pod()), NoDns);
 
-        placement.ShouldBe(new SiloPlacement("solguficky-test", "notifications-test", ServiceAddress, IPAddress.Any));
+        placement.ShouldBe(new SiloPlacement("solguficky-test", "notifications-test", ServiceAddress, IPAddress.Loopback));
     }
 
     [Theory]
@@ -125,7 +129,7 @@ public class SiloPlacementTests
         variables[SiloPlacement.AdvertisedHostVariable] = $" {ServiceAddress} ";
 
         SiloPlacement.FromEnvironment(Environment(variables), NoDns)
-            .ShouldBe(new SiloPlacement("solguficky-test", "notifications-test", ServiceAddress, IPAddress.Any));
+            .ShouldBe(new SiloPlacement("solguficky-test", "notifications-test", ServiceAddress, IPAddress.Loopback));
     }
 
     /// <summary>
