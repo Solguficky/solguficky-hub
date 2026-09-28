@@ -5,12 +5,15 @@
 // Telegram по построению, а не по договорённости.
 export { afterAll, beforeAll, describe, expect, it } from "vitest";
 export {
+  type AuthorJournal,
   type ContourEnvironment,
   freshTelegramUserId,
   openBotWire,
   openDirectClients,
   readContourEnvironment,
   unreachableUrl,
+  unusedMeetupId,
+  usernameFor,
 } from "./contour.js";
 export {
   meetupIdFromStartLink,
