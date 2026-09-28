@@ -96,6 +96,14 @@ module Envelope =
         | Some requestId -> message.RequestId <- RequestId.value requestId
         | None -> ()
 
+        // Исполнитель переносится из строки. Публикация по часам пишет в строку
+        // значение, которое человеку не принадлежит: наружу оно уходит unset, а не
+        // идентификатором, который потребитель принял бы за человека.
+        let (Meetups.Domain.PersonId clock) = PublishDueMeetups.clockPerformer
+
+        if event.PerformedBy <> clock then
+            message.PerformedBy <- event.PerformedBy.ToString "D"
+
         message
 
 /// Стрим, в который адаптер обязан попасть. Заводит его платформа (ADR-050), а

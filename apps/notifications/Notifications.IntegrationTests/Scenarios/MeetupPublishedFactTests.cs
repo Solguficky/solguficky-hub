@@ -72,6 +72,58 @@ public class MeetupPublishedFactTests
         await Eventually(() => Pending(db), pending => pending == 0);
     }
 
+    /// <summary>
+    /// О собственном действии человеку не сообщают: исполнитель публикации
+    /// остаётся без факта, остальной круг его получает. Исполнитель здесь не
+    /// автор сходки — исключается тот, кто опубликовал, а не тот, кто завёл.
+    /// </summary>
+    [Fact]
+    public async Task When_PublishedByPerson_Expect_PerformerNotAddressed()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+
+        var performer = await Person(db, "admin", "member");
+        var other = await Person(db, "member");
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var published = EventFactory.Meetup(EventFactory.NewId(), version: 2);
+        published.PerformedBy = performer.ToString();
+        published.State.Author.ShouldNotBe(performer.ToString());
+        await nats.Publish(MeetupPublishedSubject, published);
+
+        await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.MeetupsSource, "applied")), count => count == 1);
+        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
+
+        facts.Select(fact => Guid.Parse(fact.Fact.RecipientId)).ShouldBe([other]);
+        (await Facts(db)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Публикацию по расписанию исполняют часы, а не человек: поле исполнителя
+    /// не задано, и автор сходки получает её наравне с кругом.
+    /// </summary>
+    [Fact]
+    public async Task When_PublishedByClock_Expect_AuthorAddressed()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+
+        var author = await Person(db, "admin", "member");
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+
+        var published = EventFactory.Meetup(EventFactory.NewId(), version: 2);
+        published.State.Author = author.ToString();
+        published.HasPerformedBy.ShouldBeFalse();
+        await nats.Publish(MeetupPublishedSubject, published);
+
+        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
+        facts[0].Fact.RecipientId.ShouldBe(author.ToString());
+    }
+
     [Fact]
     public async Task When_PublicationRedelivered_Expect_FactsNotDoubled()
     {

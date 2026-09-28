@@ -28,6 +28,11 @@ public abstract record ReplicaEvent(Guid EventId, Guid AggregateId, long Version
 /// </param>
 /// <param name="Occasion">Повод события в той мере, в какой он различает адресные факты.</param>
 /// <param name="Material">Прикреплённый материал, если повод — его появление; иначе <c>null</c>.</param>
+/// <param name="PerformedBy">
+/// Человек, чья команда породила событие; <c>null</c> — человека не было
+/// (публикация по расписанию) или поля не было. Адресатом факта он не
+/// становится: о собственном действии человеку не сообщают.
+/// </param>
 public sealed record MeetupFact(
     Guid EventId,
     Guid MeetupId,
@@ -37,7 +42,8 @@ public sealed record MeetupFact(
     Notifications.V1.MeetupCard Card,
     MeetupOccasion Occasion = MeetupOccasion.Other,
     string? RequestId = null,
-    AttachedMaterial? Material = null) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
+    AttachedMaterial? Material = null,
+    Guid? PerformedBy = null) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.MeetupsSource;
 }

@@ -140,6 +140,7 @@ public class ReplicaMappingTests
         { "state", m => m.State = null },
         { "state id", m => m.State.Id = EventFactory.NewId() },
         { "author", m => m.State.Author = string.Empty },
+        { "performed by", m => m.PerformedBy = "not-a-uuid" },
         { "lifecycle", m => m.State.Lifecycle = MeetupLifecycle.Unspecified },
         { "visibility", m => m.State.Visibility = MeetupVisibility.Unspecified },
         { "first published", m => m.State.FirstPublishedAt = "never" },
@@ -363,6 +364,21 @@ public class ReplicaMappingTests
     public void Meetup_NoRequestId_LeavesItUnset() =>
         Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(EventFactory.Meetup(MeetupId, version: 2))))
             .RequestId.ShouldBeNull();
+
+    [Fact]
+    public void Meetup_PerformedBy_CarriedAsIs()
+    {
+        var performer = Guid.CreateVersion7();
+        var message = EventFactory.Meetup(MeetupId, version: 2);
+        message.PerformedBy = performer.ToString();
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).PerformedBy.ShouldBe(performer);
+    }
+
+    [Fact]
+    public void Meetup_NoPerformedBy_LeavesItUnset() =>
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(EventFactory.Meetup(MeetupId, version: 2))))
+            .PerformedBy.ShouldBeNull();
 
     private static TFact Fact<TFact>(Decoded decoded)
         where TFact : ReplicaEvent =>
