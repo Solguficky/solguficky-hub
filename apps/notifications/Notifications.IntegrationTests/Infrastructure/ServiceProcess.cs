@@ -27,6 +27,14 @@ public sealed class ServiceProcess : IDisposable
     /// <inheritdoc cref="Active" />
     public const int Dead = 6;
 
+    private static readonly string[] PodVariables =
+    [
+        SiloPlacement.KubernetesVariable,
+        SiloPlacement.AdvertisedHostVariable,
+        SiloPlacement.ClusterIdVariable,
+        SiloPlacement.ServiceIdVariable,
+    ];
+
     private readonly Process process;
     private readonly StringBuilder output = new();
 
@@ -68,12 +76,27 @@ public sealed class ServiceProcess : IDisposable
     /// То же, но пары портов выдаёт <paramref name="endpoints" />: тест ставит
     /// проигранную гонку за порт заранее.
     /// </summary>
-    public static async Task<ServiceProcess> Start(
-        string connectionString, string natsUrl, Func<SiloEndpoint> endpoints)
+    public static Task<ServiceProcess> Start(
+        string connectionString, string natsUrl, Func<SiloEndpoint> endpoints) =>
+        Start(connectionString, natsUrl, endpoints, environment: new Dictionary<string, string>());
+
+    /// <summary>
+    /// То же, но с переменными <paramref name="environment" /> поверх обязательных:
+    /// так процесс становится подом — со своим адресом и идентификаторами среды.
+    /// </summary>
+    public static Task<ServiceProcess> Start(
+        string connectionString, string natsUrl, IReadOnlyDictionary<string, string> environment) =>
+        Start(connectionString, natsUrl, SiloEndpoint.Allocate, environment);
+
+    private static async Task<ServiceProcess> Start(
+        string connectionString,
+        string natsUrl,
+        Func<SiloEndpoint> endpoints,
+        IReadOnlyDictionary<string, string> environment)
     {
         for (var attempt = 1; ; attempt++)
         {
-            var service = Launch(connectionString, natsUrl, endpoints());
+            var service = Launch(connectionString, natsUrl, endpoints(), environment);
 
             try
             {
@@ -99,7 +122,37 @@ public sealed class ServiceProcess : IDisposable
     private bool LostPortRace =>
         process.HasExited && Output.Contains(SiloEndpoint.ListenerFailure, StringComparison.Ordinal);
 
-    private static ServiceProcess Launch(string connectionString, string natsUrl, SiloEndpoint endpoint)
+    /// <summary>
+    /// Запускает сервис, который обязан отказать на старте, и ждёт его выхода.
+    /// </summary>
+    /// <returns>Код выхода и весь вывод процесса.</returns>
+    public static async Task<(int ExitCode, string Output)> RunToRefusal(
+        string connectionString, string natsUrl, IReadOnlyDictionary<string, string> environment)
+    {
+        using var service = Launch(connectionString, natsUrl, SiloEndpoint.Allocate(), environment);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        try
+        {
+            await service.process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException($"service did not refuse to start:{Environment.NewLine}{service.Output}");
+        }
+
+        // Без аргумента WaitForExit дожидается конца асинхронного чтения
+        // вывода — та же причина, что в WaitUntilActive.
+        service.process.WaitForExit();
+
+        return (service.process.ExitCode, service.Output);
+    }
+
+    private static ServiceProcess Launch(
+        string connectionString,
+        string natsUrl,
+        SiloEndpoint endpoint,
+        IReadOnlyDictionary<string, string> environment)
     {
         var executable = Executable();
 
@@ -121,6 +174,19 @@ public sealed class ServiceProcess : IDisposable
         start.Environment[Migrations.DatabaseUrlVariable] = connectionString;
         start.Environment[NotificationsHost.NatsUrlVariable] = natsUrl;
         start.Environment[CommunityTime.TimeZoneVariable] = SiloUnderTest.CommunityZone;
+
+        // Режим пода задаёт только сам тест. Унаследованный от раннера
+        // KUBERNETES_SERVICE_HOST — CI в поде кластера — иначе сделал бы подом
+        // каждый запуск, и сценарии с петлёй отказывали бы на старте.
+        foreach (var name in PodVariables)
+        {
+            start.Environment.Remove(name);
+        }
+
+        foreach (var (name, value) in environment)
+        {
+            start.Environment[name] = value;
+        }
 
         var process = Process.Start(start)
             ?? throw new InvalidOperationException($"cannot start {executable}");
@@ -194,6 +260,31 @@ public sealed class ServiceProcess : IDisposable
             WHERE status = @status;
             """,
             new { status }).ToList();
+    }
+
+    /// <summary>
+    /// То же в пределах одного кластера. ClusterId Orleans хранит в
+    /// membership столбцом <c>deploymentid</c>; ServiceId в этой таблице нет.
+    /// </summary>
+    public static IReadOnlyList<string> Silos(string connectionString, int status, string clusterId)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+
+        return connection.Query<string>(
+            """
+            SELECT address || ':' || port AS silo
+            FROM orleansmembershiptable
+            WHERE status = @status AND deploymentid = @clusterId;
+            """,
+            new { status, clusterId }).ToList();
+    }
+
+    /// <summary>Все строки membership, в любом состоянии.</summary>
+    public static int MemberCount(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+
+        return connection.ExecuteScalar<int>("SELECT count(*) FROM orleansmembershiptable;");
     }
 
     /// <summary>Убивает процесс деревом, не давая ему закрыть запись membership.</summary>

@@ -1,3 +1,4 @@
+using System.Net;
 using Notifications;
 using Notifications.Reminders;
 
@@ -33,6 +34,22 @@ catch (InvalidOperationException ex)
     return 1;
 }
 
+// Под без адреса или идентификаторов среды не стартует с локальными
+// умолчаниями: силос объявил бы в membership петлю, а в сменившем его поде
+// она указывала бы на другой процесс, и среды делили бы локальный ClusterId.
+// Разбор идёт до миграций, чтобы неверно настроенный под не трогал базу.
+SiloPlacement placement;
+
+try
+{
+    placement = SiloPlacement.FromEnvironment(Environment.GetEnvironmentVariable, Dns.GetHostAddresses);
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    return 1;
+}
+
 // Отказ схемы — рабочий исход старта, а не баг рантайма: оператор должен
 // прочитать одну строку про базу, а не stack trace из недр DbUp. Миграции идут
 // до силоса намеренно: таблицы membership Orleans заводит этот же DbUp, и без
@@ -47,6 +64,6 @@ catch (Exception ex)
     return 1;
 }
 
-var app = NotificationsHost.Build(args, databaseUrl, natsUrl);
+var app = NotificationsHost.Build(args, databaseUrl, natsUrl, placement: placement);
 await app.RunAsync();
 return 0;
