@@ -8,7 +8,8 @@
 #
 # Versions are not constants here. Each one is read from the file that already
 # pins it: the justfile (just, protoc, lefthook, skillshare, Node), global.json
-# (.NET SDK), apps/identity/go.mod (Go), apps/auction/.java-version (JDK); sbt
+# (.NET SDK), apps/identity/go.mod (Go), apps/auction/.java-version (JDK),
+# infra/apphost/AppHost/AppHost.csproj (Aspire CLI bundle); sbt
 # downloads the version from apps/auction/project/build.properties itself.
 #
 # Idempotent: every step first checks the installed version and skips when it
@@ -65,8 +66,9 @@ NODE_MAJOR="$(pinned NODE_MAJOR)"
 DOTNET_SDK_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' global.json | head -n 1)"
 GO_VERSION="$(awk '/^go [0-9]/ {print $2; exit}' apps/identity/go.mod)"
 JAVA_MAJOR="$(tr -d '[:space:]' < apps/auction/.java-version)"
+ASPIRE_SDK_VERSION="$(sed -n 's/.*<Sdk Name="Aspire.AppHost.Sdk" Version="\([^"]*\)".*/\1/p' infra/apphost/AppHost/AppHost.csproj)"
 
-for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR; do
+for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR ASPIRE_SDK_VERSION; do
   if [ -z "${!version}" ]; then
     echo "install.sh: $version is not pinned where this script reads it" >&2
     exit 1
@@ -114,9 +116,14 @@ else
   log ".NET SDK $DOTNET_SDK_VERSION already installed"
 fi
 $SUDO ln -sf "$DOTNET_DIR/dotnet" /usr/local/bin/dotnet
-# The AppHost build (AspireUseCliBundle) finds dnx on PATH and installs the
-# Aspire CLI of its own SDK version through it; without dnx it fails ASPIRE009.
 $SUDO ln -sf "$DOTNET_DIR/dnx" /usr/local/bin/dnx
+
+# The AppHost build (AspireUseCliBundle) needs the Aspire CLI bundle of its own
+# SDK version in ~/.aspire. The build can set it up through dnx itself, but
+# gives that 120 seconds, which a slow network does not meet (ASPIRE009), so it
+# is set up here without a deadline. A second run reports it is up to date.
+log "Setting up the Aspire CLI bundle $ASPIRE_SDK_VERSION"
+dnx --yes "aspire.cli@${ASPIRE_SDK_VERSION}" -- setup --install-path "$HOME/.aspire"
 
 # --- protoc ------------------------------------------------------------------
 
