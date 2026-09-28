@@ -68,9 +68,13 @@ type Coverage = {
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const reportDir = resolve(repoRoot, ".work/explore/");
 
-const seed = readNumber("EXPLORE_SEED") ?? randomInt(0, 2 ** 31);
-const runs = readNumber("EXPLORE_RUNS") ?? 30;
-const stepsPerRun = readNumber("EXPLORE_STEPS") ?? 15;
+// Seed ограничен 32 битами: генератор держит состояние в uint32, и больший
+// seed совпал бы с меньшим, а отчёт напечатал бы их как разные. Ноль
+// последовательностей или шагов отвергается: пустой прогон с «кандидатов 0»
+// неотличим от чистого.
+const seed = readNumber("EXPLORE_SEED", 0, 2 ** 32) ?? randomInt(0, 2 ** 31);
+const runs = readNumber("EXPLORE_RUNS", 1) ?? 30;
+const stepsPerRun = readNumber("EXPLORE_STEPS", 1) ?? 15;
 const replay = readReplay(process.env["EXPLORE_REPLAY"]);
 
 const environment = readContourEnvironment();
@@ -86,8 +90,8 @@ afterAll(() => {
   direct.close();
 });
 
-describe("исследование провода бота", () => {
-  it("проходит заданное число последовательностей и сводит кандидатов", async () => {
+describe("bot wire exploration", () => {
+  it("walks the requested number of sequences and collects candidates", async () => {
     const candidates = new Map<string, Candidate>();
     const coverage: Coverage = {
       useCases: new Set(),
@@ -100,75 +104,93 @@ describe("исследование провода бота", () => {
     const sequences: Sequence[] = [];
     const planned = replay === undefined ? runs : 1;
 
-    for (let index = 0; index < planned; index += 1) {
-      const random = forSequence(seed, index);
-      const recorded = replay?.sequence;
-      const admin = recorded?.admin ?? random.next() < 0.5;
-      const telegramUserId = freshTelegramUserId();
-      if (admin) {
-        await direct.grantAdmin(telegramUserId);
-      }
-      const person = startConversation(wire.bot, wire.calls, telegramUserId);
-      const sequence: Sequence = {
-        index: recorded?.index ?? index,
-        admin,
-        script: [],
-      };
-      const labelCounts = new Map<string, number>();
-      const length = recorded?.script.length ?? stepsPerRun;
-
-      for (let stepIndex = 0; stepIndex < length; stepIndex += 1) {
-        const step =
-          recorded?.script[stepIndex] ??
-          nextStep(random, person, labelCounts, stepIndex);
-        if (step.kind === "presses" && !person.pressable().includes(step.label)) {
-          sequence.divergedAt = stepIndex;
-          break;
-        }
-        sequence.script.push(step);
-        const before = wire.records.length;
-        const findings: Finding[] = [];
-        try {
-          await (step.kind === "says"
-            ? person.says(step.text)
-            : person.presses(step.label));
-        } catch (cause) {
-          findings.push({
-            oracle: "handle-update-settles",
-            strict: true,
-            detail: `handleUpdate отклонил промис: ${String(cause)}`,
-          });
-        }
-        const records = wire.records.slice(before);
-        findings.push(
-          ...checkStep(step, records, String(telegramUserId), seenRequestIds),
-        );
-        observe(coverage, person, records);
-        for (const finding of findings) {
-          remember(candidates, finding, sequence, stepIndex);
-        }
-        if (step.kind === "presses") {
-          labelCounts.set(step.label, (labelCounts.get(step.label) ?? 0) + 1);
-        }
-      }
-      sequences.push(sequence);
+    // Отчёт пишется и при обрыве: таймаут или отказ среды на 25-й
+    // последовательности не должен стирать кандидатов первых 24.
+    try {
+      await explore();
+    } finally {
+      writeReport(candidates, coverage, sequences);
     }
-
-    const report = summarize(candidates, coverage, sequences);
-    mkdirSync(reportDir, { recursive: true });
-    const file = join(
-      reportDir,
-      `${replay === undefined ? "seed" : "replay"}-${seed}.json`,
-    );
-    writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
-    // Мимо console: vitest перехватывает его и у прошедшего теста не печатает,
-    // а сводка — и есть результат прогона.
-    const shown = relative(repoRoot, file).replaceAll("\\", "/");
-    process.stdout.write(`${render(report, shown)}\n`);
-
     expect(sequences).toHaveLength(planned);
+
+    async function explore(): Promise<void> {
+      for (let index = 0; index < planned; index += 1) {
+        const random = forSequence(seed, index);
+        const recorded = replay?.sequence;
+        const admin = recorded?.admin ?? random.next() < 0.5;
+        const telegramUserId = freshTelegramUserId();
+        if (admin) {
+          await direct.grantAdmin(telegramUserId);
+        }
+        const person = startConversation(wire.bot, wire.calls, telegramUserId);
+        const sequence: Sequence = {
+          index: recorded?.index ?? index,
+          admin,
+          script: [],
+        };
+        const labelCounts = new Map<string, number>();
+        const length = recorded?.script.length ?? stepsPerRun;
+
+        for (let stepIndex = 0; stepIndex < length; stepIndex += 1) {
+          const step =
+            recorded?.script[stepIndex] ??
+            nextStep(random, person, labelCounts, stepIndex);
+          if (
+            step.kind === "presses" &&
+            !person.pressable().includes(step.label)
+          ) {
+            sequence.divergedAt = stepIndex;
+            break;
+          }
+          sequence.script.push(step);
+          const before = wire.records.length;
+          const findings: Finding[] = [];
+          try {
+            await (step.kind === "says"
+              ? person.says(step.text)
+              : person.presses(step.label));
+          } catch (cause) {
+            findings.push({
+              oracle: "handle-update-settles",
+              strict: true,
+              detail: `handleUpdate отклонил промис: ${String(cause)}`,
+            });
+          }
+          const records = wire.records.slice(before);
+          findings.push(
+            ...checkStep(step, records, String(telegramUserId), seenRequestIds),
+          );
+          observe(coverage, person, records);
+          for (const finding of findings) {
+            remember(candidates, finding, sequence, stepIndex);
+          }
+          if (step.kind === "presses") {
+            labelCounts.set(step.label, (labelCounts.get(step.label) ?? 0) + 1);
+          }
+        }
+        sequences.push(sequence);
+      }
+    }
   });
 });
+
+function writeReport(
+  candidates: Map<string, Candidate>,
+  coverage: Coverage,
+  sequences: Sequence[],
+): void {
+  const report = summarize(candidates, coverage, sequences);
+  mkdirSync(reportDir, { recursive: true });
+  const file = join(
+    reportDir,
+    `${replay === undefined ? "seed" : "replay"}-${seed}.json`,
+  );
+  writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+  // Мимо console: vitest перехватывает его и у прошедшего теста не печатает,
+  // а сводка — и есть результат прогона.
+  const shown = relative(repoRoot, file).replaceAll("\\", "/");
+  process.stdout.write(`${render(report, shown)}\n`);
+}
 
 // Алфавит действий человека. Кнопки выбираются с весом, обратным числу
 // прошлых нажатий: иначе обход крутится у главного экрана и не доходит до форм.
@@ -186,9 +208,9 @@ const commands = [
 
 function texts(): string[] {
   const year = new Date().getUTCFullYear();
+  // Только то, что Telegram способен доставить: пустого текста и текста
+  // длиннее 4096 символов в update не бывает, и кандидат на них был бы ложным.
   return [
-    "",
-    " ",
     "Настолки в исследовании",
     `12.06.${year + 1} 19:00`,
     "01.01.2000 10:00",
@@ -199,7 +221,7 @@ function texts(): string[] {
     "<b>разметка</b> и *звёздочки*",
     "🎲🎲🎲",
     "'; drop table meetups; --",
-    "ж".repeat(5_000),
+    "ж".repeat(4_096),
   ];
 }
 
@@ -284,12 +306,17 @@ function remember(
   step: number,
 ): void {
   const fields = finding.fields;
-  const key = [
-    finding.oracle,
-    fields?.operation ?? "-",
-    fields?.use_case ?? "-",
-    fields?.error_category ?? "-",
-  ].join(" | ");
+  // Находка без записи (ноль или две записи на update, отклонённый промис)
+  // различается только текстом: без него «ноль» и «две» слились бы в одну.
+  const key =
+    fields === undefined
+      ? `${finding.oracle} | ${finding.detail}`
+      : [
+          finding.oracle,
+          fields.operation ?? "-",
+          fields.use_case ?? "-",
+          fields.error_category ?? "-",
+        ].join(" | ");
   const known = candidates.get(key);
   if (known !== undefined) {
     known.occurrences += 1;
@@ -374,12 +401,17 @@ function render(report: ReturnType<typeof summarize>, file: string): string {
   return lines.join("\n");
 }
 
-function readNumber(name: string): number | undefined {
+/** Целое в [min, max) или undefined, если переменная не задана. */
+function readNumber(
+  name: string,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number | undefined {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`${name}=${raw}: нужно неотрицательное целое`);
+  if (!Number.isInteger(value) || value < min || value >= max) {
+    throw new Error(`${name}=${raw}: нужно целое от ${min} и меньше ${max}`);
   }
   return value;
 }
@@ -395,13 +427,27 @@ function readReplay(
     );
   }
   const file = resolve(repoRoot, raw.slice(0, hash));
-  const index = Number(raw.slice(hash + 1));
-  const report = JSON.parse(readFileSync(file, "utf8")) as {
-    sequences: Sequence[];
-  };
-  const sequence = report.sequences.find(
-    (candidate) => candidate.index === index,
-  );
+  const tail = raw.slice(hash + 1);
+  const index = Number(tail);
+  if (tail === "" || !Number.isInteger(index)) {
+    throw new Error(
+      `EXPLORE_REPLAY=${raw}: после # нужен номер последовательности`,
+    );
+  }
+  // Файл пишет этот же прогон (`writeReport`), поэтому форма шагов не
+  // перепроверяется; проверяется только то, без чего поиск по номеру молча
+  // вернул бы «нет последовательности» на чужом JSON.
+  const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("sequences" in parsed) ||
+    !Array.isArray(parsed.sequences)
+  ) {
+    throw new Error(`${file} — не отчёт исследующего прогона: нет sequences`);
+  }
+  const sequences = parsed.sequences as Sequence[]; // форму задаёт writeReport
+  const sequence = sequences.find((candidate) => candidate.index === index);
   if (sequence === undefined) {
     throw new Error(`в ${file} нет последовательности ${index}`);
   }
