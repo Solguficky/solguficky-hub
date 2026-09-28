@@ -1,0 +1,33 @@
+<Project>
+
+  <!-- Production-образ .NET-сервиса собирает SDK-контейнер (`dotnet publish
+       /t:PublishContainer`); тем же путём образ собирает `aspire do push`, и
+       второго пути сборки нет. Файл подключается явным Import из проекта
+       сервиса, а не через Directory.Build.targets: тестовым проектам образ не
+       нужен.
+
+       Базу проект объявляет сам, в ContainerBaseImage и только по digest:
+       тег не является identity образа (RFC-010), и сборка по тегу давала бы
+       разный результат с одного коммита. -->
+
+  <PropertyGroup>
+    <!-- uid пользователя app из образов Microsoft. Числом, а не именем: так
+         runtime проверяет non-root без чтения /etc/passwd образа. SDK сам
+         ставит его только для базы по умолчанию, а явная база — не она. -->
+    <ContainerUser Condition="'$(ContainerUser)' == ''">1654</ContainerUser>
+    <!-- Команда приложения идёт в CMD, а не в ENTRYPOINT: `podman run <digest> id`
+         тогда исполняет `id`, а не передаёт его приложению аргументом. -->
+    <ContainerAppCommandInstruction Condition="'$(ContainerAppCommandInstruction)' == ''">DefaultArgs</ContainerAppCommandInstruction>
+  </PropertyGroup>
+
+  <!-- Идёт до ComputeContainerBaseImage: та подставила бы базу SDK по тегу
+       вместо пустого значения, и проверка увидела бы уже не то, что объявил
+       проект. Отказ — ошибка, а не предупреждение: предупреждение сборка
+       проходит. -->
+  <Target Name="ValidateContainerBaseImageDigest" BeforeTargets="ComputeContainerBaseImage">
+    <Error Code="SOLG0001"
+           Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ContainerBaseImage)', '@sha256:[0-9a-f]{64}$'))"
+           Text="ContainerBaseImage должен быть закреплён по digest (образ@sha256:...), получено: '$(ContainerBaseImage)'. Тег не является identity образа." />
+  </Target>
+
+</Project>

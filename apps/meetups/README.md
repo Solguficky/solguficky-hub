@@ -168,11 +168,28 @@ just meetups-test
 just meetups-test-integration
 just meetups-contracts-check
 just meetups-run
+just meetups-image
 ```
 
 `MEETUPS_DATABASE_URL` и `MEETUPS_COMMUNITY_TIME_ZONE` обязательны для `meetups-run`: процесс применяет миграции DbUp до прослушивания, а хост падает при пустом часовом поясе — по нему продуктовое чтение считает день сообщества, отделяющий актуальные сходки от архива, и команда назначения момента публикации интерпретирует в этом поясе локальную пару «дата и время». Локальный прогон получает пояс от AppHost (`Europe/Moscow`), production-топология называет своё. Обе фоновые границы настраиваются переменными и значений по умолчанию не требуют: `MEETUPS_DISPATCH_INTERVAL_SECONDS` и `MEETUPS_DISPATCH_BATCH_SIZE` у публикации из журнала, `MEETUPS_PUBLICATION_INTERVAL_SECONDS` (30 секунд) и `MEETUPS_PUBLICATION_BATCH_SIZE` (100) у отложенной. Интервал опроса — рабочий параметр, а не решение: ADR-024 назвал его меняющимся без нового ADR. Интеграционные тесты схемы поднимают PostgreSQL через Testcontainers; если демона нет, берут `MEETUPS_DATABASE_URL` или `127.0.0.1:5432`, а без доступной базы фикстура пропускает тест, и `--fail-skips` рецепта роняет прогон. `just meetups-test` гоняет только `Meetups.UnitTests` и базы не требует, интеграционный набор идёт в `just meetups-test-integration`, `just test-all` и CI.
 
 Команда генерации — `dotnet build` контрактного проекта `apps/meetups/Meetups.Contracts`.
+
+## Образ
+
+Production-образ собирает SDK-контейнер .NET — `dotnet publish -t:PublishContainer` по свойствам `Container*` в `Meetups.fsproj`, без Containerfile. Тем же путём образ собирает `aspire do push`, поэтому второго способа сборки нет. Общие для .NET-сервисов правила лежат в `shared/dotnet/Container.targets`, проект подключает его явным `Import`:
+
+- база — `aspnet` по digest, без SDK: в финальном образе только runtime. Проект, чья база пуста или задана тегом, падает до скачивания базы с ошибкой `SOLG0001`. Сменить базу — заменить digest целиком;
+- запуск от uid 1654 (`app`), числом, чтобы runtime проверял non-root без чтения `/etc/passwd`;
+- команда приложения стоит в CMD, а не в ENTRYPOINT, поэтому `podman run --rm <образ> id` исполняет `id`. Обратная сторона: любой аргумент запуска заменяет команду целиком, поэтому конфигурация сервиса идёт только переменными окружения, а не аргументами.
+
+`just meetups-image` собирает образ в архив локально, без реестра. Публикацию делает только CI: `.github/workflows/image-meetups.yml` вызывает переиспользуемый `image-publish.yml`. Pull request собирает образ и проверяет его — отказ базы по тегу, uid, отсутствие SDK, — ничего не записывая в GHCR. Push в `develop` публикует `ghcr.io/solguficky/meetups`, снимает SBOM, сканирует его в режиме report-only и выпускает attestation на registry digest; digest печатается в summary прогона. Выкатка идёт по `образ@sha256:…`, тег `sha-<коммит>` — метка для человека. Происхождение проверяет та же команда, что и хост перед выкаткой:
+
+```bash
+gh attestation verify oci://ghcr.io/solguficky/meetups@sha256:<digest> --repo Solguficky/solguficky-hub --signer-workflow Solguficky/solguficky-hub/.github/workflows/image-publish.yml --source-ref refs/heads/develop
+```
+
+Read-only rootfs проверен прогоном образа с `--read-only --cap-drop=all --security-opt no-new-privileges` против PostgreSQL: миграции применяются, gRPC-проба готовности отвечает `SERVING`. Сам сервис на диск не пишет. Рантайм .NET кладёт в `/tmp` диагностический сокет; без записываемого `/tmp` сервис работает, но `dotnet-trace` и `dotnet-counters` к нему не подключаются, поэтому unit даёт `--tmpfs /tmp`. Обязательные переменные те же, что у `meetups-run`. На первом подключении к базе рантайм печатает `Cannot load library libgssapi_krb5.so.2`: Npgsql пробует GSS-шифрование, а библиотеки в образе нет. Строка — шум, подключение идёт дальше без GSS.
 
 Тесты идут на xUnit v3 с Unquote и запускаются через Microsoft.Testing.Platform: runner выбран ключом `test` в корневом `global.json`, решение передаётся флагом `--solution`, отдельный проект — флагом `--project`. Подробности и грабли — в [руководстве по локальной разработке](../../docs/development/local-development.md).
 
