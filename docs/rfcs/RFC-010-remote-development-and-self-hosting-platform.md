@@ -114,7 +114,7 @@ PER-99 уже исследует площадку для long-lived agent proces
 | CI | вредоносный action/PR крадёт deploy secret | GitHub-hosted runners, full-SHA actions, least-privilege token, no secrets for fork PR, protected environments | компрометация GitHub account/action SHA owner |
 | Artifact | подмена tag/image в registry | deploy only by digest, verify Cosign identity and provenance, retain SBOM | подписанный, но уязвимый код всё ещё возможен |
 | Secrets in Git/backup/logs | случайная публикация или вывод | SOPS+age ciphertext, secret scanning, stdin/files instead of CLI arguments, log redaction | агент может отправить секрет, который ему разрешили читать |
-| Backup | ransomware удаляет primary и repository | off-provider encrypted repo, append-only writer, separate prune credential, object versioning/lock if available | потеря recovery key или compromise maintenance credential |
+| Backup | ransomware удаляет primary и repository | off-provider encrypted repo, append-only writer, separate prune credential, object versioning и Object Lock в governance mode | потеря recovery key или compromise maintenance credential |
 | Restore | backup есть, но несовместим или повреждён | monthly isolated restore, quarterly migration drill, recorded duration/checks | неиспытанный новый schema/version gap |
 | AI provider | source/context покидает VPS через разрешённый API | data classification, approved providers, project-scoped workspace, no production data/secrets | сама удалённая модель по определению получает отправленный контекст |
 
@@ -333,10 +333,11 @@ PostgreSQL continuous archiving вместе с base backup позволяет P
 - минимум четыре успешных full chains; retention проверяется расчётом реального объёма и WAL, а не только количеством;
 - `archive_timeout=1min` как начальный интервал переключения неполного WAL segment: окно RPO 5 минут должно включать доставку в repository, а не только switch на хосте; фактический RPO считается от последней успешной записи в repository. Принудительно переключённый segment сохраняет полный размер, а PostgreSQL пропускает переключение только при отсутствии записи с прошлого раза: поэтому offset поллера и другие heartbeat-записи в PostgreSQL не хранятся, иначе простаивающий бот порождает полный segment каждую минуту. Реальный объём и bandwidth замеряются до ужимания интервала;
 - encrypted repository в другом provider/account/credential domain;
+- writer не удаляет готовые backups и WAL. pgBackRest по умолчанию (`expire-auto=y`) запускает `expire` сразу после успешного backup, поэтому writer работает с `expire-auto=n`, а `expire` выполняется отдельным maintenance credential ([pgBackRest configuration](https://pgbackrest.org/configuration.html)). Удаляет ли pgBackRest файлы writer'ом при очистке прерванного backup и падает ли следующий backup без этого права, проверяется пробным bucket до первого production repository. Object Lock bucket берётся в governance mode: compliance mode не даёт удалить заблокированную версию никому до истечения retention, и ошибка в сроке или мусорный burst исправляются только ожиданием;
 - недельный логический дамп `pg_dump -Fc` рядом с PITR. Он не улучшает RPO и не заменяет WAL, но закрывает другой класс отказа: неверно настроенный pgBackRest, несовместимость мажорных версий при восстановлении и ошибку в самой процедуре. Для первого PITR-контура вероятность такой ошибки выше вероятности отказа хоста;
 - непрерывная метрика последнего WAL, принятого off-host repository, с alert до 5 минут, ежедневная проверка backup chain и ежемесячный restore в изолированную базу.
 
-restic шифрует repository, поддерживает S3-compatible backends и требует сохранить пароль: без него данные не восстановить ([Preparing a repository](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html)). `restic check` проверяет структуру, а `--read-data` читает pack data; prune переписывает и удаляет данные, поэтому для backup jobs используется append-only credential, а забывание/prune — отдельный изолированный maintenance context. Append-only здесь свойство bucket policy, а не самого restic: запрет `DeleteObject` на весь bucket ломает снятие собственных lock-объектов repository и копит stale locks, поэтому delete запрещается на префиксах данных и остаётся разрешён на `locks/`. Object Lock берётся в governance mode: compliance mode делает prune невозможным до истечения retention. Maintenance не доверяет только свежим snapshot: retention использует `--keep-within`, проверяет ожидаемые historical snapshots и не запускается автоматически после подозрительного backup burst ([Checking integrity](https://restic.readthedocs.io/en/stable/045_working_with_repos.html), [append-only pattern](https://restic.readthedocs.io/en/stable/060_forget.html)).
+restic шифрует repository, поддерживает S3-compatible backends и требует сохранить пароль: без него данные не восстановить ([Preparing a repository](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html)). `restic check` проверяет структуру, а `--read-data` читает pack data; prune переписывает и удаляет данные, поэтому для backup jobs используется append-only credential, а забывание/prune — отдельный изолированный maintenance context. Append-only здесь свойство bucket policy, а не самого restic: запрет `DeleteObject` на весь bucket ломает снятие собственных lock-объектов repository и копит stale locks, поэтому delete запрещается на префиксах данных и остаётся разрешён на `locks/`. Хранилище, которое не может выразить это правило политикой — например, где ограничение по префиксу действует на ключ целиком, а не на отдельное действие, — для restic не подходит. Maintenance не доверяет только свежим snapshot: retention использует `--keep-within`, проверяет ожидаемые historical snapshots и не запускается автоматически после подозрительного backup burst ([Checking integrity](https://restic.readthedocs.io/en/stable/045_working_with_repos.html), [append-only pattern](https://restic.readthedocs.io/en/stable/060_forget.html)).
 
 Файлы, на которые ссылается транзакционное состояние PostgreSQL, либо immutable/content-addressed и восстанавливаются независимо, либо получают согласованную с БД recovery point. Независимый hourly restic snapshot нельзя считать консистентным с произвольной точкой PITR без доказанного application invariant.
 
@@ -432,6 +433,7 @@ PER-80 должен дать владельцу практику безопас�
 - dev, agents, test и production на первом этапе размещаются на одном хосте с зафиксированным остаточным риском;
 - отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-039;
 - production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии; объектное хранилище того же регистратора, что VPS, этим условием не является;
+- object storage, как и регистратор, выбирается операционно и в платформу не входит. Годится провайдер, который принимает доступный владельцу способ оплаты и даёт: отдельные writer и maintenance credentials, где writer не удаляет данные; versioning и Object Lock в governance mode; lifecycle для noncurrent versions. Delete для writer только на префиксе `locks/`, выраженный bucket policy, требуется, если restic останется в контуре: при декларативном ops-репозитории нужен ли файловый бэкап, решает инвентаризация состояния (PER-382). Хранилище, выбранное без этого критерия, при появлении restic перепроверяется или получает отдельный bucket под restic. Срез сравнения кандидатов — в приложении «Кандидаты object storage» в конце документа; выбор делает владелец, и в документ он не записывается;
 - алерты этого RFC и внешний dead-man's switch исполняет облачный бэкенд наблюдаемости, а на хосте работает только Collector: сервисы шлют OTLP в него, бэкенд — Better Stack ([ADR-053](../decisions/ADR-053-production-observability-otlp-better-stack.md)). Журнал хоста хранит логи прод-контура дольше трёх дней окна бэкенда; сам срок остаётся открытым в строке Metrics/logs таблицы хранения и фиксируется при подключении на хосте.
 
 ### Решения владельца до реализации
@@ -439,7 +441,7 @@ PER-80 должен дать владельцу практику безопас�
 1. Какие AI providers, repositories и классы данных разрешено отправлять удалённым моделям? Разрешены ли закрытые product docs и user-derived fixtures?
 2. Какой редактор/клиент обязан пройти devcontainer-over-SSH acceptance: Zed, VS Code, CLI или несколько?
 3. Агент одного проекта живёт под тем же Unix user, что интерактивный developer, или нужен отдельный user и односторонний workspace handoff?
-4. Какой object storage выбран для pgBackRest/restic и поддерживает ли он отдельные append/delete credentials, versioning и object lock?
+4. Закрыт: требования к object storage перенесены в «Принято владельцем», конкретный провайдер выбирается операционно.
 5. Достаточны ли RPO 5 минут, file RPO 1 час, disaster RTO 2 часа и planned downtime 15 минут?
 6. Нужен ли offline OCI export для redeploy при недоступности GHCR, или достаточно предыдущих images в local storage и registry availability?
 7. Какой срок хранения dev/agent histories допустим с точки зрения приватности и стоимости?
@@ -471,3 +473,48 @@ PER-80 должен дать владельцу практику безопас�
 - restore и migration runbooks с журналом ежемесячных/квартальных drills;
 - measured capacity, RPO/RTO и cost record;
 - обновлённые architecture, local-development, CI и operations docs после появления фактической реализации.
+
+## Приложение: кандидаты object storage
+
+Срез на 27.09.2026 из PER-234. Это варианты под критерии из «Принято владельцем», а не выбор: провайдер выбирается операционно. Цены и возможности меняются, поэтому перед выбором их сверяют заново.
+
+### Посылки
+
+- Оплата только картой РФ или СБП. Если появится иностранная карта, в сравнение возвращаются Hetzner и Wasabi.
+- Writer не удаляет готовые данные ни у одного клиента бэкапа. pgBackRest получает `expire-auto=n`. CloudNativePG с Barman Cloud не получает `retentionPolicy`: retention там исполняет `barman-cloud-backup-delete` теми же credentials, что и архив. Prune в обоих случаях идёт отдельным maintenance credential.
+- Delete только на префиксе `locks/` нужен одному restic: `backup` снимает свой lock сам. Для pgBackRest и Barman этот критерий не действует.
+- Object Lock у всех финалистов работает только на bucket с versioning.
+
+### Финалисты
+
+| | Selectel S3 | Yandex Object Storage | Cloud.ru Evolution |
+|---|---|---|---|
+| Writer ≠ prune | service users с ролью `s3.bucket.user`, права задаёт только bucket policy | сервисные аккаунты; роль `storage.uploader` пишет, но не удаляет | сервисные аккаунты в группах IAM |
+| Delete только на `locks/` | задокументировано: Deny побеждает Allow, ресурс `bucket/<prefix>`, лимит policy 20 KB | из документации не выводится: Deny в policy передаёт проверку ACL объекта, Allow не срабатывает на запросе, не прошедшем IAM или ACL бакета | методы policy заявлены, семантика Deny не описана |
+| Object Lock в governance | да; bypass — роль `member` или `s3:BypassGovernance` в policy; отключить нельзя | да; bypass только у `storage.admin`; включается на существующем bucket | методы заявлены, режимы не описаны |
+| Lifecycle noncurrent versions | не подтверждён | `NoncurrentVersionExpiration` | заявлен |
+| Цена за ~50 ГБ standard | от 2,56 ₽/ГБ, около 130 ₽/мес плюс запросы | около 60 ₽/мес, цифра из калькулятора не подтверждена | 1,83915 ₽/ГБ, 15 ГБ бесплатно, около 65 ₽/мес |
+| Ограничения | для pgBackRest нужна vHosted-адресация | класс Ice — минимум 12 месяцев хранения | в cold и ice минимальный объект 128 КБ |
+| ЦОД | Санкт-Петербург, Москва, Новосибирск | РФ | Москва |
+
+Рекомендация исследования:
+- **Selectel** — если нужна уверенность без проб. Это единственный финалист, у которого документация подтверждает все критерии, включая `locks/`. Есть официальная инструкция для pgBackRest ([Selectel: pgBackRest](https://docs.selectel.ru/en/s3/tools/pgbackrest/)).
+- **Yandex** — если restic в контуре не останется: критерий `locks/` тогда не нужен, а роль `storage.uploader` не удаляет ничего без всякой policy.
+- **Cloud.ru** — самый дешёвый, но семантику policy и режимы Object Lock подтверждает только проба.
+
+Источники: [Selectel bucket policy](https://docs.selectel.ru/en/cloud/object-storage/containers/bucket-policy/about-bucket-policy/), [Selectel Object Lock](https://docs.selectel.ru/s3/buckets/object-lock/), [Selectel роли](https://docs.selectel.ru/en/s3/about/manage-access/), [Yandex bucket policy](https://yandex.cloud/en/docs/storage/concepts/policy), [Yandex порядок проверки доступа](https://yandex.cloud/en/docs/storage/security/overview), [Yandex Object Lock](https://yandex.cloud/en/docs/storage/concepts/object-lock), [Cloud.ru методы S3](https://cloud.ru/docs/s3e/ug/topics/api__methods), [Cloud.ru тарифы](https://cloud.ru/docs/s3e/ug/topics/pricing).
+
+### Отвергнуты
+
+- **Timeweb Cloud S3** — тот же регистратор, что у вероятного VPS: общий аккаунт и failure domain. Отдельный аккаунт закрывает блокировку аккаунта, но не отказ провайдера. Object Lock не найден.
+- **Backblaze B2** — bucket policy нет, а `namePrefix` ограничивает ключ целиком, а не отдельное действие. Кроме того, HeadBucket ломает barman ([cloudnative-pg#7105](https://github.com/cloudnative-pg/cloudnative-pg/issues/7105)). Оплата из РФ тоже недоступна.
+- **Cloudflare R2** — нет прав по префиксу.
+- **Hetzner Object Storage** — договоры с клиентами с адресом в РФ расторгнуты с 31.01.2024.
+- **Wasabi** — в договоре требование не находиться в санкционной стране, оплата через Stripe.
+- **VK Cloud** — регистрация физлица не подтверждена.
+
+### Проверить пробным bucket до первого production repository
+
+- writer не удаляет объект данных, а prune удаляет, в governance — с bypass;
+- удаляет ли pgBackRest файлы при очистке прерванного backup и что делает следующий backup без права delete;
+- включённые по умолчанию CRC-чексуммы новых AWS SDK не ломают загрузку; иначе — `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`.
