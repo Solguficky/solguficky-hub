@@ -7,6 +7,7 @@ import {
   networkMiddlewares,
   type Peer,
   TelegramClient,
+  tl,
 } from "@mtcute/node";
 import { classifyFailure, TelegramLiveFailure } from "./failure.js";
 import type { LiveSecrets } from "./session.js";
@@ -153,16 +154,19 @@ export async function openLiveDriver(
     await client.destroy();
     throw classifyFailure(error);
   }
-  // Только таймаут ожидания ответа значит молчащего бота; таймаут отправки
-  // остаётся недоступностью Telegram.
-  async function awaitBot(waiting: Promise<Message>): Promise<BotReply> {
+  // Молчащий бот — только таймаут того, что ждёт бота: его сообщения, правки
+  // или ответа на callback. Таймаут отправки остаётся недоступностью Telegram.
+  async function awaitBot<T>(waiting: Promise<T>, silence: string): Promise<T> {
     try {
-      return replyOf(await waiting);
+      return await waiting;
     } catch (error) {
-      if (error instanceof MtTimeoutError) {
+      if (
+        error instanceof MtTimeoutError ||
+        (tl.RpcError.is(error) && error.text === "BOT_RESPONSE_TIMEOUT")
+      ) {
         throw new TelegramLiveFailure(
           "bot-no-reply",
-          `@${secrets.botUsername} не ответил за ${replyDeadlineMs / 1000} с: ` +
+          `@${secrets.botUsername} ${silence} за ${replyDeadlineMs / 1000} с: ` +
             "запущен ли hub с --telegram-environment test?",
           { cause: error },
         );
@@ -188,29 +192,42 @@ export async function openLiveDriver(
         const sent = await conversation.sendText(
           payload === undefined ? "/start" : `/start ${payload}`,
         );
-        return awaitBot(
+        const reply = await awaitBot(
           conversation.waitForNewMessage(
             (message) => message.sender.id === bot.id && message.id > sent.id,
             replyDeadlineMs,
           ),
+          "не ответил",
         );
+        return replyOf(reply);
       }),
     press: (reply, callbackData) =>
       // Разговор открыт до нажатия: правку, пришедшую раньше ответа на
       // callback, он запоминает, и ожидание её не пропустит.
       inConversation(async (conversation) => {
-        await client.getCallbackAnswer({
-          chatId: bot.id,
-          message: reply.messageId,
-          data: callbackData,
-          timeout: replyDeadlineMs,
-        });
-        return awaitBot(
-          conversation.waitForEdit(undefined, {
+        await awaitBot(
+          client.getCallbackAnswer({
+            chatId: bot.id,
             message: reply.messageId,
+            data: callbackData,
             timeout: replyDeadlineMs,
           }),
+          "не ответил на нажатие",
         );
+        // Ответ — первая правка с клавиатурой. Правка без неё — это снятие
+        // клавиатуры перед ответом новым сообщением (editScreen бота), а не
+        // экран; промежуточных правок с клавиатурой бот не делает.
+        const edited = await awaitBot(
+          conversation.waitForEdit(
+            (message) => callbackDataOf(message).length > 0,
+            {
+              message: reply.messageId,
+              timeout: replyDeadlineMs,
+            },
+          ),
+          "не правил сообщение с кнопкой",
+        );
+        return replyOf(edited);
       }),
     close: () => client.destroy(),
   };

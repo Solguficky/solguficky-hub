@@ -51,12 +51,13 @@ describe("кадры ошибок в тестовой среде Telegram", () =
       throw classifyFailure(error);
     }
     const live = opened();
-    const published = payloads.published.slice(2);
+    // Кнопки карточки несут токен сходки без префикса payload `m_`.
+    const publishedToken = payloads.published.slice("m_".length);
 
     // Положительный путь первым: карточка доказывает, что payload этой формы
     // доходит до Meetups, а не превращается в чистый `/start`.
     const card = await live.sendStart(payloads.published);
-    expect(card.callbackData).toContain(`v1:view:${published}`);
+    expect(card.callbackData).toContain(`v1:view:${publishedToken}`);
 
     const hidden = await live.sendStart(payloads.hidden);
     const missing = await live.sendStart(
@@ -71,7 +72,7 @@ describe("кадры ошибок в тестовой среде Telegram", () =
     });
   });
 
-  it("случай 4 и E-04: кнопка старого сообщения правит его же по текущему состоянию", async () => {
+  it("случай 4 и E-04: кнопка старого сообщения правит это же сообщение, а не присылает новое", async () => {
     const live = opened();
     const older = await live.sendStart();
     const newer = await live.sendStart();
