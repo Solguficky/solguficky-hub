@@ -13,7 +13,10 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.slf4j.LoggerFactory
 
+import auction.Readiness
+
 import scala.annotation.tailrec
+import scala.concurrent.Future
 import scala.jdk.CollectionConverters.*
 
 final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with ScalatestRouteTest with BeforeAndAfterEach {
@@ -60,6 +63,8 @@ final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with Scalatest
     appender.stop()
   }
 
+  private val health = HealthRoutes.route(() => Future.successful(Readiness.Ready))
+
   private def recordedFrame: String = {
     val events = appender.list.asScala.toList
     events should have size 1
@@ -69,7 +74,7 @@ final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with Scalatest
   "boundary" should {
 
     "answer a served request through the wrapped route" in {
-      Get("/health") ~> BoundaryLogging.boundary(HealthRoutes.route) ~> check {
+      Get("/health") ~> BoundaryLogging.boundary(health) ~> check {
         status shouldBe StatusCodes.OK
       }
     }
@@ -77,14 +82,14 @@ final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with Scalatest
     // Незапечатанный маршрут отклонил бы запрос, 404 появился бы выше границы,
     // и запись об обслуженном запросе не попала бы в журнал вовсе.
     "answer an unserved path itself instead of letting the rejection escape" in {
-      Get("/lots") ~> BoundaryLogging.boundary(HealthRoutes.route) ~> check {
+      Get("/lots") ~> BoundaryLogging.boundary(health) ~> check {
         handled shouldBe true
         status shouldBe StatusCodes.NotFound
       }
     }
 
     "answer an unsupported method itself" in {
-      Post("/health") ~> BoundaryLogging.boundary(HealthRoutes.route) ~> check {
+      Post("/health") ~> BoundaryLogging.boundary(health) ~> check {
         handled shouldBe true
         status shouldBe StatusCodes.MethodNotAllowed
       }
@@ -110,7 +115,7 @@ final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with Scalatest
   "boundary record" should {
 
     "carry the frame of a served request and no scenario" in {
-      Get("/health") ~> BoundaryLogging.boundary(HealthRoutes.route) ~> check {
+      Get("/health") ~> BoundaryLogging.boundary(health) ~> check {
         status shouldBe StatusCodes.OK
       }
 
@@ -122,13 +127,27 @@ final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with Scalatest
       frame should not include "request_id"
     }
 
+    // ADR-054 связывает неготовность базы с категорией dependency_unavailable:
+    // оператор фильтрует записи Auction тем же запросом, что и остальных.
+    "classify a node that is not ready as an unavailable dependency" in {
+      Get("/health") ~> BoundaryLogging.boundary(
+        HealthRoutes.route(() => Future.successful(Readiness.JournalUnavailable))
+      ) ~> check {
+        status shouldBe StatusCodes.ServiceUnavailable
+      }
+
+      val frame = recordedFrame
+      frame should include("result=error")
+      frame should include("error_category=dependency_unavailable")
+    }
+
     "carry the request_id the caller sent" in {
       val header = HttpHeader.parse("x-request-id", "local-probe") match {
         case HttpHeader.ParsingResult.Ok(parsed, _) => parsed
         case other => fail(s"unexpected header parsing result: $other")
       }
 
-      Get("/health").withHeaders(header) ~> BoundaryLogging.boundary(HealthRoutes.route) ~> check {
+      Get("/health").withHeaders(header) ~> BoundaryLogging.boundary(health) ~> check {
         status shouldBe StatusCodes.OK
       }
 
@@ -138,7 +157,7 @@ final class BoundaryLoggingSpec extends AnyWordSpec with Matchers with Scalatest
     // Иначе перебор адресов неаутентифицированным клиентом пишет в журнал
     // столько разных operation, сколько строк он сумел прислать.
     "keep an unserved path out of the record" in {
-      Get("/lots/../../etc/passwd") ~> BoundaryLogging.boundary(HealthRoutes.route) ~> check {
+      Get("/lots/../../etc/passwd") ~> BoundaryLogging.boundary(health) ~> check {
         status shouldBe StatusCodes.NotFound
       }
 

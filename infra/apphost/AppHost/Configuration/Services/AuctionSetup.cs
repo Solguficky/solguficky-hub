@@ -36,8 +36,8 @@ internal static class AuctionSetup
 
         // Pekko Persistence JDBC настраивается как Slick: URL без учётных данных,
         // пользователь и пароль отдельно. Поэтому ключей три, и формат URL — JDBC,
-        // а не URI, как у Identity. Читать их сервис начнёт в PER-302; до тех пор
-        // они приходят заранее и ничего не меняют.
+        // а не URI, как у Identity. Сервис читает их и для миграции схемы, и для
+        // пула журнала.
         auction
             .BindConnection<ExecutableResource, PostgresDatabaseResource>(
                 context,

@@ -180,7 +180,7 @@ verify-changed:
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test contour-test contour-bot-test
+test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -488,7 +488,8 @@ notifications-image:
 # схемах contracts/proto, как Grpc.Tools вызывает protoc внутри dotnet build
 # у Meetups. Buf в этой сборке не участвует — обоснование в ADR-048.
 # Версии Scala и библиотек закреплены в apps/auction/build.sbt.
-# Сервис — HTTP-граница на Pekko HTTP; торговой логики в нём пока нет.
+# Сервис — HTTP-граница на Pekko HTTP, одноузловой кластер и журнал Pekko
+# Persistence JDBC; торговой логики в нём пока нет.
 
 # Одного `update` мало: бинарник protoc тянет protocbridge на первой генерации,
 # а scalafmt-core подтягивается при первой проверке формата. Без обоих шагов
@@ -506,9 +507,17 @@ auction-proto:
 auction-build:
     cd apps/auction && sbt -batch Test/compile
 
-# Прогон ScalaTest, включая property-проверку каркаса лога
+# Сьюты `*IntegrationSpec` отбирает переменная в build.sbt, а не тег ScalaTest:
+# контейнер сьюта стартует до фильтра тегов. Без Docker сьют падает, а не
+# пропускается.
+#
+# Прогон ScalaTest L0, включая property-проверку каркаса лога; Docker не нужен
 auction-test:
     cd apps/auction && sbt -batch test
+
+# L1: схема, журнал, шардинг и готовность на PostgreSQL в Testcontainers; нужен Docker
+auction-test-integration:
+    cd apps/auction && AUCTION_INTEGRATION_TESTS=1 sbt -batch test
 
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым

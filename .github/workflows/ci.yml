@@ -467,6 +467,14 @@ jobs:
       - name: Scala format, build and tests
         run: sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
         working-directory: apps/auction
+      # L1 (`*IntegrationSpec`): схема, журнал и готовность на PostgreSQL в
+      # Testcontainers. Docker на ubuntu-latest есть; отдельный шаг, потому что
+      # сьюты отбирает переменная окружения, и в `verify` они не входят.
+      - name: Scala integration tests
+        run: sbt -batch test
+        working-directory: apps/auction
+        env:
+          AUCTION_INTEGRATION_TESTS: "1"
 
   # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
   # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со
