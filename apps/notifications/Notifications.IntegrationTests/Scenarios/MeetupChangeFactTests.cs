@@ -234,6 +234,54 @@ public class MeetupChangeFactTests
         (await Facts(db, NotificationFacts.MeetupChangedType)).ShouldBe(0);
     }
 
+    /// <summary>
+    /// О собственном действии человеку не сообщают: подписанный исполнитель
+    /// правки, материала и снятия не получает о них факта, другой подписчик
+    /// получает каждый.
+    /// </summary>
+    [Fact]
+    public async Task When_SubscriberPerformsChange_Expect_PerformerNotAddressed()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+
+        var meetupId = EventFactory.NewId();
+        var performer = await Person(db, "admin", "member");
+        var other = await Person(db, "member");
+        await Subscribe(db, performer, meetupId);
+        await Subscribe(db, other, meetupId);
+
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        await Publish(nats, silo.Service<ReplicaTelemetry>(), meetupId);
+
+        var renamed = Changed(meetupId, version: 3, title: "Пятничная");
+        renamed.PerformedBy = performer.ToString();
+        await nats.Publish(MeetupChangedSubject, renamed);
+        var changed = await Eventually(() => OfType(nats, Notification.TypeOneofCase.MeetupChanged), facts => facts.Count == 1);
+
+        // Материал адресуется только видимой сходке, поэтому снятие идёт после
+        // его факта, а не вперемешку с ним.
+        var material = EventFactory.Material(meetupId, version: 4, EventFactory.NewId(), "Афиша");
+        material.State.Title = "Пятничная";
+        material.PerformedBy = performer.ToString();
+        await nats.Publish(MaterialAttachedSubject, material);
+        var materials = await Eventually(() => OfType(nats, Notification.TypeOneofCase.MeetupMaterial), facts => facts.Count == 1);
+
+        var unpublished = Changed(meetupId, version: 5, title: "Пятничная");
+        unpublished.State.Materials.Add(material.State.Materials);
+        unpublished.State.Visibility = MeetupVisibility.Hidden;
+        unpublished.MeetupUnpublished = new Meetups.V1.MeetupUnpublished();
+        unpublished.PerformedBy = performer.ToString();
+        await nats.Publish(MeetupUnpublishedSubject, unpublished);
+        var withdrawn = await Eventually(() => OfType(nats, Notification.TypeOneofCase.MeetupUnpublished), facts => facts.Count == 1);
+
+        changed.Concat(materials).Concat(withdrawn).ShouldAllBe(fact => fact.RecipientId == other.ToString());
+        (await Facts(db, NotificationFacts.MeetupChangedType)).ShouldBe(1);
+        (await Facts(db, NotificationFacts.MeetupMaterialType)).ShouldBe(1);
+        (await Facts(db, NotificationFacts.MeetupUnpublishedType)).ShouldBe(1);
+    }
+
     [Fact]
     public async Task When_MaterialAttached_Expect_MaterialFactToSubscribersWithCategoryOn()
     {

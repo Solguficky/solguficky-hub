@@ -348,9 +348,10 @@ let ``Schema names no failure, so a hidden meetup is indistinguishable from a mi
 /// перечисляет их вместе: расхождение между снимком чтения и снимком события —
 /// ровно то, что раздельные определения обязаны делать заметным. Пятое отсутствие —
 /// `request_id` конверта (PER-227): «граница id не получила» отличимо от пустой
-/// строки так же, как несостоявшийся момент.
+/// строки так же, как несостоявшийся момент. Шестое — `performed_by` конверта
+/// (PER-403): у публикации по часам человека нет, и это не пустая строка.
 [<Fact>]
-let ``The schema has exactly five absent states: the publication moments and the request id`` () =
+let ``The schema has exactly six absent states: the publication moments, the request id and the performer`` () =
     let actual =
         [
             for message in messages do
@@ -377,6 +378,7 @@ let ``The schema has exactly five absent states: the publication moments and the
                 "MeetupSnapshot.first_published_at"
                 "MeetupSnapshot.scheduled_publish_at"
                 "MeetupEvent.request_id"
+                "MeetupEvent.performed_by"
                 "MeetupState.first_published_at"
                 "MeetupState.scheduled_publish_at"
             ]

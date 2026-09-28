@@ -60,6 +60,17 @@ public static class ReplicaMapping
             return new Decoded.Poison($"state.author '{state.Author}' is not a UUID");
         }
 
+        Guid? performedBy = null;
+        if (message.HasPerformedBy)
+        {
+            if (!Guid.TryParse(message.PerformedBy, out var performer))
+            {
+                return new Decoded.Poison($"performed_by '{message.PerformedBy}' is not a UUID");
+            }
+
+            performedBy = performer;
+        }
+
         var lifecycle = state.Lifecycle switch
         {
             MeetupLifecycle.Planned => "planned",
@@ -155,7 +166,8 @@ public static class ReplicaMapping
             Card(state),
             occasion,
             message.HasRequestId ? message.RequestId : null,
-            material));
+            material,
+            performedBy));
     }
 
     /// <summary>
