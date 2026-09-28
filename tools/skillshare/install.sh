@@ -45,6 +45,16 @@ if ! command -v skillshare >/dev/null 2>&1; then
     exit 1
 fi
 
+# An older skillshare ignores the lockfile and installs whatever upstream is
+# at, so the version pinned in the justfile is required, not advised. The
+# banner of `skillshare version` carries its own version as the first vX.Y.Z.
+pinned=$(sed -n 's/^SKILLSHARE_VERSION *:= *"\([^"]*\)".*/\1/p' justfile)
+installed=$(skillshare version 2>&1 | grep -o 'v[0-9][0-9.]*' | head -n 1 || true)
+if [ "$installed" != "v$pinned" ]; then
+    printf 'skillshare v%s is required (SKILLSHARE_VERSION in justfile), PATH has %s.\n' "$pinned" "${installed:-none}" >&2
+    exit 1
+fi
+
 fingerprint() {
     if [ -f "$1" ]; then
         git hash-object -- "$1"
@@ -70,7 +80,17 @@ skill_paths() {
 }
 
 paths_before=$(skill_paths)
+if [ -z "$paths_before" ]; then
+    printf 'No skills declared in %s; nothing to check the install against.\n' "$CONFIG" >&2
+    exit 1
+fi
 metadata_before=$(fingerprint "$METADATA")
+# Only a metadata file that matches the commit is restored at the end: an
+# uncommitted edit to it (an accepted audit finding, say) is someone's work.
+metadata_clean=no
+if git diff --quiet -- "$METADATA"; then
+    metadata_clean=yes
+fi
 lock_before=$(fingerprint "$LOCK")
 
 # Without `|| status=$?` a non-zero exit would end the script here under `set -e`
@@ -121,7 +141,7 @@ fi
 # With the same lock and the same set of skills, a changed metadata file is
 # bookkeeping only: every install rewrites `installed_at` of every entry. Left
 # in place it would make each fresh checkout dirty, so it is restored.
-if [ "$(fingerprint "$METADATA")" != "$metadata_before" ] && [ "$metadata_before" != absent ]; then
+if [ "$(fingerprint "$METADATA")" != "$metadata_before" ] && [ "$metadata_before" != absent ] && [ "$metadata_clean" = yes ]; then
     git checkout -- "$METADATA"
 fi
 
