@@ -70,9 +70,14 @@ export function createCapturingLogger(): {
   };
 }
 
+/**
+ * `calls` передаётся снаружи, когда рестарт процесса нужно показать в том же
+ * чате: новый бот теряет память, а история сообщений у человека остаётся.
+ */
 export function createHarness(
   identity: IdentityResolver & Partial<CommunityAdministrator>,
   dispatcher: Dispatcher = createDispatcher(),
+  calls: RecordedCall[] = [],
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
@@ -82,7 +87,6 @@ export function createHarness(
     logger,
   });
   bot.botInfo = botInfo;
-  const calls: RecordedCall[] = [];
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push(recordCall(method, payload));
     if (method === "sendMessage") {
