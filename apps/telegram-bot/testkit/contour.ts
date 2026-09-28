@@ -13,7 +13,7 @@ import { createDispatcher } from "../src/application/dispatcher.js";
 import { communityDay } from "../src/community-time.js";
 import { createIdentityClient } from "../src/identity/client.js";
 import { createMeetupsClient } from "../src/meetups/client.js";
-import { createHarness, type RecordedCall } from "./harness.js";
+import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 
 // Провод бота против настоящих Identity и Meetups (уровень L2). Среду поднимает
 // Contour.Host (`just contour-bot-test`), а этот модуль ею не владеет: он
@@ -311,6 +311,14 @@ export function openBotWire(endpoints: {
       handleUpdate: (update: Update) => current.bot.handleUpdate(update),
     },
     calls,
+    /**
+     * Записи лога текущего процесса бота — вход оракулов исследующего прогона
+     * (`explore/`). В отличие от `calls`, рестарт их обнуляет: у нового
+     * процесса свой логгер, как и в продакшне.
+     */
+    get records(): readonly LogRecord[] {
+      return current.records;
+    },
     /**
      * Рестарт процесса бота: память о висящих вопросах теряется, Meetups и
      * история сообщений у человека остаются.
