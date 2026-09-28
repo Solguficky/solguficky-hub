@@ -91,8 +91,10 @@ fi
 
 # GOTOOLCHAIN pins the compiler to go.mod even when the image ships a newer Go
 # (docs/learning/go/service-layout.md); a missing Go is installed at that version.
+# A Go older than 1.21 does not know GOTOOLCHAIN, so it counts as missing.
+go_minor="$(GOTOOLCHAIN=local go version 2>/dev/null | sed -n 's/.* go1\.\([0-9]*\).*//p' || true)"
 export GOTOOLCHAIN="go${GO_VERSION}"
-if ! command -v go >/dev/null 2>&1; then
+if [ -z "$go_minor" ] || [ "$go_minor" -lt 21 ]; then
   log "Installing Go $GO_VERSION"
   curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
   $SUDO rm -rf /usr/local/go
@@ -159,7 +161,9 @@ fi
 java_major="$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1 || true)"
 if [ "$java_major" != "$JAVA_MAJOR" ]; then
   log "Installing Temurin JDK $JAVA_MAJOR"
-  if [ ! -f /etc/apt/keyrings/adoptium.gpg ]; then
+  # Keyed on the source file, written last: a run cut off after the key
+  # rewrites both.
+  if [ ! -f /etc/apt/sources.list.d/adoptium.list ]; then
     curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public | \
       gpg --dearmor | $SUDO tee /etc/apt/keyrings/adoptium.gpg >/dev/null
     echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo "$VERSION_CODENAME") main" | \
@@ -177,7 +181,7 @@ fi
 
 if ! command -v sbt >/dev/null 2>&1; then
   log "Installing sbt"
-  if [ ! -f /etc/apt/keyrings/sbt.gpg ]; then
+  if [ ! -f /etc/apt/sources.list.d/sbt.list ]; then
     curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | \
       gpg --dearmor | $SUDO tee /etc/apt/keyrings/sbt.gpg >/dev/null
     echo "deb [signed-by=/etc/apt/keyrings/sbt.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | \
