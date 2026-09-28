@@ -1,0 +1,107 @@
+# ADR-055: Рантайм прода — k3s на том же VPS, чарт из графа AppHost
+
+> **Дата:** 2026-09-28  
+> **Статус:** Accepted
+
+## Контекст
+
+[ADR-039](ADR-039-single-vps-for-initial-self-hosting.md) разместил dev, агентов, test и production на одном Linux VPS и выбрал для приложений rootless Podman Quadlet. [RFC-010](../rfcs/RFC-010-remote-development-and-self-hosting-platform.md) описал под этот рантайм deploy-контракт: forced command на SSH-ключе service account перезапускает свои unit через `systemctl --user`, а production topology описывается Quadlet-файлами отдельно от графа Aspire.
+
+Из-за этого у топологии два описания: граф AppHost для локального запуска ([ADR-021](ADR-021-aspire-local-orchestration.md)) и рукописные unit для прода. Их соответствие держалось бы одинаковыми environment contracts и smoke-тестами. Генератора Quadlet у Aspire 13.5 нет. Kubernetes-цель есть: `aspire publish` с `Aspire.Hosting.Kubernetes` генерирует Helm-чарт из того же графа, который затем ставится `helm` или CI. Реализации на Quadlet в репозитории нет ни строки, поэтому смена рантайма сейчас ничего не выбрасывает.
+
+Граф AppHost в нынешнем виде в чарт не отображается. Identity запускается цепочкой `AddExecutable` (buf generate, go build, бинарник), PostgreSQL и NATS — контейнерами Aspire, которые в проде заменяет своя инфраструктура. Все четыре сервиса применяют миграции при старте, а бот держит единственный long-polling экземпляр на токен.
+
+Владелец выбрал k3s и чарт из AppHost. Этот документ записывает решение и развилки, которые владелец закрыл 2026-09-28.
+
+## Варианты
+
+Все варианты ниже исходят из одного VPS: отдельный прод-VPS рассмотрен и отвергнут владельцем 26.09.2026 по цене, и сигналы переезда на него остаются в ADR-039.
+
+**Рантайм.**
+
+- **rootless Podman Quadlet (ADR-039, RFC-010).** Рантайм без root-демона и учебная цель «rootless OCI под systemd». Цена — вторая, рукописная топология рядом с графом AppHost и свой deploy-helper.
+- **k3s с рукописным чартом или kustomize.** Kubernetes без зависимости от генератора Aspire. Цена та же, что у Quadlet: два описания топологии.
+- **k3s с чартом, сгенерированным из AppHost.** Одно описание топологии. Цена — containerd от root рядом с агентами, память служебных компонентов и зависимость от генератора Aspire, который в этом репозитории ещё не проверен.
+
+**Доставка.**
+
+- **Push из CI** через `ssh -L` к API k3s на localhost хоста: `helm upgrade` из workflow. Ничего лишнего в кластере, но CI получает kubeconfig прода, а откат и дрейф ведутся руками.
+- **GitOps на Flux.** Кластер сам тянет desired state из ops-репозитория. Kubeconfig наружу не выдаётся, промоушн — это ревьюируемый PR. Цена — контроллеры Flux в памяти хоста.
+
+**Изоляция test и prod.** Namespace'ы одного k3s с NetworkPolicy default-deny; два k3s на одном хосте — двойная память служебных компонентов; тест вне кластера — тестовый контур перестаёт повторять прод.
+
+**PostgreSQL.** CloudNativePG, кластер на среду; один CNPG-кластер на обе среды — общий failure domain данных test и prod; StatefulSet или чарт без оператора — PITR и failover собираются руками; PostgreSQL на хосте вне k3s с pgBackRest — данные живут вне той модели, которой описан остальной прод.
+
+**Сборка образов.** Собирает только CI: Identity и бот — своими Containerfile, .NET-сервисы — SDK-контейнером. Альтернативы: `aspire do push` собирает всё сам — Go-кодогенерации нужен корень репозитория, которого Aspire сборке не даёт; `ko` для Go — второй сборщик, который тоже не запускает buf generate.
+
+**Где лежат values и манифесты.** Приватный ops-репозиторий — RFC-010 уже называет его источником правды хоста; SOPS-шифротекст в публичном репозитории приложения — наружу уходят топология и состав секретов.
+
+## Решение
+
+**Рантайм прода — k3s на том же VPS.** Один VPS из ADR-039 остаётся: этот документ заменяет только его выбор рантайма. Test и prod — namespace'ы одного k3s с NetworkPolicy default-deny; межсервисную аутентификацию решает [PER-265](https://linear.app/anticnvm/issue/per-265), а до неё временную границу держат политики.
+
+**Топология прода генерируется из графа AppHost.** Режим публикации отображает ресурсы через `ExecutionContext.IsPublishMode`: Identity становится образом вместо цепочки `AddExecutable`, PostgreSQL и NATS — `AddConnectionString` на инфраструктуру кластера. Aspire остаётся локальной оркестрацией по ADR-021; публикация добавляется к inner loop, а не заменяет его. Чарт публикуется в GHCR как OCI-артефакт.
+
+**Доставка — GitOps на Flux.** HelmRelease тянет OCI-чарт из GHCR, kustomize-controller расшифровывает SOPS/age, промоушн из test в prod — PR в приватный ops-репозиторий, где лежат values и манифесты. Ставятся source-, helm- и kustomize-controller; notification- и image-automation-controller не ставятся. Происхождение образа проверяет CI ops-репозитория: промоушн-PR прогоняет `gh attestation verify` по каждому digest до мержа. Admission-контроллер проверки подписи в кластере в первый срез не входит.
+
+**PostgreSQL — CloudNativePG, один кластер на среду**, базы сервисов внутри кластера своей среды. PITR идёт в object storage у другого провайдера средствами CNPG (Barman Cloud), а не pgBackRest.
+
+**Образы собирает только CI**, тем же способом, что `aspire do push`: Identity и бот — своими Containerfile, Meetups и Notifications — SDK-контейнером .NET по [Container.targets](../../shared/dotnet/Container.targets). Деплой ссылается на образ только по digest.
+
+**Правила кластера.**
+
+- dev и coding agents остаются Unix-пользователями хоста вне кластера и не получают kubeconfig;
+- API k3s наружу закрыт и слушает только localhost хоста;
+- каждый из четырёх сервисов — одна реплика со стратегией `Recreate`: Identity, Meetups и Notifications применяют миграции при старте, а бот держит единственный poller на токен, и два экземпляра одновременно недопустимы.
+
+**Что из RFC-010 отменяется:** Quadlet units и systemd user services как рантайм приложений; forced command на SSH-ключе service account и перезапуск через user manager systemd; утверждение «Aspire в эту схему не публикуется»; pgBackRest как инструмент PITR.
+
+**Что из RFC-010 остаётся:** образ по digest и запрет тега как deploy identity; attestation и SBOM из CI с проверкой `gh attestation verify`; SOPS с age, разные identity для test и prod; escrow ключей восстановления; бэкап у другого провайдера и restore drill до боевого запуска; сборка только на GitHub-hosted runners; раздельные токены бота для test и prod.
+
+**Отменённые учебные цели ADR-039:** rootless OCI runtime под systemd — Quadlet, user manager systemd, rootless networking Podman. Практика Linux-hosting, Ansible bootstrap, supply-chain verification и восстановления PostgreSQL на чистом хосте остаётся; исключение Kubernetes из этапа снимается вместе с Quadlet.
+
+## Обоснование
+
+Главный довод — одно описание топологии. С рукописным рантаймом каждое изменение графа AppHost нужно повторять во втором месте, и расхождение ловится только smoke-тестом на хосте. Генерация переносит это расхождение в сборку: узел, который не отображается в режим публикации, виден в диффе AppHost. Quadlet этот довод не получает, потому что генератора для него нет, а рукописный чарт повторяет проблему Quadlet на Kubernetes.
+
+Flux выбран потому, что push требует выдать CI kubeconfig прода, а это ровно та учётка, которую RFC-010 сужал до одной команды. В pull-модели кластер ничего наружу не открывает, desired state прода — содержимое ops-репозитория, а промоушн проходит ревью. Проверка attestation переезжает с хоста в CI ops-репозитория, потому что forced command, который её выполнял, отменён; admission-контроллер закрыл бы и ручной обход, но стоит памяти на хосте, где её и так мало.
+
+Namespace'ы вместо второго кластера — из-за памяти: служебные компоненты k3s дублировались бы. CNPG один на среду держит данные test и prod в разных failure domain и даёт PITR без ручной сборки. Values в приватном репозитории — потому что публичный репозиторий приложения не должен раскрывать топологию прода.
+
+## Последствия
+
+### Что становится проще
+
+- топология прода и локальный граф — один код, а расхождение между ними видно в диффе AppHost;
+- выкатка, откат и дрейф ведутся одним механизмом: desired state в ops-репозитории, Flux его сводит;
+- PITR, failover и бэкапы PostgreSQL описываются ресурсом CNPG, а не скриптами на хосте;
+- kubeconfig прода не покидает хост.
+
+### Что становится сложнее
+
+- containerd работает от root рядом с агентами: компрометация рантайма даёт root на хосте, а не пользователя среды. Агенты по-прежнему не получают ни сокета, ни kubeconfig;
+- служебные компоненты кластера — k3s, оператор CNPG, контроллеры Flux, Collector — занимают память общего хоста, где нижняя граница 8 GB;
+- генератор Aspire для Kubernetes в этом репозитории не проверен: отображение режима публикации и сам чарт — работа [PER-370](https://linear.app/anticnvm/issue/per-370);
+- `Recreate` означает простой на каждой выкатке: старый под останавливается до старта нового;
+- откат на предыдущий digest после применённой миграции по-прежнему удерживается runbook, а не автоматикой;
+- логи подов собираются не из journald; как их забирает Collector, фиксирует лист телеметрии ([PER-378](https://linear.app/anticnvm/issue/per-378)), граница [ADR-053](ADR-053-production-observability-otlp-better-stack.md) «OTLP через Collector» не меняется;
+- учебный материал о Quadlet ([словарь self-hosting](../learning/self-hosting/vocabulary.md)) описывает отменённый рантайм.
+
+## Предсказание и пересмотр
+
+Ожидается, что служебные компоненты кластера на пустом хосте займут меньше 1,2 GB и рантайм уложится в таблицу 8/16 GB из ADR-039 без ужатия production reservation. Замер — в [PER-233](https://linear.app/anticnvm/issue/per-233) на пустом кластере и в [PER-371](https://linear.app/anticnvm/issue/per-371) после установки.
+
+Решение пересматривается в пользу Quadlet, если выполняется хотя бы одно:
+
+- k3s, оператор CNPG, контроллеры Flux и Collector на пустом хосте 8 GB вместе занимают больше 1,2 GB;
+- генератор Aspire не отображает граф в рабочий чарт без рукописных правок, которые приходится повторять на каждой публикации.
+
+Сигналы переезда прода на отдельный VPS остаются в ADR-039 и этим документом не меняются.
+
+## Связанные документы
+
+- RFC: [RFC-010](../rfcs/RFC-010-remote-development-and-self-hosting-platform.md) — runtime и deploy-контракт заменены этим решением
+- Architecture: [infrastructure.md](../architecture/infrastructure.md)
+- Standards: новые нормативы этим ADR не создаются
+- Другие ADR: заменяет раздел о рантайме [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md); [ADR-021](ADR-021-aspire-local-orchestration.md) — Aspire остаётся local inner loop; [ADR-053](ADR-053-production-observability-otlp-better-stack.md) не пересматривается
+- Linear: [PER-368](https://linear.app/anticnvm/issue/per-368), эпик [PER-80](https://linear.app/anticnvm/issue/per-80)

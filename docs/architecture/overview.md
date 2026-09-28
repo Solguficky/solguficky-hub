@@ -59,7 +59,7 @@ Linear является источником правды для порядка 
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; технический дизайн скелета зафиксирован, схема подписок Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
 | Mini App | Вне MVP, Deferred | Ни один сценарий MVP не требует второго клиента |
 | Local orchestration | Accepted, partially verified | Aspire как inner loop; механизм режимов заменён профилями-данными ([ADR-021](../decisions/ADR-021-aspire-local-orchestration.md), пересмотр 2026-09-04) |
-| Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-039 |
+| Production hosting | Accepted, not implemented | Начальный self-hosting размещается вместе с dev/agents/test на одном Linux VPS; отдельный production VPS вводится по сигналам ADR-039. Рантайм — k3s с чартом из графа AppHost и доставкой через Flux ([ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md)) |
 | Contract governance | Open, частично закрыто | Раскладка контрактов, Go, .NET, TypeScript и Scala codegen приняты; CI breaking checks и `buf lint` введены, Schema Registry остаётся открытым |
 
 Основной архитектурный поток строится вокруг сходок.
