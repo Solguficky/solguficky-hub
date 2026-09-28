@@ -7,6 +7,16 @@
     <RootNamespace>Notifications</RootNamespace>
   </PropertyGroup>
 
+  <!-- Production-образ: правила и проверка digest — shared/dotnet/Container.targets.
+       Обновить базу — заменить digest целиком: тег рядом с ним только читается
+       человеком, pull идёт по digest. База та же, что у Meetups.
+       Порты силоса и gateway не объявляются: в поде они слушают петлю
+       (NotificationsHost), и наружу образ открывает только HTTP-порт базы. -->
+  <PropertyGroup>
+    <ContainerRepository>notifications</ContainerRepository>
+    <ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:10.0-noble@sha256:2d584d8147faddb0d678c5748d47953e5b8e18621ed4fb7049a91381d9d7746f</ContainerBaseImage>
+  </PropertyGroup>
+
   <!-- Миграции лежат в сборке, а не рядом с бинарником: путь на диске зависит от
        того, как запущен процесс, а ресурс — нет. Тот же приём, что у Meetups. -->
   <ItemGroup>
@@ -41,5 +51,7 @@
     <ProjectReference Include="..\Notifications.Contracts\Notifications.Contracts.csproj" />
     <ProjectReference Include="..\..\..\shared\dotnet\ServiceDefaults\ServiceDefaults.csproj" />
   </ItemGroup>
+
+  <Import Project="..\..\..\shared\dotnet\Container.targets" />
 
 </Project>

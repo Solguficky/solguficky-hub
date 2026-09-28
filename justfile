@@ -475,6 +475,13 @@ notifications-contracts-check:
 notifications-run:
     dotnet run --project apps/notifications/Notifications
 
+# Production-образ в архив apps/notifications/Notifications/bin/container/, без
+# реестра и демона: `docker load` поднимает его как notifications:local. Публикацию
+# в GHCR делает только CI (.github/workflows/image-notifications.yml); база по тегу
+# роняет сборку с SOLG0001
+notifications-image:
+    dotnet publish apps/notifications/Notifications -t:PublishContainer --nologo -p:ContainerImageTags=local -p:ContainerArchiveOutputPath=bin/container/notifications.tar.gz
+
 # --- Auction (Scala / Pekko) -----------------------------------------------
 #
 # Кодогенерация Scala — часть `sbt compile`: sbt-protoc вызывает ScalaPB на
