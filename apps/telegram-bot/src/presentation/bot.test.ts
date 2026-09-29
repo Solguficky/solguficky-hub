@@ -2260,6 +2260,7 @@ describe("presentation adapter", () => {
       operation: "message",
       use_case: "find_meetup",
     });
+    // Солегуфику вход в управление не показывается (PER-396).
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
@@ -2267,10 +2268,10 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
         ],
       },
     });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
   });
 
   it("does not resolve identity for /start mentioned for another bot", async () => {
