@@ -44,7 +44,7 @@ Fallback между переменными запрещён, а одинаков
 
 Из [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) и [ADR-030](../decisions/ADR-030-telegram-bot.md):
 
-- бот — доверенная граница authentication. При long polling доверенностью входа является владение bot token; входящего HTTP у компонента нет, secret token не используется. Authentication material дальше не передаётся;
+- бот — доверенная граница authentication. При long polling доверенностью входа является владение bot token; входящего HTTP у компонента нет, secret token не используется. Authentication material дальше не передаётся. Сервисам за собой бот доказывает себя собственным токеном в `authorization: Bearer`, а не материалом Telegram ([ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md));
 - на каждом update, требующем продуктового действия, бот синхронно вызывает `IdentityService.ResolveIdentity`. Кэш фактов доступа и ролей не используется: устаревшее разрешение равносильно пропущенной проверке;
 - при недоступности Identity операция завершается fail-closed. Деградации до режима «показываем только чтение» нет;
 - `/start` может нести deep link payload перехода к сходке (`m_<uuid>`). Одноразовое приглашение в этом срезе не разбирается ([ADR-038](../decisions/ADR-038-identity-hub-access-retention.md)). Разбор payload принадлежит боту, решение о допуске — Identity;
