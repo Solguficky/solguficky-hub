@@ -31,6 +31,7 @@ import {
   type CommunityAdministrator,
   type IdentityAdminResult,
   type IdentityResolver,
+  type OrganizerResolver,
   toResolveIdentityInput,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
@@ -59,6 +60,7 @@ import {
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
+import { withMeetupAuthor } from "./meetup-author.js";
 import {
   meetupStartLink,
   tokenToUuid,
@@ -80,7 +82,9 @@ export type TelegramEnvironment = "prod" | "test";
 export type BotRuntime = {
   token: string;
   dispatcher: Dispatcher;
-  identity: IdentityResolver & Partial<CommunityAdministrator>;
+  identity: IdentityResolver &
+    Partial<CommunityAdministrator> &
+    Partial<OrganizerResolver>;
   logger: Logger;
   presentation?: "rich" | "plain";
   environment?: TelegramEnvironment;
@@ -290,7 +294,11 @@ type BoundaryOutcome =
       reply_error?: string;
     };
 
-export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
+export function createBot(options: BotRuntime): Bot<UpdateContext> {
+  const runtime: BotRuntime = {
+    ...options,
+    dispatcher: withMeetupAuthor(options.dispatcher, options.identity),
+  };
   // Среда передаётся всегда, а не только для `test`: умолчание живёт в одном
   // месте, и отсутствие поля не читается как «grammY решит сам».
   const bot = new Bot<UpdateContext>(runtime.token, {

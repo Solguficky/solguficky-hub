@@ -299,11 +299,8 @@ export function openBotWire(endpoints: {
 }) {
   const identity = createIdentityClient(endpoints.identityUrl);
   const meetups = createMeetupsClient(endpoints.meetupsUrl, contourTimeZone);
-  const dispatcher = createDispatcher(
-    meetups,
-    undefined,
-    () => communityDay(new Date(), contourTimeZone),
-    identity,
+  const dispatcher = createDispatcher(meetups, undefined, () =>
+    communityDay(new Date(), contourTimeZone),
   );
   const calls: RecordedCall[] = [];
   let current = createHarness(identity, dispatcher, calls);
