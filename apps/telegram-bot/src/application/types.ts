@@ -203,8 +203,15 @@ export type ExecuteResult =
   | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
   // состояние подписки тогда не показывается вовсе, а не подставляется
-  // устаревшим или выдуманным значением.
-  | { kind: "meetup-card"; meetup: MeetupSnapshot; subscribed?: boolean }
+  // устаревшим или выдуманным значением. `categories` — действующие значения
+  // категорий сходки, их несёт только ответ на подписку: по ним карточка
+  // называет, что будет приходить (PER-402).
+  | {
+      kind: "meetup-card";
+      meetup: MeetupSnapshot;
+      subscribed?: boolean;
+      categories?: readonly CategoryState<MeetupCategory>[];
+    }
   | {
       kind: "meetup-notification-settings";
       meetup: MeetupSnapshot;
