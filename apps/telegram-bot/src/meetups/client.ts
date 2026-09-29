@@ -13,6 +13,7 @@ import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
 import type { Person } from "../application/types.js";
 import { communityLocalTime } from "../community-time.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
+import { type Tracing, traceRpc } from "../tracing.js";
 import type {
   ArchivedMeetupListResult,
   ArchivedMeetupSummary,
@@ -48,6 +49,7 @@ export type MeetupsClient = Meetups & { close(): void };
 export function createMeetupsClient(
   baseUrl: string,
   communityTimeZone: string,
+  tracing: Tracing,
   timeoutMs = 3_000,
 ): MeetupsClient {
   const sessionManager = new Http2SessionManager(baseUrl);
@@ -57,6 +59,7 @@ export function createMeetupsClient(
       baseUrl,
       defaultTimeoutMs: timeoutMs,
       sessionManager,
+      interceptors: [traceRpc(tracing)],
     }),
   );
   const client = createMeetupsAdapter(rpc, timeoutMs, communityTimeZone);

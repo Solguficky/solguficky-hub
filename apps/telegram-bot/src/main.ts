@@ -13,7 +13,12 @@ import {
   createNotificationSender,
 } from "./presentation/notification-message.js";
 import { createShutdown } from "./shutdown.js";
-import { type Logs, startLogs, startMetrics } from "./telemetry.js";
+import {
+  type Logs,
+  startLogs,
+  startMetrics,
+  startTraces,
+} from "./telemetry.js";
 
 const shutdownTimeoutMs = 15_000;
 const logsShutdownTimeoutMs = 5_000;
@@ -76,20 +81,22 @@ async function main(): Promise<number> {
     );
     return 1;
   }
-  const meetups = createMeetupsClient(meetupsUrl, communityTimeZone);
-  const notifications = createNotificationsClient(notificationsUrl);
   const metrics = startMetrics();
+  const tracing = startTraces();
+  const meetups = createMeetupsClient(meetupsUrl, communityTimeZone, tracing);
+  const notifications = createNotificationsClient(notificationsUrl, tracing);
   // День сообщества считается тем же поясом, что и у Meetups: иначе граница
   // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
   const dispatcher = createDispatcher(meetups, notifications, () =>
     communityDay(new Date(), communityTimeZone),
   );
-  const identity = createIdentityClient(identityUrl);
+  const identity = createIdentityClient(identityUrl, tracing);
   const bot = createBot({
     token,
     dispatcher,
     identity,
     logger,
+    tracing,
     presentation: presentationRaw,
     environment,
   });
@@ -116,7 +123,9 @@ async function main(): Promise<number> {
         identity.close();
         meetups.close();
         notifications.close();
-        await metrics.shutdown();
+        // Трейсы закрываются вместе с метриками после клиентов: последние
+        // спаны вызовов успевают уйти до остановки.
+        await Promise.all([tracing.shutdown(), metrics.shutdown()]);
       },
     },
     logger,

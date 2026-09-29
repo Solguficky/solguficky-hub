@@ -1,7 +1,7 @@
 import { metrics } from "@opentelemetry/api";
 import type { MeterProviderOptions } from "@opentelemetry/sdk-metrics";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startMetrics, telemetryResource } from "./telemetry.js";
+import { startMetrics, startTraces, telemetryResource } from "./telemetry.js";
 
 // Провайдер настоящий, записываются только его опции: так тест видит ровно
 // то, с чем startMetrics его создал, и падает, если ресурс снова пропадёт.
@@ -34,6 +34,20 @@ vi.mock("@opentelemetry/exporter-metrics-otlp-grpc", () => ({
   },
 }));
 
+vi.mock("@opentelemetry/exporter-trace-otlp-grpc", () => ({
+  OTLPTraceExporter: class {
+    export(_spans: unknown, done: (result: { code: number }) => void) {
+      done({ code: 0 });
+    }
+    forceFlush() {
+      return Promise.resolve();
+    }
+    shutdown() {
+      return Promise.resolve();
+    }
+  },
+}));
+
 beforeEach(() => {
   meterProviderOptions.length = 0;
   vi.stubEnv("OTEL_SERVICE_NAME", "telegram-bot");
@@ -43,6 +57,7 @@ beforeEach(() => {
   );
   vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "");
   vi.stubEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "");
+  vi.stubEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "");
 });
 
 afterEach(() => {
@@ -81,5 +96,28 @@ describe("startMetrics", () => {
     startMetrics();
 
     expect(meterProviderOptions).toHaveLength(0);
+  });
+});
+
+describe("startTraces", () => {
+  it("records spans on the telegram-bot resource with an OTLP endpoint", async () => {
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
+
+    const tracing = startTraces();
+    const span = tracing.tracer.startSpan("update");
+
+    expect(span.isRecording()).toBe(true);
+    expect(
+      (span as unknown as { resource: { attributes: object } }).resource
+        .attributes,
+    ).toMatchObject({ "service.name": "telegram-bot" });
+    span.end();
+    await tracing.shutdown();
+  });
+
+  it("records nothing without an OTLP endpoint", () => {
+    const tracing = startTraces();
+
+    expect(tracing.tracer.startSpan("update").isRecording()).toBe(false);
   });
 });
