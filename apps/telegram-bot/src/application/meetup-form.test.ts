@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
 import { createDispatcher } from "./dispatcher.js";
+import { rejectedValueText } from "./meetup-form.js";
 
 const identity = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
@@ -211,11 +212,12 @@ describe("meetup creation form", () => {
     expect(meetups.createDraft).toHaveBeenCalledOnce();
   });
 
-  it("preserves an invalid argument message for the presentation", async () => {
+  it("passes the rejection cause on without a text for the person", async () => {
     const meetups = harness().meetups;
+    const cause = new Error("description is required");
     meetups.publish = vi.fn(async () => ({
       kind: "invalid" as const,
-      message: "description is required",
+      cause,
     }));
     const dispatcher = createDispatcher(meetups);
     await expect(
@@ -227,15 +229,16 @@ describe("meetup creation form", () => {
     ).resolves.toEqual({
       kind: "dependency-rejected",
       reason: "invalid",
-      message: "description is required",
+      cause,
     });
   });
 
   it("repeats a field when Meetups rejects its value", async () => {
     const meetups = harness().meetups;
+    const cause = new Error("title is too long");
     meetups.changeAttributes = vi.fn(async () => ({
       kind: "invalid" as const,
-      message: "title is too long",
+      cause,
     }));
     const dispatcher = createDispatcher(meetups);
     await expect(
@@ -249,15 +252,17 @@ describe("meetup creation form", () => {
     ).resolves.toMatchObject({
       kind: "ask",
       field: "title",
-      error: "Не получилось сохранить значение: title is too long",
+      error: rejectedValueText,
+      rejected: cause,
     });
   });
 
   it("re-asks the schedule within the edit flow when Meetups rejects its value", async () => {
     const { dispatcher, meetups } = harness();
+    const cause = new Error("schedule is in the past");
     meetups.setSchedule = vi.fn(async () => ({
       kind: "invalid" as const,
-      message: "schedule is in the past",
+      cause,
     }));
 
     await expect(
@@ -271,7 +276,8 @@ describe("meetup creation form", () => {
     ).resolves.toMatchObject({
       kind: "edit-ask",
       field: "schedule",
-      error: "Не получилось сохранить значение: schedule is in the past",
+      error: rejectedValueText,
+      rejected: cause,
     });
   });
 
@@ -492,10 +498,10 @@ describe("deferred publication", () => {
     const published = { ...empty, visibility: "visible" as const, version: 2 };
     meetups.schedulePublication = vi
       .fn<Meetups["schedulePublication"]>()
-      .mockResolvedValueOnce({ kind: "invalid", message: "in the past" })
+      .mockResolvedValueOnce({ kind: "invalid", cause: "in the past" })
       .mockResolvedValueOnce({
         kind: "invalid",
-        message: "already published",
+        cause: "already published",
         precondition: true,
       });
     const request = {

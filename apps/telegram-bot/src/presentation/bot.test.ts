@@ -15,6 +15,7 @@ import {
   blockedHubAccessText,
   pendingHubAccessText,
 } from "../application/hub-access.js";
+import { rejectedValueText } from "../application/meetup-form.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
@@ -1879,31 +1880,110 @@ describe("presentation adapter", () => {
     ).toBeDefined();
   });
 
-  it("shows the domain's rejection message for a stale republish attempt", async () => {
-    const meetup = publishedMeetup();
-    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
-      request.intent === "view-meetup"
-        ? { kind: "meetup-card", meetup }
-        : {
-            kind: "dependency-rejected",
-            reason: "invalid",
-            message: "meetup is already published",
-          },
-    );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
-      execute,
-    });
-    await bot.init();
-    await bot.handleUpdate(
-      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
-    );
-    expect(calls.at(-1)).toMatchObject({
-      method: "editMessageText",
-      payload: {
-        text: expect.stringContaining("meetup is already published"),
-      },
-    });
+  // Текст отказа сервиса несёт метку: она не должна дойти ни до одного вызова
+  // Bot API, но обязана остаться в записи границы вместе с кодом (PER-397).
+  const leak = "SENTINEL-397 expected_version must be positive";
+  const rejection = (code: Code) => ({
+    kind: "dependency-rejected" as const,
+    reason: "invalid" as const,
+    cause: new ConnectError(leak, code),
+    ...(code === Code.FailedPrecondition
+      ? { precondition: true as const }
+      : {}),
   });
+
+  it.each([
+    {
+      name: "state action rejected as invalid",
+      update: () =>
+        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+      result: rejection(Code.InvalidArgument),
+      shown: "Это на моей стороне.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "state action on a stale screen",
+      update: () =>
+        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+      result: rejection(Code.FailedPrecondition),
+      shown: "Этот экран устарел",
+      grpc: "FailedPrecondition",
+    },
+    {
+      name: "material rejected as invalid",
+      update: () =>
+        callbackMessageUpdate(
+          "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
+          {
+            caption: "Прикрепить материал?\n\nНазвание: Афиша",
+            document: {
+              file_id: "bot-file-id",
+              file_unique_id: "unique",
+              file_name: "poster.pdf",
+            },
+          },
+        ),
+      result: rejection(Code.InvalidArgument),
+      shown: "Это на моей стороне.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "broadcast rejected as invalid",
+      update: () =>
+        callbackMessageUpdate("v1:bc:cs:AZnA3gAAAAAAAABfP4Lqmw", {
+          text: "Выше — текст для участников сообщества.",
+          reply_to_message: {
+            message_id: 8,
+            date: 0,
+            chat: { id: 42, type: "private", first_name: "tester" },
+            from: { id: 1, is_bot: true, first_name: "stub" },
+            text: "Переносим начало на вечер.",
+          },
+        }),
+      result: rejection(Code.InvalidArgument),
+      shown: "Сообщение не принято. Ничего не отправлено.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "form value rejected by Meetups",
+      update: () => callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+      result: {
+        kind: "ask" as const,
+        field: "title" as const,
+        meetup: draftMeetup(),
+        error: rejectedValueText,
+        rejected: new ConnectError(leak, Code.InvalidArgument),
+      },
+      shown: rejectedValueText,
+      grpc: "InvalidArgument",
+    },
+  ])(
+    "keeps the service text out of the reply for a $name",
+    async ({ update, result, shown, grpc }) => {
+      const meetup = publishedMeetup();
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup }
+          : result,
+      );
+      const { bot, calls, records } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+      );
+      await bot.init();
+      await bot.handleUpdate(update());
+
+      const sent = JSON.stringify(calls.map((call) => call.payload));
+      expect(sent).toContain(shown);
+      expect(sent).not.toContain("SENTINEL-397");
+      expect(sent).not.toMatch(/invalid_argument|failed_precondition/);
+      const record = records.at(-1);
+      expect(record?.level).toBe("warn");
+      expect(record?.fields.error_category).toBe("invariant");
+      expect(record?.fields.grpc_code).toBe(grpc);
+      expect(record?.fields.error).toContain("SENTINEL-397");
+    },
+  );
 
   it("opens the published meetup from the generated start link", async () => {
     const meetup = publishedMeetup();
@@ -2904,7 +2984,11 @@ describe("notification frames", () => {
     async (reason, expected, retry) => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(
         reason === "invalid"
-          ? { kind: "dependency-rejected", reason, message: "bad category" }
+          ? {
+              kind: "dependency-rejected",
+              reason,
+              cause: new Error("bad category"),
+            }
           : {
               kind: "dependency-rejected",
               reason: reason as "forbidden" | "conflict",

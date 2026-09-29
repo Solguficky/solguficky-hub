@@ -62,7 +62,9 @@ export type MeetupFailure =
   // не позволяет действие в текущем состоянии сходки. Без флага это
   // INVALID_ARGUMENT — неисполнимо само значение. Коды разведены контрактом
   // намеренно (integration.md), и кадр отказа выбирается по ним, а не по тексту.
-  | { kind: "invalid"; message: string; precondition?: true }
+  // Текст отказа лежит только в `cause` и уходит в запись границы, а не
+  // человеку: строки, которую экран мог бы подставить в ответ, нет (PER-397).
+  | { kind: "invalid"; cause: unknown; precondition?: true }
   | { kind: "conflict" }
   | { kind: "timeout"; cause: unknown }
   | { kind: "unavailable"; cause: unknown };

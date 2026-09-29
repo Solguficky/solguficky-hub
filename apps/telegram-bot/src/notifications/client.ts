@@ -161,7 +161,7 @@ function toFailure(cause: unknown): NotificationFailure {
     (cause.code === Code.InvalidArgument ||
       cause.code === Code.FailedPrecondition)
   ) {
-    return { kind: "invalid", message: cause.message };
+    return { kind: "invalid", cause };
   }
   // ALREADY_EXISTS приходит только на рассылке: тот же `id` уже принят с другим
   // текстом, сходкой или автором. Это конфликт команды, а не недоступность

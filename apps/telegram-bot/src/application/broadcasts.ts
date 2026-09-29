@@ -58,7 +58,7 @@ export function createBroadcasts(
       return {
         kind: "dependency-rejected",
         reason: "invalid",
-        message: result.message,
+        cause: result.cause,
       };
     }
     return { kind: "dependency-rejected", reason: result.kind };

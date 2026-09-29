@@ -158,7 +158,7 @@ function rejection(failure: NotificationFailure): ExecuteResult {
     ? {
         kind: "dependency-rejected",
         reason: "invalid",
-        message: failure.message,
+        cause: failure.cause,
       }
     : { kind: "dependency-rejected", reason: failure.kind };
 }
