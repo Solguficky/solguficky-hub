@@ -1,5 +1,6 @@
 using Dapper;
 using Microsoft.Extensions.Hosting;
+using NATS.Client.Core;
 using Notifications.Infrastructure;
 using Notifications.IntegrationTests.Infrastructure;
 using Notifications.Replica;
@@ -28,6 +29,12 @@ public class FactReplicaTests
     private const string ProfileBlocked = "events.identity.profile_blocked";
 
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Пауза между попытками привязки: штатные пять секунд растянули бы тест
+    /// повтора, а сам повтор от периода не зависит.
+    /// </summary>
+    private static readonly string QuickRetry = $"--{ReplicaOptions.SectionName}:RetryDelay=00:00:00.200";
 
     [Fact]
     public async Task When_MeetupPublishedInStream_Expect_MeetupInReplica()
@@ -189,7 +196,7 @@ public class FactReplicaTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start(withDurables: false);
-        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        await using var silo = await SiloUnderTest.LaunchOnBus(db.ConnectionString, nats.Url);
 
         var stopping = new TaskCompletionSource();
         silo.Service<IHostApplicationLifetime>().ApplicationStopping.Register(() => stopping.TrySetResult());
@@ -207,7 +214,7 @@ public class FactReplicaTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start(streamMaxAge: TimeSpan.FromDays(30));
-        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        await using var silo = await SiloUnderTest.LaunchOnBus(db.ConnectionString, nats.Url);
 
         var stopping = new TaskCompletionSource();
         silo.Service<IHostApplicationLifetime>().ApplicationStopping.Register(() => stopping.TrySetResult());
@@ -215,6 +222,47 @@ public class FactReplicaTests
         // Стрим способен доставить повтор через тридцать дней, а ключ живёт
         // восемь: после чистки повтор применился бы как новое событие.
         await stopping.Task.WaitAsync(Patience, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task When_BusSilentAtStart_Expect_BoundOnceItAnswers()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await nats.Pause();
+        await using var silo = await SiloUnderTest.LaunchOnBus(db.ConnectionString, nats.Url, QuickRetry);
+        var bindings = silo.Service<ReplicaBindings>();
+
+        // Снимается пауза по отказу, а не по часам: до снятия записана хотя бы
+        // одна неудачная попытка, а привязки нет — значит, привязка после
+        // снятия и есть повтор, а не медленный первый ответ.
+        await Eventually(() => Task.FromResult(bindings.FailedAttempts(ReplicaFeeds.Meetups)), attempts => attempts > 0);
+        bindings.WhenAllBound.IsCompleted.ShouldBeFalse();
+        await nats.Unpause();
+
+        await bindings.WhenAllBound.WaitAsync(Patience, TestContext.Current.CancellationToken);
+        var meetupId = EventFactory.NewId();
+        await nats.Publish(MeetupPublished, EventFactory.Meetup(meetupId, version: 1));
+
+        await Eventually(() => Meetup(db, meetupId), row => row is not null);
+    }
+
+    [Fact]
+    public async Task When_BusNeverAnswers_Expect_StartFailsWithBindFailure()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await nats.Pause();
+
+        var failure = await Should.ThrowAsync<InvalidOperationException>(
+            () => SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, QuickRetry));
+
+        // Причина — отказ самой шины, а не таймаут ожидания условия. Пустая
+        // причина здесь значила бы, что исключение пришло не из ожидания
+        // привязки, а откуда-то до него.
+        failure.InnerException.ShouldNotBeNull().ShouldBeAssignableTo<NatsException>();
     }
 
     [Fact]
