@@ -146,7 +146,7 @@ sh tests/contour/bot-wire/console/send.sh quit
 
 `member` вносится в whitelist первым заведённым `admin` и получает роль на
 первом `/start`, как в продукте; `guest` — человек с ником вне whitelist.
-Каждый обмен дописывается в `.work/bot-console/<время старта>.jsonl`. Язык
+Каждый обмен дописывается в `.work/bot-console/<время старта>.jsonl`. Готовые приёмы обоих пультов — [bot-consoles.md](../docs/development/bot-consoles.md). Язык
 команд — шапка `commands.ts`, его разбор держат L0-тесты бота. Пульт в
 `verify`, `test-all` и CI не входит: это инструмент прохода, а не проверка;
 найденное в нём закрепляется сценарием в `bot-wire/`.
