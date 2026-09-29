@@ -1,0 +1,52 @@
+# Production-образ Identity. Контекст сборки — корень репозитория:
+# `buf generate` нужен contracts/proto. Что попадает в контекст, решает
+# соседний Containerfile.dockerignore — список разрешённого, а не запрещённого.
+#
+# Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
+# роняет сборку на теге. Тег рядом с digest только читается человеком, pull
+# идёт по digest; обновить базу — заменить digest целиком. Версия buf обязана
+# совпадать с BUF_VERSION в justfile (код SOLG-IMG-BUF), версия Go в базе
+# сборки — с директивой go в apps/identity/go.mod: сверка ниже роняет сборку на
+# любом расхождении, а GOTOOLCHAIN=local не даёт скачать другой тулчейн молча.
+
+FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756b37f121ec858fb0407a168c269 AS buf
+
+FROM docker.io/library/golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS build
+ENV GOTOOLCHAIN=local CGO_ENABLED=0
+WORKDIR /src
+COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
+# Модули и плагины кодогенерации — отдельным слоем до исходников: их версии
+# закреплены в go.mod директивой tool, и слой переживает правку кода.
+COPY apps/identity/go.mod apps/identity/go.sum apps/identity/
+# GOTOOLCHAIN=local ловит только базу старее go.mod; новее — тоже расхождение:
+# образ собирал бы не тот Go, которым CI гоняет тесты.
+# Версия вырезается цифрами, а не хвостом строки: go.mod из рабочей копии на
+# Windows несёт CRLF, и \r в хвосте делал бы равные версии неравными.
+RUN want="go$(sed -n 's/^go \([0-9.]*\).*/\1/p' apps/identity/go.mod)" && have=$(go env GOVERSION) \
+    && [ "$want" = "$have" ] || { echo "Go в базе $have, в go.mod $want" >&2; exit 1; }
+RUN cd apps/identity && go mod download && go install tool
+COPY contracts/proto contracts/proto
+COPY apps/identity/buf.gen.yaml apps/identity/
+COPY apps/identity/cmd apps/identity/cmd
+COPY apps/identity/internal apps/identity/internal
+# CGO выключен: драйвер pgx на чистом Go, бинарник статический и не зависит от
+# libc финальной базы.
+RUN buf generate --template apps/identity/buf.gen.yaml \
+    && cd apps/identity && go build -trimpath -o /out/identity ./cmd/identity
+
+# База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
+# исполняет `id` из образа, а канарейки tools/image/check-test.sh собираются на
+# этой же базе и исполняют RUN. Бинарник принадлежит root, процесс идёт от
+# uid 1000 и писать его не может; сервис на диск не пишет — миграции встроены
+# в бинарник, — поэтому образ работает с --read-only.
+FROM docker.io/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+# Корневые сертификаты — из стадии сборки, а не apt: TLS к PostgreSQL с
+# sslmode=verify-full и к OTLP-коллектору по https проверяет цепочку ими.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/identity /usr/local/bin/identity
+# uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
+USER 1000:1000
+EXPOSE 50051
+# Команда в CMD, а не в ENTRYPOINT: `podman run <образ> id` тогда исполняет
+# `id`. Конфигурация идёт только переменными окружения IDENTITY_*.
+CMD ["/usr/local/bin/identity"]

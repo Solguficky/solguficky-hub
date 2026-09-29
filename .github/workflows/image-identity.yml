@@ -1,0 +1,62 @@
+name: Image Identity
+
+# Production-образ Identity по apps/identity/Containerfile. Pull request
+# только собирает образ и проверяет его: в GHCR ничего не пишется, и права
+# записи код из PR не получает. Push в develop публикует образ — кандидата на
+# stage. Мерж в main образ не пересобирает: на прод едет тот же digest, что
+# прошёл stage (RFC-010: «Production build повторно не выполняется»).
+#
+# Отдельный файл, а не джоба в ci.yml: tools/verify/select-recipes.sh читает
+# фильтры путей ci.yml как карту механического гейта, а образ в гейт не входит.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/identity/**'
+      - 'contracts/proto/**'
+      - 'tools/image/**'
+      - '.github/workflows/image-identity.yml'
+      - '.github/workflows/image-publish.yml'
+  push:
+    branches: [develop]
+    paths:
+      - 'apps/identity/**'
+      - 'contracts/proto/**'
+      - 'tools/image/**'
+      - '.github/workflows/image-identity.yml'
+      - '.github/workflows/image-publish.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: ${{ github.ref != 'refs/heads/develop' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-publish.yml
+    with:
+      image-name: identity
+      builder: containerfile
+      containerfile: apps/identity/Containerfile
+      publish: false
+
+  publish:
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' }}
+    # Публикации по очереди: тег sha-<коммит> одного прогона не должен
+    # перевесить другой, пока первый читает digest и аттестует его.
+    concurrency:
+      group: image-identity-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/image-publish.yml
+    with:
+      image-name: identity
+      builder: containerfile
+      containerfile: apps/identity/Containerfile
+      publish: true

@@ -35,6 +35,25 @@ just aspire hub
 
 `just identity-tools` ставит buf, плагины кодогенерации и golangci-lint закреплённых в `justfile` версий; без него `just verify` падает на линте.
 
+## Production-образ
+
+```bash
+just identity-image
+IMAGE_ENGINE=docker just identity-image
+```
+
+Образ собирается по `Containerfile` из контекста корня репозитория: `buf generate` нужен `contracts/proto`. Что попадает в контекст, решает `Containerfile.dockerignore` — список разрешённого, поэтому `gen/`, `bin/` и тесты рабочего дерева в сборку не доезжают. Стадия `build` на `golang` ставит плагины кодогенерации из директивы `tool` в `go.mod`, генерирует код и собирает статический бинарник с `CGO_ENABLED=0`; финальная стадия берёт из неё только бинарник и корневые сертификаты.
+
+- Каждая внешняя база, включая образ `bufbuild/buf`, закреплена по digest; `tools/image/check-containerfile.sh` роняет сборку на теге кодом `SOLG-IMG-TAG`, а на версии buf, разошедшейся с `BUF_VERSION` в `justfile`, — кодом `SOLG-IMG-BUF`. Версия Go в базе сборки обязана совпадать с директивой `go` в `go.mod`: сверка в стадии `build` роняет сборку на расхождении в любую сторону, а `GOTOOLCHAIN=local` не даёт скачать другой тулчейн. Сменить базу — заменить digest целиком.
+- Финальная база — `debian:bookworm-slim`, а не distroless: `podman run --rm <образ> id` исполняет `id` из образа, а канарейки `tools/image/check-test.sh` собираются на ней же и исполняют `RUN`. Процесс идёт от uid 1000, команда стоит в CMD, конфигурация — только переменные окружения из раздела выше.
+- Read-only rootfs проверен запуском с `--read-only --cap-drop=all --security-opt no-new-privileges` против PostgreSQL: миграции применяются, проба готовности отвечает `SERVING`, `ResolveIdentity` возвращает идентификатор. Сервис на диск не пишет: миграции встроены в бинарник.
+
+Публикацию делает только CI: `.github/workflows/image-identity.yml` вызывает переиспользуемый `image-publish.yml` веткой `containerfile`, как образ Telegram Bot. Базы проверяются до публикации, uid — общим шагом по опубликованному digest. Общий шаг ищет в образе и токен Bot API; Identity его не получает, и секретов самой Identity — `IDENTITY_MAINTAINER_TOKEN` и пароля в `IDENTITY_DATABASE_URL` — эта проверка не видит: их выдаёт только среда запуска, и в Containerfile нет ни `ARG`, ни `ENV` с ними. Pull request собирает и проверяет образ, ничего не записывая в реестр. Push в `develop` публикует `ghcr.io/solguficky/identity`, снимает SBOM, сканирует его в режиме report-only и выпускает attestation на registry digest; digest печатается в summary прогона. Происхождение проверяет та же команда, что и хост перед выкаткой:
+
+```bash
+gh attestation verify oci://ghcr.io/solguficky/identity@sha256:<digest> --repo Solguficky/solguficky-hub --signer-workflow Solguficky/solguficky-hub/.github/workflows/image-publish.yml --source-ref refs/heads/develop
+```
+
 ## Проверка
 
 ```bash
