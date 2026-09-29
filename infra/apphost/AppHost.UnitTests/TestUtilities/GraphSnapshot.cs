@@ -90,14 +90,16 @@ internal static partial class GraphSnapshot
             await callback.Callback(new EnvironmentCallbackContext(executionContext, resource, environment, cancellationToken));
         }
 
-        foreach (var (key, value) in environment.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        // Переменные OTLP и дашборда выдаёт среда прогона, а не граф: даже их
+        // состав зависит от машины — OTEL_EXPORTER_OTLP_HEADERS появляется, только
+        // когда в user-secrets лежит ключ OTLP дашборда, и в CI его нет. Факт
+        // экспорта телеметрии держит OtlpExportTests.
+        foreach (var (key, value) in environment
+            .Where(pair => !pair.Key.StartsWith("OTEL_", StringComparison.Ordinal)
+                && !pair.Key.StartsWith("ASPIRE_DASHBOARD", StringComparison.Ordinal))
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            // Адрес дашборда и ключи OTLP выдаёт среда прогона, а не граф: в
-            // снимке остаётся только факт, что сервис экспортирует телеметрию.
-            var rendered = key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("ASPIRE_DASHBOARD", StringComparison.Ordinal)
-                ? "<run environment>"
-                : Normalize(Render(value), root);
-            text.AppendLine($"  env: {key}={rendered}");
+            text.AppendLine($"  env: {key}={Normalize(Render(value), root)}");
         }
 
         foreach (var mount in resource.Annotations.OfType<ContainerMountAnnotation>())

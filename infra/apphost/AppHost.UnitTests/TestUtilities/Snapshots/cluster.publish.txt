@@ -28,7 +28,6 @@ meetups: ProjectResource
   env: MEETUPS_DATABASE_URL={meetups-db.connectionString}
   env: MEETUPS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_NATS_URL={nats.connectionString}
-  env: OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY=<run environment>
   waits: identity WaitUntilHealthy
   waits: meetups-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -52,7 +51,6 @@ notifications: ProjectResource
   env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_NATS_URL={nats.connectionString}
-  env: OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY=<run environment>
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy

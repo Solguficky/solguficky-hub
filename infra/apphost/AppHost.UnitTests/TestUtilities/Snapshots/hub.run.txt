@@ -9,17 +9,6 @@ identity: ExecutableResource
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
   env: IDENTITY_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
-  env: OTEL_BLRP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_BSP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_EXPORTER_OTLP_ENDPOINT=<run environment>
-  env: OTEL_EXPORTER_OTLP_HEADERS=<run environment>
-  env: OTEL_EXPORTER_OTLP_PROTOCOL=<run environment>
-  env: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=<run environment>
-  env: OTEL_METRICS_EXEMPLAR_FILTER=<run environment>
-  env: OTEL_METRIC_EXPORT_INTERVAL=<run environment>
-  env: OTEL_RESOURCE_ATTRIBUTES=<run environment>
-  env: OTEL_SERVICE_NAME=<run environment>
-  env: OTEL_TRACES_SAMPLER=<run environment>
   waits: identity-build WaitForCompletion
   waits: identity-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -64,20 +53,6 @@ meetups: ProjectResource
   env: MEETUPS_DATABASE_URL={postgres.connectionString};Database=meetups;SSL Mode=Disable
   env: MEETUPS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
-  env: OTEL_BLRP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_BSP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION=<run environment>
-  env: OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION=<run environment>
-  env: OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY=<run environment>
-  env: OTEL_EXPORTER_OTLP_ENDPOINT=<run environment>
-  env: OTEL_EXPORTER_OTLP_HEADERS=<run environment>
-  env: OTEL_EXPORTER_OTLP_PROTOCOL=<run environment>
-  env: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=<run environment>
-  env: OTEL_METRICS_EXEMPLAR_FILTER=<run environment>
-  env: OTEL_METRIC_EXPORT_INTERVAL=<run environment>
-  env: OTEL_RESOURCE_ATTRIBUTES=<run environment>
-  env: OTEL_SERVICE_NAME=<run environment>
-  env: OTEL_TRACES_SAMPLER=<run environment>
   waits: identity WaitUntilHealthy
   waits: meetups-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -119,20 +94,6 @@ notifications: ProjectResource
   env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
-  env: OTEL_BLRP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_BSP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION=<run environment>
-  env: OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION=<run environment>
-  env: OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY=<run environment>
-  env: OTEL_EXPORTER_OTLP_ENDPOINT=<run environment>
-  env: OTEL_EXPORTER_OTLP_HEADERS=<run environment>
-  env: OTEL_EXPORTER_OTLP_PROTOCOL=<run environment>
-  env: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=<run environment>
-  env: OTEL_METRICS_EXEMPLAR_FILTER=<run environment>
-  env: OTEL_METRIC_EXPORT_INTERVAL=<run environment>
-  env: OTEL_RESOURCE_ATTRIBUTES=<run environment>
-  env: OTEL_SERVICE_NAME=<run environment>
-  env: OTEL_TRACES_SAMPLER=<run environment>
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -173,17 +134,6 @@ telegram-bot: JavaScriptAppResource
   env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NODE_ENV=development
   env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
-  env: OTEL_BLRP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_BSP_SCHEDULE_DELAY=<run environment>
-  env: OTEL_EXPORTER_OTLP_ENDPOINT=<run environment>
-  env: OTEL_EXPORTER_OTLP_HEADERS=<run environment>
-  env: OTEL_EXPORTER_OTLP_PROTOCOL=<run environment>
-  env: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=<run environment>
-  env: OTEL_METRICS_EXEMPLAR_FILTER=<run environment>
-  env: OTEL_METRIC_EXPORT_INTERVAL=<run environment>
-  env: OTEL_RESOURCE_ATTRIBUTES=<run environment>
-  env: OTEL_SERVICE_NAME=<run environment>
-  env: OTEL_TRACES_SAMPLER=<run environment>
   env: TELEGRAM_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: TELEGRAM_BOT_ENVIRONMENT=prod
   env: TELEGRAM_BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
