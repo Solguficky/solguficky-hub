@@ -429,6 +429,18 @@ jobs:
       # модели, а они отрабатывают до старта ресурсов. Через `just`, а не прямым
       # dotnet run, чтобы порог числа тестов остался в одном месте.
       - run: just apphost-test
+      - run: just apphost-chart-test
+      # Чарт прода на каждом PR (ADR-055): `aspire publish`, helm lint, helm
+      # template с фикстурой values и правила чарта. Тот же рецепт публикует
+      # чарт в chart-publish.yml, поэтому проверенное и опубликованное не
+      # расходятся. Docker не нужен: публикация не собирает образы.
+      - name: Версия Helm
+        id: tools
+        run: echo "helm=$(grep '^HELM_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: azure/setup-helm@v5
+        with:
+          version: v${{ steps.tools.outputs.helm }}
+      - run: just apphost-chart
 
   auction:
     needs: changes

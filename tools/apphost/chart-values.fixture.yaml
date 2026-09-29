@@ -1,0 +1,15 @@
+# Values fixture for tools/apphost/check-chart.py.
+#
+# Every image is pinned by a synthetic digest: the check proves that the chart
+# takes the image from values and carries a digest reference through unchanged.
+# Real digests, the registry path and the secret values live in the ops
+# repository (ADR-055) and never here.
+parameters:
+  identity:
+    identity_image: "ghcr.io/solguficky/identity@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  meetups:
+    meetups_image: "ghcr.io/solguficky/meetups@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  notifications:
+    notifications_image: "ghcr.io/solguficky/notifications@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  telegram_bot:
+    telegram_bot_image: "ghcr.io/solguficky/telegram-bot@sha256:4444444444444444444444444444444444444444444444444444444444444444"
