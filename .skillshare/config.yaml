@@ -35,18 +35,10 @@ skills:
     tracked: true
     group: golang
     branch: main
-  - name: aspire-monitoring
-    source: github.com/microsoft/aspire-skills/skills/aspire-monitoring
-  - name: aspire-orchestration
-    source: github.com/microsoft/aspire-skills/skills/aspire-orchestration
-  - name: aspire
-    source: github.com/microsoft/aspire-skills/skills/aspire
-  - name: aspire-deployment
-    source: github.com/microsoft/aspire-skills/skills/aspire-deployment
-  - name: aspire-init
-    source: github.com/microsoft/aspire-skills/skills/aspire-init
-  - name: aspireify
-    source: github.com/microsoft/aspire-skills/skills/aspireify
+  - name: _aspire-skills
+    source: https://github.com/microsoft/aspire-skills.git
+    tracked: true
+    branch: main
   - name: frontend-design-deslop
     source: github.com/samber/cc-skills/skills/frontend-design-deslop
   - name: presentation-design
