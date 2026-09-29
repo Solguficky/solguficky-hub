@@ -176,7 +176,7 @@ flowchart LR
     Prod -->|long polling, outbound only| Telegram[Telegram Bot API]
 ```
 
-Публичный ingress приложения отсутствует. PostgreSQL, gRPC сервисов, NATS и любые dashboard ports test и production слушают только внутреннюю container network своей среды и на хост не публикуются, в том числе на loopback: host loopback общий для всех аккаунтов, и опубликованный на нём порт доступен dev, agent и test ([ADR-draft](../decisions/ADR-draft-service-calls-per-caller-token-and-closed-network.md)). Для временного доступа оператор запускает клиент контейнером в сети среды под её аккаунтом. Из входящих сервисов снаружи открыт только SSH. Host firewall — default deny. Если у провайдера есть отдельный firewall, он закрывает всё, кроме SSH, ICMP/ICMPv6 и ответов необходимых UDP-endpoint (DNS, NTP): stateful tracking часто покрывает только TCP. До применения внешнего правила сохраняется console/rescue access; IPv4 и IPv6 проверяются отдельно.
+Публичный ingress приложения отсутствует. PostgreSQL, Identity gRPC, NATS при его появлении и любые dashboard ports слушают только loopback или внутреннюю container network. Для временного доступа используется SSH port forwarding. Из входящих сервисов снаружи открыт только SSH. Host firewall — default deny. Если у провайдера есть отдельный firewall, он закрывает всё, кроме SSH, ICMP/ICMPv6 и ответов необходимых UDP-endpoint (DNS, NTP): stateful tracking часто покрывает только TCP. До применения внешнего правила сохраняется console/rescue access; IPv4 и IPv6 проверяются отдельно.
 
 ### Доверительные зоны и аккаунты
 
