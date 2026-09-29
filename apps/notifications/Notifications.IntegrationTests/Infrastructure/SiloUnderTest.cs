@@ -2,7 +2,10 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Notifications.Reminders;
+using Notifications.Replica;
+using Xunit;
 
 namespace Notifications.IntegrationTests.Infrastructure;
 
@@ -54,12 +57,71 @@ public sealed class SiloUnderTest : IAsyncDisposable
         Start(connectionString, SiloEndpoint.Allocate, settings);
 
     /// <summary>
-    /// То же, но с потребителями реплики на шине <paramref name="natsUrl" />.
+    /// То же, но с потребителями реплики на шине <paramref name="natsUrl" />,
+    /// и возвращается только тогда, когда все они привязаны к своим durable.
     /// Без адреса composition root их не регистрирует, поэтому тестам, которым
     /// шина не нужна, контейнер NATS не нужен тоже.
     /// </summary>
-    public static Task<SiloUnderTest> StartOnBus(string connectionString, string natsUrl, params string[] settings) =>
+    /// <remarks>
+    /// Старт хоста о привязке ничего не говорит: потребитель отпускает старт
+    /// на первом ожидании и привязывается уже после него. Тест, получивший
+    /// силос раньше привязки, опрашивал бы потребителя, который мог и не
+    /// привязаться, и падал бы таймаутом ожидания с нулём вместо причины.
+    /// Поэтому остановка хоста до привязки и привязка, не случившаяся за
+    /// <see cref="BindPatience" />, выходят отсюда исключением, внутри которого
+    /// лежит отказ привязки.
+    /// </remarks>
+    public static async Task<SiloUnderTest> StartOnBus(string connectionString, string natsUrl, params string[] settings)
+    {
+        var silo = await LaunchOnBus(connectionString, natsUrl, settings);
+
+        try
+        {
+            await silo.Bound();
+            return silo;
+        }
+        catch
+        {
+            await silo.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Силос на шине без ожидания привязки: возвращается, как только стартовал
+    /// хост. Нужен тестам, которые проверяют сам отказ привязки — падение
+    /// хоста на старте или повтор, пока шина молчит.
+    /// </summary>
+    public static Task<SiloUnderTest> LaunchOnBus(string connectionString, string natsUrl, params string[] settings) =>
         Retry(SiloEndpoint.Allocate, endpoint => Launch(connectionString, natsUrl, endpoint, configure: null, settings));
+
+    /// <summary>
+    /// Сколько <see cref="StartOnBus" /> ждёт привязки. Столько же, сколько
+    /// сценарии ждут своего условия: запаса поверх их терпения здесь нет.
+    /// </summary>
+    public static readonly TimeSpan BindPatience = TimeSpan.FromSeconds(30);
+
+    private async Task Bound()
+    {
+        var bindings = Service<ReplicaBindings>();
+        var bound = bindings.WhenAllBound;
+
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = Service<IHostApplicationLifetime>().ApplicationStopping.Register(() => stopping.TrySetResult());
+        var deadline = Task.Delay(BindPatience, TestContext.Current.CancellationToken);
+
+        var first = await Task.WhenAny(bound, stopping.Task, deadline);
+        if (first == bound && bound.IsCompletedSuccessfully)
+        {
+            return;
+        }
+
+        var reason = first == deadline
+            ? $"replica consumers not bound within {BindPatience}"
+            : "host stopped before every replica consumer bound";
+
+        throw new InvalidOperationException(reason, bindings.LastFailure());
+    }
 
     /// <summary>
     /// То же, что <see cref="Start(string, string[])" />, но с регистрациями

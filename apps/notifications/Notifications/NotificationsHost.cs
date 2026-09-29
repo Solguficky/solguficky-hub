@@ -247,6 +247,9 @@ public static class NotificationsHost
             // обращении, и подписка на его события должна его опередить.
             builder.Services.AddHostedService<BusConnectionWatcher>();
 
+            // Готовым экземпляром: см. конструктор ReplicaBindings.
+            builder.Services.AddSingleton(new ReplicaBindings(ReplicaFeeds.All));
+
             // AddSingleton, а не AddHostedService: тот регистрирует через
             // TryAddEnumerable по типу реализации, и второй потребитель того же
             // типа молча не зарегистрировался бы.

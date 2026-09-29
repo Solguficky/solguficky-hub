@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Options;
+using NATS.Client.Core;
 using NATS.Client.JetStream;
 using Notifications.Facts;
 using Notifications.Grains;
@@ -39,6 +40,7 @@ public sealed class ReplicaConsumer(
     INatsJSContext jetStream,
     ReplicaStore store,
     ReplicaTelemetry telemetry,
+    ReplicaBindings bindings,
     FactTelemetry facts,
     IGrainFactory grains,
     IOptions<ReplicaOptions> options,
@@ -49,17 +51,10 @@ public sealed class ReplicaConsumer(
     {
         telemetry.Seed(feed.Source, await store.LastOccurredAt(feed.Source, stoppingToken));
 
-        // Без перехвата: хост роняет и отсутствующий durable, и шина,
-        // недоступная на старте. Второго в развёртывании не бывает — Aspire
-        // стартует сервис после готовности узла nats и применения топологии.
-        await EnsureKeysOutliveStream(stoppingToken);
-        var consumer = await jetStream.GetConsumerAsync(feed.Stream, feed.Durable, stoppingToken);
-
-        logger.LogInformation(
-            "Replica consumer bound to {durable} on {stream} for {source}",
-            feed.Durable,
-            feed.Stream,
-            feed.Source);
+        if (await Bind(stoppingToken) is not { } consumer)
+        {
+            return;
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -86,6 +81,80 @@ public sealed class ReplicaConsumer(
             }
         }
     }
+
+    /// <summary>
+    /// Привязывается к durable; <c>null</c> — хост остановили раньше.
+    /// </summary>
+    /// <remarks>
+    /// Шина, не ответившая на старте, — не поломка развёртывания: в поде порядка
+    /// старта, который давал Aspire, нет, а на загруженной машине ответ на
+    /// единственный запрос API не укладывается в таймаут клиента. Поэтому такой
+    /// отказ повторяется. Отказ, в котором сервер ответил, — нет durable или
+    /// стрима, окно хранения длиннее ключей — повтор не лечит, и хост на нём
+    /// падает, как прежде: заводить durable сервис не должен.
+    /// </remarks>
+    private async Task<INatsJSConsumer?> Bind(CancellationToken stoppingToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await EnsureKeysOutliveStream(stoppingToken);
+                var consumer = await jetStream.GetConsumerAsync(feed.Stream, feed.Durable, stoppingToken);
+                bindings.Bound(feed);
+
+                logger.LogInformation(
+                    "Replica consumer bound to {durable} on {stream} for {source} on attempt {attempt}",
+                    feed.Durable,
+                    feed.Stream,
+                    feed.Source,
+                    attempt);
+
+                return consumer;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return null;
+            }
+            catch (Exception ex) when (IsTransient(ex))
+            {
+                bindings.Retrying(feed, ex);
+                ReplicaTelemetry.Fail("dependency_unavailable");
+                logger.LogError(
+                    ex,
+                    "Replica consumer {durable} not bound on attempt {attempt}; retrying in {delay}",
+                    feed.Durable,
+                    attempt,
+                    options.Value.RetryDelay);
+                await Pause(options.Value.RetryDelay, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                bindings.Failed(feed, ex);
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Отказ, после которого шина может ответить на повтор: ответа не было
+    /// вовсе, либо JetStream ответил, что временно недоступен.
+    /// </summary>
+    /// <remarks>
+    /// Из ответов сервера транзиентен только <c>err_code</c> 10008. Остальные
+    /// 503 JetStream — «не включён», «нет аккаунта», «нет ресурсов» — это
+    /// конфигурация, и повтор держал бы сервис живым без надежды привязаться.
+    /// </remarks>
+    public static bool IsTransient(Exception failure) =>
+        failure switch
+        {
+            NatsJSApiException { Error: { Code: 503, ErrCode: JetStreamTemporarilyUnavailable } } => true,
+            NatsJSApiException => false,
+            NatsException => true,
+            _ => false,
+        };
+
+    private const int JetStreamTemporarilyUnavailable = 10008;
 
     /// <summary>
     /// Ключ дедупликации обязан жить не меньше, чем стрим способен доставить
