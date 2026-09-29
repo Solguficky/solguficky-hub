@@ -300,6 +300,21 @@ identity-lint: identity-proto
 identity-run: identity-proto
     cd apps/identity && go run ./cmd/identity
 
+# Production-образ в локальное хранилище движка как identity:local и те же
+# проверки до публикации, что в CI: база по digest и нет токена Bot API. Движок —
+# IMAGE_ENGINE, podman по умолчанию; docker находит список контекста
+# Containerfile.dockerignore сам. Публикацию в GHCR делает только CI
+# (.github/workflows/image-identity.yml)
+identity-image:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${IMAGE_ENGINE:-podman}
+    ignore=
+    case "$engine" in *podman*) ignore="--ignorefile apps/identity/Containerfile.dockerignore" ;; esac
+    sh tools/image/check-containerfile.sh apps/identity/Containerfile
+    "$engine" build -f apps/identity/Containerfile $ignore -t identity:local .
+    sh tools/image/check-no-token.sh identity:local
+
 # --- Telegram Bot (TypeScript) --------------------------------------
 #
 # Кодогенерация — часть сборки. Рецепты собирают grammY-скелет,
