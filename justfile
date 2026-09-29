@@ -387,6 +387,18 @@ image-checks-test:
 telegram-live-test: telegram-bot-proto
     cd apps/telegram-bot && npm run test:live
 
+# Живой пульт (L3, ADR-046): синтетический аккаунт тестовой среды ведёт
+# разговор с ботом по шагу — пишет, жмёт inline-кнопки по подписи и читает
+# экраны — через настоящий Telegram. Бота поднимает владелец, как для
+# telegram-live-test. Команда — строка в теле POST на 127.0.0.1:7358, ответ —
+# JSON; клиент `tests/telegram-live/console/send.sh`, язык команд —
+# `commands.ts` рядом. Живёт до `quit` или Ctrl+C, журнал обмена — в
+# .work/bot-console-live/. Не гейт: вне verify, test-all и CI.
+#
+# Живой пульт тестовой среды Telegram для ручного и агентского прохода; вне verify, test-all и CI
+telegram-live-console: telegram-bot-proto
+    cd apps/telegram-bot && npm run console:live
+
 # Строка сессии синтетического аккаунта `99966XYYYY` в user-secrets AppHost; код
 # подтверждения выводится из номера. Аккаунт в тестовой среде заводит владелец.
 #
