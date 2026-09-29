@@ -72,6 +72,12 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
     }
 
+    // Лот без строки каталога (ADR-057) читается отсутствием карточки, а не
+    // карточкой с пустыми строками: её край показал бы как лот без названия.
+    "keeps the catalog card absent on a lot without one after a round trip" in {
+      LotSnapshot.parseFrom(LotSnapshot(id = "l", version = 1).toByteArray).card shouldBe None
+    }
+
     // Серверный трейт генерирует pekko-grpc поверх того же ScalaPB (ADR-048).
     // Ссылка на тип держит его появление в сборке: пропавшая генерация роняет
     // компиляцию этого теста, а не первого обработчика, который его реализует.
