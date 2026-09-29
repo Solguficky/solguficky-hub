@@ -177,6 +177,8 @@ function draftMeetup() {
   };
 }
 
+const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+
 function resolvedIdentity(
   globalRoles: readonly string[] = ["member"],
   blocked = false,
@@ -184,7 +186,7 @@ function resolvedIdentity(
   return {
     resolve: async () => ({
       kind: "resolved",
-      identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+      identityId: resolvedId,
       globalRoles,
       blocked,
     }),
@@ -597,7 +599,9 @@ describe("presentation adapter", () => {
     });
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
@@ -645,10 +649,12 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText },
+      payload: { text: pendingHubAccessText(resolvedId, undefined) },
     });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("v1:nav:hub");
-    expect(sendMessageText(calls[2])).toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[2])).toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(records.map((record) => record.fields.error)).toEqual([
       "hub_access_pending",
       "hub_access_pending",
@@ -665,7 +671,7 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText },
+      payload: { text: pendingHubAccessText(resolvedId, undefined) },
     });
   });
 
@@ -674,7 +680,9 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
-    expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
   });
 
   it("renders the community screen from current Identity state", async () => {
@@ -710,6 +718,49 @@ describe("presentation adapter", () => {
     expect(JSON.stringify(calls[1]?.payload)).toContain("@invited");
   });
 
+  it("tells apart people without a username created in the same minute", async () => {
+    const community = vi
+      .fn<CommunityAdministrator["community"]>()
+      .mockResolvedValue({
+        kind: "ok",
+        value: {
+          members: [
+            {
+              identityId: "01a0e306-a646-7d3a-9b21-4f8e12ab34cd",
+              telegramUserId: 5001n,
+              admitted: false,
+            },
+            {
+              identityId: "01a0e306-918c-7e01-8c55-0d2f6a7b9e10",
+              admitted: true,
+            },
+          ],
+          allowedUsernames: [],
+        },
+      });
+    const identity = { ...resolvedIdentity(["admin"]), community };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:community:list"));
+
+    const payload = calls[1]?.payload as {
+      text: string;
+      parse_mode?: string;
+      reply_markup: { inline_keyboard: { text: string }[][] };
+    };
+    const buttons = payload.reply_markup.inline_keyboard
+      .flat()
+      .map((button) => button.text);
+    expect(payload.parse_mode).toBe("HTML");
+    expect(payload.text).toContain(
+      '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
+    );
+    expect(payload.text).toContain("• без ника · 6a7b9e10");
+    expect(payload.text).not.toContain("01a0e306");
+    expect(buttons).toContain("Допустить без ника · 12ab34cd");
+    expect(buttons).toContain("Закрыть без ника · 6a7b9e10");
+  });
+
   it("lets Identity refuse community management for a non-admin", async () => {
     const community = vi
       .fn<CommunityAdministrator["community"]>()
@@ -741,7 +792,9 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
-    expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(sendMessageText(calls[0])).not.toBe(blockedHubAccessText);
     expectBoundary(records[0], {
       level: "error",

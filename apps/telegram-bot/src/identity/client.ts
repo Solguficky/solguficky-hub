@@ -107,6 +107,10 @@ export function createCommunityAdministrator(
               ...(member.telegramUsername === undefined
                 ? {}
                 : { telegramUsername: member.telegramUsername }),
+              // Настоящий Telegram id всегда положителен, ноль — поле не пришло.
+              ...(member.telegramUserId > 0n
+                ? { telegramUserId: member.telegramUserId }
+                : {}),
               admitted: member.admitted,
             })),
             allowedUsernames: usernames.usernames,

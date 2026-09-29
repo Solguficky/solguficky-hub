@@ -13,7 +13,7 @@ import (
 )
 
 const listCommunityMembersSQL = `
-SELECT p.id, p.username,
+SELECT p.id, p.username, p.telegram_user_id,
        EXISTS (SELECT 1 FROM identity_roles r
                WHERE r.identity_id = p.id AND r.role = 'member' AND r.revoked_at IS NULL)
 FROM profiles p
@@ -54,11 +54,12 @@ func (s identityService) ListCommunityMembers(ctx context.Context, req *identity
 	for rows.Next() {
 		var id string
 		var username sql.NullString
+		var telegramUserID int64
 		var admitted bool
-		if err := rows.Scan(&id, &username, &admitted); err != nil {
+		if err := rows.Scan(&id, &username, &telegramUserID, &admitted); err != nil {
 			return nil, internal("scan community member", err)
 		}
-		member := &identityv1.CommunityMember{IdentityId: id, Admitted: admitted}
+		member := &identityv1.CommunityMember{IdentityId: id, Admitted: admitted, TelegramUserId: telegramUserID}
 		if username.Valid {
 			member.TelegramUsername = &username.String
 		}
