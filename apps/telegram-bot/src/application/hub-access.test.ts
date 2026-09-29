@@ -8,6 +8,8 @@ import {
   pendingHubAccessText,
 } from "./hub-access.js";
 
+const identityId = "01a0e306-a646-7d3a-9b21-4f8e12ab34cd";
+
 describe("decideHubAccess", () => {
   it("admits a person who has the member role", () => {
     expect(decideHubAccess(["member"], false)).toBe("admitted");
@@ -38,13 +40,15 @@ describe("decideHubAccess", () => {
   it("names pending and blocked refusals differently", () => {
     expect(hubAccessErrors.pending).toBe("hub_access_pending");
     expect(hubAccessErrors.blocked).toBe("hub_access_blocked");
-    expect(hubAccessText("pending", identityId)).toContain("ждёт проверки");
-    expect(hubAccessText("blocked", identityId)).toBe(blockedHubAccessText);
+    expect(hubAccessText("pending", identityId, undefined)).toContain(
+      "ждёт проверки",
+    );
+    expect(hubAccessText("blocked", identityId, undefined)).toBe(
+      blockedHubAccessText,
+    );
     expect(blockedHubAccessText).toContain("закрыт");
   });
 });
-
-const identityId = "01a0e306-a646-7d3a-9b21-4f8e12ab34cd";
 
 describe("applicationCode", () => {
   it("tells apart profiles created within the same minute", () => {
@@ -53,9 +57,15 @@ describe("applicationCode", () => {
     expect(applicationCode(identityId)).not.toContain("01a0e306");
   });
 
-  it("is shown to the waiting person in the pending frame", () => {
-    expect(pendingHubAccessText(identityId)).toContain(
+  it("is shown to a waiting person without a username", () => {
+    expect(pendingHubAccessText(identityId, undefined)).toContain(
       `код заявки: ${applicationCode(identityId)}`,
     );
+  });
+
+  it("is not shown to a waiting person with a username", () => {
+    const text = pendingHubAccessText(identityId, "vasya");
+    expect(text).not.toContain(applicationCode(identityId));
+    expect(text).toContain("по твоему нику");
   });
 });

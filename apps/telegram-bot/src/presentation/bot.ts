@@ -29,6 +29,7 @@ import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type CommunityAdministrator,
+  type CommunityMember,
   type IdentityAdminResult,
   type IdentityResolver,
   toResolveIdentityInput,
@@ -2320,16 +2321,15 @@ async function renderCommunity(
   }
   const pending = result.value.members.filter((member) => !member.admitted);
   const admitted = result.value.members.filter((member) => member.admitted);
-  type Member = (typeof result.value.members)[number];
   // Человек без ника называется кодом заявки: тот же код он видит в кадре
   // ожидания и называет администратору, а кнопка несёт то же представление.
-  const label = (member: Member) =>
+  const label = (member: CommunityMember) =>
     member.telegramUsername === undefined
       ? `без ника · ${applicationCode(member.identityId)}`
       : `@${member.telegramUsername}`;
   // В строке списка без ника — ещё и упоминание по Telegram id: по нему
   // администратор открывает профиль и узнаёт человека, а не только код.
-  const line = (member: Member) =>
+  const line = (member: CommunityMember) =>
     member.telegramUsername === undefined && member.telegramUserId !== undefined
       ? `• <a href="tg://user?id=${member.telegramUserId}">без ника</a> · ${escapeHtml(applicationCode(member.identityId))}`
       : `• ${escapeHtml(label(member))}`;
@@ -3262,7 +3262,11 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  const text = hubAccessText(access, identity.person.identityId);
+  const text = hubAccessText(
+    access,
+    identity.person.identityId,
+    ctx.from?.username,
+  );
   if (edit) {
     await editScreen(ctx, text, new InlineKeyboard());
   } else {

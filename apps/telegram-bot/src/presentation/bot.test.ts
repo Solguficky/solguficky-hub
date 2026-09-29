@@ -598,7 +598,9 @@ describe("presentation adapter", () => {
     });
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe(pendingHubAccessText(resolvedId));
+    expect(sendMessageText(calls[0])).toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
@@ -646,10 +648,12 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText(resolvedId) },
+      payload: { text: pendingHubAccessText(resolvedId, undefined) },
     });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("v1:nav:hub");
-    expect(sendMessageText(calls[2])).toBe(pendingHubAccessText(resolvedId));
+    expect(sendMessageText(calls[2])).toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(records.map((record) => record.fields.error)).toEqual([
       "hub_access_pending",
       "hub_access_pending",
@@ -666,7 +670,7 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText(resolvedId) },
+      payload: { text: pendingHubAccessText(resolvedId, undefined) },
     });
   });
 
@@ -676,7 +680,7 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(sendMessageText(calls[0])).not.toBe(
-      pendingHubAccessText(resolvedId),
+      pendingHubAccessText(resolvedId, undefined),
     );
   });
 
@@ -788,7 +792,7 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
     expect(sendMessageText(calls[0])).not.toBe(
-      pendingHubAccessText(resolvedId),
+      pendingHubAccessText(resolvedId, undefined),
     );
     expect(sendMessageText(calls[0])).not.toBe(blockedHubAccessText);
     expectBoundary(records[0], {
