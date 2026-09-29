@@ -17,6 +17,10 @@
     <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="13.5.3" />
     <PackageReference Include="Aspire.Hosting.Nats" Version="13.5.3" />
     <PackageReference Include="Aspire.Hosting.JavaScript" Version="13.5.3" />
+    <!-- Генератор Helm-чарта из того же графа (ADR-055). Пакет выходит только
+         preview и закреплён точной сборкой той же линии, что SDK: плавающая
+         версия меняла бы чарт без правки в этом репозитории. -->
+    <PackageReference Include="Aspire.Hosting.Kubernetes" Version="13.5.3-preview.1.26425.3" />
     <PackageReference Include="Grpc.HealthCheck" Version="2.80.0" />
     <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
     <!-- Клиент, которым AppHost применяет топологию JetStream. Та же версия уже

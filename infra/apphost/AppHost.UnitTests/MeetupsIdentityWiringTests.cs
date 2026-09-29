@@ -18,6 +18,10 @@ namespace AppHost.UnitTests;
 /// </summary>
 public class MeetupsIdentityWiringTests
 {
+    // Набор проверяет владение в локальном запуске; чем узел станет в чарте, ему
+    // неважно, а отображение — обязательный аргумент регистрации.
+    private static readonly PublishMapping LocalOnly = PublishMapping.NotPublished("local-only test node");
+
     private const string Identity = AppHostNames.Resources.Identity;
     private const string Meetups = AppHostNames.Resources.Meetups;
 
@@ -47,8 +51,8 @@ public class MeetupsIdentityWiringTests
 
         graph.AddService(Identity, [], context => context.Builder
             .AddContainer(Identity, "busybox")
-            .WithHttpEndpoint(targetPort: 8080, name: AppHostNames.Endpoints.Grpc));
-        graph.AddService(Meetups, [Identity], MeetupsSetup.Configure);
+            .WithHttpEndpoint(targetPort: 8080, name: AppHostNames.Endpoints.Grpc), LocalOnly);
+        graph.AddService(Meetups, [Identity], MeetupsSetup.Configure, LocalOnly);
         graph.Build();
 
         return builder.Resources.Single(resource => resource.Name == Meetups);

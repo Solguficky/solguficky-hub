@@ -1,10 +1,24 @@
 using AppHost.Configuration.Extensions;
+using AppHost.Configuration.Infrastructure;
+using AppHost.Configuration.Publish;
 using AppHost.Configuration.Topology;
 
 namespace AppHost.Configuration.Services;
 
 internal static class NotificationsSetup
 {
+    // В чарте порт закреплён, а не взят из values: gRPC-проба Kubernetes
+    // принимает только число, и проба с портом из шаблона разошлась бы с ним.
+    private const int ContainerGrpcPort = 8080;
+
+    private static readonly ClusterWorkload Cluster = new(
+        RunAsUser: 1654,
+        CpuRequest: "100m",
+        MemoryRequest: "256Mi",
+        CpuLimit: "1",
+        MemoryLimit: "512Mi",
+        Grpc: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Notifications));
+
     public static IResourceBuilder<ProjectResource> Configure(ServiceGraphContext context)
     {
         // Форма повторяет MeetupsSetup: тот же h2c-endpoint и та же проба по
@@ -22,16 +36,15 @@ internal static class NotificationsSetup
             // Notifications — .NET, поэтому берёт готовую строку Npgsql, как Meetups.
             // Миграции применяет сам сервис при старте, до подъёма силоса: таблицы
             // membership Orleans заводит тот же DbUp.
-            .BindConnection<ProjectResource, PostgresDatabaseResource>(
+            .BindConnection<ProjectResource, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.NotificationsDb,
                 "NOTIFICATIONS_DATABASE_URL",
-                database => ReferenceExpression.Create(
-                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"))
+                PostgresConnection.Npgsql)
             // Шина реплики чужих фактов. WaitFor(nats) внутри BindConnection ждёт
             // и применения топологии: сервис стартует, когда его durable уже
             // заведены, а сам он их не заводит и без них падает.
-            .BindConnection<ProjectResource, NatsServerResource>(
+            .BindConnection<ProjectResource, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,
                 "NOTIFICATIONS_NATS_URL",
@@ -48,4 +61,13 @@ internal static class NotificationsSetup
                 AppHostNames.Endpoints.Http,
                 "NOTIFICATIONS_LOKI_OTLP_ENDPOINT");
     }
+
+    /// <summary>
+    /// В чарте — тот же проект: образ собирает SDK-контейнер по Container.targets,
+    /// тем же путём, что CI и <c>aspire do push</c> (ADR-055).
+    /// </summary>
+    public static IResourceBuilder<ProjectResource> Publish(ServiceGraphContext context) =>
+        Configure(context)
+            .WithEndpoint(AppHostNames.Endpoints.Grpc, endpoint => endpoint.TargetPort = ContainerGrpcPort)
+            .AsClusterWorkload(Cluster);
 }

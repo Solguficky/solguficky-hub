@@ -19,6 +19,10 @@ namespace AppHost.UnitTests;
 /// </summary>
 public class NotificationsOwnersWiringTests
 {
+    // Набор проверяет владение в локальном запуске; чем узел станет в чарте, ему
+    // неважно, а отображение — обязательный аргумент регистрации.
+    private static readonly PublishMapping LocalOnly = PublishMapping.NotPublished("local-only test node");
+
     private const string Identity = AppHostNames.Resources.Identity;
     private const string Meetups = AppHostNames.Resources.Meetups;
     private const string Notifications = AppHostNames.Resources.Notifications;
@@ -43,9 +47,9 @@ public class NotificationsOwnersWiringTests
             builder,
             new ProfileConfig { Name = profile, Services = [.. services], Infrastructure = [] });
 
-        graph.AddService(Identity, [], context => Stub(context, Identity));
-        graph.AddService(Meetups, [], context => Stub(context, Meetups));
-        graph.AddService(Notifications, [Identity, Meetups], NotificationsSetup.Configure);
+        graph.AddService(Identity, [], context => Stub(context, Identity), LocalOnly);
+        graph.AddService(Meetups, [], context => Stub(context, Meetups), LocalOnly);
+        graph.AddService(Notifications, [Identity, Meetups], NotificationsSetup.Configure, LocalOnly);
         graph.Build();
 
         return builder.Resources.Single(resource => resource.Name == Notifications);

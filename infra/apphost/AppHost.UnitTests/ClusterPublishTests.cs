@@ -1,0 +1,108 @@
+using AppHost.Configuration;
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Kubernetes;
+using Aspire.Hosting.Testing;
+using Microsoft.Extensions.Configuration;
+using Shouldly;
+using Xunit;
+
+using R = AppHost.Configuration.AppHostNames.Resources;
+
+namespace AppHost.UnitTests;
+
+/// <summary>
+/// Граф настоящего AppHost в режиме публикации — то, из чего генератор строит
+/// чарт (ADR-055). Генератор публикует workload'ом каждый compute-ресурс модели,
+/// поэтому состав модели и есть состав чарта: проверка здесь ловит лишний и
+/// выпавший workload до <c>helm template</c>.
+/// </summary>
+public class ClusterPublishTests
+{
+    private static async Task<IDistributedApplicationTestingBuilder> PublishModelAsync()
+    {
+        var output = Path.Combine(Path.GetTempPath(), $"apphost-publish-{Guid.NewGuid():N}");
+        return await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(
+            ["--operation", "publish", "--publisher", "default", "--output-path", output],
+            TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Publish_Workloads_AreTheFourMvpServices()
+    {
+        var builder = await PublishModelAsync();
+
+        builder.ExecutionContext.IsPublishMode.ShouldBeTrue();
+        builder.Resources.OfType<IComputeResource>()
+            .Select(resource => resource.Name)
+            .Order(StringComparer.Ordinal)
+            .ShouldBe([R.Identity, R.Meetups, R.Notifications, R.TelegramBot]);
+    }
+
+    /// <summary>
+    /// Identity и бот собираются по своим Containerfile из корня репозитория, а
+    /// не цепочкой buf/go build и не контейнером, который Aspire сгенерировал бы
+    /// из <c>AddJavaScriptApp</c>: их кодогенерации нужен <c>contracts/proto</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(R.Identity, "apps/identity/Containerfile")]
+    [InlineData(R.TelegramBot, "apps/telegram-bot/Containerfile")]
+    public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
+    {
+        var builder = await PublishModelAsync();
+        var root = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../../.."));
+
+        var resource = builder.Resources.Single(resource => resource.Name == name);
+
+        resource.ShouldBeOfType<ContainerResource>();
+        var build = resource.Annotations.OfType<DockerfileBuildAnnotation>().ShouldHaveSingleItem();
+        Path.GetFullPath(build.ContextPath).ShouldBe(root);
+        Path.GetFullPath(build.DockerfilePath).ShouldBe(Path.GetFullPath(Path.Combine(root, containerfile)));
+    }
+
+    [Fact]
+    public async Task Publish_Infrastructure_IsConnectionStringsUnderLocalNames()
+    {
+        var builder = await PublishModelAsync();
+
+        builder.Resources.OfType<PostgresServerResource>().ShouldBeEmpty();
+        builder.Resources.OfType<NatsServerResource>().ShouldBeEmpty();
+        builder.Resources.OfType<IResourceWithConnectionString>()
+            .Select(resource => resource.Name)
+            .Order(StringComparer.Ordinal)
+            .ShouldBe([R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
+    }
+
+    [Fact]
+    public async Task Publish_KubernetesEnvironment_HasNoDashboard()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = builder.Resources.OfType<KubernetesEnvironmentResource>().ShouldHaveSingleItem();
+        environment.DashboardEnabled.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Чарт собирается из <c>cluster</c>, а локальный стенд — из <c>hub</c>.
+    /// Расхождение составов — решение, которое должно быть видно правкой этого
+    /// теста, а не тихо приехать в прод вместе с изменением локального профиля.
+    /// </summary>
+    [Fact]
+    public void PublishProfile_MatchesHubComposition()
+    {
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json")
+            .Build();
+
+        var cluster = ProfileResolver.PublishProfile(configuration).ShouldNotBeNull();
+        var hub = ProfileResolver.Resolve(new ConfigurationBuilder()
+            .AddConfiguration(configuration)
+            .AddInMemoryCollection([new("profile", "hub")])
+            .Build());
+
+        cluster.Name.ShouldBe("cluster");
+        cluster.Services.Order().ShouldBe(hub.Services.Order());
+        cluster.Infrastructure.Order().ShouldBe(hub.Infrastructure.Order());
+    }
+}
