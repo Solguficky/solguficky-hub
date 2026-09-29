@@ -16,6 +16,8 @@ val scalaCheckBridgeVersion = "3.2.19.0"
 val logbackVersion = "1.5.18"
 val logstashEncoderVersion = "8.1"
 val pekkoPersistenceJdbcVersion = "1.3.0"
+// Версия, с которой собран pekko-persistence-jdbc выше; меняется вместе с ним.
+val slickVersion = "3.5.1"
 val postgresqlVersion = "42.7.13"
 val flywayVersion = "13.8.0"
 val testcontainersScalaVersion = "0.44.1"
@@ -71,6 +73,10 @@ lazy val auction = (project in file("."))
       // discovery выше.
       "org.apache.pekko" %% "pekko-persistence-query" % pekkoVersion,
       "org.apache.pekko" %% "pekko-persistence-jdbc" % pekkoPersistenceJdbcVersion,
+      // Slick приходит с плагином JDBC, но каталог лота импортирует его сам —
+      // пул плагина и plain SQL. Транзитивную зависимость обновление плагина
+      // сменило бы молча, поэтому она объявлена той же версией, что у плагина.
+      "com.typesafe.slick" %% "slick" % slickVersion,
       "org.postgresql" % "postgresql" % postgresqlVersion,
       "org.flywaydb" % "flyway-core" % flywayVersion,
       "org.flywaydb" % "flyway-database-postgresql" % flywayVersion,
