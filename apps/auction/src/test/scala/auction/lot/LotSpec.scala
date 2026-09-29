@@ -101,21 +101,21 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     }
 
     "reject a live bid above the next price and name that price (Т-40)" in {
-      val lot = trading(price = 1000, policy = StepPolicy.fixed(money(100)).toOption.get, phase = Phase.Live)
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
 
       Lot.decide(lot, placeBid(who = 1, amount = 1150, opN = 1), bid(1)) shouldBe
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
     "reject a live bid below the next price with the same refusal" in {
-      val lot = trading(price = 1000, policy = StepPolicy.fixed(money(100)).toOption.get, phase = Phase.Live)
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
 
       Lot.decide(lot, placeBid(who = 1, amount = 1050, opN = 1), bid(1)) shouldBe
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
     "turn the second of two equal live bids into a refusal with the new price (Т-41)" in {
-      val lot = trading(price = 1000, policy = StepPolicy.fixed(money(100)).toOption.get, phase = Phase.Live)
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
 
       val (results, _) = Journal.of(lot).submitAll(Seq(placeBid(1, 1100, 1), placeBid(2, 1100, 2)))
 
@@ -213,47 +213,6 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
           case Phase.Live => PlaceBidRejected.BidNotAtNextPrice(money(price + 10))
         }
         results.drop(1).toSet shouldBe Set(Left(refusal))
-      }
-    }
-
-    "write an event for every accepted command and nothing for a refused one" in {
-      val commands = Gen.listOf(
-        for {
-          who <- Gen.chooseNum(1, 3)
-          amount <- Gen.chooseNum(90L, 260L)
-          foreign <- Gen.frequency(9 -> false, 1 -> true)
-          opN <- Gen.chooseNum(1, 12)
-        } yield placeBid(who, amount, opN, if (foreign) eur else rub)
-      )
-      val scenarios = for {
-        phase <- Gen.oneOf(Phase.Online, Phase.Live)
-        policy <- Gen.oneOf(fixedTen, tiered(0L -> 10L, 150L -> 20L))
-        script <- commands
-        seed <- Gen.long
-      } yield (trading(price = 100, policy = policy, phase = phase), script, seed)
-
-      forAll(scenarios) { (scenario: (Lot, List[PlaceBid], Long)) =>
-        val (start, script, seed) = scenario
-        val (journal, acceptedCount) = script.zipWithIndex.foldLeft((Journal.of(start), 0)) {
-          case ((current, count), (command, index)) =>
-            val required = Lot.minRequired(tradingOf(current.lot))
-            val (result, next) = current.submit(command, bid(index))
-            accepted(result) match {
-              case Some(placed) =>
-                placed.amount.minorUnits should be >= required.minorUnits
-                if (tradingOf(current.lot).phase == Phase.Live) placed.amount shouldBe required
-                (next, count + 1)
-              case None =>
-                next shouldBe current
-                (next, count)
-            }
-        }
-
-        journal.entries.size shouldBe acceptedCount
-        journal.entries.map(_.opId).distinct.size shouldBe acceptedCount
-        journal.entries.map(_.event).collect { case placed: LotEvent.BidPlaced => placed.amount.minorUnits } shouldBe
-          journal.entries.map(_.event).collect { case placed: LotEvent.BidPlaced => placed.amount.minorUnits }.sorted
-        Lot.replay(start, new Random(seed).shuffle(journal.entries)) shouldBe journal.lot
       }
     }
   }

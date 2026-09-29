@@ -24,8 +24,12 @@ object LotFixtures {
 
   val fixedTen: StepPolicy = StepPolicy.fixed(money(10)).toOption.get
 
-  def tiered(pairs: (Long, Long)*): StepPolicy =
-    StepPolicy.tiered(pairs.toList.map((bound, step) => (money(bound), money(step)))).toOption.get
+  val fixedHundred: StepPolicy = StepPolicy.fixed(money(100)).toOption.get
+
+  def tiers(pairs: (Long, Long)*): List[StepPolicy.Tier] =
+    pairs.toList.map((bound, step) => StepPolicy.Tier(money(bound), money(step)))
+
+  def tiered(pairs: (Long, Long)*): StepPolicy = StepPolicy.tiered(tiers(pairs*)).toOption.get
 
   def trading(
       price: Long,

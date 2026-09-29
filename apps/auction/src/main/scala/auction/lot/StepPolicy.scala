@@ -33,24 +33,25 @@ object StepPolicy {
    * перестало бы выполняться.
    */
   def fixed(step: Money): Either[StepPolicyInvalid, StepPolicy] =
-    if (step.minorUnits <= 0) Left(StepPolicyInvalid.StepNotPositive)
+    if (!isPositive(step)) Left(StepPolicyInvalid.StepNotPositive)
     else Right(Fixed(step))
 
-  /** Список пар (нижняя граница, шаг): непуст, первая граница ноль, границы строго растут, шаги положительны (И-15). */
-  def tiered(pairs: List[(Money, Money)]): Either[StepPolicyInvalid, StepPolicy] =
-    pairs match {
+  /** Пороги (нижняя граница, шаг): непуст, первая граница ноль, границы строго растут, шаги положительны (И-15). */
+  def tiered(tiers: List[Tier]): Either[StepPolicyInvalid, StepPolicy] =
+    tiers match {
       case Nil => Left(StepPolicyInvalid.Empty)
-      case (firstBound, firstStep) :: rest =>
-        val tiers = rest.map((bound, step) => Tier(bound, step))
-        val bounds = firstBound :: tiers.map(_.bound)
-        val amounts = pairs.flatMap((bound, step) => List(bound, step))
-        if (amounts.exists(_.currency != firstBound.currency)) Left(StepPolicyInvalid.MixedCurrency)
-        else if (firstBound.minorUnits != 0) Left(StepPolicyInvalid.FirstBoundNotZero)
+      case first :: rest =>
+        val bounds = tiers.map(_.bound)
+        val amounts = tiers.flatMap(tier => List(tier.bound, tier.step))
+        if (amounts.exists(_.currency != first.bound.currency)) Left(StepPolicyInvalid.MixedCurrency)
+        else if (first.bound.minorUnits != 0) Left(StepPolicyInvalid.FirstBoundNotZero)
         else if (bounds.zip(bounds.drop(1)).exists((lower, upper) => upper <= lower))
           Left(StepPolicyInvalid.BoundsNotAscending)
-        else if (pairs.exists((_, step) => step.minorUnits <= 0)) Left(StepPolicyInvalid.StepNotPositive)
-        else Right(Tiered(firstStep, tiers))
+        else if (tiers.exists(tier => !isPositive(tier.step))) Left(StepPolicyInvalid.StepNotPositive)
+        else Right(Tiered(first.step, rest))
     }
+
+  private def isPositive(step: Money): Boolean = step.minorUnits > 0
 
   /** Шаг от цены: для `Tiered` — шаг последнего порога, чья нижняя граница не выше цены. */
   def step(policy: StepPolicy, price: Money): Money =

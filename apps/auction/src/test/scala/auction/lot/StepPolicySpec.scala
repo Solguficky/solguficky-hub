@@ -17,9 +17,6 @@ final class StepPolicySpec extends AnyWordSpec with Matchers with ScalaCheckDriv
   // контрпример падал бы на построении политики, а не на проверке шага.
   implicit val noTierShrink: Shrink[List[(Long, Long)]] = Shrink.shrinkAny
 
-  private def pairs(values: (Long, Long)*): List[(Money, Money)] =
-    values.toList.map((bound, step) => (money(bound), money(step)))
-
   "step policy" should {
 
     "take the step of the new tier once the price crosses its bound (Т-08)" in {
@@ -57,21 +54,23 @@ final class StepPolicySpec extends AnyWordSpec with Matchers with ScalaCheckDriv
     }
 
     "reject tiers whose first bound is not zero (И-15)" in {
-      StepPolicy.tiered(pairs(10L -> 10L, 200L -> 20L)) shouldBe Left(StepPolicyInvalid.FirstBoundNotZero)
+      StepPolicy.tiered(tiers(10L -> 10L, 200L -> 20L)) shouldBe Left(StepPolicyInvalid.FirstBoundNotZero)
     }
 
     "reject tiers whose bounds do not strictly ascend (И-15)" in {
-      StepPolicy.tiered(pairs(0L -> 10L, 200L -> 20L, 100L -> 30L)) shouldBe Left(StepPolicyInvalid.BoundsNotAscending)
-      StepPolicy.tiered(pairs(0L -> 10L, 200L -> 20L, 200L -> 30L)) shouldBe Left(StepPolicyInvalid.BoundsNotAscending)
+      StepPolicy.tiered(tiers(0L -> 10L, 200L -> 20L, 100L -> 30L)) shouldBe Left(StepPolicyInvalid.BoundsNotAscending)
+      StepPolicy.tiered(tiers(0L -> 10L, 200L -> 20L, 200L -> 30L)) shouldBe Left(StepPolicyInvalid.BoundsNotAscending)
     }
 
     "reject a tier with a step that is not positive (И-15)" in {
-      StepPolicy.tiered(pairs(0L -> 10L, 200L -> 0L)) shouldBe Left(StepPolicyInvalid.StepNotPositive)
-      StepPolicy.tiered(pairs(0L -> -5L)) shouldBe Left(StepPolicyInvalid.StepNotPositive)
+      StepPolicy.tiered(tiers(0L -> 10L, 200L -> 0L)) shouldBe Left(StepPolicyInvalid.StepNotPositive)
+      StepPolicy.tiered(tiers(0L -> -5L)) shouldBe Left(StepPolicyInvalid.StepNotPositive)
     }
 
     "reject tiers expressed in more than one currency" in {
-      StepPolicy.tiered(List(money(0) -> money(10), Money(200, eur) -> money(20))) shouldBe
+      StepPolicy.tiered(
+        List(StepPolicy.Tier(money(0), money(10)), StepPolicy.Tier(Money(200, eur), money(20)))
+      ) shouldBe
         Left(StepPolicyInvalid.MixedCurrency)
     }
 
