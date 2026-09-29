@@ -144,6 +144,12 @@ const formPrompts: Record<FormField, string> = {
 const conflictText =
   "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.";
 const materialForbiddenText = "Это действие доступно организатору сходки.";
+// Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
+// кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
+const forbiddenText = "Это действие тебе недоступно.";
+const managementForbiddenText = "Управление сходками доступно администратору.";
+const communityForbiddenText =
+  "Управлять составом сообщества может только администратор.";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -830,7 +836,9 @@ async function handleMessage(
     }
     switch (result.kind) {
       case "message":
-        await ctx.reply(result.text, { reply_markup: homeKeyboard() });
+        await ctx.reply(result.text, {
+          reply_markup: homeKeyboard(identity),
+        });
         outcome = {
           level: "info",
           message: "start reply sent",
@@ -947,6 +955,36 @@ async function handleCallback(
       return;
     }
     const person = identity.person;
+    // Вход в управление и вопрос о нике видит только администратор, но старая
+    // кнопка остаётся в чате. Меню сервиса за собой не имеет, а вопрос отказал бы
+    // лишь после набора ответа, поэтому отказ приходит здесь. Остальные кнопки
+    // меню, кроме объявления с его вопросом, бот пропускает: право на них решают
+    // Meetups и Identity (PER-396). Отказ приходит новым сообщением, как и
+    // успешный ответ на эти кнопки: экран, где лежала кнопка, остаётся целым.
+    if (
+      (action.kind === "manage-menu" ||
+        action.kind === "ask-allowed-username") &&
+      !isAdministrator(person)
+    ) {
+      await ctx.reply(
+        action.kind === "manage-menu"
+          ? managementForbiddenText
+          : communityForbiddenText,
+        {
+          reply_markup: new InlineKeyboard().text("Назад", "v1:nav:start"),
+        },
+      );
+      outcome = {
+        level: "warn",
+        message: "management rejected",
+        result: "error",
+        use_case: useCase,
+        identity_id: person.identityId,
+        error_category: "authorization",
+        error: "management_forbidden",
+      };
+      return;
+    }
     if (action.kind === "open-material-file") {
       const meetupId = tokenToUuid(action.token);
       const materialId = tokenToUuid(action.materialToken);
@@ -1271,7 +1309,7 @@ async function handleCallback(
             ? "Изменение сохранено."
             : "Состояние уже было актуальным."
           : result.kind === "invalid"
-            ? "Identity отклонил изменение. Состав перечитан заново."
+            ? "Изменение не сохранилось. Состав перечитан заново."
             : undefined;
       await renderCommunity(ctx, runtime, person, true, confirmation);
       outcome = adminOutcome(result, person.identityId);
@@ -1283,7 +1321,7 @@ async function handleCallback(
         intent: "start",
       });
       if (result.kind === "message") {
-        await editScreen(ctx, result.text, homeKeyboard());
+        await editScreen(ctx, result.text, homeKeyboard(person));
         outcome = {
           level: "info",
           message: "start screen sent",
@@ -1854,7 +1892,7 @@ async function handleCallback(
       } else {
         await ctx.reply(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
-            ? "Notifications не разрешил это действие."
+            ? forbiddenText
             : unavailableText,
         );
       }
@@ -1898,7 +1936,7 @@ async function handleCallback(
       } else {
         await ctx.reply(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
-            ? "Notifications не разрешил это действие."
+            ? forbiddenText
             : unavailableText,
         );
       }
@@ -2331,9 +2369,7 @@ async function renderCommunity(
         );
   if (result.kind !== "ok") {
     const text =
-      result.kind === "forbidden"
-        ? "Identity не разрешил управление составом."
-        : unavailableText;
+      result.kind === "forbidden" ? communityForbiddenText : unavailableText;
     if (edit)
       await editScreen(
         ctx,
@@ -2667,14 +2703,24 @@ function navScreenUseCase(screen: NavScreen): ProductUseCase {
   }
 }
 
+// Управлять сходками и составом может только администратор: так решают Meetups
+// и Identity, и вход, который ведёт в отказ, хуже его отсутствия.
+function isAdministrator(person: { globalRoles: readonly string[] }): boolean {
+  return person.globalRoles.includes("admin");
+}
+
 // Главный экран — ответ на /start. Возврат на него с других экранов правит то
 // же сообщение той же клавиатурой, поэтому она собрана в одном месте.
-function homeKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
+function homeKeyboard(person: {
+  globalRoles: readonly string[];
+}): InlineKeyboard {
+  const keyboard = new InlineKeyboard()
     .text("Ближайшие сходки", "v1:nav:hub")
-    .text("Архив", "v1:nav:archive")
-    .row()
-    .text("Управление сходками", "v1:manage:menu");
+    .text("Архив", "v1:nav:archive");
+  if (isAdministrator(person)) {
+    keyboard.row().text("Управление сходками", "v1:manage:menu");
+  }
+  return keyboard;
 }
 
 function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
@@ -3052,7 +3098,7 @@ async function renderNotificationFailure(
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
     await editScreen(
       ctx,
-      "Notifications не разрешил это действие.",
+      forbiddenText,
       new InlineKeyboard().text("К списку", "v1:nav:hub"),
     );
     return;
@@ -3171,7 +3217,7 @@ async function renderStateResult(
     result.kind === "dependency-rejected" && result.reason === "invalid"
       ? invalidMeetupText(result)
       : result.kind === "dependency-rejected" && result.reason === "forbidden"
-        ? "Meetups не разрешил это действие."
+        ? forbiddenText
         : unavailableText;
   await editScreen(
     ctx,
@@ -3674,9 +3720,7 @@ async function renderFormResult(
       return;
     }
     await ctx.reply(
-      result.reason === "forbidden"
-        ? "Meetups не разрешил это действие."
-        : unavailableText,
+      result.reason === "forbidden" ? forbiddenText : unavailableText,
     );
   }
 }

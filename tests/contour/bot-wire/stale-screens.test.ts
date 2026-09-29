@@ -3,7 +3,6 @@ import {
   beforeAll,
   describe,
   expect,
-  freshTelegramUserId,
   it,
   openBotWire,
   openDirectClients,
@@ -88,18 +87,17 @@ describe("кнопки на старых экранах", () => {
   });
 
   it("случай 5: кнопка прошлого релиза не роняет обработку и открывает актуальный экран", async () => {
-    const adminId = await direct.grantAdmin(freshTelegramUserId());
-    const { person: member } = await memberAllowedBy(wire, direct, adminId);
-    await member.says("/start");
+    // Вход в управление есть только у администратора (PER-396).
+    const { person: organizer } = await organizerAtStart(wire, direct);
 
     // Кнопка, чей обычный экран — меню управления, а не список: иначе
     // исполненная как обычная она дала бы тот же экран, что и устаревшая.
-    await member.pressesFromOlderRelease("Управление сходками");
-    expect(member.buttons()).toContain("Обновить");
-    expect(member.buttons()).not.toContain("Создать сходку");
+    await organizer.pressesFromOlderRelease("Управление сходками");
+    expect(organizer.buttons()).toContain("Обновить");
+    expect(organizer.buttons()).not.toContain("Создать сходку");
 
     // Процесс жив: следующее нажатие обрабатывается как обычно.
-    await member.presses("Назад");
-    expect(member.buttons()).toContain("Ближайшие сходки");
+    await organizer.presses("Назад");
+    expect(organizer.buttons()).toContain("Ближайшие сходки");
   });
 });

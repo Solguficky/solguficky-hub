@@ -580,6 +580,24 @@ describe("presentation adapter", () => {
       operation: "message",
       use_case: "find_meetup",
     });
+    // Управление солегуфику недоступно, и вход в него он не видит (PER-396).
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+            { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
+        ],
+      },
+    });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
+  });
+
+  it("offers management on /start to an admin", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
@@ -769,12 +787,16 @@ describe("presentation adapter", () => {
     const identity = { ...resolvedIdentity(["member"]), community };
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
+    // Старая кнопка из меню бот не сторожит: право решает Identity, а отказ
+    // звучит без имени сервиса.
     await bot.handleUpdate(callbackUpdate("v1:community:list"));
 
     expect(community).toHaveBeenCalledOnce();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Identity не разрешил управление составом." },
+      payload: {
+        text: "Управлять составом сообщества может только администратор.",
+      },
     });
     expectBoundary(records[0], {
       level: "warn",
@@ -859,7 +881,7 @@ describe("presentation adapter", () => {
       kind: "message",
       text: "Привет. Главный экран.",
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
       execute,
     });
     await bot.init();
@@ -2239,6 +2261,7 @@ describe("presentation adapter", () => {
       operation: "message",
       use_case: "find_meetup",
     });
+    // Солегуфику вход в управление не показывается (PER-396).
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
@@ -2246,10 +2269,10 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
         ],
       },
     });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
   });
 
   it("does not resolve identity for /start mentioned for another bot", async () => {
@@ -2511,6 +2534,7 @@ describe("presentation adapter", () => {
     {
       name: "menu",
       data: "v1:manage:menu",
+      roles: ["admin"],
       result: undefined,
       use_case: "create_meetup",
       message: "manage menu sent",
@@ -2542,14 +2566,16 @@ describe("presentation adapter", () => {
     },
   ])(
     "records exactly one $name callback boundary at info",
-    async ({ data, result, use_case, message }) => {
+    async ({ data, roles, result, use_case, message }) => {
       const execute =
         result === undefined
           ? vi.fn<Dispatcher["execute"]>().mockImplementation(() => {
               throw new Error("dispatcher should not run");
             })
           : vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
-      const { bot, records } = createHarness(resolvedIdentity(), { execute });
+      const { bot, records } = createHarness(resolvedIdentity(roles), {
+        execute,
+      });
       await bot.init();
       await bot.handleUpdate(callbackUpdate(data));
       expect(records).toHaveLength(1);
@@ -3207,7 +3233,7 @@ describe("notification frames", () => {
   // Отказ по природе, а не один «сбой на моей стороне»: «Повторить» на отказе
   // по праву и на устаревшем экране не лечит ничего.
   it.each([
-    ["forbidden", "Notifications не разрешил это действие.", "v1:nav:hub"],
+    ["forbidden", "Это действие тебе недоступно.", "v1:nav:hub"],
     ["invalid", "Этот экран устарел.", "v1:notify:global"],
     ["conflict", "Это уже сделано.", "v1:notify:global"],
   ])(
@@ -4037,6 +4063,74 @@ describe("broadcast frames", () => {
 
     expect(JSON.stringify(admin.calls)).toContain("v1:bc:c");
     expect(JSON.stringify(member.calls)).not.toContain("v1:bc:c");
+  });
+
+  it("refuses the old management button to a non-admin without naming a service", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"]),
+      { execute },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: "Управление сходками доступно администратору.",
+        reply_markup: {
+          inline_keyboard: [[{ text: "Назад", callback_data: "v1:nav:start" }]],
+        },
+      },
+    });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:new:");
+    // Отказ не затирает экран, на котором лежала кнопка.
+    expect(calls.map((call) => call.method)).not.toContain("editMessageText");
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "create_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("management_forbidden");
+  });
+
+  it("offers the whole management menu to an admin", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    const sent = JSON.stringify(calls);
+    expect(sent).toContain("v1:manage:new:");
+    expect(sent).toContain("v1:manage:hidden");
+    expect(sent).toContain("v1:community:list");
+    expect(sent).toContain("v1:bc:c");
+  });
+
+  it("does not ask a non-admin for an allowed username", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity(["member"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:community:allow"));
+
+    expect(JSON.stringify(calls)).not.toContain("force_reply");
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: "Управлять составом сообщества может только администратор.",
+      },
+    });
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "manage_community",
+    });
   });
 
   it("does not ask a non-admin for broadcast text", async () => {
