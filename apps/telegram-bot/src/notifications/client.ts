@@ -9,7 +9,7 @@ import {
   NotificationCategory as WireCategory,
 } from "../../gen/notifications/v1/notifications_service_pb.js";
 import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
-import { type Tracing, traceRpc } from "../tracing.js";
+import { type RpcClientOptions, traceRpc } from "../tracing.js";
 import type {
   BroadcastResult,
   CategoryState,
@@ -39,8 +39,7 @@ export type NotificationsClient = Notifications & { close(): void };
 
 export function createNotificationsClient(
   baseUrl: string,
-  tracing: Tracing,
-  timeoutMs = 3_000,
+  { tracing, timeoutMs = 3_000 }: RpcClientOptions,
 ): NotificationsClient {
   const sessionManager = new Http2SessionManager(baseUrl);
   const rpc = createClient(

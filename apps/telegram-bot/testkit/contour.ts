@@ -298,12 +298,13 @@ export function openBotWire(endpoints: {
   identityUrl: string;
   meetupsUrl: string;
 }) {
-  const identity = createIdentityClient(endpoints.identityUrl, noopTracing());
-  const meetups = createMeetupsClient(
-    endpoints.meetupsUrl,
-    contourTimeZone,
-    noopTracing(),
-  );
+  // Контур проверяет провод, а не трассировку: спаны здесь не записываются.
+  const tracing = noopTracing();
+  const identity = createIdentityClient(endpoints.identityUrl, { tracing });
+  const meetups = createMeetupsClient(endpoints.meetupsUrl, {
+    communityTimeZone: contourTimeZone,
+    tracing,
+  });
   const dispatcher = createDispatcher(meetups, undefined, () =>
     communityDay(new Date(), contourTimeZone),
   );

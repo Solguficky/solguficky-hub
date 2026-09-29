@@ -83,14 +83,19 @@ async function main(): Promise<number> {
   }
   const metrics = startMetrics();
   const tracing = startTraces();
-  const meetups = createMeetupsClient(meetupsUrl, communityTimeZone, tracing);
-  const notifications = createNotificationsClient(notificationsUrl, tracing);
+  const meetups = createMeetupsClient(meetupsUrl, {
+    communityTimeZone,
+    tracing,
+  });
+  const notifications = createNotificationsClient(notificationsUrl, {
+    tracing,
+  });
   // День сообщества считается тем же поясом, что и у Meetups: иначе граница
   // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
   const dispatcher = createDispatcher(meetups, notifications, () =>
     communityDay(new Date(), communityTimeZone),
   );
-  const identity = createIdentityClient(identityUrl, tracing);
+  const identity = createIdentityClient(identityUrl, { tracing });
   const bot = createBot({
     token,
     dispatcher,
@@ -123,9 +128,25 @@ async function main(): Promise<number> {
         identity.close();
         meetups.close();
         notifications.close();
-        // Трейсы закрываются вместе с метриками после клиентов: последние
-        // спаны вызовов успевают уйти до остановки.
-        await Promise.all([tracing.shutdown(), metrics.shutdown()]);
+        // Трейсы и метрики закрываются последними и независимо: недоступный
+        // collector роняет сброс одного сигнала, но не отменяет сброс другого
+        // и не делает остановку неуспешной. Update, который ещё обрабатывается,
+        // своих последних спанов не отправит: bot.stop его не ждёт.
+        const closed = await Promise.allSettled([
+          tracing.shutdown(),
+          metrics.shutdown(),
+        ]);
+        for (const [index, result] of closed.entries()) {
+          if (result.status === "rejected") {
+            logger.warn("telemetry shutdown failed", {
+              operation: index === 0 ? "traces" : "metrics",
+              error:
+                result.reason instanceof Error
+                  ? result.reason.message
+                  : String(result.reason),
+            });
+          }
+        }
       },
     },
     logger,

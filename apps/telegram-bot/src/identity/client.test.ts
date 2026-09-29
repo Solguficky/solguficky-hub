@@ -236,7 +236,9 @@ describe("identity client", () => {
 
   it("closes the http2 session on shutdown", () => {
     const abort = vi.spyOn(Http2SessionManager.prototype, "abort");
-    const identity = createIdentityClient("http://127.0.0.1:1", noopTracing());
+    const identity = createIdentityClient("http://127.0.0.1:1", {
+      tracing: noopTracing(),
+    });
     identity.close();
     expect(abort).toHaveBeenCalledOnce();
     abort.mockRestore();

@@ -25,6 +25,9 @@ async function callUnder(
   withParent: boolean,
 ) {
   const request = rpcRequest();
+  // Сгенерированных дескрипторов сервиса тесту не нужно: interceptor читает
+  // только имена и заголовки, поэтому неполный запрос и `next` приводятся к
+  // типам Connect.
   const call = () =>
     traceRpc(tracing)(next as never)(request as never) as Promise<unknown>;
   if (!withParent) {

@@ -122,12 +122,43 @@ describe("update trace", () => {
     expect(calls.map((call) => call.method)).toContain("sendMessage");
   });
 
+  it("marks the update failed by category when the handler records a refusal", async () => {
+    const { tracing, exporter } = createRecordingTracing();
+    const unavailable: IdentityResolver = {
+      resolve: async () => ({
+        kind: "unavailable",
+        cause: new Error("connect ECONNREFUSED"),
+      }),
+    };
+    const { bot, records } = createHarness(
+      unavailable,
+      createDispatcher(),
+      [],
+      tracing,
+    );
+
+    await bot.handleUpdate(startUpdate());
+
+    const root = exporter
+      .getFinishedSpans()
+      .find((span) => span.parentSpanContext === undefined);
+    expect(root?.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(root?.attributes["error.type"]).toBe(
+      records.at(-1)?.fields.error_category,
+    );
+  });
+
   it("closes the update span as failed when the handler throws", async () => {
     const { tracing, exporter } = createRecordingTracing();
     const ctx = new Context(startUpdate(), new Api("111:test-token"), botInfo);
 
-    const handled = traceUpdate(tracing, ctx, "request-1", async () => {
-      throw new TypeError("handler defect");
+    const handled = traceUpdate({
+      tracing,
+      ctx,
+      requestId: "request-1",
+      next: async () => {
+        throw new TypeError("handler defect");
+      },
     });
 
     await expect(handled).rejects.toBeInstanceOf(TypeError);

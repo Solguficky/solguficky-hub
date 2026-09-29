@@ -30,6 +30,13 @@ export type Tracing = {
   shutdown(): Promise<void>;
 };
 
+// Опции фабрики gRPC-клиента: трассировка обязательна, чтобы клиент без неё
+// не собрался молча, а предел вызова у каждого клиента свой по умолчанию.
+export type RpcClientOptions = {
+  tracing: Tracing;
+  timeoutMs?: number;
+};
+
 export function createTracing(
   tracer: Tracer,
   shutdown: () => Promise<void>,

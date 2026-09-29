@@ -107,6 +107,7 @@ describe("startTraces", () => {
     const span = tracing.tracer.startSpan("update");
 
     expect(span.isRecording()).toBe(true);
+    // Ресурс — поле спана SDK, а API-тип Span его не объявляет.
     expect(
       (span as unknown as { resource: { attributes: object } }).resource
         .attributes,
