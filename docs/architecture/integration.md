@@ -230,7 +230,7 @@ Identity публикует события о регистрации, выдач
 | `AuctionService.PlaceBid` | `auction.v1` в `contracts/proto/auction/v1/auction_service.proto`; типы значений — `contracts/proto/auction/v1/auction.proto` | Telegram Bot: бот хаба и бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Auction |
 | `AuctionService.SetProxyLimit` | то же | то же | Auction |
 | `AuctionService.WithdrawProxyLimit` | то же | то же | Auction |
-| `AuctionService.CreateLotCard` | то же | Telegram Bot: форма лота администратора ([PER-319](https://linear.app/anticnvm/issue/per-319)) | Auction |
+| `AuctionService.CreateLotCard` | то же | то же; форма лота администратора в общем пакете экранов ([PER-319](https://linear.app/anticnvm/issue/per-319)) | Auction |
 | `AuctionService.EditLotCard` | то же | то же | Auction |
 | `AuctionService.GetLot` | то же | Telegram Bot: бот хаба и бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Auction |
 | `AuctionService.ListSessionLots` | то же | то же | Auction |
@@ -245,7 +245,7 @@ Identity публикует события о регистрации, выдач
 
 **Отказ торгов — значение ответа, а не статус gRPC.** Здесь контракт расходится с Meetups, где нарушенный инвариант отвечает `FAILED_PRECONDITION`, и расходится по двум причинам. Отказ несёт данные: `BidBelowMinimum.min_required` и `BidNotAtNextPrice.expected` называют цену, которую край показывает человеку, а статус такие данные переносит только через `google.rpc` details — сообщения, которых нет в модуле и которые пришлось бы тянуть из Buf Schema Registry вне build path. И отказ окончателен: ADR-047 запрещает автоматически повторять команду после именованного отказа, а статус gRPC край читает как сбой транспорта и заводит в ретрай. Поэтому ответ команды — `oneof outcome { accepted; refused }`, а `refused` — `oneof reason` по именованным отказам этой команды из RFC-011. Перечень отказов у каждой команды свой: `LotOnHold` возможен только у ставки, потому что прокси-лимит удержанный лот принимает.
 
-Статусы gRPC остаются для того, что не является решением торгов:
+Статусы gRPC остаются для того, что не является решением торгов. У команд каталога две нижние строки заменены отказами в ответе — абзац об отказах каталога ниже:
 
 | Условие | gRPC status |
 |---|---|
