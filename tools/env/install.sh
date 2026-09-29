@@ -28,6 +28,11 @@ fi
 
 log() { printf '\n=== %s ===\n' "$1"; }
 
+# Downloads are unpacked and run through sudo, so they go into a private
+# directory: a predictable path in /tmp could be planted by another user.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
 # --- System packages ---------------------------------------------------------
 
 APT_PACKAGES="ca-certificates curl gnupg unzip git pkg-config libssl-dev libicu-dev python3 python3-pip python-is-python3"
@@ -92,13 +97,14 @@ fi
 # GOTOOLCHAIN pins the compiler to go.mod even when the image ships a newer Go
 # (docs/learning/go/service-layout.md); a missing Go is installed at that version.
 # A Go older than 1.21 does not know GOTOOLCHAIN, so it counts as missing.
+# The pin is saved with `go env -w` so that later shells of the agent keep it.
 go_minor="$(GOTOOLCHAIN=local go version 2>/dev/null | sed -n 's/.* go1\.\([0-9]*\).*/\1/p' || true)"
 export GOTOOLCHAIN="go${GO_VERSION}"
 if [ -z "$go_minor" ] || [ "$go_minor" -lt 21 ]; then
   log "Installing Go $GO_VERSION"
-  curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+  curl -fsSL -o "$WORK_DIR/go.tar.gz" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
   $SUDO rm -rf /usr/local/go
-  $SUDO tar -C /usr/local -xzf /tmp/go.tar.gz
+  $SUDO tar -C /usr/local -xzf "$WORK_DIR/go.tar.gz"
   $SUDO ln -sf /usr/local/go/bin/go /usr/local/bin/go
   $SUDO ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 else
@@ -106,14 +112,15 @@ else
 fi
 GOBIN_DIR="$(go env GOPATH)/bin"
 export PATH="$GOBIN_DIR:$PATH"
+go env -w GOTOOLCHAIN="go${GO_VERSION}"
 
 # --- .NET SDK ----------------------------------------------------------------
 
 DOTNET_DIR="/usr/local/dotnet"
 if ! "$DOTNET_DIR/dotnet" --list-sdks 2>/dev/null | grep -q "^${DOTNET_SDK_VERSION} "; then
   log "Installing .NET SDK $DOTNET_SDK_VERSION from global.json"
-  curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-  $SUDO bash /tmp/dotnet-install.sh --jsonfile "$REPO_ROOT/global.json" --install-dir "$DOTNET_DIR" --no-path
+  curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$WORK_DIR/dotnet-install.sh"
+  $SUDO bash "$WORK_DIR/dotnet-install.sh" --jsonfile "$REPO_ROOT/global.json" --install-dir "$DOTNET_DIR" --no-path
 else
   log ".NET SDK $DOTNET_SDK_VERSION already installed"
 fi
@@ -132,12 +139,12 @@ dnx --yes "aspire.cli@${ASPIRE_SDK_VERSION}" -- setup --install-path "$HOME/.asp
 PROTOC_DIR="/usr/local/protoc${PROTOC_VERSION}"
 if [ "$(protoc --version 2>/dev/null | awk '{print $2}')" != "$PROTOC_VERSION" ]; then
   log "Installing protoc $PROTOC_VERSION"
-  curl -fsSL -o /tmp/protoc.zip \
+  curl -fsSL -o "$WORK_DIR/protoc.zip" \
     "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
-  echo "${PROTOC_SHA256}  /tmp/protoc.zip" | sha256sum -c -
+  echo "${PROTOC_SHA256}  $WORK_DIR/protoc.zip" | sha256sum -c -
   $SUDO rm -rf "$PROTOC_DIR"
   $SUDO mkdir -p "$PROTOC_DIR"
-  $SUDO unzip -oq /tmp/protoc.zip -d "$PROTOC_DIR"
+  $SUDO unzip -oq "$WORK_DIR/protoc.zip" -d "$PROTOC_DIR"
   $SUDO ln -sf "$PROTOC_DIR/bin/protoc" /usr/local/bin/protoc
 else
   log "protoc $PROTOC_VERSION already installed"
@@ -147,7 +154,7 @@ fi
 
 # `|| true`: under pipefail a missing binary would abort the script here.
 node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9]*\)\..*/\1/p' || true)"
-if [ -z "$node_major" ] || [ "$node_major" -lt "$NODE_MAJOR" ]; then
+if [ "$node_major" != "$NODE_MAJOR" ]; then
   log "Installing Node.js $NODE_MAJOR"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | $SUDO bash -
   apt_updated=yes
@@ -209,10 +216,10 @@ if ! skillshare version 2>/dev/null | grep -q "v${SKILLSHARE_VERSION}"; then
   # release archive installs; it is checked against the release checksums.
   archive="skillshare_${SKILLSHARE_VERSION}_linux_amd64.tar.gz"
   release="https://github.com/runkids/skillshare/releases/download/v${SKILLSHARE_VERSION}"
-  curl -fsSL -o "/tmp/$archive" "$release/$archive"
-  curl -fsSL -o /tmp/skillshare-checksums.txt "$release/checksums.txt"
-  (cd /tmp && grep " ${archive}\$" skillshare-checksums.txt | sha256sum -c -)
-  $SUDO tar -C /usr/local/bin -xzf "/tmp/$archive" skillshare
+  curl -fsSL -o "$WORK_DIR/$archive" "$release/$archive"
+  curl -fsSL -o "$WORK_DIR/skillshare-checksums.txt" "$release/checksums.txt"
+  (cd "$WORK_DIR" && grep " ${archive}\$" skillshare-checksums.txt | sha256sum -c -)
+  $SUDO tar -C /usr/local/bin -xzf "$WORK_DIR/$archive" skillshare
 else
   log "skillshare $SKILLSHARE_VERSION already installed"
 fi
