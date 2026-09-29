@@ -79,6 +79,29 @@ public class ServiceGraphPublishTests
         exception.Message.ShouldContain(Reason);
     }
 
+    /// <summary>
+    /// Опечатка в профиле публикации ловится локальным прогоном: активен в нём
+    /// другой профиль, и общая проверка имён профиля публикации не видит.
+    /// </summary>
+    [Fact]
+    public void Build_RunMode_PublishProfileListsUnregisteredService_Throws()
+    {
+        var builder = Builder(
+            publish: false,
+            ("Topology:PublishProfile", "cluster"),
+            ("Topology:Profiles:cluster:Services:0", "identty"),
+            ("Topology:Profiles:hub:Services:0", Identity),
+            ("Topology:Profiles:hub:Infrastructure:0", Postgres));
+        var graph = new ServiceGraph(builder, new ProfileConfig { Name = "hub", Services = [Identity], Infrastructure = [Postgres] });
+        graph.AddInfrastructure(Postgres, context => context.Builder.AddContainer(Postgres, "busybox"), PublishMapping.Connections(PublishDatabase));
+        graph.AddService(Identity, [Postgres], Workload, PublishMapping.Workload(Workload));
+
+        var exception = Should.Throw<InvalidOperationException>(graph.Build);
+
+        exception.Message.ShouldContain("'identty'");
+        exception.Message.ShouldContain("Publish profile 'cluster'");
+    }
+
     [Fact]
     public void Build_PublishProfileOwnsInfrastructureMappedAsWorkload_Throws()
     {
@@ -136,6 +159,7 @@ public class ServiceGraphPublishTests
     [InlineData("profile", "hub")]
     [InlineData("run-services", Identity)]
     [InlineData("skip-services", Identity)]
+    [InlineData("telegram-environment", "test")]
     public void ResolvePublish_RunSliceFlag_Throws(string key, string value)
     {
         var configuration = new ConfigurationBuilder()

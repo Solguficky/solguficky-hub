@@ -13,10 +13,12 @@ var topology = new ServiceGraph(builder, profile);
 
 topology.PublishTo(ClusterEnvironment.Configure);
 
+var localLogStack = P.NotPublished("local log stack; production telemetry goes through the Collector (ADR-053)");
+
 topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure, P.Connections(PostgresSetup.Publish));
 topology.AddInfrastructure(R.Nats, NatsSetup.Configure, P.Connections(NatsSetup.Publish));
-topology.AddInfrastructure(R.Loki, LokiSetup.Configure, P.NotPublished("local log stack; production telemetry goes through the Collector (ADR-053)"));
-topology.AddInfrastructure(R.Grafana, GrafanaSetup.Configure, P.NotPublished("local log stack; production telemetry goes through the Collector (ADR-053)"));
+topology.AddInfrastructure(R.Loki, LokiSetup.Configure, localLogStack);
+topology.AddInfrastructure(R.Grafana, GrafanaSetup.Configure, localLogStack);
 
 topology.AddService(R.Identity, [R.Postgres, R.Nats], IdentitySetup.Configure, P.Workload(IdentitySetup.Publish));
 topology.AddService(R.Meetups, [R.Postgres, R.Nats, R.Identity], MeetupsSetup.Configure, P.Workload(MeetupsSetup.Publish));

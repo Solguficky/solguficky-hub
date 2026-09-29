@@ -24,6 +24,13 @@ internal sealed record TelegramEnvironment(string Value, string TokenParameter)
             ["test"] = new("test", "telegram-bot-test-token"),
         };
 
+    /// <summary>
+    /// Продакшн-среда Telegram. Чарт собирается только под неё: тестовый контур в
+    /// кластере — отдельный бот в той же среде со своим токеном из values
+    /// (ADR-055), а тестовая среда Telegram — инструмент локального L3 (ADR-046).
+    /// </summary>
+    public static TelegramEnvironment Production => Known[DefaultName];
+
     public static TelegramEnvironment Resolve(IConfiguration configuration)
     {
         var name = (configuration[CommandLineKey] ?? configuration[ConfigurationKey])

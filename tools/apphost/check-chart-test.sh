@@ -132,6 +132,41 @@ work=$(tree missing-service)
 rm -r "$work/solguficky-hub/templates/notifications"
 assert_fails "a service missing from the chart" "notifications: MVP service has no workload" "$work"
 
+values() {
+    printf 'parameters:\n  identity:\n    identity_image: "identity:latest"\n'
+    printf 'secrets:\n  identity:\n    identity_db: %s\n    nats: ""\n' "$1"
+    printf 'config:\n  identity:\n    IDENTITY_GRPC_ADDR: ":50051"\n'
+}
+
+assert_values_pass() {
+    if output=$("$python" "$check" --values "$2" 2>&1); then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: expected success, got:"
+        echo "$output" | sed 's/^/     /'
+        failed=1
+    fi
+}
+
+assert_values_fail() {
+    if output=$("$python" "$check" --values "$3" 2>&1); then
+        echo "FAIL $1: expected failure, got success"
+        failed=1
+    elif echo "$output" | grep -qF -- "$2"; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: failure does not name '$2':"
+        echo "$output" | sed 's/^/     /'
+        failed=1
+    fi
+}
+
+values '""' > "$scratch/values-empty.yaml"
+assert_values_pass "secrets without values pass, config values are allowed" "$scratch/values-empty.yaml"
+
+values '"postgresql://leaked"' > "$scratch/values-leaked.yaml"
+assert_values_fail "a secret with a value in the chart" "secret 'identity.identity_db' has a value" "$scratch/values-leaked.yaml"
+
 if [ "$failed" -ne 0 ]; then
     echo "check-chart-test: some cases failed"
     exit 1

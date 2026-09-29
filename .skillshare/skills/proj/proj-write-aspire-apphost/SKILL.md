@@ -55,10 +55,10 @@ infra/apphost/
       Publish/                                  среда Kubernetes и форма workload'а чарта
       Extensions/ResourceBuilderExtensions.cs   ApplyIf
       Extensions/ResourceBindExtensions.cs      BindEndpoint, BindConnection
-      Infrastructure/                           один файл на backing store
+      Infrastructure/                           один файл на backing store; PostgresConnection — формат строки для компонента
       Services/                                 один файл на компонент
   AppHost.UnitTests/                          тесты графа, профилей и публикации, just apphost-test
-    Snapshots/hub.run.txt                     снимок локального графа hub
+    TestUtilities/Snapshots/                  снимки модели: hub.run.txt и cluster.publish.txt
 ```
 
 Другой расклад без причины не выдумывай.

@@ -13,7 +13,9 @@ workload is checked against the rules of the production chart:
 - every image comes from values as `@sha256:<64 hex>`, not a tag;
 - the pod runs as non-root and the container has resource limits;
 - the gRPC services have liveness and readiness probes. The bot has no health
-  endpoint and is the one named exception.
+  endpoint and is the one named exception;
+- every secret in the chart's own values.yaml is empty: secrets are parameters
+  without values, and the ops repository supplies them per environment.
 
 The fixture proves that the chart carries a digest through, not that a digest
 is real: real digests live in the ops repository (ADR-055).
@@ -21,6 +23,7 @@ is real: real digests live in the ops repository (ADR-055).
 Usage:
   check-chart.py <chart-dir> <values-fixture>   render with helm, then check
   check-chart.py --rendered <dir>               check an already rendered tree
+  check-chart.py --values <values.yaml>         check the chart's own values only
 """
 
 import re
@@ -105,6 +108,30 @@ def check_rendered(rendered: Path) -> list[str]:
     return errors
 
 
+def check_values(values: Path) -> list[str]:
+    """Every leaf under the top-level `secrets:` key must be an empty string."""
+    errors = []
+    inside = False
+    path: list[str] = []
+    for line in values.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            inside = line.rstrip() == "secrets:"
+            path = []
+            continue
+        if not inside:
+            continue
+        key, _, value = line.strip().partition(":")
+        depth = indent // 2 - 1
+        path = path[:depth] + [key]
+        value = value.strip()
+        if value and value not in ('""', "''"):
+            errors.append(f"secret '{'.'.join(path)}' has a value in the chart's values.yaml")
+    return errors
+
+
 def render(chart: Path, values: Path, out: Path) -> None:
     subprocess.run(["helm", "lint", str(chart), "--strict", "-f", str(values)], check=True)
     subprocess.run(
@@ -117,6 +144,8 @@ def render(chart: Path, values: Path, out: Path) -> None:
 def main(argv: list[str]) -> int:
     if len(argv) == 2 and argv[0] == "--rendered":
         errors = check_rendered(Path(argv[1]))
+    elif len(argv) == 2 and argv[0] == "--values":
+        errors = check_values(Path(argv[1]))
     elif len(argv) == 2:
         with tempfile.TemporaryDirectory() as out:
             try:
@@ -124,7 +153,7 @@ def main(argv: list[str]) -> int:
             except subprocess.CalledProcessError as error:
                 print(f"check-chart: {' '.join(error.cmd[:2])} failed with exit code {error.returncode}", file=sys.stderr)
                 return 1
-            errors = check_rendered(Path(out))
+            errors = check_values(Path(argv[0]) / "values.yaml") + check_rendered(Path(out))
     else:
         print(__doc__, file=sys.stderr)
         return 2
@@ -133,7 +162,9 @@ def main(argv: list[str]) -> int:
         print(f"check-chart: {error}", file=sys.stderr)
     if errors:
         return 1
-    print(f"check-chart: {len(WORKLOADS)} workloads match the production chart rules")
+    checked = "chart values have no secret values" if argv[0] == "--values" else \
+        f"{len(WORKLOADS)} workloads match the production chart rules"
+    print(f"check-chart: {checked}")
     return 0
 
 

@@ -5,7 +5,7 @@ using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace AppHost.UnitTests;
+namespace AppHost.UnitTests.TestUtilities;
 
 /// <summary>
 /// Текстовый снимок модели настоящего AppHost: тот же Program.cs, что исполняет
@@ -50,6 +50,11 @@ internal static partial class GraphSnapshot
         foreach (var image in resource.Annotations.OfType<ContainerImageAnnotation>())
         {
             text.AppendLine($"  image: {image.Registry}/{image.Image}:{image.Tag}");
+        }
+
+        foreach (var build in resource.Annotations.OfType<DockerfileBuildAnnotation>())
+        {
+            text.AppendLine($"  build: {Normalize(build.DockerfilePath, root)} context={Normalize(build.ContextPath, root)}");
         }
 
         if (resource is ExecutableResource executable)

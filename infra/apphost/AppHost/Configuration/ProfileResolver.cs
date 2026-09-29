@@ -16,8 +16,9 @@ internal static class ProfileResolver
     private const string PublishProfileKey = "Topology:PublishProfile";
 
     // Срез запуска чарту не принадлежит: чарт с частью сервисов выглядел бы
-    // полным, и выпавший сервис заметили бы только на кластере.
-    private static readonly string[] RunOnlyKeys = ["profile", "run-services", "skip-services"];
+    // полным, и выпавший сервис заметили бы только на кластере. Среда Telegram
+    // тоже: чарт собирается под продакшн-среду, и флаг молча не применился бы.
+    private static readonly string[] RunOnlyKeys = ["profile", "run-services", "skip-services", "telegram-environment"];
 
     public static ProfileConfig Resolve(IConfiguration configuration, DistributedApplicationExecutionContext executionContext) =>
         executionContext.IsPublishMode ? ResolvePublish(configuration) : Resolve(configuration);

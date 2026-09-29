@@ -198,6 +198,22 @@ internal sealed class ServiceGraph(IDistributedApplicationBuilder builder, Profi
             return;
         }
 
+        // Опечатка в профиле публикации не должна ждать сборки чарта в CI: в
+        // локальном запуске этот профиль не активен, и общая проверка имён его
+        // не видит.
+        foreach (var name in published.Services.Where(name => _services.All(node =>
+            !string.Equals(node.Name, name, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException(
+                $"Publish profile '{published.Name}' lists service '{name}', which is not registered in the graph.");
+        }
+
+        foreach (var name in published.Infrastructure.Where(name => !_infrastructure.ContainsKey(name)))
+        {
+            throw new InvalidOperationException(
+                $"Publish profile '{published.Name}' lists infrastructure '{name}', which is not registered in the graph.");
+        }
+
         foreach (var (name, node) in _infrastructure
             .Where(pair => published.OwnsInfrastructure(pair.Key))
             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))

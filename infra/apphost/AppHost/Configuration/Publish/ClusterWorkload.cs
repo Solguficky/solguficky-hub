@@ -61,19 +61,25 @@ internal static class ClusterWorkloadExtensions
 
                 if (shape.Grpc is { } grpc)
                 {
+                    // Сервисы применяют миграции при старте, Notifications — ещё и до
+                    // подъёма силоса. Пока startup-проба не прошла, liveness не
+                    // спрашивается: иначе долгая миграция упёрлась бы в 30 секунд
+                    // liveness и под перезапускался бы посреди неё по кругу.
+                    container.StartupProbe = GrpcProbe(grpc.Port, string.Empty, periodSeconds: 5, failureThreshold: 60);
                     container.LivenessProbe = GrpcProbe(grpc.Port, string.Empty);
                     container.ReadinessProbe = GrpcProbe(grpc.Port, grpc.ReadinessService);
                 }
             }
         });
 
-    // Пределы пробы повторяют локальную: deadline gRPC-вызова readiness
-    // укладывается в 2 секунды (ADR-054), таймаут пробы — 3.
-    private static ProbeV1 GrpcProbe(int port, string service) => new()
+    // Сервис считает готовность не дольше 2 секунд (ADR-054), поэтому таймаут
+    // пробы в 3 секунды оставляет запас на сам вызов — как deadline локальной
+    // пробы AppHost.
+    private static ProbeV1 GrpcProbe(int port, string service, int periodSeconds = 10, int failureThreshold = 3) => new()
     {
         Grpc = new GrpcActionV1 { Port = port, Service = service },
-        PeriodSeconds = 10,
+        PeriodSeconds = periodSeconds,
         TimeoutSeconds = 3,
-        FailureThreshold = 3,
+        FailureThreshold = failureThreshold,
     };
 }

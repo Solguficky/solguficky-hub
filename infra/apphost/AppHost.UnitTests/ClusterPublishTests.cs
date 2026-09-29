@@ -58,6 +58,9 @@ public class ClusterPublishTests
         var build = resource.Annotations.OfType<DockerfileBuildAnnotation>().ShouldHaveSingleItem();
         Path.GetFullPath(build.ContextPath).ShouldBe(root);
         Path.GetFullPath(build.DockerfilePath).ShouldBe(Path.GetFullPath(Path.Combine(root, containerfile)));
+        // Перенос Containerfile без правки графа дал бы чарт, образ которого CI
+        // соберёт по другому пути, — или не соберёт вовсе.
+        File.Exists(build.DockerfilePath).ShouldBeTrue();
     }
 
     [Fact]

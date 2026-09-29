@@ -19,6 +19,7 @@ internal static class TelegramBotSetup
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context) =>
         Wire(
             context,
+            TelegramEnvironment.Resolve(context.Builder.Configuration),
             context.Builder.AddJavaScriptApp(
                 AppHostNames.Resources.TelegramBot,
                 RepositoryPaths.App(context.Builder, "telegram-bot"),
@@ -32,17 +33,19 @@ internal static class TelegramBotSetup
     public static IResourceBuilder<ContainerResource> Publish(ServiceGraphContext context) =>
         Wire(
                 context,
+                TelegramEnvironment.Production,
                 context.Builder.AddDockerfile(
                     AppHostNames.Resources.TelegramBot,
                     RepositoryPaths.Root(context.Builder),
                     "apps/telegram-bot/Containerfile"))
             .AsClusterWorkload(Cluster);
 
-    private static IResourceBuilder<T> Wire<T>(ServiceGraphContext context, IResourceBuilder<T> bot)
+    private static IResourceBuilder<T> Wire<T>(
+        ServiceGraphContext context,
+        TelegramEnvironment environment,
+        IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
-        var environment = TelegramEnvironment.Resolve(context.Builder.Configuration);
-
         // Секрет объявляется только когда профиль владеет ботом: профиль без него
         // не спрашивает токен и не требует Node-toolchain. Имя параметра приходит
         // от среды, поэтому прогон спрашивает ровно один токен — тот, которым

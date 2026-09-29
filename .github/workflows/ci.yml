@@ -89,6 +89,10 @@ jobs:
               - '.github/workflows/ci.yml'
             apphost:
               - 'infra/apphost/**'
+              # Чарт собирает Identity и бота по этим файлам: перенос без
+              # правки графа ловит тест публикации.
+              - 'apps/identity/Containerfile'
+              - 'apps/telegram-bot/Containerfile'
               # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
               - 'aspire.config.json'
               - 'tools/apphost/**'

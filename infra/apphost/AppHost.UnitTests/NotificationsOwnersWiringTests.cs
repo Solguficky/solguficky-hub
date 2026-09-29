@@ -8,6 +8,8 @@ using Microsoft.Extensions.Configuration;
 using Shouldly;
 using Xunit;
 
+using static AppHost.UnitTests.TestUtilities.TestMappings;
+
 namespace AppHost.UnitTests;
 
 /// <summary>
@@ -19,10 +21,6 @@ namespace AppHost.UnitTests;
 /// </summary>
 public class NotificationsOwnersWiringTests
 {
-    // Набор проверяет владение в локальном запуске; чем узел станет в чарте, ему
-    // неважно, а отображение — обязательный аргумент регистрации.
-    private static readonly PublishMapping LocalOnly = PublishMapping.NotPublished("local-only test node");
-
     private const string Identity = AppHostNames.Resources.Identity;
     private const string Meetups = AppHostNames.Resources.Meetups;
     private const string Notifications = AppHostNames.Resources.Notifications;
