@@ -105,9 +105,14 @@ internal static partial class GraphSnapshot
             text.AppendLine($"  waits: {wait.Resource.Name} {wait.WaitType}");
         }
 
-        foreach (var relationship in resource.Annotations.OfType<ResourceRelationshipAnnotation>())
+        // Порядок связей повторяет порядок вызовов в setup и смысла не несёт:
+        // перестановка WithEnvironment и WaitFor не меняет запуск.
+        foreach (var relationship in resource.Annotations.OfType<ResourceRelationshipAnnotation>()
+            .Select(relationship => $"{relationship.Type} {relationship.Resource.Name}")
+            .Distinct()
+            .Order(StringComparer.Ordinal))
         {
-            text.AppendLine($"  relationship: {relationship.Type} {relationship.Resource.Name}");
+            text.AppendLine($"  relationship: {relationship}");
         }
 
         foreach (var health in resource.Annotations.OfType<HealthCheckAnnotation>().OrderBy(h => h.Key, StringComparer.Ordinal))

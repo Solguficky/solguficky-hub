@@ -24,15 +24,15 @@ identity: ExecutableResource
   waits: identity-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
-  relationship: Reference identity-maintainer-token
-  relationship: WaitFor identity-build
-  relationship: Reference postgres-password
-  relationship: Reference postgres
-  relationship: WaitFor identity-db
-  relationship: Reference nats-password
-  relationship: Reference nats
-  relationship: WaitFor nats
   relationship: Reference identity
+  relationship: Reference identity-maintainer-token
+  relationship: Reference nats
+  relationship: Reference nats-password
+  relationship: Reference postgres
+  relationship: Reference postgres-password
+  relationship: WaitFor identity-build
+  relationship: WaitFor identity-db
+  relationship: WaitFor nats
   health: identity-grpc
 identity-build: ExecutableResource
   command: go
@@ -42,8 +42,8 @@ identity-build: ExecutableResource
   arg: <repo>/apps/identity/bin/identity
   arg: ./cmd/identity
   waits: identity-proto WaitForCompletion
-  relationship: WaitFor identity-proto
   relationship: Parent identity
+  relationship: WaitFor identity-proto
 identity-db: PostgresDatabaseResource
   health: identity-db_check
 identity-maintainer-token: ParameterResource
@@ -82,12 +82,12 @@ meetups: ProjectResource
   waits: meetups-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
-  relationship: Reference postgres
-  relationship: WaitFor meetups-db
   relationship: Reference identity
-  relationship: WaitFor identity
-  relationship: Reference nats-password
   relationship: Reference nats
+  relationship: Reference nats-password
+  relationship: Reference postgres
+  relationship: WaitFor identity
+  relationship: WaitFor meetups-db
   relationship: WaitFor nats
   health: meetups-grpc
 meetups-db: PostgresDatabaseResource
@@ -138,15 +138,15 @@ notifications: ProjectResource
   waits: nats WaitUntilHealthy
   waits: notifications-db WaitUntilHealthy
   waits: postgres WaitUntilHealthy
-  relationship: Reference postgres
-  relationship: WaitFor notifications-db
-  relationship: Reference nats-password
-  relationship: Reference nats
-  relationship: WaitFor nats
-  relationship: Reference meetups
-  relationship: WaitFor meetups
   relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: Reference nats-password
+  relationship: Reference postgres
   relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  relationship: WaitFor notifications-db
   health: notifications-grpc
 notifications-db: PostgresDatabaseResource
   health: notifications-db_check
@@ -193,17 +193,17 @@ telegram-bot: JavaScriptAppResource
   waits: nats WaitUntilHealthy
   waits: notifications WaitUntilHealthy
   waits: telegram-bot-installer WaitForCompletion
-  relationship: WaitFor telegram-bot-installer
-  relationship: Reference telegram-bot-token
   relationship: Reference identity
-  relationship: WaitFor identity
   relationship: Reference meetups
-  relationship: WaitFor meetups
-  relationship: Reference notifications
-  relationship: WaitFor notifications
-  relationship: Reference nats-password
   relationship: Reference nats
+  relationship: Reference nats-password
+  relationship: Reference notifications
+  relationship: Reference telegram-bot-token
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
   relationship: WaitFor nats
+  relationship: WaitFor notifications
+  relationship: WaitFor telegram-bot-installer
 telegram-bot-installer: JavaScriptInstallerResource
   command: node
   workdir: <repo>/apps/telegram-bot
