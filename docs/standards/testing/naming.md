@@ -60,7 +60,7 @@
 - Внутреннее имя начинается с глагола в третьем лице настоящего времени, со строчной буквы, без `should` внутри и без повторения имени SUT: `should` уже стоит в конструкции блока, и второй раз он ломает фразу.
 - Отрицательный случай называет наблюдаемое бездействие: `leaves a path it does not serve unhandled`, `omits request_id when the caller did not send one`.
 - Property-тест остаётся в том же блоке и формулирует инвариант декларативно: `carries an error category exactly when the result is an error`.
-- Файл `<SUT>Spec.scala` лежит в `src/test/scala/` по пути пакета SUT, рядом с ним в дереве тестов. Суффикс `Spec` — форма ScalaTest; `Tests` не используется, чтобы имя не читалось как .NET-проект. Раскладку уровней задаёт [testing-strategy.md](testing-strategy.md).
+- Файл `<SUT>Spec.scala` лежит в `src/test/scala/` по пути пакета SUT, рядом с ним в дереве тестов. Суффикс `Spec` — форма ScalaTest; `Tests` не используется, чтобы имя не читалось как .NET-проект. Интеграционный сьют (L1) называется `<SUT>IntegrationSpec.scala`: суффикс отбирает уровень в сборке, поэтому он часть имени, а не украшение. Раскладку уровней задаёт [testing-strategy.md](testing-strategy.md).
 
 ## Пример
 

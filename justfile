@@ -14,7 +14,10 @@
 # Единственное место, где закреплены версии buf и golangci-lint. Джобы
 # identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
 # ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
-# identity-lint отказывается работать на другой версии. Версии
+# identity-lint отказывается работать на другой версии. Образ bufbuild/buf в
+# apps/telegram-bot/Containerfile закреплён по digest и потому несёт версию
+# литералом; tools/image/check-containerfile.sh роняет сборку, если она
+# разошлась с BUF_VERSION. Версии
 # protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
@@ -189,7 +192,7 @@ verify-changed:
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test contour-test contour-bot-test
+test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
@@ -333,6 +336,27 @@ telegram-bot-lint: telegram-bot-proto
 
 telegram-bot-run: telegram-bot-build
     cd apps/telegram-bot && npm start
+
+# Production-образ в локальное хранилище движка как telegram-bot:local и те же
+# проверки, что в CI: база по digest, нет токена Bot API, нет пакетов разработки.
+# Движок — IMAGE_ENGINE, podman по умолчанию; docker находит список контекста
+# Containerfile.dockerignore сам. Публикацию в GHCR делает только CI
+# (.github/workflows/image-telegram-bot.yml)
+telegram-bot-image:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${IMAGE_ENGINE:-podman}
+    ignore=
+    case "$engine" in *podman*) ignore="--ignorefile apps/telegram-bot/Containerfile.dockerignore" ;; esac
+    sh tools/image/check-containerfile.sh apps/telegram-bot/Containerfile
+    "$engine" build -f apps/telegram-bot/Containerfile $ignore -t telegram-bot:local .
+    sh tools/image/check-no-token.sh telegram-bot:local
+    sh tools/image/check-node-runtime.sh telegram-bot:local apps/telegram-bot/package-lock.json /app
+
+# Негативный путь проверок образа: база по тегу, токен в слое и токен в
+# аргументе сборки роняют проверки их кодами. Нужен движок, как у telegram-bot-image
+image-checks-test:
+    sh tools/image/check-test.sh apps/telegram-bot/Containerfile
 
 # Живой контур (L3, ADR-046): `/start` от синтетического аккаунта тестового DC
 # до ответа бота через настоящий Telegram. Бота поднимает владелец —
@@ -497,7 +521,8 @@ notifications-image:
 # схемах contracts/proto, как Grpc.Tools вызывает protoc внутри dotnet build
 # у Meetups. Buf в этой сборке не участвует — обоснование в ADR-048.
 # Версии Scala и библиотек закреплены в apps/auction/build.sbt.
-# Сервис — HTTP-граница на Pekko HTTP; торговой логики в нём пока нет.
+# Сервис — HTTP-граница на Pekko HTTP, одноузловой кластер и журнал Pekko
+# Persistence JDBC; торговой логики в нём пока нет.
 
 # Одного `update` мало: бинарник protoc тянет protocbridge на первой генерации,
 # а scalafmt-core подтягивается при первой проверке формата. Без обоих шагов
@@ -515,9 +540,17 @@ auction-proto:
 auction-build:
     cd apps/auction && sbt -batch Test/compile
 
-# Прогон ScalaTest, включая property-проверку каркаса лога
+# Сьюты `*IntegrationSpec` отбирает переменная в build.sbt, а не тег ScalaTest:
+# тег исключает тесты, но не конструктор сьюта, где может стартовать контейнер.
+# Без Docker сьют падает, а не пропускается.
+#
+# Прогон ScalaTest L0, включая property-проверку каркаса лога; Docker не нужен
 auction-test:
     cd apps/auction && sbt -batch test
+
+# L1: схема, журнал, шардинг и готовность на PostgreSQL в Testcontainers; нужен Docker
+auction-test-integration:
+    cd apps/auction && AUCTION_INTEGRATION_TESTS=1 sbt -batch test
 
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым
