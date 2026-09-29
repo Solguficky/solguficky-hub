@@ -18,8 +18,19 @@ import (
 
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
+	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/protobuf/proto"
 )
+
+// tracerName — имя инструментирования в спанах публикации.
+const tracerName = "github.com/Solguficky/solguficky-hub/apps/identity/internal/relay"
+
+// messagingSystem — значение messaging.system: в перечне semconv NATS нет.
+var messagingSystem = semconv.MessagingSystemKey.String("nats")
 
 // Operation — имя фоновой операции в логе. Сценария у неё нет: публикацию начинает
 // таймер, а не человек, поэтому use_case в записи отсутствует.
@@ -63,22 +74,39 @@ type Decline struct {
 
 // Relay — фоновый публикатор очереди.
 type Relay struct {
-	db    *sql.DB
-	pub   Publisher
-	log   *slog.Logger
-	batch int
-	now   func() time.Time
+	db     *sql.DB
+	pub    Publisher
+	log    *slog.Logger
+	batch  int
+	now    func() time.Time
+	tracer trace.Tracer
+}
+
+// Option настраивает релей.
+type Option func(*Relay)
+
+// WithTracerProvider задаёт провайдер спанов публикации. Без опции спаны идут в
+// no-op провайдер.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(r *Relay) { r.tracer = tp.Tracer(tracerName) }
 }
 
 // New собирает релей. batch ≤ 0 означает DefaultBatch.
-func New(db *sql.DB, pub Publisher, log *slog.Logger, batch int) *Relay {
+func New(db *sql.DB, pub Publisher, log *slog.Logger, batch int, opts ...Option) *Relay {
 	if batch <= 0 {
 		batch = DefaultBatch
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Relay{db: db, pub: pub, log: log, batch: batch, now: time.Now}
+	r := &Relay{
+		db: db, pub: pub, log: log, batch: batch, now: time.Now,
+		tracer: tracenoop.NewTracerProvider().Tracer(tracerName),
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // Run тикает до отмены ctx. Отказ тика пишется в лог и не останавливает цикл:
@@ -164,7 +192,20 @@ func (e *declineError) Unwrap() error { return e.err }
 // publish публикует одну запись и отмечает её. repeat — запись уже была отмечена
 // или стрим признал её повтором. Отказ шины приходит declineError, остальные
 // ошибки — отказ собственной базы или испорченная строка.
-func (r *Relay) publish(ctx context.Context, conn *sql.Conn, record outbox.Record) (bool, error) {
+//
+// Каждая публикация — корневой спан со ссылкой на трейс запроса, записавшего
+// строку, а не его дочерний спан: тик публикует записи разных запросов, а
+// публикация идёт после ответа и повторяется при отказе шины, так что трейс
+// запроса к этому моменту уже закрыт. Отметка публикации — дочерний спан.
+func (r *Relay) publish(ctx context.Context, conn *sql.Conn, record outbox.Record) (repeat bool, err error) {
+	ctx, span := r.startPublishSpan(ctx, record)
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, "publication failed")
+		}
+		span.End()
+	}()
+
 	message, err := record.Message()
 	if err != nil {
 		return false, fmt.Errorf("build event %s: %w", record.EventID, err)
@@ -184,6 +225,26 @@ func (r *Relay) publish(ctx context.Context, conn *sql.Conn, record outbox.Recor
 		return false, err
 	}
 	return duplicate || !marked, nil
+}
+
+func (r *Relay) startPublishSpan(ctx context.Context, record outbox.Record) (context.Context, trace.Span) {
+	subject := record.Subject()
+	opts := []trace.SpanStartOption{
+		trace.WithNewRoot(),
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			messagingSystem,
+			semconv.MessagingOperationTypeSend,
+			semconv.MessagingOperationName("publish"),
+			semconv.MessagingDestinationName(subject),
+			semconv.MessagingMessageID(record.EventID),
+			attribute.String("identity_id", record.IdentityID),
+		),
+	}
+	if link, ok := record.Link(); ok {
+		opts = append(opts, trace.WithLinks(link))
+	}
+	return r.tracer.Start(ctx, "publish "+subject, opts...)
 }
 
 func (r *Relay) logTick(ctx context.Context, report Report, err error, elapsed time.Duration) {

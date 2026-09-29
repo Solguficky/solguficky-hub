@@ -44,13 +44,14 @@ RETURNING version, blocked`
 	// Порядок ролей контракт не обещает; сортировка делает строку воспроизводимой.
 	insertEventSQL = `
 INSERT INTO identity_outbox
-    (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at)
+    (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at,
+     traceparent)
 SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::text,
        COALESCE(
            (SELECT array_agg(role ORDER BY role) FROM identity_roles
             WHERE identity_id = $2::uuid AND revoked_at IS NULL),
            '{}'),
-       $6::boolean, now()`
+       $6::boolean, now(), $7::text`
 )
 
 // Append записывает событие о профиле в транзакции изменения. Он двигает версию
@@ -61,6 +62,9 @@ SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::text,
 //
 // Откат транзакции откатывает и событие, и сдвиг версии: отдельной фиксации у
 // очереди нет.
+//
+// Контекст трассировки ctx ложится в строку заголовком traceparent: по нему спан
+// публикации ссылается на трейс запроса. Вне спана колонка остаётся NULL.
 func Append(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, role string) error {
 	var (
 		version int64
@@ -82,8 +86,12 @@ func Append(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasio
 	if role != "" {
 		roleArg = role
 	}
+	var traceArg any
+	if tp := TraceParent(ctx); tp != "" {
+		traceArg = tp
+	}
 	if _, err := tx.ExecContext(ctx, insertEventSQL,
-		eventID.String(), identityID, version, string(occasion), roleArg, blocked); err != nil {
+		eventID.String(), identityID, version, string(occasion), roleArg, blocked, traceArg); err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
 	return nil
