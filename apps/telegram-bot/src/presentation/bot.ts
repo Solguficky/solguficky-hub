@@ -7,10 +7,11 @@ import {
 } from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import {
+  applicationCode,
   decideHubAccess,
   type HubAccess,
   hubAccessErrors,
-  hubAccessTexts,
+  hubAccessText,
 } from "../application/hub-access.js";
 import {
   formatLocalMoment,
@@ -2319,28 +2320,35 @@ async function renderCommunity(
   }
   const pending = result.value.members.filter((member) => !member.admitted);
   const admitted = result.value.members.filter((member) => member.admitted);
-  const label = (member: (typeof result.value.members)[number]) =>
+  type Member = (typeof result.value.members)[number];
+  // Человек без ника называется кодом заявки: тот же код он видит в кадре
+  // ожидания и называет администратору, а кнопка несёт то же представление.
+  const label = (member: Member) =>
     member.telegramUsername === undefined
-      ? member.identityId.slice(0, 8)
+      ? `без ника · ${applicationCode(member.identityId)}`
       : `@${member.telegramUsername}`;
+  // В строке списка без ника — ещё и упоминание по Telegram id: по нему
+  // администратор открывает профиль и узнаёт человека, а не только код.
+  const line = (member: Member) =>
+    member.telegramUsername === undefined && member.telegramUserId !== undefined
+      ? `• <a href="tg://user?id=${member.telegramUserId}">без ника</a> · ${escapeHtml(applicationCode(member.identityId))}`
+      : `• ${escapeHtml(label(member))}`;
   const lines = [
-    ...(confirmation === undefined ? [] : [confirmation, ""]),
+    ...(confirmation === undefined ? [] : [escapeHtml(confirmation), ""]),
     "Состав сообщества",
     "",
     `Ожидают допуска: ${pending.length}`,
-    ...(pending.length === 0
-      ? ["—"]
-      : pending.map((member) => `• ${label(member)}`)),
+    ...(pending.length === 0 ? ["—"] : pending.map(line)),
     "",
     `Допущены: ${admitted.length}`,
-    ...(admitted.length === 0
-      ? ["—"]
-      : admitted.map((member) => `• ${label(member)}`)),
+    ...(admitted.length === 0 ? ["—"] : admitted.map(line)),
     "",
     "Разрешённые ники:",
     ...(result.value.allowedUsernames.length === 0
       ? ["—"]
-      : result.value.allowedUsernames.map((username) => `• @${username}`)),
+      : result.value.allowedUsernames.map(
+          (username) => `• ${escapeHtml(`@${username}`)}`,
+        )),
   ];
   const keyboard = new InlineKeyboard();
   for (const member of pending)
@@ -2370,8 +2378,12 @@ async function renderCommunity(
   keyboard
     .text("Обновить", "v1:community:list")
     .text("Назад", "v1:manage:menu");
-  if (edit) await editScreen(ctx, lines.join("\n"), keyboard);
-  else await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+  if (edit) await editScreen(ctx, lines.join("\n"), keyboard, "HTML");
+  else
+    await ctx.reply(lines.join("\n"), {
+      reply_markup: keyboard,
+      parse_mode: "HTML",
+    });
   return result;
 }
 
@@ -2495,11 +2507,13 @@ async function editScreen(
   ctx: UpdateContext,
   text: string,
   keyboard: InlineKeyboard,
+  parseMode?: "HTML",
 ): Promise<void> {
+  const format = parseMode === undefined ? {} : { parse_mode: parseMode };
   // Экран, открытый командой, править нечем: кнопки под сообщением нет, и
   // попытка правки дала бы два заведомо неудачных вызова Bot API.
   if (ctx.callbackQuery === undefined) {
-    await ctx.reply(text, { reply_markup: keyboard });
+    await ctx.reply(text, { reply_markup: keyboard, ...format });
     return;
   }
   try {
@@ -2508,16 +2522,20 @@ async function editScreen(
       message !== undefined &&
       ("document" in message || "photo" in message)
     ) {
-      await ctx.editMessageCaption({ caption: text, reply_markup: keyboard });
+      await ctx.editMessageCaption({
+        caption: text,
+        reply_markup: keyboard,
+        ...format,
+      });
     } else {
-      await ctx.editMessageText(text, { reply_markup: keyboard });
+      await ctx.editMessageText(text, { reply_markup: keyboard, ...format });
     }
   } catch (cause) {
     if (errorText(cause).includes("message is not modified")) {
       return;
     }
     await clearCallbackKeyboard(ctx);
-    await ctx.reply(text, { reply_markup: keyboard });
+    await ctx.reply(text, { reply_markup: keyboard, ...format });
   }
 }
 
@@ -3244,7 +3262,7 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  const text = hubAccessTexts[access];
+  const text = hubAccessText(access, identity.person.identityId);
   if (edit) {
     await editScreen(ctx, text, new InlineKeyboard());
   } else {

@@ -39,6 +39,11 @@ message CommunityMember {
   string identity_id = 1;
   optional string telegram_username = 2;
   bool admitted = 3;
+
+  // Telegram user id of the profile, so that an administrator can open the
+  // person's Telegram profile and recognise someone who has no username. Zero
+  // means an older server that does not send it: a real id is always positive.
+  int64 telegram_user_id = 4;
 }
 
 message ListCommunityMembersRequest { IdentityActor actor = 1; }

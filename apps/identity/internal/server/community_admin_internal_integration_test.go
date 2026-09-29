@@ -43,6 +43,28 @@ func TestCommunityAdministrationIsAuthorizedAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestCommunityMembersCarryTelegramUserID(t *testing.T) {
+	t.Parallel()
+	svc, db := newIdentityService(t)
+	adminID := seedProfile(t, db, 9521)
+	targetID := seedProfile(t, db, 9522)
+	actor := &identityv1.IdentityActor{IdentityId: adminID, GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN}}
+
+	list, err := svc.ListCommunityMembers(t.Context(), &identityv1.ListCommunityMembersRequest{Actor: actor})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, member := range list.GetMembers() {
+		if member.GetIdentityId() == targetID {
+			if member.GetTelegramUserId() != 9522 {
+				t.Fatalf("telegram_user_id = %d, want 9522", member.GetTelegramUserId())
+			}
+			return
+		}
+	}
+	t.Fatalf("member %s is missing from %v", targetID, list.GetMembers())
+}
+
 func TestAllowedUsernameAdministrationListsOnlyCurrentEntries(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
