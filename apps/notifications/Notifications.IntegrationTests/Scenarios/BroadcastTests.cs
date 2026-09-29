@@ -36,7 +36,7 @@ public class BroadcastTests
     /// <summary>
     /// Сообщение организатора получает подписчик с включённой категорией — по
     /// умолчанию, глобально или у сходки. Выключивший её у сходки или глобально,
-    /// неподписанный и заблокированный факта не получают.
+    /// неподписанный, заблокированный и подписанный автор факта не получают.
     /// </summary>
     [Fact]
     public async Task When_OrganizerBroadcasts_Expect_OneFactPerSubscriberWithCategoryOn()
@@ -52,7 +52,7 @@ public class BroadcastTests
         var blocked = await Person(env.Db, blocked: true, "member");
         var notSubscribed = await Person(env.Db, "member");
 
-        foreach (var person in new[] { byDefault, overriddenOn, offHere, offGlobally, blocked })
+        foreach (var person in new[] { author, byDefault, overriddenOn, offHere, offGlobally, blocked })
         {
             await Subscribe(env.Db, person, meetupId);
         }
@@ -215,14 +215,16 @@ public class BroadcastTests
     }
 
     /// <summary>
-    /// Объявление получает круг хаба с включённой категорией. Внешний круг
-    /// аукциона, заблокированный и выключивший категорию — нет.
+    /// Объявление получает круг хаба — роли admin, maintainer и member — с
+    /// включённой категорией. Внешний круг аукциона, заблокированный,
+    /// выключивший категорию и сам автор — нет.
     /// </summary>
     [Fact]
     public async Task When_AdministratorAnnounces_Expect_OneFactPerHubMemberWithCategoryOn()
     {
         await using var env = await BroadcastsUnderTest.Start();
         var author = await Person(env.Db, "admin");
+        var administrator = await Person(env.Db, "admin");
         var member = await Person(env.Db, "member");
         var maintainer = await Person(env.Db, "maintainer");
         var outer = await Person(env.Db, "public");
@@ -235,9 +237,9 @@ public class BroadcastTests
 
         accepted.Created.ShouldBeTrue();
         var facts = await env.Facts(id);
-        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { author, member, maintainer }, ignoreOrder: true);
+        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { administrator, member, maintainer }, ignoreOrder: true);
         facts.ShouldAllBe(fact => fact.Type == "community_announcement" && fact.MeetupId == null);
-        new[] { outer, blocked, off }.ShouldAllBe(person => facts.All(fact => fact.RecipientId != person));
+        new[] { author, outer, blocked, off }.ShouldAllBe(person => facts.All(fact => fact.RecipientId != person));
 
         var message = facts[0].Parsed();
         message.TypeCase.ShouldBe(Notification.TypeOneofCase.CommunityAnnouncement);

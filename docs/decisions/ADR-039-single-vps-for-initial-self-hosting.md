@@ -1,5 +1,7 @@
 # ADR-039: Один Linux VPS для начального self-hosting
 
+> **Текущая применимость:** Active, limited scope. В силе один Linux VPS для dev, agents, test и production, остаточный риск общего хоста и сигналы переезда production на отдельный VPS. Рантайм приложений заменён [ADR-055](ADR-055-k3s-runtime-from-aspire-chart.md): k3s с чартом из графа AppHost вместо rootless Podman Quadlet. Вместе с ним сняты учебная цель «rootless OCI runtime под systemd» и исключение Kubernetes из этапа, а PITR вместо pgBackRest делает CloudNativePG; отдельный production VPS повторно отвергнут по цене 26.09.2026.
+
 > **Дата:** 2026-09-06  
 > **Статус:** Accepted
 

@@ -1,0 +1,13 @@
+# Контекст сборки Containerfile рядом — корень репозитория, поэтому список
+# разрешённого: всё, что не названо ниже, в контекст не попадает. Так .env с
+# токеном, node_modules и dist рабочего дерева не доезжают до сборки.
+# Docker находит файл по имени сам, podman получает его через --ignorefile.
+*
+!contracts/proto
+!apps/telegram-bot/package.json
+!apps/telegram-bot/package-lock.json
+!apps/telegram-bot/buf.gen.yaml
+!apps/telegram-bot/tsconfig.json
+!apps/telegram-bot/tsconfig.build.json
+!apps/telegram-bot/src
+**/*.test.ts

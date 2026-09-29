@@ -1,0 +1,46 @@
+# Production-образ Telegram Bot. Контекст сборки — корень репозитория:
+# `buf generate` нужен contracts/proto. Что попадает в контекст, решает
+# соседний Containerfile.dockerignore — список разрешённого, а не запрещённого.
+#
+# Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
+# роняет сборку на теге. Тег рядом с digest только читается человеком, pull
+# идёт по digest; обновить базу — заменить digest целиком. Версия buf обязана
+# совпадать с BUF_VERSION в justfile: иначе та же проверка роняет сборку кодом
+# SOLG-IMG-BUF. Меняется BUF_VERSION — здесь меняются тег и digest вместе с ней.
+
+FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756b37f121ec858fb0407a168c269 AS buf
+
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS build
+WORKDIR /src
+COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
+COPY apps/telegram-bot/package.json apps/telegram-bot/package-lock.json apps/telegram-bot/
+RUN cd apps/telegram-bot && npm ci --ignore-scripts
+COPY contracts/proto contracts/proto
+COPY apps/telegram-bot/buf.gen.yaml apps/telegram-bot/tsconfig.json apps/telegram-bot/tsconfig.build.json apps/telegram-bot/
+COPY apps/telegram-bot/src apps/telegram-bot/src
+RUN buf generate --template apps/telegram-bot/buf.gen.yaml && cd apps/telegram-bot && npm run build
+
+# Production-зависимости ставятся отдельно от сборки: в стадии build лежат
+# devDependencies, и копировать оттуда node_modules значило бы везти их в образ.
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS deps
+WORKDIR /app
+COPY apps/telegram-bot/package.json apps/telegram-bot/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+# База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
+# исполняет `id` из образа. Файлы приложения принадлежат root, процесс идёт от
+# uid 1000 и писать их не может, поэтому образ работает с --read-only.
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+ENV NODE_ENV=production
+WORKDIR /app
+# package.json нужен рантайму: `"type": "module"` делает dist/*.js модулями ES.
+COPY apps/telegram-bot/package.json ./
+COPY --from=deps /app/node_modules node_modules
+COPY --from=build /src/apps/telegram-bot/dist dist
+# uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
+USER 1000:1000
+# Команда в CMD, а не в ENTRYPOINT, и точка входа базы (docker-entrypoint.sh)
+# сброшена: `podman run <образ> id` тогда исполняет `id`. Прямой node, а не
+# `npm start`: npm пишет в ~/.npm и под --read-only падает.
+ENTRYPOINT []
+CMD ["node", "dist/src/main.js"]

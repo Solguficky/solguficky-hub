@@ -84,6 +84,24 @@ NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notificat
 
 Локально ни одна из них не задаётся: силос объявляет петлю под `solguficky`/`notifications`.
 
+## Образ
+
+```bash
+just notifications-image
+```
+
+Production-образ собирает SDK-контейнер .NET — `dotnet publish -t:PublishContainer` по свойствам `Container*` в `Notifications.csproj`, без Containerfile, тем же путём, что `aspire do push`. Правила общие с Meetups и лежат в `shared/dotnet/Container.targets`: база `aspnet` по digest, без SDK, а база пустая или по тегу роняет сборку ошибкой `SOLG0001`; запуск от uid 1654; команда приложения в CMD, поэтому `podman run --rm <образ> id` исполняет `id`, а конфигурация идёт только переменными окружения. Сейчас база та же, что у Meetups, но digest записан в каждом проекте отдельно, и их совпадение ничем не проверяется: обновляя базу, меняй digest в обоих.
+
+Наружу образ открывает один порт — `8080`, HTTP/2 Kestrel с gRPC и `grpc.health.v1`. Порты силоса и gateway (11111 и 30000) в образе не объявлены: в поде они слушают петлю, и открывать их некому.
+
+`just notifications-image` собирает образ в архив локально, без реестра. Публикацию делает только CI: `.github/workflows/image-notifications.yml` вызывает тот же переиспользуемый `image-publish.yml`, что и Meetups. Pull request собирает образ и проверяет его — отказ базы по тегу, uid, отсутствие SDK, — ничего не записывая в GHCR. Push в `develop` публикует `ghcr.io/solguficky/notifications`, снимает SBOM, сканирует его в режиме report-only и выпускает attestation на registry digest; digest печатается в summary прогона. Выкатка идёт по `образ@sha256:…`. Происхождение проверяет та же команда, что и хост перед выкаткой:
+
+```bash
+gh attestation verify oci://ghcr.io/solguficky/notifications@sha256:<digest> --repo Solguficky/solguficky-hub --signer-workflow Solguficky/solguficky-hub/.github/workflows/image-publish.yml --source-ref refs/heads/develop
+```
+
+Read-only rootfs проверен прогоном образа с `--read-only --cap-drop=all --security-opt no-new-privileges` в режиме пода против PostgreSQL и NATS профиля `infra`: миграции применяются, силос входит в кластер, потребители реплики привязываются к своим durable, обе gRPC-пробы — пустое имя и `notifications.v1.NotificationsService` — отвечают `SERVING`. Сам сервис на диск не пишет. Без записываемого `/tmp` он тоже работает, но рантайм .NET кладёт туда диагностический сокет, и без него `dotnet-trace` и `dotnet-counters` не подключаются, поэтому запуску стоит дать `/tmp` в памяти (`--tmpfs /tmp`). Проверка ручная: в CI её нет, потому что без шины и durable, которые заводит топология AppHost, сервис не стартует. Строка `Cannot load library libgssapi_krb5.so.2` на первом подключении к базе — шум Npgsql, как у Meetups.
+
 ## Проверки
 
 ```bash

@@ -68,6 +68,16 @@ message MeetupEvent {
   // A consumer carries this value into its logs and into the facts it derives
   // from this one, and never mints a replacement for it.
   optional string request_id = 17;
+
+  // Canonical lowercase UUIDv7 with hyphens: the internal Identity id of the person
+  // whose command produced this fact. It is stored with the journal row, so it is the
+  // same value on every publication of that row.
+  //
+  // Unset means no person performed it: a fact decided by the producer's own
+  // scheduled work. It is not the author of the meetup, who is state.author and may
+  // differ from the person who performed a later command. An empty string is not a
+  // value.
+  optional string performed_by = 18;
 }
 
 // The state of a meetup after an event.
@@ -87,7 +97,7 @@ message MeetupState {
 
   // Canonical lowercase UUIDv7 with hyphens: the internal Identity id of the author,
   // set at creation and never changed. Who performed the command that produced this
-  // event is not carried at all.
+  // event is MeetupEvent.performed_by, not this field.
   string author = 2;
 
   // Empty string is the total value "unspecified", not a missing field. There is no

@@ -10,9 +10,14 @@ name: Image publish
 #
 # Входы:
 #   image-name — имя образа в GHCR, `ghcr.io/<владелец>/<image-name>`.
-#   builder    — способ сборки. Сейчас есть `dotnet-sdk` (SDK-контейнер .NET по
-#                `project`); ветку Containerfile добавит первый её потребитель.
+#   builder    — способ сборки: `dotnet-sdk` (SDK-контейнер .NET по `project`)
+#                или `containerfile` (`podman build` по `containerfile` с
+#                контекстом в корне репозитория).
 #   project    — путь к проекту для `dotnet-sdk`.
+#   containerfile — путь к Containerfile для `containerfile`. Список контекста
+#                лежит рядом, в `<containerfile>.dockerignore`.
+#   node-lock  — package-lock.json Node-образа: по нему проверяется, что в
+#                /app нет пакетов только для разработки и исходников TypeScript.
 #   publish    — false: собрать в архив и проверить, в GHCR ничего не пишется;
 #                true: опубликовать, снять SBOM, просканировать, аттестовать.
 # Выходы (только при publish): digest — `sha256:...`, ref — `образ@digest`.
@@ -38,6 +43,14 @@ on:
         type: string
         required: false
         default: ''
+      containerfile:
+        type: string
+        required: false
+        default: ''
+      node-lock:
+        type: string
+        required: false
+        default: ''
       publish:
         type: boolean
         required: false
@@ -57,12 +70,15 @@ jobs:
     env:
       BUILDER: ${{ inputs.builder }}
       PROJECT: ${{ inputs.project }}
+      CONTAINERFILE: ${{ inputs.containerfile }}
+      NODE_LOCK: ${{ inputs.node-lock }}
       IMAGE_NAME: ${{ inputs.image-name }}
     steps:
       - name: Способ сборки известен
         run: |
           case "$BUILDER" in
             dotnet-sdk) [ -n "$PROJECT" ] || { echo "::error::builder dotnet-sdk требует project"; exit 1; } ;;
+            containerfile) [ -n "$CONTAINERFILE" ] || { echo "::error::builder containerfile требует containerfile"; exit 1; } ;;
             *) echo "::error::неизвестный builder '$BUILDER'"; exit 1 ;;
           esac
 
@@ -92,6 +108,49 @@ jobs:
           cat "$RUNNER_TEMP/rejected.log"
           [ "$code" -ne 0 ] || { echo "::error::сборка с базой по тегу прошла"; exit 1; }
           grep -q SOLG0001 "$RUNNER_TEMP/rejected.log" || { echo "::error::сборка упала, но не проверкой digest"; exit 1; }
+
+      # Ветка containerfile проверяет базы, токен и состав /app до публикации, а
+      # не после, как dotnet-sdk: podman пушит уже собранный образ, пересборки
+      # нет, и образ с токеном или пакетами разработки в GHCR не попадает вовсе.
+      # uid проверяет общий шаг ниже, по опубликованному digest. Проверки
+      # печатают свой код, SOLG-IMG-*, по которому негативный шаг отличает их
+      # отказ от любого другого.
+      - name: Внешние базы Containerfile закреплены по digest
+        if: ${{ inputs.builder == 'containerfile' }}
+        run: sh tools/image/check-containerfile.sh "$CONTAINERFILE"
+
+      - name: Сборка по Containerfile
+        if: ${{ inputs.builder == 'containerfile' }}
+        run: |
+          podman build -f "$CONTAINERFILE" --ignorefile "$CONTAINERFILE.dockerignore" \
+            -t "localhost/$IMAGE_NAME:candidate" .
+          echo "IMAGE=localhost/$IMAGE_NAME:candidate" >> "$GITHUB_ENV"
+
+      - name: В образе нет токена Bot API
+        if: ${{ inputs.builder == 'containerfile' }}
+        run: sh tools/image/check-no-token.sh "$IMAGE"
+
+      - name: В образе нет пакетов разработки и исходников TypeScript
+        if: ${{ inputs.node-lock != '' }}
+        run: sh tools/image/check-node-runtime.sh "$IMAGE" "$NODE_LOCK" /app
+
+      # Негативный путь критерия приёмки: база по тегу, чужая версия buf, токен
+      # в слое и токен в аргументе сборки обязаны ронять проверки их кодами. Идёт после сборки:
+      # канарейки собираются на её базе, уже скачанной.
+      - name: Проверки образа ловят дефекты
+        if: ${{ inputs.builder == 'containerfile' }}
+        run: sh tools/image/check-test.sh "$CONTAINERFILE"
+
+      - name: Публикация в GHCR по Containerfile
+        if: ${{ inputs.builder == 'containerfile' && inputs.publish }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "REPOSITORY=ghcr.io/$owner/$IMAGE_NAME" >> "$GITHUB_ENV"
+          # Вход через stdin, а не --creds: аргументы процесса видны в его argv.
+          echo "$TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          podman push "$IMAGE" "docker://ghcr.io/$owner/$IMAGE_NAME:sha-$GITHUB_SHA"
 
       - name: Сборка в архив
         if: ${{ inputs.builder == 'dotnet-sdk' && !inputs.publish }}

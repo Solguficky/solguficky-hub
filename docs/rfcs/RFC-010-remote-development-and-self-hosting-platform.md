@@ -1,8 +1,10 @@
 # RFC-010: Удалённая среда разработки и self-hosting Solguficky
 
-> **Статус:** In Review; hosting model принят в ADR-039  
+> **Статус:** In Review; hosting model принят в ADR-039, рантайм заменён ADR-055  
 > **Автор:** Dmitriy Panfilyonok  
 > **Дата:** 2026-09-06
+
+> **Рантайм пересмотрен.** [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md) заменил rootless Podman Quadlet на k3s с чартом из графа AppHost и доставкой через Flux. Отменены: Quadlet units и systemd user services как рантайм приложений, forced command на SSH-ключе service account с перезапуском через user manager systemd, утверждение «Aspire в эту схему не публикуется» из раздела «Runtime test/production», pgBackRest как инструмент PITR и учебная цель «rootless OCI runtime под systemd». В силе остаются образ по digest, attestation и SBOM из CI, SOPS с age, escrow, бэкап у другого провайдера и restore drill. Текст ниже не переписан и описывает предложение на момент ревью.
 
 ## Кратко
 

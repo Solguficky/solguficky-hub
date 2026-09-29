@@ -14,6 +14,9 @@ plugins:
 inputs:
   - directory: contracts/proto
     paths:
+      # Из аукциона — только файл значений: его импортирует словарь уведомлений,
+      # а сервис торгов и его события боту хаба не нужны.
+      - contracts/proto/auction/v1/auction.proto
       - contracts/proto/identity
       - contracts/proto/meetups
       - contracts/proto/notifications
