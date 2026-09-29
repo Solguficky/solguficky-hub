@@ -19,7 +19,8 @@ import {
 
 // Сценарий первого среза целиком (first-slice.md, «Сценарий») и его
 // отрицательная половина: до публикации сходка для солегуфика не наблюдаема ни
-// списком, ни прямой ссылкой. Плюс кадр E-01: отказ в праве приходит от
+// списком, ни прямой ссылкой. Плюс кадр E-01: вход в управление
+// солегуфик не видит, а отказ в праве по оставшейся в чате кнопке приходит от
 // Meetups, а не от проверки в боте.
 const environment = readContourEnvironment();
 const direct = openDirectClients(environment);
@@ -83,22 +84,38 @@ describe("сценарий первого среза", () => {
     });
   });
 
-  it("E-01: создать сходку не-администратору отказывает Meetups, и журнал не растёт", async () => {
+  it("солегуфик не видит входа в управление", async () => {
     const adminId = await direct.grantAdmin(freshTelegramUserId());
-    const { telegramUserId, person: member } = await memberAllowedBy(
+    const { person: member } = await memberAllowedBy(wire, direct, adminId);
+
+    await member.says("/start");
+
+    expect(member.buttons()).toContain("Ближайшие сходки");
+    expect(member.buttons()).not.toContain("Управление сходками");
+  });
+
+  it("E-01: создать сходку после отзыва роли отказывает Meetups, и журнал не растёт", async () => {
+    const adminId = await direct.grantAdmin(freshTelegramUserId());
+    const { telegramUserId, person } = await memberAllowedBy(
       wire,
       direct,
       adminId,
     );
+    // Роль `member` человек получает первым `/start`: без неё после отзыва он
+    // упёрся бы в кадр ожидания доступа, а не в Meetups.
+    await person.says("/start");
+    await direct.grantAdmin(telegramUserId);
+    await person.says("/start");
+    await person.presses("Управление сходками");
+    const personId = await direct.identityOf(telegramUserId);
+    await direct.revokeAdmin(personId);
 
-    // Вход в управление бот не прячет: право решает Meetups.
-    await member.says("/start");
-    await member.presses("Управление сходками");
-    await member.presses("Создать сходку");
+    // Меню осталось в чате, а кнопку внутри него бот не сторожит: право решает
+    // Meetups, и отказ звучит без имени сервиса.
+    await person.presses("Создать сходку");
 
-    expect(member.sees()).toBe("Meetups не разрешил это действие.");
-    const memberId = await direct.identityOf(telegramUserId);
-    expect(await direct.journalOf(memberId)).toEqual({
+    expect(person.sees()).toBe("Это действие тебе недоступно.");
+    expect(await direct.journalOf(personId)).toEqual({
       meetupIds: [],
       events: 0,
     });

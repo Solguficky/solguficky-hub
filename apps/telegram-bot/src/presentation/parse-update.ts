@@ -48,6 +48,10 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
   if (command.name === "start") {
     return parsedStart(identity, startDeepLink(command.argument));
   }
+  // `/menu` — это `/start` без payload: хвост в deep link не превращается.
+  if (command.name === "menu") {
+    return parsedStart(identity, undefined);
+  }
   // Хвост после команды меню не значит ничего: экран открывается тот же.
   const screen = screenCommands.get(command.name);
   if (screen === undefined) {

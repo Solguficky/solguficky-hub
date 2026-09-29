@@ -81,6 +81,8 @@ export type OrganizerResolver = {
 export type CommunityMember = {
   identityId: string;
   telegramUsername?: string;
+  // Нет у ответа старого Identity, который поле не присылает.
+  telegramUserId?: bigint;
   admitted: boolean;
 };
 export type CommunitySnapshot = {

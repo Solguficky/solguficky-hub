@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  applicationCode,
   blockedHubAccessText,
   decideHubAccess,
   hubAccessErrors,
+  hubAccessText,
   pendingHubAccessText,
 } from "./hub-access.js";
+
+const identityId = "01a0e306-a646-7d3a-9b21-4f8e12ab34cd";
 
 describe("decideHubAccess", () => {
   it("admits a person who has the member role", () => {
@@ -36,8 +40,32 @@ describe("decideHubAccess", () => {
   it("names pending and blocked refusals differently", () => {
     expect(hubAccessErrors.pending).toBe("hub_access_pending");
     expect(hubAccessErrors.blocked).toBe("hub_access_blocked");
-    expect(pendingHubAccessText).toContain("ждёт проверки");
+    expect(hubAccessText("pending", identityId, undefined)).toContain(
+      "ждёт проверки",
+    );
+    expect(hubAccessText("blocked", identityId, undefined)).toBe(
+      blockedHubAccessText,
+    );
     expect(blockedHubAccessText).toContain("закрыт");
-    expect(pendingHubAccessText).not.toBe(blockedHubAccessText);
+  });
+});
+
+describe("applicationCode", () => {
+  it("tells apart profiles created within the same minute", () => {
+    const neighbour = "01a0e306-918c-7e01-8c55-0d2f6a7b9e10";
+    expect(applicationCode(identityId)).not.toBe(applicationCode(neighbour));
+    expect(applicationCode(identityId)).not.toContain("01a0e306");
+  });
+
+  it("is shown to a waiting person without a username", () => {
+    expect(pendingHubAccessText(identityId, undefined)).toContain(
+      `код заявки: ${applicationCode(identityId)}`,
+    );
+  });
+
+  it("is not shown to a waiting person with a username", () => {
+    const text = pendingHubAccessText(identityId, "vasya");
+    expect(text).not.toContain(applicationCode(identityId));
+    expect(text).toContain("по твоему нику");
   });
 });

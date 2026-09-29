@@ -13,6 +13,7 @@ import { createDispatcher } from "../src/application/dispatcher.js";
 import { communityDay } from "../src/community-time.js";
 import { createIdentityClient } from "../src/identity/client.js";
 import { createMeetupsClient } from "../src/meetups/client.js";
+import { noopTracing } from "../src/tracing.js";
 import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 
 // Провод бота против настоящих Identity и Meetups (уровень L2). Среду поднимает
@@ -86,6 +87,26 @@ export function openDirectClients(environment: ContourEnvironment) {
       sessionManager: meetupsSessions,
     }),
   );
+  async function asMaintainer(
+    call: (options: { headers: Record<string, string> }) => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await call({
+        headers: { authorization: `Bearer ${environment.maintainerToken}` },
+      });
+    } catch (cause) {
+      // Токен чеканится на каждый подъём контура: dotenv от прошлого
+      // `just contour-up` несёт чужой, и без этой строки отказ читался бы
+      // как дефект Identity.
+      if (ConnectError.from(cause).code === Code.Unauthenticated) {
+        throw new Error(
+          "Identity не принял токен maintainer'а: переменные окружения от другого подъёма контура",
+          { cause },
+        );
+      }
+      throw cause;
+    }
+  }
   return {
     identity,
     meetups,
@@ -115,28 +136,19 @@ export function openDirectClients(environment: ContourEnvironment) {
      */
     async grantAdmin(telegramUserId: bigint): Promise<string> {
       const resolved = await identity.resolveIdentity({ telegramUserId });
-      try {
-        await identity.grantAdminRole(
-          { identityId: resolved.identityId },
-          {
-            headers: {
-              authorization: `Bearer ${environment.maintainerToken}`,
-            },
-          },
-        );
-      } catch (cause) {
-        // Токен чеканится на каждый подъём контура: dotenv от прошлого
-        // `just contour-up` несёт чужой, и без этой строки отказ читался бы
-        // как дефект Identity.
-        if (ConnectError.from(cause).code === Code.Unauthenticated) {
-          throw new Error(
-            "Identity не принял токен maintainer'а: переменные окружения от другого подъёма контура",
-            { cause },
-          );
-        }
-        throw cause;
-      }
+      await asMaintainer((options) =>
+        identity.grantAdminRole({ identityId: resolved.identityId }, options),
+      );
       return resolved.identityId;
+    },
+    /**
+     * Отзыв роли настоящим `RevokeAdminRole`: экран, отрисованный
+     * администратору, остаётся у человека в чате и после отзыва.
+     */
+    async revokeAdmin(identityId: string): Promise<void> {
+      await asMaintainer((options) =>
+        identity.revokeAdminRole({ identityId }, options),
+      );
     },
     /**
      * Человек из сценария среза: ник заранее внесён администратором в
@@ -297,8 +309,13 @@ export function openBotWire(endpoints: {
   identityUrl: string;
   meetupsUrl: string;
 }) {
-  const identity = createIdentityClient(endpoints.identityUrl);
-  const meetups = createMeetupsClient(endpoints.meetupsUrl, contourTimeZone);
+  // Контур проверяет провод, а не трассировку: спаны здесь не записываются.
+  const tracing = noopTracing();
+  const identity = createIdentityClient(endpoints.identityUrl, { tracing });
+  const meetups = createMeetupsClient(endpoints.meetupsUrl, {
+    communityTimeZone: contourTimeZone,
+    tracing,
+  });
   const dispatcher = createDispatcher(meetups, undefined, () =>
     communityDay(new Date(), contourTimeZone),
   );

@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Bot, type Context, InlineKeyboard } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
 } from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import {
+  applicationCode,
   decideHubAccess,
   type HubAccess,
   hubAccessErrors,
-  hubAccessTexts,
+  hubAccessText,
 } from "../application/hub-access.js";
 import {
   formatLocalMoment,
@@ -29,6 +30,7 @@ import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type CommunityAdministrator,
+  type CommunityMember,
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
@@ -42,8 +44,13 @@ import type {
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
-import type { NotificationCategory } from "../notifications/port.js";
+import type {
+  CategoryState,
+  MeetupCategory,
+  NotificationCategory,
+} from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
+import type { Tracing } from "../tracing.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
 import {
@@ -73,6 +80,11 @@ import {
   removableUsernamePattern,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
+import {
+  markUpdateFailed,
+  type TracedContext,
+  traceUpdate,
+} from "./tracing.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
 // инфраструктуру (ADR-046). Значения совпадают с опцией grammY, чтобы между
@@ -86,6 +98,7 @@ export type BotRuntime = {
     Partial<CommunityAdministrator> &
     Partial<OrganizerResolver>;
   logger: Logger;
+  tracing: Tracing;
   presentation?: "rich" | "plain";
   environment?: TelegramEnvironment;
 };
@@ -136,6 +149,12 @@ const formPrompts: Record<FormField, string> = {
 const conflictText =
   "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.";
 const materialForbiddenText = "Это действие доступно организатору сходки.";
+// Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
+// кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
+const forbiddenText = "Это действие тебе недоступно.";
+const managementForbiddenText = "Управление сходками доступно администратору.";
+const communityForbiddenText =
+  "Управлять составом сообщества может только администратор.";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -266,7 +285,7 @@ type PendingInput =
   | PendingMaterialTitle
   | PendingBroadcastBody;
 
-type UpdateContext = Context & {
+type UpdateContext = TracedContext & {
   requestId?: string;
   startedAt?: bigint;
 };
@@ -306,9 +325,12 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   });
   const questions = new Map<string, PendingInput>();
   bot.use((ctx, next) => {
-    ctx.requestId = randomUUID();
+    const requestId = randomUUID();
+    ctx.requestId = requestId;
     ctx.startedAt = process.hrtime.bigint();
-    return next();
+    // Спан открывается в первом middleware: всё, что ниже, включая вызовы Bot
+    // API и gRPC, становится его потомком.
+    return traceUpdate({ tracing: runtime.tracing, ctx, requestId, next });
   });
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions),
@@ -823,7 +845,9 @@ async function handleMessage(
     }
     switch (result.kind) {
       case "message":
-        await ctx.reply(result.text, { reply_markup: homeKeyboard() });
+        await ctx.reply(result.text, {
+          reply_markup: homeKeyboard(identity),
+        });
         outcome = {
           level: "info",
           message: "start reply sent",
@@ -940,6 +964,36 @@ async function handleCallback(
       return;
     }
     const person = identity.person;
+    // Вход в управление и вопрос о нике видит только администратор, но старая
+    // кнопка остаётся в чате. Меню сервиса за собой не имеет, а вопрос отказал бы
+    // лишь после набора ответа, поэтому отказ приходит здесь. Остальные кнопки
+    // меню, кроме объявления с его вопросом, бот пропускает: право на них решают
+    // Meetups и Identity (PER-396). Отказ приходит новым сообщением, как и
+    // успешный ответ на эти кнопки: экран, где лежала кнопка, остаётся целым.
+    if (
+      (action.kind === "manage-menu" ||
+        action.kind === "ask-allowed-username") &&
+      !isAdministrator(person)
+    ) {
+      await ctx.reply(
+        action.kind === "manage-menu"
+          ? managementForbiddenText
+          : communityForbiddenText,
+        {
+          reply_markup: new InlineKeyboard().text("Назад", "v1:nav:start"),
+        },
+      );
+      outcome = {
+        level: "warn",
+        message: "management rejected",
+        result: "error",
+        use_case: useCase,
+        identity_id: person.identityId,
+        error_category: "authorization",
+        error: "management_forbidden",
+      };
+      return;
+    }
     if (action.kind === "open-material-file") {
       const meetupId = tokenToUuid(action.token);
       const materialId = tokenToUuid(action.materialToken);
@@ -1264,7 +1318,7 @@ async function handleCallback(
             ? "Изменение сохранено."
             : "Состояние уже было актуальным."
           : result.kind === "invalid"
-            ? "Identity отклонил изменение. Состав перечитан заново."
+            ? "Изменение не сохранилось. Состав перечитан заново."
             : undefined;
       await renderCommunity(ctx, runtime, person, true, confirmation);
       outcome = adminOutcome(result, person.identityId);
@@ -1276,7 +1330,7 @@ async function handleCallback(
         intent: "start",
       });
       if (result.kind === "message") {
-        await editScreen(ctx, result.text, homeKeyboard());
+        await editScreen(ctx, result.text, homeKeyboard(person));
         outcome = {
           level: "info",
           message: "start screen sent",
@@ -1847,7 +1901,7 @@ async function handleCallback(
       } else {
         await ctx.reply(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
-            ? "Notifications не разрешил это действие."
+            ? forbiddenText
             : unavailableText,
         );
       }
@@ -1891,7 +1945,7 @@ async function handleCallback(
       } else {
         await ctx.reply(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
-            ? "Notifications не разрешил это действие."
+            ? forbiddenText
             : unavailableText,
         );
       }
@@ -1916,12 +1970,22 @@ async function handleCallback(
         ...rpcCall(ctx, useCase),
       });
       if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+        // Заметка разовая: она отвечает на нажатие и при следующем открытии
+        // карточки не повторяется, чтобы подписанному не читать её каждый раз.
+        // Поэтому решение принимает этот обработчик, а не рендер карточки.
+        const note =
+          result.kind === "meetup-card" &&
+          result.subscribed === true &&
+          result.categories !== undefined
+            ? subscriptionNote(result.categories)
+            : undefined;
         await renderMeetupCard(
           ctx,
           result,
           true,
           runtime.presentation ?? "rich",
           person.globalRoles.includes("admin"),
+          note,
         );
       } else {
         await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
@@ -2314,9 +2378,7 @@ async function renderCommunity(
         );
   if (result.kind !== "ok") {
     const text =
-      result.kind === "forbidden"
-        ? "Identity не разрешил управление составом."
-        : unavailableText;
+      result.kind === "forbidden" ? communityForbiddenText : unavailableText;
     if (edit)
       await editScreen(
         ctx,
@@ -2328,28 +2390,34 @@ async function renderCommunity(
   }
   const pending = result.value.members.filter((member) => !member.admitted);
   const admitted = result.value.members.filter((member) => member.admitted);
-  const label = (member: (typeof result.value.members)[number]) =>
+  // Человек без ника называется кодом заявки: тот же код он видит в кадре
+  // ожидания и называет администратору, а кнопка несёт то же представление.
+  const label = (member: CommunityMember) =>
     member.telegramUsername === undefined
-      ? member.identityId.slice(0, 8)
+      ? `без ника · ${applicationCode(member.identityId)}`
       : `@${member.telegramUsername}`;
+  // В строке списка без ника — ещё и упоминание по Telegram id: по нему
+  // администратор открывает профиль и узнаёт человека, а не только код.
+  const line = (member: CommunityMember) =>
+    member.telegramUsername === undefined && member.telegramUserId !== undefined
+      ? `• <a href="tg://user?id=${member.telegramUserId}">без ника</a> · ${escapeHtml(applicationCode(member.identityId))}`
+      : `• ${escapeHtml(label(member))}`;
   const lines = [
-    ...(confirmation === undefined ? [] : [confirmation, ""]),
+    ...(confirmation === undefined ? [] : [escapeHtml(confirmation), ""]),
     "Состав сообщества",
     "",
     `Ожидают допуска: ${pending.length}`,
-    ...(pending.length === 0
-      ? ["—"]
-      : pending.map((member) => `• ${label(member)}`)),
+    ...(pending.length === 0 ? ["—"] : pending.map(line)),
     "",
     `Допущены: ${admitted.length}`,
-    ...(admitted.length === 0
-      ? ["—"]
-      : admitted.map((member) => `• ${label(member)}`)),
+    ...(admitted.length === 0 ? ["—"] : admitted.map(line)),
     "",
     "Разрешённые ники:",
     ...(result.value.allowedUsernames.length === 0
       ? ["—"]
-      : result.value.allowedUsernames.map((username) => `• @${username}`)),
+      : result.value.allowedUsernames.map(
+          (username) => `• ${escapeHtml(`@${username}`)}`,
+        )),
   ];
   const keyboard = new InlineKeyboard();
   for (const member of pending)
@@ -2379,8 +2447,12 @@ async function renderCommunity(
   keyboard
     .text("Обновить", "v1:community:list")
     .text("Назад", "v1:manage:menu");
-  if (edit) await editScreen(ctx, lines.join("\n"), keyboard);
-  else await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+  if (edit) await editScreen(ctx, lines.join("\n"), keyboard, "HTML");
+  else
+    await ctx.reply(lines.join("\n"), {
+      reply_markup: keyboard,
+      parse_mode: "HTML",
+    });
   return result;
 }
 
@@ -2504,11 +2576,13 @@ async function editScreen(
   ctx: UpdateContext,
   text: string,
   keyboard: InlineKeyboard,
+  parseMode?: "HTML",
 ): Promise<void> {
+  const format = parseMode === undefined ? {} : { parse_mode: parseMode };
   // Экран, открытый командой, править нечем: кнопки под сообщением нет, и
   // попытка правки дала бы два заведомо неудачных вызова Bot API.
   if (ctx.callbackQuery === undefined) {
-    await ctx.reply(text, { reply_markup: keyboard });
+    await ctx.reply(text, { reply_markup: keyboard, ...format });
     return;
   }
   try {
@@ -2517,16 +2591,20 @@ async function editScreen(
       message !== undefined &&
       ("document" in message || "photo" in message)
     ) {
-      await ctx.editMessageCaption({ caption: text, reply_markup: keyboard });
+      await ctx.editMessageCaption({
+        caption: text,
+        reply_markup: keyboard,
+        ...format,
+      });
     } else {
-      await ctx.editMessageText(text, { reply_markup: keyboard });
+      await ctx.editMessageText(text, { reply_markup: keyboard, ...format });
     }
   } catch (cause) {
     if (errorText(cause).includes("message is not modified")) {
       return;
     }
     await clearCallbackKeyboard(ctx);
-    await ctx.reply(text, { reply_markup: keyboard });
+    await ctx.reply(text, { reply_markup: keyboard, ...format });
   }
 }
 
@@ -2634,14 +2712,24 @@ function navScreenUseCase(screen: NavScreen): ProductUseCase {
   }
 }
 
+// Управлять сходками и составом может только администратор: так решают Meetups
+// и Identity, и вход, который ведёт в отказ, хуже его отсутствия.
+function isAdministrator(person: { globalRoles: readonly string[] }): boolean {
+  return person.globalRoles.includes("admin");
+}
+
 // Главный экран — ответ на /start. Возврат на него с других экранов правит то
 // же сообщение той же клавиатурой, поэтому она собрана в одном месте.
-function homeKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
+function homeKeyboard(person: {
+  globalRoles: readonly string[];
+}): InlineKeyboard {
+  const keyboard = new InlineKeyboard()
     .text("Ближайшие сходки", "v1:nav:hub")
-    .text("Архив", "v1:nav:archive")
-    .row()
-    .text("Управление сходками", "v1:manage:menu");
+    .text("Архив", "v1:nav:archive");
+  if (isAdministrator(person)) {
+    keyboard.row().text("Управление сходками", "v1:manage:menu");
+  }
+  return keyboard;
 }
 
 function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
@@ -2719,6 +2807,45 @@ function checkbox(label: string, enabled: boolean): string {
   return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
 
+const meetupCategoryOrder: readonly MeetupCategory[] = [
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+];
+
+// Перечень строится по действующим значениям, а не по умолчаниям продукта:
+// человек, который раньше включил напоминание или выключил материалы, иначе
+// прочёл бы неправду. Напоминание названо отдельно, потому что по умолчанию
+// оно выключено и без подсказки его не найти. Снимок без какой-то категории
+// заметки не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
+// на пустом ответе было бы выдумкой.
+function subscriptionNote(
+  categories: readonly CategoryState<MeetupCategory>[],
+): string | undefined {
+  const known = meetupCategoryOrder
+    .map((category) => categories.find((entry) => entry.category === category))
+    .filter(
+      (state): state is CategoryState<MeetupCategory> => state !== undefined,
+    );
+  if (known.length !== meetupCategoryOrder.length) return undefined;
+  const enabled = known
+    .filter((state) => state.enabled)
+    .map((state) => categoryLabels[state.category].toLowerCase());
+  if (enabled.length === 0) {
+    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомления».";
+  }
+  const lines = [
+    `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
+  ];
+  if (known.some((state) => state.category === "reminder" && !state.enabled)) {
+    lines.push(
+      "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+    );
+  }
+  return lines.join(" ");
+}
+
 // Карточка, которую представление собирает из результата команды — правки,
 // публикации, смены статуса, — несёт того же автора, что и карточка просмотра.
 function cardFrom(result: {
@@ -2736,6 +2863,7 @@ async function renderMeetupCard(
   edit: boolean,
   presentation: "rich" | "plain",
   manageable = false,
+  note?: string,
 ): Promise<void> {
   if (result.kind === "meetup-not-found") {
     const text = "Сходка не найдена или больше недоступна.";
@@ -2803,7 +2931,11 @@ async function renderMeetupCard(
       .text("К списку", "v1:nav:hub");
     if (presentation === "rich") {
       const richMessage = {
-        html: meetupCardHtml(result.meetup, result.author),
+        html: withNote(
+          meetupCardHtml(result.meetup, result.author),
+          note,
+          "rich",
+        ),
       };
       if (
         edit &&
@@ -2829,7 +2961,11 @@ async function renderMeetupCard(
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }
     } else {
-      const html = meetupCardPlainHtml(result.meetup, result.author);
+      const html = withNote(
+        meetupCardPlainHtml(result.meetup, result.author),
+        note,
+        "plain",
+      );
       if (edit) {
         try {
           await ctx.editMessageText(html, {
@@ -2990,7 +3126,7 @@ async function renderNotificationFailure(
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
     await editScreen(
       ctx,
-      "Notifications не разрешил это действие.",
+      forbiddenText,
       new InlineKeyboard().text("К списку", "v1:nav:hub"),
     );
     return;
@@ -3104,7 +3240,7 @@ async function renderStateResult(
     result.kind === "dependency-rejected" && result.reason === "invalid"
       ? invalidMeetupText(result)
       : result.kind === "dependency-rejected" && result.reason === "forbidden"
-        ? "Meetups не разрешил это действие."
+        ? forbiddenText
         : unavailableText;
   await editScreen(
     ctx,
@@ -3117,6 +3253,19 @@ function meetupCardHtml(meetup: MeetupSnapshot, author?: MeetupAuthor): string {
   const lines = meetupCardText(meetup, false, author).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
   return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
+}
+
+// Заметка идёт под карточкой отдельным абзацем; режимы различаются только
+// разметкой абзаца.
+function withNote(
+  html: string,
+  note: string | undefined,
+  presentation: "rich" | "plain",
+): string {
+  if (note === undefined) return html;
+  return presentation === "rich"
+    ? `${html}<p>${escapeHtml(note)}</p>`
+    : `${html}\n\n${escapeHtml(note)}`;
 }
 
 function meetupCardPlainHtml(
@@ -3273,7 +3422,11 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  const text = hubAccessTexts[access];
+  const text = hubAccessText(
+    access,
+    identity.person.identityId,
+    ctx.from?.username,
+  );
   if (edit) {
     await editScreen(ctx, text, new InlineKeyboard());
   } else {
@@ -3584,9 +3737,7 @@ async function renderFormResult(
       return;
     }
     await ctx.reply(
-      result.reason === "forbidden"
-        ? "Meetups не разрешил это действие."
-        : unavailableText,
+      result.reason === "forbidden" ? forbiddenText : unavailableText,
     );
   }
 }
@@ -3939,6 +4090,7 @@ function writeBoundary(
   }
   if (outcome.result === "error") {
     countFailure(outcome.error_category);
+    markUpdateFailed(ctx.updateSpan, outcome.error_category);
     fields.error_category = outcome.error_category;
     fields.error = outcome.error;
     if (outcome.stack !== undefined) {

@@ -120,6 +120,38 @@ describe("meetup notification settings", () => {
     expect(notifications.getGlobalPreferences).not.toHaveBeenCalled();
   });
 
+  // Карточка называет, что будет приходить, по значениям из ответа самой
+  // команды: второго вызова ради перечня нет (PER-402).
+  it("carries the effective categories returned by the subscription command", async () => {
+    const categories = [
+      { category: "changes", enabled: true },
+      { category: "material", enabled: true },
+      { category: "reminder", enabled: false },
+      { category: "organizer", enabled: true },
+    ] as const;
+    const notifications = notificationsStub({
+      setSubscription: vi.fn().mockResolvedValue({
+        kind: "ok",
+        preferences: { meetupId, subscribed: true, categories },
+      }),
+    });
+    const settings = createNotificationSettings(meetupsStub(), notifications);
+
+    const result = await settings({
+      identity,
+      intent: "set-meetup-subscription",
+      meetupId,
+      subscribed: true,
+    });
+
+    expect(result).toMatchObject({
+      kind: "meetup-card",
+      subscribed: true,
+      categories,
+    });
+    expect(notifications.getMeetupPreferences).not.toHaveBeenCalled();
+  });
+
   it("reports the refusal instead of the card when the subscription command fails", async () => {
     const settings = createNotificationSettings(
       meetupsStub(),

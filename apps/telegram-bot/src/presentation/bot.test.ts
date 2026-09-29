@@ -23,6 +23,8 @@ import type {
   IdentityResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
+import type { CategoryState, MeetupCategory } from "../notifications/port.js";
+import { noopTracing } from "../tracing.js";
 import {
   createBot,
   parseTelegramEnvironment,
@@ -177,6 +179,8 @@ function draftMeetup() {
   };
 }
 
+const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+
 function resolvedIdentity(
   globalRoles: readonly string[] = ["member"],
   blocked = false,
@@ -184,7 +188,7 @@ function resolvedIdentity(
   return {
     resolve: async () => ({
       kind: "resolved",
-      identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+      identityId: resolvedId,
       globalRoles,
       blocked,
     }),
@@ -578,6 +582,24 @@ describe("presentation adapter", () => {
       operation: "message",
       use_case: "find_meetup",
     });
+    // Управление солегуфику недоступно, и вход в него он не видит (PER-396).
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+            { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
+        ],
+      },
+    });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
+  });
+
+  it("offers management on /start to an admin", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
@@ -598,7 +620,9 @@ describe("presentation adapter", () => {
     });
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
@@ -646,10 +670,12 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText },
+      payload: { text: pendingHubAccessText(resolvedId, undefined) },
     });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("v1:nav:hub");
-    expect(sendMessageText(calls[2])).toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[2])).toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(records.map((record) => record.fields.error)).toEqual([
       "hub_access_pending",
       "hub_access_pending",
@@ -666,7 +692,7 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText },
+      payload: { text: pendingHubAccessText(resolvedId, undefined) },
     });
   });
 
@@ -675,7 +701,9 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
-    expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
   });
 
   it("renders the community screen from current Identity state", async () => {
@@ -711,6 +739,49 @@ describe("presentation adapter", () => {
     expect(JSON.stringify(calls[1]?.payload)).toContain("@invited");
   });
 
+  it("tells apart people without a username created in the same minute", async () => {
+    const community = vi
+      .fn<CommunityAdministrator["community"]>()
+      .mockResolvedValue({
+        kind: "ok",
+        value: {
+          members: [
+            {
+              identityId: "01a0e306-a646-7d3a-9b21-4f8e12ab34cd",
+              telegramUserId: 5001n,
+              admitted: false,
+            },
+            {
+              identityId: "01a0e306-918c-7e01-8c55-0d2f6a7b9e10",
+              admitted: true,
+            },
+          ],
+          allowedUsernames: [],
+        },
+      });
+    const identity = { ...resolvedIdentity(["admin"]), community };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:community:list"));
+
+    const payload = calls[1]?.payload as {
+      text: string;
+      parse_mode?: string;
+      reply_markup: { inline_keyboard: { text: string }[][] };
+    };
+    const buttons = payload.reply_markup.inline_keyboard
+      .flat()
+      .map((button) => button.text);
+    expect(payload.parse_mode).toBe("HTML");
+    expect(payload.text).toContain(
+      '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
+    );
+    expect(payload.text).toContain("• без ника · 6a7b9e10");
+    expect(payload.text).not.toContain("01a0e306");
+    expect(buttons).toContain("Допустить без ника · 12ab34cd");
+    expect(buttons).toContain("Закрыть без ника · 6a7b9e10");
+  });
+
   it("lets Identity refuse community management for a non-admin", async () => {
     const community = vi
       .fn<CommunityAdministrator["community"]>()
@@ -718,12 +789,16 @@ describe("presentation adapter", () => {
     const identity = { ...resolvedIdentity(["member"]), community };
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
+    // Старая кнопка из меню бот не сторожит: право решает Identity, а отказ
+    // звучит без имени сервиса.
     await bot.handleUpdate(callbackUpdate("v1:community:list"));
 
     expect(community).toHaveBeenCalledOnce();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Identity не разрешил управление составом." },
+      payload: {
+        text: "Управлять составом сообщества может только администратор.",
+      },
     });
     expectBoundary(records[0], {
       level: "warn",
@@ -742,7 +817,9 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
-    expect(sendMessageText(calls[0])).not.toBe(pendingHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(
+      pendingHubAccessText(resolvedId, undefined),
+    );
     expect(sendMessageText(calls[0])).not.toBe(blockedHubAccessText);
     expectBoundary(records[0], {
       level: "error",
@@ -806,7 +883,7 @@ describe("presentation adapter", () => {
       kind: "message",
       text: "Привет. Главный экран.",
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
       execute,
     });
     await bot.init();
@@ -2177,6 +2254,31 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[0])).toContain("Привет.");
   });
 
+  it("opens the start screen from /menu with the keyboard of the role", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/menu"));
+    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      operation: "message",
+      use_case: "find_meetup",
+    });
+    // Солегуфику вход в управление не показывается (PER-396).
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+            { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
+        ],
+      },
+    });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
+  });
+
   it("does not resolve identity for /start mentioned for another bot", async () => {
     const resolve = vi.fn(resolvedIdentity().resolve);
     const { bot, calls } = createHarness({ resolve });
@@ -2436,6 +2538,7 @@ describe("presentation adapter", () => {
     {
       name: "menu",
       data: "v1:manage:menu",
+      roles: ["admin"],
       result: undefined,
       use_case: "create_meetup",
       message: "manage menu sent",
@@ -2467,14 +2570,16 @@ describe("presentation adapter", () => {
     },
   ])(
     "records exactly one $name callback boundary at info",
-    async ({ data, result, use_case, message }) => {
+    async ({ data, roles, result, use_case, message }) => {
       const execute =
         result === undefined
           ? vi.fn<Dispatcher["execute"]>().mockImplementation(() => {
               throw new Error("dispatcher should not run");
             })
           : vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
-      const { bot, records } = createHarness(resolvedIdentity(), { execute });
+      const { bot, records } = createHarness(resolvedIdentity(roles), {
+        execute,
+      });
       await bot.init();
       await bot.handleUpdate(callbackUpdate(data));
       expect(records).toHaveLength(1);
@@ -2532,6 +2637,7 @@ describe("presentation adapter", () => {
       dispatcher: createDispatcher(),
       identity: resolvedIdentity(),
       logger,
+      tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
     const failing: Transformer = (_prev, method) =>
@@ -2580,6 +2686,7 @@ describe("presentation adapter", () => {
       dispatcher: createDispatcher(),
       identity: resolvedIdentity(),
       logger,
+      tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
     const failing: Transformer = (_prev, method) =>
@@ -2742,6 +2849,7 @@ describe("presentation adapter", () => {
       dispatcher: createDispatcher(),
       identity,
       logger,
+      tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
     const failing: Transformer = () =>
@@ -2813,6 +2921,7 @@ async function requestedUrl(
     dispatcher: createDispatcher(),
     identity: resolvedIdentity(),
     logger,
+    tracing: noopTracing(),
   };
   const bot = createBot(
     environment === undefined ? runtime : { ...runtime, environment },
@@ -2972,6 +3081,138 @@ describe("notification frames", () => {
     expect(data).toContain(`v1:view:${token}`);
   });
 
+  // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
+  // называет, что будет приходить, и куда идти за выключенным напоминанием.
+  describe("subscription note", () => {
+    // Полезная нагрузка записана как unknown; карточка по умолчанию идёт
+    // rich-сообщением, и отсутствие поля даёт пустую строку, а не падение.
+    const cardHtml = (call: RecordedCall | undefined): string =>
+      (call?.payload as { rich_message?: { html?: string } } | undefined)
+        ?.rich_message?.html ?? "";
+    const allCategories = (
+      enabled: Partial<Record<MeetupCategory, boolean>>,
+    ): CategoryState<MeetupCategory>[] =>
+      (["changes", "material", "reminder", "organizer"] as const).map(
+        (category) => ({ category, enabled: enabled[category] ?? false }),
+      );
+    const subscribe = async (
+      result: Awaited<ReturnType<Dispatcher["execute"]>>,
+      data = `v1:notify:sub:${token}:1`,
+    ): Promise<string> => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(data));
+      return cardHtml(calls[1]);
+    };
+
+    it("lists what will come and points to the disabled reminder", async () => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: true },
+          { category: "material", enabled: true },
+          { category: "reminder", enabled: false },
+          { category: "organizer", enabled: true },
+        ],
+      });
+      expect(html).toContain(
+        "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые связанные сообщения, сообщения организатора.",
+      );
+      expect(html).toContain(
+        "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+      );
+    });
+
+    // Перечень берётся из действующих значений: включённое заранее напоминание
+    // входит в список, выключенные материалы из него выпадают.
+    it("follows the effective values rather than product defaults", async () => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: true },
+          { category: "material", enabled: false },
+          { category: "reminder", enabled: true },
+          { category: "organizer", enabled: true },
+        ],
+      });
+      expect(html).toContain(
+        "будут приходить: изменения данных и статуса, напоминание перед началом, сообщения организатора.",
+      );
+      expect(html).not.toContain("новые связанные сообщения");
+      expect(html).not.toContain("Напоминание перед началом выключено");
+    });
+
+    it("says nothing will come when every category is off", async () => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: false },
+          { category: "material", enabled: false },
+          { category: "reminder", enabled: false },
+          { category: "organizer", enabled: false },
+        ],
+      });
+      expect(html).toContain(
+        "Подписка включена, но по этой сходке сейчас ничего не приходит",
+      );
+    });
+
+    // Пропуск категории в ответе неотличим от «выключено»: заметка тогда не
+    // говорит ничего, а не «ничего не приходит».
+    it.each([
+      ["an empty", []],
+      ["an incomplete", [{ category: "changes" as const, enabled: true }]],
+    ])("adds no note for %s category snapshot", async (_name, categories) => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories,
+      });
+      expect(html).toContain("Настолки у Лёши");
+      expect(html).not.toContain("Подписка включена");
+    });
+
+    it("adds no note on unsubscribing or on a plain card view", async () => {
+      const everything = allCategories({
+        changes: true,
+        material: true,
+        organizer: true,
+      });
+      const unsubscribed = await subscribe(
+        {
+          kind: "meetup-card",
+          meetup,
+          subscribed: false,
+          categories: everything,
+        },
+        `v1:notify:sub:${token}:0`,
+      );
+      expect(unsubscribed).toContain("Настолки у Лёши");
+      expect(unsubscribed).not.toContain("Подписка включена");
+      // Категории в результате есть, но заметка — ответ на нажатие, а не
+      // свойство карточки: просмотр её не показывает.
+      const viewed = await subscribe(
+        {
+          kind: "meetup-card",
+          meetup,
+          subscribed: true,
+          categories: everything,
+        },
+        `v1:view:${token}`,
+      );
+      expect(viewed).toContain("Настолки у Лёши");
+      expect(viewed).not.toContain("Подписка включена");
+    });
+  });
+
   // Кадр настроек кнопки подписки не несёт: действие живёт в карточке, и макет
   // этого экрана его не показывает.
   it("keeps the subscription action out of the settings frame", async () => {
@@ -2998,7 +3239,7 @@ describe("notification frames", () => {
   // Отказ по природе, а не один «сбой на моей стороне»: «Повторить» на отказе
   // по праву и на устаревшем экране не лечит ничего.
   it.each([
-    ["forbidden", "Notifications не разрешил это действие.", "v1:nav:hub"],
+    ["forbidden", "Это действие тебе недоступно.", "v1:nav:hub"],
     ["invalid", "Этот экран устарел.", "v1:notify:global"],
     ["conflict", "Это уже сделано.", "v1:notify:global"],
   ])(
@@ -3830,6 +4071,74 @@ describe("broadcast frames", () => {
     expect(JSON.stringify(member.calls)).not.toContain("v1:bc:c");
   });
 
+  it("refuses the old management button to a non-admin without naming a service", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(["member"]),
+      { execute },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: "Управление сходками доступно администратору.",
+        reply_markup: {
+          inline_keyboard: [[{ text: "Назад", callback_data: "v1:nav:start" }]],
+        },
+      },
+    });
+    expect(JSON.stringify(calls)).not.toContain("v1:manage:new:");
+    // Отказ не затирает экран, на котором лежала кнопка.
+    expect(calls.map((call) => call.method)).not.toContain("editMessageText");
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "create_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("management_forbidden");
+  });
+
+  it("offers the whole management menu to an admin", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    const sent = JSON.stringify(calls);
+    expect(sent).toContain("v1:manage:new:");
+    expect(sent).toContain("v1:manage:hidden");
+    expect(sent).toContain("v1:community:list");
+    expect(sent).toContain("v1:bc:c");
+  });
+
+  it("does not ask a non-admin for an allowed username", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity(["member"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:community:allow"));
+
+    expect(JSON.stringify(calls)).not.toContain("force_reply");
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: "Управлять составом сообщества может только администратор.",
+      },
+    });
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      operation: "callback_query",
+      error_category: "authorization",
+      use_case: "manage_community",
+    });
+  });
+
   it("does not ask a non-admin for broadcast text", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
@@ -4091,6 +4400,7 @@ describe("meetup author", () => {
       resolvedIdentity(["member"]),
       { execute },
       [],
+      undefined,
       presentation,
     );
     await harness.bot.init();
