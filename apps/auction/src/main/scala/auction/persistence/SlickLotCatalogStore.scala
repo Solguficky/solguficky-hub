@@ -32,8 +32,15 @@ final class SlickLotCatalogStore(database: Database)(using ExecutionContext) ext
              VALUES (${card.lotId.value.toString}::uuid, ${card.title.value}, ${card.description})
              ON CONFLICT (lot_id) DO NOTHING""".flatMap {
         case 1 => DBIO.successful(None)
-        // Строки не удаляются, поэтому конфликт вставки означает, что строка есть и будет прочитана.
-        case _ => select(card.lotId)
+        // Конфликт вставки значит, что строка есть. Если её уже нет, ответ «вставлено» соврал бы: ничего не записано.
+        case _ =>
+          select(card.lotId).flatMap {
+            case Some(existing) => DBIO.successful(Some(existing))
+            case None =>
+              DBIO.failed(
+                IllegalStateException(s"lot_catalog row for lot ${card.lotId.value} vanished after a conflict")
+              )
+          }
       }
     )
 

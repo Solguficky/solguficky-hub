@@ -31,7 +31,7 @@ final class LotCatalogCommandsSpec
     Viewer(Set(GlobalRole.Maintainer, GlobalRole.Member, GlobalRole.Public))
   )
 
-  private val blankTitles = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\r')).map(_.mkString)
+  private val blankTitles = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\r', '\u00A0', '\u2007', '\u202F')).map(_.mkString)
 
   private def lotId() = LotId(UUID.randomUUID())
 
@@ -53,7 +53,7 @@ final class LotCatalogCommandsSpec
 
   "lot catalog commands" should {
 
-    "refuse a viewer who is not a meetup administrator before touching the store" in {
+    "refuses a viewer who is not a meetup administrator before touching the store" in {
       val commands = LotCatalogCommands(Untouchable)
       forAll(notAdmins) { viewer =>
         commands.create(viewer, lotId(), "Лот", "").futureValue shouldBe Left(CatalogRefusal.NotAdmin)
@@ -61,7 +61,7 @@ final class LotCatalogCommandsSpec
       }
     }
 
-    "refuse a blank title before touching the store" in {
+    "refuses a blank title before touching the store" in {
       val commands = LotCatalogCommands(Untouchable)
       forAll(blankTitles) { title =>
         commands.create(admin, lotId(), title, "описание").futureValue shouldBe Left(CatalogRefusal.EmptyTitle)
@@ -69,14 +69,14 @@ final class LotCatalogCommandsSpec
       }
     }
 
-    "answer a non-administrator with a blank title by the missing right" in {
+    "answers a non-administrator with a blank title by the missing right" in {
       forAll(notAdmins, blankTitles) { (viewer, title) =>
         LotCatalogCommands(Untouchable).create(viewer, lotId(), title, "").futureValue shouldBe
           Left(CatalogRefusal.NotAdmin)
       }
     }
 
-    "keep the title as the administrator typed it" in {
+    "keeps the title as the administrator typed it" in {
       val store = InMemory()
       val id = lotId()
 
@@ -86,7 +86,7 @@ final class LotCatalogCommandsSpec
       store.rows(id).title.value shouldBe "  Кружка с гербом "
     }
 
-    "accept a repeated creation with the same fields and keep one card" in {
+    "accepts a repeated creation with the same fields and keeps one card" in {
       val store = InMemory()
       val commands = LotCatalogCommands(store)
       val id = lotId()
@@ -96,7 +96,7 @@ final class LotCatalogCommandsSpec
       store.rows.size shouldBe 1
     }
 
-    "refuse a repeated creation with other fields and leave the card as it was" in {
+    "refuses a repeated creation with other fields and leaves the card as it was" in {
       val store = InMemory()
       val commands = LotCatalogCommands(store)
       val id = lotId()
@@ -106,7 +106,7 @@ final class LotCatalogCommandsSpec
       Right(store.rows(id)) shouldBe first
     }
 
-    "replace the title and the description of an existing card" in {
+    "replaces the title and the description of an existing card" in {
       val store = InMemory()
       val commands = LotCatalogCommands(store)
       val id = lotId()
@@ -118,7 +118,7 @@ final class LotCatalogCommandsSpec
       Right(store.rows(id)) shouldBe edited
     }
 
-    "refuse to edit a card that does not exist" in {
+    "refuses to edit a card that does not exist" in {
       val store = InMemory()
 
       LotCatalogCommands(store).edit(admin, lotId(), "Кружка", "").futureValue shouldBe

@@ -58,7 +58,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
 
   "lot catalog" should {
 
-    "keep a card written before the node stopped for the next node on the same database" in {
+    "keeps a card written before the node stopped for the next node on the same database" in {
       val database = freshDatabase()
       val id = lotId()
       val created = withNode(database)((_, commands) => commands.create(admin, id, "Кружка", "с гербом").futureValue)
@@ -69,7 +69,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       restored shouldBe created.toOption
     }
 
-    "keep one row when the same creation repeats and refuse a repetition with other fields" in {
+    "keeps one row when the same creation repeats and refuses a repetition with other fields" in {
       val database = freshDatabase()
       val id = lotId()
       withNode(database) { (_, commands) =>
@@ -82,7 +82,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       rows(database, id) shouldBe List("Кружка" -> "с гербом")
     }
 
-    "leave the row as it was when a participant tries to edit it" in {
+    "leaves the row as it was when a participant tries to edit it" in {
       val database = freshDatabase()
       val id = lotId()
       withNode(database) { (_, commands) =>
@@ -95,7 +95,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       rows(database, id) shouldBe List("Кружка" -> "с гербом")
     }
 
-    "replace the text of an existing card and refuse a card that does not exist" in {
+    "replaces the text of an existing card and refuses a card that does not exist" in {
       val database = freshDatabase()
       val id = lotId()
       val missing = lotId()
@@ -110,7 +110,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       rows(database, missing) shouldBe empty
     }
 
-    "reject a blank title written past the service" in {
+    "rejects a blank title written past the service" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
 

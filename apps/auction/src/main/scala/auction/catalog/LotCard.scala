@@ -11,7 +11,10 @@ final case class LotTitle private (value: String)
 object LotTitle {
 
   def apply(raw: String): Either[CatalogRefusal, LotTitle] =
-    if (raw.isBlank) Left(CatalogRefusal.EmptyTitle) else Right(new LotTitle(raw))
+    if (raw.forall(blank)) Left(CatalogRefusal.EmptyTitle) else Right(new LotTitle(raw))
+
+  // `isBlank` неразрывные пробелы (U+00A0, U+2007, U+202F) пробелом не считает, а на экране они пусты так же.
+  private def blank(c: Char): Boolean = Character.isWhitespace(c) || Character.isSpaceChar(c)
 }
 
 /**
