@@ -8,6 +8,7 @@ import type {
 } from "../src/identity/port.js";
 import type { LogFields, Logger } from "../src/logging.js";
 import { createBot } from "../src/presentation/bot.js";
+import { noopTracing, type Tracing } from "../src/tracing.js";
 
 // Харнесс бота без Telegram: `botInfo` подставляется, поэтому `bot.init()` не
 // ходит в Bot API, а исходящие вызовы записывает трансформер grammY. Общий для
@@ -78,6 +79,7 @@ export function createHarness(
   identity: IdentityResolver & Partial<CommunityAdministrator>,
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
+  tracing: Tracing = noopTracing(),
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
@@ -85,6 +87,7 @@ export function createHarness(
     dispatcher,
     identity,
     logger,
+    tracing,
   });
   bot.botInfo = botInfo;
   const recorder: Transformer = (_prev, method, payload) => {

@@ -4,6 +4,7 @@ import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResolveIdentityResponseSchema } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
+import { noopTracing } from "../tracing.js";
 import {
   createIdentityClient,
   createIdentityResolver,
@@ -235,7 +236,9 @@ describe("identity client", () => {
 
   it("closes the http2 session on shutdown", () => {
     const abort = vi.spyOn(Http2SessionManager.prototype, "abort");
-    const identity = createIdentityClient("http://127.0.0.1:1");
+    const identity = createIdentityClient("http://127.0.0.1:1", {
+      tracing: noopTracing(),
+    });
     identity.close();
     expect(abort).toHaveBeenCalledOnce();
     abort.mockRestore();

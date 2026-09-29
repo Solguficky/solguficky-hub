@@ -24,6 +24,7 @@ import type {
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CategoryState, MeetupCategory } from "../notifications/port.js";
+import { noopTracing } from "../tracing.js";
 import {
   createBot,
   parseTelegramEnvironment,
@@ -2606,6 +2607,7 @@ describe("presentation adapter", () => {
       dispatcher: createDispatcher(),
       identity: resolvedIdentity(),
       logger,
+      tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
     const failing: Transformer = (_prev, method) =>
@@ -2654,6 +2656,7 @@ describe("presentation adapter", () => {
       dispatcher: createDispatcher(),
       identity: resolvedIdentity(),
       logger,
+      tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
     const failing: Transformer = (_prev, method) =>
@@ -2815,6 +2818,7 @@ describe("presentation adapter", () => {
       dispatcher: createDispatcher(),
       identity,
       logger,
+      tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
     const failing: Transformer = () =>
@@ -2886,6 +2890,7 @@ async function requestedUrl(
     dispatcher: createDispatcher(),
     identity: resolvedIdentity(),
     logger,
+    tracing: noopTracing(),
   };
   const bot = createBot(
     environment === undefined ? runtime : { ...runtime, environment },

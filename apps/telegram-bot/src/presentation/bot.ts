@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Bot, type Context, InlineKeyboard } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
@@ -48,6 +48,7 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
+import type { Tracing } from "../tracing.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
 import {
@@ -76,6 +77,11 @@ import {
   removableUsernamePattern,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
+import {
+  markUpdateFailed,
+  type TracedContext,
+  traceUpdate,
+} from "./tracing.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
 // инфраструктуру (ADR-046). Значения совпадают с опцией grammY, чтобы между
@@ -87,6 +93,7 @@ export type BotRuntime = {
   dispatcher: Dispatcher;
   identity: IdentityResolver & Partial<CommunityAdministrator>;
   logger: Logger;
+  tracing: Tracing;
   presentation?: "rich" | "plain";
   environment?: TelegramEnvironment;
 };
@@ -267,7 +274,7 @@ type PendingInput =
   | PendingMaterialTitle
   | PendingBroadcastBody;
 
-type UpdateContext = Context & {
+type UpdateContext = TracedContext & {
   requestId?: string;
   startedAt?: bigint;
 };
@@ -303,9 +310,12 @@ export function createBot(runtime: BotRuntime): Bot<UpdateContext> {
   });
   const questions = new Map<string, PendingInput>();
   bot.use((ctx, next) => {
-    ctx.requestId = randomUUID();
+    const requestId = randomUUID();
+    ctx.requestId = requestId;
     ctx.startedAt = process.hrtime.bigint();
-    return next();
+    // Спан открывается в первом middleware: всё, что ниже, включая вызовы Bot
+    // API и gRPC, становится его потомком.
+    return traceUpdate({ tracing: runtime.tracing, ctx, requestId, next });
   });
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions),
@@ -4019,6 +4029,7 @@ function writeBoundary(
   }
   if (outcome.result === "error") {
     countFailure(outcome.error_category);
+    markUpdateFailed(ctx.updateSpan, outcome.error_category);
     fields.error_category = outcome.error_category;
     fields.error = outcome.error;
     if (outcome.stack !== undefined) {

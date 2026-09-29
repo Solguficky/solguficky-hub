@@ -13,6 +13,7 @@ import { createDispatcher } from "../src/application/dispatcher.js";
 import { communityDay } from "../src/community-time.js";
 import { createIdentityClient } from "../src/identity/client.js";
 import { createMeetupsClient } from "../src/meetups/client.js";
+import { noopTracing } from "../src/tracing.js";
 import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 
 // Провод бота против настоящих Identity и Meetups (уровень L2). Среду поднимает
@@ -297,8 +298,13 @@ export function openBotWire(endpoints: {
   identityUrl: string;
   meetupsUrl: string;
 }) {
-  const identity = createIdentityClient(endpoints.identityUrl);
-  const meetups = createMeetupsClient(endpoints.meetupsUrl, contourTimeZone);
+  // Контур проверяет провод, а не трассировку: спаны здесь не записываются.
+  const tracing = noopTracing();
+  const identity = createIdentityClient(endpoints.identityUrl, { tracing });
+  const meetups = createMeetupsClient(endpoints.meetupsUrl, {
+    communityTimeZone: contourTimeZone,
+    tracing,
+  });
   const dispatcher = createDispatcher(meetups, undefined, () =>
     communityDay(new Date(), contourTimeZone),
   );
