@@ -54,7 +54,7 @@ apt_install() {
     $SUDO apt-get update -qq
     apt_updated=yes
   fi
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
 }
 
 missing_packages=""
