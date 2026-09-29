@@ -16,9 +16,8 @@ service IdentityService {
   // accepts, read from current state. The caller names the roles; Identity
   // does not know which surface asks or what it guards.
   rpc CheckGlobalRole(CheckGlobalRoleRequest) returns (CheckGlobalRoleResponse);
-  // Resolves the author of a meetup to their Telegram username so a card can
-  // name the organizer. It answers only for a profile holding an active admin
-  // role, so it cannot be used to read the username of an ordinary member.
+  // Resolves the author of a meetup to their Telegram username for the meetup
+  // card.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
   // Grants the global admin role to an existing identity. Requires maintainer authentication.
   rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
@@ -116,20 +115,18 @@ message CheckGlobalRoleResponse {
 }
 
 message ResolveOrganizerUsernameRequest {
-  // The viewer of the card. Its roles must include one of the member circle
-  // (admin, maintainer, member); otherwise the call is PERMISSION_DENIED.
+  // The viewer of the card.
   IdentityActor actor = 1;
 
-  // Canonical lowercase UUIDv7 string with hyphens: the author id the caller
-  // read from a meetup it was allowed to see.
+  // Canonical lowercase UUIDv7 string with hyphens: the author id taken from a
+  // meetup snapshot.
   string identity_id = 2;
 }
 
 message ResolveOrganizerUsernameResponse {
-  // Username without the leading '@'. Absent when the organizer has none. A
-  // profile that is unknown or holds no active admin role is NOT_FOUND, not an
-  // absent field here: blocked profiles hold no roles and fall under the same
-  // answer.
+  // Username without the leading '@'. Absent only when the organizer has none:
+  // a profile the call does not answer for is a failed call, never an absent
+  // field here.
   optional string telegram_username = 1;
 }
 
