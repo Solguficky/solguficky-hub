@@ -77,7 +77,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
 
         try
         {
-            await silo.Bound();
+            await silo.WaitForBinding();
             return silo;
         }
         catch
@@ -101,7 +101,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// </summary>
     public static readonly TimeSpan BindPatience = TimeSpan.FromSeconds(30);
 
-    private async Task Bound()
+    private async Task WaitForBinding()
     {
         var bindings = Service<ReplicaBindings>();
         var bound = bindings.WhenAllBound;
@@ -116,9 +116,11 @@ public sealed class SiloUnderTest : IAsyncDisposable
             return;
         }
 
-        var reason = first == deadline
-            ? $"replica consumers not bound within {BindPatience}"
-            : "host stopped before every replica consumer bound";
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+
+        var reason = first == bound ? "replica consumer binding failed"
+            : first == stopping.Task ? "host stopped before every replica consumer bound"
+            : $"replica consumers not bound within {BindPatience}";
 
         throw new InvalidOperationException(reason, bindings.LastFailure());
     }

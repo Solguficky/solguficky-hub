@@ -91,7 +91,9 @@ public sealed class ReplicaConsumer(
     /// единственный запрос API не укладывается в таймаут клиента. Поэтому такой
     /// отказ повторяется. Отказ, в котором сервер ответил, — нет durable или
     /// стрима, окно хранения длиннее ключей — повтор не лечит, и хост на нём
-    /// падает, как прежде: заводить durable сервис не должен.
+    /// падает, как прежде: заводить durable сервис не должен. Шина, которая
+    /// уже отвечает, а топологию ещё не применила, тоже падает этим путём:
+    /// порядок применения топологии в кластере — PER-375.
     /// </remarks>
     private async Task<INatsJSConsumer?> Bind(CancellationToken stoppingToken)
     {
@@ -127,6 +129,14 @@ public sealed class ReplicaConsumer(
                     attempt,
                     options.Value.RetryDelay);
                 await Pause(options.Value.RetryDelay, stoppingToken);
+
+                // Pause глотает отмену, а неявное подключение клиента токена
+                // не берёт: без этой проверки остановка хоста при молчащей
+                // шине крутила бы повторы без паузы до конца ShutdownTimeout.
+                if (stoppingToken.IsCancellationRequested)
+                {
+                    return null;
+                }
             }
             catch (Exception ex)
             {
@@ -137,19 +147,25 @@ public sealed class ReplicaConsumer(
     }
 
     /// <summary>
-    /// Отказ, после которого шина может ответить на повтор: ответа не было
-    /// вовсе, либо JetStream ответил, что временно недоступен.
+    /// Отказ, после которого шина может ответить на повтор: соединения нет,
+    /// ответа не было вовсе, либо JetStream ответил, что временно недоступен.
     /// </summary>
     /// <remarks>
-    /// Из ответов сервера транзиентен только <c>err_code</c> 10008. Остальные
-    /// 503 JetStream — «не включён», «нет аккаунта», «нет ресурсов» — это
-    /// конфигурация, и повтор держал бы сервис живым без надежды привязаться.
+    /// Всё, что сервер сказал сам, — конфигурация, и повтор держал бы сервис
+    /// живым без надежды привязаться. Из ответов API транзиентен только
+    /// <c>err_code</c> 10008; остальные 503 — «не включён», «нет аккаунта»,
+    /// «нет ресурсов». «Нет ответчиков» значит, что JetStream на сервере никто
+    /// не обслуживает, а отказ сервера в соединении — неверные учётные данные;
+    /// клиент заворачивает его в общий отказ подключения.
     /// </remarks>
     public static bool IsTransient(Exception failure) =>
         failure switch
         {
             NatsJSApiException { Error: { Code: 503, ErrCode: JetStreamTemporarilyUnavailable } } => true,
             NatsJSApiException => false,
+            NatsNoRespondersException => false,
+            NatsServerException => false,
+            NatsException { InnerException: NatsServerException } => false,
             NatsException => true,
             _ => false,
         };

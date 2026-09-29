@@ -29,6 +29,7 @@ public sealed class NatsUnderTest : IAsyncDisposable
 {
     private readonly NatsContainer container;
     private readonly NatsConnection connection;
+    private bool paused;
 
     private NatsUnderTest(NatsContainer container, NatsConnection connection)
     {
@@ -175,7 +176,6 @@ public sealed class NatsUnderTest : IAsyncDisposable
         paused = false;
     }
 
-    private bool paused;
 
     private static string Subjects(ReplicaFeed feed) => $"events.{feed.Source}.>";
 

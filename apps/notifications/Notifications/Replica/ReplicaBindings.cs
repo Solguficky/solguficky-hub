@@ -25,7 +25,7 @@ public sealed class ReplicaBindings
     public ReplicaBindings(IEnumerable<ReplicaFeed> feeds)
     {
         this.feeds = feeds.ToDictionary(feed => feed.Source, _ => new Binding());
-        WhenAllBound = All([.. this.feeds.Values.Select(binding => binding.Outcome.Task)]);
+        WhenAllBound = AllBoundOrFirstFailure([.. this.feeds.Values.Select(binding => binding.Outcome.Task)]);
         // Отказ читают не всегда: хост на нём останавливается сам.
         WhenAllBound.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
     }
@@ -41,12 +41,19 @@ public sealed class ReplicaBindings
 
     /// <summary>
     /// Причина, по которой привязки нет: окончательный отказ, если он был у
-    /// какого-нибудь потребителя, иначе последний транзиентный отказ первого,
-    /// у кого он был. <c>null</c> — отказов не было.
+    /// какого-нибудь потребителя, иначе последний транзиентный отказ первого
+    /// ещё не привязанного. <c>null</c> — таких отказов нет.
     /// </summary>
+    /// <remarks>
+    /// Отказ потребителя, который потом привязался, причиной не считается:
+    /// иначе он объяснял бы, почему не привязан соседний.
+    /// </remarks>
     public Exception? LastFailure() =>
         feeds.Values.Select(binding => binding.Outcome.Task.Exception?.InnerException).FirstOrDefault(failure => failure is not null)
-        ?? feeds.Values.Select(binding => binding.LastFailure).FirstOrDefault(failure => failure is not null);
+        ?? feeds.Values
+            .Where(binding => !binding.Outcome.Task.IsCompleted)
+            .Select(binding => binding.LastFailure)
+            .FirstOrDefault(failure => failure is not null);
 
     public void Retrying(ReplicaFeed feed, Exception failure)
     {
@@ -71,7 +78,7 @@ public sealed class ReplicaBindings
     /// окончательный отказ одного потребителя был бы не виден, пока другой
     /// повторяет привязку.
     /// </remarks>
-    private static async Task All(List<Task> pending)
+    private static async Task AllBoundOrFirstFailure(List<Task> pending)
     {
         while (pending.Count > 0)
         {
