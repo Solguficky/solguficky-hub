@@ -21,6 +21,9 @@ type Record struct {
 	GlobalRoles []string
 	Blocked     bool
 	OccurredAt  time.Time
+	// TraceParent — контекст трассировки запроса, записавшего строку; пусто, если
+	// запись шла вне спана. В сообщение не входит.
+	TraceParent string
 }
 
 // Subject — адрес публикации повода. Он выводится из повода, а не хранится

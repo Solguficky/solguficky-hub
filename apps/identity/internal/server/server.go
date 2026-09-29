@@ -6,6 +6,8 @@ import (
 	"net"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
@@ -19,7 +21,25 @@ type Server struct {
 	health *health.Server
 }
 
-func New(log *slog.Logger, db *sql.DB, maintainerToken string) *Server {
+// Option настраивает сервер.
+type Option func(*config)
+
+type config struct {
+	tracerProvider trace.TracerProvider
+}
+
+// WithTracerProvider задаёт провайдер серверных спанов. Без опции спаны идут в
+// no-op провайдер: контекст входящего вызова всё равно переносится в ctx
+// обработчика, но ничего не экспортируется.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(c *config) { c.tracerProvider = tp }
+}
+
+func New(log *slog.Logger, db *sql.DB, maintainerToken string, opts ...Option) *Server {
+	cfg := config{tracerProvider: tracenoop.NewTracerProvider()}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -28,11 +48,14 @@ func New(log *slog.Logger, db *sql.DB, maintainerToken string) *Server {
 	}
 
 	srv := grpc.NewServer(
+		grpc.StatsHandler(tracingHandler(cfg.tracerProvider)),
 		grpc.ChainUnaryInterceptor(
+			unaryRequestIDSpan(),
 			unaryLogging(log),
 			unaryRecovery(),
 		),
 		grpc.ChainStreamInterceptor(
+			streamRequestIDSpan(),
 			streamLogging(log),
 			streamRecovery(),
 		),

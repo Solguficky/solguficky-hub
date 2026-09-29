@@ -18,6 +18,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
 
@@ -48,20 +49,15 @@ func run() int {
 		addr = ":50051"
 	}
 
-	metrics, err := startMetrics(ctx)
+	// Телеметрия закрывается после сервера и релея: defer исполняются в обратном
+	// порядке, и последние спаны и метрики успевают уйти до закрытия логов.
+	traces, closeTelemetry, err := startTelemetry(ctx, log)
 	if err != nil {
-		log.Error("metrics setup failed", "service", server.ServiceName, "error", err)
 		return 1
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := metrics.Shutdown(shutdownCtx); err != nil {
-			log.Error("metrics shutdown failed", "service", server.ServiceName, "error", err)
-		}
-	}()
+	defer closeTelemetry()
 
-	db, err := openStore(ctx)
+	db, err := openStore(ctx, traces)
 	if err != nil {
 		log.Error("store setup failed", "service", server.ServiceName, "error", err)
 		return 1
@@ -75,14 +71,14 @@ func run() int {
 		return 1
 	}
 
-	stopRelay, err := startRelay(ctx, log, db)
+	stopRelay, err := startRelay(ctx, log, db, traces)
 	if err != nil {
 		log.Error("relay setup failed", "service", server.ServiceName, "error", err)
 		return 1
 	}
 	defer stopRelay()
 
-	srv := server.New(log, db, os.Getenv("IDENTITY_MAINTAINER_TOKEN"))
+	srv := server.New(log, db, os.Getenv("IDENTITY_MAINTAINER_TOKEN"), server.WithTracerProvider(traces))
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String())
@@ -135,12 +131,12 @@ func serveDone(err error) bool {
 	return err == nil || errors.Is(err, grpc.ErrServerStopped)
 }
 
-func openStore(ctx context.Context) (*sql.DB, error) {
+func openStore(ctx context.Context, tp trace.TracerProvider) (*sql.DB, error) {
 	dsn, err := databaseURL()
 	if err != nil {
 		return nil, err
 	}
-	db, err := migrations.Open(ctx, dsn)
+	db, err := migrations.Open(ctx, dsn, migrations.WithTracerProvider(tp))
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +156,7 @@ func openStore(ctx context.Context) (*sql.DB, error) {
 // закрывает соединение. Отмена своя и от сигнала не зависит: релей работает, пока
 // gRPC сливает запросы, и публикует закоммиченное ими, а при отказе листенера
 // сигнала нет вовсе, и без своей отмены ожидание тика не кончилось бы.
-func startRelay(ctx context.Context, log *slog.Logger, db *sql.DB) (func(), error) {
+func startRelay(ctx context.Context, log *slog.Logger, db *sql.DB, tp trace.TracerProvider) (func(), error) {
 	url := os.Getenv("IDENTITY_NATS_URL")
 	if url == "" {
 		log.Info("outbox dispatch unconfigured, events accumulate",
@@ -186,7 +182,8 @@ func startRelay(ctx context.Context, log *slog.Logger, db *sql.DB) (func(), erro
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		relay.New(db, publisher, log, relay.DefaultBatch).Run(relayCtx, relay.DefaultInterval)
+		relay.New(db, publisher, log, relay.DefaultBatch, relay.WithTracerProvider(tp)).
+			Run(relayCtx, relay.DefaultInterval)
 	}()
 	log.Info("outbox dispatch started", "service", server.ServiceName, "dispatch", "jetstream")
 

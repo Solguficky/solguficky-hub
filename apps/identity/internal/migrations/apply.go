@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
+	"go.opentelemetry.io/otel/trace"
 )
 
 //go:embed *.sql
@@ -30,9 +31,22 @@ const (
 	ConnectTimeout = time.Second
 )
 
+// Option настраивает пул.
+type Option func(*poolConfig)
+
+type poolConfig struct {
+	tracerProvider trace.TracerProvider
+}
+
+// WithTracerProvider включает спаны запросов к PostgreSQL. Без опции пул не
+// трассируется.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(c *poolConfig) { c.tracerProvider = tp }
+}
+
 // Open собирает пул и проверяет, что база отвечает: сервис без базы не стартует.
-func Open(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := Pool(dsn)
+func Open(ctx context.Context, dsn string, opts ...Option) (*sql.DB, error) {
+	db, err := Pool(dsn, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +60,11 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 // Pool собирает пул с настройками сервиса, не подключаясь: соединения
 // открываются при первом обращении. Тесты берут его, чтобы проверить отказ
 // недоступной базы с тем же пределом подключения, что и у сервиса.
-func Pool(dsn string) (*sql.DB, error) {
+func Pool(dsn string, opts ...Option) (*sql.DB, error) {
+	var pool poolConfig
+	for _, opt := range opts {
+		opt(&pool)
+	}
 	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
@@ -55,6 +73,9 @@ func Pool(dsn string) (*sql.DB, error) {
 	// развёртывания, а не отсутствие ключа. Поэтому признак — сам ключ.
 	if config.ConnectTimeout == 0 && !strings.Contains(dsn, "connect_timeout") {
 		config.ConnectTimeout = ConnectTimeout
+	}
+	if pool.tracerProvider != nil {
+		config.Tracer = newQueryTracer(pool.tracerProvider)
 	}
 	db := stdlib.OpenDB(*config)
 	db.SetMaxOpenConns(maxOpenConns)
