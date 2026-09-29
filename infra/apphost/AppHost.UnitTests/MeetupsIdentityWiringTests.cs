@@ -8,6 +8,8 @@ using Microsoft.Extensions.Configuration;
 using Shouldly;
 using Xunit;
 
+using static AppHost.UnitTests.TestUtilities.TestMappings;
+
 namespace AppHost.UnitTests;
 
 /// <summary>
@@ -47,8 +49,8 @@ public class MeetupsIdentityWiringTests
 
         graph.AddService(Identity, [], context => context.Builder
             .AddContainer(Identity, "busybox")
-            .WithHttpEndpoint(targetPort: 8080, name: AppHostNames.Endpoints.Grpc));
-        graph.AddService(Meetups, [Identity], MeetupsSetup.Configure);
+            .WithHttpEndpoint(targetPort: 8080, name: AppHostNames.Endpoints.Grpc), LocalOnly);
+        graph.AddService(Meetups, [Identity], MeetupsSetup.Configure, LocalOnly);
         graph.Build();
 
         return builder.Resources.Single(resource => resource.Name == Meetups);

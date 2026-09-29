@@ -1,0 +1,93 @@
+identity: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/identity/Containerfile context=<repo>
+  endpoint: grpc http port= target=50051 proxied=True external=False
+  env: IDENTITY_DATABASE_URL={identity-db.connectionString}
+  env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
+  env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
+  env: IDENTITY_NATS_URL={nats.connectionString}
+  waits: identity-db WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference identity-db
+  relationship: Reference identity-maintainer-token
+  relationship: Reference nats
+  relationship: WaitFor identity-db
+  relationship: WaitFor nats
+  health: identity-grpc
+identity-db: ConnectionStringParameterResource
+  secret: True
+identity-maintainer-token: ParameterResource
+  secret: True
+k8s: KubernetesEnvironmentResource
+meetups: ProjectResource
+  endpoint: grpc http port= target=8080 proxied=True external=False
+  env: ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+  env: HTTP_PORTS={meetups.bindings.grpc.targetPort}
+  env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: MEETUPS_DATABASE_URL={meetups-db.connectionString}
+  env: MEETUPS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: MEETUPS_NATS_URL={nats.connectionString}
+  waits: identity WaitUntilHealthy
+  waits: meetups-db WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference meetups-db
+  relationship: Reference nats
+  relationship: WaitFor identity
+  relationship: WaitFor meetups-db
+  relationship: WaitFor nats
+  health: meetups-grpc
+meetups-db: ConnectionStringParameterResource
+  secret: True
+nats: ConnectionStringParameterResource
+  secret: True
+notifications: ProjectResource
+  endpoint: grpc http port= target=8080 proxied=True external=False
+  env: ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+  env: HTTP_PORTS={notifications.bindings.grpc.targetPort}
+  env: NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: NOTIFICATIONS_DATABASE_URL={notifications-db.connectionString}
+  env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
+  env: NOTIFICATIONS_NATS_URL={nats.connectionString}
+  waits: identity WaitUntilHealthy
+  waits: meetups WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  waits: notifications-db WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: Reference notifications-db
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  relationship: WaitFor notifications-db
+  health: notifications-grpc
+notifications-db: ConnectionStringParameterResource
+  secret: True
+telegram-bot: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/telegram-bot/Containerfile context=<repo>
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
+  env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  env: TELEGRAM_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: TELEGRAM_BOT_ENVIRONMENT=prod
+  env: TELEGRAM_BOT_NATS_URL={nats.connectionString}
+  env: TELEGRAM_BOT_TOKEN={telegram-bot-token.value}
+  waits: identity WaitUntilHealthy
+  waits: meetups WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  waits: notifications WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: Reference notifications
+  relationship: Reference telegram-bot-token
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  relationship: WaitFor notifications
+telegram-bot-token: ParameterResource
+  secret: True

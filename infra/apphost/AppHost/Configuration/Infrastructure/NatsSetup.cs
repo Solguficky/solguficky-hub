@@ -27,6 +27,13 @@ internal static class NatsSetup
                 ApplyTopologyAsync(nats, readyEvent, volume, cancellationToken));
     }
 
+    /// <summary>
+    /// В чарте NATS — строка подключения среды под тем же именем. Топологию
+    /// JetStream в кластере хук AppHost не создаёт: её переносит PER-375.
+    /// </summary>
+    public static void Publish(ServiceGraphContext context) =>
+        context.Publish(AppHostNames.Resources.Nats, context.Builder.AddConnectionString(AppHostNames.Resources.Nats));
+
     private static async Task ApplyTopologyAsync(
         NatsServerResource nats,
         ResourceReadyEvent readyEvent,

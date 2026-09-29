@@ -6,6 +6,8 @@ using Microsoft.Extensions.Configuration;
 using Shouldly;
 using Xunit;
 
+using static AppHost.UnitTests.TestUtilities.TestMappings;
+
 namespace AppHost.UnitTests;
 
 /// <summary>
@@ -64,9 +66,9 @@ public class ServiceGraphTests
             ("Topology:Profiles:hub:Infrastructure:0", Postgres));
 
         var graph = new ServiceGraph(builder, Profile("hub", [Identity], [Postgres]));
-        graph.AddInfrastructure(Postgres, context => Node(context, Postgres));
-        graph.AddInfrastructure(Nats, context => Node(context, Nats));
-        graph.AddService(Identity, [Postgres], context => Node(context, Identity));
+        graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
+        graph.AddInfrastructure(Nats, context => Node(context, Nats), LocalOnly);
+        graph.AddService(Identity, [Postgres], context => Node(context, Identity), LocalOnly);
 
         var exception = Should.Throw<InvalidOperationException>(graph.Build);
 
@@ -80,9 +82,9 @@ public class ServiceGraphTests
         var builder = Builder();
 
         var graph = new ServiceGraph(builder, Profile("hub", [Identity], [Postgres, Nats]));
-        graph.AddInfrastructure(Postgres, context => Node(context, Postgres));
-        graph.AddInfrastructure(Nats, context => Node(context, Nats));
-        graph.AddService(Identity, [Postgres], context => Node(context, Identity));
+        graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
+        graph.AddInfrastructure(Nats, context => Node(context, Nats), LocalOnly);
+        graph.AddService(Identity, [Postgres], context => Node(context, Identity), LocalOnly);
 
         Should.NotThrow(graph.Build);
     }
@@ -100,9 +102,9 @@ public class ServiceGraphTests
             ("Topology:Profiles:identity:Infrastructure:0", Postgres));
 
         var graph = new ServiceGraph(builder, Profile("identity", [Identity], [Postgres]));
-        graph.AddInfrastructure(Postgres, context => Node(context, Postgres));
-        graph.AddInfrastructure(Nats, context => Node(context, Nats));
-        graph.AddService(Identity, [Postgres], context => Node(context, Identity));
+        graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
+        graph.AddInfrastructure(Nats, context => Node(context, Nats), LocalOnly);
+        graph.AddService(Identity, [Postgres], context => Node(context, Identity), LocalOnly);
 
         Should.NotThrow(graph.Build);
     }
@@ -115,7 +117,7 @@ public class ServiceGraphTests
             ("Topology:Profiles:hub:Infrastructure:0", Postgres));
 
         var graph = new ServiceGraph(builder, Profile("hub", [TelegramBot], [Postgres]));
-        graph.AddInfrastructure(Postgres, context => Node(context, Postgres));
+        graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
 
         var exception = Should.Throw<InvalidOperationException>(graph.Build);
 
@@ -131,8 +133,8 @@ public class ServiceGraphTests
             ("Topology:Profiles:hub:Infrastructure:0", Postgres));
 
         var graph = new ServiceGraph(builder, Profile("hub", [Identity], [Postgres]));
-        graph.AddInfrastructure(Postgres, context => Node(context, Postgres));
-        graph.AddService(Identity, [Nats], context => Node(context, Identity));
+        graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
+        graph.AddService(Identity, [Nats], context => Node(context, Identity), LocalOnly);
 
         var exception = Should.Throw<InvalidOperationException>(graph.Build);
 
@@ -152,9 +154,9 @@ public class ServiceGraphTests
             ("Topology:Profiles:identity:Infrastructure:0", Postgres));
 
         var graph = new ServiceGraph(builder, Profile("identity", [Identity], [Postgres]));
-        graph.AddInfrastructure(Postgres, context => Node(context, Postgres));
-        graph.AddInfrastructure(Nats, context => Node(context, Nats));
-        graph.AddService(Identity, [Postgres], context => Node(context, Identity));
+        graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
+        graph.AddInfrastructure(Nats, context => Node(context, Nats), LocalOnly);
+        graph.AddService(Identity, [Postgres], context => Node(context, Identity), LocalOnly);
 
         graph.Build();
 

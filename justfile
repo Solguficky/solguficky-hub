@@ -44,6 +44,14 @@ LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
 
+# Helm для проверки и публикации чарта прода (apphost-chart). Джобы apphost и
+# chart-publish в CI ставят его tools/apphost/install-helm.sh из релиза и
+# сверяют архив linux-amd64 с суммой. Aspire требует не ниже 4.2 для деплоя, а
+# чарт, который проверен одной версией и опубликован другой, мог бы разойтись в
+# том, что считает ошибкой lint.
+HELM_VERSION := "4.3.0"
+HELM_SHA256 := "86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb"
+
 # Таргеты MCP: пять агентов, у каждого свой формат одного и того же объявления.
 # Zed сюда не входит намеренно — rulesync писал бы .zed/settings.json целиком
 # и затёр бы редакторские настройки репозитория.
@@ -175,8 +183,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, путь AppHost в aspire.config.json, AppHost, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-config-check apphost-build apphost-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -226,7 +234,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "34"
+APPHOST_TEST_THRESHOLD := "60"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -239,6 +247,24 @@ APPHOST_TEST_THRESHOLD := "34"
 apphost-test:
     @echo "apphost-test: минимум {{APPHOST_TEST_THRESHOLD}} тестов — добавил тест, подними APPHOST_TEST_THRESHOLD в этом рецепте тем же изменением"
     dotnet run --project infra/apphost/AppHost.UnitTests/AppHost.UnitTests.csproj -- --fail-skips on --minimum-expected-tests {{APPHOST_TEST_THRESHOLD}}
+
+# Чарт прода из графа AppHost (ADR-055): `aspire publish` собирает его из профиля
+# Topology:PublishProfile, затем helm lint, helm template с фикстурой values и
+# проверка правил чарта. Aspire CLI берётся через dnx той же версии, что SDK
+# AppHost, — второго закрепления нет. Нужны helm и сеть, поэтому в verify не
+# входит: его гоняет джоба apphost в CI на каждом PR, а в verify идут фикстуры
+# самой проверки (apphost-chart-test).
+apphost-chart out="infra/apphost/AppHost/bin/chart":
+    #!/usr/bin/env sh
+    set -eu
+    version=$(sed -n 's/.*<Sdk Name="Aspire.AppHost.Sdk" Version="\([^"]*\)".*/\1/p' infra/apphost/AppHost/AppHost.csproj)
+    rm -rf "{{out}}"
+    dotnet dnx --yes "aspire.cli@$version" -- publish -o "{{out}}" --non-interactive
+    python3 tools/apphost/check-chart.py "{{out}}" tools/apphost/chart-values.fixture.yaml
+
+# Фикстуры проверки чарта: каждое правило ловит свой дефект. Без helm и сети.
+apphost-chart-test:
+    sh tools/apphost/check-chart-test.sh
 
 # --- Identity (Go) ---------------------------------------------------------
 #

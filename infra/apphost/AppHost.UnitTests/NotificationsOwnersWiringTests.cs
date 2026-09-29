@@ -8,6 +8,8 @@ using Microsoft.Extensions.Configuration;
 using Shouldly;
 using Xunit;
 
+using static AppHost.UnitTests.TestUtilities.TestMappings;
+
 namespace AppHost.UnitTests;
 
 /// <summary>
@@ -43,9 +45,9 @@ public class NotificationsOwnersWiringTests
             builder,
             new ProfileConfig { Name = profile, Services = [.. services], Infrastructure = [] });
 
-        graph.AddService(Identity, [], context => Stub(context, Identity));
-        graph.AddService(Meetups, [], context => Stub(context, Meetups));
-        graph.AddService(Notifications, [Identity, Meetups], NotificationsSetup.Configure);
+        graph.AddService(Identity, [], context => Stub(context, Identity), LocalOnly);
+        graph.AddService(Meetups, [], context => Stub(context, Meetups), LocalOnly);
+        graph.AddService(Notifications, [Identity, Meetups], NotificationsSetup.Configure, LocalOnly);
         graph.Build();
 
         return builder.Resources.Single(resource => resource.Name == Notifications);

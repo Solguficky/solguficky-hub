@@ -1,10 +1,24 @@
 using AppHost.Configuration.Extensions;
+using AppHost.Configuration.Infrastructure;
+using AppHost.Configuration.Publish;
 using AppHost.Configuration.Topology;
 
 namespace AppHost.Configuration.Services;
 
 internal static class MeetupsSetup
 {
+    // В чарте порт закреплён, а не взят из values: gRPC-проба Kubernetes
+    // принимает только число, и проба с портом из шаблона разошлась бы с ним.
+    private const int ContainerGrpcPort = 8080;
+
+    private static readonly ClusterWorkload Cluster = new(
+        RunAsUser: 1654,
+        CpuRequest: "100m",
+        MemoryRequest: "192Mi",
+        CpuLimit: "1",
+        MemoryLimit: "384Mi",
+        Grpc: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Meetups));
+
     public static IResourceBuilder<ProjectResource> Configure(ServiceGraphContext context)
     {
         // Отдельных узлов кодогенерации и сборки нет: Grpc.Tools генерирует C#
@@ -22,12 +36,11 @@ internal static class MeetupsSetup
             // URI: `UriExpression` существует для клиентов вроде pgx, которые
             // формат ключей не понимают, и Identity на Go пользуется именно им.
             // Здесь URI пришлось бы разбирать обратно в ключи руками.
-            .BindConnection<ProjectResource, PostgresDatabaseResource>(
+            .BindConnection<ProjectResource, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.MeetupsDb,
                 "MEETUPS_DATABASE_URL",
-                database => ReferenceExpression.Create(
-                    $"{database.Resource.ConnectionStringExpression};SSL Mode=Disable"))
+                PostgresConnection.Npgsql)
             // По поясу сообщества решается, когда сходка переходит в архив, и в
             // нём интерпретируется момент назначенной публикации; без него
             // `Host.build` падает на старте, а не на первом запросе. Значение
@@ -43,10 +56,19 @@ internal static class MeetupsSetup
             // события копятся в журнале и уйдут, когда адрес появится. WaitFor
             // внутри bind ждёт и применения топологии JetStream (NatsSetup), поэтому
             // первая публикация не встречает отсутствующий стрим.
-            .BindConnection<ProjectResource, NatsServerResource>(
+            .BindConnection<ProjectResource, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,
                 "MEETUPS_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
     }
+
+    /// <summary>
+    /// В чарте — тот же проект: образ собирает SDK-контейнер по Container.targets,
+    /// тем же путём, что CI и <c>aspire do push</c> (ADR-055).
+    /// </summary>
+    public static IResourceBuilder<ProjectResource> Publish(ServiceGraphContext context) =>
+        Configure(context)
+            .WithEndpoint(AppHostNames.Endpoints.Grpc, endpoint => endpoint.TargetPort = ContainerGrpcPort)
+            .AsClusterWorkload(Cluster);
 }

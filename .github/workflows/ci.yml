@@ -89,6 +89,10 @@ jobs:
               - '.github/workflows/ci.yml'
             apphost:
               - 'infra/apphost/**'
+              # Чарт собирает Identity и бота по этим файлам: перенос без
+              # правки графа ловит тест публикации.
+              - 'apps/identity/Containerfile'
+              - 'apps/telegram-bot/Containerfile'
               # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
               - 'aspire.config.json'
               - 'tools/apphost/**'
@@ -429,6 +433,23 @@ jobs:
       # модели, а они отрабатывают до старта ресурсов. Через `just`, а не прямым
       # dotnet run, чтобы порог числа тестов остался в одном месте.
       - run: just apphost-test
+      # Снимок модели, разошедшийся с эталоном, лог показывает усечённым:
+      # полный полученный текст едет артефактом, чтобы сверить его построчно.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: apphost-snapshots-received
+          path: infra/apphost/AppHost.UnitTests/bin/Debug/net10.0/*.received.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: just apphost-chart-test
+      # Чарт прода на каждом PR (ADR-055): `aspire publish`, helm lint, helm
+      # template с фикстурой values и правила чарта. Тот же рецепт публикует
+      # чарт в chart-publish.yml, поэтому проверенное и опубликованное не
+      # расходятся. Docker не нужен: публикация не собирает образы.
+      - name: Helm из justfile
+        run: sh tools/apphost/install-helm.sh >> "$GITHUB_PATH"
+      - run: just apphost-chart
 
   auction:
     needs: changes

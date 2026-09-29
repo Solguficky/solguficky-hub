@@ -37,7 +37,7 @@ Production deployment не обязан быть первым milestone; пор�
 - Telegram Bot ждёт здоровые Identity и Meetups и получает их proxy endpoints через `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - NATS поднимается в профилях `infra` и `hub` на томе своего рабочего дерева ([local-development.md](../development/local-development.md)), и AppHost на старте создаёт стримы и durable consumers ([каталог](integration.md#jetstream)), но потребителя среди компонентов у шины пока нет: зелёный узел означает работающий брокер со стримами, а не работающую интеграцию;
-- тестовая среда Telegram, `aspire publish` и production-топология не проверены; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);
+- тестовая среда Telegram, установка чарта в k3s и production-топология не проверены; `aspire publish` чарт собирает; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);
 - NATS image закреплён на ветке 2.10, поэтому возможности новых версий нельзя предполагать без upgrade decision.
 
 ## Связанные решения
