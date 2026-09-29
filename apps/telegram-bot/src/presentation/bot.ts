@@ -1913,6 +1913,7 @@ async function handleCallback(
       if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
         // Заметка разовая: она отвечает на нажатие и при следующем открытии
         // карточки не повторяется, чтобы подписанному не читать её каждый раз.
+        // Поэтому решение принимает этот обработчик, а не рендер карточки.
         const note =
           result.kind === "meetup-card" &&
           result.subscribed === true &&
@@ -2733,23 +2734,28 @@ const meetupCategoryOrder: readonly MeetupCategory[] = [
 // Перечень строится по действующим значениям, а не по умолчаниям продукта:
 // человек, который раньше включил напоминание или выключил материалы, иначе
 // прочёл бы неправду. Напоминание названо отдельно, потому что по умолчанию
-// оно выключено и без подсказки его не найти.
+// оно выключено и без подсказки его не найти. Снимок без какой-то категории
+// заметки не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
+// на пустом ответе было бы выдумкой.
 function subscriptionNote(
   categories: readonly CategoryState<MeetupCategory>[],
-): string {
-  const enabled = meetupCategoryOrder
-    .filter((category) =>
-      categories.some((entry) => entry.category === category && entry.enabled),
-    )
-    .map((category) => categoryLabels[category].toLowerCase());
+): string | undefined {
+  const known = meetupCategoryOrder
+    .map((category) => categories.find((entry) => entry.category === category))
+    .filter(
+      (state): state is CategoryState<MeetupCategory> => state !== undefined,
+    );
+  if (known.length !== meetupCategoryOrder.length) return undefined;
+  const enabled = known
+    .filter((state) => state.enabled)
+    .map((state) => categoryLabels[state.category].toLowerCase());
   if (enabled.length === 0) {
     return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомления».";
   }
   const lines = [
     `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
   ];
-  const reminder = categories.find((entry) => entry.category === "reminder");
-  if (reminder !== undefined && !reminder.enabled) {
+  if (known.some((state) => state.category === "reminder" && !state.enabled)) {
     lines.push(
       "Напоминание перед началом выключено, включить его можно в «Уведомления».",
     );
@@ -2831,10 +2837,7 @@ async function renderMeetupCard(
       .text("К списку", "v1:nav:hub");
     if (presentation === "rich") {
       const richMessage = {
-        html:
-          note === undefined
-            ? meetupCardHtml(result.meetup)
-            : `${meetupCardHtml(result.meetup)}<p>${escapeHtml(note)}</p>`,
+        html: withNote(meetupCardHtml(result.meetup), note, "rich"),
       };
       if (
         edit &&
@@ -2860,10 +2863,7 @@ async function renderMeetupCard(
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }
     } else {
-      const html =
-        note === undefined
-          ? meetupCardPlainHtml(result.meetup)
-          : `${meetupCardPlainHtml(result.meetup)}\n\n${escapeHtml(note)}`;
+      const html = withNote(meetupCardPlainHtml(result.meetup), note, "plain");
       if (edit) {
         try {
           await ctx.editMessageText(html, {
@@ -3156,6 +3156,19 @@ function meetupCardHtml(meetup: MeetupSnapshot): string {
   const lines = meetupCardText(meetup, false).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
   return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
+}
+
+// Заметка идёт под карточкой отдельным абзацем; режимы различаются только
+// разметкой абзаца.
+function withNote(
+  html: string,
+  note: string | undefined,
+  presentation: "rich" | "plain",
+): string {
+  if (note === undefined) return html;
+  return presentation === "rich"
+    ? `${html}<p>${escapeHtml(note)}</p>`
+    : `${html}\n\n${escapeHtml(note)}`;
 }
 
 function meetupCardPlainHtml(meetup: MeetupSnapshot): string {

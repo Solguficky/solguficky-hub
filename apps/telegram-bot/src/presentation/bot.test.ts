@@ -23,6 +23,7 @@ import type {
   IdentityResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
+import type { CategoryState, MeetupCategory } from "../notifications/port.js";
 import {
   createBot,
   parseTelegramEnvironment,
@@ -2969,9 +2970,17 @@ describe("notification frames", () => {
   // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
   // называет, что будет приходить, и куда идти за выключенным напоминанием.
   describe("subscription note", () => {
+    // Полезная нагрузка записана как unknown; карточка по умолчанию идёт
+    // rich-сообщением, и отсутствие поля даёт пустую строку, а не падение.
     const cardHtml = (call: RecordedCall | undefined): string =>
       (call?.payload as { rich_message?: { html?: string } } | undefined)
         ?.rich_message?.html ?? "";
+    const allCategories = (
+      enabled: Partial<Record<MeetupCategory, boolean>>,
+    ): CategoryState<MeetupCategory>[] =>
+      (["changes", "material", "reminder", "organizer"] as const).map(
+        (category) => ({ category, enabled: enabled[category] ?? false }),
+      );
     const subscribe = async (
       result: Awaited<ReturnType<Dispatcher["execute"]>>,
       data = `v1:notify:sub:${token}:1`,
@@ -3041,20 +3050,48 @@ describe("notification frames", () => {
       );
     });
 
+    // Пропуск категории в ответе неотличим от «выключено»: заметка тогда не
+    // говорит ничего, а не «ничего не приходит».
+    it.each([
+      ["an empty", []],
+      ["an incomplete", [{ category: "changes" as const, enabled: true }]],
+    ])("adds no note for %s category snapshot", async (_name, categories) => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories,
+      });
+      expect(html).toContain("Настолки у Лёши");
+      expect(html).not.toContain("Подписка включена");
+    });
+
     it("adds no note on unsubscribing or on a plain card view", async () => {
+      const everything = allCategories({
+        changes: true,
+        material: true,
+        organizer: true,
+      });
       const unsubscribed = await subscribe(
         {
           kind: "meetup-card",
           meetup,
           subscribed: false,
-          categories: [{ category: "changes", enabled: true }],
+          categories: everything,
         },
         `v1:notify:sub:${token}:0`,
       );
       expect(unsubscribed).toContain("Настолки у Лёши");
       expect(unsubscribed).not.toContain("Подписка включена");
+      // Категории в результате есть, но заметка — ответ на нажатие, а не
+      // свойство карточки: просмотр её не показывает.
       const viewed = await subscribe(
-        { kind: "meetup-card", meetup, subscribed: true },
+        {
+          kind: "meetup-card",
+          meetup,
+          subscribed: true,
+          categories: everything,
+        },
         `v1:view:${token}`,
       );
       expect(viewed).toContain("Настолки у Лёши");
