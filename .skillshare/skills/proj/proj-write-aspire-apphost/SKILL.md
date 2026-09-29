@@ -20,6 +20,7 @@ AppHost — не скрипт `AddExecutable`/`WithReference`, а граф им�
 7. Connection string и адрес отдаются под ключом, который компонент реально читает. Ключ диктует компонент, а не конвенция AppHost.
 8. Секрет — только `AddParameter(secret: true)` и только внутри setup того компонента, которому он нужен. В `appsettings*.json` секретов нет.
 9. Всё, что печатается или летит в исключение, — по-английски: stdout AppHost проходит через Aspire CLI и ломает не-ASCII. Комментарии в коде остаются русскими.
+10. У каждого узла есть отображение в чарт прода ([ADR-055](../../../docs/decisions/ADR-055-k3s-runtime-from-aspire-chart.md)) — обязательный аргумент регистрации: `Workload`, `Connections` или `NotPublished("причина")`. Режим публикации выбирает только `ServiceGraph`; setup `IsPublishMode` не спрашивает, а держит две функции — `Configure` и `Publish` — поверх общего wiring. Формат строки подключения выбирается по типу ресурса, а не по режиму.
 
 Нарушил пункт — поправь модель, а не обходи его в setup.
 
@@ -48,13 +49,16 @@ infra/apphost/
       RepositoryPaths.cs                        пути компонентов от корня репозитория
       ProfileResolver.cs                        --profile | TOPOLOGY__PROFILE, --run-services
       Models/ProfileConfig.cs                   списки владения
-      Topology/ServiceGraph.cs                  реестр, валидация, порядок, баннер
+      Topology/ServiceGraph.cs                  реестр, валидация, порядок, баннер, выбор режима
       Topology/ServiceGraphContext.cs           builder, профиль, материализованные узлы
+      Topology/PublishMapping.cs                Workload | Connections | NotPublished
+      Publish/                                  среда Kubernetes и форма workload'а чарта
       Extensions/ResourceBuilderExtensions.cs   ApplyIf
       Extensions/ResourceBindExtensions.cs      BindEndpoint, BindConnection
       Infrastructure/                           один файл на backing store
       Services/                                 один файл на компонент
-  AppHost.UnitTests/                          тесты графа и профилей, just apphost-test
+  AppHost.UnitTests/                          тесты графа, профилей и публикации, just apphost-test
+    Snapshots/hub.run.txt                     снимок локального графа hub
 ```
 
 Другой расклад без причины не выдумывай.
@@ -63,20 +67,24 @@ infra/apphost/
 
 ```csharp
 var builder = DistributedApplication.CreateBuilder(args);
-var profile = ProfileResolver.Resolve(builder.Configuration);
+var profile = ProfileResolver.Resolve(builder.Configuration, builder.ExecutionContext);
 var topology = new ServiceGraph(builder, profile);
 
-topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure);
-topology.AddInfrastructure(R.Nats, NatsSetup.Configure);
+topology.PublishTo(ClusterEnvironment.Configure);
 
-topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure);
-topology.AddService(R.TelegramBot, [R.Identity], TelegramBotSetup.Configure);
+topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure, P.Connections(PostgresSetup.Publish));
+topology.AddInfrastructure(R.Loki, LokiSetup.Configure, P.NotPublished("local log stack"));
+
+topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure, P.Workload(IdentitySetup.Publish));
+topology.AddService(R.TelegramBot, [R.Identity], TelegramBotSetup.Configure, P.Workload(TelegramBotSetup.Publish));
 
 topology.Build();
 builder.Build().Run();
 ```
 
-Новый компонент = константа в `AppHostNames` + строка `AddService` + файл setup + имя в нужных профилях. Больше ничего.
+Новый компонент = константа в `AppHostNames` + строка `AddService` с отображением в чарт + файл setup + имя в нужных профилях. Больше ничего.
+
+В режиме публикации профиль берётся из `Topology:PublishProfile`, а `--profile` и срез отвергаются. Профиль публикации, который владеет узлом с `NotPublished`, роняет граф в обоих режимах; compute-ресурс, не созданный отображением `Workload`, роняет сборку чарта — генератор публикует workload'ом каждый compute-ресурс модели без opt-in.
 
 ## Профиль
 
@@ -106,8 +114,8 @@ builder.Build().Run();
 
 1. Константа в `AppHostNames.Resources`.
 2. `Configuration/Services/<Name>Setup.cs` — рецепт в [reference.md](reference.md).
-3. Строка `AddService(name, depends, Setup.Configure)` в `Program.cs`.
-4. Имя в `Services` тех профилей, где AppHost должен его поднимать.
+3. Строка `AddService(name, depends, Setup.Configure, P.Workload(Setup.Publish))` в `Program.cs`; вне чарта — `P.NotPublished("причина")`.
+4. Имя в `Services` тех профилей, где AppHost должен его поднимать, и в профиле публикации, если компонент едет в прод. `Publish` строит его из образа, без узлов сборки, и задаёт форму workload'а (`AsClusterWorkload`).
 5. Сборка и кодогенерация компонента — внутри его setup, через `WaitForCompletion` и `WithParentRelationship`.
 6. Health по штатному протоколу компонента. `Running` без readiness-проверки не считается `Healthy`.
 
@@ -115,7 +123,7 @@ builder.Build().Run();
 
 1. Константа и ключ профиля — одна строка.
 2. `Configuration/Infrastructure/<Name>Setup.cs`; setup всегда создаёт ресурс, проверок владения внутри нет.
-3. `AddInfrastructure` в composition root.
+3. `AddInfrastructure` в composition root с отображением: в чарте инфраструктура — `P.Connections`, строки подключения под теми же именами, либо `P.NotPublished`.
 4. Имя в `Infrastructure` профилей, где AppHost её поднимает; потребители перечисляют её в `depends` и биндят хелпером.
 5. Ресурс, принадлежащий другому ресурсу (база внутри сервера), публикуется через `context.Publish` и в профиле не упоминается.
 

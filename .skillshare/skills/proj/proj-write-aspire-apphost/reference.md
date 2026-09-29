@@ -36,7 +36,7 @@ internal static class NatsSetup
 }
 ```
 
-Дальше: константа в `AppHostNames.Resources`, строка `topology.AddInfrastructure(R.Nats, NatsSetup.Configure)` в `Program.cs`, имя в `Infrastructure` профилей.
+Дальше: константа в `AppHostNames.Resources`, строка `topology.AddInfrastructure(R.Nats, NatsSetup.Configure, P.Connections(NatsSetup.Publish))` в `Program.cs`, имя в `Infrastructure` профилей. `Publish` публикует в контексте `AddConnectionString` под тем же именем: в чарте сервера нет.
 
 Версия образа фиксируется тегом. Плавающий `latest` в графе не появляется.
 

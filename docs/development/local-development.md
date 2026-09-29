@@ -1,6 +1,6 @@
 # Локальная разработка
 
-> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop, полный `hub` с Telegram Bot, сценарий первого среза, сквозная цепочка `request_id`, рестарт каждого компонента и потеря PostgreSQL и NATS, продуктовый сценарий MVP до полученного напоминания — в продакшн-среде Telegram отдельным локальным ботом; материал сходки и ручные рассылки через бота не прошли, тестовая среда Telegram и production-like публикация не проверены.
+> **Статус:** Current, частично подтверждено. Этот документ — единственный владелец факта о том, что подтверждено живым прогоном Aspire; остальные документы на него ссылаются и своего перечня не держат. Профили `infra`, `identity`, `meetups`, `notifications`, срез `hub` без Telegram Bot вместе с NATS и его повтор на том же томе подтверждены живым прогоном на Aspire 13.5.3 с Docker Desktop, полный `hub` с Telegram Bot, сценарий первого среза, сквозная цепочка `request_id`, рестарт каждого компонента и потеря PostgreSQL и NATS, продуктовый сценарий MVP до полученного напоминания — в продакшн-среде Telegram отдельным локальным ботом; материал сходки и ручные рассылки через бота не прошли, тестовая среда Telegram не проверена. Чарт прода `aspire publish` собирает, установка его в кластер не проверена — раздел «Публикация чарта прода».
 
 Граница между local development, production-like integration и production hosting описана в [инфраструктурном обзоре](../architecture/infrastructure.md).
 
@@ -169,6 +169,27 @@ just aspire hub -- --skip-services telegram-bot
 
 Имена узлов и их связи объявлены в `infra/apphost/AppHost/Program.cs`, форма кода — в skill `proj-write-aspire-apphost`.
 
+## Публикация чарта прода
+
+Чарт прода генерирует `Aspire.Hosting.Kubernetes` из того же графа, что и локальный запуск ([ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md)); второго описания топологии нет.
+
+```bash
+just apphost-chart
+```
+
+Рецепт вызывает `aspire publish` через `dotnet dnx` той же версии CLI, что SDK AppHost, и кладёт чарт в `infra/apphost/AppHost/bin/chart`. Затем идут `helm lint --strict` и `helm template` с фикстурой values `tools/apphost/chart-values.fixture.yaml`, в которой каждый образ закреплён синтетическим digest, и `tools/apphost/check-chart.py` сверяет отрендеренные workload'ы с правилами чарта. Нужны helm версии `HELM_VERSION` из `justfile` и сеть для Aspire CLI, Docker не нужен: публикация образы не собирает. Поэтому рецепт в `verify` не входит. Его гоняет джоба `apphost` в CI на каждом PR, а `chart-publish.yml` тем же рецептом публикует чарт в `oci://ghcr.io/<владелец>/charts` на push в `develop`. В `verify` идут фикстуры самой проверки (`just apphost-chart-test`).
+
+Чарт собирается из профиля, который назван ключом `Topology:PublishProfile`, сейчас это `cluster` с тем же составом, что `hub`. Срез запуска к чарту не применяется: `--profile`, `--run-services` и `--skip-services` в режиме публикации отвергаются явно. Каждый узел графа регистрируется с отображением в чарт — `Workload`, `Connections` или `NotPublished` с причиной, — и режим выбирает только `ServiceGraph`, а setup его не спрашивает:
+
+- Identity и Telegram Bot в чарте — образы по своим Containerfile с контекстом из корня репозитория, без узлов кодогенерации и сборки; Meetups и Notifications — проекты, образ которых собирает SDK-контейнер;
+- PostgreSQL и NATS становятся строками подключения среды под локальными именами (`identity-db`, `meetups-db`, `notifications-db`, `nats`), значения которых кладёт ops-репозиторий целиком, уже в формате компонента; `auction-db` не публикуется вместе с Auction, Loki и Grafana остаются локальным стеком;
+- все четыре workload'а — одна реплика со стратегией `Recreate`, лимиты, `runAsNonRoot` с UID образа и gRPC-пробы по [ADR-054](../decisions/ADR-054-storage-unavailability-visible-outside.md) с закреплённым портом; у бота проб нет, потому что нет health-эндпоинта;
+- образы в `values.yaml` — заглушки `<сервис>:latest`, секреты — пустые значения: digest образов и секреты кладёт ops-репозиторий в values среды.
+
+Граф, который чарт получить не может, отвергается не только сборкой чарта. Профиль публикации, владеющий узлом без отображения, роняет и `aspire run`, и тесты графа, а compute-ресурс, который не создан отображением `Workload`, роняет сборку чарта с именем ресурса. Неизменность локального графа держит снимок `hub` в `infra/apphost/AppHost.UnitTests/Snapshots/hub.run.txt`, записанный до ветки публикации.
+
+Подтверждено 2026-09-29 на Aspire 13.5.3 и `Aspire.Hosting.Kubernetes` 13.5.3-preview: `aspire publish` собирает чарт без Docker, в нём четыре Deployment с сервисами и ни одного workload'а сборки, PostgreSQL, NATS и дашборда. Генератор при этом оставлял `rollingUpdate` рядом с `Recreate`, а такой Deployment API Kubernetes отвергает; setup его убирает, а проверка чарта это правило держит. Установка чарта в k3s, работа сервисов в подах, топология JetStream в кластере ([PER-375](https://linear.app/anticnvm/issue/per-375)) и силос Orleans в поде ([PER-387](https://linear.app/anticnvm/issue/per-387)) не проверены.
+
 ## Проверенный локальный gate
 
 Механика графа, без Docker — эти пункты отрабатывают до старта ресурсов:
@@ -292,7 +313,7 @@ just aspire hub -- --skip-services telegram-bot
 
 У самого узла бота понятия готовности в терминах AppHost нет: он не слушает порт, а ходит наружу long polling, поэтому пробы у него не будет и `WaitFor` на него не ставит никто. Его готовность читается собственной строкой лога, и «узел `Running`» подтверждением работы в Telegram не является.
 
-Зелёный узел `nats` на дашборде означает работающий брокер со стримами, а не работающую интеграцию. Путь «Meetups → шина → реплика Notifications → бот» подтверждён прогоном PER-7 (пункты 37 и 40), пункты 16–19 — ручным потребителем `nats-tester`. Пригодность `aspire publish` для production-like k3s и сама production-топология не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
+Зелёный узел `nats` на дашборде означает работающий брокер со стримами, а не работающую интеграцию. Путь «Meetups → шина → реплика Notifications → бот» подтверждён прогоном PER-7 (пункты 37 и 40), пункты 16–19 — ручным потребителем `nats-tester`. `aspire publish` собирает чарт прода, но его установка в k3s и сама production-топология не проверены. Локальный успешный прогон не является подтверждением deployment-пути.
 
 ## Повторная проверка
 
