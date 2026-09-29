@@ -434,12 +434,8 @@ jobs:
       # template с фикстурой values и правила чарта. Тот же рецепт публикует
       # чарт в chart-publish.yml, поэтому проверенное и опубликованное не
       # расходятся. Docker не нужен: публикация не собирает образы.
-      - name: Версия Helm
-        id: tools
-        run: echo "helm=$(grep '^HELM_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
-      - uses: azure/setup-helm@v5
-        with:
-          version: v${{ steps.tools.outputs.helm }}
+      - name: Helm из justfile
+        run: sh tools/apphost/install-helm.sh >> "$GITHUB_PATH"
       - run: just apphost-chart
 
   auction:
