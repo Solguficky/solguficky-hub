@@ -23,6 +23,9 @@ func TestAppendStoresTraceParentOfTheSpan(t *testing.T) {
 	const untraced = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3872"
 
 	ctx, span := sdktrace.NewTracerProvider().Tracer("test").Start(t.Context(), "rpc")
+	// Ожидание снимается до End: закрытый спан уже не записывается, и TraceParent
+	// для него пуст.
+	want := outbox.TraceParent(ctx)
 	tx := beginTx(t, db)
 	mustTxExec(t, tx, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9371)`, traced)
 	if err := outbox.Append(ctx, tx, traced, outbox.ProfileRegistered, ""); err != nil {
@@ -34,7 +37,7 @@ func TestAppendStoresTraceParentOfTheSpan(t *testing.T) {
 	span.End()
 	registerProfile(t, db, untraced, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9372)`)
 
-	if got, want := storedTraceParent(t, db, traced), outbox.TraceParent(ctx); !got.Valid || got.String != want {
+	if got := storedTraceParent(t, db, traced); !got.Valid || got.String != want {
 		t.Fatalf("traced row: got %v want %q", got, want)
 	}
 	if got := storedTraceParent(t, db, untraced); got.Valid {
