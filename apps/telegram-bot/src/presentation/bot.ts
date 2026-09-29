@@ -105,12 +105,15 @@ export function parseTelegramEnvironment(
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
+// FAILED_PRECONDITION не говорит, что именно мешает: сходку отменили, пока
+// экран висел, или у черновика нет названия для публикации. Кадр не утверждает
+// ни то, ни другое, а ведёт к карточке, где видно текущее состояние (E-04).
 const staleMeetupText =
-  "Этот экран устарел: сходка уже в другом состоянии. Открой её заново из списка.";
+  "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
 
 // Отказ Meetups по самой команде человеку показывается кадром, а не текстом
 // сервиса: код gRPC и текст уходят в запись границы (PER-397). FAILED_PRECONDITION —
-// экран отстал от состояния сходки (E-04); INVALID_ARGUMENT на кнопке —
+// состояние сходки не допускает действия (E-04); INVALID_ARGUMENT на кнопке —
 // неверную команду собрал бот, и это сбой на нашей стороне (E-05).
 function invalidMeetupText(result: { precondition?: true }): string {
   return result.precondition === true ? staleMeetupText : unavailableText;
@@ -3341,10 +3344,14 @@ async function renderFormResult(
         : result.meetup[result.field] === ""
           ? "не задано"
           : result.meetup[result.field];
-    const prompt =
-      result.kind === "edit-ask"
-        ? `Сейчас: ${currentValue}\n${result.error ?? formPrompts[result.field]}`
+    // Отказ Meetups причины не называет, поэтому рядом с ним стоит сам вопрос
+    // поля: без него человек теряет формат даты и не знает, что вводить.
+    const ask =
+      "rejected" in result && result.error !== undefined
+        ? `${result.error}\n${formPrompts[result.field]}`
         : (result.error ?? formPrompts[result.field]);
+    const prompt =
+      result.kind === "edit-ask" ? `Сейчас: ${currentValue}\n${ask}` : ask;
     const question: QuestionMessage =
       result.kind === "edit-ask"
         ? editQuestion({
@@ -3758,7 +3765,7 @@ function screenBoundary(
   // формы, а для записи границы — отказ с кодом и текстом сервиса (PER-397).
   if (
     (result.kind === "ask" || result.kind === "edit-ask") &&
-    result.rejected !== undefined
+    "rejected" in result
   ) {
     return {
       level: "warn",

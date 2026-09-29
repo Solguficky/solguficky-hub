@@ -498,10 +498,13 @@ describe("deferred publication", () => {
     const published = { ...empty, visibility: "visible" as const, version: 2 };
     meetups.schedulePublication = vi
       .fn<Meetups["schedulePublication"]>()
-      .mockResolvedValueOnce({ kind: "invalid", cause: "in the past" })
       .mockResolvedValueOnce({
         kind: "invalid",
-        cause: "already published",
+        cause: new Error("in the past"),
+      })
+      .mockResolvedValueOnce({
+        kind: "invalid",
+        cause: new Error("already published"),
         precondition: true,
       });
     const request = {

@@ -1906,7 +1906,7 @@ describe("presentation adapter", () => {
       update: () =>
         callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
       result: rejection(Code.FailedPrecondition),
-      shown: "Этот экран устарел",
+      shown: "Сейчас это действие недоступно.",
       grpc: "FailedPrecondition",
     },
     {
@@ -1955,11 +1955,26 @@ describe("presentation adapter", () => {
         rejected: new ConnectError(leak, Code.InvalidArgument),
       },
       shown: rejectedValueText,
+      also: "Как называется сходка?",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "publication rejected from the form",
+      update: () => callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+      result: rejection(Code.InvalidArgument),
+      shown: "Это на моей стороне.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "notification setting rejected as invalid",
+      update: () => callbackUpdate("v1:notify:global"),
+      result: rejection(Code.InvalidArgument),
+      shown: "Этот экран устарел.",
       grpc: "InvalidArgument",
     },
   ])(
     "keeps the service text out of the reply for a $name",
-    async ({ update, result, shown, grpc }) => {
+    async ({ update, result, shown, also, grpc }) => {
       const meetup = publishedMeetup();
       const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
         request.intent === "view-meetup"
@@ -1975,6 +1990,7 @@ describe("presentation adapter", () => {
 
       const sent = JSON.stringify(calls.map((call) => call.payload));
       expect(sent).toContain(shown);
+      if (also !== undefined) expect(sent).toContain(also);
       expect(sent).not.toContain("SENTINEL-397");
       expect(sent).not.toMatch(/invalid_argument|failed_precondition/);
       const record = records.at(-1);
