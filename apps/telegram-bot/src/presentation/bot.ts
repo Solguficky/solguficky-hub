@@ -40,7 +40,11 @@ import type {
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
-import type { NotificationCategory } from "../notifications/port.js";
+import type {
+  CategoryState,
+  MeetupCategory,
+  NotificationCategory,
+} from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
@@ -1907,12 +1911,22 @@ async function handleCallback(
         ...rpcCall(ctx, useCase),
       });
       if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+        // Заметка разовая: она отвечает на нажатие и при следующем открытии
+        // карточки не повторяется, чтобы подписанному не читать её каждый раз.
+        // Поэтому решение принимает этот обработчик, а не рендер карточки.
+        const note =
+          result.kind === "meetup-card" &&
+          result.subscribed === true &&
+          result.categories !== undefined
+            ? subscriptionNote(result.categories)
+            : undefined;
         await renderMeetupCard(
           ctx,
           result,
           true,
           runtime.presentation ?? "rich",
           person.globalRoles.includes("admin"),
+          note,
         );
       } else {
         await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
@@ -2710,12 +2724,52 @@ function checkbox(label: string, enabled: boolean): string {
   return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
 
+const meetupCategoryOrder: readonly MeetupCategory[] = [
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+];
+
+// Перечень строится по действующим значениям, а не по умолчаниям продукта:
+// человек, который раньше включил напоминание или выключил материалы, иначе
+// прочёл бы неправду. Напоминание названо отдельно, потому что по умолчанию
+// оно выключено и без подсказки его не найти. Снимок без какой-то категории
+// заметки не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
+// на пустом ответе было бы выдумкой.
+function subscriptionNote(
+  categories: readonly CategoryState<MeetupCategory>[],
+): string | undefined {
+  const known = meetupCategoryOrder
+    .map((category) => categories.find((entry) => entry.category === category))
+    .filter(
+      (state): state is CategoryState<MeetupCategory> => state !== undefined,
+    );
+  if (known.length !== meetupCategoryOrder.length) return undefined;
+  const enabled = known
+    .filter((state) => state.enabled)
+    .map((state) => categoryLabels[state.category].toLowerCase());
+  if (enabled.length === 0) {
+    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомления».";
+  }
+  const lines = [
+    `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
+  ];
+  if (known.some((state) => state.category === "reminder" && !state.enabled)) {
+    lines.push(
+      "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+    );
+  }
+  return lines.join(" ");
+}
+
 async function renderMeetupCard(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   edit: boolean,
   presentation: "rich" | "plain",
   manageable = false,
+  note?: string,
 ): Promise<void> {
   if (result.kind === "meetup-not-found") {
     const text = "Сходка не найдена или больше недоступна.";
@@ -2782,7 +2836,9 @@ async function renderMeetupCard(
       .row()
       .text("К списку", "v1:nav:hub");
     if (presentation === "rich") {
-      const richMessage = { html: meetupCardHtml(result.meetup) };
+      const richMessage = {
+        html: withNote(meetupCardHtml(result.meetup), note, "rich"),
+      };
       if (
         edit &&
         ctx.chat !== undefined &&
@@ -2807,7 +2863,7 @@ async function renderMeetupCard(
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }
     } else {
-      const html = meetupCardPlainHtml(result.meetup);
+      const html = withNote(meetupCardPlainHtml(result.meetup), note, "plain");
       if (edit) {
         try {
           await ctx.editMessageText(html, {
@@ -3100,6 +3156,19 @@ function meetupCardHtml(meetup: MeetupSnapshot): string {
   const lines = meetupCardText(meetup, false).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
   return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
+}
+
+// Заметка идёт под карточкой отдельным абзацем; режимы различаются только
+// разметкой абзаца.
+function withNote(
+  html: string,
+  note: string | undefined,
+  presentation: "rich" | "plain",
+): string {
+  if (note === undefined) return html;
+  return presentation === "rich"
+    ? `${html}<p>${escapeHtml(note)}</p>`
+    : `${html}\n\n${escapeHtml(note)}`;
 }
 
 function meetupCardPlainHtml(meetup: MeetupSnapshot): string {
