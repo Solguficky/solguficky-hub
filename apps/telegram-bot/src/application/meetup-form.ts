@@ -26,6 +26,9 @@ export function utcToday(): CommunityDay {
   return communityDay(new Date(), "UTC");
 }
 
+export const rejectedValueText =
+  "Это значение не подошло. Попробуй написать его иначе.";
+
 export function createMeetupForm(
   meetups: Meetups,
   today: CommunityToday = utcToday,
@@ -99,12 +102,14 @@ export function createMeetupForm(
             rpcMeta(request),
           );
           if (scheduled.kind === "invalid") {
-            return invalidField(
-              request.field,
-              current.meetup,
-              scheduled.message,
-              editing,
-            );
+            return scheduled.precondition
+              ? failure(scheduled)
+              : invalidField(
+                  request.field,
+                  current.meetup,
+                  scheduled.cause,
+                  editing,
+                );
           }
           if (scheduled.kind === "conflict") {
             return conflict(meetups, request, {
@@ -138,12 +143,14 @@ export function createMeetupForm(
           rpcMeta(request),
         );
         if (updated.kind === "invalid") {
-          return invalidField(
-            request.field,
-            current.meetup,
-            updated.message,
-            editing,
-          );
+          return updated.precondition
+            ? failure(updated)
+            : invalidField(
+                request.field,
+                current.meetup,
+                updated.cause,
+                editing,
+              );
         }
         if (updated.kind === "conflict") {
           return conflict(meetups, request, {
@@ -445,23 +452,28 @@ function failure(
     return {
       kind: "dependency-rejected",
       reason: "invalid",
-      message: result.message,
+      cause: result.cause,
+      ...(result.precondition ? { precondition: true as const } : {}),
     };
   }
   return { kind: "dependency-rejected", reason: result.kind };
 }
 
+// Meetups не принял само значение: шаг повторяется, как при неразобранной
+// дате (E-02). Текст отказа сервиса человеку не показывается — он на английском
+// и несёт код gRPC, — а уходит в запись границы через `rejected` (PER-397).
 function invalidField(
   field: FormField,
   meetup: MeetupSnapshot,
-  message: string,
+  cause: unknown,
   editing = false,
 ): ExecuteResult {
   return {
     kind: editing ? "edit-ask" : "ask",
     field,
     meetup,
-    error: `Не получилось сохранить значение: ${message}`,
+    error: rejectedValueText,
+    rejected: cause,
   };
 }
 

@@ -327,11 +327,11 @@ describe("Meetups client", () => {
 
     expect(past).toEqual({
       kind: "invalid",
-      message: expect.stringContaining("moment in the past"),
+      cause: expect.objectContaining({ code: Code.InvalidArgument }),
     });
     expect(published).toEqual({
       kind: "invalid",
-      message: expect.stringContaining("already published"),
+      cause: expect.objectContaining({ code: Code.FailedPrecondition }),
       precondition: true,
     });
   });

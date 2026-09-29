@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { Bot, type Context, InlineKeyboard } from "grammy";
 import {
   broadcastBodyLimit,
@@ -39,7 +40,11 @@ import type {
   MeetupSnapshot,
   MeetupSummary,
 } from "../meetups/port.js";
-import type { NotificationCategory } from "../notifications/port.js";
+import type {
+  CategoryState,
+  MeetupCategory,
+  NotificationCategory,
+} from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
@@ -104,6 +109,19 @@ export function parseTelegramEnvironment(
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
+// FAILED_PRECONDITION не говорит, что именно мешает: сходку отменили, пока
+// экран висел, или у черновика нет названия для публикации. Кадр не утверждает
+// ни то, ни другое, а ведёт к карточке, где видно текущее состояние (E-04).
+const staleMeetupText =
+  "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
+
+// Отказ Meetups по самой команде человеку показывается кадром, а не текстом
+// сервиса: код gRPC и текст уходят в запись границы (PER-397). FAILED_PRECONDITION —
+// состояние сходки не допускает действия (E-04); INVALID_ARGUMENT на кнопке —
+// неверную команду собрал бот, и это сбой на нашей стороне (E-05).
+function invalidMeetupText(result: { precondition?: true }): string {
+  return result.precondition === true ? staleMeetupText : unavailableText;
+}
 const formPrompts: Record<FormField, string> = {
   title: "Как называется сходка?",
   schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
@@ -1893,12 +1911,22 @@ async function handleCallback(
         ...rpcCall(ctx, useCase),
       });
       if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
+        // Заметка разовая: она отвечает на нажатие и при следующем открытии
+        // карточки не повторяется, чтобы подписанному не читать её каждый раз.
+        // Поэтому решение принимает этот обработчик, а не рендер карточки.
+        const note =
+          result.kind === "meetup-card" &&
+          result.subscribed === true &&
+          result.categories !== undefined
+            ? subscriptionNote(result.categories)
+            : undefined;
         await renderMeetupCard(
           ctx,
           result,
           true,
           runtime.presentation ?? "rich",
           person.globalRoles.includes("admin"),
+          note,
         );
       } else {
         await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
@@ -2114,7 +2142,7 @@ async function renderMaterialResult(
     result.kind === "dependency-rejected" && result.reason === "forbidden"
       ? materialForbiddenText
       : result.kind === "dependency-rejected" && result.reason === "invalid"
-        ? `Не получилось изменить материалы: ${result.message}`
+        ? invalidMeetupText(result)
         : unavailableText;
   await editScreen(
     ctx,
@@ -2249,11 +2277,7 @@ async function renderBroadcastResult(
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
-    await editScreen(
-      ctx,
-      `Сообщение не принято: ${result.message}. Ничего не отправлено.`,
-      back,
-    );
+    await editScreen(ctx, "Сообщение не принято. Ничего не отправлено.", back);
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "conflict") {
@@ -2700,12 +2724,52 @@ function checkbox(label: string, enabled: boolean): string {
   return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
 
+const meetupCategoryOrder: readonly MeetupCategory[] = [
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+];
+
+// Перечень строится по действующим значениям, а не по умолчаниям продукта:
+// человек, который раньше включил напоминание или выключил материалы, иначе
+// прочёл бы неправду. Напоминание названо отдельно, потому что по умолчанию
+// оно выключено и без подсказки его не найти. Снимок без какой-то категории
+// заметки не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
+// на пустом ответе было бы выдумкой.
+function subscriptionNote(
+  categories: readonly CategoryState<MeetupCategory>[],
+): string | undefined {
+  const known = meetupCategoryOrder
+    .map((category) => categories.find((entry) => entry.category === category))
+    .filter(
+      (state): state is CategoryState<MeetupCategory> => state !== undefined,
+    );
+  if (known.length !== meetupCategoryOrder.length) return undefined;
+  const enabled = known
+    .filter((state) => state.enabled)
+    .map((state) => categoryLabels[state.category].toLowerCase());
+  if (enabled.length === 0) {
+    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомления».";
+  }
+  const lines = [
+    `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
+  ];
+  if (known.some((state) => state.category === "reminder" && !state.enabled)) {
+    lines.push(
+      "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+    );
+  }
+  return lines.join(" ");
+}
+
 async function renderMeetupCard(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   edit: boolean,
   presentation: "rich" | "plain",
   manageable = false,
+  note?: string,
 ): Promise<void> {
   if (result.kind === "meetup-not-found") {
     const text = "Сходка не найдена или больше недоступна.";
@@ -2772,7 +2836,9 @@ async function renderMeetupCard(
       .row()
       .text("К списку", "v1:nav:hub");
     if (presentation === "rich") {
-      const richMessage = { html: meetupCardHtml(result.meetup) };
+      const richMessage = {
+        html: withNote(meetupCardHtml(result.meetup), note, "rich"),
+      };
       if (
         edit &&
         ctx.chat !== undefined &&
@@ -2797,7 +2863,7 @@ async function renderMeetupCard(
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }
     } else {
-      const html = meetupCardPlainHtml(result.meetup);
+      const html = withNote(meetupCardPlainHtml(result.meetup), note, "plain");
       if (edit) {
         try {
           await ctx.editMessageText(html, {
@@ -3075,7 +3141,7 @@ async function renderStateResult(
   }
   const text =
     result.kind === "dependency-rejected" && result.reason === "invalid"
-      ? `Не получилось выполнить действие: ${result.message}`
+      ? invalidMeetupText(result)
       : result.kind === "dependency-rejected" && result.reason === "forbidden"
         ? "Meetups не разрешил это действие."
         : unavailableText;
@@ -3090,6 +3156,19 @@ function meetupCardHtml(meetup: MeetupSnapshot): string {
   const lines = meetupCardText(meetup, false).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
   return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
+}
+
+// Заметка идёт под карточкой отдельным абзацем; режимы различаются только
+// разметкой абзаца.
+function withNote(
+  html: string,
+  note: string | undefined,
+  presentation: "rich" | "plain",
+): string {
+  if (note === undefined) return html;
+  return presentation === "rich"
+    ? `${html}<p>${escapeHtml(note)}</p>`
+    : `${html}\n\n${escapeHtml(note)}`;
 }
 
 function meetupCardPlainHtml(meetup: MeetupSnapshot): string {
@@ -3334,10 +3413,14 @@ async function renderFormResult(
         : result.meetup[result.field] === ""
           ? "не задано"
           : result.meetup[result.field];
-    const prompt =
-      result.kind === "edit-ask"
-        ? `Сейчас: ${currentValue}\n${result.error ?? formPrompts[result.field]}`
+    // Отказ Meetups причины не называет, поэтому рядом с ним стоит сам вопрос
+    // поля: без него человек теряет формат даты и не знает, что вводить.
+    const ask =
+      "rejected" in result && result.error !== undefined
+        ? `${result.error}\n${formPrompts[result.field]}`
         : (result.error ?? formPrompts[result.field]);
+    const prompt =
+      result.kind === "edit-ask" ? `Сейчас: ${currentValue}\n${ask}` : ask;
     const question: QuestionMessage =
       result.kind === "edit-ask"
         ? editQuestion({
@@ -3551,7 +3634,7 @@ async function renderFormResult(
   }
   if (result.kind === "dependency-rejected") {
     if (result.reason === "invalid") {
-      await ctx.reply(`Не получилось сохранить значение: ${result.message}`);
+      await ctx.reply(invalidMeetupText(result));
       return;
     }
     if (result.reason === "conflict") {
@@ -3747,6 +3830,22 @@ function screenBoundary(
       error: "meetup_not_visible",
     };
   }
+  // Вопрос формы, заданный заново из-за отказа Meetups, — для человека шаг
+  // формы, а для записи границы — отказ с кодом и текстом сервиса (PER-397).
+  if (
+    (result.kind === "ask" || result.kind === "edit-ask") &&
+    "rejected" in result
+  ) {
+    return {
+      level: "warn",
+      message: screen.rejectedMessage,
+      result: "error",
+      use_case: screen.useCase,
+      ...meetup,
+      error_category: "invariant",
+      ...rejectionFields(result.rejected),
+    };
+  }
   if (screen.ok.includes(result.kind)) {
     return {
       level: "info",
@@ -3778,7 +3877,9 @@ function screenBoundary(
       use_case: screen.useCase,
       ...meetup,
       error_category: dependencyCategory(result.reason),
-      error: result.reason,
+      ...(result.reason === "invalid"
+        ? rejectionFields(result.cause)
+        : { error: result.reason }),
     };
   }
   return {
@@ -3955,6 +4056,17 @@ function unavailableCategory(cause: unknown): FailureCategory {
   return text.includes("deadline") || text.includes("timeout")
     ? "timeout"
     : "dependency_unavailable";
+}
+
+// Код gRPC — в том же виде, что у отказа Identity (`InvalidArgument`), а текст
+// сервиса — в `error`: здесь его единственное место (PER-397).
+function rejectionFields(cause: unknown): {
+  error: string;
+  grpc_code?: string;
+} {
+  return cause instanceof ConnectError
+    ? { error: cause.rawMessage, grpc_code: Code[cause.code] }
+    : { error: errorText(cause) };
 }
 
 function errorText(cause: unknown): string {

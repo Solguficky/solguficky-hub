@@ -95,13 +95,13 @@ export function createMeetupsAdapter(
         cause instanceof ConnectError &&
         cause.code === Code.InvalidArgument
       ) {
-        return { kind: "invalid", message: cause.message };
+        return { kind: "invalid", cause };
       }
       if (
         cause instanceof ConnectError &&
         cause.code === Code.FailedPrecondition
       ) {
-        return { kind: "invalid", message: cause.message, precondition: true };
+        return { kind: "invalid", cause, precondition: true };
       }
       // ABORTED — настоящий конфликт версий, а не недоступность зависимости:
       // команда собрана верно, но показанный снимок устарел (PER-78).
@@ -140,7 +140,7 @@ export function createMeetupsAdapter(
           cause instanceof ConnectError &&
           cause.code === Code.InvalidArgument
         ) {
-          return { kind: "invalid", message: cause.message };
+          return { kind: "invalid", cause };
         }
         return { kind: "unavailable", cause };
       }
@@ -169,7 +169,7 @@ export function createMeetupsAdapter(
           cause instanceof ConnectError &&
           cause.code === Code.InvalidArgument
         ) {
-          return { kind: "invalid", message: cause.message };
+          return { kind: "invalid", cause };
         }
         return { kind: "unavailable", cause };
       }
@@ -211,7 +211,7 @@ export function createMeetupsAdapter(
           cause instanceof ConnectError &&
           cause.code === Code.InvalidArgument
         ) {
-          return { kind: "invalid", message: cause.message };
+          return { kind: "invalid", cause };
         }
         return { kind: "unavailable", cause };
       }

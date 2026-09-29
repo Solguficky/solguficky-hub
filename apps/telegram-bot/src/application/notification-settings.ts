@@ -94,7 +94,9 @@ export function createNotificationSettings(
         );
       // Подписка возвращает карточку, а не кадр настроек: нажали её в P-04, и
       // человек остаётся там же. Глобальный снимок для этого не нужен —
-      // сравнивать нечего, и лишнего вызова не делается.
+      // сравнивать нечего, и лишнего вызова не делается. Действующие значения
+      // категорий команда возвращает сама, и карточка называет по ним, что
+      // будет приходить: из одной кнопки «Подписаться» этого не видно.
       case "set-meetup-subscription": {
         const changed = await notifications.setSubscription(
           identityId,
@@ -114,6 +116,7 @@ export function createNotificationSettings(
           kind: "meetup-card",
           meetup: card.meetup,
           subscribed: changed.preferences.subscribed,
+          categories: changed.preferences.categories,
         };
       }
       case "set-meetup-category":
@@ -158,7 +161,7 @@ function rejection(failure: NotificationFailure): ExecuteResult {
     ? {
         kind: "dependency-rejected",
         reason: "invalid",
-        message: failure.message,
+        cause: failure.cause,
       }
     : { kind: "dependency-rejected", reason: failure.kind };
 }

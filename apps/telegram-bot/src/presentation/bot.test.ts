@@ -15,6 +15,7 @@ import {
   blockedHubAccessText,
   pendingHubAccessText,
 } from "../application/hub-access.js";
+import { rejectedValueText } from "../application/meetup-form.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
@@ -22,6 +23,7 @@ import type {
   IdentityResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
+import type { CategoryState, MeetupCategory } from "../notifications/port.js";
 import {
   createBot,
   parseTelegramEnvironment,
@@ -1879,31 +1881,126 @@ describe("presentation adapter", () => {
     ).toBeDefined();
   });
 
-  it("shows the domain's rejection message for a stale republish attempt", async () => {
-    const meetup = publishedMeetup();
-    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
-      request.intent === "view-meetup"
-        ? { kind: "meetup-card", meetup }
-        : {
-            kind: "dependency-rejected",
-            reason: "invalid",
-            message: "meetup is already published",
-          },
-    );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
-      execute,
-    });
-    await bot.init();
-    await bot.handleUpdate(
-      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
-    );
-    expect(calls.at(-1)).toMatchObject({
-      method: "editMessageText",
-      payload: {
-        text: expect.stringContaining("meetup is already published"),
-      },
-    });
+  // Текст отказа сервиса несёт метку: она не должна дойти ни до одного вызова
+  // Bot API, но обязана остаться в записи границы вместе с кодом (PER-397).
+  const leak = "SENTINEL-397 expected_version must be positive";
+  const rejection = (code: Code) => ({
+    kind: "dependency-rejected" as const,
+    reason: "invalid" as const,
+    cause: new ConnectError(leak, code),
+    ...(code === Code.FailedPrecondition
+      ? { precondition: true as const }
+      : {}),
   });
+
+  it.each([
+    {
+      name: "state action rejected as invalid",
+      update: () =>
+        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+      result: rejection(Code.InvalidArgument),
+      shown: "Это на моей стороне.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "state action on a stale screen",
+      update: () =>
+        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+      result: rejection(Code.FailedPrecondition),
+      shown: "Сейчас это действие недоступно.",
+      grpc: "FailedPrecondition",
+    },
+    {
+      name: "material rejected as invalid",
+      update: () =>
+        callbackMessageUpdate(
+          "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
+          {
+            caption: "Прикрепить материал?\n\nНазвание: Афиша",
+            document: {
+              file_id: "bot-file-id",
+              file_unique_id: "unique",
+              file_name: "poster.pdf",
+            },
+          },
+        ),
+      result: rejection(Code.InvalidArgument),
+      shown: "Это на моей стороне.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "broadcast rejected as invalid",
+      update: () =>
+        callbackMessageUpdate("v1:bc:cs:AZnA3gAAAAAAAABfP4Lqmw", {
+          text: "Выше — текст для участников сообщества.",
+          reply_to_message: {
+            message_id: 8,
+            date: 0,
+            chat: { id: 42, type: "private", first_name: "tester" },
+            from: { id: 1, is_bot: true, first_name: "stub" },
+            text: "Переносим начало на вечер.",
+          },
+        }),
+      result: rejection(Code.InvalidArgument),
+      shown: "Сообщение не принято. Ничего не отправлено.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "form value rejected by Meetups",
+      update: () => callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+      result: {
+        kind: "ask" as const,
+        field: "title" as const,
+        meetup: draftMeetup(),
+        error: rejectedValueText,
+        rejected: new ConnectError(leak, Code.InvalidArgument),
+      },
+      shown: rejectedValueText,
+      also: "Как называется сходка?",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "publication rejected from the form",
+      update: () => callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
+      result: rejection(Code.InvalidArgument),
+      shown: "Это на моей стороне.",
+      grpc: "InvalidArgument",
+    },
+    {
+      name: "notification setting rejected as invalid",
+      update: () => callbackUpdate("v1:notify:global"),
+      result: rejection(Code.InvalidArgument),
+      shown: "Этот экран устарел.",
+      grpc: "InvalidArgument",
+    },
+  ])(
+    "keeps the service text out of the reply for a $name",
+    async ({ update, result, shown, also, grpc }) => {
+      const meetup = publishedMeetup();
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup }
+          : result,
+      );
+      const { bot, calls, records } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+      );
+      await bot.init();
+      await bot.handleUpdate(update());
+
+      const sent = JSON.stringify(calls.map((call) => call.payload));
+      expect(sent).toContain(shown);
+      if (also !== undefined) expect(sent).toContain(also);
+      expect(sent).not.toContain("SENTINEL-397");
+      expect(sent).not.toMatch(/invalid_argument|failed_precondition/);
+      const record = records.at(-1);
+      expect(record?.level).toBe("warn");
+      expect(record?.fields.error_category).toBe("invariant");
+      expect(record?.fields.grpc_code).toBe(grpc);
+      expect(record?.fields.error).toContain("SENTINEL-397");
+    },
+  );
 
   it("opens the published meetup from the generated start link", async () => {
     const meetup = publishedMeetup();
@@ -2870,6 +2967,138 @@ describe("notification frames", () => {
     expect(data).toContain(`v1:view:${token}`);
   });
 
+  // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
+  // называет, что будет приходить, и куда идти за выключенным напоминанием.
+  describe("subscription note", () => {
+    // Полезная нагрузка записана как unknown; карточка по умолчанию идёт
+    // rich-сообщением, и отсутствие поля даёт пустую строку, а не падение.
+    const cardHtml = (call: RecordedCall | undefined): string =>
+      (call?.payload as { rich_message?: { html?: string } } | undefined)
+        ?.rich_message?.html ?? "";
+    const allCategories = (
+      enabled: Partial<Record<MeetupCategory, boolean>>,
+    ): CategoryState<MeetupCategory>[] =>
+      (["changes", "material", "reminder", "organizer"] as const).map(
+        (category) => ({ category, enabled: enabled[category] ?? false }),
+      );
+    const subscribe = async (
+      result: Awaited<ReturnType<Dispatcher["execute"]>>,
+      data = `v1:notify:sub:${token}:1`,
+    ): Promise<string> => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(data));
+      return cardHtml(calls[1]);
+    };
+
+    it("lists what will come and points to the disabled reminder", async () => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: true },
+          { category: "material", enabled: true },
+          { category: "reminder", enabled: false },
+          { category: "organizer", enabled: true },
+        ],
+      });
+      expect(html).toContain(
+        "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые связанные сообщения, сообщения организатора.",
+      );
+      expect(html).toContain(
+        "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+      );
+    });
+
+    // Перечень берётся из действующих значений: включённое заранее напоминание
+    // входит в список, выключенные материалы из него выпадают.
+    it("follows the effective values rather than product defaults", async () => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: true },
+          { category: "material", enabled: false },
+          { category: "reminder", enabled: true },
+          { category: "organizer", enabled: true },
+        ],
+      });
+      expect(html).toContain(
+        "будут приходить: изменения данных и статуса, напоминание перед началом, сообщения организатора.",
+      );
+      expect(html).not.toContain("новые связанные сообщения");
+      expect(html).not.toContain("Напоминание перед началом выключено");
+    });
+
+    it("says nothing will come when every category is off", async () => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories: [
+          { category: "changes", enabled: false },
+          { category: "material", enabled: false },
+          { category: "reminder", enabled: false },
+          { category: "organizer", enabled: false },
+        ],
+      });
+      expect(html).toContain(
+        "Подписка включена, но по этой сходке сейчас ничего не приходит",
+      );
+    });
+
+    // Пропуск категории в ответе неотличим от «выключено»: заметка тогда не
+    // говорит ничего, а не «ничего не приходит».
+    it.each([
+      ["an empty", []],
+      ["an incomplete", [{ category: "changes" as const, enabled: true }]],
+    ])("adds no note for %s category snapshot", async (_name, categories) => {
+      const html = await subscribe({
+        kind: "meetup-card",
+        meetup,
+        subscribed: true,
+        categories,
+      });
+      expect(html).toContain("Настолки у Лёши");
+      expect(html).not.toContain("Подписка включена");
+    });
+
+    it("adds no note on unsubscribing or on a plain card view", async () => {
+      const everything = allCategories({
+        changes: true,
+        material: true,
+        organizer: true,
+      });
+      const unsubscribed = await subscribe(
+        {
+          kind: "meetup-card",
+          meetup,
+          subscribed: false,
+          categories: everything,
+        },
+        `v1:notify:sub:${token}:0`,
+      );
+      expect(unsubscribed).toContain("Настолки у Лёши");
+      expect(unsubscribed).not.toContain("Подписка включена");
+      // Категории в результате есть, но заметка — ответ на нажатие, а не
+      // свойство карточки: просмотр её не показывает.
+      const viewed = await subscribe(
+        {
+          kind: "meetup-card",
+          meetup,
+          subscribed: true,
+          categories: everything,
+        },
+        `v1:view:${token}`,
+      );
+      expect(viewed).toContain("Настолки у Лёши");
+      expect(viewed).not.toContain("Подписка включена");
+    });
+  });
+
   // Кадр настроек кнопки подписки не несёт: действие живёт в карточке, и макет
   // этого экрана его не показывает.
   it("keeps the subscription action out of the settings frame", async () => {
@@ -2904,7 +3133,11 @@ describe("notification frames", () => {
     async (reason, expected, retry) => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(
         reason === "invalid"
-          ? { kind: "dependency-rejected", reason, message: "bad category" }
+          ? {
+              kind: "dependency-rejected",
+              reason,
+              cause: new Error("bad category"),
+            }
           : {
               kind: "dependency-rejected",
               reason: reason as "forbidden" | "conflict",

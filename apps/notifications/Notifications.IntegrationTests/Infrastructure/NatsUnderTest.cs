@@ -6,6 +6,7 @@ using Notifications.Facts;
 using Notifications.Replica;
 using Notifications.V1;
 using Testcontainers.Nats;
+using Xunit;
 
 namespace Notifications.IntegrationTests.Infrastructure;
 
@@ -28,15 +29,21 @@ public sealed class NatsUnderTest : IAsyncDisposable
 {
     private readonly NatsContainer container;
     private readonly NatsConnection connection;
+    private bool paused;
 
     private NatsUnderTest(NatsContainer container, NatsConnection connection)
     {
         this.container = container;
         this.connection = connection;
+        Url = container.GetConnectionString();
         JetStream = new NatsJSContext(connection);
     }
 
-    public string Url => container.GetConnectionString();
+    /// <remarks>
+    /// Запоминается при старте: проброшенный порт Testcontainers читает у
+    /// Docker, а у замороженного контейнера (<see cref="Pause" />) его не видно.
+    /// </remarks>
+    public string Url { get; }
 
     public INatsJSContext JetStream { get; }
 
@@ -152,10 +159,34 @@ public sealed class NatsUnderTest : IAsyncDisposable
         return consumer.Info.NumPending + (ulong)consumer.Info.NumAckPending;
     }
 
+    /// <summary>
+    /// Замораживает сервер: адрес, streams и durable остаются, а на запросы
+    /// никто не отвечает. Так выглядит шина, не успевшая ответить за таймаут
+    /// клиента, — остановка контейнера дала бы другой адрес и пустой сервер.
+    /// </summary>
+    public async Task Pause()
+    {
+        await container.PauseAsync(TestContext.Current.CancellationToken);
+        paused = true;
+    }
+
+    public async Task Unpause()
+    {
+        await container.UnpauseAsync(TestContext.Current.CancellationToken);
+        paused = false;
+    }
+
+
     private static string Subjects(ReplicaFeed feed) => $"events.{feed.Source}.>";
 
     public async ValueTask DisposeAsync()
     {
+        // Замороженный контейнер останавливается не на каждой версии Docker.
+        if (paused)
+        {
+            await container.UnpauseAsync();
+        }
+
         await connection.DisposeAsync();
         await container.DisposeAsync();
     }

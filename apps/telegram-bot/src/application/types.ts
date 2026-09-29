@@ -203,8 +203,15 @@ export type ExecuteResult =
   | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
   // состояние подписки тогда не показывается вовсе, а не подставляется
-  // устаревшим или выдуманным значением.
-  | { kind: "meetup-card"; meetup: MeetupSnapshot; subscribed?: boolean }
+  // устаревшим или выдуманным значением. `categories` — действующие значения
+  // категорий сходки, их несёт только ответ на подписку: по ним карточка
+  // называет, что будет приходить (PER-402).
+  | {
+      kind: "meetup-card";
+      meetup: MeetupSnapshot;
+      subscribed?: boolean;
+      categories?: readonly CategoryState<MeetupCategory>[];
+    }
   | {
       kind: "meetup-notification-settings";
       meetup: MeetupSnapshot;
@@ -216,12 +223,21 @@ export type ExecuteResult =
       categories: readonly CategoryState<NotificationCategory>[];
     }
   | { kind: "meetup-not-found" }
-  | { kind: "ask"; field: FormField; meetup: MeetupSnapshot; error?: string }
+  // `error` — текст для человека. `rejected` — отказ Meetups, из-за которого
+  // вопрос задан заново: он идёт в запись границы, а не в ответ (PER-397).
+  | {
+      kind: "ask";
+      field: FormField;
+      meetup: MeetupSnapshot;
+      error?: string;
+      rejected?: unknown;
+    }
   | {
       kind: "edit-ask";
       field: FormField;
       meetup: MeetupSnapshot;
       error?: string;
+      rejected?: unknown;
     }
   | { kind: "preview"; meetup: MeetupSnapshot }
   // Введённая дата раньше сегодняшнего дня сообщества: сходка с ней сразу
@@ -291,5 +307,10 @@ export type ExecuteResult =
       kind: "dependency-rejected";
       reason: "forbidden" | "conflict" | "timeout" | "unavailable";
     }
-  | { kind: "dependency-rejected"; reason: "invalid"; message: string }
+  | {
+      kind: "dependency-rejected";
+      reason: "invalid";
+      cause: unknown;
+      precondition?: true;
+    }
   | { kind: "rejected"; reason: string };

@@ -39,7 +39,8 @@ export function createMeetupMaterials(
       return {
         kind: "dependency-rejected",
         reason: "invalid",
-        message: result.message,
+        cause: result.cause,
+        ...(result.precondition ? { precondition: true as const } : {}),
       };
     }
     return { kind: "dependency-rejected", reason: result.kind };
