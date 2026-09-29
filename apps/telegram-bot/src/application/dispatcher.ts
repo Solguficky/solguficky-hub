@@ -48,7 +48,7 @@ export function createDispatcher(
               ? {
                   kind: "dependency-rejected",
                   reason: "invalid",
-                  message: result.message,
+                  cause: result.cause,
                 }
               : { kind: "dependency-rejected", reason: result.kind };
         }
@@ -66,7 +66,7 @@ export function createDispatcher(
               ? {
                   kind: "dependency-rejected",
                   reason: "invalid",
-                  message: result.message,
+                  cause: result.cause,
                 }
               : { kind: "dependency-rejected", reason: result.kind };
         }
@@ -102,7 +102,7 @@ export function createDispatcher(
             ? {
                 kind: "dependency-rejected",
                 reason: "invalid",
-                message: result.message,
+                cause: result.cause,
               }
             : { kind: "dependency-rejected", reason: result.kind };
         }

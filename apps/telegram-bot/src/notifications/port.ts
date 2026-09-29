@@ -32,7 +32,7 @@ export type MeetupPreferences = {
 
 export type NotificationFailure =
   | { kind: "forbidden" }
-  | { kind: "invalid"; message: string }
+  | { kind: "invalid"; cause: unknown }
   | { kind: "conflict" }
   | { kind: "timeout"; cause: unknown }
   | { kind: "unavailable"; cause: unknown };

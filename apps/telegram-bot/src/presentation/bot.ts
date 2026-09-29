@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { Bot, type Context, InlineKeyboard } from "grammy";
 import {
   broadcastBodyLimit,
@@ -104,6 +105,19 @@ export function parseTelegramEnvironment(
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
 Попробуй ещё раз через минуту.`;
+// FAILED_PRECONDITION не говорит, что именно мешает: сходку отменили, пока
+// экран висел, или у черновика нет названия для публикации. Кадр не утверждает
+// ни то, ни другое, а ведёт к карточке, где видно текущее состояние (E-04).
+const staleMeetupText =
+  "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
+
+// Отказ Meetups по самой команде человеку показывается кадром, а не текстом
+// сервиса: код gRPC и текст уходят в запись границы (PER-397). FAILED_PRECONDITION —
+// состояние сходки не допускает действия (E-04); INVALID_ARGUMENT на кнопке —
+// неверную команду собрал бот, и это сбой на нашей стороне (E-05).
+function invalidMeetupText(result: { precondition?: true }): string {
+  return result.precondition === true ? staleMeetupText : unavailableText;
+}
 const formPrompts: Record<FormField, string> = {
   title: "Как называется сходка?",
   schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
@@ -2114,7 +2128,7 @@ async function renderMaterialResult(
     result.kind === "dependency-rejected" && result.reason === "forbidden"
       ? materialForbiddenText
       : result.kind === "dependency-rejected" && result.reason === "invalid"
-        ? `Не получилось изменить материалы: ${result.message}`
+        ? invalidMeetupText(result)
         : unavailableText;
   await editScreen(
     ctx,
@@ -2249,11 +2263,7 @@ async function renderBroadcastResult(
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
-    await editScreen(
-      ctx,
-      `Сообщение не принято: ${result.message}. Ничего не отправлено.`,
-      back,
-    );
+    await editScreen(ctx, "Сообщение не принято. Ничего не отправлено.", back);
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "conflict") {
@@ -3075,7 +3085,7 @@ async function renderStateResult(
   }
   const text =
     result.kind === "dependency-rejected" && result.reason === "invalid"
-      ? `Не получилось выполнить действие: ${result.message}`
+      ? invalidMeetupText(result)
       : result.kind === "dependency-rejected" && result.reason === "forbidden"
         ? "Meetups не разрешил это действие."
         : unavailableText;
@@ -3334,10 +3344,14 @@ async function renderFormResult(
         : result.meetup[result.field] === ""
           ? "не задано"
           : result.meetup[result.field];
-    const prompt =
-      result.kind === "edit-ask"
-        ? `Сейчас: ${currentValue}\n${result.error ?? formPrompts[result.field]}`
+    // Отказ Meetups причины не называет, поэтому рядом с ним стоит сам вопрос
+    // поля: без него человек теряет формат даты и не знает, что вводить.
+    const ask =
+      "rejected" in result && result.error !== undefined
+        ? `${result.error}\n${formPrompts[result.field]}`
         : (result.error ?? formPrompts[result.field]);
+    const prompt =
+      result.kind === "edit-ask" ? `Сейчас: ${currentValue}\n${ask}` : ask;
     const question: QuestionMessage =
       result.kind === "edit-ask"
         ? editQuestion({
@@ -3551,7 +3565,7 @@ async function renderFormResult(
   }
   if (result.kind === "dependency-rejected") {
     if (result.reason === "invalid") {
-      await ctx.reply(`Не получилось сохранить значение: ${result.message}`);
+      await ctx.reply(invalidMeetupText(result));
       return;
     }
     if (result.reason === "conflict") {
@@ -3747,6 +3761,22 @@ function screenBoundary(
       error: "meetup_not_visible",
     };
   }
+  // Вопрос формы, заданный заново из-за отказа Meetups, — для человека шаг
+  // формы, а для записи границы — отказ с кодом и текстом сервиса (PER-397).
+  if (
+    (result.kind === "ask" || result.kind === "edit-ask") &&
+    "rejected" in result
+  ) {
+    return {
+      level: "warn",
+      message: screen.rejectedMessage,
+      result: "error",
+      use_case: screen.useCase,
+      ...meetup,
+      error_category: "invariant",
+      ...rejectionFields(result.rejected),
+    };
+  }
   if (screen.ok.includes(result.kind)) {
     return {
       level: "info",
@@ -3778,7 +3808,9 @@ function screenBoundary(
       use_case: screen.useCase,
       ...meetup,
       error_category: dependencyCategory(result.reason),
-      error: result.reason,
+      ...(result.reason === "invalid"
+        ? rejectionFields(result.cause)
+        : { error: result.reason }),
     };
   }
   return {
@@ -3955,6 +3987,17 @@ function unavailableCategory(cause: unknown): FailureCategory {
   return text.includes("deadline") || text.includes("timeout")
     ? "timeout"
     : "dependency_unavailable";
+}
+
+// Код gRPC — в том же виде, что у отказа Identity (`InvalidArgument`), а текст
+// сервиса — в `error`: здесь его единственное место (PER-397).
+function rejectionFields(cause: unknown): {
+  error: string;
+  grpc_code?: string;
+} {
+  return cause instanceof ConnectError
+    ? { error: cause.rawMessage, grpc_code: Code[cause.code] }
+    : { error: errorText(cause) };
 }
 
 function errorText(cause: unknown): string {
