@@ -81,10 +81,13 @@ async function main(): Promise<number> {
   const metrics = startMetrics();
   // День сообщества считается тем же поясом, что и у Meetups: иначе граница
   // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
-  const dispatcher = createDispatcher(meetups, notifications, () =>
-    communityDay(new Date(), communityTimeZone),
-  );
   const identity = createIdentityClient(identityUrl);
+  const dispatcher = createDispatcher(
+    meetups,
+    notifications,
+    () => communityDay(new Date(), communityTimeZone),
+    identity,
+  );
   const bot = createBot({
     token,
     dispatcher,

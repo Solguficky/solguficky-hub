@@ -21,6 +21,9 @@ export type MeetupMaterial = {
 
 export type MeetupSnapshot = {
   id: string;
+  // Внутренний идентификатор автора в Identity, а не Telegram-атрибут: ник
+  // карточка спрашивает у Identity отдельно (PER-404).
+  author: string;
   title: string;
   description: string;
   venue: string;

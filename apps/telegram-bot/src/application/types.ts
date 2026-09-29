@@ -12,6 +12,13 @@ import type {
 } from "../notifications/port.js";
 
 export type Person = { identityId: string; globalRoles: readonly string[] };
+// Как карточка называет автора (PER-404): самому автору — «вы», остальным —
+// ник, который Identity отдаёт только для действующего администратора.
+// Отсутствие поля в результате — строки автора нет: ника нет, Identity
+// отказал или не ответил.
+export type MeetupAuthor =
+  | { kind: "self" }
+  | { kind: "organizer"; telegramUsername: string };
 export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "unclassified"; payload: string };
@@ -204,7 +211,12 @@ export type ExecuteResult =
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
   // состояние подписки тогда не показывается вовсе, а не подставляется
   // устаревшим или выдуманным значением.
-  | { kind: "meetup-card"; meetup: MeetupSnapshot; subscribed?: boolean }
+  | {
+      kind: "meetup-card";
+      meetup: MeetupSnapshot;
+      subscribed?: boolean;
+      author?: MeetupAuthor;
+    }
   | {
       kind: "meetup-notification-settings";
       meetup: MeetupSnapshot;
@@ -249,21 +261,36 @@ export type ExecuteResult =
       meetup: MeetupSnapshot;
       repeated?: true;
       archived?: true;
+      author?: MeetupAuthor;
     }
   | {
       kind: "ask-publish-moment";
       meetup: MeetupSnapshot;
       retry?: PublishMomentRetry;
     }
-  | { kind: "publication-scheduled"; meetup: MeetupSnapshot }
+  | {
+      kind: "publication-scheduled";
+      meetup: MeetupSnapshot;
+      author?: MeetupAuthor;
+    }
   // Назначить публикацию нельзя в текущем состоянии сходки: она уже
   // опубликована или отменена (FAILED_PRECONDITION). Снимок — перечитанный.
-  | { kind: "publication-unavailable"; meetup: MeetupSnapshot }
-  | { kind: "meetup-updated"; meetup: MeetupSnapshot; archived?: true }
+  | {
+      kind: "publication-unavailable";
+      meetup: MeetupSnapshot;
+      author?: MeetupAuthor;
+    }
+  | {
+      kind: "meetup-updated";
+      meetup: MeetupSnapshot;
+      archived?: true;
+      author?: MeetupAuthor;
+    }
   | {
       kind: "meetup-state-changed";
       action: MeetupStateAction;
       meetup: MeetupSnapshot;
+      author?: MeetupAuthor;
     }
   | {
       kind: "meetup-state-unchanged";

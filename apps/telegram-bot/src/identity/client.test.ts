@@ -7,6 +7,7 @@ import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   createIdentityClient,
   createIdentityResolver,
+  createOrganizerResolver,
   createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
@@ -289,5 +290,68 @@ describe("telegram recipient resolver", () => {
         new ConnectError("bad id", Code.InvalidArgument),
       ).resolveTelegramUserId(identityId),
     ).resolves.toMatchObject({ kind: "rejected", code: "InvalidArgument" });
+  });
+});
+
+describe("organizer resolver", () => {
+  const organizerId = "0192f0a0-0000-7000-8000-00000000a001";
+  const viewer = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    globalRoles: ["member"],
+  };
+
+  function failing(cause: unknown) {
+    return createOrganizerResolver({
+      resolveOrganizerUsername: () => Promise.reject(cause),
+    });
+  }
+
+  it("sends the viewer as the actor and returns the username", async () => {
+    const rpc = vi.fn().mockResolvedValue({ telegramUsername: "organizer" });
+    const organizers = createOrganizerResolver({
+      resolveOrganizerUsername: rpc,
+    });
+    await expect(
+      organizers.resolveOrganizerUsername(viewer, organizerId, {
+        requestId: "req-1",
+      }),
+    ).resolves.toEqual({ kind: "resolved", telegramUsername: "organizer" });
+    expect(rpc).toHaveBeenCalledWith(
+      {
+        actor: {
+          identityId: viewer.identityId,
+          globalRoles: [GlobalRole.MEMBER],
+        },
+        identityId: organizerId,
+      },
+      expect.objectContaining({ headers: { [requestIdHeader]: "req-1" } }),
+    );
+  });
+
+  it("resolves an organizer without a username to an absent field", async () => {
+    const organizers = createOrganizerResolver({
+      resolveOrganizerUsername: vi.fn().mockResolvedValue({}),
+    });
+    await expect(
+      organizers.resolveOrganizerUsername(viewer, organizerId),
+    ).resolves.toEqual({ kind: "resolved" });
+  });
+
+  it("separates not-found, unavailability and a contract violation", async () => {
+    await expect(
+      failing(
+        new ConnectError("not an organizer", Code.NotFound),
+      ).resolveOrganizerUsername(viewer, organizerId),
+    ).resolves.toEqual({ kind: "not-found" });
+    await expect(
+      failing(
+        new ConnectError("down", Code.Unavailable),
+      ).resolveOrganizerUsername(viewer, organizerId),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(
+      failing(
+        new ConnectError("outside the hub", Code.PermissionDenied),
+      ).resolveOrganizerUsername(viewer, organizerId),
+    ).resolves.toMatchObject({ kind: "rejected", code: "PermissionDenied" });
   });
 });

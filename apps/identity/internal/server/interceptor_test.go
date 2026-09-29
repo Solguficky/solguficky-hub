@@ -619,6 +619,30 @@ func TestUnaryLoggingNamesProfileOfRoleCheckFromRequest(t *testing.T) {
 	}
 }
 
+func TestUnaryLoggingNamesOrganizerWithoutUsername(t *testing.T) {
+	t.Parallel()
+
+	const username = "organizer_handle"
+	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/ResolveOrganizerUsername"}
+	logs := &capture{}
+	_, _ = unaryLogging(slog.New(logs))(t.Context(),
+		&identityv1.ResolveOrganizerUsernameRequest{IdentityId: resolvedIdentityID}, info,
+		func(context.Context, any) (any, error) {
+			return &identityv1.ResolveOrganizerUsernameResponse{TelegramUsername: new(username)}, nil
+		})
+
+	rec := logs.sole(t)
+	if got := attrValue(t, rec, "identity_id").String(); got != resolvedIdentityID {
+		t.Fatalf("identity_id: got %q want %q", got, resolvedIdentityID)
+	}
+	rec.Attrs(func(a slog.Attr) bool {
+		if strings.Contains(a.Value.String(), username) {
+			t.Fatalf("attribute %q carries the username: %q", a.Key, a.Value.String())
+		}
+		return true
+	})
+}
+
 func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {
 	t.Parallel()
 

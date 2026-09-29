@@ -20,6 +20,7 @@ import type {
   BroadcastAudience,
   ExecuteResult,
   FormField,
+  MeetupAuthor,
   MeetupStateAction,
   Person,
   PublishMomentRetry,
@@ -1407,7 +1408,7 @@ async function handleCallback(
           runtime.presentation ?? "rich",
         );
       } else if (action.kind === "manage-status") {
-        await renderMeetupStatus(ctx, meetup);
+        await renderMeetupStatus(ctx, meetup, current.author);
       } else if (
         action.kind === "manage-cancel" &&
         meetup.lifecycle === "held"
@@ -1768,7 +1769,7 @@ async function handleCallback(
         // состоянию вместо второго «Сходка создана».
         await renderMeetupCard(
           ctx,
-          { kind: "meetup-card", meetup: result.meetup },
+          cardFrom(result),
           true,
           runtime.presentation ?? "rich",
           true,
@@ -2710,6 +2711,17 @@ function checkbox(label: string, enabled: boolean): string {
   return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
 
+// Карточка, которую представление собирает из результата команды — правки,
+// публикации, смены статуса, — несёт того же автора, что и карточка просмотра.
+function cardFrom(result: {
+  meetup: MeetupSnapshot;
+  author?: MeetupAuthor;
+}): Extract<ExecuteResult, { kind: "meetup-card" }> {
+  return result.author === undefined
+    ? { kind: "meetup-card", meetup: result.meetup }
+    : { kind: "meetup-card", meetup: result.meetup, author: result.author };
+}
+
 async function renderMeetupCard(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
@@ -2782,7 +2794,9 @@ async function renderMeetupCard(
       .row()
       .text("К списку", "v1:nav:hub");
     if (presentation === "rich") {
-      const richMessage = { html: meetupCardHtml(result.meetup) };
+      const richMessage = {
+        html: meetupCardHtml(result.meetup, result.author),
+      };
       if (
         edit &&
         ctx.chat !== undefined &&
@@ -2807,7 +2821,7 @@ async function renderMeetupCard(
         await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
       }
     } else {
-      const html = meetupCardPlainHtml(result.meetup);
+      const html = meetupCardPlainHtml(result.meetup, result.author);
       if (edit) {
         try {
           await ctx.editMessageText(html, {
@@ -3001,6 +3015,7 @@ async function renderNotificationFailure(
 async function renderMeetupStatus(
   ctx: UpdateContext,
   meetup: MeetupSnapshot,
+  author: MeetupAuthor | undefined,
 ): Promise<void> {
   const token = uuidToToken(meetup.id);
   const keyboard = new InlineKeyboard();
@@ -3031,7 +3046,7 @@ async function renderMeetupStatus(
   keyboard.text("Назад", `v1:view:${token}`);
   await editScreen(
     ctx,
-    `Управление статусом\n\n${meetupCardText(meetup)}`,
+    `Управление статусом\n\n${meetupCardText(meetup, true, author)}`,
     keyboard,
   );
 }
@@ -3042,13 +3057,7 @@ async function renderStateResult(
   presentation: "rich" | "plain",
 ): Promise<void> {
   if (result.kind === "published" || result.kind === "meetup-state-changed") {
-    await renderMeetupCard(
-      ctx,
-      { kind: "meetup-card", meetup: result.meetup },
-      true,
-      presentation,
-      true,
-    );
+    await renderMeetupCard(ctx, cardFrom(result), true, presentation, true);
     return;
   }
   if (result.kind === "meetup-state-unchanged") {
@@ -3096,14 +3105,17 @@ async function renderStateResult(
   );
 }
 
-function meetupCardHtml(meetup: MeetupSnapshot): string {
-  const lines = meetupCardText(meetup, false).split("\n");
+function meetupCardHtml(meetup: MeetupSnapshot, author?: MeetupAuthor): string {
+  const lines = meetupCardText(meetup, false, author).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
   return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
 }
 
-function meetupCardPlainHtml(meetup: MeetupSnapshot): string {
-  const lines = meetupCardText(meetup, false).split("\n");
+function meetupCardPlainHtml(
+  meetup: MeetupSnapshot,
+  author?: MeetupAuthor,
+): string {
+  const lines = meetupCardText(meetup, false, author).split("\n");
   const title = escapeHtml(lines.shift() ?? "");
   return `<b>${title}</b>\n${lines.map(escapeHtml).join("\n")}${materialHtml(meetup, "\n")}`;
 }
@@ -3119,6 +3131,7 @@ function escapeHtml(value: string): string {
 function meetupCardText(
   meetup: MeetupSnapshot,
   includeMaterials = true,
+  author?: MeetupAuthor,
 ): string {
   const lifecycle =
     meetup.lifecycle === "cancelled"
@@ -3139,7 +3152,15 @@ function meetupCardText(
     meetup.publishAt === undefined
       ? ""
       : `\nПубликация назначена на ${formatLocalMoment(meetup.publishAt)}`;
-  const card = `${meetupTitleLabel(meetup.title)}\nСтатус: ${lifecycle}, ${visibility}${pending}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
+  // Автор стоит под статусом и только тогда, когда его есть чем назвать:
+  // нет ника или Identity не ответил — строки нет, без заглушки (PER-404).
+  const authorLine =
+    author === undefined
+      ? ""
+      : author.kind === "self"
+        ? "\nВы автор этой сходки"
+        : `\nАвтор: @${author.telegramUsername}`;
+  const card = `${meetupTitleLabel(meetup.title)}\nСтатус: ${lifecycle}, ${visibility}${pending}${authorLine}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
   if (!includeMaterials || meetup.materials.length === 0) return card;
   const materials = meetup.materials
     .slice(0, materialCardLimit)
@@ -3450,13 +3471,7 @@ async function renderFormResult(
         ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Ближайших сходках»."
         : "Изменение сохранено.",
     );
-    await renderMeetupCard(
-      ctx,
-      { kind: "meetup-card", meetup: result.meetup },
-      false,
-      presentation,
-      true,
-    );
+    await renderMeetupCard(ctx, cardFrom(result), false, presentation, true);
     return;
   }
   if (result.kind === "edit-unavailable") {
@@ -3519,13 +3534,7 @@ async function renderFormResult(
         ? "Публикация назначена."
         : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`,
     );
-    await renderMeetupCard(
-      ctx,
-      { kind: "meetup-card", meetup: result.meetup },
-      false,
-      presentation,
-      true,
-    );
+    await renderMeetupCard(ctx, cardFrom(result), false, presentation, true);
     return;
   }
   if (result.kind === "publication-unavailable") {
@@ -3535,13 +3544,7 @@ async function renderFormResult(
         ? "Сходка отменена. Назначить ей публикацию нельзя."
         : "Сходка уже опубликована. Назначать публикацию больше не нужно.";
     await ctx.reply(text);
-    await renderMeetupCard(
-      ctx,
-      { kind: "meetup-card", meetup: result.meetup },
-      false,
-      presentation,
-      true,
-    );
+    await renderMeetupCard(ctx, cardFrom(result), false, presentation, true);
     return;
   }
   if (result.kind === "published") {

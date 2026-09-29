@@ -1,7 +1,9 @@
+import type { OrganizerResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { createBroadcasts } from "./broadcasts.js";
+import { createAuthorNaming } from "./meetup-author.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
@@ -16,7 +18,9 @@ export function createDispatcher(
   meetups?: Meetups,
   notifications?: Notifications,
   today?: CommunityToday,
+  organizers?: OrganizerResolver,
 ): Dispatcher {
+  const nameAuthor = createAuthorNaming(organizers);
   const form =
     meetups === undefined ? undefined : createMeetupForm(meetups, today);
   // Кадры уведомлений читают и сходку тоже: заголовок кадра берётся из Meetups,
@@ -29,7 +33,7 @@ export function createDispatcher(
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
-  return {
+  const routed: Dispatcher = {
     async execute(request) {
       switch (request.intent) {
         case "start":
@@ -137,6 +141,17 @@ export function createDispatcher(
           return { kind: "rejected", reason: String(_exhaustive) };
         }
       }
+    },
+  };
+  // Карточку называет автором один проход над результатом, а не каждый
+  // сценарий отдельно: иначе строка автора терялась бы в карточке после
+  // правки, публикации или смены статуса (PER-404).
+  return {
+    async execute(request) {
+      const result = await routed.execute(request);
+      return request.intent === "start"
+        ? result
+        : nameAuthor(result, request.identity, rpcMeta(request));
     },
   };
 }

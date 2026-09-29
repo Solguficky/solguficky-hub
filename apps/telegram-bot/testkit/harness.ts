@@ -78,6 +78,7 @@ export function createHarness(
   identity: IdentityResolver & Partial<CommunityAdministrator>,
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
+  presentation?: "rich" | "plain",
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
@@ -85,6 +86,7 @@ export function createHarness(
     dispatcher,
     identity,
     logger,
+    ...(presentation === undefined ? {} : { presentation }),
   });
   bot.botInfo = botInfo;
   const recorder: Transformer = (_prev, method, payload) => {

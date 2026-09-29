@@ -21,6 +21,7 @@ const person = { identityId: "viewer-id", globalRoles: [] };
 function storedMeetup(version: number): MeetupSnapshot {
   return {
     id: "meetup-id",
+    author: "author-id",
     title: "Настолки",
     description: "",
     venue: "",
@@ -219,6 +220,28 @@ describe("Meetups client", () => {
       expect.anything(),
     );
     expect(result).toMatchObject({ kind: "ok", meetup: { version: 8 } });
+  });
+
+  it("carries the author id from the wire into the snapshot", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.changeMeetupAttributes.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        author: "0192f0a0-0000-7000-8000-00000000a001",
+        title: "Настолки",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.HIDDEN,
+        version: 8n,
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    const result = await meetups.changeAttributes(person, storedMeetup(7));
+
+    expect(result).toMatchObject({
+      kind: "ok",
+      meetup: { author: "0192f0a0-0000-7000-8000-00000000a001" },
+    });
   });
 
   it("keeps a version conflict distinct from an unavailable response", async () => {
