@@ -30,7 +30,7 @@ describe("bot command menu", () => {
     await registerCommands({ setMyCommands }, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [
-        { command: "start", description: "Главное меню" },
+        { command: "menu", description: "Главное меню" },
         { command: "meetups", description: "Ближайшие сходки" },
         { command: "archive", description: "Архив сходок" },
         { command: "notifications", description: "Настройки уведомлений" },
@@ -62,9 +62,9 @@ describe("bot command menu", () => {
     ]);
   });
 
-  it("routes every menu command except start to the screen of its caption", () => {
+  it("routes every menu command except menu to the screen of its caption", () => {
     expect(botCommands.map((entry) => entry.command)).toEqual([
-      "start",
+      "menu",
       ...screenCommands.keys(),
     ]);
     expect(Object.fromEntries(screenCommands)).toEqual({

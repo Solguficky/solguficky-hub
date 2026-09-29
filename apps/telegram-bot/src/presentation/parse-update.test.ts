@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { botCommands } from "./commands.js";
 import { parseUpdate } from "./parse-update.js";
 
 const botUsername = "stub_bot";
@@ -136,6 +137,34 @@ describe("parseUpdate", () => {
 
   it("ignores a menu command mentioned for another bot", () => {
     expect(messageText("/meetups@other_bot")).toEqual({ kind: "ignored" });
+  });
+
+  it("reads /menu as /start without a payload", () => {
+    expect(messageText("/menu")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+    });
+    expect(messageText("/MENU@Stub_Bot")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+    });
+  });
+
+  it("does not turn a tail after /menu into a deep link", () => {
+    expect(messageText("/menu m_AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+    });
+  });
+
+  it("parses every command of the Telegram menu into a reply", () => {
+    for (const { command } of botCommands) {
+      expect(messageText(`/${command}`).kind).not.toBe("ignored");
+    }
+  });
+
+  it("ignores /menu mentioned for another bot", () => {
+    expect(messageText("/menu@other_bot")).toEqual({ kind: "ignored" });
   });
 
   it("ignores unknown commands, including prototype property names", () => {
