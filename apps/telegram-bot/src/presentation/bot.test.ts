@@ -2174,6 +2174,30 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[0])).toContain("Привет.");
   });
 
+  it("opens the start screen from /menu with the keyboard of the role", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/menu"));
+    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      operation: "message",
+      use_case: "find_meetup",
+    });
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
+            { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
+          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+        ],
+      },
+    });
+  });
+
   it("does not resolve identity for /start mentioned for another bot", async () => {
     const resolve = vi.fn(resolvedIdentity().resolve);
     const { bot, calls } = createHarness({ resolve });

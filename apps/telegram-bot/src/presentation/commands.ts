@@ -9,13 +9,18 @@ export type NavScreen = "hub" | "archive" | "notify-global";
 // Состав меню записан в брифе бота, раздел «Меню команд». Управления здесь нет
 // намеренно: список администраторов живёт в Identity и на старте недоступен,
 // а показывать всем команду, на которой большинству откажут, незачем.
+// `/start` в меню нет: его читают как команду первого запуска, и в главное
+// меню возвращает `/menu`. Сам `/start` и его deep link работают по-прежнему.
 export const botCommands = [
-  { command: "start", description: "Главное меню" },
+  { command: "menu", description: "Главное меню" },
   { command: "meetups", description: "Ближайшие сходки" },
   { command: "archive", description: "Архив сходок" },
   { command: "notifications", description: "Настройки уведомлений" },
 ] as const;
 
+// Главного экрана здесь нет: его строит ответ на `/start`, а `/menu` разбирается
+// как `/start` без payload.
+//
 // Map, а не объект: имя команды приходит от человека, и `/constructor` на
 // объекте нашёл бы свойство прототипа.
 export const screenCommands: ReadonlyMap<string, NavScreen> = new Map([
