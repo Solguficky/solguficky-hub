@@ -21,6 +21,7 @@ export {
 export {
   meetupIdFromStartLink,
   type Person,
+  type ScreenView,
   startConversation,
 } from "./conversation.js";
 export type { LogRecord } from "./harness.js";

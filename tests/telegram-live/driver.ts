@@ -127,9 +127,17 @@ async function connect(
   return client.getPeer(secrets.botUsername);
 }
 
-export async function openLiveDriver(
+/** Клиент синтетического аккаунта и бот, с которым он говорит. */
+export type LiveClient = { client: TelegramClient; bot: Peer };
+
+/**
+ * Соединение синтетического аккаунта с тестовой средой со всеми проверками
+ * среды. Общее для драйвера сценариев и пульта (`console/`): второй путь
+ * соединения мог бы разойтись с этим именно в защите от продакшна.
+ */
+export async function openLiveClient(
   secrets: LiveSecrets,
-): Promise<LiveDriver> {
+): Promise<LiveClient> {
   assertTestSession(secrets.session);
   const client = new TelegramClient({
     apiId: secrets.apiId,
@@ -143,17 +151,23 @@ export async function openLiveDriver(
       middlewares: networkMiddlewares.basic({ floodWaiter: { maxWait: 0 } }),
     },
   });
-  let bot: Peer;
   try {
-    bot = await withDeadline(
+    const bot = await withDeadline(
       connect(client, secrets),
       connectDeadlineMs,
       `тестовый DC не ответил за ${connectDeadlineMs / 1000} с`,
     );
+    return { client, bot };
   } catch (error) {
     await client.destroy();
     throw classifyFailure(error);
   }
+}
+
+export async function openLiveDriver(
+  secrets: LiveSecrets,
+): Promise<LiveDriver> {
+  const { client, bot } = await openLiveClient(secrets);
   // Молчащий бот — только таймаут того, что ждёт бота: его сообщения, правки
   // или ответа на callback. Таймаут отправки остаётся недоступностью Telegram.
   async function awaitBot<T>(waiting: Promise<T>, silence: string): Promise<T> {

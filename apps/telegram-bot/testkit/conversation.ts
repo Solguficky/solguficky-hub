@@ -47,6 +47,20 @@ export type Person = {
   pressable(): string[];
   /** Сколько сообщений бота в чате: правка экрана их не прибавляет. */
   messages(): number;
+  /**
+   * Все экраны чата по порядку последнего изменения. Номер сообщения отличает
+   * новое сообщение от правки старого: по нему пульт (`bot-wire/console/`)
+   * показывает, что изменило действие.
+   */
+  history(): ScreenView[];
+};
+
+export type ScreenView = {
+  message: number;
+  text: string;
+  buttons: string[];
+  /** Бот ждёт ответа на это сообщение (ForceReply). */
+  awaitsReply: boolean;
 };
 
 export function startConversation(
@@ -192,6 +206,14 @@ export function startConversation(
     },
     messages() {
       return screens().length;
+    },
+    history() {
+      return screens().map((screen) => ({
+        message: screen.messageId,
+        text: screen.text,
+        buttons: screen.buttons.map((button) => button.text),
+        awaitsReply: screen.asksForReply,
+      }));
     },
   };
 }

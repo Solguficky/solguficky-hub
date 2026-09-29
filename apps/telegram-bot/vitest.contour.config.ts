@@ -13,7 +13,9 @@ export default defineConfig({
     // Исследующий прогон — не гейт (vitest.explore.config.ts). Суффикс
     // `.explore.ts` его уже не подхватывает; исключение держит границу и при
     // переименовании файла.
-    exclude: [...configDefaults.exclude, "explore/**"],
+    // Пульт (`console/`) — тоже не набор: его разбор команд гоняет L0
+    // `vitest.config.ts`, а сам пульт — `vitest.console.config.ts`.
+    exclude: [...configDefaults.exclude, "explore/**", "console/**"],
     // Файлы делят одну топологию и одну базу: параллельный прогон смешал бы
     // их записи и сделал бы красный невоспроизводимым.
     fileParallelism: false,

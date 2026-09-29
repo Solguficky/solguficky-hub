@@ -15,6 +15,14 @@
 # Idempotent: every step first checks the installed version and skips when it
 # matches, so a second run installs nothing new. Repository recipes at the end
 # (`just tools`, `just skillshare-install`) are idempotent on their own.
+#
+# Restricted egress: a sandbox that allows GitHub releases and package
+# registries but denies vendor installers (the Claude Code cloud container
+# denies just.systems, dot.net, deb.nodesource.com, packages.adoptium.net and
+# repo.scala-sbt.org) gets each such tool from the first reachable fallback:
+# just and sbt from their GitHub releases with checksums, the .NET SDK from the
+# official SDK image, the JDK from packages.microsoft.com. The same step also
+# starts an installed but stopped Docker daemon: the contour (L2) needs it.
 
 set -euo pipefail
 
@@ -27,6 +35,10 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 log() { printf '\n=== %s ===\n' "$1"; }
+
+# A GET of the first byte, not HEAD: some hosts reject HEAD. A denied CONNECT
+# through the egress proxy and a missing host both land here as "unreachable".
+reachable() { curl -fsSL -o /dev/null --max-time 15 -r 0-0 "$1" 2>/dev/null; }
 
 # Downloads are unpacked and run through sudo, so they go into a private
 # directory: a predictable path in /tmp could be planted by another user.
@@ -42,7 +54,7 @@ apt_install() {
     $SUDO apt-get update -qq
     apt_updated=yes
   fi
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
 }
 
 missing_packages=""
@@ -86,8 +98,17 @@ done
 # anonymous clients hit a rate limit on.
 if [ "$(just --version 2>/dev/null | awk '{print $2}')" != "$JUST_VERSION" ]; then
   log "Installing just $JUST_VERSION"
-  curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | \
-    $SUDO bash -s -- --tag "$JUST_VERSION" --to /usr/local/bin --force
+  if reachable https://just.systems/install.sh; then
+    curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | \
+      $SUDO bash -s -- --tag "$JUST_VERSION" --to /usr/local/bin --force
+  else
+    archive="just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+    release="https://github.com/casey/just/releases/download/${JUST_VERSION}"
+    curl -fsSL -o "$WORK_DIR/$archive" "$release/$archive"
+    curl -fsSL -o "$WORK_DIR/just-SHA256SUMS" "$release/SHA256SUMS"
+    (cd "$WORK_DIR" && grep " ${archive}\$" just-SHA256SUMS | sha256sum -c -)
+    $SUDO tar -C /usr/local/bin -xzf "$WORK_DIR/$archive" just
+  fi
 else
   log "just $JUST_VERSION already installed"
 fi
@@ -116,11 +137,39 @@ go env -w GOTOOLCHAIN="go${GO_VERSION}"
 
 # --- .NET SDK ----------------------------------------------------------------
 
+# Started before .NET: the SDK fallback copies it out of an image. The daemon
+# stays up for later shells, which is what the contour recipes expect.
+if command -v dockerd >/dev/null 2>&1 && ! $SUDO docker info >/dev/null 2>&1; then
+  log "Starting the Docker daemon"
+  $SUDO sh -c 'nohup dockerd >/var/log/dockerd.log 2>&1 &'
+  for _ in $(seq 1 30); do
+    $SUDO docker info >/dev/null 2>&1 && break
+    sleep 1
+  done
+  $SUDO docker info >/dev/null 2>&1 || { echo "install.sh: dockerd did not start, see /var/log/dockerd.log" >&2; exit 1; }
+fi
+
+# Satisfied is decided by the SDK itself: `dotnet --version` in the repository
+# root resolves global.json with its rollForward, so a newer feature band that
+# the fallback image brings counts, and an older one does not.
 DOTNET_DIR="/usr/local/dotnet"
-if ! "$DOTNET_DIR/dotnet" --list-sdks 2>/dev/null | grep -q "^${DOTNET_SDK_VERSION} "; then
+if ! (cd "$REPO_ROOT" && "$DOTNET_DIR/dotnet" --version >/dev/null 2>&1); then
   log "Installing .NET SDK $DOTNET_SDK_VERSION from global.json"
-  curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$WORK_DIR/dotnet-install.sh"
-  $SUDO bash "$WORK_DIR/dotnet-install.sh" --jsonfile "$REPO_ROOT/global.json" --install-dir "$DOTNET_DIR" --no-path
+  if reachable https://dot.net/v1/dotnet-install.sh; then
+    curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$WORK_DIR/dotnet-install.sh"
+    $SUDO bash "$WORK_DIR/dotnet-install.sh" --jsonfile "$REPO_ROOT/global.json" --install-dir "$DOTNET_DIR" --no-path
+  else
+    sdk_image="mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_VERSION%.*}"
+    $SUDO docker pull -q "$sdk_image"
+    container="$($SUDO docker create "$sdk_image")"
+    $SUDO rm -rf "$DOTNET_DIR"
+    $SUDO docker cp "$container:/usr/share/dotnet" "$DOTNET_DIR"
+    $SUDO docker rm "$container" >/dev/null
+    (cd "$REPO_ROOT" && "$DOTNET_DIR/dotnet" --version >/dev/null) || {
+      echo "install.sh: $sdk_image does not satisfy global.json ($DOTNET_SDK_VERSION)" >&2
+      exit 1
+    }
+  fi
 else
   log ".NET SDK $DOTNET_SDK_VERSION already installed"
 fi
@@ -131,8 +180,10 @@ $SUDO ln -sf "$DOTNET_DIR/dnx" /usr/local/bin/dnx
 # SDK version in ~/.aspire. The build can set it up through dnx itself, but
 # gives that 120 seconds, which a slow network does not meet (ASPIRE009), so it
 # is set up here without a deadline. A second run reports it is up to date.
+# --nologo: the banner crashes the CLI (ArgumentOutOfRangeException) when the
+# terminal reports zero width, which is how an agent's shell looks to it.
 log "Setting up the Aspire CLI bundle $ASPIRE_SDK_VERSION"
-dnx --yes "aspire.cli@${ASPIRE_SDK_VERSION}" -- setup --install-path "$HOME/.aspire"
+dnx --yes "aspire.cli@${ASPIRE_SDK_VERSION}" -- setup --install-path "$HOME/.aspire" --nologo
 
 # --- protoc ------------------------------------------------------------------
 
@@ -167,26 +218,52 @@ fi
 
 java_major="$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1 || true)"
 if [ "$java_major" != "$JAVA_MAJOR" ]; then
-  log "Installing Temurin JDK $JAVA_MAJOR"
   # Keyed on the source file, written last: a run cut off after the key
   # rewrites both.
-  if [ ! -f /etc/apt/sources.list.d/adoptium.list ]; then
-    curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public | \
-      gpg --dearmor | $SUDO tee /etc/apt/keyrings/adoptium.gpg >/dev/null
-    echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo "$VERSION_CODENAME") main" | \
-      $SUDO tee /etc/apt/sources.list.d/adoptium.list >/dev/null
-    apt_updated=no
+  if reachable https://packages.adoptium.net/artifactory/api/gpg/key/public; then
+    log "Installing Temurin JDK $JAVA_MAJOR"
+    jdk_package="temurin-${JAVA_MAJOR}-jdk"
+    if [ ! -f /etc/apt/sources.list.d/adoptium.list ]; then
+      curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public | \
+        gpg --dearmor | $SUDO tee /etc/apt/keyrings/adoptium.gpg >/dev/null
+      echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo "$VERSION_CODENAME") main" | \
+        $SUDO tee /etc/apt/sources.list.d/adoptium.list >/dev/null
+      apt_updated=no
+    fi
+  else
+    # Another OpenJDK build of the same major: the pin is the major version.
+    log "Installing Microsoft Build of OpenJDK $JAVA_MAJOR"
+    jdk_package="msopenjdk-${JAVA_MAJOR}"
+    if [ ! -f /etc/apt/sources.list.d/microsoft-prod.list ]; then
+      curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | \
+        gpg --dearmor | $SUDO tee /etc/apt/keyrings/microsoft.gpg >/dev/null
+      echo "deb [signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/$(. /etc/os-release && echo "$VERSION_ID")/prod $(. /etc/os-release && echo "$VERSION_CODENAME") main" | \
+        $SUDO tee /etc/apt/sources.list.d/microsoft-prod.list >/dev/null
+      apt_updated=no
+    fi
   fi
-  apt_install "temurin-${JAVA_MAJOR}-jdk"
+  apt_install "$jdk_package"
   # An image with another JDK keeps it as the default: point java at this one.
-  jdk_home="/usr/lib/jvm/temurin-${JAVA_MAJOR}-jdk-amd64"
-  $SUDO update-alternatives --set java "$jdk_home/bin/java"
-  $SUDO update-alternatives --set javac "$jdk_home/bin/javac"
+  jdk_java="$(dpkg -L "$jdk_package" | grep '/bin/java$' | head -n 1)"
+  $SUDO update-alternatives --set java "$jdk_java"
+  $SUDO update-alternatives --set javac "$(dirname "$jdk_java")/javac"
 else
   log "JDK $JAVA_MAJOR already installed"
 fi
 
-if ! command -v sbt >/dev/null 2>&1; then
+SBT_VERSION="$(sed -n 's/^sbt.version=//p' apps/auction/project/build.properties)"
+if ! command -v sbt >/dev/null 2>&1 && ! reachable https://repo.scala-sbt.org/scalasbt/debian/; then
+  # The launcher from the release fetches the version from build.properties
+  # anyway, so installing that same version saves nothing but a download.
+  log "Installing sbt $SBT_VERSION from its GitHub release"
+  archive="sbt-${SBT_VERSION}.tgz"
+  release="https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}"
+  curl -fsSL -o "$WORK_DIR/$archive" "$release/$archive"
+  echo "$(curl -fsSL "$release/$archive.sha256" | awk '{print $1}')  $WORK_DIR/$archive" | sha256sum -c -
+  $SUDO rm -rf /usr/local/sbt
+  $SUDO tar -C /usr/local -xzf "$WORK_DIR/$archive"
+  $SUDO ln -sf /usr/local/sbt/bin/sbt /usr/local/bin/sbt
+elif ! command -v sbt >/dev/null 2>&1; then
   log "Installing sbt"
   if [ ! -f /etc/apt/sources.list.d/sbt.list ]; then
     curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | \
