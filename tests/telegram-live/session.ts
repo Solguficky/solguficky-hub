@@ -18,6 +18,8 @@ export const secretKeys = {
   apiHash: "TelegramLive:ApiHash",
   session: "TelegramLive:Session",
   botUsername: "TelegramLive:BotUsername",
+  publishedMeetup: "TelegramLive:PublishedMeetup",
+  hiddenMeetup: "TelegramLive:HiddenMeetup",
 } as const;
 
 export type LiveSecrets = {
@@ -110,6 +112,38 @@ export function pickLiveSecrets(store: Record<string, string>): LiveSecrets {
     ...pickApiCredentials(store),
     session: readSecret(store, secretKeys.session),
     botUsername: readSecret(store, secretKeys.botUsername).replace(/^@/, ""),
+  };
+}
+
+export type MeetupPayloads = {
+  published: string;
+  hidden: string;
+};
+
+// Та же форма, что у регулярки бота
+// (apps/telegram-bot/src/presentation/schemas.ts): payload другой формы бот
+// молча принимает за чистый `/start`, и отрицательный путь зеленел бы, не
+// дойдя до Meetups.
+const meetupPayload = /(?:^|\?start=)(m_[A-Za-z0-9_-]{22})$/;
+
+function pickMeetupPayload(store: Record<string, string>, key: string): string {
+  const payload = meetupPayload.exec(readSecret(store, key).trim())?.[1];
+  if (payload === undefined) {
+    throw new SecretError(key, "invalid");
+  }
+  return payload;
+}
+
+/**
+ * Сходки кадра E-03 заводит владелец (local-development.md): значение —
+ * «Ссылка для чата» из ответа бота на публикацию или payload `m_…` из неё.
+ */
+export function pickMeetupPayloads(
+  store: Record<string, string>,
+): MeetupPayloads {
+  return {
+    published: pickMeetupPayload(store, secretKeys.publishedMeetup),
+    hidden: pickMeetupPayload(store, secretKeys.hiddenMeetup),
   };
 }
 

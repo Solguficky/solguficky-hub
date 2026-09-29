@@ -366,7 +366,7 @@ image-checks-test:
 # роняют прогон с названной причиной. В verify, test-all и CI не входит ни при
 # какой стабильности: источник отказа внешний.
 #
-# Живой `/start` через тестовую среду Telegram; в verify и test-all не входит
+# Живой `/start` и кадры ошибок через тестовую среду Telegram; в verify и test-all не входит
 telegram-live-test: telegram-bot-proto
     cd apps/telegram-bot && npm run test:live
 
