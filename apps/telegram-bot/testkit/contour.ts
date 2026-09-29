@@ -86,6 +86,26 @@ export function openDirectClients(environment: ContourEnvironment) {
       sessionManager: meetupsSessions,
     }),
   );
+  async function asMaintainer(
+    call: (options: { headers: Record<string, string> }) => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await call({
+        headers: { authorization: `Bearer ${environment.maintainerToken}` },
+      });
+    } catch (cause) {
+      // Токен чеканится на каждый подъём контура: dotenv от прошлого
+      // `just contour-up` несёт чужой, и без этой строки отказ читался бы
+      // как дефект Identity.
+      if (ConnectError.from(cause).code === Code.Unauthenticated) {
+        throw new Error(
+          "Identity не принял токен maintainer'а: переменные окружения от другого подъёма контура",
+          { cause },
+        );
+      }
+      throw cause;
+    }
+  }
   return {
     identity,
     meetups,
@@ -115,28 +135,19 @@ export function openDirectClients(environment: ContourEnvironment) {
      */
     async grantAdmin(telegramUserId: bigint): Promise<string> {
       const resolved = await identity.resolveIdentity({ telegramUserId });
-      try {
-        await identity.grantAdminRole(
-          { identityId: resolved.identityId },
-          {
-            headers: {
-              authorization: `Bearer ${environment.maintainerToken}`,
-            },
-          },
-        );
-      } catch (cause) {
-        // Токен чеканится на каждый подъём контура: dotenv от прошлого
-        // `just contour-up` несёт чужой, и без этой строки отказ читался бы
-        // как дефект Identity.
-        if (ConnectError.from(cause).code === Code.Unauthenticated) {
-          throw new Error(
-            "Identity не принял токен maintainer'а: переменные окружения от другого подъёма контура",
-            { cause },
-          );
-        }
-        throw cause;
-      }
+      await asMaintainer((options) =>
+        identity.grantAdminRole({ identityId: resolved.identityId }, options),
+      );
       return resolved.identityId;
+    },
+    /**
+     * Отзыв роли настоящим `RevokeAdminRole`: экран, отрисованный
+     * администратору, остаётся у человека в чате и после отзыва.
+     */
+    async revokeAdmin(identityId: string): Promise<void> {
+      await asMaintainer((options) =>
+        identity.revokeAdminRole({ identityId }, options),
+      );
     },
     /**
      * Человек из сценария среза: ник заранее внесён администратором в
