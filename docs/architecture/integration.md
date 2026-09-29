@@ -9,7 +9,7 @@ Wire-схемы находятся в `contracts/proto/`. Этот докуме�
 - Асинхронные команды и события передаются через NATS.
 - Синхронные queries и CRUD-вызовы могут использовать gRPC.
 - Конкретный выбор делается по failure semantics сценария, а не только по признаку read/write; перегруженный ADR-016 переведён в `Historical` и новые решения принимаются отдельными ADR.
-- NATS и gRPC payload сериализуется только в Protobuf.
+- NATS и gRPC payload сериализуется только в Protobuf. Хранение внутри сервиса границей не является и выбирает свою схему: журнал Meetups держит payload в `JSONB`, строка журнала Auction — JSON отдельной модели хранения ([ADR-058](../decisions/ADR-058-auction-journal-row-json-storage-model.md)).
 
 ## Subjects
 

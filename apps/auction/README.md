@@ -2,7 +2,7 @@
 
 Auction Service на Scala 3 и Apache Pekko. Ответственность сервиса — [бриф](../../docs/services/auction.md), стек — [ADR-045](../../docs/decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), сборка и кодогенерация — [ADR-048](../../docs/decisions/ADR-048-auction-sbt-and-scalapb-build.md).
 
-Сейчас здесь инфраструктура без торгов: одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, HTTP-граница с health-эндпоинтом, кодогенерация Protobuf из `contracts/proto` и тесты. Лотов и сессий в нём нет.
+Сейчас здесь инфраструктура торгов без транспорта: одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, HTTP-граница с health-эндпоинтом, кодогенерация Protobuf из `contracts/proto` и тесты. Снаружи лот пока недоступен — gRPC-граница придёт отдельно, — а сессии в сервисе нет.
 
 Нужны JDK версии из `.java-version` и sbt. Ни то, ни другое репозиторий не ставит: `just auction-tools` прогревает уже установленный sbt. Одного `update` для этого мало, поэтому рецепт гонит ещё генерацию и проверку формата — `protocbridge` тянет бинарник protoc на первой генерации, а `scalafmt-core` подтягивается на первой проверке. Отсюда два следствия: рецепт оставляет в `target/` вывод кодогенерации и краснеет на неотформатированном коде, то есть повторяет вердикт `just auction-lint` до гейта.
 

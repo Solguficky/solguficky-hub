@@ -1,12 +1,18 @@
 package auction
 
+import auction.entity.LotEntity
 import auction.persistence.JournalDatabase
+import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.cluster.MemberStatus
+import org.apache.pekko.cluster.sharding.typed.ShardingEnvelope
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
+import org.apache.pekko.cluster.sharding.typed.scaladsl.Entity
 import org.apache.pekko.cluster.typed.Cluster
 import org.apache.pekko.cluster.typed.Join
 
+import java.time.Clock
+import java.util.UUID
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 
@@ -28,6 +34,14 @@ object AuctionNode {
     cluster.manager ! Join(cluster.selfMember.address)
     ClusterSharding(system)
   }
+
+  /** Регистрирует entity лота; идентификатор entity — идентификатор лота. */
+  def registerLots(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID
+  ): ActorRef[ShardingEnvelope[LotEntity.Command]] =
+    sharding.init(Entity(LotEntity.TypeKey)(context => LotEntity(context.entityId, clock, newId)))
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {
     val cluster = Cluster(system)

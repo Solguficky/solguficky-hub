@@ -108,6 +108,35 @@ final class JournalIntegrationSpec extends AnyWordSpec with Matchers with Postgr
       }
     }
 
+    "write the events of one command together or not at all" in {
+      val database = freshDatabase()
+      val kit = node(database)
+      try {
+        val id = UUID.randomUUID().toString
+        val entity = kit.spawn(CounterEntity(id))
+        val replies = kit.createTestProbe[Long]()
+        entity ! CounterEntity.Append(replies.ref)
+        replies.expectMessage(patience, 1L)
+
+        // Чужая строка занимает второе место пакета: первая строка пакета сама
+        // по себе свободна, и только атомарность запрещает ей остаться.
+        withConnection(database) {
+          _.createStatement().executeUpdate(
+            s"""INSERT INTO event_journal
+               |  (persistence_id, sequence_number, writer, event_ser_id, event_ser_manifest, event_payload)
+               |SELECT persistence_id, 3, 'intruder', event_ser_id, event_ser_manifest, event_payload
+               |FROM event_journal WHERE persistence_id = '${persistenceId(id)}' AND sequence_number = 1""".stripMargin
+          )
+        }
+        val watcher = kit.createTestProbe[Nothing]()
+        entity ! CounterEntity.AppendMany(2, replies.ref)
+
+        watcher.expectTerminated(entity, patience)
+        replies.expectNoMessage(1.second)
+        journalRows(database, persistenceId(id)).map(_._1) shouldBe List(1L, 3L)
+      } finally kit.shutdownTestKit()
+    }
+
     "serve a sharded entity on the single-node cluster" in {
       val database = freshDatabase()
       val kit = node(database)
