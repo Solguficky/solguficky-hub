@@ -15,9 +15,10 @@
 # identity и telegram-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
 # ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
 # identity-lint отказывается работать на другой версии. Образ bufbuild/buf в
-# apps/telegram-bot/Containerfile закреплён по digest и потому несёт версию
-# литералом; tools/image/check-containerfile.sh роняет сборку, если она
-# разошлась с BUF_VERSION. Версии
+# apps/telegram-bot/Containerfile и apps/identity/Containerfile закреплён по
+# digest и потому несёт версию литералом; tools/image/check-containerfile.sh
+# роняет сборку, если она разошлась с BUF_VERSION. Меняется BUF_VERSION —
+# тег и digest меняются в обоих Containerfile тем же изменением. Версии
 # protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
@@ -301,7 +302,8 @@ identity-run: identity-proto
     cd apps/identity && go run ./cmd/identity
 
 # Production-образ в локальное хранилище движка как identity:local и те же
-# проверки до публикации, что в CI: база по digest и нет токена Bot API. Движок —
+# проверки до публикации, что в CI: база по digest и общий поиск токена Bot API.
+# Секреты самой Identity он не ищет — их выдаёт только среда запуска. Движок —
 # IMAGE_ENGINE, podman по умолчанию; docker находит список контекста
 # Containerfile.dockerignore сам. Публикацию в GHCR делает только CI
 # (.github/workflows/image-identity.yml)

@@ -5,9 +5,9 @@
 # Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
 # роняет сборку на теге. Тег рядом с digest только читается человеком, pull
 # идёт по digest; обновить базу — заменить digest целиком. Версия buf обязана
-# совпадать с BUF_VERSION в justfile (код SOLG-IMG-BUF), версия Go — с
-# директивой go в apps/identity/go.mod: GOTOOLCHAIN=local роняет сборку, а не
-# скачивает другой тулчейн молча.
+# совпадать с BUF_VERSION в justfile (код SOLG-IMG-BUF), версия Go в базе
+# сборки — с директивой go в apps/identity/go.mod: сверка ниже роняет сборку на
+# любом расхождении, а GOTOOLCHAIN=local не даёт скачать другой тулчейн молча.
 
 FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756b37f121ec858fb0407a168c269 AS buf
 
@@ -18,6 +18,12 @@ COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
 # Модули и плагины кодогенерации — отдельным слоем до исходников: их версии
 # закреплены в go.mod директивой tool, и слой переживает правку кода.
 COPY apps/identity/go.mod apps/identity/go.sum apps/identity/
+# GOTOOLCHAIN=local ловит только базу старее go.mod; новее — тоже расхождение:
+# образ собирал бы не тот Go, которым CI гоняет тесты.
+# Версия вырезается цифрами, а не хвостом строки: go.mod из рабочей копии на
+# Windows несёт CRLF, и \r в хвосте делал бы равные версии неравными.
+RUN want="go$(sed -n 's/^go \([0-9.]*\).*/\1/p' apps/identity/go.mod)" && have=$(go env GOVERSION) \
+    && [ "$want" = "$have" ] || { echo "Go в базе $have, в go.mod $want" >&2; exit 1; }
 RUN cd apps/identity && go mod download && go install tool
 COPY contracts/proto contracts/proto
 COPY apps/identity/buf.gen.yaml apps/identity/
