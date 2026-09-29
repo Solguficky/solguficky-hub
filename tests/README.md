@@ -122,6 +122,35 @@ EXPLORE_REPLAY=.work/explore/seed-7.json#12 just contour-bot-explore
 входит ни в `verify`, ни в `test-all`, ни в CI. Найденное заводится задачами,
 а не чинится внутри исследования.
 
+### bot-wire/console — пульт, не гейт
+
+Тот же провод, что у сценариев, но разговор ведётся по шагу, а не
+заранее написанным набором: человек или агент заводит людей с ролями, пишет
+боту, жмёт кнопки по подписи и читает экраны. Telegram не участвует — экран
+здесь то, что бот отправил или отредактировал, а не то, как его нарисует
+клиент. Пульт поднимает `just contour-bot-console`; команда — строка в теле
+POST на `127.0.0.1:7357` (порт — `BOT_CONSOLE_PORT`), ответ — JSON с
+экранами, которые действие отправило или правило (`new` или `edit`), нажимаемыми
+подписями и предупреждениями и ошибками из лога бота за это действие. Если на
+экране «Ссылка для чата», в ответе есть `meetupId` для команды `link`.
+
+```bash
+just contour-bot-console                          # в отдельном терминале или фоном
+sh tests/contour/bot-wire/console/send.sh         # готовность и справка
+sh tests/contour/bot-wire/console/send.sh new alice admin
+sh tests/contour/bot-wire/console/send.sh new bob member
+sh tests/contour/bot-wire/console/send.sh alice say /start
+sh tests/contour/bot-wire/console/send.sh alice press Управление сходками
+sh tests/contour/bot-wire/console/send.sh quit
+```
+
+`member` вносится в whitelist первым заведённым `admin` и получает роль на
+первом `/start`, как в продукте; `guest` — человек с ником вне whitelist.
+Каждый обмен дописывается в `.work/bot-console/<время старта>.jsonl`. Язык
+команд — шапка `commands.ts`, его разбор держат L0-тесты бота. Пульт в
+`verify`, `test-all` и CI не входит: это инструмент прохода, а не проверка;
+найденное в нём закрепляется сценарием в `bot-wire/`.
+
 ### Красный прогон
 
 Тип исключения называет класс отказа:

@@ -696,6 +696,17 @@ contour-bot-test: telegram-bot-proto
 contour-bot-explore: telegram-bot-proto
     dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/telegram-bot run explore:contour
 
+# Пульт провода бота (L2): разговор с ботом по шагу против настоящих Identity
+# и Meetups — завести людей с ролями, писать, жать кнопки по подписи и читать
+# экраны. Команда — строка в теле POST на 127.0.0.1:7357, ответ — JSON; клиент
+# `tests/contour/bot-wire/console/send.sh`, язык команд — `commands.ts` рядом.
+# Живёт до `quit` или Ctrl+C, журнал обмена — в .work/bot-console/. Telegram не
+# участвует. Не гейт: вне verify, test-all и CI.
+#
+# Пульт провода бота для ручного и агентского прохода; вне verify, test-all и CI
+contour-bot-console: telegram-bot-proto
+    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/telegram-bot run console:contour
+
 # Контрактный проект контура остаётся generated-only (ADR-025)
 contour-contracts-check:
     sh tools/contour/check-contracts-generated.sh

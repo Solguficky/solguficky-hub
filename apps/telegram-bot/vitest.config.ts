@@ -6,7 +6,13 @@ export default defineConfig({
     environment: "node",
     // Классификатор отказов и разбор секретов живого контура — L0: живой прогон
     // редок, и сломанный разбор иначе всплыл бы только у владельца.
-    include: ["src/**/*.test.ts", "../../tests/telegram-live/**/*.test.ts"],
+    // Разбор языка пульта провода бота — тоже L0: пульт живёт на контуре, а его
+    // синтаксис от контура не зависит.
+    include: [
+      "src/**/*.test.ts",
+      "../../tests/telegram-live/**/*.test.ts",
+      "../../tests/contour/bot-wire/console/**/*.test.ts",
+    ],
     // Наборы с контейнерами — уровень L1: их гоняет vitest.integration.config.ts
     // (`npm run test:integration`), а `npm test` и `just verify` остаются без Docker.
     // Живой контур — L3 и ходит в Telegram: его гоняет vitest.live.config.ts.
