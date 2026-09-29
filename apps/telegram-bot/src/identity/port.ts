@@ -61,6 +61,23 @@ export type IdentityActor = {
   identityId: string;
   globalRoles: readonly string[];
 };
+
+// Ник автора сходки для карточки (PER-404). Identity отвечает только про
+// действующего администратора: для остальных, отсутствующих и заблокированных
+// — одинаковый `not-found`. Отсутствие ника — `resolved` без поля, а не отказ.
+export type OrganizerUsernameResult =
+  | { kind: "resolved"; telegramUsername?: string }
+  | { kind: "not-found" }
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; code: string; cause: unknown };
+
+export type OrganizerResolver = {
+  resolveOrganizerUsername(
+    viewer: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<OrganizerUsernameResult>;
+};
 export type CommunityMember = {
   identityId: string;
   telegramUsername?: string;

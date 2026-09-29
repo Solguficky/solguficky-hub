@@ -16,6 +16,9 @@ service IdentityService {
   // accepts, read from current state. The caller names the roles; Identity
   // does not know which surface asks or what it guards.
   rpc CheckGlobalRole(CheckGlobalRoleRequest) returns (CheckGlobalRoleResponse);
+  // Resolves the author of a meetup to their Telegram username for the meetup
+  // card.
+  rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
   // Grants the global admin role to an existing identity. Requires maintainer authentication.
   rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
   // Revokes the active global admin role. Requires maintainer authentication.
@@ -113,6 +116,22 @@ message CheckGlobalRoleRequest {
 message CheckGlobalRoleResponse {
   // True only when the identity holds an accepted role right now.
   bool granted = 1;
+}
+
+message ResolveOrganizerUsernameRequest {
+  // The viewer of the card.
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens: the author id taken from a
+  // meetup snapshot.
+  string identity_id = 2;
+}
+
+message ResolveOrganizerUsernameResponse {
+  // Username without the leading '@'. Absent only when the organizer has none:
+  // a profile the call does not answer for is a failed call, never an absent
+  // field here.
+  optional string telegram_username = 1;
 }
 
 message GrantAdminRoleRequest {

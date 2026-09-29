@@ -80,6 +80,7 @@ export function createHarness(
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),
+  presentation?: "rich" | "plain",
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
@@ -88,6 +89,7 @@ export function createHarness(
     identity,
     logger,
     tracing,
+    ...(presentation === undefined ? {} : { presentation }),
   });
   bot.botInfo = botInfo;
   const recorder: Transformer = (_prev, method, payload) => {

@@ -488,6 +488,7 @@ function toSnapshot(
 ): MeetupSnapshot {
   const snapshot: MeetupSnapshot = {
     id: value.id,
+    author: value.author,
     title: value.title,
     description: value.description,
     venue: value.venue,

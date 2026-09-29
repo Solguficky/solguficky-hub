@@ -163,6 +163,7 @@ function publishedMeetup() {
     venue: "Циферблат",
     lifecycle: "planned" as const,
     visibility: "visible" as const,
+    author: "0192f0a0-0000-7000-8000-00000000a001",
     version: 1,
     materials: [],
   };
@@ -549,6 +550,7 @@ describe("presentation adapter", () => {
         venue: "",
         lifecycle: "planned",
         visibility: "hidden",
+        author: "0192f0a0-0000-7000-8000-00000000a001",
         version: 1,
         materials: [],
       },
@@ -1370,6 +1372,7 @@ describe("presentation adapter", () => {
         venue: "",
         lifecycle: "planned",
         visibility: "hidden",
+        author: "0192f0a0-0000-7000-8000-00000000a001",
         version: 1,
         materials: [],
       },
@@ -2142,6 +2145,7 @@ describe("presentation adapter", () => {
         venue: "Циферблат",
         lifecycle: "planned",
         visibility: "visible",
+        author: "0192f0a0-0000-7000-8000-00000000a001",
         version: 1,
         materials: [],
       },
@@ -2716,6 +2720,7 @@ describe("presentation adapter", () => {
         venue: "",
         lifecycle: "planned",
         visibility: "hidden",
+        author: "0192f0a0-0000-7000-8000-00000000a001",
         version: 1,
         materials: [],
       },
@@ -2993,6 +2998,7 @@ describe("notification frames", () => {
     venue: "",
     lifecycle: "planned" as const,
     visibility: "visible" as const,
+    author: "0192f0a0-0000-7000-8000-00000000a001",
     version: 1,
     materials: [],
   };
@@ -4376,5 +4382,100 @@ describe("broadcast frames", () => {
       error_category: "invariant",
       use_case: "send_broadcast",
     });
+  });
+});
+
+describe("meetup author", () => {
+  const organizer = {
+    kind: "organizer" as const,
+    telegramUsername: "organizer_nick",
+  };
+
+  async function viewCard(
+    card: Awaited<ReturnType<Dispatcher["execute"]>>,
+    presentation?: "rich" | "plain",
+  ) {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(card);
+    const harness = createHarness(
+      resolvedIdentity(["member"]),
+      { execute },
+      [],
+      undefined,
+      presentation,
+    );
+    await harness.bot.init();
+    await harness.bot.handleUpdate(
+      callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const card_ = harness.calls.find(
+      (call) => call.method === "editMessageText",
+    );
+    return {
+      payload: JSON.stringify(card_?.payload),
+      records: harness.records,
+    };
+  }
+
+  it("tells the author that the meetup is theirs", async () => {
+    const { payload } = await viewCard({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+      author: { kind: "self" },
+    });
+    expect(payload).toContain("Вы автор этой сходки");
+    expect(payload).not.toContain("Автор:");
+  });
+
+  it("names the organizer in the rich card and keeps the username out of the log", async () => {
+    const { payload, records } = await viewCard({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+      author: organizer,
+    });
+    expect(payload).toContain("Автор: @organizer_nick");
+    expect(JSON.stringify(records)).not.toContain("organizer_nick");
+  });
+
+  it("names the organizer in the plain card", async () => {
+    const { payload } = await viewCard(
+      { kind: "meetup-card", meetup: publishedMeetup(), author: organizer },
+      "plain",
+    );
+    expect(payload).toContain("Автор: @organizer_nick");
+  });
+
+  it("draws no author line when there is nothing to name", async () => {
+    const { payload } = await viewCard({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    expect(payload).not.toContain("Автор:");
+    expect(payload).not.toContain("Вы автор");
+  });
+
+  it("keeps the author line on the card redrawn after a state change", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup, author: organizer }
+        : {
+            kind: "meetup-state-changed",
+            action: "hold",
+            meetup: { ...meetup, lifecycle: "held" as const },
+            author: organizer,
+          },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA"),
+    );
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Автор: @organizer_nick",
+    );
   });
 });

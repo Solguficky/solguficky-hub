@@ -11,6 +11,8 @@ import { type RpcClientOptions, traceRpc } from "../tracing.js";
 import type {
   CommunityAdministrator,
   IdentityResolver,
+  OrganizerResolver,
+  OrganizerUsernameResult,
   ResolveIdentityInput,
   ResolveIdentityResult,
   TelegramRecipientResolver,
@@ -32,6 +34,10 @@ export type TelegramRecipientRpc = Pick<
   Client<typeof IdentityService>,
   "resolveTelegramUserId"
 >;
+export type OrganizerRpc = Pick<
+  Client<typeof IdentityService>,
+  "resolveOrganizerUsername"
+>;
 type IdentityAdminRpc = Pick<
   Client<typeof IdentityService>,
   | "listCommunityMembers"
@@ -44,6 +50,7 @@ type IdentityAdminRpc = Pick<
 
 export type IdentityClient = IdentityResolver &
   TelegramRecipientResolver &
+  OrganizerResolver &
   CommunityAdministrator & {
     close(): void;
   };
@@ -63,10 +70,13 @@ export function createIdentityClient(
   const resolver = createIdentityResolver(client, timeoutMs);
   const administrator = createCommunityAdministrator(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
+  const organizers = createOrganizerResolver(client, timeoutMs);
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
     resolveTelegramUserId: (identityId, meta) =>
       recipients.resolveTelegramUserId(identityId, meta),
+    resolveOrganizerUsername: (viewer, identityId, meta) =>
+      organizers.resolveOrganizerUsername(viewer, identityId, meta),
     ...administrator,
     close() {
       sessionManager.abort();
@@ -226,6 +236,43 @@ export function createTelegramRecipientResolver(
       }
     },
   };
+}
+
+export function createOrganizerResolver(
+  rpc: OrganizerRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): OrganizerResolver {
+  return {
+    async resolveOrganizerUsername(viewer, identityId, meta) {
+      try {
+        const response = await rpc.resolveOrganizerUsername(
+          {
+            actor: {
+              identityId: viewer.identityId,
+              globalRoles: viewer.globalRoles.map(roleValue),
+            },
+            identityId,
+          },
+          { timeoutMs, ...callHeaders(meta) },
+        );
+        return response.telegramUsername === undefined
+          ? { kind: "resolved" }
+          : { kind: "resolved", telegramUsername: response.telegramUsername };
+      } catch (cause) {
+        return classifyOrganizerFailure(cause);
+      }
+    },
+  };
+}
+
+function classifyOrganizerFailure(cause: unknown): OrganizerUsernameResult {
+  if (cause instanceof ConnectError) {
+    if (cause.code === Code.NotFound) return { kind: "not-found" };
+    if (permanentCodes.has(cause.code)) {
+      return { kind: "rejected", code: Code[cause.code], cause };
+    }
+  }
+  return { kind: "unavailable", cause };
 }
 
 // NOT_FOUND и FAILED_PRECONDITION контракт отдал двум окончательным исходам
