@@ -2,6 +2,7 @@ package auction
 
 import auction.boundary.BoundaryLogging
 import auction.boundary.HealthRoutes
+import auction.entity.UuidV7
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import com.typesafe.config.ConfigFactory
@@ -11,6 +12,7 @@ import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.http.scaladsl.Http
 import org.slf4j.LoggerFactory
 
+import java.time.Clock
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.DurationConverters.*
 import scala.util.Failure
@@ -21,7 +23,7 @@ import scala.util.control.NonFatal
  * Точка входа Auction Service.
  *
  * Доменной логики торгов здесь нет и не будет: composition root собирает конфигурацию, схему журнала, actor system с
- * кластером и HTTP-границу, а агрегаты регистрируются в шардинге отдельными срезами.
+ * кластером, entity лота в шардинге и HTTP-границу.
  */
 object Main {
 
@@ -50,7 +52,10 @@ object Main {
     given system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "auction", config)
     import system.executionContext
 
-    AuctionNode.join(system)
+    // Транспорта к лоту ещё нет (gRPC — PER-323), но entity регистрируется уже
+    // здесь: узел, который стартует сервис, и узел L1-тестов собираются одинаково.
+    val clock = Clock.systemUTC()
+    AuctionNode.registerLots(AuctionNode.join(system), clock, UuidV7.generator(clock))
     val readiness = AuctionNode.readiness(system, readinessTimeout)
 
     Http()

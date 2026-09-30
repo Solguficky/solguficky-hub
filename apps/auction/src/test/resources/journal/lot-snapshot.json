@@ -1,0 +1,123 @@
+{
+  "sequence": 2,
+  "state": {
+    "kind": "Trading",
+    "trading": {
+      "config": {
+        "currency": "RUB",
+        "stepPolicy": {
+          "fixed": null,
+          "tiers": [
+            {
+              "bound": {
+                "minorUnits": 0,
+                "currency": "RUB"
+              },
+              "step": {
+                "minorUnits": 500,
+                "currency": "RUB"
+              }
+            },
+            {
+              "bound": {
+                "minorUnits": 100000,
+                "currency": "RUB"
+              },
+              "step": {
+                "minorUnits": 1000,
+                "currency": "RUB"
+              }
+            }
+          ]
+        },
+        "antiSnipe": {
+          "window": "PT2M",
+          "extension": "PT2M",
+          "maxExtensions": 3
+        },
+        "proxyEnabled": true
+      },
+      "currentPrice": {
+        "minorUnits": 10500,
+        "currency": "RUB"
+      },
+      "ask": null,
+      "leader": "00000000-0000-0001-0000-000000000002",
+      "leadingBidId": "00000000-0000-0002-0000-000000000001",
+      "phase": "Online",
+      "deadline": "2026-10-07T18:00:00Z"
+    },
+    "held": null,
+    "sold": null
+  },
+  "seen": [
+    {
+      "sequence": 1,
+      "opId": "00000000-0000-0003-0000-000000000001",
+      "event": {
+        "kind": "LotOpened",
+        "lotOpened": {
+          "startingPrice": {
+            "minorUnits": 10000,
+            "currency": "RUB"
+          },
+          "config": {
+            "currency": "RUB",
+            "stepPolicy": {
+              "fixed": null,
+              "tiers": [
+                {
+                  "bound": {
+                    "minorUnits": 0,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 500,
+                    "currency": "RUB"
+                  }
+                },
+                {
+                  "bound": {
+                    "minorUnits": 100000,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 1000,
+                    "currency": "RUB"
+                  }
+                }
+              ]
+            },
+            "antiSnipe": {
+              "window": "PT2M",
+              "extension": "PT2M",
+              "maxExtensions": 3
+            },
+            "proxyEnabled": true
+          },
+          "deadline": "2026-10-07T18:00:00Z"
+        },
+        "bidPlaced": null
+      }
+    },
+    {
+      "sequence": 2,
+      "opId": "00000000-0000-0003-0000-000000000002",
+      "event": {
+        "kind": "BidPlaced",
+        "lotOpened": null,
+        "bidPlaced": {
+          "bidId": "00000000-0000-0002-0000-000000000001",
+          "participant": "00000000-0000-0001-0000-000000000002",
+          "amount": {
+            "minorUnits": 10500,
+            "currency": "RUB"
+          },
+          "previousLeader": null,
+          "origin": "Manual",
+          "source": "Bot"
+        }
+      }
+    }
+  ]
+}

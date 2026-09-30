@@ -1,5 +1,6 @@
 package auction.lot
 
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -31,6 +32,17 @@ object LotFixtures {
 
   def tiered(pairs: (Long, Long)*): StepPolicy = StepPolicy.tiered(tiers(pairs*)).toOption.get
 
+  /** Умолчание сессии из RFC-011: окно 2 минуты, продление на 2 минуты, не больше трёх раз. */
+  val antiSnipe: AntiSnipe = AntiSnipe(Duration.ofMinutes(2), Duration.ofMinutes(2), 3)
+
+  def config(policy: StepPolicy = fixedTen, proxyEnabled: Boolean = true): LotConfig =
+    LotConfig.of(rub, policy, antiSnipe, proxyEnabled).toOption.get
+
+  val deadline: Instant = Instant.parse("2026-10-07T18:00:00Z")
+
+  def openLot(opN: Int, startingPrice: Long = 100, deadline: Option[Instant] = Some(deadline)): OpenLot =
+    OpenLot(money(startingPrice), config(), deadline, op(opN))
+
   def trading(
       price: Long,
       policy: StepPolicy = fixedTen,
@@ -41,18 +53,19 @@ object LotFixtures {
     Lot.of(
       LotState.Trading(
         TradingState(
-          config = LotConfig.of(rub, policy).toOption.get,
+          config = config(policy),
           currentPrice = money(price),
           ask = ask.map(money),
           leader = leader,
           leadingBidId = leader.map(_ => bid(0)),
-          phase = phase
+          phase = phase,
+          deadline = Some(deadline)
         )
       )
     )
 
   def held(price: Long, leader: ParticipantId): Lot =
-    Lot.of(LotState.Held(HeldState(LotConfig.of(rub, fixedTen).toOption.get, money(price), Some(leader), Some(bid(0)))))
+    Lot.of(LotState.Held(HeldState(config(), money(price), Some(leader), Some(bid(0)))))
 
   def sold(price: Long, winner: ParticipantId): Lot =
     Lot.of(LotState.Sold(Sale(winner, money(price), bid(0), Instant.EPOCH)))

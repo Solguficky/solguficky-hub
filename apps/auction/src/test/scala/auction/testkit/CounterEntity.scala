@@ -20,6 +20,9 @@ object CounterEntity {
 
   sealed trait Command
   final case class Append(replyTo: ActorRef[Long]) extends Command
+
+  /** Несколько событий одной командой — один `AtomicWrite`, как у транзакции агрегата из нескольких событий. */
+  final case class AppendMany(count: Int, replyTo: ActorRef[Long]) extends Command
   final case class Read(replyTo: ActorRef[Long]) extends Command
 
   def apply(id: String): Behavior[Command] =
@@ -29,6 +32,7 @@ object CounterEntity {
       commandHandler = (count, command) =>
         command match {
           case Append(replyTo) => Effect.persist(1L).thenReply(replyTo)(count => count)
+          case AppendMany(many, replyTo) => Effect.persist(List.fill(many)(1L)).thenReply(replyTo)(count => count)
           case Read(replyTo) => Effect.reply(replyTo)(count)
         },
       eventHandler = (count, event) => count + event

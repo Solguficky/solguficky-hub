@@ -20,6 +20,26 @@ object Lot {
 
   def of(state: LotState): Lot = Lot(state, Map.empty)
 
+  /** Лот, в журнале которого ещё ничего нет: начальное состояние entity. */
+  val notOpened: Lot = of(LotState.NotOpened)
+
+  /**
+   * Открытие торгов. Как и у ставки, `seen` проверяется первым: повтор открытия получает исходный ответ, а не
+   * `LotNotScheduled`. Открывается только лот, который ещё не открыт; проверка валюты стоит здесь до PER-410, пока
+   * расписание приходит во входе команды.
+   */
+  def decide(lot: Lot, command: OpenLot): Either[OpenLotRejected, Decision] =
+    lot.seen.get(command.opId) match {
+      case Some(original) => Right(Decision.Repeated(original))
+      case None =>
+        lot.state match {
+          case LotState.NotOpened =>
+            if (command.startingPrice.currency != command.config.currency) Left(OpenLotRejected.CurrencyMismatch)
+            else Right(Decision.Accepted(LotEvent.LotOpened(command.startingPrice, command.config, command.deadline)))
+          case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) => Left(OpenLotRejected.LotNotScheduled)
+        }
+    }
+
   /**
    * Приём ставки (П-01).
    *
@@ -31,6 +51,7 @@ object Lot {
       case Some(original) => Right(Decision.Repeated(original))
       case None =>
         lot.state match {
+          case LotState.NotOpened => Left(PlaceBidRejected.LotNotOpen)
           case LotState.Trading(trading) => placeBid(trading, command, bidId).map(Decision.Accepted(_))
           case LotState.Held(_) => Left(PlaceBidRejected.LotOnHold)
           case LotState.Sold(_) => Left(PlaceBidRejected.LotNotOpen)
@@ -74,9 +95,24 @@ object Lot {
   /**
    * Применение события: только меняет состояние и не отказывает. Событие, которое к текущему состоянию не относится,
    * состояние не трогает — такой пары `decide` не порождает, а журнал её не содержит.
+   *
+   * `LotOpened` строит торги только из самого события: стартовая цена становится текущей, лидера нет, фаза `Online`
+   * выводится из факта открытия (RFC-011). Поэтому журнал, записанный до PER-410, проигрывается так же и после неё.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
     val state = (lot.state, envelope.event) match {
+      case (LotState.NotOpened, opened: LotEvent.LotOpened) =>
+        LotState.Trading(
+          TradingState(
+            config = opened.config,
+            currentPrice = opened.startingPrice,
+            ask = None,
+            leader = None,
+            leadingBidId = None,
+            phase = Phase.Online,
+            deadline = opened.deadline
+          )
+        )
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) =>
         LotState.Trading(
           trading.copy(

@@ -73,6 +73,9 @@ lazy val auction = (project in file("."))
       // discovery выше.
       "org.apache.pekko" %% "pekko-persistence-query" % pekkoVersion,
       "org.apache.pekko" %% "pekko-persistence-jdbc" % pekkoPersistenceJdbcVersion,
+      // Строка журнала и snapshot лота — JSON через отдельную модель хранения
+      // (ADR о формате журнала): Protobuf остаётся межсервисным форматом.
+      "org.apache.pekko" %% "pekko-serialization-jackson" % pekkoVersion,
       // Slick приходит с плагином JDBC, но каталог лота импортирует его сам —
       // пул плагина и plain SQL. Транзитивную зависимость обновление плагина
       // сменило бы молча, поэтому она объявлена той же версией, что у плагина.
@@ -84,6 +87,7 @@ lazy val auction = (project in file("."))
       "net.logstash.logback" % "logstash-logback-encoder" % logstashEncoderVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
       "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
+      "org.apache.pekko" %% "pekko-persistence-testkit" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-http-testkit" % pekkoHttpVersion % Test,
       "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
       "org.scalatestplus" %% "scalacheck-1-18" % scalaCheckBridgeVersion % Test,

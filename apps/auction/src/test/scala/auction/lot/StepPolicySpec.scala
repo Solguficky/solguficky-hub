@@ -82,7 +82,7 @@ final class StepPolicySpec extends AnyWordSpec with Matchers with ScalaCheckDriv
   "lot config" should {
 
     "reject a step policy in a currency other than the lot's" in {
-      LotConfig.of(eur, fixedTen) shouldBe Left(StepPolicyInvalid.MixedCurrency)
+      LotConfig.of(eur, fixedTen, antiSnipe, proxyEnabled = true) shouldBe Left(StepPolicyInvalid.MixedCurrency)
     }
   }
 }

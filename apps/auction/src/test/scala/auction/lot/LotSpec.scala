@@ -27,6 +27,61 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
   "lot" should {
 
+    "open trading at the starting price with no leader, the online phase and the deadline of the command" in {
+      val command = openLot(opN = 1, startingPrice = 500)
+
+      val decision = Lot.decide(Lot.notOpened, command)
+      val opened = decision match {
+        case Right(Decision.Accepted(event)) => Lot.apply(Lot.notOpened, Envelope(1, command.opId, event))
+        case other => fail(s"открытие не принято: $other")
+      }
+
+      tradingOf(opened) shouldBe TradingState(
+        config = config(),
+        currentPrice = money(500),
+        ask = None,
+        leader = None,
+        leadingBidId = None,
+        phase = Phase.Online,
+        deadline = Some(deadline)
+      )
+    }
+
+    "open a lot led by a person without a deadline" in {
+      val command = openLot(opN = 1, deadline = None)
+
+      Lot.decide(Lot.notOpened, command) shouldBe
+        Right(Decision.Accepted(LotEvent.LotOpened(money(100), config(), None)))
+    }
+
+    "refuse to open a lot that is already open and leave it as it was" in {
+      Lot.decide(trading(price = 100), openLot(opN = 1)) shouldBe Left(OpenLotRejected.LotNotScheduled)
+      Lot.decide(sold(price = 100, winner = participant(1)), openLot(opN = 1)) shouldBe
+        Left(OpenLotRejected.LotNotScheduled)
+    }
+
+    "refuse to open at a starting price in another currency" in {
+      val command = openLot(opN = 1).copy(startingPrice = Money(100, eur))
+
+      Lot.decide(Lot.notOpened, command) shouldBe Left(OpenLotRejected.CurrencyMismatch)
+    }
+
+    "answer a repeated opening with the original response instead of a refusal" in {
+      val command = openLot(opN = 1)
+      val envelope = Lot.decide(Lot.notOpened, command) match {
+        case Right(Decision.Accepted(event)) => Envelope(1, command.opId, event)
+        case other => fail(s"открытие не принято: $other")
+      }
+      val opened = Lot.apply(Lot.notOpened, envelope)
+
+      Lot.decide(opened, command) shouldBe Right(Decision.Repeated(envelope))
+    }
+
+    "refuse a bid on a lot that is not open yet" in {
+      Lot.decide(Lot.notOpened, placeBid(who = 1, amount = 110, opN = 1), bid(1)) shouldBe
+        Left(PlaceBidRejected.LotNotOpen)
+    }
+
     "accept a first bid at the starting price plus the step (Т-01)" in {
       val (result, journal) = Journal.of(trading(price = 100)).submit(placeBid(who = 1, amount = 110, opN = 1), bid(1))
 
