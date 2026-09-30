@@ -75,14 +75,14 @@ message AntiSnipe {
   int32 max_extensions = 3;
 }
 
-// A lot that exists and belongs to its session, with no trading conditions yet.
-// It carries nothing: the session is in the envelope, and the config is unset.
+// A lot that exists and belongs to its auction, with no trading conditions yet.
+// It carries nothing: the auction is in the envelope, and the config is unset.
 message LotDraft {}
 
 // A lot with checked trading conditions, waiting to be opened. The conditions
 // are the config next to the status and are not repeated here; this carries only
 // what the config does not - the starting price. A deadline is not here either:
-// it belongs to the session and reaches the lot when the lot is opened. Bids are
+// it belongs to the auction and reaches the lot when the lot is opened. Bids are
 // not accepted.
 message LotSchedule {
   // The price trading opens at. Its currency is the currency of the config.
@@ -146,28 +146,28 @@ message LotSale {
   string sold_at = 4;
 }
 
-// Configuration of a trading session: the format of the auction expressed as
-// values, not as branches. SessionScheduled sets it and may replace it until
+// Configuration of an auction: its format expressed as
+// values, not as branches. AuctionScheduled sets it and may replace it until
 // prebidding starts; from PrebiddingStarted on it never changes.
-message SessionConfig {
+message AuctionConfig {
   // The online phase. Unset is a real value: a format without an online phase.
   // It is then absent, not empty.
   OnlinePhase online_phase = 1;
 
   // How many blocks the live final has: 0 or 1. 0 is a real value: no final.
-  // The session knows one final, so a larger number is refused as an invalid
+  // The auction knows one final, so a larger number is refused as an invalid
   // configuration rather than accepted silently.
   int32 final_blocks = 2;
 
   ClosingPolicy closing_policy = 3;
 
-  // Values the session fills into the conditions of a lot that a ScheduleLot
+  // Values the auction fills into the conditions of a lot that a ScheduleLot
   // leaves unset. They are applied at that moment: a later change of the defaults
   // does not reach a lot already scheduled.
   LotDefaults lot_defaults = 4;
 }
 
-// The online phase of a session: two instants, not a duration, because the
+// The online phase of an auction: two instants, not a duration, because the
 // scheduler needs points on the time line to start and to end the prebidding.
 message OnlinePhase {
   // RFC 3339 instant in UTC: when the prebidding starts.
@@ -208,7 +208,7 @@ message MixedClosing {
 
 // Defaults for the trading conditions of a lot. The fields are those of LotConfig
 // with the same numbers so that the two stay readable side by side, but this is
-// not a config: nothing trades on it, and it is a value of the session, not of a
+// not a config: nothing trades on it, and it is a value of the auction, not of a
 // lot.
 message LotDefaults {
   // ISO 4217 alphabetic code.
@@ -221,7 +221,7 @@ message LotDefaults {
   bool proxy_enabled = 4;
 }
 
-// Phase of a lot in trading. The format of the session is not visible here: the
+// Phase of a lot in trading. The format of the auction is not visible here: the
 // lot learns its phase from its own events.
 enum LotPhase {
   LOT_PHASE_UNSPECIFIED = 0;

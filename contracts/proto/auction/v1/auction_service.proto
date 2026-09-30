@@ -13,7 +13,7 @@ import "identity/v1/roles.proto";
 // replayed and which conditions still answer with a status are documented in
 // docs/architecture/integration.md, section "Auction gRPC".
 //
-// Trading commands of the auctioneer, of the organizer and of the session are
+// Trading commands of the auctioneer, of the organizer and of the auction are
 // deliberately absent.
 service AuctionService {
   rpc PlaceBid(PlaceBidRequest) returns (PlaceBidResponse);
@@ -22,7 +22,7 @@ service AuctionService {
   rpc CreateLotCard(CreateLotCardRequest) returns (CreateLotCardResponse);
   rpc EditLotCard(EditLotCardRequest) returns (EditLotCardResponse);
   rpc GetLot(GetLotRequest) returns (LotSnapshot);
-  rpc ListSessionLots(ListSessionLotsRequest) returns (ListSessionLotsResponse);
+  rpc ListAuctionLots(ListAuctionLotsRequest) returns (ListAuctionLotsResponse);
 }
 
 message Viewer {
@@ -252,11 +252,11 @@ message GetLotRequest {
   string lot_id = 2;
 }
 
-message ListSessionLotsRequest {
+message ListAuctionLotsRequest {
   Viewer viewer = 1;
 
   // Canonical lowercase UUIDv7 with hyphens.
-  string session_id = 2;
+  string auction_id = 2;
 
   // Opaque token returned as next_page_token. Empty starts an enumeration.
   string page_token = 3;
@@ -265,7 +265,7 @@ message ListSessionLotsRequest {
   int32 page_size = 4;
 }
 
-message ListSessionLotsResponse {
+message ListAuctionLotsResponse {
   repeated LotSnapshot lots = 1;
 
   // Opaque continuation token. Empty means that the enumeration is complete.
@@ -280,7 +280,7 @@ message LotSnapshot {
   string id = 1;
 
   // Canonical lowercase UUIDv7 with hyphens.
-  string session_id = 2;
+  string auction_id = 2;
 
   // The trading conditions. Set by the first LotScheduled and replaceable until the
   // lot is opened; frozen from that moment on. Unset on a draft, and on a lot
