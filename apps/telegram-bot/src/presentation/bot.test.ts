@@ -412,10 +412,13 @@ describe("presentation adapter", () => {
       return;
     const keyboard = confirmation.payload.reply_markup;
     const callbackData = JSON.stringify(keyboard).match(
-      /v1:mm:confirm-add:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/,
+      /v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/,
     )?.[0];
     expect(callbackData).toBeDefined();
     if (callbackData === undefined) return;
+    // Версия — та карточка, с которой начато прикрепление, а не чтение при
+    // подтверждении.
+    expect(callbackData.endsWith(`:${meetup.version}`)).toBe(true);
     await bot.handleUpdate(
       callbackMessageUpdate(callbackData, {
         text: confirmation.payload.text,
@@ -427,6 +430,7 @@ describe("presentation adapter", () => {
       expect.objectContaining({
         intent: "attach-material",
         meetupId: meetup.id,
+        expectedVersion: meetup.version,
         material: expect.objectContaining({
           title: "Опрос: кто идёт",
           source: {
@@ -451,7 +455,7 @@ describe("presentation adapter", () => {
 
     await bot.handleUpdate(
       callbackMessageUpdate(
-        "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
+        "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:4",
         {
           caption: "Прикрепить материал?\n\nНазвание: Афиша",
           document: {
@@ -466,6 +470,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
         intent: "attach-material",
+        expectedVersion: 4,
         material: expect.objectContaining({
           title: "Афиша",
           source: { kind: "file", fileId: "bot-file-id" },
@@ -486,7 +491,7 @@ describe("presentation adapter", () => {
         url: "https://t.me/c/1234567890/78",
       },
     };
-    const meetup = { ...publishedMeetup(), materials: [material] };
+    const meetup = { ...publishedMeetup(), version: 6, materials: [material] };
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "view-meetup"
         ? { kind: "meetup-card", meetup }
@@ -511,17 +516,231 @@ describe("presentation adapter", () => {
         text: expect.stringContaining("Оригинал в Telegram останется на месте"),
       },
     });
-    await bot.handleUpdate(
-      callbackUpdate(data.replace("v1:mm:rm:", "v1:mm:confirm-rm:")),
-    );
+    const confirm = `${data.replace("v1:mm:rm:", "v1:mm:cr:")}:6`;
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(confirm);
+    await bot.handleUpdate(callbackUpdate(confirm));
 
     expect(execute).toHaveBeenLastCalledWith(
       expect.objectContaining({
         intent: "remove-material",
         meetupId: meetup.id,
         materialId: material.id,
+        expectedVersion: 6,
       }),
     );
+  });
+
+  it("keeps the attach confirmation and renews its version on a version conflict", async () => {
+    const fresh = {
+      ...publishedMeetup(),
+      title: "Настолки в субботу",
+      version: 5,
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "conflict",
+      meetup: fresh,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:4",
+        {
+          caption: "Прикрепить материал?\n\nНазвание: Афиша",
+          document: {
+            file_id: "bot-file-id",
+            file_unique_id: "unique",
+            file_name: "poster.pdf",
+          },
+        },
+      ),
+    );
+
+    // Подпись с названием и файлом не переписывается: по ней бот читает
+    // материал при повторном нажатии.
+    expect(calls.some((call) => call.method === "editMessageCaption")).toBe(
+      false,
+    );
+    const markup = calls.find(
+      (call) => call.method === "editMessageReplyMarkup",
+    );
+    expect(JSON.stringify(markup?.payload)).toContain(
+      "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:5",
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: { text: expect.stringContaining("Сходка уже изменилась.") },
+    });
+    expect(records.at(-1)?.fields.error).toBe("version_conflict");
+  });
+
+  it.each([
+    [
+      "attach",
+      "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
+      "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:3",
+    ],
+    [
+      "remove",
+      "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
+      "v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:3",
+    ],
+  ])(
+    "answers a %s confirmation without a version by the current card instead of a command",
+    async (_, data, renewed) => {
+      // Материал кнопки снятия ещё на месте, а материала кнопки прикрепления
+      // ещё нет: ни одна цель не достигнута, и ответом остаётся кадр конфликта.
+      const current = {
+        ...publishedMeetup(),
+        version: 3,
+        materials: [
+          {
+            id: "0199c0de-0000-7000-8000-00000000009a",
+            title: "Уточнение по времени",
+            source: {
+              kind: "message-link" as const,
+              url: "https://t.me/c/1234567890/78",
+            },
+          },
+        ],
+      };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup: current,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackMessageUpdate(data, {
+          caption: "Прикрепить материал?\n\nНазвание: Афиша",
+          document: {
+            file_id: "bot-file-id",
+            file_unique_id: "unique",
+            file_name: "poster.pdf",
+          },
+        }),
+      );
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ intent: "view-meetup" }),
+      );
+      expect(JSON.stringify(calls)).toContain(renewed);
+      expect(JSON.stringify(calls)).toContain("Сходка уже изменилась.");
+    },
+  );
+
+  it("answers a confirmation without a version for an already removed material as done", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), version: 3 },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
+      ),
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(calls)).not.toContain("Сходка уже изменилась.");
+    expect(JSON.stringify(calls)).toContain("Пока ничего не прикреплено.");
+  });
+
+  it("refuses a confirmation without a version from a non-admin without reading the meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity(["member"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
+      ),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.stringify(calls)).toContain(
+      "Это действие доступно организатору сходки.",
+    );
+  });
+
+  it("still tells about the conflict when the attach confirmation cannot be edited", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "conflict",
+      meetup: { ...publishedMeetup(), version: 5 },
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    bot.api.config.use((prev, method, payload, signal) =>
+      method === "editMessageReplyMarkup"
+        ? Promise.reject(new Error("Bad Request: message to edit not found"))
+        : prev(method, payload, signal),
+    );
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:4",
+        {
+          caption: "Прикрепить материал?\n\nНазвание: Афиша",
+          document: {
+            file_id: "bot-file-id",
+            file_unique_id: "unique",
+            file_name: "poster.pdf",
+          },
+        },
+      ),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining(
+          "Начни прикрепление заново из карточки сходки.",
+        ),
+      },
+    });
+    expect(records.at(-1)?.fields.error).toBe("version_conflict");
+  });
+
+  it("asks to confirm a material removal again after a version conflict", async () => {
+    const fresh = { ...publishedMeetup(), version: 7 };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "conflict",
+      meetup: fresh,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        "v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:6",
+      ),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("Сходка уже изменилась.") },
+    });
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:7",
+    );
+    expect(records.at(-1)?.fields.error).toBe("version_conflict");
   });
   it("does not treat a command replying to a user as a stale form answer", async () => {
     const { bot, calls } = createHarness(resolvedIdentity());
@@ -1993,7 +2212,7 @@ describe("presentation adapter", () => {
       name: "material rejected as invalid",
       update: () =>
         callbackMessageUpdate(
-          "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
+          "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:4",
           {
             caption: "Прикрепить материал?\n\nНазвание: Афиша",
             document: {

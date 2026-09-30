@@ -119,14 +119,49 @@ describe("callback parser", () => {
     const cases = [
       [`v1:mm:list:${meetup}`, "manage-materials"],
       [`v1:mm:add:${meetup}`, "begin-attach-material"],
-      [`v1:mm:confirm-add:${meetup}:${material}`, "confirm-attach-material"],
+      [`v1:mm:ca:${meetup}:${material}:999999999`, "confirm-attach-material"],
       [`v1:mm:rm:${meetup}:${material}`, "remove-material"],
-      [`v1:mm:confirm-rm:${meetup}:${material}`, "confirm-remove-material"],
+      [`v1:mm:cr:${meetup}:${material}:999999999`, "confirm-remove-material"],
       [`v1:mm:file:${meetup}:${material}`, "open-material-file"],
     ] as const;
     for (const [data, kind] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
       expect(parseCallback(data)).toMatchObject({ kind });
+    }
+  });
+
+  it("carries the shown meetup version in material confirmations", () => {
+    const meetup = "AZLzpLXGfY6fChssPU5fYA";
+    const material = "AZnA3gAAAAAAAABfP4Lqmw";
+    expect(parseCallback(`v1:mm:ca:${meetup}:${material}:12`)).toEqual({
+      kind: "confirm-attach-material",
+      token: meetup,
+      materialToken: material,
+      version: 12,
+    });
+    expect(parseCallback(`v1:mm:cr:${meetup}:${material}:3`)).toMatchObject({
+      kind: "confirm-remove-material",
+      version: 3,
+    });
+    // Кнопка прошлого релиза разбирается без версии, а не с нулевой: команду по
+    // ней экран не отправляет.
+    expect(parseCallback(`v1:mm:confirm-add:${meetup}:${material}`)).toEqual({
+      kind: "confirm-attach-material",
+      token: meetup,
+      materialToken: material,
+    });
+    expect(parseCallback(`v1:mm:confirm-rm:${meetup}:${material}`)).toEqual({
+      kind: "confirm-remove-material",
+      token: meetup,
+      materialToken: material,
+    });
+    for (const data of [
+      `v1:mm:ca:${meetup}:${material}`,
+      `v1:mm:ca:${meetup}:${material}:0`,
+      `v1:mm:cr:${meetup}:${material}:07`,
+      `v1:mm:cr:${meetup}:${material}:x`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }
   });
 
