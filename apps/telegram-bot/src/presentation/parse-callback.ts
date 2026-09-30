@@ -44,6 +44,13 @@ const FormModeSchema = z.enum(["c", "e"]);
 // ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
 // правки, восстановимые по сущностям сообщения.
 const PastScheduleSchema = z.string().regex(/^\d{12}$/);
+// Версия карточки, с которой человек начал действие с материалом. Её несёт
+// кнопка подтверждения: `v1:mm:ca:` с двумя токенами занимает 55 байт, и
+// девять цифр — всё, что остаётся до 64 (PER-393).
+const VersionSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,8}$/)
+  .transform(Number);
 
 // Ник едет в `callback_data` как есть, и обратно он доезжает только в этом
 // алфавите и в этой длине: у Telegram на данные кнопки 64 байта, а длиннее 32
@@ -86,9 +93,21 @@ export type CallbackAction =
   | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
-  | { kind: "confirm-attach-material"; token: string; materialToken: string }
+  // `version` отсутствует только у кнопки прошлого релиза, которая версии не
+  // несла: команду по ней не отправить, и экран отвечает кадром конфликта.
+  | {
+      kind: "confirm-attach-material";
+      token: string;
+      materialToken: string;
+      version?: number;
+    }
   | { kind: "remove-material"; token: string; materialToken: string }
-  | { kind: "confirm-remove-material"; token: string; materialToken: string }
+  | {
+      kind: "confirm-remove-material";
+      token: string;
+      materialToken: string;
+      version?: number;
+    }
   | { kind: "open-material-file"; token: string; materialToken: string }
   | { kind: "view-meetup"; token: string }
   // Рассылка: вход из карточки сходки или из управления, затем подтверждение.
@@ -165,9 +184,24 @@ export function parseCallback(raw: unknown): CallbackAction {
       return { kind: "begin-attach-material", token: meetupToken.data };
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
-    if (!materialToken.success || parts.length !== 5) {
-      return { kind: "malformed" };
+    if (!materialToken.success) return { kind: "malformed" };
+    // Подтверждения несут версию шестым сегментом. Прежние `confirm-add` и
+    // `confirm-rm` версии не несли, и Meetups отвергал их с 22.09: такая кнопка
+    // разбирается без версии, и экран перечитывает карточку вместо команды.
+    if (parts.length === 6 && (parts[2] === "ca" || parts[2] === "cr")) {
+      const version = VersionSchema.safeParse(parts[5]);
+      if (!version.success) return { kind: "malformed" };
+      return {
+        kind:
+          parts[2] === "ca"
+            ? "confirm-attach-material"
+            : "confirm-remove-material",
+        token: meetupToken.data,
+        materialToken: materialToken.data,
+        version: version.data,
+      };
     }
+    if (parts.length !== 5) return { kind: "malformed" };
     switch (parts[2]) {
       case "confirm-add":
         return {

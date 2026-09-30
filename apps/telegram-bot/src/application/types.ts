@@ -110,6 +110,9 @@ export type ExecuteRequest =
       intent: "attach-material";
       meetupId: string;
       material: MeetupMaterial;
+      // Версия карточки, с которой человек начал действие: её несёт кнопка
+      // подтверждения, а не чтение перед командой (PER-393).
+      expectedVersion: number;
       requestId?: string;
       useCase?: string;
     }
@@ -118,6 +121,7 @@ export type ExecuteRequest =
       intent: "remove-material";
       meetupId: string;
       materialId: string;
+      expectedVersion: number;
       requestId?: string;
       useCase?: string;
     }

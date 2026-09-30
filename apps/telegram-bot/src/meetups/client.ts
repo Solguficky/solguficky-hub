@@ -359,7 +359,7 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
-    attachMaterial: ({ person, meetupId, material, meta }) =>
+    attachMaterial: ({ person, meetupId, material, expectedVersion, meta }) =>
       call(async () =>
         snapshot(
           await rpc.attachMaterial(
@@ -369,16 +369,22 @@ export function createMeetupsAdapter(
               materialId: material.id,
               title: material.title,
               source: fromMaterialSource(material.source),
+              expectedVersion: BigInt(expectedVersion),
             },
             options(meta),
           ),
         ),
       ),
-    removeMaterial: ({ person, meetupId, materialId, meta }) =>
+    removeMaterial: ({ person, meetupId, materialId, expectedVersion, meta }) =>
       call(async () =>
         snapshot(
           await rpc.removeMaterial(
-            { viewer: viewer(person), id: meetupId, materialId },
+            {
+              viewer: viewer(person),
+              id: meetupId,
+              materialId,
+              expectedVersion: BigInt(expectedVersion),
+            },
             options(meta),
           ),
         ),
