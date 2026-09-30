@@ -72,6 +72,18 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
     }
 
+    // Лот без строки каталога (ADR-057) читается отсутствием карточки, а не
+    // карточкой с пустыми строками: её край показал бы как лот без названия.
+    // Отсутствие держит только поле-сообщение с presence вне `status`: плоские
+    // строки его не выражают, а член `oneof` сбрасывал бы статус лота.
+    "carries the catalog card as a message with presence outside the status" in {
+      val card = LotSnapshot.javaDescriptor.findFieldByName("card")
+
+      card.getMessageType.getFullName shouldBe "auction.v1.LotCard"
+      card.hasPresence shouldBe true
+      card.getContainingOneof shouldBe null
+    }
+
     // Серверный трейт генерирует pekko-grpc поверх того же ScalaPB (ADR-048).
     // Ссылка на тип держит его появление в сборке: пропавшая генерация роняет
     // компиляцию этого теста, а не первого обработчика, который его реализует.
