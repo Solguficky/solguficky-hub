@@ -33,7 +33,7 @@
 
 ### 1. Агрегаты и идентификаторы
 
-Агрегатов два: **лот** и **торговая сессия**. Идентификаторы — UUIDv7 в канонической строковой форме: `session_id`, `lot_id`, `bid_id`, `participant_id`. Прокси-лимит адресуется парой `(lot_id, participant_id)` и собственного идентификатора не имеет.
+Агрегатов два: **лот** и **аукцион**. Аукцион — торги одной сходки: мероприятие — сходка, и у неё один аукцион; связи `meetup_id` словарь пока не несёт. Идентификаторы — UUIDv7 в канонической строковой форме: `auction_id`, `lot_id`, `bid_id`, `participant_id`. Прокси-лимит адресуется парой `(lot_id, participant_id)` и собственного идентификатора не имеет.
 
 `participant_id` — идентификатор платформы, а не Telegram user id: отображение в Telegram живёт в Identity. Лот — не строка каталога: каталожные атрибуты хранятся отдельно и в домен торгов не входят.
 
@@ -75,9 +75,9 @@
 
 ### 4. Конверт строки журнала
 
-`event_id`, `aggregate_type` (`Lot` либо `Session`), `aggregate_id`, `sequence`, `session_id`, `occurred_at`, `transaction_id`, `op_id`, `actor`, `schema_version`, `payload`.
+`event_id`, `aggregate_type` (`Lot` либо `Auction`), `aggregate_id`, `sequence`, `auction_id`, `occurred_at`, `transaction_id`, `op_id`, `actor`, `schema_version`, `payload`.
 
-`session_id` присутствует в конверте всегда: связь лота с сессией принадлежит событию, а не догадке читателя. `sequence` — арбитр порядка внутри агрегата; `occurred_at` — данные и в сравнении порядка не участвует.
+`auction_id` присутствует в конверте всегда: связь лота с аукционом принадлежит событию, а не догадке читателя. `sequence` — арбитр порядка внутри агрегата; `occurred_at` — данные и в сравнении порядка не участвует.
 
 ### 5. Деньги, время и шаг
 
@@ -112,7 +112,7 @@
 
 ### Что не является решением этого ADR
 
-Имена NATS subjects, Protobuf-схемы и gRPC-поверхность — [PER-149](https://linear.app/anticnvm/issue/per-149). Топология акторов, восстановление и хранение — [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md). Схема БД и миграции. Механика переспроса лота сессией после её рестарта: обязанность названа, устройство — за реализацией. Ответ прокси на ask (О-6) и форма участия онлайна в финале (В-9 из [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md)).
+Имена NATS subjects, Protobuf-схемы и gRPC-поверхность — [PER-149](https://linear.app/anticnvm/issue/per-149). Топология акторов, восстановление и хранение — [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md). Схема БД и миграции. Механика переспроса лота аукционом после его рестарта: обязанность названа, устройство — за реализацией. Ответ прокси на ask (О-6) и форма участия онлайна в финале (В-9 из [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md)).
 
 ## Обоснование
 
@@ -135,14 +135,14 @@
 ### Что становится проще
 
 - `contracts/proto/auction/v1/` пишется без угадывания: у каждого поля есть источник в словаре, а критерий «полей на будущее нет» становится проверяемым.
-- Восемь из шестнадцати дефектов архива закрываются словарём, а не библиотекой: связь лота с сессией, семантика отсутствия, идемпотентность, восстановимость состояния, фазы как значения, участник вместо чата.
+- Восемь из шестнадцати дефектов архива закрываются словарём, а не библиотекой: связь лота с аукционом, семантика отсутствия, идемпотентность, восстановимость состояния, фазы как значения, участник вместо чата.
 - Отказы перечислимы, поэтому выводимы в тест и отображаемы на gRPC-статусы без строкового разбора.
 - Реализация ядра получает пару `decide` / `apply` с уже названными ветками.
 
 ### Что становится сложнее
 
 - Журнал перестаёт быть покадровой записью: промежуточные состояния гонки прокси не восстанавливаются, и отладка войны лимитов идёт по итогу, а не по шагам.
-- Два агрегата означают eventual-согласованность между ними; подтверждение открытия лота сокращает окно, но не устраняет, и добавляет сессии обязанность переспрашивать лот после рестарта.
+- Два агрегата означают eventual-согласованность между ними; подтверждение открытия лота сокращает окно, но не устраняет, и добавляет аукциону обязанность переспрашивать лот после рестарта.
 - Конфигурация, выразимая данными, выразима и неверно: валидация `stepPolicy` — новый обязательный код и новый источник дефектов.
 - Словарь становится обязательством для соседних задач: изменение после закрытия контрактов — переписывание, а не правка.
 
@@ -169,7 +169,7 @@
 
 ## Дополнение 2026-09-24
 
-Раздел дописан после принятия и текст выше не меняет. Причина — выбор формата Ф-4 ([RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md#ф-4-неделя-параллельных-торгов-с-отобранным-финалом)): 7-8 лотов, отобранных вручную по статистике недели, обязаны пережить общий дедлайн каталога, а у сессии не было ни одной команды и ни одного события. Решение владельца принято в [PER-291](https://linear.app/anticnvm/issue/per-291); разбор вариантов — ось H и раздел «Машина состояний сессии» [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md). Дописать раздел, а не завести отдельный ADR, выбрал владелец.
+Раздел дописан после принятия и текст выше не меняет. Причина — выбор формата Ф-4 ([RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md#ф-4-неделя-параллельных-торгов-с-отобранным-финалом)): 7-8 лотов, отобранных вручную по статистике недели, обязаны пережить общий дедлайн каталога, а у аукциона не было ни одной команды и ни одного события. Решение владельца принято в [PER-291](https://linear.app/anticnvm/issue/per-291); разбор вариантов — ось H и раздел «Машина состояний сессии» [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md). Дописать раздел, а не завести отдельный ADR, выбрал владелец.
 
 **Лот.** Состояние `Held` — отобранный лот между общим дедлайном и своей очередью в финале, без дедлайна и без ask. В `Trading` добавлены два поля состояния, не конфигурации: `phase : Online | Live` и `markedForFinal`.
 
@@ -182,17 +182,17 @@
 
 Новые события: `LotMarkedForFinal` (без payload), `LotHeldForFinal` (`at`), `LotResumed` (без payload). **Форма существующих событий не меняется**: ни одному payload не добавлено поле, конверт тот же. Команд лота становится девять, событий — двенадцать с производным `DeadlineExtended`.
 
-**Сессия.** Состояния `Draft → Scheduled → Prebidding → Settling → Break → LineupFrozen → Final → Finished`. Команды `ScheduleSession`, `StartPrebidding`, `SelectForFinal`, `EndPrebidding`, `FreezeFinalLineup`, `StartFinal`, `StartNextLot`; события `SessionScheduled`, `PrebiddingStarted`, `FinalistConfirmed`, `PrebiddingDeadlineReached`, `PrebiddingEnded`, `FinalistDropped`, `FinalLineupFrozen(order)`, `FinalStarted`, `FinalLotActivated`, `FinalLotCompleted`, `SessionFinished`. Заморозку состава финала несёт `FinalLineupFrozen`. Отказы и переходы — таблица RFC-011; здесь не дублируются.
+**Аукцион.** Состояния `Draft → Scheduled → Prebidding → Settling → Break → LineupFrozen → Final → Finished`. Команды `ScheduleAuction`, `StartPrebidding`, `SelectForFinal`, `EndPrebidding`, `FreezeFinalLineup`, `StartFinal`, `StartNextLot`; события `AuctionScheduled`, `PrebiddingStarted`, `FinalistConfirmed`, `PrebiddingDeadlineReached`, `PrebiddingEnded`, `FinalistDropped`, `FinalLineupFrozen(order)`, `FinalStarted`, `FinalLotActivated`, `FinalLotCompleted`, `AuctionFinished`. Заморозку состава финала несёт `FinalLineupFrozen`. Отказы и переходы — таблица RFC-011; здесь не дублируются.
 
 **Инварианты.** Добавлены И-16…И-19; И-10 уточнён: повторный вход в `Trading` — только из `Held` событием `LotResumed`, `config` при этом не меняется. И-06 и И-12 не задеты: удержание не пишет `DeadlineExtended`. Правило живой ставки финала — отдельное решение, [ADR-049](ADR-049-auction-live-bid-rule.md).
 
 **Сигнал пересмотра дополнения.** Отбор в финал становится автоматическим правилом («самые дорогие» или «самые популярные», ОВ-4 [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md#осталось-открытым-на-22092026)) и известен до старта — тогда удержание выразимо конфигурацией, и отметка `MarkForFinal` становится лишней.
 
-## Дополнение 2026-09-24: планирование лота и состав событий сессии
+## Дополнение 2026-09-24: планирование лота и состав событий аукциона
 
-Раздел дописан после первого дополнения того же дня и текст выше не меняет. Причина — первый сигнал пересмотра этого ADR: при описании `contracts/proto/auction/v1/` ([PER-149](https://linear.app/anticnvm/issue/per-149)) лоту до торгов и торговой сессии понадобились поля, которых не было ни в одном payload, поэтому схема описала лот только с `LotOpened`. Правлен словарь, а не схема, как ADR и требует. Решение владельца принято в [PER-301](https://linear.app/anticnvm/issue/per-301); разбор пяти развилок с отвергнутыми вариантами — раздел «Словарь планирования и сессии» [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md).
+Раздел дописан после первого дополнения того же дня и текст выше не меняет. Причина — первый сигнал пересмотра этого ADR: при описании `contracts/proto/auction/v1/` ([PER-149](https://linear.app/anticnvm/issue/per-149)) лоту до торгов и аукциону понадобились поля, которых не было ни в одном payload, поэтому схема описала лот только с `LotOpened`. Правлен словарь, а не схема, как ADR и требует. Решение владельца принято в [PER-301](https://linear.app/anticnvm/issue/per-301); разбор пяти развилок с отвергнутыми вариантами — раздел «Словарь планирования и сессии» [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md).
 
-**Лот до торгов.** `Draft` — состояние после `LotDrafted`, `Scheduled of Schedule` — после `LotScheduled`, которое повторяется при каждой правке до `LotOpened` и несёт снимок. `Schedule = { startingPrice; config : LotConfig }`. Дедлайна в `Schedule` нет: он принадлежит сессии и приходит лоту во входе `OpenLot`.
+**Лот до торгов.** `Draft` — состояние после `LotDrafted`, `Scheduled of Schedule` — после `LotScheduled`, которое повторяется при каждой правке до `LotOpened` и несёт снимок. `Schedule = { startingPrice; config : LotConfig }`. Дедлайна в `Schedule` нет: он принадлежит аукциону и приходит лоту во входе `OpenLot`.
 
 | Команда | Вход сверх `op_id` | Событие при успехе | Именованные отказы |
 |---|---|---|---|
@@ -200,21 +200,25 @@
 | `ScheduleLot` | `lot_id`, `startingPrice`, `config`, `actor` | `LotScheduled` | `SchedulingClosed`, `StepPolicyInvalid`, `CurrencyMismatch` |
 | `OpenLot` | добавлен `deadline?` | без изменений | без изменений |
 
-Payload: `LotDrafted` — нет; `LotScheduled` — `startingPrice`, `stepPolicy`, `antiSnipe {N, M, K}`, `proxyEnabled`, `currency`. **Форма существующих событий не меняется**: `LotOpened` и прежде нёс `deadline?`, изменился только вход команды. Команд лота становится одиннадцать, событий — четырнадцать с производным `DeadlineExtended`. `ScheduleLot` идёт через сессию: она подставляет `lotDefaults` в момент команды и после `PrebiddingStarted` команду не пропускает (`LotsFrozen`).
+Payload: `LotDrafted` — нет; `LotScheduled` — `startingPrice`, `stepPolicy`, `antiSnipe {N, M, K}`, `proxyEnabled`, `currency`. **Форма существующих событий не меняется**: `LotOpened` и прежде нёс `deadline?`, изменился только вход команды. Команд лота становится одиннадцать, событий — четырнадцать с производным `DeadlineExtended`. `ScheduleLot` идёт через аукцион: он подставляет `lotDefaults` в момент команды и после `PrebiddingStarted` команду не пропускает (`LotsFrozen`).
 
-**Сессия.** `Draft` — начальное состояние без события. Реестр лотов — события сессии `LotAdded(lot_id)` и `LotRemoved(lot_id)` от команд `AddLot` и `RemoveLot`, открытый в `Draft` и `Scheduled` и замороженный `PrebiddingStarted` (отказ `LotsFrozen`, для `RemoveLot` ещё `LotNotInSession`). `ScheduleSession` повторяется до старта, после — `SessionAlreadyStarted`. Сессия записывает ответы лотов только там, где они меняют состав или очередь финала; ответы на `OpenLot` и исходы лотов пребиддинга восстанавливаются переспросом, по [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md).
+**Аукцион.** `Draft` — начальное состояние без события. Реестр лотов — события аукциона `LotAdded(lot_id)` и `LotRemoved(lot_id)` от команд `AddLot` и `RemoveLot`, открытый в `Draft` и `Scheduled` и замороженный `PrebiddingStarted` (отказ `LotsFrozen`, для `RemoveLot` ещё `LotNotInAuction`). `ScheduleAuction` повторяется до старта, после — `AuctionAlreadyStarted`. Аукцион записывает ответы лотов только там, где они меняют состав или очередь финала; ответы на `OpenLot` и исходы лотов пребиддинга восстанавливаются переспросом, по [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md).
 
-| Событие сессии | Payload |
+| Событие аукциона | Payload |
 |---|---|
-| `SessionScheduled` | `SessionConfig` целиком |
+| `AuctionScheduled` | `AuctionConfig` целиком |
 | `LotAdded`, `LotRemoved`, `FinalistConfirmed`, `FinalistDropped`, `FinalLotActivated`, `FinalLotCompleted` | `lot_id` |
 | `FinalLineupFrozen` | `order` |
-| `PrebiddingStarted`, `PrebiddingDeadlineReached`, `PrebiddingEnded`, `FinalStarted`, `SessionFinished` | нет |
+| `PrebiddingStarted`, `PrebiddingDeadlineReached`, `PrebiddingEnded`, `FinalStarted`, `AuctionFinished` | нет |
 
-**`SessionConfig`.** `onlinePhase = None | Enabled { opensAt; closesAt?; closesLots }` — моменты вместо длительности, и `closesAt` становится единственным источником дедлайна лота. `finalBlocks : int` с допустимыми `0..1`: модели хватает количества блоков, записи `FinalBlock` нет. `LotDefaults = { stepPolicy; antiSnipe; proxyEnabled; currency }` — ими сессия заполняет незаданные поля `ScheduleLot`.
+**`AuctionConfig`.** `onlinePhase = None | Enabled { opensAt; closesAt?; closesLots }` — моменты вместо длительности, и `closesAt` становится единственным источником дедлайна лота. `finalBlocks : int` с допустимыми `0..1`: модели хватает количества блоков, записи `FinalBlock` нет. `LotDefaults = { stepPolicy; antiSnipe; proxyEnabled; currency }` — ими аукцион заполняет незаданные поля `ScheduleLot`.
 
-**`ConfigInvalid` (Т-19, Т-44) выводится из payload `SessionScheduled` без обращения наружу**: `closesLots` или `ByDeadline` без `closesAt`, `closesAt ≤ opensAt`, `finalBlocks` вне `0..1`, `lotDefaults.stepPolicy` против И-15. Т-44 сводится к `closesLots` без `closesAt`, потому что лот без дедлайна при `closesLots = true` стал непредставим.
+**`ConfigInvalid` (Т-19, Т-44) выводится из payload `AuctionScheduled` без обращения наружу**: `closesLots` или `ByDeadline` без `closesAt`, `closesAt ≤ opensAt`, `finalBlocks` вне `0..1`, `lotDefaults.stepPolicy` против И-15. Т-44 сводится к `closesLots` без `closesAt`, потому что лот без дедлайна при `closesLots = true` стал непредставим.
 
 **Инварианты.** Добавлен И-20: реестр лотов меняется только в `Draft` и `Scheduled`. И-15 уточнён: проверяется уже на `ScheduleLot`, поэтому на входе в `Trading` выполняется по построению.
 
-**Сигналы пересмотра дополнения.** Формату понадобились дедлайны по лотам (волны Ф-3) — это переопределение в `Schedule`, совместимое добавление поля. Формату понадобилось больше одного блока финала (Ф-2) — тогда `finalBlocks > 1` перестаёт быть ошибкой конфигурации, и дописывать нужно машину сессии, а не конфигурацию. Переспрос лотов после рестарта сессии оказался дорогим на полном каталоге — тогда пересматривается выбор не писать их ответы в журнал сессии.
+**Сигналы пересмотра дополнения.** Формату понадобились дедлайны по лотам (волны Ф-3) — это переопределение в `Schedule`, совместимое добавление поля. Формату понадобилось больше одного блока финала (Ф-2) — тогда `finalBlocks > 1` перестаёт быть ошибкой конфигурации, и дописывать нужно машину аукциона, а не конфигурацию. Переспрос лотов после рестарта аукциона оказался дорогим на полном каталоге — тогда пересматривается выбор не писать их ответы в журнал аукциона.
+
+## Переименование 2026-09-30
+
+Агрегат, который прежде назывался «торговая сессия», назван «аукцион»: он держит весь аукцион сходки — неделю, перерыв и финал, а «сессия» в языке аукционов означает один заход внутри торгов. Границы и поведение агрегата прежние. К имени словарь добавляет одно утверждение из того же решения владельца, принятого в [PER-313](https://linear.app/anticnvm/issue/per-313): мероприятие — сходка, и у неё один аукцион; связь `meetup_id` при этом не вводится. Текст выше, включая оба дополнения, исправлен по месту, а не дописан сверху: так решил владелец в [PER-423](https://linear.app/anticnvm/issue/per-423), чтобы в решениях не жили два имени одного понятия. Названия разделов [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), на которые ссылаются дополнения, оставлены прежними.

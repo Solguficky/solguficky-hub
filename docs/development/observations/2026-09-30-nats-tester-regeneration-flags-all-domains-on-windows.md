@@ -1,0 +1,9 @@
+# 2026-09-30 — Регенерация nats-tester на Windows помечает изменёнными классы всех доменов
+
+- **Контекст:** PER-423, [PR #284](https://github.com/Solguficky/solguficky-hub/pull/284); `just nats-tester-proto`, [generate_proto.py](../../../tools/nats-tester/generate_proto.py), корневой `.gitattributes`.
+- **Наблюдение:** схема менялась только в `auction/v1`, а после `just nats-tester-proto` `git status` показал изменёнными и сгенерированные классы `identity`, `meetups` и `notifications`. Содержательного диффа в них нет: генератор пишет файлы с `newline="\n"`, при `core.autocrlf=true` рабочее дерево держит их в CRLF (`git ls-files --eol`: `i/lf w/crlf attr/text=auto`), и перезапись в LF выглядит правкой. Для `*.go`, `*.ts` и `*.scala` в `.gitattributes` по той же причине стоит `eol=lf`, для `*.py` правила нет.
+- **Последствие:** чужие домены пришлось откатывать `git checkout` перед коммитом; без отката PR тащил бы шум в три каталога, которые срез не трогал.
+- **Адресат:** Автоматическая проверка — строка `eol=lf` в `.gitattributes` для `tools/nats-tester/nats_tester/generated/**` (или для `*.py`), рядом с правилами для Go, TypeScript и Scala.
+- **Повторение:** первое. Запись о [editable-установке nats-tester](2026-09-30-nats-tester-editable-install-shared-across-worktrees.md) описывает другой механизм.
+- **Следующий сигнал:** на Windows после `just nats-tester-proto` в `git status` появляются сгенерированные классы домена, схему которого правка не трогала.
+- **Статус:** наблюдение

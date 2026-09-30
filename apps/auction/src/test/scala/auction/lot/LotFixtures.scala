@@ -34,7 +34,7 @@ object LotFixtures {
 
   def tiered(pairs: (Long, Long)*): StepPolicy = StepPolicy.tiered(tiers(pairs*)).toOption.get
 
-  /** Умолчание сессии из RFC-011: окно 2 минуты, продление на 2 минуты, не больше трёх раз. */
+  /** Умолчание аукциона из RFC-011: окно 2 минуты, продление на 2 минуты, не больше трёх раз. */
   val antiSnipe: AntiSnipe = AntiSnipe(Duration.ofMinutes(2), Duration.ofMinutes(2), 3)
 
   def config(policy: StepPolicy = fixedTen, proxyEnabled: Boolean = true): LotConfig =
