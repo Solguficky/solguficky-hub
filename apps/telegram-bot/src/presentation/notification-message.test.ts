@@ -10,10 +10,12 @@ import type {
 import {
   classifySendFailure,
   createNotificationSender,
+  disableAnnouncementCallback,
   disableMeetupCategoryCallback,
   disablePublishedCallback,
   disableReminderCallback,
   renderNotification,
+  telegramTextLimit,
 } from "./notification-message.js";
 
 const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf";
@@ -265,8 +267,70 @@ describe("unpublished notification", () => {
   });
 });
 
+describe("organizer message", () => {
+  const organizer = (body: string): RenderableContent => ({
+    kind: "organizer-message",
+    meetup,
+    body,
+  });
+
+  it("puts the author's text under the meetup, verbatim", () => {
+    expect(renderNotification(organizer("  Берите\nнастолки  ")).text).toBe(
+      "Сообщение организатора: Настолки у Лёши\n\n  Берите\nнастолки  ",
+    );
+  });
+
+  it("opens the meetup and disables organizer messages for this meetup only", () => {
+    expect(buttons(organizer("Берите настолки"))).toEqual([
+      expect.objectContaining({ text: "Открыть сходку" }),
+      expect.objectContaining({
+        text: "Не присылать сообщения организатора этой сходки",
+        callback_data: "v1:notify:moff:AZjypHwefTqbIU-OEqs0zw:organizer",
+      }),
+    ]);
+  });
+
+  // Тело до предела Telegram — законный ввод; заголовок над ним получил бы 400.
+  // Тогда уходит одно тело, а сходку называет кнопка.
+  const lead = "Сообщение организатора: Настолки у Лёши\n\n";
+  const fits = "а".repeat(telegramTextLimit - lead.length);
+
+  it("keeps the headline while it fits the Telegram limit", () => {
+    expect(renderNotification(organizer(fits)).text).toBe(`${lead}${fits}`);
+  });
+
+  it("sends the bare body with both buttons once the headline does not fit", () => {
+    const over = `${fits}б`;
+    expect(renderNotification(organizer(over)).text).toBe(over);
+    expect(buttons(organizer(over))).toHaveLength(2);
+  });
+});
+
+describe("community announcement", () => {
+  const announcement = (body: string): RenderableContent => ({
+    kind: "community-announcement",
+    body,
+  });
+
+  it("names the announcement and offers to stop announcements, without a meetup", () => {
+    const message = renderNotification(announcement("Сбор в пятницу"));
+    expect(message.text).toBe("Объявление сообщества\n\nСбор в пятницу");
+    expect(buttons(announcement("Сбор в пятницу"))).toEqual([
+      expect.objectContaining({
+        text: "Не присылать объявления",
+        callback_data: disableAnnouncementCallback,
+      }),
+    ]);
+  });
+
+  it("sends a body at the Telegram limit without the headline", () => {
+    const limit = "а".repeat(telegramTextLimit);
+    expect(renderNotification(announcement(limit)).text).toBe(limit);
+  });
+});
+
 it("keeps every disable button within the 64-byte budget", () => {
-  for (const category of ["changes", "material"] as const) {
+  for (const category of ["changes", "material", "organizer"] as const) {
     expect(
       Buffer.byteLength(disableMeetupCategoryCallback(meetupId, category)),
     ).toBeLessThanOrEqual(64);

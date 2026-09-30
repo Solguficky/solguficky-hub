@@ -20,7 +20,10 @@ function message(
       notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
       recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
       createdAt: "2026-09-26T10:00:00Z",
-      type: { case: "organizerMessage", value: {} },
+      type: {
+        case: "communityAnnouncement",
+        value: { body: "Сбор в пятницу" },
+      },
     }),
   ),
   deliveryCount = 1,
@@ -72,6 +75,27 @@ describe("handleDeliveryMessage", () => {
     });
     expect(msg.term).toHaveBeenCalledWith("bot_blocked");
     expect(logger.entries).toContain("notification dropped");
+  });
+
+  // Принятый, но не нарисованный тип — дефект канала: автор видел «принято», а
+  // получатель ничего не получил. Доставку он не роняет, но оператор его видит.
+  it("reports an unrendered type as an error and still settles it", async () => {
+    const msg = message();
+    const levels: string[] = [];
+    const leveled = (level: string) => (text: string) => {
+      levels.push(`${level}:${text}`);
+    };
+    await handleDeliveryMessage(msg, {
+      deliver: deciding({ kind: "drop", reason: "unrendered_type" }),
+      logger: {
+        debug: leveled("debug"),
+        info: leveled("info"),
+        warn: leveled("warn"),
+        error: leveled("error"),
+      },
+    });
+    expect(msg.term).toHaveBeenCalledWith("unrendered_type");
+    expect(levels).toEqual(["error:notification dropped"]);
   });
 
   it("passes the bus delivery count as the attempt number", async () => {
