@@ -12,7 +12,8 @@ final class AliasSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
 
   private val blanks = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\u00A0', '\u2007', '\u202F', '\u3000')).map(_.mkString)
 
-  private val texts = Gen.listOf(Gen.oneOf(Gen.alphaNumChar, Gen.oneOf('в', 'Я', 'ё', ' ', '\u00A0', '-'))).map(_.mkString)
+  private val texts =
+    Gen.listOf(Gen.oneOf(Gen.alphaNumChar, Gen.oneOf('в', 'Я', 'ё', ' ', '\u00A0', '-'))).map(_.mkString)
 
   "Alias" should {
 
