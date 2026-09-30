@@ -31,6 +31,11 @@ public static class AppHostNames
         public const string Notifications = "notifications";
         public const string TelegramBot = "telegram-bot";
         public const string Auction = "auction";
+
+        // Бот аукциона (ADR-044). Узла ещё нет, но вызывающим Auction он уже
+        // объявлен (integration.md, «Auction gRPC»): имя нужно токену, а
+        // таблица вызываемого следует колонке Caller, а не составу запуска.
+        public const string AuctionBot = "auction-bot";
     }
 
     /// <summary>

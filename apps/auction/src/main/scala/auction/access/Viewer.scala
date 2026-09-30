@@ -24,4 +24,11 @@ final case class Viewer(globalRoles: Set[GlobalRole]) {
    * (ADR-043). Круги вложены вниз, а не вверх: `maintainer` в круг `admin` не входит.
    */
   def isMeetupAdministrator: Boolean = globalRoles.contains(GlobalRole.Admin)
+
+  /**
+   * Участник торгов: поверхность аукциона требует роль `public` (ADR-044), и Auction повторяет ту же проверку как
+   * владелец ресурса. Набор ролей от Identity плоский и вложенность кругов не разворачивает (ADR-043), поэтому проверка
+   * буквальная: администратор без `public` участником не считается.
+   */
+  def isParticipant: Boolean = globalRoles.contains(GlobalRole.Public)
 }

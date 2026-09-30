@@ -3,6 +3,8 @@ package auction
 import auction.boundary.BoundaryLogging
 import auction.boundary.HealthRoutes
 import auction.entity.UuidV7
+import auction.grpc.CallerTable
+import auction.grpc.MethodAccess
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import com.typesafe.config.ConfigFactory
@@ -17,13 +19,14 @@ import scala.concurrent.duration.FiniteDuration
 import scala.jdk.DurationConverters.*
 import scala.util.Failure
 import scala.util.Success
+import scala.util.Try
 import scala.util.control.NonFatal
 
 /**
  * Точка входа Auction Service.
  *
  * Доменной логики торгов здесь нет и не будет: composition root собирает конфигурацию, схему журнала, actor system с
- * кластером, entity лота в шардинге и HTTP-границу.
+ * кластером, entity лота в шардинге, HTTP-границу с health и gRPC-границу.
  */
 object Main {
 
@@ -32,10 +35,20 @@ object Main {
   def main(args: Array[String]): Unit = {
     val config = ConfigFactory.load()
     val httpConfig = AuctionConfig.fromConfig(config)
+    val grpcConfig = AuctionConfig.grpcFromConfig(config)
     val readinessTimeout: FiniteDuration = config.getDuration("auction.readiness-timeout").toScala
+    val askTimeout: FiniteDuration = config.getDuration("auction.grpc.ask-timeout").toScala
 
     val database = DatabaseSettings.fromConfig(config) match {
       case Right(settings) => settings
+      case Left(reason) => fail(reason, None)
+    }
+
+    // Таблица вызывающих — до ActorSystem, как база: неполная таблица — дефект
+    // развёртывания, и он виден отказом старта, а не зелёным health при закрытых
+    // методах (ADR-056).
+    val callers = CallerTable.fromConfig(config, MethodAccess.declared) match {
+      case Right(table) => table
       case Left(reason) => fail(reason, None)
     }
 
@@ -52,33 +65,43 @@ object Main {
     given system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "auction", config)
     import system.executionContext
 
-    // Транспорта к лоту ещё нет (gRPC — PER-323), но entity регистрируется уже
-    // здесь: узел, который стартует сервис, и узел L1-тестов собираются одинаково.
+    // Узел, который стартует сервис, и узел L1-тестов собираются одинаково.
     val clock = Clock.systemUTC()
-    AuctionNode.registerLots(AuctionNode.join(system), clock, UuidV7.generator(clock))
+    val sharding = AuctionNode.join(system)
+    AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
     val readiness = AuctionNode.readiness(system, readinessTimeout)
 
     Http()
       .newServerAt(httpConfig.host, httpConfig.port)
       .bind(BoundaryLogging.boundary(HealthRoutes.route(readiness)))
-      .onComplete {
-        // Запись о жизненном цикле процесса операцией не является: длительности
-        // и результата у неё нет, поэтому каркас к ней не применяется.
-        case Success(binding) =>
-          val address = binding.localAddress
-          logger.info(
-            "auction http bound",
-            StructuredArguments.keyValue("bound_address", s"${address.getHostString}:${address.getPort}")
-          )
-        // Завершение обязано быть ненулевым: `system.terminate()` сам по себе
-        // отдаёт код 0, и оркестратор видит штатную остановку вместо отказа,
-        // то есть рестарт-политика не срабатывает, а `just auction-run`
-        // печатает success на сервисе, который никого не слушает.
-        case Failure(cause) =>
-          logger.error("auction http bind failed", cause)
-          system.terminate()
-          System.exit(1)
-      }
+      .onComplete(bound("http", system))
+
+    Http()
+      .newServerAt(grpcConfig.host, grpcConfig.port)
+      .bind(AuctionNode.grpc(system, sharding, callers, askTimeout))
+      .onComplete(bound("grpc", system))
+  }
+
+  /**
+   * Итог привязки одной из границ. Запись о жизненном цикле процесса операцией не является: длительности и результата у
+   * неё нет, поэтому каркас к ней не применяется.
+   *
+   * Отказ привязки любой из границ роняет процесс: health на HTTP остался бы зелёным у сервиса, который не слушает
+   * gRPC. Завершение обязано быть ненулевым: `system.terminate()` сам по себе отдаёт код 0, и оркестратор видит штатную
+   * остановку вместо отказа, то есть рестарт-политика не срабатывает, а `just auction-run` печатает success на сервисе,
+   * который никого не слушает.
+   */
+  private def bound(boundary: String, system: ActorSystem[?]): Try[Http.ServerBinding] => Unit = {
+    case Success(binding) =>
+      val address = binding.localAddress
+      logger.info(
+        s"auction $boundary bound",
+        StructuredArguments.keyValue("bound_address", s"${address.getHostString}:${address.getPort}")
+      )
+    case Failure(cause) =>
+      logger.error(s"auction $boundary bind failed", cause)
+      system.terminate()
+      System.exit(1)
   }
 
   // Отказ до ActorSystem: завершать нечего, кроме самого процесса, и код

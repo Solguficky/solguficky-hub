@@ -129,6 +129,21 @@ lazy val auction = (project in file("."))
     // переезжает из identity.v1.roles в identity.v1. Без флага Scala-пакет
     // выводится из файла так же, как до стабов и как записано в protobuf.md.
     pekkoGrpcCodeGeneratorSettings -= "flat_package",
+    // Клиент AuctionService нужен только L1-тестам gRPC-границы: они ходят в
+    // сервер так же, как бот. В Test генерируется один клиентский стаб поверх
+    // тех же схем, а сообщения берутся из Compile — вторая копия классов
+    // ScalaPB на test classpath конфликтовала бы с первой. Рантайм сервиса
+    // клиента не получает: выбор «только сервер» выше остаётся в силе.
+    Test / PB.protoSources := (Compile / PB.protoSources).value,
+    Test / PB.generate / includeFilter := new SimpleFileFilter(schema =>
+      schema.isFile && schema.getPath.replace('\\', '/').endsWith("/proto/auction/v1/auction_service.proto")
+    ),
+    Test / pekkoGrpcGeneratedSources := Seq(PekkoGrpc.Client),
+    Test / PB.targets := (Test / PB.targets).value.filterNot(_.generator.name == "scala"),
+    // Генератор клиента кладёт рядом и описание сервиса `AuctionService` —
+    // тот же класс, что уже есть в Compile. Тестовая копия затенила бы его на
+    // classpath, поэтому в Test остаётся только сам клиент.
+    Test / managedSources := (Test / managedSources).value.filterNot(_.getName == "AuctionService.scala"),
     // Prefix в имени процесса не нужен: `just auction-run` запускает ровно
     // один main, и sbt не должен спрашивать, какой именно.
     Compile / mainClass := Some("auction.Main"),

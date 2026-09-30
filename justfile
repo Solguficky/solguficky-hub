@@ -234,7 +234,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "66"
+APPHOST_TEST_THRESHOLD := "67"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -639,7 +639,8 @@ auction-format:
 # Останавливать через сам sbt: forked JVM переживает убитого родителя и
 # оставляет блокировку сервера sbt.
 #
-# Локальный запуск вне Aspire; адрес — AUCTION_HTTP_HOST и AUCTION_HTTP_PORT
+# Локальный запуск вне Aspire; адреса — AUCTION_HTTP_* и AUCTION_GRPC_*, токены
+# вызывающих — AUCTION_CALLER_TOKEN_TELEGRAM_BOT и AUCTION_CALLER_TOKEN_AUCTION_BOT
 auction-run:
     cd apps/auction && sbt -batch run
 
