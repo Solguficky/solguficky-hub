@@ -161,6 +161,12 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       }
     }
 
+    "give the row of a draft the drafting session and every later row the session of the lot" in {
+      Lot.sessionOf(Lot.initial, LotEvent.LotDrafted(session(7))) shouldBe Some(session(7))
+      Lot.sessionOf(scheduled(), LotEvent.LotOpened(money(100), config(), None)) shouldBe Some(session(1))
+      Lot.sessionOf(Lot.initial, LotEvent.LotOpened(money(100), config(), None)) shouldBe None
+    }
+
     "bring no lot to life from a journal that starts with an opening" in {
       val opened = Envelope(1, op(1), LotEvent.LotOpened(money(100), config(), Some(deadline)))
 

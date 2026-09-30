@@ -173,15 +173,25 @@ object LotJournal {
         }
     )
 
-  def restoreLot(stored: StoredLot): Lot =
+  /**
+   * Snapshot восстанавливается с инвариантом `Lot.session`: сессия пуста ровно в `Initial`. Replay такого лота не дал
+   * бы, поэтому snapshot без сессии в непустом состоянии — испорченный, и entity падает на recovery, а не на первой
+   * команде после него.
+   */
+  def restoreLot(stored: StoredLot): Lot = {
+    val state = restoreState(stored.state)
+    val session = stored.session.map(SessionId(_))
+    if ((state == LotState.Initial) != session.isEmpty)
+      corrupted(s"lot snapshot of kind ${stored.state.kind} with session ${stored.session}")
     Lot(
-      state = restoreState(stored.state),
-      session = stored.session.map(SessionId(_)),
+      state = state,
+      session = session,
       seen = stored.seen.map { seen =>
         val envelope = Envelope(seen.sequence, OpId(seen.opId), restoreEvent(seen.event, seen.sessionId))
         envelope.opId -> envelope
       }.toMap
     )
+  }
 
   val snapshotAdapter: SnapshotAdapter[LotEntity.State] = new SnapshotAdapter[LotEntity.State] {
     override def toJournal(state: LotEntity.State): Any = storeLot(state.lot, state.sequence)

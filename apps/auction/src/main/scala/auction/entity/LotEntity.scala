@@ -122,22 +122,13 @@ object LotEntity {
       case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
       case Right(Decision.Repeated(original)) => Effect.reply(replyTo)(Right(original))
       case Right(Decision.Accepted(event)) =>
-        val transaction = Transaction(newId(), opId, sessionOf(lot, event), clock.instant(), initiator)
+        val session = Lot
+          .sessionOf(lot, event)
+          .getOrElse(throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without a session"))
+        val transaction = Transaction(newId(), opId, session, clock.instant(), initiator)
         Effect
           .persist(List(LotJournal.store(newId(), transaction, event)))
           .thenReply(replyTo)(written => Right(firstOf(written.lot, opId)))
-    }
-
-  /**
-   * Сессия строки: у `LotDrafted` — та, что родила лот, у остальных — сессия лота. Лот вне `Initial` без сессии
-   * непредставим по `apply`, а из `Initial` `decide` принимает только `LotDrafted`.
-   */
-  private def sessionOf(lot: Lot, event: LotEvent): SessionId =
-    (event, lot.session) match {
-      case (LotEvent.LotDrafted(session), _) => session
-      case (_, Some(session)) => session
-      case (_, None) =>
-        throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without a session")
     }
 
   /** Первый конверт записанной транзакции: `apply` кладёт его в окно `seen`, поэтому после записи он там есть. */

@@ -166,6 +166,16 @@ object Lot {
   }
 
   /**
+   * Сессия строки, которую пишет принятое событие: у `LotDrafted` — та, что родила лот, у остальных — сессия лота.
+   * Пусто только у события лота в `Initial`, а из `Initial` [[decide]] принимает одно `LotDrafted`.
+   */
+  def sessionOf(lot: Lot, event: LotEvent): Option[SessionId] =
+    event match {
+      case LotEvent.LotDrafted(session) => Some(session)
+      case _ => lot.session
+    }
+
+  /**
    * Свёртка журнала в порядке `sequence` (П-07): при равных суммах лидирует ставка, записанная первой, и время события
    * в сравнении не участвует. Порядок, в котором строки пришли к вызывающему, на итог не влияет.
    */

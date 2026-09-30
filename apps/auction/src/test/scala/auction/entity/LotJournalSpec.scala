@@ -144,6 +144,14 @@ final class LotJournalSpec
       }
     }
 
+    "refuse to restore a snapshot whose session breaks the invariant of the lot instead of failing on a later command" in {
+      val stored = LotJournal.storeLot(tradingLot, sequence = 4)
+
+      a[JournalCorrupted] should be thrownBy LotJournal.restoreLot(stored.copy(session = None))
+      a[JournalCorrupted] should be thrownBy
+        LotJournal.restoreLot(LotJournal.storeLot(Lot.initial, sequence = 0).copy(session = stored.session))
+    }
+
     "refuse to restore a draft without the session that drafted the lot" in {
       val stored = storedEvent(lotDrafted).copy(sessionId = None)
 
