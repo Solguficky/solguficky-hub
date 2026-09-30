@@ -64,7 +64,7 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       open()
       val placed = bidOf(who = 1, amount = 110, opN = 2)
 
-      placed.events.map(event => (event.opId, event.occurredAt, event.initiator, event.event.kind)) shouldBe
+      placed.events.map(event => (event.opId, event.occurredAt, event.actor, event.event.kind)) shouldBe
         List((op(2).value, decidedAt, LotJournal.storeInitiator(bidder), "BidPlaced"))
       placed.events.map(_.eventId) should not contain placed.events.head.transactionId
     }

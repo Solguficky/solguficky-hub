@@ -57,7 +57,8 @@ final case class StoredBidPlaced(
 
 final case class StoredEvent(kind: String, lotOpened: Option[StoredLotOpened], bidPlaced: Option[StoredBidPlaced])
 
-final case class StoredInitiator(kind: String, id: Option[UUID])
+/** Поле `actor` конверта ADR-047; в коде его значение — [[Initiator]], чтобы не спорить с актором Pekko. */
+final case class StoredActor(kind: String, id: Option[UUID])
 
 /**
  * Строка журнала лота: конверт ADR-047 и событие. `aggregate_type` и `aggregate_id` — это `persistence_id` строки,
@@ -69,7 +70,7 @@ final case class StoredLotEvent(
     transactionId: UUID,
     opId: UUID,
     occurredAt: Instant,
-    initiator: StoredInitiator,
+    actor: StoredActor,
     event: StoredEvent
 ) extends JournalSerializable
 
@@ -131,7 +132,7 @@ object LotJournal {
       transactionId = transaction.id,
       opId = transaction.opId.value,
       occurredAt = transaction.occurredAt,
-      initiator = storeInitiator(transaction.initiator),
+      actor = storeInitiator(transaction.initiator),
       event = storeEvent(event)
     )
 
@@ -167,14 +168,14 @@ object LotJournal {
       }
   }
 
-  def storeInitiator(initiator: Initiator): StoredInitiator =
+  def storeInitiator(initiator: Initiator): StoredActor =
     initiator match {
-      case Initiator.Participant(id) => StoredInitiator("Participant", Some(id.value))
-      case Initiator.Operator(id) => StoredInitiator("Operator", Some(id.value))
-      case Initiator.Scheduler => StoredInitiator("Scheduler", None)
+      case Initiator.Participant(id) => StoredActor("Participant", Some(id.value))
+      case Initiator.Operator(id) => StoredActor("Operator", Some(id.value))
+      case Initiator.Scheduler => StoredActor("Scheduler", None)
     }
 
-  def restoreInitiator(stored: StoredInitiator): Initiator =
+  def restoreInitiator(stored: StoredActor): Initiator =
     (stored.kind, stored.id) match {
       case ("Participant", Some(id)) => Initiator.Participant(ParticipantId(id))
       case ("Operator", Some(id)) => Initiator.Operator(ParticipantId(id))
