@@ -1,5 +1,6 @@
 package auction.naming
 
+import auction.lot.AuctionId
 import auction.lot.ParticipantId
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers

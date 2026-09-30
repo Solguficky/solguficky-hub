@@ -1,5 +1,6 @@
 package auction.naming
 
+import auction.lot.AuctionId
 import auction.lot.ParticipantId
 
 import scala.concurrent.ExecutionContext

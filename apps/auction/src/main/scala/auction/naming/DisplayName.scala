@@ -4,10 +4,6 @@ import auction.lot.ParticipantId
 
 import java.text.Normalizer
 import java.util.Locale
-import java.util.UUID
-
-/** Аукцион — область имени участника: выбор в одном аукционе другой не затрагивает. */
-final case class AuctionId(value: UUID)
 
 /** Ник Telegram без «@»: латиница, цифры и подчёркивание, не длиннее 32 символов. */
 final case class TelegramUsername private (value: String)

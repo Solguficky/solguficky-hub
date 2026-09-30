@@ -1,7 +1,7 @@
 package auction.persistence
 
+import auction.lot.AuctionId
 import auction.lot.ParticipantId
-import auction.naming.AuctionId
 import auction.naming.DisplayKind
 import auction.naming.DisplayName
 import auction.naming.DisplayNameCommands
