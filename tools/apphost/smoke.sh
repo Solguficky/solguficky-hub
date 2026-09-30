@@ -6,7 +6,9 @@
 #
 #   profile   Topology profile, `hub` by default. Extra args go to the AppHost.
 #   --attach  Check the AppHost already running from this worktree instead of
-#             starting one. Used after restarting a resource by hand.
+#             starting one. Used after restarting a resource by hand. Domain
+#             calls then need SMOKE_BOT_SERVICE_TOKEN: the value of the
+#             telegram-bot-service-token parameter, shown by the dashboard.
 #   --keep    Leave the AppHost running afterwards for manual checks.
 #
 # Exit code 0 means every check passed. Needs aspire, grpcurl and python3.
@@ -52,6 +54,15 @@ SETTLE_TIMEOUT=${SMOKE_SETTLE_TIMEOUT:-600}
 RUN=$(python3 -c 'import secrets; print(secrets.token_hex(4))')
 REQUEST_ID=smoke-$RUN
 FAILS=0
+
+# Domain calls go with the bot's own token (ADR-056). Aspire generates it
+# unless the configuration names one, so a fresh start names it here and the
+# script knows the value; an AppHost it did not start keeps its own.
+if [ "$ATTACH" = no ]; then
+  BOT_SERVICE_TOKEN=smoke-bot-$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+else
+  BOT_SERVICE_TOKEN=${SMOKE_BOT_SERVICE_TOKEN:-}
+fi
 
 ok() { echo "  ok    $1"; }
 fail() { echo "  FAIL  $1"; FAILS=$((FAILS + 1)); }
@@ -146,7 +157,11 @@ echo "smoke run=$RUN profile=$PROFILE"
 
 if [ "$ATTACH" = no ]; then
   echo "1. Start"
-  if aspire start --isolated --non-interactive --apphost "$APPHOST" -- --profile "$PROFILE" "$@" > /dev/null 2>&1; then
+  # The configuration key has a dash, which `export` rejects, hence env(1).
+  # The token is not hidden from the host: grpcurl below carries it in its
+  # arguments. It is minted for this run and dies with the AppHost it starts.
+  if env "Parameters__telegram-bot-service-token=$BOT_SERVICE_TOKEN" \
+      aspire start --isolated --non-interactive --apphost "$APPHOST" -- --profile "$PROFILE" "$@" > /dev/null 2>&1; then
     ok "aspire start"
   else
     fail "aspire start did not bring the AppHost up; see ~/.aspire/logs"
@@ -191,9 +206,15 @@ IDENTITY=$(echo "$snapshot" | endpoint identity)
 MEETUPS=$(echo "$snapshot" | endpoint meetups)
 NOTIFICATIONS=$(echo "$snapshot" | endpoint notifications)
 
+# A profile without gRPC services makes no domain call and needs no token.
+if [ -z "$BOT_SERVICE_TOKEN" ] && [ -n "$IDENTITY$MEETUPS$NOTIFICATIONS" ]; then
+  fail "no bot service token: with --attach set SMOKE_BOT_SERVICE_TOKEN; calls below go without it"
+fi
+
 call() {
   addr=$1 method=$2 body=$3
   grpcurl -plaintext -max-time 10 -H "x-request-id: $REQUEST_ID" -H "x-use-case: smoke" \
+    -H "authorization: Bearer $BOT_SERVICE_TOKEN" \
     -d "$body" "$addr" "$method" 2>&1 || true
 }
 has() { python3 -c 'import sys; sys.exit(0 if sys.argv[1] in sys.stdin.read() else 1)' "$1"; }

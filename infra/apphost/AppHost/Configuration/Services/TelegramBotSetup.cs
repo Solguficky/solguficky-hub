@@ -54,6 +54,9 @@ internal static class TelegramBotSetup
 
         return bot
             .WithEnvironment("TELEGRAM_BOT_TOKEN", token)
+            // Не путать с токеном Bot API выше: этим бот доказывает себя
+            // Identity, Meetups и Notifications (ADR-056).
+            .WithServiceToken(context)
             .WithEnvironment("TELEGRAM_BOT_ENVIRONMENT", environment.Value)
             // Бот показывает назначенный момент публикации в поясе сообщества,
             // а Meetups отдаёт его мгновением UTC. Значение общее с Meetups
