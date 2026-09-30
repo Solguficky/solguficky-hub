@@ -141,7 +141,7 @@ final case class Envelope(sequence: Long, opId: OpId, event: LotEvent)
 /**
  * Именованные отказы `OpenLot`. `LotNotScheduled` — ответ лоту, который уже не ждёт открытия. `CurrencyMismatch` —
  * стартовая цена в чужой валюте; вместе со входом команды он переедет к `ScheduleLot` (PER-410), где RFC-011 его и
- * держит. `AnotherLotActive` проверяет сессия, а не лот (PER-325).
+ * держит. `AnotherLotActive` проверяет аукцион, а не лот (PER-325).
  */
 enum OpenLotRejected {
   case LotNotScheduled

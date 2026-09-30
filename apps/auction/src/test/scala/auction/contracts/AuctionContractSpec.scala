@@ -1,6 +1,6 @@
 package auction.contracts
 
-import auction.v1.auction_events.{BidPlaced, LotEvent, LotState, ManualBid, ProxyBid, SessionState}
+import auction.v1.auction_events.{BidPlaced, LotEvent, LotState, ManualBid, ProxyBid, AuctionState}
 import auction.v1.auction_service.{AuctionService, LotSnapshot}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.scalatest.matchers.should.Matchers
@@ -41,9 +41,9 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
     // Между лотами финала активного лота нет; `""` в этом поле читалось бы как
     // идентификатор лота, которого нет.
     "keeps the active lot absent between the lots of the final after a round trip" in {
-      val between = SessionState(id = "s").withInFinal(SessionState.Final(order = Seq("l")))
+      val between = AuctionState(id = "s").withInFinal(AuctionState.Final(order = Seq("l")))
 
-      SessionState.parseFrom(between.toByteArray).status.inFinal.flatMap(_.activeLotId) shouldBe None
+      AuctionState.parseFrom(between.toByteArray).status.inFinal.flatMap(_.activeLotId) shouldBe None
     }
 
     // Снимок факта на шине и снимок чтения — два определения с обещанием «номера

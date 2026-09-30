@@ -4,14 +4,14 @@ package auction.v1;
 
 import "auction/v1/auction.proto";
 
-// Outgoing facts of the lot journal and of the session journal. They live apart
+// Outgoing facts of the lot journal and of the auction journal. They live apart
 // from auction_service.proto for the same reason the value types do: a consumer of
 // the events must not drag AuctionService and its requests into its codegen.
 //
 // This is not the journal row. The row also carries the aggregate type, the
 // operation id, the transaction id, the actor and the schema version; none of them
 // leaves the service. The aggregate type in particular is told by the subject and
-// by the message: a lot fact is a LotEvent, a session fact is a SessionEvent.
+// by the message: a lot fact is a LotEvent, an auction fact is an AuctionEvent.
 // Subjects, delivery semantics and what is deliberately absent are documented in
 // docs/architecture/integration.md, section "Auction NATS".
 //
@@ -19,9 +19,9 @@ import "auction/v1/auction.proto";
 // the selection of a lot for the final stays a working choice of the organizer
 // until the lineup is frozen, so ProxyLimitSet, ProxyLimitWithdrawn and
 // LotMarkedForFinal have no occasion here, and the lot state carries neither
-// limits nor the final mark. The session records that choice too - a finalist
+// limits nor the final mark. The auction records that choice too - a finalist
 // confirmed or dropped - so FinalistConfirmed and FinalistDropped have no
-// occasion here either, and the session state names no finalist before the
+// occasion here either, and the auction state names no finalist before the
 // lineup is frozen.
 
 // A recorded public fact about one lot: why it changed and what is true about it now.
@@ -82,9 +82,9 @@ message LotState {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens: the trading session the lot belongs
+  // Canonical lowercase UUIDv7 with hyphens: the auction the lot belongs
   // to. Always set: the link belongs to the fact, not to a guess of the reader.
-  string session_id = 2;
+  string auction_id = 2;
 
   // The trading conditions. Set by lot_scheduled and replaced by every repeated
   // lot_scheduled until the lot is opened; from lot_opened on it never changes.
@@ -103,9 +103,9 @@ message LotState {
   }
 }
 
-// The lot came into existence: its session recorded it in the registry and the lot
+// The lot came into existence: its auction recorded it in the registry and the lot
 // confirmed it. Nothing else is known about it yet, so the state is a draft with
-// no config. The session is in the state, as on every lot fact.
+// no config. The auction is in the state, as on every lot fact.
 message LotDrafted {}
 
 // The trading conditions were set or replaced. They are in the state: the config
@@ -173,21 +173,21 @@ message LotHeldForFinal {}
 // live, and neither a deadline nor an ask.
 message LotResumed {}
 
-// A recorded public fact about one trading session: why it changed and what is
+// A recorded public fact about one auction: why it changed and what is
 // true about it now. The envelope is the one of LotEvent, field for field, so that
 // a consumer of both reads them the same way; which of the two arrived is told by
 // the subject, not by the body.
-message SessionEvent {
+message AuctionEvent {
   // Canonical lowercase UUIDv7 with hyphens. Identifies the row of the journal and
   // is the same value again when that row is published more than once.
   string event_id = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens. The session this fact belongs to. It
+  // Canonical lowercase UUIDv7 with hyphens. The auction this fact belongs to. It
   // repeats state.id so that the envelope alone identifies the subject of the fact.
-  string session_id = 2;
+  string auction_id = 2;
 
-  // Position of the event in the journal of the session, starting at 1, so 0 is
-  // not a valid value. Monotonic within one session but not contiguous on the bus:
+  // Position of the event in the journal of the auction, starting at 1, so 0 is
+  // not a valid value. Monotonic within one auction but not contiguous on the bus:
   // private facts take positions too and are not published, so a gap is not a lost
   // event. Delivery order is not promised: a redelivered event may arrive after a
   // newer one.
@@ -198,14 +198,14 @@ message SessionEvent {
   // order events - version does.
   string occurred_at = 4;
 
-  // The public state of the session after the event was applied. Always set: the
+  // The public state of the auction after the event was applied. Always set: the
   // body of every event is a whole snapshot, never a delta.
-  SessionState state = 5;
+  AuctionState state = 5;
 
   // Why the state changed - the occasion. Exactly one is set, and an empty oneof is
   // not a value.
   oneof occasion {
-    SessionScheduled session_scheduled = 6;
+    AuctionScheduled auction_scheduled = 6;
     LotAdded lot_added = 7;
     LotRemoved lot_removed = 8;
     PrebiddingStarted prebidding_started = 9;
@@ -215,35 +215,35 @@ message SessionEvent {
     FinalStarted final_started = 13;
     FinalLotActivated final_lot_activated = 14;
     FinalLotCompleted final_lot_completed = 15;
-    SessionFinished session_finished = 16;
+    AuctionFinished auction_finished = 16;
   }
 }
 
-// The public state of a session after an event. The service reads no session yet,
+// The public state of an auction after an event. The service reads no auction yet,
 // so no second definition exists to line up with; the statuses start at 10 so that
 // a read snapshot, when it comes, has room below them for its own values, the way
 // LotSnapshot spends 4 to 6.
-message SessionState {
+message AuctionState {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
 
-  // Set by session_scheduled and replaced by every repeated session_scheduled
+  // Set by auction_scheduled and replaced by every repeated auction_scheduled
   // until prebidding starts; from prebidding_started on it never changes. Unset on
   // a draft.
-  SessionConfig config = 2;
+  AuctionConfig config = 2;
 
-  // Canonical lowercase UUIDv7 with hyphens: the registry of the session, the
+  // Canonical lowercase UUIDv7 with hyphens: the registry of the auction, the
   // source of truth about which lot belongs to it. Open until prebidding starts and
   // unchanged after. A lot withdrawn later stays in it: withdrawal is a fact of the
   // lot, not of the registry. The order carries no meaning.
   repeated string lot_ids = 3;
 
-  // Where the session is. Exactly one is set.
+  // Where the auction is. Exactly one is set.
   //
   // Nothing before the lineup is frozen names a finalist: the selection stays a
   // working choice of the organizer, so the statuses of the prebidding, the settling
-  // and the break carry no lots. Which lots the session still waits for is not
-  // carried either: the session restores it by asking the lots, not from a journal.
+  // and the break carry no lots. Which lots the auction still waits for is not
+  // carried either: the auction restores it by asking the lots, not from a journal.
   //
   // Two fields are not named after their status: break and final are keywords in
   // the languages of the consumers.
@@ -267,7 +267,7 @@ message SessionState {
   // The online phase is running; the registry and the configuration are frozen.
   message Prebidding {}
 
-  // The common deadline passed; the session waits for every lot to close or to be
+  // The common deadline passed; the auction waits for every lot to close or to be
   // held.
   message Settling {}
 
@@ -298,7 +298,7 @@ message SessionState {
 
 // The configuration was set or replaced; it is state.config. The fact repeats on
 // every change until prebidding starts, and each body is a whole snapshot.
-message SessionScheduled {}
+message AuctionScheduled {}
 
 // A lot was added to the registry; it is in state.lot_ids. The id names which
 // element is the new one, so a consumer without a replica need not guess. The
@@ -320,11 +320,11 @@ message LotRemoved {
 message PrebiddingStarted {}
 
 // The common deadline passed; the moment is state.config.online_phase.closes_at.
-// The lots are still closing, and the session waits for them.
+// The lots are still closing, and the auction waits for them.
 message PrebiddingDeadlineReached {}
 
 // Every lot of the catalog is closed or held. When no lot was held, this same fact
-// finishes the session: the state says which of the two happened.
+// finishes the auction: the state says which of the two happened.
 message PrebiddingEnded {}
 
 // The lineup of the final is frozen and announced; it is state.lineup_frozen.order.
@@ -345,4 +345,4 @@ message FinalLotCompleted {
 }
 
 // Every lot of the lineup is completed. Terminal.
-message SessionFinished {}
+message AuctionFinished {}

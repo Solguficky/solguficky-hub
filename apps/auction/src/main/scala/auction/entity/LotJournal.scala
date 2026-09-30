@@ -63,7 +63,7 @@ final case class StoredActor(kind: String, id: Option[UUID])
 /**
  * Строка журнала лота: конверт ADR-047 и событие. `aggregate_type` и `aggregate_id` — это `persistence_id` строки,
  * `sequence` — её `sequence_number`, `schema_version` — версия в manifest (`JacksonMigration`); в payload они не
- * дублируются. `session_id` появится необязательным полем вместе с `LotDrafted` (PER-410).
+ * дублируются. `auction_id` появится необязательным полем вместе с `LotDrafted` (PER-410).
  */
 final case class StoredLotEvent(
     eventId: UUID,
