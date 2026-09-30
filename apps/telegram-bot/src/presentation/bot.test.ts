@@ -591,7 +591,22 @@ describe("presentation adapter", () => {
   ])(
     "answers a %s confirmation without a version by the current card instead of a command",
     async (_, data, renewed) => {
-      const current = { ...publishedMeetup(), version: 3 };
+      // Материал кнопки снятия ещё на месте, а материала кнопки прикрепления
+      // ещё нет: ни одна цель не достигнута, и ответом остаётся кадр конфликта.
+      const current = {
+        ...publishedMeetup(),
+        version: 3,
+        materials: [
+          {
+            id: "0199c0de-0000-7000-8000-00000000009a",
+            title: "Уточнение по времени",
+            source: {
+              kind: "message-link" as const,
+              url: "https://t.me/c/1234567890/78",
+            },
+          },
+        ],
+      };
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "meetup-card",
         meetup: current,
@@ -620,6 +635,86 @@ describe("presentation adapter", () => {
       expect(JSON.stringify(calls)).toContain("Сходка уже изменилась.");
     },
   );
+
+  it("answers a confirmation without a version for an already removed material as done", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), version: 3 },
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
+      ),
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(calls)).not.toContain("Сходка уже изменилась.");
+    expect(JSON.stringify(calls)).toContain("Пока ничего не прикреплено.");
+  });
+
+  it("refuses a confirmation without a version from a non-admin without reading the meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity(["member"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
+      ),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.stringify(calls)).toContain(
+      "Это действие доступно организатору сходки.",
+    );
+  });
+
+  it("still tells about the conflict when the attach confirmation cannot be edited", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "conflict",
+      meetup: { ...publishedMeetup(), version: 5 },
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    bot.api.config.use((prev, method, payload, signal) =>
+      method === "editMessageReplyMarkup"
+        ? Promise.reject(new Error("Bad Request: message to edit not found"))
+        : prev(method, payload, signal),
+    );
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(
+        "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:4",
+        {
+          caption: "Прикрепить материал?\n\nНазвание: Афиша",
+          document: {
+            file_id: "bot-file-id",
+            file_unique_id: "unique",
+            file_name: "poster.pdf",
+          },
+        },
+      ),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining(
+          "Начни прикрепление заново из карточки сходки.",
+        ),
+      },
+    });
+    expect(records.at(-1)?.fields.error).toBe("version_conflict");
+  });
 
   it("asks to confirm a material removal again after a version conflict", async () => {
     const fresh = { ...publishedMeetup(), version: 7 };

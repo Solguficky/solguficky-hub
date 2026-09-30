@@ -126,4 +126,22 @@ describe("meetup materials", () => {
       expect(get).toHaveBeenCalledWith(person, meetup.id, undefined);
     },
   );
+
+  it("answers a conflict on a meetup that is no longer visible as not found", async () => {
+    const materials = createMeetupMaterials({
+      attachMaterial: vi.fn(),
+      removeMaterial: vi.fn(async () => ({ kind: "conflict" as const })),
+      get: vi.fn(async () => ({ kind: "not-found" as const })),
+    } satisfies Pick<Meetups, "attachMaterial" | "removeMaterial" | "get">);
+
+    await expect(
+      materials({
+        identity: person,
+        intent: "remove-material",
+        meetupId: meetup.id,
+        materialId: "material-id",
+        expectedVersion: 1,
+      }),
+    ).resolves.toEqual({ kind: "meetup-not-found" });
+  });
 });

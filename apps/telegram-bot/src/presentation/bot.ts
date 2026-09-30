@@ -1105,17 +1105,28 @@ async function handleCallback(
         };
         return;
       }
+      const materialId = tokenToUuid(action.materialToken);
       const result =
         action.version === undefined
-          ? await unversionedConfirmation(runtime, person, meetupId, {
-              ...rpcCall(ctx, useCase),
-            })
+          ? await unversionedConfirmation(
+              runtime,
+              person,
+              meetupId,
+              rpcCall(ctx, useCase),
+              {
+                reached: (meetup) =>
+                  meetup.materials.some(
+                    (material) => material.id === materialId,
+                  ),
+                kind: "material-attached",
+              },
+            )
           : await runtime.dispatcher.execute({
               identity: person,
               intent: "attach-material",
               meetupId,
               material: {
-                id: tokenToUuid(action.materialToken),
+                id: materialId,
                 title: confirmation.title,
                 source: confirmation.source,
               },
@@ -1126,16 +1137,19 @@ async function handleCallback(
         // Подтверждение — сообщение с источником, и его название и файл бот
         // читает обратно при нажатии. Поэтому текст конфликта уходит новым
         // сообщением, а у подтверждения меняется только версия в кнопке.
-        await ctx.editMessageReplyMarkup({
-          reply_markup: materialConfirmationKeyboard(
+        const renewed = await renewConfirmationKeyboard(
+          ctx,
+          materialConfirmationKeyboard(
             action.token,
             action.materialToken,
             result.meetup.version,
             confirmation.source,
           ),
-        });
+        );
         await ctx.reply(
-          `${conflictText}\n\nПроверь материал и подтверди прикрепление ещё раз.`,
+          renewed
+            ? `${conflictText}\n\nПроверь материал и подтверди прикрепление ещё раз.`
+            : `${conflictText}\n\nНачни прикрепление заново из карточки сходки.`,
         );
       } else {
         await renderMaterialResult(ctx, result);
@@ -1151,22 +1165,34 @@ async function handleCallback(
     }
     if (action.kind === "confirm-remove-material") {
       const meetupId = tokenToUuid(action.token);
+      const materialId = tokenToUuid(action.materialToken);
       const result =
         action.version === undefined
-          ? await unversionedConfirmation(runtime, person, meetupId, {
-              ...rpcCall(ctx, useCase),
-            })
+          ? await unversionedConfirmation(
+              runtime,
+              person,
+              meetupId,
+              rpcCall(ctx, useCase),
+              {
+                reached: (meetup) =>
+                  !meetup.materials.some(
+                    (material) => material.id === materialId,
+                  ),
+                kind: "material-removed",
+              },
+            )
           : await runtime.dispatcher.execute({
               identity: person,
               intent: "remove-material",
               meetupId,
-              materialId: tokenToUuid(action.materialToken),
+              materialId,
               expectedVersion: action.version,
               ...rpcCall(ctx, useCase),
             });
       if (result.kind === "conflict") {
-        // Уже убранный материал Meetups отдаёт успехом по любой версии, так что
-        // здесь он ещё на месте: подтверждение повторяется со свежей версией.
+        // Уже убранный материал Meetups отдаёт успехом по любой версии, а кнопка
+        // без версии проверяет это сама, так что здесь он ещё на месте:
+        // подтверждение повторяется со свежей версией.
         await editScreen(
           ctx,
           `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
@@ -2131,22 +2157,58 @@ async function handleCallback(
 // Кнопка подтверждения прошлого релиза не несёт версии, по которой человек
 // решал, а команда без неё Meetups не принимает. Решение по такой кнопке
 // равносильно устаревшему экрану: человек получает кадр конфликта по текущей
-// карточке и подтверждает её версию заново.
+// карточке и подтверждает её версию заново. Прежде кадра карточка отвечает
+// тем же, что ответил бы Meetups: достигнутая цель — успех, отмена — отказ по
+// состоянию, чужая роль — отказ по праву. Иначе кадр предлагал бы подтвердить
+// заведомо невыполнимое или уже сделанное.
 async function unversionedConfirmation(
   runtime: BotRuntime,
   person: Person,
   meetupId: string,
   call: RpcMetadata,
+  target: {
+    reached: (meetup: MeetupSnapshot) => boolean;
+    kind: "material-attached" | "material-removed";
+  },
 ): Promise<ExecuteResult> {
+  if (!person.globalRoles.includes("admin")) {
+    return { kind: "dependency-rejected", reason: "forbidden" };
+  }
   const current = await runtime.dispatcher.execute({
     identity: person,
     intent: "view-meetup",
     meetupId,
     ...call,
   });
-  return current.kind === "meetup-card"
-    ? { kind: "conflict", meetup: current.meetup }
-    : current;
+  if (current.kind !== "meetup-card") return current;
+  if (target.reached(current.meetup)) {
+    return { kind: target.kind, meetup: current.meetup };
+  }
+  if (current.meetup.lifecycle === "cancelled") {
+    return {
+      kind: "dependency-rejected",
+      reason: "invalid",
+      cause: new Error("material confirmation on a cancelled meetup"),
+      precondition: true,
+    };
+  }
+  return { kind: "conflict", meetup: current.meetup };
+}
+
+// Подтверждение прикрепления живёт в сообщении с источником, поэтому после
+// конфликта у него меняется только клавиатура. Повторная правка тем же
+// содержимым и удалённое сообщение — ожидаемые отказы Telegram; в обоих
+// случаях человек получает текст конфликта, а не тишину.
+async function renewConfirmationKeyboard(
+  ctx: UpdateContext,
+  keyboard: InlineKeyboard,
+): Promise<boolean> {
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+    return true;
+  } catch (cause) {
+    return errorText(cause).includes("message is not modified");
+  }
 }
 
 function confirmAttachCallback(

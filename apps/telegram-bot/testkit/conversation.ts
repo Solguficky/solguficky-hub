@@ -1,4 +1,10 @@
-import type { Message, MessageEntity, Update } from "grammy/types";
+import type {
+  InlineKeyboardButton,
+  Message,
+  MessageEntity,
+  MessageOrigin,
+  Update,
+} from "grammy/types";
 import {
   tokenToUuid,
   uuidToToken,
@@ -102,7 +108,7 @@ export function startConversation(
   };
 
   const write = async (
-    content: { text: string } | { forward_origin: unknown; text: string },
+    content: { text: string; forward_origin?: MessageOrigin },
     replyTo?: Screen,
   ): Promise<void> => {
     messageId += 1;
@@ -111,7 +117,7 @@ export function startConversation(
       date: 0,
       chat,
       from,
-      ...(content as { text: string }),
+      ...content,
       ...(replyTo === undefined
         ? {}
         : {
@@ -170,10 +176,17 @@ export function startConversation(
           text: screen.text,
           ...(screen.keyboard.length === 0
             ? {}
-            : { reply_markup: { inline_keyboard: screen.keyboard } }),
+            : {
+                reply_markup: {
+                  // Клавиатуру записал сам бот: это `reply_markup`, который он
+                  // отдал grammY, и Telegram вернул бы её как есть. Тип записи
+                  // держит только поля, которые харнесс читает.
+                  inline_keyboard: screen.keyboard as InlineKeyboardButton[][],
+                },
+              }),
         },
       },
-    } as Update);
+    });
   };
 
   return {
@@ -197,7 +210,7 @@ export function startConversation(
             },
             message_id: postId,
             date: 0,
-          },
+          } satisfies MessageOrigin,
         },
         last?.asksForReply === true ? last : undefined,
       );

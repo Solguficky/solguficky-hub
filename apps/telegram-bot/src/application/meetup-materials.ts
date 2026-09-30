@@ -44,9 +44,9 @@ export function createMeetupMaterials(
       const fresh = await meetups.get(request.identity, request.meetupId, meta);
       if (fresh.kind === "ok")
         return { kind: "conflict", meetup: fresh.meetup };
-      if (fresh.kind === "not-found") {
-        return { kind: "dependency-rejected", reason: "unavailable" };
-      }
+      // Сходку скрыли или удалили между нажатием и перечитыванием: это тот же
+      // исход, что у просмотра, а не сбой зависимости.
+      if (fresh.kind === "not-found") return { kind: "meetup-not-found" };
       return failure(fresh);
     }
     return failure(result);
