@@ -47,6 +47,16 @@ object LotEntity {
    */
   sealed trait Command
 
+  final case class Draft(command: DraftLot, initiator: Initiator, replyTo: ActorRef[Either[DraftLotRejected, Envelope]])
+      extends Command
+
+  /** Планирование условий торгов; `Schedule` уже занято доменным снимком условий. */
+  final case class Plan(
+      command: ScheduleLot,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[ScheduleLotRejected, Envelope]]
+  ) extends Command
+
   final case class Open(command: OpenLot, initiator: Initiator, replyTo: ActorRef[Either[OpenLotRejected, Envelope]])
       extends Command
 
@@ -71,7 +81,7 @@ object LotEntity {
   ): Behavior[Command] =
     EventSourcedBehavior[Command, StoredLotEvent, State](
       persistenceId = PersistenceId(TypeKey.name, lotId),
-      emptyState = State(Lot.notOpened, 0),
+      emptyState = State(Lot.initial, 0),
       commandHandler = (state, command) => handle(state.lot, command, clock, newId),
       eventHandler = (state, stored) => {
         val sequence = state.sequence + 1
@@ -82,19 +92,25 @@ object LotEntity {
 
   private def handle(lot: Lot, command: Command, clock: Clock, newId: () => UUID): Effect[StoredLotEvent, State] =
     command match {
+      case Draft(draft, initiator, replyTo) =>
+        record(lot, Lot.decide(lot, draft), draft.opId, initiator, replyTo, clock, newId)
+      case Plan(schedule, initiator, replyTo) =>
+        record(lot, Lot.decide(lot, schedule), schedule.opId, initiator, replyTo, clock, newId)
       case Open(open, initiator, replyTo) =>
-        record(Lot.decide(lot, open), open.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, open), open.opId, initiator, replyTo, clock, newId)
       case Bid(bid, initiator, replyTo) =>
-        record(Lot.decide(lot, bid, BidId(newId())), bid.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, bid, BidId(newId())), bid.opId, initiator, replyTo, clock, newId)
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }
 
   /**
    * Все события одной команды пишутся одним `persist` — одним `AtomicWrite`, который плагин JDBC кладёт в базу одной
-   * транзакцией, — и несут один `op_id`, одну транзакцию и одно время решения (ADR-047). Отказ событий не пишет.
+   * транзакцией, — и несут один `op_id`, одну транзакцию, один аукцион и одно время решения (ADR-047). Отказ событий не
+   * пишет.
    */
   private def record[R](
+      lot: Lot,
       decision: Either[R, Decision],
       opId: OpId,
       initiator: Initiator,
@@ -106,7 +122,12 @@ object LotEntity {
       case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
       case Right(Decision.Repeated(original)) => Effect.reply(replyTo)(Right(original))
       case Right(Decision.Accepted(event)) =>
-        val transaction = Transaction(newId(), opId, clock.instant(), initiator)
+        val auction = Lot
+          .auctionOf(lot, event)
+          .getOrElse(
+            throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without an auction")
+          )
+        val transaction = Transaction(newId(), opId, auction, clock.instant(), initiator)
         Effect
           .persist(List(LotJournal.store(newId(), transaction, event)))
           .thenReply(replyTo)(written => Right(firstOf(written.lot, opId)))

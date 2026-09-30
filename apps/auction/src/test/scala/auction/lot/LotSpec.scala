@@ -27,16 +27,108 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
   "lot" should {
 
-    "open trading at the starting price with no leader, the online phase and the deadline of the command" in {
-      val command = openLot(opN = 1, startingPrice = 500)
+    "be born a draft that belongs to the auction which drafted it" in {
+      val (result, journal) = Journal.of(Lot.initial).draft(draftLot(opN = 1, of = auctionId(7)))
 
-      val decision = Lot.decide(Lot.notOpened, command)
-      val opened = decision match {
-        case Right(Decision.Accepted(event)) => Lot.apply(Lot.notOpened, Envelope(1, command.opId, event))
-        case other => fail(s"открытие не принято: $other")
+      result shouldBe Right(Decision.Accepted(LotEvent.LotDrafted(auctionId(7))))
+      journal.lot.state shouldBe LotState.Draft
+      journal.lot.auction shouldBe Some(auctionId(7))
+    }
+
+    "refuse a second draft in any state with LotAlreadyExists" in {
+      List(drafted, scheduled(), trading(price = 100), held(price = 100, leader = participant(1)))
+        .appended(sold(price = 100, winner = participant(1)))
+        .foreach(lot => Lot.decide(lot, draftLot(opN = 9)) shouldBe Left(DraftLotRejected.LotAlreadyExists))
+    }
+
+    "answer a repeated draft with the original response instead of a refusal" in {
+      val (_, journal) = Journal.of(Lot.initial).draft(draftLot(opN = 1))
+
+      Lot.decide(journal.lot, draftLot(opN = 1)) shouldBe Right(Decision.Repeated(journal.entries.head))
+    }
+
+    "answer every command but the draft to a lot that was never drafted with LotNotFound" in {
+      Lot.decide(Lot.initial, scheduleLot(opN = 1)) shouldBe Left(ScheduleLotRejected.LotNotFound)
+      Lot.decide(Lot.initial, openLot(opN = 1)) shouldBe Left(OpenLotRejected.LotNotFound)
+      Lot.decide(Lot.initial, placeBid(who = 1, amount = 110, opN = 1), bid(1)) shouldBe
+        Left(PlaceBidRejected.LotNotFound)
+    }
+
+    "schedule a draft with the whole schedule of the command" in {
+      val (result, journal) = Journal.of(drafted).schedule(scheduleLot(opN = 1, startingPrice = 500))
+
+      result shouldBe Right(Decision.Accepted(LotEvent.LotScheduled(schedule(startingPrice = 500))))
+      journal.lot.state shouldBe LotState.Scheduled(schedule(startingPrice = 500))
+      journal.lot.auction shouldBe drafted.auction
+    }
+
+    "write every change before the opening as a whole schedule and replay to the last one" in {
+      val tieredInput = configInput(StepPolicyInput.Tiered(tiers((0, 50), (10000, 100))))
+      val (_, afterDraft) = Journal.of(Lot.initial).draft(draftLot(opN = 1))
+      val (_, afterFirst) = afterDraft.schedule(scheduleLot(opN = 2, startingPrice = 100))
+      val (_, afterSecond) = afterFirst.schedule(scheduleLot(opN = 3, startingPrice = 200, input = tieredInput))
+
+      afterSecond.entries.map(_.event).collect { case scheduled: LotEvent.LotScheduled => scheduled } shouldBe Vector(
+        LotEvent.LotScheduled(schedule(startingPrice = 100)),
+        LotEvent.LotScheduled(schedule(startingPrice = 200, policy = tiered((0, 50), (10000, 100))))
+      )
+      val replayed = Lot.replay(Lot.initial, Random.shuffle(afterSecond.entries))
+      replayed shouldBe afterSecond.lot
+      replayed.state shouldBe LotState.Scheduled(schedule(startingPrice = 200, policy = tiered((0, 50), (10000, 100))))
+    }
+
+    "refuse to schedule a lot after its opening and keep its config (Т-20, Т-52)" in {
+      val (_, afterDraft) = Journal.of(Lot.initial).draft(draftLot(opN = 1))
+      val (_, afterSchedule) = afterDraft.schedule(scheduleLot(opN = 2))
+      val (_, opened) = afterSchedule.open(openLot(opN = 3))
+
+      val (result, after) = opened.schedule(scheduleLot(opN = 4, startingPrice = 900))
+
+      result shouldBe Left(ScheduleLotRejected.SchedulingClosed)
+      after shouldBe opened
+      tradingOf(after.lot).config shouldBe config()
+      List(held(price = 100, leader = participant(1)), sold(price = 100, winner = participant(1)))
+        .foreach(lot => Lot.decide(lot, scheduleLot(opN = 5)) shouldBe Left(ScheduleLotRejected.SchedulingClosed))
+    }
+
+    "refuse a step policy that breaks И-15 with its reason and keep the lot as it was" in {
+      val cases = List(
+        StepPolicyInput.Tiered(Nil) -> StepPolicyInvalid.Empty,
+        StepPolicyInput.Tiered(tiers((10, 10))) -> StepPolicyInvalid.FirstBoundNotZero,
+        StepPolicyInput.Tiered(tiers((0, 10), (0, 20))) -> StepPolicyInvalid.BoundsNotAscending,
+        StepPolicyInput.Fixed(money(0)) -> StepPolicyInvalid.StepNotPositive,
+        StepPolicyInput.Fixed(Money(10, eur)) -> StepPolicyInvalid.MixedCurrency
+      )
+
+      forAll(Gen.oneOf(cases), Gen.oneOf(drafted, scheduled())) { (sample, lot) =>
+        val (policy, reason) = sample
+        val (result, after) = Journal.of(lot).schedule(scheduleLot(opN = 1, input = configInput(policy)))
+
+        result shouldBe Left(ScheduleLotRejected.StepPolicyInvalid(reason))
+        after.lot shouldBe lot
       }
+    }
 
-      tradingOf(opened) shouldBe TradingState(
+    "refuse a starting price in another currency than the config and keep the lot as it was" in {
+      val command = ScheduleLot(Money(100, eur), configInput(), op(1))
+      val (result, after) = Journal.of(drafted).schedule(command)
+
+      result shouldBe Left(ScheduleLotRejected.CurrencyMismatch)
+      after.lot shouldBe drafted
+    }
+
+    "answer a repeated schedule with the original response instead of scheduling again" in {
+      val (_, journal) = Journal.of(drafted).schedule(scheduleLot(opN = 1))
+
+      Lot.decide(journal.lot, scheduleLot(opN = 1, startingPrice = 900)) shouldBe
+        Right(Decision.Repeated(journal.entries.head))
+    }
+
+    "open trading from the schedule at its starting price with no leader, the online phase and the given deadline" in {
+      val (result, journal) = Journal.of(scheduled(startingPrice = 500)).open(openLot(opN = 1))
+
+      result shouldBe Right(Decision.Accepted(LotEvent.LotOpened(money(500), config(), Some(deadline))))
+      tradingOf(journal.lot) shouldBe TradingState(
         config = config(),
         currentPrice = money(500),
         ask = None,
@@ -48,38 +140,39 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     }
 
     "open a lot led by a person without a deadline" in {
-      val command = openLot(opN = 1, deadline = None)
-
-      Lot.decide(Lot.notOpened, command) shouldBe
+      Lot.decide(scheduled(), openLot(opN = 1, deadline = None)) shouldBe
         Right(Decision.Accepted(LotEvent.LotOpened(money(100), config(), None)))
     }
 
-    "refuse to open a lot that is already open and leave it as it was" in {
-      Lot.decide(trading(price = 100), openLot(opN = 1)) shouldBe Left(OpenLotRejected.LotNotScheduled)
-      Lot.decide(sold(price = 100, winner = participant(1)), openLot(opN = 1)) shouldBe
-        Left(OpenLotRejected.LotNotScheduled)
-    }
-
-    "refuse to open at a starting price in another currency" in {
-      val command = openLot(opN = 1).copy(startingPrice = Money(100, eur))
-
-      Lot.decide(Lot.notOpened, command) shouldBe Left(OpenLotRejected.CurrencyMismatch)
+    "refuse to open a lot without a schedule or one that is already open" in {
+      List(drafted, trading(price = 100), sold(price = 100, winner = participant(1)))
+        .foreach(lot => Lot.decide(lot, openLot(opN = 1)) shouldBe Left(OpenLotRejected.LotNotScheduled))
     }
 
     "answer a repeated opening with the original response instead of a refusal" in {
-      val command = openLot(opN = 1)
-      val envelope = Lot.decide(Lot.notOpened, command) match {
-        case Right(Decision.Accepted(event)) => Envelope(1, command.opId, event)
-        case other => fail(s"открытие не принято: $other")
-      }
-      val opened = Lot.apply(Lot.notOpened, envelope)
+      val (_, journal) = Journal.of(scheduled()).open(openLot(opN = 1))
 
-      Lot.decide(opened, command) shouldBe Right(Decision.Repeated(envelope))
+      Lot.decide(journal.lot, openLot(opN = 1)) shouldBe Right(Decision.Repeated(journal.entries.head))
     }
 
     "refuse a bid on a lot that is not open yet" in {
-      Lot.decide(Lot.notOpened, placeBid(who = 1, amount = 110, opN = 1), bid(1)) shouldBe
-        Left(PlaceBidRejected.LotNotOpen)
+      List(drafted, scheduled()).foreach { lot =>
+        Lot.decide(lot, placeBid(who = 1, amount = 110, opN = 1), bid(1)) shouldBe Left(PlaceBidRejected.LotNotOpen)
+      }
+    }
+
+    "give the row of a draft the drafting auction and every later row the auction of the lot" in {
+      Lot.auctionOf(Lot.initial, LotEvent.LotDrafted(auctionId(7))) shouldBe Some(auctionId(7))
+      Lot.auctionOf(scheduled(), LotEvent.LotOpened(money(100), config(), None)) shouldBe Some(auctionId(1))
+      Lot.auctionOf(Lot.initial, LotEvent.LotOpened(money(100), config(), None)) shouldBe None
+    }
+
+    "bring no lot to life from a journal that starts with an opening" in {
+      val opened = Envelope(1, op(1), LotEvent.LotOpened(money(100), config(), Some(deadline)))
+
+      val replayed = Lot.replay(Lot.initial, List(opened))
+
+      (replayed.state, replayed.auction) shouldBe (LotState.Initial, None)
     }
 
     "accept a first bid at the starting price plus the step (Т-01)" in {

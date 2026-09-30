@@ -1,14 +1,17 @@
 package auction.lot
 
 /**
- * Агрегат лота: состояние и окно дедупликации, свёрнутые из журнала.
+ * Агрегат лота: состояние, аукцион и окно дедупликации, свёрнутые из журнала.
  *
  * `seen` — это П-06 в форме значения: `seen(op_id) ⟺ в журнале агрегата есть событие с этим op_id`. Пишет в него только
  * [[Lot.apply]], поэтому окно восстанавливается реплеем журнала, а не живёт кэшем процесса, и отказ, который событий не
  * пишет, в него не попадает. Для транзакции из нескольких событий окно держит первый конверт — по нему
  * восстанавливается ответ на повтор.
+ *
+ * `auction` пуста ровно в `Initial`: лот рождается внутри аукциона, и `LotDrafted` приносит его вместе с рождением.
+ * Пишет его тоже только [[Lot.apply]], и больше она не меняется.
  */
-final case class Lot(state: LotState, seen: Map[OpId, Envelope])
+final case class Lot(state: LotState, auction: Option[AuctionId], seen: Map[OpId, Envelope])
 
 /** Исход принятой команды: новое событие либо исходный ответ на повтор того же `op_id`. */
 enum Decision {
@@ -18,25 +21,57 @@ enum Decision {
 
 object Lot {
 
-  def of(state: LotState): Lot = Lot(state, Map.empty)
-
   /** Лот, в журнале которого ещё ничего нет: начальное состояние entity. */
-  val notOpened: Lot = of(LotState.NotOpened)
+  val initial: Lot = Lot(LotState.Initial, None, Map.empty)
+
+  /** Рождение лота. Повтор того же `op_id` получает исходный ответ, другой `op_id` — `LotAlreadyExists`. */
+  def decide(lot: Lot, command: DraftLot): Either[DraftLotRejected, Decision] =
+    lot.seen.get(command.opId) match {
+      case Some(original) => Right(Decision.Repeated(original))
+      case None =>
+        lot.state match {
+          case LotState.Initial => Right(Decision.Accepted(LotEvent.LotDrafted(command.auction)))
+          case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) =>
+            Left(DraftLotRejected.LotAlreadyExists)
+        }
+    }
+
+  /**
+   * Планирование условий торгов. Порядок проверок: состояние, затем И-15, затем валюта стартовой цены — отказ по
+   * состоянию не зависит от того, что прислали, и после `LotOpened` лот отвечает `SchedulingClosed` на любой вход
+   * (Т-20, Т-52). Каждая правка пишет `Schedule` целиком.
+   */
+  def decide(lot: Lot, command: ScheduleLot): Either[ScheduleLotRejected, Decision] =
+    lot.seen.get(command.opId) match {
+      case Some(original) => Right(Decision.Repeated(original))
+      case None =>
+        lot.state match {
+          case LotState.Initial => Left(ScheduleLotRejected.LotNotFound)
+          case LotState.Draft | LotState.Scheduled(_) =>
+            LotConfig
+              .parse(command.config)
+              .left
+              .map(ScheduleLotRejected.StepPolicyInvalid(_))
+              .flatMap(Schedule.of(command.startingPrice, _))
+              .map(schedule => Decision.Accepted(LotEvent.LotScheduled(schedule)))
+          case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) => Left(ScheduleLotRejected.SchedulingClosed)
+        }
+    }
 
   /**
    * Открытие торгов. Как и у ставки, `seen` проверяется первым: повтор открытия получает исходный ответ, а не
-   * `LotNotScheduled`. Открывается только лот, который ещё не открыт; проверка валюты стоит здесь до PER-410, пока
-   * расписание приходит во входе команды.
+   * `LotNotScheduled`. Условия торгов берутся из `Scheduled` и уже проверены, поэтому других отказов у открытия нет.
    */
   def decide(lot: Lot, command: OpenLot): Either[OpenLotRejected, Decision] =
     lot.seen.get(command.opId) match {
       case Some(original) => Right(Decision.Repeated(original))
       case None =>
         lot.state match {
-          case LotState.NotOpened =>
-            if (command.startingPrice.currency != command.config.currency) Left(OpenLotRejected.CurrencyMismatch)
-            else Right(Decision.Accepted(LotEvent.LotOpened(command.startingPrice, command.config, command.deadline)))
-          case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) => Left(OpenLotRejected.LotNotScheduled)
+          case LotState.Initial => Left(OpenLotRejected.LotNotFound)
+          case LotState.Scheduled(schedule) =>
+            Right(Decision.Accepted(LotEvent.LotOpened(schedule.startingPrice, schedule.config, command.deadline)))
+          case LotState.Draft | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) =>
+            Left(OpenLotRejected.LotNotScheduled)
         }
     }
 
@@ -51,7 +86,8 @@ object Lot {
       case Some(original) => Right(Decision.Repeated(original))
       case None =>
         lot.state match {
-          case LotState.NotOpened => Left(PlaceBidRejected.LotNotOpen)
+          case LotState.Initial => Left(PlaceBidRejected.LotNotFound)
+          case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
           case LotState.Trading(trading) => placeBid(trading, command, bidId).map(Decision.Accepted(_))
           case LotState.Held(_) => Left(PlaceBidRejected.LotOnHold)
           case LotState.Sold(_) => Left(PlaceBidRejected.LotNotOpen)
@@ -97,35 +133,47 @@ object Lot {
    * состояние не трогает — такой пары `decide` не порождает, а журнал её не содержит.
    *
    * `LotOpened` строит торги только из самого события: стартовая цена становится текущей, лидера нет, фаза `Online`
-   * выводится из факта открытия (RFC-011). Поэтому журнал, записанный до PER-410, проигрывается так же и после неё.
+   * выводится из факта открытия (RFC-011). Применяется он только к `Scheduled`: журнал, который начинается с
+   * `LotOpened` без `LotDrafted`, лота не рождает.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
-    val state = (lot.state, envelope.event) match {
-      case (LotState.NotOpened, opened: LotEvent.LotOpened) =>
-        LotState.Trading(
-          TradingState(
-            config = opened.config,
-            currentPrice = opened.startingPrice,
-            ask = None,
-            leader = None,
-            leadingBidId = None,
-            phase = Phase.Online,
-            deadline = opened.deadline
-          )
+    val (state, auction) = (lot.state, envelope.event) match {
+      case (LotState.Initial, LotEvent.LotDrafted(auction)) => (LotState.Draft, Some(auction))
+      case (LotState.Draft | LotState.Scheduled(_), LotEvent.LotScheduled(schedule)) =>
+        (LotState.Scheduled(schedule), lot.auction)
+      case (LotState.Scheduled(_), opened: LotEvent.LotOpened) =>
+        val trading = TradingState(
+          config = opened.config,
+          currentPrice = opened.startingPrice,
+          ask = None,
+          leader = None,
+          leadingBidId = None,
+          phase = Phase.Online,
+          deadline = opened.deadline
         )
+        (LotState.Trading(trading), lot.auction)
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) =>
-        LotState.Trading(
-          trading.copy(
-            currentPrice = placed.amount,
-            leader = Some(placed.participant),
-            leadingBidId = Some(placed.bidId)
-          )
+        val next = trading.copy(
+          currentPrice = placed.amount,
+          leader = Some(placed.participant),
+          leadingBidId = Some(placed.bidId)
         )
-      case (other, _) => other
+        (LotState.Trading(next), lot.auction)
+      case (other, _) => (other, lot.auction)
     }
     val seen = if (lot.seen.contains(envelope.opId)) lot.seen else lot.seen.updated(envelope.opId, envelope)
-    Lot(state, seen)
+    Lot(state, auction, seen)
   }
+
+  /**
+   * Аукцион строки, которую пишет принятое событие: у `LotDrafted` — тот, что родил лот, у остальных — аукцион лота.
+   * Пусто только у события лота в `Initial`, а из `Initial` [[decide]] принимает одно `LotDrafted`.
+   */
+  def auctionOf(lot: Lot, event: LotEvent): Option[AuctionId] =
+    event match {
+      case LotEvent.LotDrafted(auction) => Some(auction)
+      case _ => lot.auction
+    }
 
   /**
    * Свёртка журнала в порядке `sequence` (П-07): при равных суммах лидирует ставка, записанная первой, и время события

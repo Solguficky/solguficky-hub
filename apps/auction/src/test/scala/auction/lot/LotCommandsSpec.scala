@@ -140,6 +140,7 @@ object LotCommands extends Commands {
           case (Expected.Repeat((w, a)), Right(Decision.Repeated(original))) =>
             original.opId == op(opN) && (original.event match {
               case placed: LotEvent.BidPlaced => placed.participant == participant(w) && placed.amount == money(a)
+              case _ => false
             })
           case (Expected.Reject(rejection), Left(actual)) => rejection == actual
           case _ => false

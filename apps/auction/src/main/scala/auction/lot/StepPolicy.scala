@@ -5,7 +5,7 @@ package auction.lot
  *
  * Конструкторы закрыты, и значение получается только через [[StepPolicy.fixed]] и [[StepPolicy.tiered]]. Так И-15
  * выполняется по построению: противоречивая политика непредставима, и `step` тотальна на любой цене без `head` и без
- * пустого случая. Отказ [[StepPolicyInvalid]] станет ответом `ScheduleLot`, когда команда появится (RFC-011, И-15).
+ * пустого случая. Отказ [[StepPolicyInvalid]] — ответ `ScheduleLot` через [[LotConfig.parse]] (RFC-011, И-15).
  */
 sealed trait StepPolicy {
   def currency: CurrencyCode
