@@ -86,10 +86,14 @@ export type ArchivedMeetupListResult =
   | { kind: "ok"; meetups: readonly ArchivedMeetupSummary[] }
   | MeetupFailure;
 
+// `expectedVersion` — версия карточки, которую человек видел, когда начал
+// действие, а не перечитанная перед командой: иначе устаревший экран не давал
+// бы конфликта вовсе (integration.md, PER-393).
 export type AttachMaterialRequest = {
   person: Person;
   meetupId: string;
   material: MeetupMaterial;
+  expectedVersion: number;
   meta?: RpcMetadata;
 };
 
@@ -97,6 +101,7 @@ export type RemoveMaterialRequest = {
   person: Person;
   meetupId: string;
   materialId: string;
+  expectedVersion: number;
   meta?: RpcMetadata;
 };
 

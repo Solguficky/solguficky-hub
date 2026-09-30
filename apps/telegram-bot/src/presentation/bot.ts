@@ -40,6 +40,7 @@ import type { LogFields, Logger } from "../logging.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
+  MeetupMaterialSource,
   MeetupSchedule,
   MeetupSnapshot,
   MeetupSummary,
@@ -246,15 +247,19 @@ type PendingUsername = {
   telegramUserId: number;
   expiresAt: number;
 };
+// `version` — версия карточки, с которой начато прикрепление: она доезжает до
+// кнопки подтверждения и уходит в `expected_version` (PER-393).
 type PendingMaterialInput = {
   kind: "material-source";
   meetupId: string;
+  version: number;
   telegramUserId: number;
   expiresAt: number;
 };
 type PendingMaterialTitle = {
   kind: "material-title";
   meetupId: string;
+  version: number;
   source: MaterialInputSource;
   telegramUserId: number;
   expiresAt: number;
@@ -506,6 +511,7 @@ async function handleMessage(
         questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
           kind: "material-title",
           meetupId: pending.meetupId,
+          version: pending.version,
           source,
           telegramUserId: pending.telegramUserId,
           expiresAt: Date.now() + questionTtlMs,
@@ -547,6 +553,7 @@ async function handleMessage(
       await sendMaterialConfirmation(
         ctx,
         pending.meetupId,
+        pending.version,
         title,
         pending.source,
       );
@@ -1098,18 +1105,55 @@ async function handleCallback(
         };
         return;
       }
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "attach-material",
-        meetupId,
-        material: {
-          id: tokenToUuid(action.materialToken),
-          title: confirmation.title,
-          source: confirmation.source,
-        },
-        ...rpcCall(ctx, useCase),
-      });
-      await renderMaterialResult(ctx, result);
+      const materialId = tokenToUuid(action.materialToken);
+      const result =
+        action.version === undefined
+          ? await unversionedConfirmation(
+              runtime,
+              person,
+              meetupId,
+              rpcCall(ctx, useCase),
+              {
+                reached: (meetup) =>
+                  meetup.materials.some(
+                    (material) => material.id === materialId,
+                  ),
+                kind: "material-attached",
+              },
+            )
+          : await runtime.dispatcher.execute({
+              identity: person,
+              intent: "attach-material",
+              meetupId,
+              material: {
+                id: materialId,
+                title: confirmation.title,
+                source: confirmation.source,
+              },
+              expectedVersion: action.version,
+              ...rpcCall(ctx, useCase),
+            });
+      if (result.kind === "conflict") {
+        // Подтверждение — сообщение с источником, и его название и файл бот
+        // читает обратно при нажатии. Поэтому текст конфликта уходит новым
+        // сообщением, а у подтверждения меняется только версия в кнопке.
+        const renewed = await renewConfirmationKeyboard(
+          ctx,
+          materialConfirmationKeyboard(
+            action.token,
+            action.materialToken,
+            result.meetup.version,
+            confirmation.source,
+          ),
+        );
+        await ctx.reply(
+          renewed
+            ? `${conflictText}\n\nПроверь материал и подтверди прикрепление ещё раз.`
+            : `${conflictText}\n\nНачни прикрепление заново из карточки сходки.`,
+        );
+      } else {
+        await renderMaterialResult(ctx, result);
+      }
       outcome = screenBoundary(result, {
         ok: ["material-attached"],
         okMessage: "material attached",
@@ -1121,14 +1165,52 @@ async function handleCallback(
     }
     if (action.kind === "confirm-remove-material") {
       const meetupId = tokenToUuid(action.token);
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "remove-material",
-        meetupId,
-        materialId: tokenToUuid(action.materialToken),
-        ...rpcCall(ctx, useCase),
-      });
-      await renderMaterialResult(ctx, result);
+      const materialId = tokenToUuid(action.materialToken);
+      const result =
+        action.version === undefined
+          ? await unversionedConfirmation(
+              runtime,
+              person,
+              meetupId,
+              rpcCall(ctx, useCase),
+              {
+                reached: (meetup) =>
+                  !meetup.materials.some(
+                    (material) => material.id === materialId,
+                  ),
+                kind: "material-removed",
+              },
+            )
+          : await runtime.dispatcher.execute({
+              identity: person,
+              intent: "remove-material",
+              meetupId,
+              materialId,
+              expectedVersion: action.version,
+              ...rpcCall(ctx, useCase),
+            });
+      if (result.kind === "conflict") {
+        // Уже убранный материал Meetups отдаёт успехом по любой версии, а кнопка
+        // без версии проверяет это сама, так что здесь он ещё на месте:
+        // подтверждение повторяется со свежей версией.
+        await editScreen(
+          ctx,
+          `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
+          new InlineKeyboard()
+            .text(
+              "Да, убрать",
+              confirmRemoveCallback(
+                action.token,
+                action.materialToken,
+                result.meetup.version,
+              ),
+            )
+            .row()
+            .text("Нет", `v1:mm:list:${action.token}`),
+        );
+      } else {
+        await renderMaterialResult(ctx, result);
+      }
       outcome = screenBoundary(result, {
         ok: ["material-removed"],
         okMessage: "material removed",
@@ -1207,6 +1289,7 @@ async function handleCallback(
         questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
           kind: "material-source",
           meetupId,
+          version: current.meetup.version,
           telegramUserId: ctx.from?.id ?? 0,
           expiresAt: Date.now() + questionTtlMs,
         });
@@ -1229,7 +1312,11 @@ async function handleCallback(
             : new InlineKeyboard()
                 .text(
                   "Да, убрать",
-                  `v1:mm:confirm-rm:${action.token}:${action.materialToken}`,
+                  confirmRemoveCallback(
+                    action.token,
+                    action.materialToken,
+                    current.meetup.version,
+                  ),
                 )
                 .row()
                 .text("Нет", `v1:mm:list:${action.token}`),
@@ -2067,21 +2154,115 @@ async function handleCallback(
   }
 }
 
+// Кнопка подтверждения прошлого релиза не несёт версии, по которой человек
+// решал, а команда без неё Meetups не принимает. Решение по такой кнопке
+// равносильно устаревшему экрану: человек получает кадр конфликта по текущей
+// карточке и подтверждает её версию заново. Прежде кадра карточка отвечает
+// тем же, что ответил бы Meetups: достигнутая цель — успех, отмена — отказ по
+// состоянию, чужая роль — отказ по праву. Иначе кадр предлагал бы подтвердить
+// заведомо невыполнимое или уже сделанное.
+async function unversionedConfirmation(
+  runtime: BotRuntime,
+  person: Person,
+  meetupId: string,
+  call: RpcMetadata,
+  target: {
+    reached: (meetup: MeetupSnapshot) => boolean;
+    kind: "material-attached" | "material-removed";
+  },
+): Promise<ExecuteResult> {
+  if (!person.globalRoles.includes("admin")) {
+    return { kind: "dependency-rejected", reason: "forbidden" };
+  }
+  const current = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-meetup",
+    meetupId,
+    ...call,
+  });
+  if (current.kind !== "meetup-card") return current;
+  if (target.reached(current.meetup)) {
+    return { kind: target.kind, meetup: current.meetup };
+  }
+  if (current.meetup.lifecycle === "cancelled") {
+    return {
+      kind: "dependency-rejected",
+      reason: "invalid",
+      cause: new Error("material confirmation on a cancelled meetup"),
+      precondition: true,
+    };
+  }
+  return { kind: "conflict", meetup: current.meetup };
+}
+
+// Подтверждение прикрепления живёт в сообщении с источником, поэтому после
+// конфликта у него меняется только клавиатура. Повторная правка тем же
+// содержимым и удалённое сообщение — ожидаемые отказы Telegram; в обоих
+// случаях человек получает текст конфликта, а не тишину.
+async function renewConfirmationKeyboard(
+  ctx: UpdateContext,
+  keyboard: InlineKeyboard,
+): Promise<boolean> {
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+    return true;
+  } catch (cause) {
+    return errorText(cause).includes("message is not modified");
+  }
+}
+
+function confirmAttachCallback(
+  meetupToken: string,
+  materialToken: string,
+  version: number,
+): string {
+  return `v1:mm:ca:${meetupToken}:${materialToken}:${version}`;
+}
+
+function confirmRemoveCallback(
+  meetupToken: string,
+  materialToken: string,
+  version: number,
+): string {
+  return `v1:mm:cr:${meetupToken}:${materialToken}:${version}`;
+}
+
+// Клавиатура подтверждения прикрепления. Ключ материала и источник в ней
+// постоянны, меняется только версия: после конфликта та же кнопка несёт версию
+// перечитанной карточки.
+function materialConfirmationKeyboard(
+  meetupToken: string,
+  materialToken: string,
+  version: number,
+  source: MeetupMaterialSource,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  if (source.kind === "message-link") {
+    keyboard.url("Открыть источник", source.url).row();
+  }
+  return keyboard
+    .text(
+      "Прикрепить",
+      confirmAttachCallback(meetupToken, materialToken, version),
+    )
+    .text("Отмена", `v1:view:${meetupToken}`);
+}
+
 async function sendMaterialConfirmation(
   ctx: UpdateContext,
   meetupId: string,
+  version: number,
   title: string,
   source: MaterialInputSource,
 ): Promise<void> {
   const meetupToken = uuidToToken(meetupId);
   const materialToken = uuidToToken(createUuidV7());
-  const keyboard = new InlineKeyboard();
-  if (source.kind === "message-link") {
-    keyboard.url("Открыть источник", source.url).row();
-  }
-  keyboard
-    .text("Прикрепить", `v1:mm:confirm-add:${meetupToken}:${materialToken}`)
-    .text("Отмена", `v1:view:${meetupToken}`);
+  const keyboard = materialConfirmationKeyboard(
+    meetupToken,
+    materialToken,
+    version,
+    source,
+  );
   const text = materialConfirmationText(title);
   if (source.kind === "message-link") {
     await ctx.reply(text, { reply_markup: keyboard });

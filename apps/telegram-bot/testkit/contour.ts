@@ -178,6 +178,17 @@ export function openDirectClients(environment: ContourEnvironment) {
         visible: snapshot.visibility === MeetupVisibility.VISIBLE,
       };
     },
+    /** Названия материалов сходки в порядке карточки, прочитанные мимо бота. */
+    async materialsAsAdmin(
+      identityId: string,
+      meetupId: string,
+    ): Promise<string[]> {
+      const snapshot = await meetups.getMeetup({
+        viewer: asAdmin(identityId),
+        id: meetupId,
+      });
+      return snapshot.materials.map((material) => material.title);
+    },
     /** Прямой вызов Meetups с ключом, как его передал бы бот. */
     async createDraftAsAdmin(identityId: string, meetupId: string) {
       const snapshot = await meetups.createMeetupDraft({

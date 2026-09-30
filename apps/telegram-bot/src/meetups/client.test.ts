@@ -410,7 +410,7 @@ describe("Meetups client", () => {
     });
   });
 
-  it("sends attach and remove material requests with caller ids", async () => {
+  it("sends attach and remove material requests with caller ids and the shown version", async () => {
     const rpc = rpcWithList(vi.fn());
     const response = create(MeetupSnapshotSchema, {
       id: "meetup-id",
@@ -429,11 +429,13 @@ describe("Meetups client", () => {
         title: "Афиша",
         source: { kind: "file", fileId: "bot-file-id" },
       },
+      expectedVersion: 4,
     });
     await meetups.removeMaterial({
       person,
       meetupId: "meetup-id",
       materialId: "material-id",
+      expectedVersion: 5,
     });
 
     expect(rpc.attachMaterial).toHaveBeenCalledWith(
@@ -443,6 +445,7 @@ describe("Meetups client", () => {
         materialId: "material-id",
         title: "Афиша",
         source: { source: { case: "fileId", value: "bot-file-id" } },
+        expectedVersion: 4n,
       },
       { timeoutMs: 3_000 },
     );
@@ -451,6 +454,7 @@ describe("Meetups client", () => {
         viewer: { identityId: "viewer-id", globalRoles: [] },
         id: "meetup-id",
         materialId: "material-id",
+        expectedVersion: 5n,
       },
       { timeoutMs: 3_000 },
     );

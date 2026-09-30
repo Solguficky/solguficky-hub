@@ -1,4 +1,10 @@
-import type { Message, MessageEntity, Update } from "grammy/types";
+import type {
+  InlineKeyboardButton,
+  Message,
+  MessageEntity,
+  MessageOrigin,
+  Update,
+} from "grammy/types";
 import {
   tokenToUuid,
   uuidToToken,
@@ -12,11 +18,16 @@ import { botInfo, type RecordedCall } from "./harness.js";
 
 type Button = { text: string; data: string };
 
+type KeyboardButton = { text: string; callback_data?: string; url?: string };
+
 type Screen = {
   messageId: number;
   text: string;
   entities: readonly MessageEntity[];
   buttons: readonly Button[];
+  // Клавиатура целиком, с url-кнопками: Telegram возвращает её в сообщении
+  // нажатой кнопки, и бот читает из неё источник материала.
+  keyboard: readonly (readonly KeyboardButton[])[];
   asksForReply: boolean;
 };
 
@@ -30,6 +41,11 @@ export type Person = {
   answers(number: number, text: string): Promise<void>;
   /** Нажимает кнопку с этой подписью на последнем изменённом экране, где она сейчас есть. */
   presses(label: string): Promise<void>;
+  /**
+   * Пересылает боту пост публичного канала. Висит вопрос — это ответ на него,
+   * как `says`.
+   */
+  forwardsChannelPost(channel: string, postId: number): Promise<void>;
   /** Два нажатия одной кнопки, быстрее, чем бот успевает ответить на первое. */
   pressesTwice(label: string): Promise<void>;
   /** Нажимает кнопку экрана, отрисованного прошлым релизом бота. */
@@ -91,14 +107,17 @@ export function startConversation(
     return last;
   };
 
-  const write = async (text: string, replyTo?: Screen): Promise<void> => {
+  const write = async (
+    content: { text: string; forward_origin?: MessageOrigin },
+    replyTo?: Screen,
+  ): Promise<void> => {
     messageId += 1;
     const message: Message.TextMessage = {
       message_id: messageId,
       date: 0,
       chat,
       from,
-      text,
+      ...content,
       ...(replyTo === undefined
         ? {}
         : {
@@ -138,6 +157,9 @@ export function startConversation(
     return { screen, button };
   };
 
+  // Сообщение нажатой кнопки приходит в update целиком, как его отдаёт
+  // Telegram: текст и клавиатура с url-кнопками. Бот читает по ним
+  // подтверждение материала — название и источник живут в самом экране.
   const press = (screen: Screen, data: string): Promise<unknown> => {
     updateId += 1;
     return bot.handleUpdate({
@@ -147,7 +169,22 @@ export function startConversation(
         chat_instance: `chat-${userId}`,
         from,
         data,
-        message: { message_id: screen.messageId, date: 0, chat },
+        message: {
+          message_id: screen.messageId,
+          date: 0,
+          chat,
+          text: screen.text,
+          ...(screen.keyboard.length === 0
+            ? {}
+            : {
+                reply_markup: {
+                  // Клавиатуру записал сам бот: это `reply_markup`, который он
+                  // отдал grammY, и Telegram вернул бы её как есть. Тип записи
+                  // держит только поля, которые харнесс читает.
+                  inline_keyboard: screen.keyboard as InlineKeyboardButton[][],
+                },
+              }),
+        },
       },
     });
   };
@@ -155,7 +192,28 @@ export function startConversation(
   return {
     async says(text) {
       const last = screens().at(-1);
-      await write(text, last?.asksForReply === true ? last : undefined);
+      await write({ text }, last?.asksForReply === true ? last : undefined);
+    },
+    async forwardsChannelPost(channel, postId) {
+      const last = screens().at(-1);
+      await write(
+        {
+          // Текст поста бот не читает: ему нужен только источник пересылки.
+          text: "пост канала",
+          forward_origin: {
+            type: "channel",
+            chat: {
+              id: -1001234567890,
+              type: "channel",
+              title: channel,
+              username: channel,
+            },
+            message_id: postId,
+            date: 0,
+          } satisfies MessageOrigin,
+        },
+        last?.asksForReply === true ? last : undefined,
+      );
     },
     async answers(number, text) {
       // Вопрос с ForceReply бот не правит, поэтому его номер сообщения растёт
@@ -169,7 +227,7 @@ export function startConversation(
           `вопроса №${number} нет: бот задал ${questions.length}`,
         );
       }
-      await write(text, question);
+      await write({ text }, question);
     },
     async presses(label) {
       const { screen, button } = findButton(label);
@@ -190,7 +248,7 @@ export function startConversation(
       await press(screen, ["v0", ...rest].join(":"));
     },
     async opensLink(meetupId) {
-      await write(`/start m_${uuidToToken(meetupId)}`);
+      await write({ text: `/start m_${uuidToToken(meetupId)}` });
     },
     sees() {
       return lastScreen().text;
@@ -236,7 +294,7 @@ type ScreenPayload = {
   message_id?: unknown;
   reply_markup?: {
     force_reply?: boolean;
-    inline_keyboard?: { text: string; callback_data?: string }[][];
+    inline_keyboard?: KeyboardButton[][];
   };
 };
 
@@ -314,13 +372,18 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
         text,
         entities: payload.entities ?? [],
         buttons: readButtons(payload),
+        keyboard: payload.reply_markup?.inline_keyboard ?? [],
         asksForReply: payload.reply_markup?.force_reply === true,
       };
     } else if (
       call.method === "editMessageReplyMarkup" &&
       previous !== undefined
     ) {
-      next = { ...previous, buttons: readButtons(payload) };
+      next = {
+        ...previous,
+        buttons: readButtons(payload),
+        keyboard: payload.reply_markup?.inline_keyboard ?? [],
+      };
     }
     if (next === undefined) return;
     current.delete(messageId);
