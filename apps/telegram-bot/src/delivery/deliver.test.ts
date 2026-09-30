@@ -123,6 +123,39 @@ describe("deliver notification", () => {
     expect(restarted.send.send).not.toHaveBeenCalled();
   });
 
+  // Ручные рассылки идут тем же путём, что и факты о сходке: одна отправка на
+  // факт, повтор шиной после отметки второй раз не отправляет.
+  it.each([
+    {
+      kind: "organizer-message",
+      meetup: {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+        title: "Настолки у Лёши",
+        venue: "",
+        kind: "",
+        when: { kind: "no-date" },
+      },
+      body: "Берите настолки",
+    },
+    { kind: "community-announcement", body: "Сбор в пятницу" },
+  ] as const)("sends a $kind once", async (content) => {
+    const journal = memoryJournal();
+    const { deliver, send } = setup({ journal });
+    const broadcast = notification({ content });
+    await expect(deliver(broadcast, 1)).resolves.toEqual({
+      kind: "ack",
+      outcome: "delivered",
+    });
+    await expect(deliver(broadcast, 2)).resolves.toEqual({
+      kind: "ack",
+      outcome: "already_delivered",
+    });
+    expect(send.send).toHaveBeenCalledOnce();
+    expect(send.send).toHaveBeenCalledWith(
+      expect.objectContaining({ content }),
+    );
+  });
+
   it("acknowledges an already dropped notification without sending", async () => {
     const journal = memoryJournal({
       [notification().notificationId]: {
@@ -242,12 +275,12 @@ describe("deliver notification", () => {
     expect(send.send).not.toHaveBeenCalled();
   });
 
-  it("drops a type the channel cannot render yet instead of sending it", async () => {
+  it("drops a type the channel cannot render instead of sending it", async () => {
     const { deliver, send } = setup();
     await expect(
       deliver(
         notification({
-          content: { kind: "unrendered", type: "organizerMessage" },
+          content: { kind: "unrendered", type: "unknown" },
         }),
         1,
       ),

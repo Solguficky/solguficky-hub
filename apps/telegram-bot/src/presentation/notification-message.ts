@@ -10,6 +10,7 @@ import type {
 import type { NotificationSender, SendResult } from "../delivery/port.js";
 import type { TelegramEnvironment } from "./bot.js";
 import { uuidToToken } from "./meetup-deep-link.js";
+import type { NotifiedMeetupCategory } from "./parse-callback.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -20,6 +21,15 @@ export const disablePublishedCallback = "v1:notify:off:published";
 // напоминание включено отдельно, это не остановит, и подтверждение говорит об
 // этом прямо.
 export const disableReminderCallback = "v1:notify:off:reminder";
+
+// Предел текста сообщения Telegram в UTF-16-единицах; длина строки JavaScript
+// считается в тех же единицах. Предел тела рассылки сегодня совпадает с ним
+// (docs/architecture/integration.md), но это разные величины: сужение тела не
+// должно сужать кадр, в который тело вставляется.
+export const telegramTextLimit = 4096;
+
+// Объявление ни к какой сходке не привязано, и категория у него только общая.
+export const disableAnnouncementCallback = "v1:notify:off:announcement";
 
 // Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст то
 // же сообщение второй раз, пока первая отправка ещё висит. Умолчание клиента
@@ -47,7 +57,7 @@ export type NotificationMessage = {
 // включена явно, а подтверждение под сообщением обещало бы обратное.
 export function disableMeetupCategoryCallback(
   meetupId: string,
-  category: "changes" | "material",
+  category: NotifiedMeetupCategory,
 ): string {
   return `v1:notify:moff:${uuidToToken(meetupId)}:${category}`;
 }
@@ -58,6 +68,15 @@ export function disableMeetupCategoryCallback(
 export function renderNotification(
   content: RenderableContent,
 ): NotificationMessage {
+  if (content.kind === "community-announcement") {
+    return {
+      text: withHeadline("Объявление сообщества", content.body),
+      keyboard: new InlineKeyboard().text(
+        "Не присылать объявления",
+        disableAnnouncementCallback,
+      ),
+    };
+  }
   const meetup = content.meetup;
   const open = () =>
     new InlineKeyboard().text(
@@ -107,6 +126,21 @@ export function renderNotification(
         keyboard: open()
           .row()
           .text("Не присылать напоминания", disableReminderCallback),
+      };
+    // Сообщение организатора получают подписчики сходки, поэтому кнопка, как у
+    // изменений, выключает категорию у этой сходки, а не общую.
+    case "organizer-message":
+      return {
+        text: withHeadline(
+          headline("Сообщение организатора", meetup),
+          content.body,
+        ),
+        keyboard: open()
+          .row()
+          .text(
+            "Не присылать сообщения организатора этой сходки",
+            disableMeetupCategoryCallback(meetup.id, "organizer"),
+          ),
       };
     // Сходка скрыта: кнопка «Открыть» упёрлась бы в «не найдено», а отключать
     // уже нечего — снятие последний повод, пока сходку не вернут. Поэтому
@@ -176,6 +210,17 @@ function renderChange(content: ChangeContent): string[] {
   // Отменённой сходке дата и место уже ни к чему: главное сказано заголовком.
   if (!cancelled) lines.push(...whenAndWhere(meetup));
   return lines;
+}
+
+// Тело рассылки ограничено тем же пределом, что и сообщение Telegram, и
+// заголовок канала над телом предельной длины получил бы 400 — сообщение
+// снялось бы без повтора. Поэтому заголовок ставится, только когда помещается,
+// а иначе уходит одно тело: текст автора дороже конверта, а у сообщения
+// организатора сходку по-прежнему называет кнопка. Тело не обрезается — его
+// обещано доставить дословно.
+function withHeadline(lead: string, body: string): string {
+  const framed = `${lead}\n\n${body}`;
+  return framed.length <= telegramTextLimit ? framed : body;
 }
 
 function headline(lead: string, meetup: NotifiedMeetup): string {

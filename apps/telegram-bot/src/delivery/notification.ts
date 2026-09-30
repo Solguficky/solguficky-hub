@@ -56,9 +56,10 @@ export type MeetupAspect =
 export type MeetupLifecycle = "planned" | "held" | "cancelled";
 export type MeetupVisibility = "hidden" | "visible";
 
-// Типы, которые канал не рисует — ручные рассылки, — доезжают до
-// решения явным вариантом, а не пропадают на разборе: контракт запрещает
-// доставлять неизвестное молча, и отказ обязан быть виден в журнале и логах.
+// Тип, которого канал не рисует, — из схемы новее этой сборки или ещё не
+// нарисованный, — доезжает до решения явным вариантом, а не пропадает на
+// разборе: контракт запрещает доставлять неизвестное молча, и отказ обязан быть
+// виден в журнале и логах.
 export type NotificationContent =
   | { kind: "meetup-published"; meetup: NotifiedMeetup }
   | {
@@ -71,6 +72,10 @@ export type NotificationContent =
   | { kind: "meetup-material"; meetup: NotifiedMeetup; materialTitle: string }
   | { kind: "meetup-unpublished"; meetup: NotifiedMeetup }
   | { kind: "meetup-reminder"; meetup: NotifiedMeetup }
+  // Ручные рассылки несут текст автора дословно; отправителя канал не
+  // получает и не называет: имя не входит в контракт личности.
+  | { kind: "organizer-message"; meetup: NotifiedMeetup; body: string }
+  | { kind: "community-announcement"; body: string }
   | { kind: "unrendered"; type: string };
 
 export type RenderableContent = Exclude<
@@ -180,9 +185,30 @@ function toContent(message: Notification): NotificationContent | undefined {
         ? undefined
         : { kind: "meetup-reminder", meetup };
     }
+    case "organizerMessage": {
+      const meetup = toMeetup(type.value.meetup);
+      const body = toBody(type.value.body);
+      return meetup === undefined || body === undefined
+        ? undefined
+        : { kind: "organizer-message", meetup, body };
+    }
+    case "communityAnnouncement": {
+      const body = toBody(type.value.body);
+      return body === undefined
+        ? undefined
+        : { kind: "community-announcement", body };
+    }
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }
+}
+
+// Пустое тело контракт запрещает: у поля нет значения «не указано». Тело из
+// одних пробелов он пропускает, и канал его не отвергает — под заголовком
+// такой текст Telegram примет. Сам текст не нормализуется: он уходит как
+// написан.
+function toBody(body: string): string | undefined {
+  return body === "" ? undefined : body;
 }
 
 function toMeetup(card: MeetupCard | undefined): NotifiedMeetup | undefined {

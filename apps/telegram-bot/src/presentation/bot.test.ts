@@ -3717,6 +3717,154 @@ describe("notification frames", () => {
     });
   });
 
+  // Сообщение организатора получают подписчики сходки: кнопка, как у
+  // изменений, выключает категорию у этой сходки.
+  it("turns organizer messages off for this meetup from an organizer message", async () => {
+    const off = `v1:notify:moff:${token}:organizer`;
+    const notification = {
+      text: "Сообщение организатора: Настолки у Лёши\n\nБерите настолки",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
+          [
+            {
+              text: "Не присылать сообщения организатора этой сходки",
+              callback_data: off,
+            },
+          ],
+        ],
+      },
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-notification-settings",
+      meetup,
+      subscribed: true,
+      categories: [
+        { category: "organizer", enabled: false, differsFromGlobal: true },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackMessageUpdate(off, notification));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "set-meetup-category",
+        meetupId: meetup.id,
+        category: "organizer",
+        enabled: false,
+      }),
+    );
+    const payload = screen(calls[1]);
+    expect(payload.text).toContain(notification.text);
+    expect(payload.text).toContain(
+      "Больше не присылаю по этой сходке сообщения организатора",
+    );
+  });
+
+  // Объявление ни к какой сходке не привязано: выключается общая категория.
+  it("turns announcements off globally from an announcement", async () => {
+    const notification = {
+      text: "Объявление сообщества\n\nСбор в пятницу",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Не присылать объявления",
+              callback_data: "v1:notify:off:announcement",
+            },
+          ],
+        ],
+      },
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "global-notification-settings",
+      categories: [{ category: "announcement", enabled: false }],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackMessageUpdate("v1:notify:off:announcement", notification),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "set-global-category",
+        category: "announcement",
+        enabled: false,
+      }),
+    );
+    const payload = screen(calls[1]);
+    expect(payload.text).toContain(notification.text);
+    expect(payload.text).toContain("Больше не присылаю: объявления сообщества");
+    expect(payload.reply_markup?.inline_keyboard).toEqual([
+      [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+    ]);
+  });
+
+  describe("confirming a disabled announcement", () => {
+    const off = "v1:notify:off:announcement";
+    const announcement = (text: string) => ({
+      text,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Не присылать объявления", callback_data: off }],
+        ],
+      },
+    });
+    const disabled = () =>
+      vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "global-notification-settings",
+        categories: [{ category: "announcement", enabled: false }],
+      });
+
+    // Рассылка у предела длины: заметка под текстом дала бы 400 на правке.
+    it("keeps a text at the Telegram limit and sends the note separately", async () => {
+      const long = "а".repeat(4096);
+      const { bot, calls } = createHarness(resolvedIdentity(), {
+        execute: disabled(),
+      });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, announcement(long)));
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+        "sendMessage",
+      ]);
+      expect(screen(calls[1]).text).toBe(long);
+      expect(screen(calls[1]).reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+      ]);
+      expect(screen(calls[2]).text).toContain(
+        "Больше не присылаю: объявления сообщества",
+      );
+    });
+
+    // Тело пишет автор: совпадение с заметкой внутри текста подтверждения не
+    // отменяет.
+    it("still appends the note when the body quotes it", async () => {
+      const note =
+        "Больше не присылаю: объявления сообщества. Включить снова можно в настройках уведомлений.";
+      const text = `Объявление сообщества\n\n${note}\nА это уже текст автора`;
+      const { bot, calls } = createHarness(resolvedIdentity(), {
+        execute: disabled(),
+      });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, announcement(text)));
+      expect(screen(calls[1]).text).toBe(`${text}\n\n${note}`);
+    });
+
+    it("still appends the note when the body ends with it", async () => {
+      const note =
+        "Больше не присылаю: объявления сообщества. Включить снова можно в настройках уведомлений.";
+      const text = `Объявление сообщества\n\n${note}`;
+      const { bot, calls } = createHarness(resolvedIdentity(), {
+        execute: disabled(),
+      });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, announcement(text)));
+      expect(screen(calls[1]).text).toBe(`${text}\n\n${note}`);
+    });
+  });
+
   // E-05: отказ Notifications приходит кадром о сбое, а не пустым списком
   // категорий, который человек прочитал бы как «всё выключено».
   it("renders a Notifications refusal as E-05 instead of an empty frame", async () => {

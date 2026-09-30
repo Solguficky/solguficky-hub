@@ -74,6 +74,7 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
+import { telegramTextLimit } from "./notification-message.js";
 import {
   type CallbackAction,
   type NotifiedMeetupCategory,
@@ -2460,8 +2461,9 @@ function broadcastForbiddenOutcome(
 }
 
 // Предпросмотр — сам текст отдельным сообщением, без заголовка и разметки:
-// ровно то, что уйдёт получателям, и ровно то, что кнопка подтверждения потом
-// прочтёт обратно. Кадр подтверждения отвечает на него и несёт ключ рассылки.
+// ровно тот текст автора, что уйдёт получателям (заголовок и кнопки канал
+// добавит при доставке), и ровно то, что кнопка подтверждения потом прочтёт
+// обратно. Кадр подтверждения отвечает на него и несёт ключ рассылки.
 async function sendBroadcastConfirmation(
   ctx: UpdateContext,
   audience: BroadcastAudience,
@@ -3255,10 +3257,17 @@ function globalCategoryDisabledNote(category: NotificationCategory): string {
 
 // Изменения и снятие с публикации идут по одной категории, поэтому
 // подтверждение говорит и о снятии: иначе его отсутствие стало бы сюрпризом.
+const meetupCategoryDisabledNotes: Record<NotifiedMeetupCategory, string> = {
+  changes:
+    "Больше не присылаю по этой сходке изменения данных и статуса, включая снятие с публикации. Включить снова можно в уведомлениях сходки.",
+  material:
+    "Больше не присылаю по этой сходке новые связанные сообщения. Включить снова можно в уведомлениях сходки.",
+  organizer:
+    "Больше не присылаю по этой сходке сообщения организатора. Включить снова можно в уведомлениях сходки.",
+};
+
 function meetupCategoryDisabledNote(category: NotifiedMeetupCategory): string {
-  return category === "changes"
-    ? "Больше не присылаю по этой сходке изменения данных и статуса, включая снятие с публикации. Включить снова можно в уведомлениях сходки."
-    : "Больше не присылаю по этой сходке новые связанные сообщения. Включить снова можно в уведомлениях сходки.";
+  return meetupCategoryDisabledNotes[category];
 }
 
 type CategoryDisabledConfirmation = {
@@ -3272,9 +3281,19 @@ async function confirmCategoryDisabled(
 ): Promise<void> {
   const message = ctx.callbackQuery?.message;
   const pressed = ctx.callbackQuery?.data;
+  const current = message?.reply_markup?.inline_keyboard ?? [];
+  // Подтверждение уже стоит, если нажатой кнопки под сообщением нет: она
+  // снимается той же правкой, что дописывает заметку. Признак берётся из
+  // клавиатуры, а не из текста: текст рассылки пишет автор, и совпадение с
+  // заметкой в нём не должно глушить подтверждение.
+  const confirmed = !current.some((row) =>
+    row.some(
+      (button) => "callback_data" in button && button.callback_data === pressed,
+    ),
+  );
   // Кнопки уведомления, кроме нажатой, остаются: «Открыть сходку» по-прежнему
   // нужна, а отключать уже нечего.
-  const rows = (message?.reply_markup?.inline_keyboard ?? [])
+  const rows = current
     .map((row) =>
       row.filter(
         (button) =>
@@ -3287,13 +3306,22 @@ async function confirmCategoryDisabled(
     .text(settings.text, settings.data);
   const original =
     message !== undefined && "text" in message ? message.text : undefined;
-  const text =
-    original === undefined
-      ? note
-      : original.includes(note)
-        ? original
-        : `${original}\n\n${note}`;
-  await editScreen(ctx, text, keyboard);
+  if (original === undefined) {
+    await editScreen(ctx, note, keyboard);
+    return;
+  }
+  const tail = `\n\n${note}`;
+  if (confirmed) {
+    await editScreen(ctx, original, keyboard);
+  } else if (original.length + tail.length <= telegramTextLimit) {
+    await editScreen(ctx, `${original}${tail}`, keyboard);
+  } else {
+    // Рассылка у предела длины: заметка под ней не поместится, и правка
+    // текста получила бы 400. Текст остаётся, меняются кнопки, а заметка
+    // приходит отдельным сообщением.
+    await editScreen(ctx, original, keyboard);
+    await ctx.reply(note);
+  }
 }
 
 // Отказ Notifications отвечает кадром по природе отказа, а не одним «сбой на

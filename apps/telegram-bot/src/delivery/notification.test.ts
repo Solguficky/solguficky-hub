@@ -5,6 +5,7 @@ import {
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
 import {
+  CommunityAnnouncementSchema,
   MeetupAspect,
   type MeetupCard,
   MeetupPublishedSchema,
@@ -82,20 +83,87 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Тип из схемы новее сборки доезжает неизвестным полем: у oneof тогда нет
+  // выбранной ветки. Поле 99 с пустым значением — тег 99<<3|2 варинтом и длина 0.
   it("keeps a type the channel cannot render as an explicit variant", () => {
+    const envelope = published((message) => {
+      message.type = { case: undefined };
+    });
     const decoded = decodeNotification(
-      published((message) => {
-        message.type = {
-          case: "organizerMessage",
-          value: create(OrganizerMessageSchema),
-        };
-      }),
+      new Uint8Array([...envelope, 0x9a, 0x06, 0x00]),
     );
     expect(decoded).toMatchObject({
       kind: "ok",
-      notification: {
-        content: { kind: "unrendered", type: "organizerMessage" },
-      },
+      notification: { content: { kind: "unrendered", type: "unknown" } },
+    });
+  });
+
+  describe("a manual broadcast", () => {
+    const senderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
+    // Сходка берётся из готового факта о публикации: карточка у сообщения
+    // организатора та же, что у любого факта о сходке.
+    const organizer = (body: string, withMeetup = true): Uint8Array =>
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        message.type = {
+          case: "organizerMessage",
+          value: create(OrganizerMessageSchema, {
+            ...(withMeetup ? { meetup: message.type.value.meetup } : {}),
+            senderId,
+            body,
+          }),
+        };
+      });
+    const announcement = (body: string): Uint8Array =>
+      published((message) => {
+        message.type = {
+          case: "communityAnnouncement",
+          value: create(CommunityAnnouncementSchema, { senderId, body }),
+        };
+      });
+
+    it("decodes an organizer message with its meetup and the verbatim body", () => {
+      expect(
+        decodeNotification(organizer("  Берите\nнастолки  ")),
+      ).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: {
+            kind: "organizer-message",
+            meetup: { id: meetupId, title: "Настолки у Лёши" },
+            body: "  Берите\nнастолки  ",
+          },
+        },
+      });
+    });
+
+    it("decodes a community announcement without a meetup", () => {
+      expect(decodeNotification(announcement("Сбор в пятницу"))).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: { kind: "community-announcement", body: "Сбор в пятницу" },
+        },
+      });
+    });
+
+    // Контракт запрещает только пустую строку: тело из пробелов уходит под
+    // заголовком, и Telegram его примет.
+    it("rejects an empty body", () => {
+      expect(decodeNotification(announcement("")).kind).toBe("malformed");
+      expect(decodeNotification(organizer("")).kind).toBe("malformed");
+    });
+
+    it("keeps a body of whitespace as written", () => {
+      expect(decodeNotification(announcement(" \n "))).toMatchObject({
+        kind: "ok",
+        notification: { content: { body: " \n " } },
+      });
+    });
+
+    it("rejects an organizer message without its meetup", () => {
+      expect(decodeNotification(organizer("Берите настолки", false)).kind).toBe(
+        "malformed",
+      );
     });
   });
 

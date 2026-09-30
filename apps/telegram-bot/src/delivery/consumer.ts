@@ -176,8 +176,10 @@ function write(
     error: decision.reason,
     ...causeField(decision.cause),
   };
-  // Ожидаемые отказы получателя — нормальная жизнь канала; нарушение контракта
-  // и исчерпанные попытки — то, что оператор обязан увидеть.
+  // Ожидаемые отказы получателя — нормальная жизнь канала; нарушение контракта,
+  // исчерпанные попытки и принятый, но не нарисованный тип — то, что оператор
+  // обязан увидеть: последний значит, что автор видел «принято», а до
+  // получателя ничего не дошло.
   if (expectedDrops.has(decision.reason)) {
     logger.warn("notification dropped", entry);
   } else {
@@ -198,7 +200,6 @@ const dropCategory: Record<DropReason, FailureCategory> = {
 
 const expectedDrops: ReadonlySet<DropReason> = new Set([
   "expired",
-  "unrendered_type",
   "recipient_not_found",
   "recipient_blocked",
   "bot_blocked",
