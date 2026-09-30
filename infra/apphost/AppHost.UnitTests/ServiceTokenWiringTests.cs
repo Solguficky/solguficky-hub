@@ -37,7 +37,7 @@ public class ServiceTokenWiringTests
     private static readonly string[] Contour = ["--profile", "hub", "--run-services", $"{Identity},{Meetups}"];
 
     [Fact]
-    public async Task EachPair_SharesTheCallersParameter()
+    public async Task ServiceToken_EachCallerCalleePair_SharesOneParameter()
     {
         var tokens = await TokensAsync(Hub);
 
@@ -54,7 +54,7 @@ public class ServiceTokenWiringTests
     }
 
     [Fact]
-    public async Task DifferentCallers_GetDifferentValues()
+    public async Task ServiceToken_DifferentCallers_GetDifferentValues()
     {
         var tokens = await TokensAsync(Hub);
 
@@ -76,7 +76,7 @@ public class ServiceTokenWiringTests
     /// который его не вызывает, — тот же дефект, что пропущенный.
     /// </summary>
     [Fact]
-    public async Task EachResource_SeesOnlyItsOwnTokenAndItsCallers()
+    public async Task ServiceToken_HubProfile_ReachesOnlyTheCallerAndItsCallees()
     {
         var tokens = await TokensAsync(Hub);
 
@@ -96,7 +96,7 @@ public class ServiceTokenWiringTests
     }
 
     [Fact]
-    public async Task RunMode_GeneratesEveryToken()
+    public async Task ServiceToken_RunMode_IsGeneratedWithoutInput()
     {
         var tokens = await TokensAsync(Hub);
 
@@ -112,7 +112,7 @@ public class ServiceTokenWiringTests
     /// Identity и Meetups всё равно знают его токен, и провод контура ходит им.
     /// </summary>
     [Fact]
-    public async Task ContourSlice_KeepsTheBotInEveryTable()
+    public async Task CallerTable_ContourSliceWithoutBot_KeepsTheBot()
     {
         var tokens = await TokensAsync(Contour);
 
@@ -128,7 +128,7 @@ public class ServiceTokenWiringTests
     /// Значение из конфигурации обязано перекрыть сгенерированное.
     /// </summary>
     [Fact]
-    public async Task ConfiguredValue_OverridesTheGeneratedOne()
+    public async Task ServiceToken_ValueConfigured_OverridesTheGeneratedOne()
     {
         var tokens = await TokensAsync(Contour, ("Parameters:telegram-bot-service-token", "configured-bot-token"));
 

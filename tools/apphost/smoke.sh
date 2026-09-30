@@ -157,9 +157,9 @@ echo "smoke run=$RUN profile=$PROFILE"
 
 if [ "$ATTACH" = no ]; then
   echo "1. Start"
-  # The environment, not an AppHost argument, carries the token: arguments are
-  # visible to every account on a shared host. env(1) because the key has a
-  # dash, which `export` rejects.
+  # The configuration key has a dash, which `export` rejects, hence env(1).
+  # The token is not hidden from the host: grpcurl below carries it in its
+  # arguments. It is minted for this run and dies with the AppHost it starts.
   if env "Parameters__telegram-bot-service-token=$BOT_SERVICE_TOKEN" \
       aspire start --isolated --non-interactive --apphost "$APPHOST" -- --profile "$PROFILE" "$@" > /dev/null 2>&1; then
     ok "aspire start"
