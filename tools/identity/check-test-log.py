@@ -3,9 +3,10 @@
 Usage: check-test-log.py LOG THRESHOLD
 
 `go test` exits 0 when a test is skipped and when a test file is not compiled
-at all: a typo in `//go:build integration` drops the whole file from every
-run without a trace. Go has no flag for either case, so this check reads the
-event stream and fails when
+at all: a typo in `//go:build integration` drops a file that no other file
+of the package refers to from every run without a trace (one that is referred
+to breaks the package build loudly). Go has no flag for either case, so this
+check reads the event stream and fails when
 
 - any test, subtests included, was skipped ("skip is not pass",
   docs/standards/testing/testing-strategy.md), or

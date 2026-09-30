@@ -10,10 +10,11 @@
 # this run is the whole suite. Extra flags go to `go test`; CI passes -race.
 #
 # `go test` has no flag that turns a skip into a failure, and a skipped test
-# exits 0 exactly like a passing one. A typo in the build tag is quieter still:
-# the file is not compiled and nothing reports it. `testdb` already fails
-# instead of skipping when the database is unreachable; check-test-log.py is
-# the guard for any other `t.Skip` and for a lost file ("skip is not pass",
+# exits 0 exactly like a passing one. A typo in the build tag is quieter still
+# when no other file of the package refers to the file: it is not compiled and
+# nothing reports it. `testdb` already fails instead of skipping when the
+# database is unreachable; check-test-log.py is the guard for any other
+# `t.Skip` and for a lost file ("skip is not pass",
 # docs/standards/testing/testing-strategy.md).
 
 set -eu
