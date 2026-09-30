@@ -1,5 +1,5 @@
 {
-  "sequence": 2,
+  "sequence": 4,
   "state": {
     "kind": "Trading",
     "trading": {
@@ -48,12 +48,76 @@
       "deadline": "2026-10-07T18:00:00Z"
     },
     "held": null,
-    "sold": null
+    "sold": null,
+    "scheduled": null
   },
+  "session": "00000000-0000-0004-0000-000000000001",
   "seen": [
     {
       "sequence": 1,
       "opId": "00000000-0000-0003-0000-000000000001",
+      "sessionId": "00000000-0000-0004-0000-000000000001",
+      "event": {
+        "kind": "LotDrafted",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": null
+      }
+    },
+    {
+      "sequence": 2,
+      "opId": "00000000-0000-0003-0000-000000000002",
+      "sessionId": null,
+      "event": {
+        "kind": "LotScheduled",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": {
+          "startingPrice": {
+            "minorUnits": 10000,
+            "currency": "RUB"
+          },
+          "config": {
+            "currency": "RUB",
+            "stepPolicy": {
+              "fixed": null,
+              "tiers": [
+                {
+                  "bound": {
+                    "minorUnits": 0,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 500,
+                    "currency": "RUB"
+                  }
+                },
+                {
+                  "bound": {
+                    "minorUnits": 100000,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 1000,
+                    "currency": "RUB"
+                  }
+                }
+              ]
+            },
+            "antiSnipe": {
+              "window": "PT2M",
+              "extension": "PT2M",
+              "maxExtensions": 3
+            },
+            "proxyEnabled": true
+          }
+        }
+      }
+    },
+    {
+      "sequence": 3,
+      "opId": "00000000-0000-0003-0000-000000000003",
+      "sessionId": null,
       "event": {
         "kind": "LotOpened",
         "lotOpened": {
@@ -97,12 +161,14 @@
           },
           "deadline": "2026-10-07T18:00:00Z"
         },
-        "bidPlaced": null
+        "bidPlaced": null,
+        "lotScheduled": null
       }
     },
     {
-      "sequence": 2,
-      "opId": "00000000-0000-0003-0000-000000000002",
+      "sequence": 4,
+      "opId": "00000000-0000-0003-0000-000000000004",
+      "sessionId": null,
       "event": {
         "kind": "BidPlaced",
         "lotOpened": null,
@@ -116,7 +182,8 @@
           "previousLeader": null,
           "origin": "Manual",
           "source": "Bot"
-        }
+        },
+        "lotScheduled": null
       }
     }
   ]

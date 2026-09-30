@@ -80,9 +80,16 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
   private def lot(kit: ActorTestKit, id: String, snapshotEvery: Int = LotEntity.DefaultSnapshotEvery) =
     kit.spawn(LotEntity(id, clock, UuidV7.generator(clock), snapshotEvery))
 
+  /** Полный путь до торгов: рождение, планирование и открытие занимают `op(1)`–`op(3)` и строки 1–3 журнала. */
   private def openOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command]): Either[OpenLotRejected, Envelope] = {
+    val drafted = kit.createTestProbe[Either[DraftLotRejected, Envelope]]()
+    entity ! LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, drafted.ref)
+    drafted.receiveMessage(patience)
+    val planned = kit.createTestProbe[Either[ScheduleLotRejected, Envelope]]()
+    entity ! LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(participant(9)), planned.ref)
+    planned.receiveMessage(patience)
     val replies = kit.createTestProbe[Either[OpenLotRejected, Envelope]]()
-    entity ! LotEntity.Open(openLot(opN = 1), Initiator.Scheduler, replies.ref)
+    entity ! LotEntity.Open(openLot(opN = 3), Initiator.Scheduler, replies.ref)
     replies.receiveMessage(patience)
   }
 
@@ -112,22 +119,26 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
       try {
         val entity = lot(first, id)
         openOn(first, entity)
-        bidOn(first, entity, who = 1, amount = 110, opN = 2)
-        bidOn(first, entity, who = 2, amount = 120, opN = 3)
+        bidOn(first, entity, who = 1, amount = 110, opN = 4)
+        bidOn(first, entity, who = 2, amount = 120, opN = 5)
       } finally first.shutdownTestKit()
 
       val second = node(database)
       try {
         // Команда уходит сразу после spawn и ждёт recovery в stash — так пассивированный лот будит первая команда.
         val entity = lot(second, id)
-        val woke = bidOn(second, entity, who = 1, amount = 130, opN = 4)
-        val restored = tradingOf(read(second, entity))
+        val woke = bidOn(second, entity, who = 1, amount = 130, opN = 6)
+        val woken = read(second, entity)
+        val restored = tradingOf(woken)
 
-        woke.map(_.sequence) shouldBe Right(4L)
+        woke.map(_.sequence) shouldBe Right(6L)
         (restored.currentPrice, restored.leader, restored.deadline) shouldBe
           (money(130), Some(participant(1)), Some(deadline))
+        woken.session shouldBe Some(session(1))
         val written = journal(database, id)
-        written.map(_.sequence) shouldBe List(1L, 2L, 3L, 4L)
+        written.map(_.sequence) shouldBe List(1L, 2L, 3L, 4L, 5L, 6L)
+        written.map(row => mapper.readTree(row.payload).get("sessionId").asText).distinct shouldBe
+          List(session(1).value.toString)
         written.map(_.manifest).distinct shouldBe List(classOf[StoredLotEvent].getName)
         written.map(_.serializerId).distinct shouldBe List(jacksonId(second))
         written.flatMap(row => floatingPoints(row.payload)) shouldBe Nil
@@ -140,24 +151,24 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
       val first = node(database)
       val original =
         try {
-          val entity = lot(first, id, snapshotEvery = 2)
+          val entity = lot(first, id, snapshotEvery = 4)
           openOn(first, entity)
-          val original = bidOn(first, entity, who = 1, amount = 110, opN = 2)
-          bidOn(first, entity, who = 2, amount = 120, opN = 3)
-          eventually(snapshots(database, id).map(_.sequence) shouldBe List(2L))
+          val original = bidOn(first, entity, who = 1, amount = 110, opN = 4)
+          bidOn(first, entity, who = 2, amount = 120, opN = 5)
+          eventually(snapshots(database, id).map(_.sequence) shouldBe List(4L))
           original
         } finally first.shutdownTestKit()
 
       val second = node(database)
       try {
-        val entity = lot(second, id, snapshotEvery = 2)
-        val repeated = bidOn(second, entity, who = 1, amount = 110, opN = 2)
+        val entity = lot(second, id, snapshotEvery = 4)
+        val repeated = bidOn(second, entity, who = 1, amount = 110, opN = 4)
         val restored = tradingOf(read(second, entity))
 
         repeated shouldBe original
         (restored.currentPrice, restored.leader, restored.deadline) shouldBe
           (money(120), Some(participant(2)), Some(deadline))
-        journal(database, id).map(_.sequence) shouldBe List(1L, 2L, 3L)
+        journal(database, id).map(_.sequence) shouldBe List(1L, 2L, 3L, 4L, 5L)
         val snapshot = snapshots(database, id)
         snapshot.map(_.manifest) shouldBe List(classOf[StoredLot].getName)
         snapshot.flatMap(row => floatingPoints(row.payload)) shouldBe Nil
@@ -172,15 +183,15 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
         try {
           val entity = lot(first, id)
           openOn(first, entity)
-          val original = bidOn(first, entity, who = 1, amount = 110, opN = 2)
-          bidOn(first, entity, who = 1, amount = 110, opN = 2) shouldBe original
+          val original = bidOn(first, entity, who = 1, amount = 110, opN = 4)
+          bidOn(first, entity, who = 1, amount = 110, opN = 4) shouldBe original
           original
         } finally first.shutdownTestKit()
 
       val second = node(database)
       try {
-        bidOn(second, lot(second, id), who = 1, amount = 110, opN = 2) shouldBe original
-        rowsWithOp(database, id, opN = 2) shouldBe 1
+        bidOn(second, lot(second, id), who = 1, amount = 110, opN = 4) shouldBe original
+        rowsWithOp(database, id, opN = 4) shouldBe 1
       } finally second.shutdownTestKit()
     }
 
@@ -195,21 +206,21 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
 
         // Второй писатель того же лота: шардинг сужает такую гонку, но не исключает её (ADR-045).
         val rival = lot(second, id)
-        val rivalReply = bidOn(second, rival, who = 1, amount = 110, opN = 2)
+        val rivalReply = bidOn(second, rival, who = 1, amount = 110, opN = 4)
 
-        // Первый писатель не видел ставки соперника и занимает тот же номер 2.
+        // Первый писатель не видел ставки соперника и занимает тот же номер 4.
         val watcher = first.createTestProbe[Nothing]()
         val staleReplies = first.createTestProbe[BidReply]()
-        stale ! LotEntity.Bid(placeBid(1, 110, 2), Initiator.Participant(participant(1)), staleReplies.ref)
+        stale ! LotEntity.Bid(placeBid(1, 110, 4), Initiator.Participant(participant(1)), staleReplies.ref)
         watcher.expectTerminated(stale, patience)
         staleReplies.expectNoMessage(1.second)
 
-        val repeated = bidOn(first, lot(first, id), who = 1, amount = 110, opN = 2)
+        val repeated = bidOn(first, lot(first, id), who = 1, amount = 110, opN = 4)
 
-        rivalReply.map(_.sequence) shouldBe Right(2L)
+        rivalReply.map(_.sequence) shouldBe Right(4L)
         repeated shouldBe rivalReply
-        journal(database, id).map(_.sequence) shouldBe List(1L, 2L)
-        rowsWithOp(database, id, opN = 2) shouldBe 1
+        journal(database, id).map(_.sequence) shouldBe List(1L, 2L, 3L, 4L)
+        rowsWithOp(database, id, opN = 4) shouldBe 1
       } finally {
         first.shutdownTestKit()
         second.shutdownTestKit()
@@ -225,14 +236,14 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
         given Timeout = Timeout(patience)
         val id = UUID.randomUUID().toString
 
-        val opened = Await.result(
+        val drafted = Await.result(
           sharding
             .entityRefFor(LotEntity.TypeKey, id)
-            .ask[Either[OpenLotRejected, Envelope]](LotEntity.Open(openLot(opN = 1), Initiator.Scheduler, _)),
+            .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, _)),
           patience
         )
 
-        opened.map(_.sequence) shouldBe Right(1L)
+        drafted.map(_.sequence) shouldBe Right(1L)
         journal(database, id).map(_.sequence) shouldBe List(1L)
       } finally kit.shutdownTestKit()
     }

@@ -9,8 +9,10 @@
     "id": null
   },
   "event": {
-    "kind": "LotOpened",
-    "lotOpened": {
+    "kind": "LotScheduled",
+    "lotOpened": null,
+    "bidPlaced": null,
+    "lotScheduled": {
       "startingPrice": {
         "minorUnits": 10000,
         "currency": "RUB"
@@ -48,10 +50,7 @@
           "maxExtensions": 3
         },
         "proxyEnabled": true
-      },
-      "deadline": "2026-10-07T18:00:00Z"
-    },
-    "bidPlaced": null,
-    "lotScheduled": null
+      }
+    }
   }
 }

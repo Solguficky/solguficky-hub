@@ -44,6 +44,9 @@ final case class StoredConfig(
     proxyEnabled: Boolean
 )
 
+/** Секция `LotScheduled` и состояния `Scheduled`: `Schedule` снимком. */
+final case class StoredSchedule(startingPrice: StoredMoney, config: StoredConfig)
+
 final case class StoredLotOpened(startingPrice: StoredMoney, config: StoredConfig, deadline: Option[Instant])
 
 final case class StoredBidPlaced(
@@ -55,7 +58,16 @@ final case class StoredBidPlaced(
     source: String
 )
 
-final case class StoredEvent(kind: String, lotOpened: Option[StoredLotOpened], bidPlaced: Option[StoredBidPlaced])
+/**
+ * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а сессия лежит в конверте строки. Секции
+ * добавлялись в конец: строка, записанная до них, читает недостающую как пустую.
+ */
+final case class StoredEvent(
+    kind: String,
+    lotOpened: Option[StoredLotOpened],
+    bidPlaced: Option[StoredBidPlaced],
+    lotScheduled: Option[StoredSchedule]
+)
 
 /** Поле `actor` конверта ADR-047; в коде его значение — [[Initiator]], чтобы не спорить с актором Pekko. */
 final case class StoredActor(kind: String, id: Option[UUID])
@@ -63,12 +75,14 @@ final case class StoredActor(kind: String, id: Option[UUID])
 /**
  * Строка журнала лота: конверт ADR-047 и событие. `aggregate_type` и `aggregate_id` — это `persistence_id` строки,
  * `sequence` — её `sequence_number`, `schema_version` — версия в manifest (`JacksonMigration`); в payload они не
- * дублируются. `session_id` появится необязательным полем вместе с `LotDrafted` (PER-410).
+ * дублируются. `sessionId` необязателен по форме (ADR-058): строка, записанная до `LotDrafted`, его не несёт, и такая
+ * строка читается, но лота уже не рождает. Новая строка несёт его всегда, а `LotDrafted` без него — испорченный журнал.
  */
 final case class StoredLotEvent(
     eventId: UUID,
     transactionId: UUID,
     opId: UUID,
+    sessionId: Option[UUID],
     occurredAt: Instant,
     actor: StoredActor,
     event: StoredEvent
@@ -97,16 +111,19 @@ final case class StoredLotState(
     kind: String,
     trading: Option[StoredTrading],
     held: Option[StoredHeld],
-    sold: Option[StoredSale]
+    sold: Option[StoredSale],
+    scheduled: Option[StoredSchedule]
 )
 
-final case class StoredSeen(sequence: Long, opId: UUID, event: StoredEvent)
+/** Конверт окна дедупликации несёт сессию строки: без неё `LotDrafted` из snapshot не восстановить. */
+final case class StoredSeen(sequence: Long, opId: UUID, sessionId: Option[UUID], event: StoredEvent)
 
 /**
  * Snapshot лота целиком, вместе с окном дедупликации: без него повтор `op_id` до snapshot дописал бы журнал (П-06).
  * `sequence` — номер последнего события, с которого entity продолжает счёт после snapshot (`LotEntity.State`).
  */
-final case class StoredLot(sequence: Long, state: StoredLotState, seen: List[StoredSeen]) extends JournalSerializable
+final case class StoredLot(sequence: Long, state: StoredLotState, session: Option[UUID], seen: List[StoredSeen])
+    extends JournalSerializable
 
 /** Кто инициировал команду (RFC-011, конверт): участник, оператор или планировщик. */
 enum Initiator {
@@ -115,8 +132,11 @@ enum Initiator {
   case Scheduler
 }
 
-/** Общая часть конверта всех событий одной команды: один `op_id`, одна транзакция, одно время решения (ADR-047). */
-final case class Transaction(id: UUID, opId: OpId, occurredAt: Instant, initiator: Initiator)
+/**
+ * Общая часть конверта всех событий одной команды: один `op_id`, одна транзакция, одна сессия и одно время решения
+ * (ADR-047).
+ */
+final case class Transaction(id: UUID, opId: OpId, session: SessionId, occurredAt: Instant, initiator: Initiator)
 
 /**
  * Строка журнала или snapshot, которую нельзя превратить обратно в доменное значение. Это не ожидаемый отказ, а
@@ -131,6 +151,7 @@ object LotJournal {
       eventId = eventId,
       transactionId = transaction.id,
       opId = transaction.opId.value,
+      sessionId = Some(transaction.session.value),
       occurredAt = transaction.occurredAt,
       actor = storeInitiator(transaction.initiator),
       event = storeEvent(event)
@@ -138,22 +159,26 @@ object LotJournal {
 
   /** Строка журнала в той части конверта, которую читает ядро; `sequence` — номер строки в журнале Pekko. */
   def envelope(sequence: Long, stored: StoredLotEvent): Envelope =
-    Envelope(sequence, OpId(stored.opId), restoreEvent(stored.event))
+    Envelope(sequence, OpId(stored.opId), restoreEvent(stored.event, stored.sessionId))
 
   def storeLot(lot: Lot, sequence: Long): StoredLot =
     StoredLot(
       sequence = sequence,
       state = storeState(lot.state),
+      session = lot.session.map(_.value),
       seen = lot.seen.values.toList
         .sortBy(_.sequence)
-        .map(envelope => StoredSeen(envelope.sequence, envelope.opId.value, storeEvent(envelope.event)))
+        .map { envelope =>
+          StoredSeen(envelope.sequence, envelope.opId.value, sessionOfEvent(envelope.event), storeEvent(envelope.event))
+        }
     )
 
   def restoreLot(stored: StoredLot): Lot =
     Lot(
       state = restoreState(stored.state),
+      session = stored.session.map(SessionId(_)),
       seen = stored.seen.map { seen =>
-        val envelope = Envelope(seen.sequence, OpId(seen.opId), restoreEvent(seen.event))
+        val envelope = Envelope(seen.sequence, OpId(seen.opId), restoreEvent(seen.event, seen.sessionId))
         envelope.opId -> envelope
       }.toMap
     )
@@ -183,13 +208,28 @@ object LotJournal {
       case _ => corrupted(s"initiator $stored")
     }
 
+  /**
+   * Сессия, которую событие несёт в домене. Конверт окна `seen` пишет её только для `LotDrafted`: остальным событиям
+   * она при восстановлении не нужна, а лот хранит свою сессию отдельным полем snapshot.
+   */
+  private def sessionOfEvent(event: LotEvent): Option[UUID] =
+    event match {
+      case LotEvent.LotDrafted(session) => Some(session.value)
+      case _ => None
+    }
+
   private def storeEvent(event: LotEvent): StoredEvent =
     event match {
+      case LotEvent.LotDrafted(_) =>
+        StoredEvent("LotDrafted", lotOpened = None, bidPlaced = None, lotScheduled = None)
+      case LotEvent.LotScheduled(schedule) =>
+        StoredEvent("LotScheduled", lotOpened = None, bidPlaced = None, lotScheduled = Some(storeSchedule(schedule)))
       case LotEvent.LotOpened(startingPrice, config, deadline) =>
         StoredEvent(
           "LotOpened",
           lotOpened = Some(StoredLotOpened(storeMoney(startingPrice), storeConfig(config), deadline)),
-          bidPlaced = None
+          bidPlaced = None,
+          lotScheduled = None
         )
       case LotEvent.BidPlaced(bidId, participant, amount, previousLeader, origin, source) =>
         StoredEvent(
@@ -204,15 +244,22 @@ object LotJournal {
               origin = origin.toString,
               source = source.toString
             )
-          )
+          ),
+          lotScheduled = None
         )
     }
 
-  private def restoreEvent(stored: StoredEvent): LotEvent =
-    (stored.kind, stored.lotOpened, stored.bidPlaced) match {
-      case ("LotOpened", Some(opened), None) =>
+  private def restoreEvent(stored: StoredEvent, session: Option[UUID]): LotEvent =
+    (stored.kind, stored.lotOpened, stored.bidPlaced, stored.lotScheduled) match {
+      case ("LotDrafted", None, None, None) =>
+        session match {
+          case Some(id) => LotEvent.LotDrafted(SessionId(id))
+          case None => corrupted("lot drafted without a session")
+        }
+      case ("LotScheduled", None, None, Some(schedule)) => LotEvent.LotScheduled(restoreSchedule(schedule))
+      case ("LotOpened", Some(opened), None, None) =>
         LotEvent.LotOpened(restoreMoney(opened.startingPrice), restoreConfig(opened.config), opened.deadline)
-      case ("BidPlaced", None, Some(placed)) =>
+      case ("BidPlaced", None, Some(placed), None) =>
         LotEvent.BidPlaced(
           bidId = BidId(placed.bidId),
           participant = ParticipantId(placed.participant),
@@ -226,7 +273,10 @@ object LotJournal {
 
   private def storeState(state: LotState): StoredLotState =
     state match {
-      case LotState.NotOpened => StoredLotState("NotOpened", None, None, None)
+      case LotState.Initial => StoredLotState("Initial", None, None, None, None)
+      case LotState.Draft => StoredLotState("Draft", None, None, None, None)
+      case LotState.Scheduled(schedule) =>
+        StoredLotState("Scheduled", None, None, None, scheduled = Some(storeSchedule(schedule)))
       case LotState.Trading(trading) =>
         StoredLotState(
           "Trading",
@@ -242,7 +292,8 @@ object LotJournal {
             )
           ),
           held = None,
-          sold = None
+          sold = None,
+          scheduled = None
         )
       case LotState.Held(held) =>
         StoredLotState(
@@ -256,21 +307,25 @@ object LotJournal {
               leadingBidId = held.leadingBidId.map(_.value)
             )
           ),
-          sold = None
+          sold = None,
+          scheduled = None
         )
       case LotState.Sold(sale) =>
         StoredLotState(
           "Sold",
           trading = None,
           held = None,
-          sold = Some(StoredSale(sale.winner.value, storeMoney(sale.price), sale.bidId.value, sale.at))
+          sold = Some(StoredSale(sale.winner.value, storeMoney(sale.price), sale.bidId.value, sale.at)),
+          scheduled = None
         )
     }
 
   private def restoreState(stored: StoredLotState): LotState =
-    (stored.kind, stored.trading, stored.held, stored.sold) match {
-      case ("NotOpened", None, None, None) => LotState.NotOpened
-      case ("Trading", Some(trading), None, None) =>
+    (stored.kind, stored.trading, stored.held, stored.sold, stored.scheduled) match {
+      case ("Initial", None, None, None, None) => LotState.Initial
+      case ("Draft", None, None, None, None) => LotState.Draft
+      case ("Scheduled", None, None, None, Some(schedule)) => LotState.Scheduled(restoreSchedule(schedule))
+      case ("Trading", Some(trading), None, None, None) =>
         LotState.Trading(
           TradingState(
             config = restoreConfig(trading.config),
@@ -282,7 +337,7 @@ object LotJournal {
             deadline = trading.deadline
           )
         )
-      case ("Held", None, Some(held), None) =>
+      case ("Held", None, Some(held), None, None) =>
         LotState.Held(
           HeldState(
             config = restoreConfig(held.config),
@@ -291,7 +346,7 @@ object LotJournal {
             leadingBidId = held.leadingBidId.map(BidId(_))
           )
         )
-      case ("Sold", None, None, Some(sale)) =>
+      case ("Sold", None, None, Some(sale), None) =>
         LotState.Sold(Sale(ParticipantId(sale.winner), restoreMoney(sale.price), BidId(sale.bidId), sale.at))
       case _ => corrupted(s"lot state of kind ${stored.kind} with sections that do not match it")
     }
@@ -299,6 +354,15 @@ object LotJournal {
   private def storeMoney(money: Money): StoredMoney = StoredMoney(money.minorUnits, money.currency.value)
 
   private def restoreMoney(stored: StoredMoney): Money = Money(stored.minorUnits, CurrencyCode(stored.currency))
+
+  private def storeSchedule(schedule: Schedule): StoredSchedule =
+    StoredSchedule(storeMoney(schedule.startingPrice), storeConfig(schedule.config))
+
+  /** Снимок условий восстанавливается через те же проверки, что и при планировании: журнал И-15 и валюту не обходит. */
+  private def restoreSchedule(stored: StoredSchedule): Schedule =
+    Schedule
+      .of(restoreMoney(stored.startingPrice), restoreConfig(stored.config))
+      .fold(rejected => corrupted(s"schedule violates $rejected"), schedule => schedule)
 
   private def storeConfig(config: LotConfig): StoredConfig =
     StoredConfig(

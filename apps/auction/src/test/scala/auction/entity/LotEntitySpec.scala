@@ -39,8 +39,23 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
 
   private val bidder: Initiator = Initiator.Participant(participant(1))
 
-  private def open(opN: Int = 1) =
+  private val organizer: Initiator = Initiator.Operator(participant(9))
+
+  private def draft(opN: Int = 1) =
+    entity.runCommand[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN), Initiator.Scheduler, _))
+
+  private def plan(command: ScheduleLot) =
+    entity.runCommand[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(command, organizer, _))
+
+  private def open(opN: Int) =
     entity.runCommand[Either[OpenLotRejected, Envelope]](LotEntity.Open(openLot(opN), Initiator.Scheduler, _))
+
+  /** Лот сессии `session(1)`, открытый по полному пути: `op(1)`–`op(3)` заняты, журнал — три строки. */
+  private def openThrough() = {
+    draft(opN = 1)
+    plan(scheduleLot(opN = 2))
+    open(opN = 3)
+  }
 
   private def bidOf(who: Int, amount: Long, opN: Int) =
     entity.runCommand[Either[PlaceBidRejected, Envelope]](
@@ -50,29 +65,61 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
   "lot entity" should {
 
     "number the events of the lot by their position in the journal" in {
-      val opened = open()
-      val placed = bidOf(who = 1, amount = 110, opN = 2)
+      val drafted = draft(opN = 1)
+      val planned = plan(scheduleLot(opN = 2))
+      val opening = open(opN = 3)
+      val placed = bidOf(who = 1, amount = 110, opN = 4)
 
-      opened.reply.map(_.sequence) shouldBe Right(1L)
-      placed.reply.map(_.sequence) shouldBe Right(2L)
-      placed.state.sequence shouldBe 2L
+      List(drafted.reply, planned.reply, opening.reply, placed.reply).map(_.map(_.sequence)) shouldBe
+        List(Right(1L), Right(2L), Right(3L), Right(4L))
+      placed.state.sequence shouldBe 4L
       placed.state.lot.seen.values.map(envelope => envelope.opId -> envelope.sequence).toMap shouldBe
-        Map(op(1) -> 1L, op(2) -> 2L)
+        Map(op(1) -> 1L, op(2) -> 2L, op(3) -> 3L, op(4) -> 4L)
     }
 
-    "write one event per accepted command with the op id, the decision time and the initiator of the command" in {
-      open()
-      val placed = bidOf(who = 1, amount = 110, opN = 2)
+    "write one event per accepted command with the op id, the session, the decision time and the initiator" in {
+      val drafted = draft(opN = 1)
+      val planned = plan(scheduleLot(opN = 2))
+      open(opN = 3)
+      val placed = bidOf(who = 1, amount = 110, opN = 4)
 
-      placed.events.map(event => (event.opId, event.occurredAt, event.actor, event.event.kind)) shouldBe
-        List((op(2).value, decidedAt, LotJournal.storeInitiator(bidder), "BidPlaced"))
+      List(drafted, planned, placed).flatMap(_.events).map { row =>
+        (row.opId, row.sessionId, row.occurredAt, row.actor, row.event.kind)
+      } shouldBe List(
+        (op(1).value, Some(session(1).value), decidedAt, LotJournal.storeInitiator(Initiator.Scheduler), "LotDrafted"),
+        (op(2).value, Some(session(1).value), decidedAt, LotJournal.storeInitiator(organizer), "LotScheduled"),
+        (op(4).value, Some(session(1).value), decidedAt, LotJournal.storeInitiator(bidder), "BidPlaced")
+      )
       placed.events.map(_.eventId) should not contain placed.events.head.transactionId
     }
 
+    "keep the last of two schedules and the session of the lot after a restart" in {
+      draft(opN = 1)
+      plan(scheduleLot(opN = 2, startingPrice = 100))
+      val second = plan(scheduleLot(opN = 3, startingPrice = 200))
+
+      val restarted = entity.restart().state
+
+      restarted shouldBe second.state
+      restarted.lot.state shouldBe LotState.Scheduled(schedule(startingPrice = 200))
+      restarted.lot.session shouldBe Some(session(1))
+    }
+
+    "refuse to schedule an opened lot, write nothing and keep its config (Т-20, Т-52)" in {
+      val before = openThrough().state
+
+      val late = plan(scheduleLot(opN = 4, startingPrice = 900))
+
+      late.reply shouldBe Left(ScheduleLotRejected.SchedulingClosed)
+      late.events shouldBe Nil
+      late.state shouldBe before
+      tradingOf(late.state.lot).config shouldBe config()
+    }
+
     "restore price, leader and deadline after a restart from the journal alone (Т-16)" in {
-      open()
-      bidOf(who = 1, amount = 110, opN = 2)
-      val beforeRestart = bidOf(who = 2, amount = 120, opN = 3).state
+      openThrough()
+      bidOf(who = 1, amount = 110, opN = 4)
+      val beforeRestart = bidOf(who = 2, amount = 120, opN = 5).state
 
       val restarted = entity.restart().state
 
@@ -86,12 +133,12 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
     }
 
     "answer a repeated command with the original response and write nothing, even after a restart (Т-14)" in {
-      open()
-      val first = bidOf(who = 1, amount = 110, opN = 2)
+      openThrough()
+      val first = bidOf(who = 1, amount = 110, opN = 4)
 
-      val repeated = bidOf(who = 1, amount = 110, opN = 2)
+      val repeated = bidOf(who = 1, amount = 110, opN = 4)
       entity.restart()
-      val repeatedAfterRestart = bidOf(who = 1, amount = 110, opN = 2)
+      val repeatedAfterRestart = bidOf(who = 1, amount = 110, opN = 4)
 
       repeated.events shouldBe Nil
       repeatedAfterRestart.events shouldBe Nil
@@ -100,18 +147,19 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
     }
 
     "answer a refused command with its refusal and write nothing" in {
-      val beforeOpen = bidOf(who = 1, amount = 110, opN = 1)
-      open(opN = 2)
-      val secondOpen = open(opN = 3)
+      val beforeDraft = plan(scheduleLot(opN = 1))
+      draft(opN = 2)
+      val secondDraft = draft(opN = 3)
+      val beforeSchedule = open(opN = 4)
 
-      beforeOpen.reply shouldBe Left(PlaceBidRejected.LotNotOpen)
-      beforeOpen.events shouldBe Nil
-      secondOpen.reply shouldBe Left(OpenLotRejected.LotNotScheduled)
-      secondOpen.events shouldBe Nil
+      beforeDraft.reply shouldBe Left(ScheduleLotRejected.LotNotFound)
+      secondDraft.reply shouldBe Left(DraftLotRejected.LotAlreadyExists)
+      beforeSchedule.reply shouldBe Left(OpenLotRejected.LotNotScheduled)
+      List(beforeDraft.events, secondDraft.events, beforeSchedule.events) shouldBe List(Nil, Nil, Nil)
     }
 
     "reply to a read with the state of the lot" in {
-      open()
+      openThrough()
 
       val read = entity.runCommand[Lot](LotEntity.Get(_))
 

@@ -23,6 +23,8 @@ object LotFixtures {
 
   def op(n: Int): OpId = OpId(new UUID(3L, n.toLong))
 
+  def session(n: Int): SessionId = SessionId(new UUID(4L, n.toLong))
+
   val fixedTen: StepPolicy = StepPolicy.fixed(money(10)).toOption.get
 
   val fixedHundred: StepPolicy = StepPolicy.fixed(money(100)).toOption.get
@@ -40,8 +42,29 @@ object LotFixtures {
 
   val deadline: Instant = Instant.parse("2026-10-07T18:00:00Z")
 
-  def openLot(opN: Int, startingPrice: Long = 100, deadline: Option[Instant] = Some(deadline)): OpenLot =
-    OpenLot(money(startingPrice), config(), deadline, op(opN))
+  /** Вход `ScheduleLot`, который даёт `config()`: тот же образец в непроверенной форме. */
+  def configInput(
+      policy: StepPolicyInput = StepPolicyInput.Fixed(money(10)),
+      currency: CurrencyCode = rub
+  ): LotConfigInput =
+    LotConfigInput(currency, policy, antiSnipe, proxyEnabled = true)
+
+  def schedule(startingPrice: Long = 100, policy: StepPolicy = fixedTen): Schedule =
+    Schedule.of(money(startingPrice), config(policy)).toOption.get
+
+  def draftLot(opN: Int, of: SessionId = session(1)): DraftLot = DraftLot(of, op(opN))
+
+  def scheduleLot(opN: Int, startingPrice: Long = 100, input: LotConfigInput = configInput()): ScheduleLot =
+    ScheduleLot(money(startingPrice), input, op(opN))
+
+  def openLot(opN: Int, deadline: Option[Instant] = Some(deadline)): OpenLot = OpenLot(deadline, op(opN))
+
+  /** Лот сессии `session(1)` в данном состоянии с пустым окном дедупликации. */
+  def lotIn(state: LotState): Lot = Lot(state, Some(session(1)), Map.empty)
+
+  val drafted: Lot = lotIn(LotState.Draft)
+
+  def scheduled(startingPrice: Long = 100): Lot = lotIn(LotState.Scheduled(schedule(startingPrice)))
 
   def trading(
       price: Long,
@@ -50,7 +73,7 @@ object LotFixtures {
       leader: Option[ParticipantId] = None,
       ask: Option[Long] = None
   ): Lot =
-    Lot.of(
+    lotIn(
       LotState.Trading(
         TradingState(
           config = config(policy),
@@ -65,10 +88,10 @@ object LotFixtures {
     )
 
   def held(price: Long, leader: ParticipantId): Lot =
-    Lot.of(LotState.Held(HeldState(config(), money(price), Some(leader), Some(bid(0)))))
+    lotIn(LotState.Held(HeldState(config(), money(price), Some(leader), Some(bid(0)))))
 
   def sold(price: Long, winner: ParticipantId): Lot =
-    Lot.of(LotState.Sold(Sale(winner, money(price), bid(0), Instant.EPOCH)))
+    lotIn(LotState.Sold(Sale(winner, money(price), bid(0), Instant.EPOCH)))
 
   def placeBid(who: Int, amount: Long, opN: Int, currency: CurrencyCode = rub): PlaceBid =
     PlaceBid(participant(who), Money(amount, currency), op(opN), BidSource.Bot)
@@ -81,16 +104,27 @@ object LotFixtures {
 
   final case class Journal(lot: Lot, entries: Vector[Envelope]) {
 
-    /** Решение по команде и журнал после него: принятое событие получает следующий `sequence` и применяется. */
-    def submit(command: PlaceBid, bidId: BidId): (Either[PlaceBidRejected, Decision], Journal) = {
-      val result = Lot.decide(lot, command, bidId)
+    /** Принятое решение ложится в журнал следующим номером; отказ и повтор журнал не меняют. */
+    def record[R](opId: OpId, result: Either[R, Decision]): (Either[R, Decision], Journal) =
       result match {
         case Right(Decision.Accepted(event)) =>
-          val envelope = Envelope(entries.size.toLong + 1, command.opId, event)
+          val envelope = Envelope(entries.size.toLong + 1, opId, event)
           (result, Journal(Lot.apply(lot, envelope), entries :+ envelope))
         case _ => (result, this)
       }
-    }
+
+    def draft(command: DraftLot): (Either[DraftLotRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command))
+
+    def schedule(command: ScheduleLot): (Either[ScheduleLotRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command))
+
+    def open(command: OpenLot): (Either[OpenLotRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command))
+
+    /** Решение по команде и журнал после него: принятое событие получает следующий `sequence` и применяется. */
+    def submit(command: PlaceBid, bidId: BidId): (Either[PlaceBidRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, bidId))
 
     def submitAll(commands: Seq[PlaceBid]): (Vector[Either[PlaceBidRejected, Decision]], Journal) =
       commands.zipWithIndex.foldLeft((Vector.empty[Either[PlaceBidRejected, Decision]], this)) {

@@ -34,10 +34,24 @@ final class LotJournalSpec
   private def storedEvent(event: LotEvent, opN: Int = 1): StoredLotEvent =
     LotJournal.store(uuid(1), transaction(opN), event)
 
-  private val tradingLot: Lot = {
-    val start = Lot.of(LotState.NotOpened)
-    val afterOpen = Lot.apply(start, Envelope(1, op(1), opened))
-    Lot.apply(afterOpen, Envelope(2, op(2), placed.copy(previousLeader = None)))
+  /** Лот, прошедший полный путь до торгов: рождение, планирование, открытие и первая ставка. */
+  private val tradingLot: Lot =
+    Lot.replay(
+      Lot.initial,
+      List(
+        Envelope(1, op(1), lotDrafted),
+        Envelope(2, op(2), lotScheduled),
+        Envelope(3, op(3), opened),
+        Envelope(4, op(4), placed.copy(previousLeader = None))
+      )
+    )
+
+  /** Эталон пишется так, как его пишет сервис, и сервис читает эталон в то же значение. */
+  private def keepsGolden(name: String, stored: StoredLotEvent) = {
+    val row = write(kit.system, stored)
+
+    row.json shouldBe mapper.readTree(golden(name))
+    read(kit.system, row.copy(bytes = golden(name))) shouldBe stored
   }
 
   "lot journal" should {
@@ -49,24 +63,36 @@ final class LotJournalSpec
       new String(row.bytes, StandardCharsets.UTF_8) should startWith("{")
     }
 
-    "keep the stored form of an opened lot equal to its golden file and read the golden file back" in {
-      val stored = storedEvent(opened)
-      val row = write(kit.system, stored)
+    "keep the stored form of a drafted lot equal to its golden file and read the golden file back" in {
+      keepsGolden("lot-drafted", storedEvent(lotDrafted))
+    }
 
-      row.json shouldBe mapper.readTree(golden("lot-opened"))
-      read(kit.system, row.copy(bytes = golden("lot-opened"))) shouldBe stored
+    "keep the stored form of a scheduled lot equal to its golden file and read the golden file back" in {
+      keepsGolden("lot-scheduled", storedEvent(lotScheduled))
+    }
+
+    "keep the stored form of an opened lot equal to its golden file and read the golden file back" in {
+      keepsGolden("lot-opened", storedEvent(opened))
+    }
+
+    "read an opening written before the session and the schedule into the same event" in {
+      val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
+
+      val stored = read(kit.system, row).asInstanceOf[StoredLotEvent]
+
+      stored shouldBe storedEvent(opened).copy(sessionId = None)
+      LotJournal.envelope(1, stored) shouldBe Envelope(1, op(1), opened)
     }
 
     "keep the stored form of a placed bid equal to its golden file and read the golden file back" in {
-      val stored = LotJournal.store(uuid(1), transaction(2, Initiator.Participant(participant(2))), placed)
-      val row = write(kit.system, stored)
-
-      row.json shouldBe mapper.readTree(golden("bid-placed"))
-      read(kit.system, row.copy(bytes = golden("bid-placed"))) shouldBe stored
+      keepsGolden(
+        "bid-placed",
+        LotJournal.store(uuid(1), transaction(2, Initiator.Participant(participant(2))), placed)
+      )
     }
 
     "keep the stored form of a lot snapshot equal to its golden file and read the golden file back" in {
-      val stored = LotJournal.storeLot(tradingLot, sequence = 2)
+      val stored = LotJournal.storeLot(tradingLot, sequence = 4)
       val row = write(kit.system, stored)
 
       row.manifest shouldBe classOf[StoredLot].getName
@@ -76,10 +102,13 @@ final class LotJournalSpec
     }
 
     "restore every event and the whole lot with its deduplication window from what it stored" in {
-      LotJournal.envelope(7, storedEvent(opened)) shouldBe Envelope(7, op(1), opened)
-      LotJournal.envelope(8, storedEvent(placed)) shouldBe Envelope(8, op(1), placed)
+      List(lotDrafted, lotScheduled, opened, placed).zipWithIndex.foreach { (event, index) =>
+        LotJournal.envelope(index.toLong + 7, storedEvent(event)) shouldBe Envelope(index.toLong + 7, op(1), event)
+      }
       List(
-        Lot.notOpened,
+        Lot.initial,
+        drafted,
+        scheduled(),
         tradingLot,
         held(price = 700, leader = participant(3)),
         sold(price = 900, winner = participant(4))
@@ -113,6 +142,12 @@ final class LotJournalSpec
         read(kit.system, row) shouldBe stored
         LotJournal.envelope(1, stored).event shouldBe LotEvent.LotOpened(money(price), lotConfig, Some(at))
       }
+    }
+
+    "refuse to restore a draft without the session that drafted the lot" in {
+      val stored = storedEvent(lotDrafted).copy(sessionId = None)
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, stored)
     }
 
     "refuse to restore an event whose kind does not match its sections" in {

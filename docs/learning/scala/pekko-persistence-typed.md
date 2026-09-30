@@ -18,7 +18,7 @@
 ```scala
 EventSourcedBehavior[Command, StoredLotEvent, State](
   persistenceId = PersistenceId(TypeKey.name, lotId),
-  emptyState = State(Lot.notOpened, 0),
+  emptyState = State(Lot.initial, 0),
   commandHandler = (state, command) => handle(state.lot, command, clock, newId),
   eventHandler = (state, stored) => { ... }
 )
