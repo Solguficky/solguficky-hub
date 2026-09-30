@@ -5,6 +5,9 @@ identity: ExecutableResource
   workdir: <repo>/apps/identity
   endpoint: grpc http port= target= proxied=True external=False
   env: ASPIRE_IDENTITY_GRPC_PORT={identity.bindings.grpc.targetPort}
+  env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
   env: IDENTITY_DATABASE_URL=postgresql://postgres:{postgres-password.value}@{postgres.bindings.tcp.host}:{postgres.bindings.tcp.port}/identity?sslmode=disable
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
@@ -15,10 +18,13 @@ identity: ExecutableResource
   waits: postgres WaitUntilHealthy
   relationship: Reference identity
   relationship: Reference identity-maintainer-token
+  relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference nats-password
+  relationship: Reference notifications-service-token
   relationship: Reference postgres
   relationship: Reference postgres-password
+  relationship: Reference telegram-bot-service-token
   relationship: WaitFor identity-build
   relationship: WaitFor identity-db
   relationship: WaitFor nats
@@ -49,18 +55,24 @@ meetups: ProjectResource
   env: ASPNETCORE_URLS={meetups.bindings.grpc.scheme}://localhost:{meetups.bindings.grpc.targetPort}
   env: DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=true
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
+  env: MEETUPS_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: MEETUPS_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
   env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: MEETUPS_DATABASE_URL={postgres.connectionString};Database=meetups;SSL Mode=Disable
   env: MEETUPS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: MEETUPS_SERVICE_TOKEN={meetups-service-token.value}
   waits: identity WaitUntilHealthy
   waits: meetups-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
   relationship: Reference identity
+  relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference nats-password
+  relationship: Reference notifications-service-token
   relationship: Reference postgres
+  relationship: Reference telegram-bot-service-token
   relationship: WaitFor identity
   relationship: WaitFor meetups-db
   relationship: WaitFor nats
@@ -72,6 +84,8 @@ meetups-rebuilder: ProjectRebuilderResource
   workdir: <repo>/apps/meetups/Meetups
   arg: build
   arg: <repo>/apps/meetups/Meetups/Meetups.fsproj
+meetups-service-token: ParameterResource
+  secret: True
 nats: NatsServerResource
   image: docker.io/library/nats:2.10-alpine
   arg: --user
@@ -89,11 +103,13 @@ notifications: ProjectResource
   env: ASPNETCORE_URLS={notifications.bindings.grpc.scheme}://localhost:{notifications.bindings.grpc.targetPort}
   env: DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=true
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
+  env: NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
   env: NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: NOTIFICATIONS_DATABASE_URL={postgres.connectionString};Database=notifications;SSL Mode=Disable
   env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: NOTIFICATIONS_SERVICE_TOKEN={notifications-service-token.value}
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -103,7 +119,9 @@ notifications: ProjectResource
   relationship: Reference meetups
   relationship: Reference nats
   relationship: Reference nats-password
+  relationship: Reference notifications-service-token
   relationship: Reference postgres
+  relationship: Reference telegram-bot-service-token
   relationship: WaitFor identity
   relationship: WaitFor meetups
   relationship: WaitFor nats
@@ -116,6 +134,8 @@ notifications-rebuilder: ProjectRebuilderResource
   workdir: <repo>/apps/notifications/Notifications
   arg: build
   arg: <repo>/apps/notifications/Notifications/Notifications.csproj
+notifications-service-token: ParameterResource
+  secret: True
 postgres: PostgresServerResource
   image: docker.io/library/postgres:16-alpine
   endpoint: tcp tcp port= target=5432 proxied=True external=False
@@ -137,6 +157,7 @@ telegram-bot: JavaScriptAppResource
   env: TELEGRAM_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: TELEGRAM_BOT_ENVIRONMENT=prod
   env: TELEGRAM_BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: TELEGRAM_BOT_SERVICE_TOKEN={telegram-bot-service-token.value}
   env: TELEGRAM_BOT_TOKEN={telegram-bot-token.value}
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
@@ -148,6 +169,7 @@ telegram-bot: JavaScriptAppResource
   relationship: Reference nats
   relationship: Reference nats-password
   relationship: Reference notifications
+  relationship: Reference telegram-bot-service-token
   relationship: Reference telegram-bot-token
   relationship: WaitFor identity
   relationship: WaitFor meetups
@@ -158,5 +180,7 @@ telegram-bot-installer: JavaScriptInstallerResource
   command: node
   workdir: <repo>/apps/telegram-bot
   relationship: Parent telegram-bot
+telegram-bot-service-token: ParameterResource
+  secret: True
 telegram-bot-token: ParameterResource
   secret: True

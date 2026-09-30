@@ -1,19 +1,23 @@
 namespace Contour.Environment;
 
 /// <summary>
-/// Что контур отдаёт внешнему потребителю: адреса обоих сервисов и токен
-/// maintainer'а. Потребитель — набор провода бота на TypeScript (PER-271): он
-/// средой не владеет и читает её как обычные переменные окружения.
+/// Что контур отдаёт внешнему потребителю: адреса обоих сервисов, токен
+/// maintainer'а и токен бота. Потребитель — набор провода бота на TypeScript
+/// (PER-271): он средой не владеет и читает её как обычные переменные окружения.
 ///
 /// Токен здесь потому, что без него потребитель не получит администратора:
 /// Meetups создаёт сходку только для Administrator, а роль выдаёт одна
 /// `GrantAdminRole` по токену maintainer'а. Секретом он не является — его
 /// чеканит <see cref="ContourHost"/> на прогон, и живёт он столько же, сколько
 /// топология. Имя переменной то же, что читает сам Identity.
+///
+/// Токен бота — потому что потребитель играет бота: им он доказывает себя
+/// Identity и Meetups (ADR-056). Имя переменной то же, что читает сам бот.
 /// </summary>
 public static class ConsumerEnvironment
 {
     public const string MaintainerTokenVariable = "IDENTITY_MAINTAINER_TOKEN";
+    public const string BotServiceTokenVariable = "TELEGRAM_BOT_SERVICE_TOKEN";
 
     // Префикс, а не одно имя: Aspire выставляет вместе с адресом экспортёра
     // протокол, заголовки и имя сервиса, и без адреса они бессмысленны.
@@ -24,6 +28,7 @@ public static class ConsumerEnvironment
         var variables = new Dictionary<string, string>(contour.Endpoints.AsEnvironment(), StringComparer.Ordinal)
         {
             [MaintainerTokenVariable] = contour.MaintainerToken,
+            [BotServiceTokenVariable] = contour.BotServiceToken,
         };
 
         return variables;

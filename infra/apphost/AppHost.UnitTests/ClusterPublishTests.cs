@@ -4,6 +4,7 @@ using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Kubernetes;
 using Aspire.Hosting.Testing;
 using Microsoft.Extensions.Configuration;
+using AppHost.UnitTests.TestUtilities;
 using Shouldly;
 using Xunit;
 
@@ -17,6 +18,7 @@ namespace AppHost.UnitTests;
 /// поэтому состав модели и есть состав чарта: проверка здесь ловит лишний и
 /// выпавший workload до <c>helm template</c>.
 /// </summary>
+[Collection(RealAppHostCollection.Name)]
 public class ClusterPublishTests
 {
     private static async Task<IDistributedApplicationTestingBuilder> PublishModelAsync()

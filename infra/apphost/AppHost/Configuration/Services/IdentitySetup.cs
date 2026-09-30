@@ -81,6 +81,12 @@ internal static class IdentitySetup
 
         return identity
             .WithEnvironment("IDENTITY_MAINTAINER_TOKEN", maintainerToken)
+            // Вызывающие по колонке Caller в integration.md (ADR-056).
+            .AcceptCallers(
+                context,
+                AppHostNames.Resources.TelegramBot,
+                AppHostNames.Resources.Meetups,
+                AppHostNames.Resources.Notifications)
             // Проект .NET получает OTLP-переменные сам, исполняемый файл — только
             // так. Без них логи Identity не попадают в Structured logs, и фильтр
             // по request_id теряет звено цепочки.

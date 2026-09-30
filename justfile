@@ -234,7 +234,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "60"
+APPHOST_TEST_THRESHOLD := "66"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -709,7 +709,7 @@ contour-test:
 #   just contour-up '--env-file .contour.env'
 #   just contour-up '-- npm test'
 #
-# Поднять контур и отдать IDENTITY_GRPC_URL, MEETUPS_GRPC_URL и IDENTITY_MAINTAINER_TOKEN наружу
+# Поднять контур и отдать IDENTITY_GRPC_URL, MEETUPS_GRPC_URL, IDENTITY_MAINTAINER_TOKEN и TELEGRAM_BOT_SERVICE_TOKEN наружу
 contour-up *args="":
     dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- {{args}}
 

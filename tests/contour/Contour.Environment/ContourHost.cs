@@ -60,11 +60,13 @@ public sealed class ContourHost : IAsyncDisposable
         DistributedApplication application,
         ContourEndpoints endpoints,
         string maintainerToken,
+        string botServiceToken,
         int seed)
     {
         this.application = application;
         Endpoints = endpoints;
         MaintainerToken = maintainerToken;
+        BotServiceToken = botServiceToken;
         Seed = seed;
     }
 
@@ -77,6 +79,14 @@ public sealed class ContourHost : IAsyncDisposable
     /// </summary>
     public string MaintainerToken { get; }
 
+    /// <summary>
+    /// Токен вызывающего Telegram Bot (ADR-056). Бота в контуре нет — им играет
+    /// потребитель, поэтому значение задаётся здесь, а не генерируется AppHost:
+    /// иначе снаружи его не узнать. Чеканится так же, как maintainer, и с ним не
+    /// совпадает: сервис с таким совпадением не стартует.
+    /// </summary>
+    public string BotServiceToken { get; }
+
     /// <summary>Печатается в баннер и переопределяется CONTOUR_SEED: красный воспроизводим.</summary>
     public int Seed { get; }
 
@@ -86,6 +96,7 @@ public sealed class ContourHost : IAsyncDisposable
 
         var seed = ResolveSeed();
         var maintainerToken = $"contour-maintainer-{seed:x8}";
+        var botServiceToken = $"contour-bot-{seed:x8}";
         var started = Stopwatch.StartNew();
 
         var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(
@@ -93,6 +104,7 @@ public sealed class ContourHost : IAsyncDisposable
             cancellationToken);
 
         builder.Configuration["Parameters:identity-maintainer-token"] = maintainerToken;
+        builder.Configuration["Parameters:telegram-bot-service-token"] = botServiceToken;
 
         DetachDataVolume(builder);
 
@@ -119,7 +131,7 @@ public sealed class ContourHost : IAsyncDisposable
 
             PrintBanner(versions, seed, endpoints, started.Elapsed);
 
-            return new ContourHost(application, endpoints, maintainerToken, seed);
+            return new ContourHost(application, endpoints, maintainerToken, botServiceToken, seed);
         }
         catch
         {

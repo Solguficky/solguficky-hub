@@ -12,6 +12,7 @@ namespace AppHost.UnitTests;
 /// же изменением, и тогда оно видно на ревью, а не только в живом прогоне или
 /// на кластере.
 /// </summary>
+[Collection(RealAppHostCollection.Name)]
 public class GraphSnapshotTests
 {
     /// <summary>

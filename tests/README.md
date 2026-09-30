@@ -18,7 +18,7 @@
 |---|---|
 | `Contour.Environment` | подъём топологии, предусловия, ожидание готовности, адреса, сбор логов |
 | `Contour.E2ETests` | один дымовой сценарий через настоящие Identity и Meetups |
-| `Contour.Host` | отдаёт `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL` и `IDENTITY_MAINTAINER_TOKEN` внешнему потребителю; унаследованные `OTEL_*` до него не доходят |
+| `Contour.Host` | отдаёт `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `IDENTITY_MAINTAINER_TOKEN` и `TELEGRAM_BOT_SERVICE_TOKEN` внешнему потребителю; унаследованные `OTEL_*` до него не доходят |
 | `Contour.Contracts` | generated-only точка C#-клиентов Identity и Meetups; клиенты генерирует `Meetups.Contracts`, сам Identity генерирует только Go |
 | `bot-wire` | провод Telegram Bot на TypeScript: `bot.handleUpdate` с настоящими клиентами Identity и Meetups |
 
