@@ -258,9 +258,9 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 | A-11 | Материалы | `v1:mm:list:AZLzpLXGfY6fChssPU5fYA` | 33 |
 | A-11 | Следующая страница | `v1:mm:list:AZLzpLXGfY6fChssPU5fYA:3` | 35 |
 | A-11 | Добавить материал | `v1:mm:add:AZLzpLXGfY6fChssPU5fYA` | 32 |
-| A-13 | Привязать (последний сегмент — версия карточки, до девяти цифр) | `v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12` | 57 |
+| A-13 | Привязать (`ca` — confirm-add; последний сегмент — версия карточки, до девяти цифр) | `v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12` | 57 |
 | A-14 | Удалить | `v1:mm:rm:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA` | 54 |
-| A-14 | Да, удалить привязку (версия — как у «Привязать») | `v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12` | 57 |
+| A-14 | Да, удалить привязку (`cr` — confirm-remove; версия — как у «Привязать») | `v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12` | 57 |
 | P-04 | Открыть файл | `v1:mm:file:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA` | 56 |
 | A-07 | Написать подписчикам | `v1:bc:m:AZLzpLXGfY6fChssPU5fYA` | 30 |
 | A-01 | Объявление сообществу | `v1:bc:c` | 7 |
