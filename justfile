@@ -184,7 +184,7 @@ check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
 # Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -195,7 +195,7 @@ verify-changed:
     @recipes=$(sh tools/verify/select-recipes.sh) && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes
 
 # Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет
-# прогон — у .NET флагом --fail-skips, у Identity скриптом поверх `go test -v`.
+# прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
 # умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
@@ -297,17 +297,34 @@ identity-build: identity-proto
 identity-test: identity-proto
     cd apps/identity && go test ./...
 
+# Порог поднимается руками вместе с набором, как у .NET: выведенный из текущего
+# прогона сравнивал бы набор сам с собой. Считаются тесты верхнего уровня под
+# тегом integration — то же число, что печатает
+# `go test -tags=integration -list . ./...` без базы. Опечатка в теге молча
+# выключает файл, на который не ссылаются соседние файлы пакета, и недобор до
+# порога — единственный её след; файл со ссылками роняет компиляцию пакета.
+IDENTITY_TEST_THRESHOLD := "152"
+
 # Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
 # прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не
-# пропускает его, а скрипт роняет прогон, если пропуск всё же случился.
+# пропускает его, а скрипт роняет прогон, если пропуск всё же случился или
+# тестов выполнено меньше порога. Флаги уходят в `go test`: CI добавляет -race.
+# Флаг, который сужает набор (-run, -skip), роняет прогон недобором: порог
+# считает весь набор, и частичный прогон этим рецептом не делается.
 # Адрес базы задаётся только явно: умолчание на общий порт машины отдавало
 # вердикт тому, что там слушает, и посторонний PostgreSQL с другим паролем
 # ронял гейт на правке, которая Identity не трогала. Без адреса рецепт
 # отказывает до go test и называет это отказом среды, а не красным тестом.
-identity-test-integration: identity-proto
+identity-test-integration *flags: identity-proto
     @[ -n "${IDENTITY_DATABASE_URL:-}" ] || { echo 'identity-test-integration: отказ среды, а не красный тест — IDENTITY_DATABASE_URL не задан; задай адрес PostgreSQL, на котором тесты вправе создавать базы' >&2; exit 1; }
     @echo "identity-test-integration: база обязательна, недоступный PostgreSQL роняет прогон"
-    sh tools/identity/test-integration.sh
+    @echo "identity-test-integration: минимум {{IDENTITY_TEST_THRESHOLD}} тестов — добавил тест, подними IDENTITY_TEST_THRESHOLD в этом рецепте тем же изменением"
+    sh tools/identity/test-integration.sh {{IDENTITY_TEST_THRESHOLD}} {{flags}}
+
+# Фикстуры разбора лога: пропуск и недобор до порога роняют прогон. Без базы и
+# без Go — готовые логи `go test -json`, поэтому идут в `verify`
+identity-test-log-check:
+    sh tools/identity/check-test-log-test.sh
 
 # Линт Identity закреплённой версией; чужая версия читает тот же
 # .golangci.yml иначе, поэтому расхождение — ошибка, а не предупреждение
