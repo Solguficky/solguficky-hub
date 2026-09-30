@@ -10,9 +10,9 @@ final class AliasSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
   implicit override val generatorDrivenConfig: PropertyCheckConfiguration =
     PropertyCheckConfiguration(minSuccessful = 200)
 
-  private val blanks = Gen.listOf(Gen.oneOf(' ', '\t', '\n', ' ', ' ', ' ', '　')).map(_.mkString)
+  private val blanks = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\u00A0', '\u2007', '\u202F', '\u3000')).map(_.mkString)
 
-  private val texts = Gen.listOf(Gen.oneOf(Gen.alphaNumChar, Gen.oneOf('в', 'Я', 'ё', ' ', ' ', '-'))).map(_.mkString)
+  private val texts = Gen.listOf(Gen.oneOf(Gen.alphaNumChar, Gen.oneOf('в', 'Я', 'ё', ' ', '\u00A0', '-'))).map(_.mkString)
 
   "Alias" should {
 
@@ -21,13 +21,13 @@ final class AliasSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
     }
 
     "refuses a pseudonym that carries a mark of another kind of name" in {
-      forAll(Gen.oneOf("Вася*", "*", "@vasya", "Вася＊", "＠vasya")) { raw =>
+      forAll(Gen.oneOf("Вася*", "*", "@vasya", "Вася\uFF0A", "\uFF20vasya")) { raw =>
         Alias(raw) shouldBe Left(NamingRefusal.AliasInvalid)
       }
     }
 
     "refuses a pseudonym with characters that make different texts look the same" in {
-      forAll(Gen.oneOf("Ва​ся", "Вася‮", "Ва\u0000ся", "Вася\n\u0007")) { raw =>
+      forAll(Gen.oneOf("Ва\u200Bся", "Вася\u202E", "Ва\u0000ся", "Вася\n\u0007")) { raw =>
         Alias(raw) shouldBe Left(NamingRefusal.AliasInvalid)
       }
     }
@@ -42,7 +42,7 @@ final class AliasSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
     }
 
     "trims the edges and collapses the spaces inside" in {
-      Alias("  Кот  в\tсапогах ").map(_.value) shouldBe Right("Кот в сапогах")
+      Alias("\u00A0 Кот  в\tсапогах ").map(_.value) shouldBe Right("Кот в сапогах")
     }
 
     "gives one key to pseudonyms that differ only in case and spaces" in {
