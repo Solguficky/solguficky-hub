@@ -134,11 +134,11 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
         woke.map(_.sequence) shouldBe Right(6L)
         (restored.currentPrice, restored.leader, restored.deadline) shouldBe
           (money(130), Some(participant(1)), Some(deadline))
-        woken.session shouldBe Some(session(1))
+        woken.auction shouldBe Some(auctionId(1))
         val written = journal(database, id)
         written.map(_.sequence) shouldBe List(1L, 2L, 3L, 4L, 5L, 6L)
-        written.map(row => mapper.readTree(row.payload).get("sessionId").asText).distinct shouldBe
-          List(session(1).value.toString)
+        written.map(row => mapper.readTree(row.payload).get("auctionId").asText).distinct shouldBe
+          List(auctionId(1).value.toString)
         written.map(_.manifest).distinct shouldBe List(classOf[StoredLotEvent].getName)
         written.map(_.serializerId).distinct shouldBe List(jacksonId(second))
         written.flatMap(row => floatingPoints(row.payload)) shouldBe Nil

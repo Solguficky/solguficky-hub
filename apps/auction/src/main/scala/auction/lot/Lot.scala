@@ -1,17 +1,17 @@
 package auction.lot
 
 /**
- * Агрегат лота: состояние, сессия и окно дедупликации, свёрнутые из журнала.
+ * Агрегат лота: состояние, аукцион и окно дедупликации, свёрнутые из журнала.
  *
  * `seen` — это П-06 в форме значения: `seen(op_id) ⟺ в журнале агрегата есть событие с этим op_id`. Пишет в него только
  * [[Lot.apply]], поэтому окно восстанавливается реплеем журнала, а не живёт кэшем процесса, и отказ, который событий не
  * пишет, в него не попадает. Для транзакции из нескольких событий окно держит первый конверт — по нему
  * восстанавливается ответ на повтор.
  *
- * `session` пуста ровно в `Initial`: лот рождается внутри сессии, и `LotDrafted` приносит её вместе с рождением. Пишет
- * её тоже только [[Lot.apply]], и больше она не меняется.
+ * `auction` пуста ровно в `Initial`: лот рождается внутри аукциона, и `LotDrafted` приносит его вместе с рождением.
+ * Пишет его тоже только [[Lot.apply]], и больше она не меняется.
  */
-final case class Lot(state: LotState, session: Option[SessionId], seen: Map[OpId, Envelope])
+final case class Lot(state: LotState, auction: Option[AuctionId], seen: Map[OpId, Envelope])
 
 /** Исход принятой команды: новое событие либо исходный ответ на повтор того же `op_id`. */
 enum Decision {
@@ -30,7 +30,7 @@ object Lot {
       case Some(original) => Right(Decision.Repeated(original))
       case None =>
         lot.state match {
-          case LotState.Initial => Right(Decision.Accepted(LotEvent.LotDrafted(command.session)))
+          case LotState.Initial => Right(Decision.Accepted(LotEvent.LotDrafted(command.auction)))
           case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) =>
             Left(DraftLotRejected.LotAlreadyExists)
         }
@@ -137,10 +137,10 @@ object Lot {
    * `LotOpened` без `LotDrafted`, лота не рождает.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
-    val (state, session) = (lot.state, envelope.event) match {
-      case (LotState.Initial, LotEvent.LotDrafted(session)) => (LotState.Draft, Some(session))
+    val (state, auction) = (lot.state, envelope.event) match {
+      case (LotState.Initial, LotEvent.LotDrafted(auction)) => (LotState.Draft, Some(auction))
       case (LotState.Draft | LotState.Scheduled(_), LotEvent.LotScheduled(schedule)) =>
-        (LotState.Scheduled(schedule), lot.session)
+        (LotState.Scheduled(schedule), lot.auction)
       case (LotState.Scheduled(_), opened: LotEvent.LotOpened) =>
         val trading = TradingState(
           config = opened.config,
@@ -151,28 +151,28 @@ object Lot {
           phase = Phase.Online,
           deadline = opened.deadline
         )
-        (LotState.Trading(trading), lot.session)
+        (LotState.Trading(trading), lot.auction)
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) =>
         val next = trading.copy(
           currentPrice = placed.amount,
           leader = Some(placed.participant),
           leadingBidId = Some(placed.bidId)
         )
-        (LotState.Trading(next), lot.session)
-      case (other, _) => (other, lot.session)
+        (LotState.Trading(next), lot.auction)
+      case (other, _) => (other, lot.auction)
     }
     val seen = if (lot.seen.contains(envelope.opId)) lot.seen else lot.seen.updated(envelope.opId, envelope)
-    Lot(state, session, seen)
+    Lot(state, auction, seen)
   }
 
   /**
-   * Сессия строки, которую пишет принятое событие: у `LotDrafted` — та, что родила лот, у остальных — сессия лота.
+   * Аукцион строки, которую пишет принятое событие: у `LotDrafted` — тот, что родил лот, у остальных — аукцион лота.
    * Пусто только у события лота в `Initial`, а из `Initial` [[decide]] принимает одно `LotDrafted`.
    */
-  def sessionOf(lot: Lot, event: LotEvent): Option[SessionId] =
+  def auctionOf(lot: Lot, event: LotEvent): Option[AuctionId] =
     event match {
-      case LotEvent.LotDrafted(session) => Some(session)
-      case _ => lot.session
+      case LotEvent.LotDrafted(auction) => Some(auction)
+      case _ => lot.auction
     }
 
   /**

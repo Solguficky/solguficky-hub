@@ -59,8 +59,8 @@ final case class StoredBidPlaced(
 )
 
 /**
- * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а сессия лежит в конверте строки. Секции
- * добавлялись в конец: строка, записанная до них, читает недостающую как пустую.
+ * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки.
+ * Секции добавлялись в конец: строка, записанная до них, читает недостающую как пустую.
  */
 final case class StoredEvent(
     kind: String,
@@ -75,14 +75,14 @@ final case class StoredActor(kind: String, id: Option[UUID])
 /**
  * Строка журнала лота: конверт ADR-047 и событие. `aggregate_type` и `aggregate_id` — это `persistence_id` строки,
  * `sequence` — её `sequence_number`, `schema_version` — версия в manifest (`JacksonMigration`); в payload они не
- * дублируются. `sessionId` необязателен по форме (ADR-058): строка, записанная до `LotDrafted`, его не несёт, и такая
+ * дублируются. `auctionId` необязателен по форме (ADR-058): строка, записанная до `LotDrafted`, его не несёт, и такая
  * строка читается, но лота уже не рождает. Новая строка несёт его всегда, а `LotDrafted` без него — испорченный журнал.
  */
 final case class StoredLotEvent(
     eventId: UUID,
     transactionId: UUID,
     opId: UUID,
-    sessionId: Option[UUID],
+    auctionId: Option[UUID],
     occurredAt: Instant,
     actor: StoredActor,
     event: StoredEvent
@@ -115,14 +115,14 @@ final case class StoredLotState(
     scheduled: Option[StoredSchedule]
 )
 
-/** Конверт окна дедупликации несёт сессию строки: без неё `LotDrafted` из snapshot не восстановить. */
-final case class StoredSeen(sequence: Long, opId: UUID, sessionId: Option[UUID], event: StoredEvent)
+/** Конверт окна дедупликации несёт аукцион строки: без неё `LotDrafted` из snapshot не восстановить. */
+final case class StoredSeen(sequence: Long, opId: UUID, auctionId: Option[UUID], event: StoredEvent)
 
 /**
  * Snapshot лота целиком, вместе с окном дедупликации: без него повтор `op_id` до snapshot дописал бы журнал (П-06).
  * `sequence` — номер последнего события, с которого entity продолжает счёт после snapshot (`LotEntity.State`).
  */
-final case class StoredLot(sequence: Long, state: StoredLotState, session: Option[UUID], seen: List[StoredSeen])
+final case class StoredLot(sequence: Long, state: StoredLotState, auction: Option[UUID], seen: List[StoredSeen])
     extends JournalSerializable
 
 /** Кто инициировал команду (RFC-011, конверт): участник, оператор или планировщик. */
@@ -133,10 +133,10 @@ enum Initiator {
 }
 
 /**
- * Общая часть конверта всех событий одной команды: один `op_id`, одна транзакция, одна сессия и одно время решения
+ * Общая часть конверта всех событий одной команды: один `op_id`, одна транзакция, один аукцион и одно время решения
  * (ADR-047).
  */
-final case class Transaction(id: UUID, opId: OpId, session: SessionId, occurredAt: Instant, initiator: Initiator)
+final case class Transaction(id: UUID, opId: OpId, auction: AuctionId, occurredAt: Instant, initiator: Initiator)
 
 /**
  * Строка журнала или snapshot, которую нельзя превратить обратно в доменное значение. Это не ожидаемый отказ, а
@@ -151,7 +151,7 @@ object LotJournal {
       eventId = eventId,
       transactionId = transaction.id,
       opId = transaction.opId.value,
-      sessionId = Some(transaction.session.value),
+      auctionId = Some(transaction.auction.value),
       occurredAt = transaction.occurredAt,
       actor = storeInitiator(transaction.initiator),
       event = storeEvent(event)
@@ -159,35 +159,35 @@ object LotJournal {
 
   /** Строка журнала в той части конверта, которую читает ядро; `sequence` — номер строки в журнале Pekko. */
   def envelope(sequence: Long, stored: StoredLotEvent): Envelope =
-    Envelope(sequence, OpId(stored.opId), restoreEvent(stored.event, stored.sessionId))
+    Envelope(sequence, OpId(stored.opId), restoreEvent(stored.event, stored.auctionId))
 
   def storeLot(lot: Lot, sequence: Long): StoredLot =
     StoredLot(
       sequence = sequence,
       state = storeState(lot.state),
-      session = lot.session.map(_.value),
+      auction = lot.auction.map(_.value),
       seen = lot.seen.values.toList
         .sortBy(_.sequence)
         .map { envelope =>
-          StoredSeen(envelope.sequence, envelope.opId.value, sessionOfEvent(envelope.event), storeEvent(envelope.event))
+          StoredSeen(envelope.sequence, envelope.opId.value, auctionOfEvent(envelope.event), storeEvent(envelope.event))
         }
     )
 
   /**
-   * Snapshot восстанавливается с инвариантом `Lot.session`: сессия пуста ровно в `Initial`. Replay такого лота не дал
-   * бы, поэтому snapshot без сессии в непустом состоянии — испорченный, и entity падает на recovery, а не на первой
+   * Snapshot восстанавливается с инвариантом `Lot.auction`: аукцион пуст ровно в `Initial`. Replay такого лота не дал
+   * бы, поэтому snapshot без аукциона в непустом состоянии — испорченный, и entity падает на recovery, а не на первой
    * команде после него.
    */
   def restoreLot(stored: StoredLot): Lot = {
     val state = restoreState(stored.state)
-    val session = stored.session.map(SessionId(_))
-    if ((state == LotState.Initial) != session.isEmpty)
-      corrupted(s"lot snapshot of kind ${stored.state.kind} with session ${stored.session}")
+    val auction = stored.auction.map(AuctionId(_))
+    if ((state == LotState.Initial) != auction.isEmpty)
+      corrupted(s"lot snapshot of kind ${stored.state.kind} with auction ${stored.auction}")
     Lot(
       state = state,
-      session = session,
+      auction = auction,
       seen = stored.seen.map { seen =>
-        val envelope = Envelope(seen.sequence, OpId(seen.opId), restoreEvent(seen.event, seen.sessionId))
+        val envelope = Envelope(seen.sequence, OpId(seen.opId), restoreEvent(seen.event, seen.auctionId))
         envelope.opId -> envelope
       }.toMap
     )
@@ -219,12 +219,12 @@ object LotJournal {
     }
 
   /**
-   * Сессия, которую событие несёт в домене. Конверт окна `seen` пишет её только для `LotDrafted`: остальным событиям
-   * она при восстановлении не нужна, а лот хранит свою сессию отдельным полем snapshot.
+   * Аукцион, который событие несёт в домене. Конверт окна `seen` пишет его только для `LotDrafted`: остальным событиям
+   * он при восстановлении не нужен, а лот хранит свой аукцион отдельным полем snapshot.
    */
-  private def sessionOfEvent(event: LotEvent): Option[UUID] =
+  private def auctionOfEvent(event: LotEvent): Option[UUID] =
     event match {
-      case LotEvent.LotDrafted(session) => Some(session.value)
+      case LotEvent.LotDrafted(auction) => Some(auction.value)
       case _ => None
     }
 
@@ -259,12 +259,12 @@ object LotJournal {
         )
     }
 
-  private def restoreEvent(stored: StoredEvent, session: Option[UUID]): LotEvent =
+  private def restoreEvent(stored: StoredEvent, auction: Option[UUID]): LotEvent =
     (stored.kind, stored.lotOpened, stored.bidPlaced, stored.lotScheduled) match {
       case ("LotDrafted", None, None, None) =>
-        session match {
-          case Some(id) => LotEvent.LotDrafted(SessionId(id))
-          case None => corrupted("lot drafted without a session")
+        auction match {
+          case Some(id) => LotEvent.LotDrafted(AuctionId(id))
+          case None => corrupted("lot drafted without an auction")
         }
       case ("LotScheduled", None, None, Some(schedule)) => LotEvent.LotScheduled(restoreSchedule(schedule))
       case ("LotOpened", Some(opened), None, None) =>

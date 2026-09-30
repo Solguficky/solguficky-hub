@@ -106,7 +106,7 @@ object LotEntity {
 
   /**
    * Все события одной команды пишутся одним `persist` — одним `AtomicWrite`, который плагин JDBC кладёт в базу одной
-   * транзакцией, — и несут один `op_id`, одну транзакцию, одну сессию и одно время решения (ADR-047). Отказ событий не
+   * транзакцией, — и несут один `op_id`, одну транзакцию, один аукцион и одно время решения (ADR-047). Отказ событий не
    * пишет.
    */
   private def record[R](
@@ -122,10 +122,12 @@ object LotEntity {
       case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
       case Right(Decision.Repeated(original)) => Effect.reply(replyTo)(Right(original))
       case Right(Decision.Accepted(event)) =>
-        val session = Lot
-          .sessionOf(lot, event)
-          .getOrElse(throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without a session"))
-        val transaction = Transaction(newId(), opId, session, clock.instant(), initiator)
+        val auction = Lot
+          .auctionOf(lot, event)
+          .getOrElse(
+            throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without an auction")
+          )
+        val transaction = Transaction(newId(), opId, auction, clock.instant(), initiator)
         Effect
           .persist(List(LotJournal.store(newId(), transaction, event)))
           .thenReply(replyTo)(written => Right(firstOf(written.lot, opId)))

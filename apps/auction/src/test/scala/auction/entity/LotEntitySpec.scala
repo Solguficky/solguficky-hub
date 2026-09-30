@@ -50,7 +50,7 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
   private def open(opN: Int) =
     entity.runCommand[Either[OpenLotRejected, Envelope]](LotEntity.Open(openLot(opN), Initiator.Scheduler, _))
 
-  /** Лот сессии `session(1)`, открытый по полному пути: `op(1)`–`op(3)` заняты, журнал — три строки. */
+  /** Лот аукциона `auctionId(1)`, открытый по полному пути: `op(1)`–`op(3)` заняты, журнал — три строки. */
   private def openThrough() = {
     draft(opN = 1)
     plan(scheduleLot(opN = 2))
@@ -77,23 +77,29 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         Map(op(1) -> 1L, op(2) -> 2L, op(3) -> 3L, op(4) -> 4L)
     }
 
-    "write one event per accepted command with the op id, the session, the decision time and the initiator" in {
+    "write one event per accepted command with the op id, the auction, the decision time and the initiator" in {
       val drafted = draft(opN = 1)
       val planned = plan(scheduleLot(opN = 2))
       open(opN = 3)
       val placed = bidOf(who = 1, amount = 110, opN = 4)
 
       List(drafted, planned, placed).flatMap(_.events).map { row =>
-        (row.opId, row.sessionId, row.occurredAt, row.actor, row.event.kind)
+        (row.opId, row.auctionId, row.occurredAt, row.actor, row.event.kind)
       } shouldBe List(
-        (op(1).value, Some(session(1).value), decidedAt, LotJournal.storeInitiator(Initiator.Scheduler), "LotDrafted"),
-        (op(2).value, Some(session(1).value), decidedAt, LotJournal.storeInitiator(organizer), "LotScheduled"),
-        (op(4).value, Some(session(1).value), decidedAt, LotJournal.storeInitiator(bidder), "BidPlaced")
+        (
+          op(1).value,
+          Some(auctionId(1).value),
+          decidedAt,
+          LotJournal.storeInitiator(Initiator.Scheduler),
+          "LotDrafted"
+        ),
+        (op(2).value, Some(auctionId(1).value), decidedAt, LotJournal.storeInitiator(organizer), "LotScheduled"),
+        (op(4).value, Some(auctionId(1).value), decidedAt, LotJournal.storeInitiator(bidder), "BidPlaced")
       )
       placed.events.map(_.eventId) should not contain placed.events.head.transactionId
     }
 
-    "keep the last of two schedules and the session of the lot after a restart" in {
+    "keep the last of two schedules and the auction of the lot after a restart" in {
       draft(opN = 1)
       plan(scheduleLot(opN = 2, startingPrice = 100))
       val second = plan(scheduleLot(opN = 3, startingPrice = 200))
@@ -102,7 +108,7 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
 
       restarted shouldBe second.state
       restarted.lot.state shouldBe LotState.Scheduled(schedule(startingPrice = 200))
-      restarted.lot.session shouldBe Some(session(1))
+      restarted.lot.auction shouldBe Some(auctionId(1))
     }
 
     "refuse to schedule an opened lot, write nothing and keep its config (Т-20, Т-52)" in {

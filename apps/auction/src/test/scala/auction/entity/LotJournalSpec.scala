@@ -75,12 +75,12 @@ final class LotJournalSpec
       keepsGolden("lot-opened", storedEvent(opened))
     }
 
-    "read an opening written before the session and the schedule into the same event" in {
+    "read an opening written before the auction and the schedule into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 
       val stored = read(kit.system, row).asInstanceOf[StoredLotEvent]
 
-      stored shouldBe storedEvent(opened).copy(sessionId = None)
+      stored shouldBe storedEvent(opened).copy(auctionId = None)
       LotJournal.envelope(1, stored) shouldBe Envelope(1, op(1), opened)
     }
 
@@ -144,16 +144,16 @@ final class LotJournalSpec
       }
     }
 
-    "refuse to restore a snapshot whose session breaks the invariant of the lot instead of failing on a later command" in {
+    "refuse to restore a snapshot whose auction breaks the invariant of the lot instead of failing on a later command" in {
       val stored = LotJournal.storeLot(tradingLot, sequence = 4)
 
-      a[JournalCorrupted] should be thrownBy LotJournal.restoreLot(stored.copy(session = None))
+      a[JournalCorrupted] should be thrownBy LotJournal.restoreLot(stored.copy(auction = None))
       a[JournalCorrupted] should be thrownBy
-        LotJournal.restoreLot(LotJournal.storeLot(Lot.initial, sequence = 0).copy(session = stored.session))
+        LotJournal.restoreLot(LotJournal.storeLot(Lot.initial, sequence = 0).copy(auction = stored.auction))
     }
 
-    "refuse to restore a draft without the session that drafted the lot" in {
-      val stored = storedEvent(lotDrafted).copy(sessionId = None)
+    "refuse to restore a draft without the auction that drafted the lot" in {
+      val stored = storedEvent(lotDrafted).copy(auctionId = None)
 
       a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, stored)
     }

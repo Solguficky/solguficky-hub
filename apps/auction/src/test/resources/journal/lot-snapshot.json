@@ -51,12 +51,12 @@
     "sold": null,
     "scheduled": null
   },
-  "session": "00000000-0000-0004-0000-000000000001",
+  "auction": "00000000-0000-0004-0000-000000000001",
   "seen": [
     {
       "sequence": 1,
       "opId": "00000000-0000-0003-0000-000000000001",
-      "sessionId": "00000000-0000-0004-0000-000000000001",
+      "auctionId": "00000000-0000-0004-0000-000000000001",
       "event": {
         "kind": "LotDrafted",
         "lotOpened": null,
@@ -67,7 +67,7 @@
     {
       "sequence": 2,
       "opId": "00000000-0000-0003-0000-000000000002",
-      "sessionId": null,
+      "auctionId": null,
       "event": {
         "kind": "LotScheduled",
         "lotOpened": null,
@@ -117,7 +117,7 @@
     {
       "sequence": 3,
       "opId": "00000000-0000-0003-0000-000000000003",
-      "sessionId": null,
+      "auctionId": null,
       "event": {
         "kind": "LotOpened",
         "lotOpened": {
@@ -168,7 +168,7 @@
     {
       "sequence": 4,
       "opId": "00000000-0000-0003-0000-000000000004",
-      "sessionId": null,
+      "auctionId": null,
       "event": {
         "kind": "BidPlaced",
         "lotOpened": null,

@@ -38,7 +38,7 @@ object JournalFixtures {
 
   val tieredConfig: LotConfig = config(policy = tiered((0, 500), (100000, 1000)))
 
-  val lotDrafted: LotEvent.LotDrafted = LotEvent.LotDrafted(session(1))
+  val lotDrafted: LotEvent.LotDrafted = LotEvent.LotDrafted(auctionId(1))
 
   val lotScheduled: LotEvent.LotScheduled =
     LotEvent.LotScheduled(Schedule.of(money(10000), tieredConfig).toOption.get)
@@ -49,7 +49,7 @@ object JournalFixtures {
     LotEvent.BidPlaced(bid(1), participant(2), money(10500), Some(participant(1)), BidOrigin.Manual, BidSource.Bot)
 
   def transaction(opN: Int, initiator: Initiator = Initiator.Scheduler): Transaction =
-    Transaction(uuid(2), op(opN), session(1), decidedAt, initiator)
+    Transaction(uuid(2), op(opN), auctionId(1), decidedAt, initiator)
 
   /** Строка журнала: байты, manifest и идентификатор сериализатора — то, что лежит в `event_journal`. */
   final case class Row(serializerId: Int, manifest: String, bytes: Array[Byte]) {

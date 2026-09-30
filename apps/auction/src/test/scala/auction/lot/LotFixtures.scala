@@ -23,7 +23,7 @@ object LotFixtures {
 
   def op(n: Int): OpId = OpId(new UUID(3L, n.toLong))
 
-  def session(n: Int): SessionId = SessionId(new UUID(4L, n.toLong))
+  def auctionId(n: Int): AuctionId = AuctionId(new UUID(4L, n.toLong))
 
   val fixedTen: StepPolicy = StepPolicy.fixed(money(10)).toOption.get
 
@@ -52,15 +52,15 @@ object LotFixtures {
   def schedule(startingPrice: Long = 100, policy: StepPolicy = fixedTen): Schedule =
     Schedule.of(money(startingPrice), config(policy)).toOption.get
 
-  def draftLot(opN: Int, of: SessionId = session(1)): DraftLot = DraftLot(of, op(opN))
+  def draftLot(opN: Int, of: AuctionId = auctionId(1)): DraftLot = DraftLot(of, op(opN))
 
   def scheduleLot(opN: Int, startingPrice: Long = 100, input: LotConfigInput = configInput()): ScheduleLot =
     ScheduleLot(money(startingPrice), input, op(opN))
 
   def openLot(opN: Int, deadline: Option[Instant] = Some(deadline)): OpenLot = OpenLot(deadline, op(opN))
 
-  /** Лот сессии `session(1)` в данном состоянии с пустым окном дедупликации. */
-  def lotIn(state: LotState): Lot = Lot(state, Some(session(1)), Map.empty)
+  /** Лот аукциона `auctionId(1)` в данном состоянии с пустым окном дедупликации. */
+  def lotIn(state: LotState): Lot = Lot(state, Some(auctionId(1)), Map.empty)
 
   val drafted: Lot = lotIn(LotState.Draft)
 

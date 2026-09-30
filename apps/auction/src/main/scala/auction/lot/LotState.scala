@@ -13,8 +13,8 @@ final case class BidId(value: UUID)
 /** Ключ идемпотентности команды; генерирует отправитель, проверяет домен (П-06). */
 final case class OpId(value: UUID)
 
-/** Торговая сессия, которой принадлежит лот (RFC-011, «Идентичность»). */
-final case class SessionId(value: UUID)
+/** Аукцион, которому принадлежит лот (RFC-011, «Идентичность»; до PER-423 — «торговая сессия»). */
+final case class AuctionId(value: UUID)
 
 /**
  * Параметры анти-снайпа (П-04): ставка за `window` до дедлайна продлевает его на `extension`, не больше `maxExtensions`
@@ -153,17 +153,17 @@ enum BidOrigin {
 final case class PlaceBid(participant: ParticipantId, amount: Money, opId: OpId, source: BidSource)
 
 /**
- * Рождение лота. Отправляет сессия после своего `LotAdded`, и лот с этой минуты принадлежит ей: сессия — часть
+ * Рождение лота. Отправляет аукцион после своего `LotAdded`, и лот с этой минуты принадлежит ему: аукцион — часть
  * рождения, а не отдельная привязка (RFC-011, «Команды и события»).
  */
-final case class DraftLot(session: SessionId, opId: OpId)
+final case class DraftLot(auction: AuctionId, opId: OpId)
 
 /** Условия торгов целиком: каждая правка до `LotOpened` заменяет прежние, а не дополняет их. */
 final case class ScheduleLot(startingPrice: Money, config: LotConfigInput, opId: OpId)
 
 /**
- * Открытие торгов лота. Стартовая цена и конфигурация берутся из `Scheduled`, а дедлайн приходит от сессии, которой он
- * принадлежит (RFC-011, «Вход и выход команд»).
+ * Открытие торгов лота. Стартовая цена и конфигурация берутся из `Scheduled`, а дедлайн приходит от аукциона, которому
+ * он принадлежит (RFC-011, «Вход и выход команд»).
  */
 final case class OpenLot(deadline: Option[Instant], opId: OpId)
 
@@ -171,12 +171,12 @@ final case class OpenLot(deadline: Option[Instant], opId: OpId)
  * События лота. `LotOpened` несёт всю конфигурацию торгов, чтобы состояние восстанавливалось из журнала без обращения
  * наружу (И-07). `previousLeader` при первой ставке отсутствует, а не равен нулю (RFC-011, П-01).
  *
- * У `LotDrafted` payload нет (ADR-047): сессия лежит в конверте строки. В доменном событии она полем, потому что
- * принадлежность лота сессии восстанавливает `apply`, а конверт ядро не читает. `LotScheduled` несёт `Schedule`
+ * У `LotDrafted` payload нет (ADR-047): аукцион лежит в конверте строки. В доменном событии он полем, потому что
+ * принадлежность лота аукциону восстанавливает `apply`, а конверт ядро не читает. `LotScheduled` несёт `Schedule`
  * снимком.
  */
 enum LotEvent {
-  case LotDrafted(session: SessionId)
+  case LotDrafted(auction: AuctionId)
   case LotScheduled(schedule: Schedule)
   case LotOpened(startingPrice: Money, config: LotConfig, deadline: Option[Instant])
   case BidPlaced(
@@ -220,7 +220,7 @@ enum ScheduleLotRejected {
 
 /**
  * Отказы `OpenLot`. `LotNotScheduled` — ответ лоту без условий торгов или уже открытому. `AnotherLotActive` проверяет
- * сессия, а не лот (PER-325).
+ * аукцион, а не лот (PER-325).
  */
 enum OpenLotRejected {
   case LotNotFound

@@ -27,12 +27,12 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
   "lot" should {
 
-    "be born a draft that belongs to the session which drafted it" in {
-      val (result, journal) = Journal.of(Lot.initial).draft(draftLot(opN = 1, of = session(7)))
+    "be born a draft that belongs to the auction which drafted it" in {
+      val (result, journal) = Journal.of(Lot.initial).draft(draftLot(opN = 1, of = auctionId(7)))
 
-      result shouldBe Right(Decision.Accepted(LotEvent.LotDrafted(session(7))))
+      result shouldBe Right(Decision.Accepted(LotEvent.LotDrafted(auctionId(7))))
       journal.lot.state shouldBe LotState.Draft
-      journal.lot.session shouldBe Some(session(7))
+      journal.lot.auction shouldBe Some(auctionId(7))
     }
 
     "refuse a second draft in any state with LotAlreadyExists" in {
@@ -59,7 +59,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
       result shouldBe Right(Decision.Accepted(LotEvent.LotScheduled(schedule(startingPrice = 500))))
       journal.lot.state shouldBe LotState.Scheduled(schedule(startingPrice = 500))
-      journal.lot.session shouldBe drafted.session
+      journal.lot.auction shouldBe drafted.auction
     }
 
     "write every change before the opening as a whole schedule and replay to the last one" in {
@@ -161,10 +161,10 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       }
     }
 
-    "give the row of a draft the drafting session and every later row the session of the lot" in {
-      Lot.sessionOf(Lot.initial, LotEvent.LotDrafted(session(7))) shouldBe Some(session(7))
-      Lot.sessionOf(scheduled(), LotEvent.LotOpened(money(100), config(), None)) shouldBe Some(session(1))
-      Lot.sessionOf(Lot.initial, LotEvent.LotOpened(money(100), config(), None)) shouldBe None
+    "give the row of a draft the drafting auction and every later row the auction of the lot" in {
+      Lot.auctionOf(Lot.initial, LotEvent.LotDrafted(auctionId(7))) shouldBe Some(auctionId(7))
+      Lot.auctionOf(scheduled(), LotEvent.LotOpened(money(100), config(), None)) shouldBe Some(auctionId(1))
+      Lot.auctionOf(Lot.initial, LotEvent.LotOpened(money(100), config(), None)) shouldBe None
     }
 
     "bring no lot to life from a journal that starts with an opening" in {
@@ -172,7 +172,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
       val replayed = Lot.replay(Lot.initial, List(opened))
 
-      (replayed.state, replayed.session) shouldBe (LotState.Initial, None)
+      (replayed.state, replayed.auction) shouldBe (LotState.Initial, None)
     }
 
     "accept a first bid at the starting price plus the step (Т-01)" in {
