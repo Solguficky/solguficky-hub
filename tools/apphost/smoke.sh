@@ -206,7 +206,8 @@ IDENTITY=$(echo "$snapshot" | endpoint identity)
 MEETUPS=$(echo "$snapshot" | endpoint meetups)
 NOTIFICATIONS=$(echo "$snapshot" | endpoint notifications)
 
-if [ -z "$BOT_SERVICE_TOKEN" ]; then
+# A profile without gRPC services makes no domain call and needs no token.
+if [ -z "$BOT_SERVICE_TOKEN" ] && [ -n "$IDENTITY$MEETUPS$NOTIFICATIONS" ]; then
   fail "no bot service token: with --attach set SMOKE_BOT_SERVICE_TOKEN; calls below go without it"
 fi
 

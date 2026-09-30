@@ -99,8 +99,12 @@ public class ServiceTokenWiringTests
     public async Task ServiceToken_RunMode_IsGeneratedWithoutInput()
     {
         var tokens = await TokensAsync(Hub);
+        var parameters = tokens.Values.SelectMany(env => env.Values).Distinct().ToList();
 
-        foreach (var parameter in tokens.Values.SelectMany(env => env.Values).Distinct())
+        // Пустой реестр прошёл бы цикл без единой проверки.
+        parameters.Select(parameter => parameter.Name).Order(StringComparer.Ordinal).ToArray().ShouldBe(
+            ["meetups-service-token", "notifications-service-token", "telegram-bot-service-token"]);
+        foreach (var parameter in parameters)
         {
             parameter.Secret.ShouldBeTrue(parameter.Name);
             parameter.Default.ShouldBeOfType<GenerateParameterDefault>(parameter.Name);
