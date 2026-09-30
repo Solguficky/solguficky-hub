@@ -1,6 +1,6 @@
 package auction.contracts
 
-import auction.v1.auction_events.{BidPlaced, LotEvent, LotState, ManualBid, ProxyBid, AuctionState}
+import auction.v1.auction_events.{AuctionState, BidPlaced, LotEvent, LotState, ManualBid, ProxyBid}
 import auction.v1.auction_service.{AuctionService, LotSnapshot}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.scalatest.matchers.should.Matchers
