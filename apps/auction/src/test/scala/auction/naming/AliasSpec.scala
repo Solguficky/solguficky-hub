@@ -49,6 +49,11 @@ final class AliasSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
       Alias(" вася ").map(_.key) shouldBe Alias("ВАСЯ").map(_.key)
     }
 
+    "gives one key to letters that differ only in case, including the final sigma" in {
+      Alias("Σοφία").map(_.key) shouldBe Alias("σοφίΑ").map(_.key)
+      Alias("Σ").map(_.key) shouldBe Alias("ς").map(_.key)
+    }
+
     "keeps its text when it is read back" in {
       forAll(texts) { raw =>
         Alias(raw).foreach(alias => Alias(alias.value) shouldBe Right(alias))

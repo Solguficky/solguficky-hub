@@ -174,6 +174,22 @@ final class DisplayNameIntegrationSpec extends AnyWordSpec with Matchers with Sc
       }
     }
 
+    "refuses to read a pseudonym whose key was written past the service" in {
+      val database = freshDatabase()
+      val auction = auctionId()
+      val someone = participant()
+      JournalSchema.migrate(database)
+      withConnection(database) {
+        _.createStatement().executeUpdate(
+          s"""INSERT INTO auction_display_name (auction_id, participant_id, alias, alias_key)
+              VALUES ('${auction.value}', '${someone.value}', 'Кот', 'собака')"""
+        )
+      }
+
+      withNode(database)(commands => commands.names(auction, Set(someone)).failed.futureValue) shouldBe
+        an[IllegalStateException]
+    }
+
     "does not freeze a participant without a choice" in {
       val database = freshDatabase()
       val auction = auctionId()

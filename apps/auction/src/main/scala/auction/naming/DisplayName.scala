@@ -23,7 +23,8 @@ object TelegramUsername {
  * Псевдоним участника в аукционе. `value` — текст для показа, `key` — по нему псевдоним уникален в аукционе.
  *
  * Текст приводится к NFKC, крайние пробелы срезаются, серии пробелов внутри сжимаются в один: иначе « Вася » и «Вася»
- * были бы разными псевдонимами, неотличимыми на экране. Ключ — тот же текст без учёта регистра.
+ * были бы разными псевдонимами, неотличимыми на экране. Ключ — тот же текст без учёта регистра: через верхний регистр и
+ * обратно, потому что одного `toLowerCase` мало — «Σ» и конечная «ς» у него дают разные строчные буквы.
  */
 final case class Alias private (value: String, key: String)
 
@@ -35,7 +36,7 @@ object Alias {
     val text = collapsed(Normalizer.normalize(raw, Normalizer.Form.NFKC))
     val length = text.codePointCount(0, text.length)
     if (length == 0 || length > MaxLength || text.codePoints.anyMatch(forbidden)) Left(NamingRefusal.AliasInvalid)
-    else Right(new Alias(text, text.toLowerCase(Locale.ROOT)))
+    else Right(new Alias(text, text.toUpperCase(Locale.ROOT).toLowerCase(Locale.ROOT)))
   }
 
   // Звёздочка — метка псевдонима, «@» — метка ника: внутри псевдонима они подделали бы чужую метку. Проверка идёт после

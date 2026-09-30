@@ -75,34 +75,36 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
   // UUID приходят типом, а не текстом вызывающего, поэтому литерал массива собирается из их канонической формы.
   private def select(auction: AuctionId, participants: Set[ParticipantId]) = {
     val ids = participants.map(_.value.toString).mkString("{", ",", "}")
-    sql"""SELECT participant_id::text, telegram_username, alias FROM auction_display_name
+    sql"""SELECT participant_id::text, telegram_username, alias, alias_key FROM auction_display_name
           WHERE auction_id = ${auction.value.toString}::uuid AND participant_id = ANY($ids::uuid[])"""
-      .as[(String, Option[String], Option[String])]
-      .map(_.map { (id, username, alias) =>
+      .as[(String, Option[String], Option[String], Option[String])]
+      .map(_.map { (id, username, alias, key) =>
         val participant = ParticipantId(UUID.fromString(id))
-        participant -> restored(auction, participant, username, alias)
+        participant -> restored(auction, participant, username, alias, key)
       }.toMap)
   }
 
   private def violates(error: PSQLException, constraint: String): Boolean =
     error.getSQLState == "23505" && Option(error.getServerErrorMessage).exists(_.getConstraint == constraint)
 
-  // CHECK таблицы слабее типов: NFKC и сжатие пробелов он не проверяет. Строка, которую тип не восстанавливает в тот же
-  // текст, записана в обход сервиса, и выдать её за выбор участника нельзя.
+  // CHECK таблицы слабее типов: NFKC, сжатие пробелов и ключ уникальности он не проверяет. Строка, которую тип не
+  // восстанавливает в тот же текст и тот же ключ, записана в обход сервиса, и выдать её за выбор участника нельзя: с чужим
+  // ключом индекс пропустил бы второй такой же псевдоним.
   private def restored(
       auction: AuctionId,
       participant: ParticipantId,
       username: Option[String],
-      alias: Option[String]
+      alias: Option[String],
+      key: Option[String]
   ): ChosenName = {
     def broken = IllegalStateException(
       s"auction_display_name holds a malformed name of ${participant.value} in ${auction.value}"
     )
     (username, alias) match {
-      case (Some(raw), None) => ChosenName.Telegram(TelegramUsername.from(raw).getOrElse(throw broken))
+      case (Some(raw), None) if key.isEmpty => ChosenName.Telegram(TelegramUsername.from(raw).getOrElse(throw broken))
       case (None, Some(raw)) =>
         Alias(raw) match {
-          case Right(value) if value.value == raw => ChosenName.Pseudonym(value)
+          case Right(value) if value.value == raw && key.contains(value.key) => ChosenName.Pseudonym(value)
           case _ => throw broken
         }
       case _ => throw broken
