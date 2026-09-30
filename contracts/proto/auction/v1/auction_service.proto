@@ -5,7 +5,8 @@ package auction.v1;
 import "auction/v1/auction.proto";
 import "identity/v1/roles.proto";
 
-// Commands of a participant, commands of the lot catalog and reads of a lot.
+// Commands of a participant, commands of the lot catalog, reads of a lot and the
+// display names of participants.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -23,6 +24,8 @@ service AuctionService {
   rpc EditLotCard(EditLotCardRequest) returns (EditLotCardResponse);
   rpc GetLot(GetLotRequest) returns (LotSnapshot);
   rpc ListAuctionLots(ListAuctionLotsRequest) returns (ListAuctionLotsResponse);
+  rpc ChooseDisplayName(ChooseDisplayNameRequest) returns (ChooseDisplayNameResponse);
+  rpc GetDisplayNames(GetDisplayNamesRequest) returns (GetDisplayNamesResponse);
 }
 
 message Viewer {
@@ -74,6 +77,7 @@ message PlaceBidRefusal {
     BidNotAtNextPrice bid_not_at_next_price = 4;
     BidderIsLeader bidder_is_leader = 5;
     CurrencyMismatch currency_mismatch = 6;
+    DisplayNameNotChosen display_name_not_chosen = 7;
   }
 }
 
@@ -108,6 +112,7 @@ message SetProxyLimitRefusal {
     ProxyBelowCurrentPrice proxy_below_current_price = 2;
     ProxyDisabledForLot proxy_disabled_for_lot = 3;
     CurrencyMismatch currency_mismatch = 4;
+    DisplayNameNotChosen display_name_not_chosen = 5;
   }
 }
 
@@ -167,6 +172,9 @@ message ProxyBelowCurrentPrice {}
 message ProxyDisabledForLot {}
 
 message NoActiveProxyLimit {}
+
+// The viewer has not chosen how to be shown in the auction of the lot.
+message DisplayNameNotChosen {}
 
 // The catalog card of a lot: what a lot is, not how it trades. It is not part of
 // the trading domain and never appears on the bus.
@@ -313,4 +321,80 @@ message LotSnapshot {
     UnsoldReason unsold = 13;
     WithdrawnReason withdrawn = 14;
   }
+}
+
+message ChooseDisplayNameRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string auction_id = 2;
+
+  // Exactly one is set.
+  oneof choice {
+    // The Telegram username of the viewer as the update carried it, without "@".
+    // An empty string is a set choice that says the viewer has no username.
+    string telegram_username = 3;
+
+    // A pseudonym as the viewer typed it.
+    string alias = 4;
+  }
+}
+
+message ChooseDisplayNameResponse {
+  // Exactly one is set.
+  oneof outcome {
+    DisplayName accepted = 1;
+    ChooseDisplayNameRefusal refused = 2;
+  }
+}
+
+message ChooseDisplayNameRefusal {
+  // Exactly one is set.
+  oneof reason {
+    UsernameMissing username_missing = 1;
+    AliasInvalid alias_invalid = 2;
+    AliasTaken alias_taken = 3;
+    NameFrozen name_frozen = 4;
+  }
+}
+
+message UsernameMissing {}
+
+message AliasInvalid {}
+
+// Carries no owner: who holds the pseudonym is not shown to the caller.
+message AliasTaken {}
+
+message NameFrozen {}
+
+// How a participant is shown in one auction.
+message DisplayName {
+  // Ready to show as is: marks are already applied, the caller adds none.
+  string text = 1;
+
+  DisplayNameKind kind = 2;
+}
+
+enum DisplayNameKind {
+  DISPLAY_NAME_KIND_UNSPECIFIED = 0;
+  DISPLAY_NAME_KIND_TELEGRAM_USERNAME = 1;
+  DISPLAY_NAME_KIND_ALIAS = 2;
+  // Nothing is chosen, or the choice was erased with the participant.
+  DISPLAY_NAME_KIND_PLACEHOLDER = 3;
+}
+
+message GetDisplayNamesRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: identity ids of participants, the
+  // same ids leader_id and winner_id carry.
+  repeated string participant_ids = 3;
+}
+
+message GetDisplayNamesResponse {
+  // Keyed by participant id. Every requested id is present.
+  map<string, DisplayName> names = 1;
 }

@@ -1,7 +1,7 @@
 package auction.contracts
 
 import auction.v1.auction_events.{AuctionState, BidPlaced, LotEvent, LotState, ManualBid, ProxyBid}
-import auction.v1.auction_service.{AuctionService, LotSnapshot}
+import auction.v1.auction_service.{AuctionService, ChooseDisplayNameRequest, LotSnapshot}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -82,6 +82,15 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       card.getMessageType.getFullName shouldBe "auction.v1.LotCard"
       card.hasPresence shouldBe true
       card.getContainingOneof shouldBe null
+    }
+
+    // «Ника нет» бот выражает пустым ником, а не пустым запросом: отказ
+    // UsernameMissing и ошибка формы с пустым `choice` — разные ответы. Член
+    // `oneof` держит присутствие и у пустой строки, плоское поле — нет.
+    "keeps an empty username a choice of the username after a round trip" in {
+      val noUsername = ChooseDisplayNameRequest().withTelegramUsername("")
+
+      ChooseDisplayNameRequest.parseFrom(noUsername.toByteArray).choice.telegramUsername shouldBe Some("")
     }
 
     // Серверный трейт генерирует pekko-grpc поверх того же ScalaPB (ADR-048).

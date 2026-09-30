@@ -1,0 +1,58 @@
+package auction.naming
+
+import org.scalacheck.Gen
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
+import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
+
+final class AliasSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPropertyChecks {
+
+  implicit override val generatorDrivenConfig: PropertyCheckConfiguration =
+    PropertyCheckConfiguration(minSuccessful = 200)
+
+  private val blanks = Gen.listOf(Gen.oneOf(' ', '\t', '\n', ' ', ' ', ' ', '　')).map(_.mkString)
+
+  private val texts = Gen.listOf(Gen.oneOf(Gen.alphaNumChar, Gen.oneOf('в', 'Я', 'ё', ' ', ' ', '-'))).map(_.mkString)
+
+  "Alias" should {
+
+    "refuses a blank pseudonym" in {
+      forAll(blanks)(raw => Alias(raw) shouldBe Left(NamingRefusal.AliasInvalid))
+    }
+
+    "refuses a pseudonym that carries a mark of another kind of name" in {
+      forAll(Gen.oneOf("Вася*", "*", "@vasya", "Вася＊", "＠vasya")) { raw =>
+        Alias(raw) shouldBe Left(NamingRefusal.AliasInvalid)
+      }
+    }
+
+    "refuses a pseudonym with characters that make different texts look the same" in {
+      forAll(Gen.oneOf("Ва​ся", "Вася‮", "Ва\u0000ся", "Вася\n\u0007")) { raw =>
+        Alias(raw) shouldBe Left(NamingRefusal.AliasInvalid)
+      }
+    }
+
+    "accepts a pseudonym of the longest length and refuses a longer one" in {
+      Alias("я" * Alias.MaxLength).map(_.value) shouldBe Right("я" * Alias.MaxLength)
+      Alias("я" * (Alias.MaxLength + 1)) shouldBe Left(NamingRefusal.AliasInvalid)
+    }
+
+    "counts a character outside the basic plane once" in {
+      Alias("🐈" * Alias.MaxLength).isRight shouldBe true
+    }
+
+    "trims the edges and collapses the spaces inside" in {
+      Alias("  Кот  в\tсапогах ").map(_.value) shouldBe Right("Кот в сапогах")
+    }
+
+    "gives one key to pseudonyms that differ only in case and spaces" in {
+      Alias(" вася ").map(_.key) shouldBe Alias("ВАСЯ").map(_.key)
+    }
+
+    "keeps its text when it is read back" in {
+      forAll(texts) { raw =>
+        Alias(raw).foreach(alias => Alias(alias.value) shouldBe Right(alias))
+      }
+    }
+  }
+}
