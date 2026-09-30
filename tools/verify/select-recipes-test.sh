@@ -54,7 +54,9 @@ assert_selects "justfile selects all of verify" "$verify_deps" justfile
 assert_selects "no change selects only the cheap checks" "$always"
 assert_selects "docs select only the cheap checks" "$always" docs/README.md AGENTS.md
 assert_selects "identity selects identity" \
-    "$always identity-build identity-test identity-lint" apps/identity/cmd/identity/main.go
+    "$always identity-build identity-test identity-test-log-check identity-lint" apps/identity/cmd/identity/main.go
+assert_selects "identity test tooling selects identity" \
+    "$always identity-build identity-test identity-test-log-check identity-lint" tools/identity/check-test-log.py
 assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
 assert_selects "aspire.config.json selects apphost" \

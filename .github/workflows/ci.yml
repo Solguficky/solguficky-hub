@@ -45,6 +45,7 @@ jobs:
             identity:
               - 'contracts/proto/**'
               - 'apps/identity/**'
+              - 'tools/identity/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             meetups:
@@ -236,15 +237,19 @@ jobs:
       - run: buf generate --template apps/identity/buf.gen.yaml
       - run: go build ./...
         working-directory: apps/identity
-      # Тег integration включает тесты с PostgreSQL: без него `go test`
-      # компилирует одни unit-файлы, и джоба молча теряла бы уровень L1.
-      # Под тегом unit-файлы компилируются тоже, поэтому прогон полный.
-      - run: go test -tags=integration ./...
-        working-directory: apps/identity
+      - uses: extractions/setup-just@v4
+      # Фикстуры разбора лога — та же проверка, что в `just verify`.
+      - run: just identity-test-log-check
+      # Тесты через рецепт, а не прямым `go test`: тег integration, порог
+      # числа тестов и падение на пропуске живут в justfile и скрипте, и копия
+      # здесь разошлась бы с `test-all` молча. Под тегом unit-файлы
+      # компилируются тоже, поэтому прогон полный. Рецепт повторяет
+      # `buf generate`; после шага выше это та же генерация без изменений.
+      - run: just identity-test-integration
       # Отдельным шагом: -race требует cgo и на Windows-машине разработчика
       # не запускается без toolchain C, поэтому детектор гонок живёт в CI.
-      - run: go test -race -tags=integration ./...
-        working-directory: apps/identity
+      # Тот же рецепт держит порог и пропуск и под -race.
+      - run: just identity-test-integration -race
       # Два прогона, как у `just identity-lint`: с тегом линтер видит тесты с
       # базой, без тега `unused` ловит помощник, нужный только им.
       - uses: golangci/golangci-lint-action@v9

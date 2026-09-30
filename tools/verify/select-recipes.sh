@@ -35,7 +35,7 @@ skipped_filters="contour"
 recipes_of() {
     case $1 in
         contracts) echo "contracts-build contracts-check contracts-codegen-buf" ;;
-        identity) echo "identity-build identity-test identity-lint" ;;
+        identity) echo "identity-build identity-test identity-test-log-check identity-lint" ;;
         telegram-bot) echo "telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build" ;;
         community-site-api) echo "community-site-api-typecheck community-site-api-lint community-site-api-test" ;;
         apphost) echo "apphost-config-check apphost-build apphost-test apphost-chart-test" ;;
