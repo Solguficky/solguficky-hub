@@ -116,12 +116,14 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.isNotAdmin shouldBe true
     }
 
-    "answers UNIMPLEMENTED on proxy limits and reads that belong to later slices" in {
+    "answers UNIMPLEMENTED on proxy limits, reads and display names that belong to later slices" in {
       val auction = service(Unreachable)
       statusOf(auction.setProxyLimit(wire.SetProxyLimitRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.withdrawProxyLimit(wire.WithdrawProxyLimitRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.getLot(wire.GetLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.listAuctionLots(wire.ListAuctionLotsRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.chooseDisplayName(wire.ChooseDisplayNameRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.getDisplayNames(wire.GetDisplayNamesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
   }
 }

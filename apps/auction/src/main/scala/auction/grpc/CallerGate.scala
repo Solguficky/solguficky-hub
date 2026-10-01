@@ -19,7 +19,9 @@ object MethodAccess {
     "CreateLotCard" -> bots,
     "EditLotCard" -> bots,
     "GetLot" -> bots,
-    "ListAuctionLots" -> bots
+    "ListAuctionLots" -> bots,
+    "ChooseDisplayName" -> bots,
+    "GetDisplayNames" -> bots
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */
