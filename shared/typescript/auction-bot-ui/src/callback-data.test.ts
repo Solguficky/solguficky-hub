@@ -39,6 +39,9 @@ describe("auction callback_data", () => {
     "v1:bc:no",
     "v1:community:list",
     "v1:auction:lot:AZKbflwdej-OSy1snwobPA",
+    // Чужая кнопка другой версии остаётся чужой, а не устаревшей своей.
+    "v2:nav:hub",
+    "v0:meetup:view:AZLzpLXGfY6fChssPU5fYA",
   ])("rejects foreign %s", (raw) => {
     expect(reasonOf(raw)).toBe("foreign");
   });
@@ -58,6 +61,7 @@ describe("auction callback_data", () => {
     ["no version", `auc:lot:${LOT_TOKEN}`],
     ["upper-case version", `V1:auc:lot:${LOT_TOKEN}`],
     ["missing domain", "v1"],
+    ["missing domain of another version", "v2"],
     ["empty domain", `v1::lot:${LOT_TOKEN}`],
     ["missing action", "v1:auc"],
     ["unknown action", `v1:auc:bid:${LOT_TOKEN}`],

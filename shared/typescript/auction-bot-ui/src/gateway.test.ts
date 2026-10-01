@@ -104,6 +104,27 @@ describe("handleAuctionUpdate gateway", () => {
     });
   });
 
+  // Кнопка хаба не аукционное действие: её получает обратно приложение, даже
+  // если аукцион этого человека не пускает или он заблокирован.
+  it.each<[AuctionSurface["kind"], GlobalRole[], boolean]>([
+    ["hub", ["public"], false],
+    ["hub", [], true],
+    ["auction", [], false],
+  ])(
+    "returns a foreign button on %s to the app before the policy (%j, blocked %s)",
+    async (kind, roles, blocked) => {
+      const { press, calls } = surfaceFor(kind, {
+        globalRoles: roles,
+        blocked,
+      });
+      const result = await press("v1:nav:hub");
+      expect(result.kind).toBe("unreadable");
+      if (result.kind !== "unreadable") return;
+      expect(result.error.reason).toBe("foreign");
+      expect(calls.auction).toBe(0);
+    },
+  );
+
   it("answers an unreadable button with the named error and no Auction call", async () => {
     const { press, calls } = surfaceFor("hub", {
       globalRoles: ["member"],

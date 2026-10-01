@@ -8,6 +8,7 @@ export {
   AuctionCallbackError,
   type AuctionCallbackErrorReason,
   type AuctionIntent,
+  encodeAuctionCallback,
   type ParsedAuctionCallback,
   parseAuctionCallback,
 } from "./callback-data.js";

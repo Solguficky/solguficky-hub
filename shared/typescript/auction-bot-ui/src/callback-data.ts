@@ -83,18 +83,15 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (Buffer.byteLength(raw, "utf8") > MAX_BYTES) return refuse("malformed");
   const parts = raw.split(":");
   const [version, domain, action, ...args] = parts;
-  // Версия разбирается первой: строку другой версии этот пакет не понимает,
-  // даже если её домен совпал.
-  if (version !== VERSION) {
-    return /^v\d+$/.test(version ?? "")
-      ? refuse("outdated")
-      : refuse("malformed");
+  if (!/^v\d+$/.test(version ?? "") || domain === undefined || domain === "") {
+    return refuse("malformed");
   }
-  if (domain !== AUCTION_CALLBACK_DOMAIN) {
-    return domain === undefined || domain === ""
-      ? refuse("malformed")
-      : refuse("foreign");
-  }
+  // Домен разбирается раньше номера версии: чужая кнопка остаётся чужой при
+  // любой версии. Иначе хаб, поднявший свои кнопки до v2, получал бы их от
+  // пакета обратно как устаревшие аукционные.
+  if (domain !== AUCTION_CALLBACK_DOMAIN) return refuse("foreign");
+  // Своя строка другой версии: этот пакет её не понимает, экран устарел.
+  if (version !== VERSION) return refuse("outdated");
   if (action === "lot" && args.length === 1) {
     const lotId = tokenToUuid(args[0] ?? "");
     return lotId === undefined

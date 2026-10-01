@@ -76,6 +76,13 @@ describe("auction contract self-check", () => {
     expect(kinds).toEqual(["identity-not-resolved-once"]);
   });
 
+  it("fails when the app resolves someone other than the presser", async () => {
+    const wrongUser: AuctionContractApp = (ports) => async (pressed) =>
+      stubApp("hub")(ports)({ ...pressed, from: { telegramUserId: 1 } });
+    const kinds = (await checkAuctionContract(wrongUser)).map((v) => v.kind);
+    expect(kinds).toEqual(["identity-not-resolved-once"]);
+  });
+
   it("fails when the app skips the Identity port", async () => {
     const skipping: AuctionContractApp =
       (ports) =>

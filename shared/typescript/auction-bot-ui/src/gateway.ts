@@ -65,8 +65,16 @@ export async function handleAuctionUpdate(
   surface: AuctionSurface,
   update: AuctionUpdate,
 ): Promise<AuctionResult> {
-  // Политика идёт раньше разбора кнопки: отказ заблокированному положен на
-  // любом действии, в том числе на нечитаемой кнопке.
+  // Чужая кнопка — не аукционное действие, и политика аукциона к ней не
+  // применяется: приложение отдаёт её своему разбору. Иначе человек, которого
+  // аукцион не пускает, получал бы аукционный отказ на кнопке хаба.
+  const parsed = parseAuctionCallback(update.input.data);
+  if (!parsed.ok && parsed.error.reason === "foreign") {
+    return { kind: "unreadable", error: parsed.error };
+  }
+
+  // Своя кнопка, даже нечитаемая, — уже действие аукциона: отказ
+  // заблокированному положен на любом из них.
   const { identity } = update;
   if (!admits(surface.kind, identity)) {
     return {
@@ -74,8 +82,6 @@ export async function handleAuctionUpdate(
       reason: identity.blocked ? "blocked" : "not-admitted",
     };
   }
-
-  const parsed = parseAuctionCallback(update.input.data);
   if (!parsed.ok) return { kind: "unreadable", error: parsed.error };
 
   const body = await dispatchAuctionIntent({

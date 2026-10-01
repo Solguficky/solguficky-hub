@@ -153,12 +153,20 @@ export async function checkAuctionContractCase(
   });
 
   const violations: ContractViolation[] = [];
-  // Личность разрешается ровно один раз на update: приложение — для своей
-  // оболочки, а шлюз берёт тот же ответ из update и Identity не зовёт.
+  // Личность разрешается ровно один раз на update и ровно того, кто нажал:
+  // приложение — для своей оболочки, а шлюз берёт тот же ответ из update и
+  // Identity не зовёт. Шпион отвечает одной личностью на любой запрос,
+  // поэтому чужой пользователь виден только по самому запросу.
   const identityCalls = calls.filter((call) => call.port === "identity");
-  if (identityCalls.length !== 1) {
+  const expectedIdentityCalls: PortCall[] = [
+    { port: "identity", method: "resolveIdentity", request: CONTRACT_USER },
+  ];
+  if (!isDeepStrictEqual(identityCalls, expectedIdentityCalls)) {
     violations.push(
-      violation("identity-not-resolved-once", { calls: identityCalls.length }),
+      violation("identity-not-resolved-once", {
+        expected: expectedIdentityCalls,
+        actual: identityCalls,
+      }),
     );
   }
   const auctionCalls = calls.filter((call) => call.port === "auction");
