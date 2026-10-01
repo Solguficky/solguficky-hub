@@ -1,0 +1,64 @@
+export type TelegramEnvironment = "prod" | "test";
+
+export type Config = {
+  token: string;
+  serviceToken: string;
+  environment: TelegramEnvironment;
+  identityUrl: string;
+  auctionUrl: string;
+  logLevel: string;
+};
+
+export type ConfigResult =
+  | { ok: true; config: Config }
+  | { ok: false; error: string };
+
+// Конфигурация процесса из переменных, которые раздаёт AppHost. Отказ называет
+// только имя переменной: значения токенов в запись не попадают.
+//
+// Своя переменная токена и ни одной чужой: `TELEGRAM_BOT_TOKEN` бот аукциона не
+// читает даже запасным вариантом (ADR-044, «Конфигурация и Aspire»).
+export function readConfig(
+  env: Readonly<Record<string, string | undefined>>,
+): ConfigResult {
+  const read = (name: string): string | undefined => env[name];
+  const token = read("AUCTION_BOT_TOKEN");
+  if (token === undefined || token.trim() === "") {
+    return { ok: false, error: "AUCTION_BOT_TOKEN is not set" };
+  }
+  // Токен вызывающего (ADR-056) проверяется на старте: без него каждый вызов
+  // Identity и Auction получил бы UNAUTHENTICATED уже на первом человеке.
+  // Пробелы по краям Headers срезает молча, и токен ушёл бы искажённым.
+  const serviceToken = read("AUCTION_BOT_SERVICE_TOKEN");
+  if (serviceToken === undefined || serviceToken.trim() === "") {
+    return { ok: false, error: "AUCTION_BOT_SERVICE_TOKEN is not set" };
+  }
+  if (serviceToken !== serviceToken.trim()) {
+    return {
+      ok: false,
+      error: "AUCTION_BOT_SERVICE_TOKEN has surrounding whitespace",
+    };
+  }
+  const environment = parseEnvironment(read("AUCTION_BOT_ENVIRONMENT"));
+  if (environment === undefined) {
+    return { ok: false, error: "AUCTION_BOT_ENVIRONMENT must be prod or test" };
+  }
+  return {
+    ok: true,
+    config: {
+      token,
+      serviceToken,
+      environment,
+      identityUrl: read("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051",
+      auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
+      logLevel: read("AUCTION_BOT_LOG_LEVEL") ?? "info",
+    },
+  };
+}
+
+function parseEnvironment(
+  raw: string | undefined,
+): TelegramEnvironment | undefined {
+  if (raw === undefined || raw === "") return "prod";
+  return raw === "prod" || raw === "test" ? raw : undefined;
+}

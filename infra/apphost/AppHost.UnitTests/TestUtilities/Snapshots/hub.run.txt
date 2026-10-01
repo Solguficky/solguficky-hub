@@ -1,3 +1,5 @@
+auction-bot-service-token: ParameterResource
+  secret: True
 auction-db: PostgresDatabaseResource
   health: auction-db_check
 identity: ExecutableResource
@@ -5,6 +7,7 @@ identity: ExecutableResource
   workdir: <repo>/apps/identity
   endpoint: grpc http port= target= proxied=True external=False
   env: ASPIRE_IDENTITY_GRPC_PORT={identity.bindings.grpc.targetPort}
+  env: IDENTITY_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: IDENTITY_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
@@ -16,6 +19,7 @@ identity: ExecutableResource
   waits: identity-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
   relationship: Reference identity
   relationship: Reference identity-maintainer-token
   relationship: Reference meetups-service-token

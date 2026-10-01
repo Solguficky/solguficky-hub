@@ -27,6 +27,7 @@ jobs:
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
       auction-bot-ui: ${{ steps.filter.outputs.auction-bot-ui }}
+      auction-bot: ${{ steps.filter.outputs.auction-bot }}
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
@@ -90,6 +91,14 @@ jobs:
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction-bot-ui:
+              - 'shared/typescript/auction-bot-ui/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Бот аукциона берёт общий пакет `file:`-зависимостью: правка пакета
+            # обязана проверить и его потребителя.
+            auction-bot:
+              - 'contracts/proto/**'
+              - 'apps/auction-bot/**'
               - 'shared/typescript/auction-bot-ui/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
@@ -446,6 +455,49 @@ jobs:
         working-directory: shared/typescript/auction-bot-ui
       - run: npm test
         working-directory: shared/typescript/auction-bot-ui
+
+  # Бот аукциона (ADR-044). Пакет собирается первым: `exports` ведут в его
+  # `dist`, и без сборки typecheck бота не нашёл бы типов шлюза.
+  auction-bot:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.auction-bot == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            shared/typescript/auction-bot-ui/package-lock.json
+            apps/auction-bot/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      # setup_only: действие только ставит buf. Без него дефолты buf-action
+      # добавляют в джобу его lint, format, breaking и push.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/auction-bot-ui
+      - run: npm ci
+        working-directory: apps/auction-bot
+      - run: buf generate --template apps/auction-bot/buf.gen.yaml
+      - run: npm run typecheck
+        working-directory: apps/auction-bot
+      - run: npm run lint
+        working-directory: apps/auction-bot
+      - run: npm test
+        working-directory: apps/auction-bot
+      - run: npm run build
+        working-directory: apps/auction-bot
 
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
   # джобы правка графа или setup-а ресурса, которая не собирается, проходит

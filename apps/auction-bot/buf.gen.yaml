@@ -1,0 +1,21 @@
+version: v2
+clean: true
+plugins:
+  # Плагин запускается через node, а не через шим из node_modules/.bin:
+  # шим без расширения на Windows не исполняется, а cmd.exe принимает путь
+  # с прямыми слэшами за ключи. Сам шим делает ровно этот же exec node.
+  - local:
+      - node
+      - apps/auction-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es
+    out: apps/auction-bot/gen
+    opt:
+      - target=ts
+      - import_extension=.js
+inputs:
+  - directory: contracts/proto
+    paths:
+      # Боту аукциона нужны только два вызова: ResolveIdentity и GetLot.
+      # Meetups и Notifications он не зовёт.
+      - contracts/proto/auction/v1/auction.proto
+      - contracts/proto/auction/v1/auction_service.proto
+      - contracts/proto/identity

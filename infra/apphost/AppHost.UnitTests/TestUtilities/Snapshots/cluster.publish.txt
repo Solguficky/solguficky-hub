@@ -1,7 +1,10 @@
+auction-bot-service-token: ParameterResource
+  secret: True
 identity: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/identity/Containerfile context=<repo>
   endpoint: grpc http port= target=50051 proxied=True external=False
+  env: IDENTITY_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: IDENTITY_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
@@ -11,6 +14,7 @@ identity: ContainerResource
   env: IDENTITY_NATS_URL={nats.connectionString}
   waits: identity-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
   relationship: Reference identity
   relationship: Reference identity-db
   relationship: Reference identity-maintainer-token
