@@ -219,6 +219,9 @@ object Lot {
    * идёт с лидером, а не только между соперниками. Ручная ставка лидера главнее его старого лимита: база — `max(L.max,
    * f)`. Производная ставка может быть ниже порога П-01 (Т-22): лимит исчерпан, но `target > f` держит И-01.
    *
+   * Цена на шаг выше насыщается на `Long.MaxValue`: лимит — ввод участника, и у самого большого из них сумма с шагом
+   * переполнила бы `Long` в отрицательную, а пересчёт молча не нашёл бы ставки.
+   *
    * Только фаза `Online`: в `Live` цель округляется до сетки, а это
    * [PER-293](https://linear.app/anticnvm/issue/per-293). После `AskAdvanced` пересчёт не запускается, пока открыт О-6.
    */
@@ -226,7 +229,11 @@ object Lot {
     if (trading.phase != Phase.Online) None
     else {
       val f = floor(trading)
-      val step = (price: Money) => StepPolicy.step(trading.config.stepPolicy, price)
+      val stepAbove = (price: Money) => {
+        val step = StepPolicy.step(trading.config.stepPolicy, price).minorUnits
+        if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)
+        else price.copy(minorUnits = price.minorUnits + step)
+      }
       val contender = trading.proxyLimits.toList
         .filter((who, limit) => !trading.leader.contains(who) && limit.max > f)
         .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
@@ -235,11 +242,11 @@ object Lot {
       contender.flatMap { (rival, c) =>
         leading match {
           case Some((leader, l)) if l.max > c.max || (l.max == c.max && l.setSeq < c.setSeq) =>
-            val target = lesser(l.max, c.max.plus(step(c.max)))
+            val target = lesser(l.max, stepAbove(c.max))
             Option.when(target > f)(proxyBid(bidId, leader, target, trading.leader))
           case _ =>
             val base = leading.fold(f)((_, l) => greater(l.max, f))
-            val target = lesser(c.max, base.plus(step(base)))
+            val target = lesser(c.max, stepAbove(base))
             Option.when(target > f)(proxyBid(bidId, rival, target, trading.leader))
         }
       }

@@ -198,6 +198,14 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
         Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)
     }
 
+    "let the stronger limit reach the weaker one plus a step even at the edge of the amount range" in {
+      val (_, first) = open.limit(setProxyLimit(who = 1, max = Long.MaxValue, opN = 1))
+      val (_, second) = first.limit(setProxyLimit(who = 2, max = Long.MaxValue - 5, opN = 2))
+
+      tradingOf(second.lot).currentPrice shouldBe money(Long.MaxValue)
+      tradingOf(second.lot).leader shouldBe Some(participant(1))
+    }
+
     "answer a repeated limit with the original response and write nothing (Т-25 without the deadline)" in {
       val command = setProxyLimit(who = 1, max = 200, opN = 1)
       val (_, journal) = open.limit(command)
