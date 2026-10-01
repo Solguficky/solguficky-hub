@@ -34,14 +34,11 @@ public class AuctionBotWiringTests
     [Fact]
     public async Task AuctionBotProfile_OwnsTheBotWithIdentityAndAuction()
     {
-        var model = await ModelAsync(Profile);
-
-        var services = model.Resources
-            .Where(resource => resource.Name is AuctionBot
+        var services = (await ResourceNamesAsync(Profile))
+            .Where(name => name is AuctionBot
                 or AppHostNames.Resources.Identity
                 or AppHostNames.Resources.Auction
                 or AppHostNames.Resources.TelegramBot)
-            .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
             .ToArray();
 
@@ -111,7 +108,7 @@ public class AuctionBotWiringTests
             "--Parameters:telegram-bot-token", "222:hub",
         ];
 
-        var exception = await Should.ThrowAsync<Exception>(() => ModelAsync(args));
+        var exception = await Should.ThrowAsync<Exception>(() => ResourceNamesAsync(args));
 
         Flatten(exception).ShouldContain(inner =>
             inner is InvalidOperationException && inner.Message.Contains("repeats 'telegram-bot-token'", StringComparison.Ordinal));
@@ -125,12 +122,17 @@ public class AuctionBotWiringTests
         }
     }
 
-    private static async Task<DistributedApplicationModel> ModelAsync(string[] args)
+    /// <summary>
+    /// Приложение освобождается до выхода: живой хост остался бы в процессе
+    /// после теста и стартовал бы ресурсы рядом с моделями соседних наборов.
+    /// </summary>
+    private static async Task<string[]> ResourceNamesAsync(string[] args)
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(args, cancellationToken);
-        var application = await builder.BuildAsync(cancellationToken);
-        return application.Services.GetRequiredService<DistributedApplicationModel>();
+        await using var application = await builder.BuildAsync(cancellationToken);
+        var model = application.Services.GetRequiredService<DistributedApplicationModel>();
+        return [.. model.Resources.Select(resource => resource.Name)];
     }
 
     private static async Task<Dictionary<string, object>> EnvironmentAsync(string[] args, string resourceName) =>
