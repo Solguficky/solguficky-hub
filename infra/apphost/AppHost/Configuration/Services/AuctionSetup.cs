@@ -27,6 +27,12 @@ internal static class AuctionSetup
         var auction = context.Builder
             .AddExecutable(AppHostNames.Resources.Auction, "java", auctionPath, "auction.Main")
             .WithHttpEndpoint(name: AppHostNames.Endpoints.Http, env: "AUCTION_HTTP_PORT")
+            // gRPC — отдельный порт h2c рядом с health, как у Identity: проба
+            // остаётся на HTTP и токена не требует (ADR-056).
+            .WithEndpoint(scheme: "http", name: AppHostNames.Endpoints.Grpc, env: "AUCTION_GRPC_PORT")
+            // Вызывающие — по колонке Caller в integration.md. Без полной таблицы
+            // сервис не стартует, поэтому она приходит и в профиле без ботов.
+            .AcceptCallers(context, AppHostNames.Resources.TelegramBot, AppHostNames.Resources.AuctionBot)
             .WaitForCompletion(build)
             // Callback вычисляется при старте ресурса, то есть уже после сборки:
             // файл classpath к этому моменту записан текущим вызовом sbt.

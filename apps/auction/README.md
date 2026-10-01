@@ -2,7 +2,7 @@
 
 Auction Service на Scala 3 и Apache Pekko. Ответственность сервиса — [бриф](../../docs/services/auction.md), стек — [ADR-045](../../docs/decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), сборка и кодогенерация — [ADR-048](../../docs/decisions/ADR-048-auction-sbt-and-scalapb-build.md).
 
-Сейчас здесь инфраструктура торгов без транспорта: одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, HTTP-граница с health-эндпоинтом, кодогенерация Protobuf из `contracts/proto` и тесты. Снаружи лот пока недоступен — gRPC-граница придёт отдельно, — а агрегата аукциона в сервисе нет.
+Сейчас здесь одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, каталог карточек лота, HTTP-граница с health-эндпоинтом, gRPC-граница `AuctionService` с проверкой вызывающего, кодогенерация Protobuf из `contracts/proto` и тесты. По gRPC открыты ставка (`PlaceBid`) и команды каталога (`CreateLotCard`, `EditLotCard`); прокси-лимиты и чтение отвечают `UNIMPLEMENTED` до своих листов. Агрегата аукциона в сервисе нет.
 
 Нужны JDK версии из `.java-version` и sbt. Ни то, ни другое репозиторий не ставит: `just auction-tools` прогревает уже установленный sbt. Одного `update` для этого мало, поэтому рецепт гонит ещё генерацию и проверку формата — `protocbridge` тянет бинарник protoc на первой генерации, а `scalafmt-core` подтягивается на первой проверке. Отсюда два следствия: рецепт оставляет в `target/` вывод кодогенерации и краснеет на неотформатированном коде, то есть повторяет вердикт `just auction-lint` до гейта.
 
@@ -41,16 +41,20 @@ just aspire auction
 |---|---|---|
 | `AUCTION_HTTP_HOST` | `127.0.0.1` | адрес, на котором сервис слушает HTTP |
 | `AUCTION_HTTP_PORT` | `8080` | порт HTTP-границы |
+| `AUCTION_GRPC_HOST` | `127.0.0.1` | адрес, на котором сервис слушает gRPC |
+| `AUCTION_GRPC_PORT` | `8081` | порт gRPC-границы, h2c |
+| `AUCTION_CALLER_TOKEN_TELEGRAM_BOT` | нет, обязательна | токен бота хаба как вызывающего ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) |
+| `AUCTION_CALLER_TOKEN_AUCTION_BOT` | нет, обязательна | токен бота аукциона как вызывающего; значение отличается от токена бота хаба |
 | `AUCTION_DATABASE_JDBC_URL` | нет, обязательна | JDBC URL базы Auction без учётных данных, `jdbc:postgresql://<хост>:<порт>/auction` |
 | `AUCTION_DATABASE_USER` | нет, обязательна | пользователь базы |
 | `AUCTION_DATABASE_PASSWORD` | нет, обязательна | пароль базы |
 
-Переопределение живёт в `src/main/resources/application.conf`: код читает готовое значение и о способе переопределения не знает. На старте сервис применяет схему журнала миграциями Flyway; без переменных базы или при отказе миграции он завершается с ненулевым кодом.
+Переопределение живёт в `src/main/resources/application.conf`: код читает готовое значение и о способе переопределения не знает. На старте сервис применяет схему журнала миграциями Flyway; без переменных базы, без токена любого из вызывающих, с одинаковыми токенами у двух вызывающих или при отказе миграции он завершается с ненулевым кодом и называет причину, но не значение токена.
 
 ## Проверка
 
 ```bash
-AUCTION_HTTP_PORT=8080 AUCTION_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/auction AUCTION_DATABASE_USER=postgres AUCTION_DATABASE_PASSWORD=postgres just auction-run
+AUCTION_HTTP_PORT=8080 AUCTION_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/auction AUCTION_DATABASE_USER=postgres AUCTION_DATABASE_PASSWORD=postgres AUCTION_CALLER_TOKEN_TELEGRAM_BOT=hub-local AUCTION_CALLER_TOKEN_AUCTION_BOT=auction-local just auction-run
 ```
 
 ```bash
@@ -68,5 +72,13 @@ curl -i -H 'x-request-id: local-probe' http://127.0.0.1:8080/health
 ```bash
 curl -i http://127.0.0.1:8080/lots
 ```
+
+gRPC-вызов идёт с токеном вызывающего в `authorization: Bearer`. Reflection сервис не отдаёт, поэтому `grpcurl` получает схему из `contracts/proto`:
+
+```bash
+grpcurl -plaintext -import-path contracts/proto -proto auction/v1/auction_service.proto   -H 'authorization: Bearer hub-local' -H 'x-request-id: local-probe'   -d '{"viewer":{"identity_id":"01890a5d-ac96-774b-bcce-b302099a8057","global_roles":["GLOBAL_ROLE_PUBLIC"]},"lot_id":"01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e5f","amount":{"minor_units":150,"currency":"RUB"},"op_id":"01890a5d-ac98-7aaa-8bbb-cccccccccccc"}'   127.0.0.1:8081 auction.v1.AuctionService/PlaceBid
+```
+
+На лот, которого нет, ответ — `NotFound`; без заголовка `authorization` или с чужим токеном — `Unauthenticated` до обращения к лоту. Запись границы — `request handled` с `operation=auction.v1.AuctionService/PlaceBid`, `grpc_code`, `caller` у допущенного вызова и `caller_refusal` (`missing_token`, `unknown_token`, `not_declared`) у отказанного. Токен, тело запроса и сообщение неожиданного исключения в запись не попадают: у такого отказа `error` — только класс исключения, а `stack` — классы и кадры без сообщений.
 
 Сервис запускается в отдельной JVM (`run / fork := true` в `build.sbt`), поэтому останавливать его надо через сам sbt — Ctrl-C в его терминале. Убитый мимо sbt процесс оставляет и работающую JVM приложения, и блокировку сервера sbt; следующий запуск падает на `ServerAlreadyBootingException`. Лечится остановкой оставшихся java-процессов этого каталога и удалением `project/target/active.json`.

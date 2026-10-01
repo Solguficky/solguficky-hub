@@ -22,6 +22,7 @@ public class ServiceTokenWiringTests
     private const string Meetups = AppHostNames.Resources.Meetups;
     private const string Notifications = AppHostNames.Resources.Notifications;
     private const string TelegramBot = AppHostNames.Resources.TelegramBot;
+    private const string Auction = AppHostNames.Resources.Auction;
 
     /// <summary>Колонка Caller в integration.md: вызываемый — его вызывающие.</summary>
     private static readonly Dictionary<string, string[]> Callers = new()
@@ -128,6 +129,23 @@ public class ServiceTokenWiringTests
     }
 
     /// <summary>
+    /// Профиль Auction ботов не поднимает, а таблица полна всё равно: бот хаба
+    /// берёт тот же параметр, что в своём профиле, а бот аукциона — свой, хотя
+    /// его узла ещё нет. Собственного токена у Auction нет: он никого не зовёт.
+    /// </summary>
+    [Fact]
+    public async Task CallerTable_AuctionProfile_AcceptsBothBots()
+    {
+        var tokens = await TokensAsync(["--profile", "auction"]);
+
+        tokens.Keys.ShouldBe([Auction]);
+        tokens[Auction].Keys.Order(StringComparer.Ordinal).ToArray()
+            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_TELEGRAM_BOT"]);
+        tokens[Auction]["AUCTION_CALLER_TOKEN_TELEGRAM_BOT"].Name.ShouldBe("telegram-bot-service-token");
+        tokens[Auction]["AUCTION_CALLER_TOKEN_AUCTION_BOT"].Name.ShouldBe("auction-bot-service-token");
+    }
+
+    /// <summary>
     /// Контур и smoke задают токен бота конфигурацией, чтобы знать его снаружи.
     /// Значение из конфигурации обязано перекрыть сгенерированное.
     /// </summary>
@@ -164,7 +182,18 @@ public class ServiceTokenWiringTests
             var environment = new Dictionary<string, object>();
             foreach (var callback in resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
             {
-                await callback.Callback(new EnvironmentCallbackContext(executionContext, resource, environment, cancellationToken));
+                try
+                {
+                    await callback.Callback(new EnvironmentCallbackContext(executionContext, resource, environment, cancellationToken));
+                }
+                catch (InvalidOperationException exception)
+                    when (resource.Name == Auction && exception.Message.Contains("classpath file", StringComparison.Ordinal))
+                {
+                    // CLASSPATH Auction читается из файла, который пишет сборка sbt,
+                    // а модель здесь собирается без неё. Токены — отдельные
+                    // callback'и, и отказ этого до них не дотягивается; любой
+                    // другой отказ, в том числе callback'а токена, тест роняет.
+                }
             }
 
             var tokens = environment

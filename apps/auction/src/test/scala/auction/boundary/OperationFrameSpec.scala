@@ -1,5 +1,6 @@
 package auction.boundary
 
+import io.grpc.Status
 import org.apache.pekko.http.scaladsl.model.StatusCode
 import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.scalacheck.Gen
@@ -34,7 +35,7 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
 
   "operation frame" should {
 
-    "report a served request as ok and carry no error category" in {
+    "reports a served request as ok and carries no error category" in {
       val frame = OperationFrame.of("GET /health", StatusCodes.OK, durationUs = 1234, requestId = None)
 
       frame("result") shouldBe "ok"
@@ -43,26 +44,26 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
       frame.keySet should not contain "error_category"
     }
 
-    "omit request_id when the caller did not send one" in {
+    "omits request_id when the caller did not send one" in {
       val frame = OperationFrame.of("GET /health", StatusCodes.OK, durationUs = 1, requestId = None)
 
       frame.keySet should not contain "request_id"
     }
 
-    "omit request_id when the caller sent an empty header" in {
+    "omits request_id when the caller sent an empty header" in {
       val frame = OperationFrame.of("GET /health", StatusCodes.OK, durationUs = 1, requestId = Some(""))
 
       frame.keySet should not contain "request_id"
     }
 
-    "carry the request_id the caller sent through" in {
+    "carries the request_id the caller sent through" in {
       val frame =
         OperationFrame.of("GET /health", StatusCodes.OK, durationUs = 1, requestId = Some("01930000-request"))
 
       frame("request_id") shouldBe "01930000-request"
     }
 
-    "classify an unavailable dependency apart from an unexpected failure" in {
+    "classifies an unavailable dependency apart from an unexpected failure" in {
       val unavailable = OperationFrame.of("GET /health", StatusCodes.ServiceUnavailable, 1, None)
       val unexpected = OperationFrame.of("GET /health", StatusCodes.InternalServerError, 1, None)
 
@@ -70,20 +71,20 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
       unexpected("error_category") shouldBe "unexpected"
     }
 
-    "classify an unserved path as a broken input rather than a hidden resource" in {
+    "classifies an unserved path as a broken input rather than a hidden resource" in {
       val frame = OperationFrame.of("GET /lots", StatusCodes.NotFound, 1, None)
 
       frame("error_category") shouldBe "invariant"
     }
 
-    "name the rejected input by the status reason when nothing was thrown" in {
+    "names the rejected input by the status reason when nothing was thrown" in {
       val frame = OperationFrame.of("GET /lots", StatusCodes.NotFound, 1, None)
 
       frame("error") shouldBe StatusCodes.NotFound.reason
       frame.keySet should not contain "stack"
     }
 
-    "name the caught failure and keep its stack when something was thrown" in {
+    "names the caught failure and keeps its stack when something was thrown" in {
       val cause = new IllegalStateException("lot registry is not wired yet")
       val frame =
         OperationFrame.of("GET /lots", StatusCodes.InternalServerError, 1, None, Some(cause))
@@ -93,14 +94,14 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
       frame("stack") should include("OperationFrameSpec")
     }
 
-    "fall back to the failure class when the exception carries no message" in {
+    "falls back to the failure class when the exception carries no message" in {
       val frame =
         OperationFrame.of("GET /lots", StatusCodes.InternalServerError, 1, None, Some(new RuntimeException))
 
       frame("error") shouldBe "java.lang.RuntimeException"
     }
 
-    "carry an error category and an error text exactly when the result is an error" in {
+    "carries an error category and an error text exactly when the result is an error" in {
       forAll(statuses, Gen.chooseNum(0L, 10000000L)) { (status: StatusCode, durationUs: Long) =>
         val frame = OperationFrame.of("GET /health", status, durationUs, None)
 
@@ -112,9 +113,66 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
       }
     }
 
-    "keep the stack out of a record that no exception produced" in {
+    "keeps the stack out of a record that no exception produced" in {
       forAll(statuses, Gen.chooseNum(0L, 10000000L)) { (status: StatusCode, durationUs: Long) =>
         OperationFrame.of("GET /health", status, durationUs, None).keySet should not contain "stack"
+      }
+    }
+  }
+
+  private val operation = "auction.v1.AuctionService/PlaceBid"
+
+  private def grpc(code: Status.Code, failure: Option[Throwable] = None) =
+    OperationFrame.grpc(operation, code, Some("described"), 42, Some("req-1"), Some("place_bid"), failure)
+
+  "grpc operation frame" should {
+
+    "reports an OK call as ok with its code in grpc_code, not in result" in {
+      val frame = grpc(Status.Code.OK)
+      frame("result") shouldBe "ok"
+      frame("grpc_code") shouldBe "OK"
+      frame("operation") shouldBe operation
+      frame("request_id") shouldBe "req-1"
+      frame("use_case") shouldBe "place_bid"
+      frame.keySet should not contain "error_category"
+    }
+
+    "classifies a refused caller and a refused viewer as authorization" in {
+      grpc(Status.Code.UNAUTHENTICATED)("error_category") shouldBe "authorization"
+      grpc(Status.Code.PERMISSION_DENIED)("error_category") shouldBe "authorization"
+    }
+
+    "classifies an unanswered lot as a timeout and a malformed request as an invariant" in {
+      grpc(Status.Code.DEADLINE_EXCEEDED)("error_category") shouldBe "timeout"
+      grpc(Status.Code.INVALID_ARGUMENT)("error_category") shouldBe "invariant"
+      grpc(Status.Code.UNIMPLEMENTED)("error_category") shouldBe "invariant"
+    }
+
+    "writes the code with the service's own description as the error of an expected refusal" in {
+      grpc(Status.Code.INVALID_ARGUMENT)("error") shouldBe "INVALID_ARGUMENT: described"
+    }
+
+    "writes only the exception class of an unexpected failure, never its message" in {
+      val cause = new IllegalArgumentException("value (Описание)")
+      val frame = grpc(Status.Code.INTERNAL, Some(new IllegalStateException("Failing row contains (Лот)", cause)))
+      frame("error_category") shouldBe "unexpected"
+      frame("error") shouldBe "java.lang.IllegalStateException"
+      frame("stack") should include("java.lang.IllegalStateException")
+      frame("stack") should include("Caused by: java.lang.IllegalArgumentException")
+      frame("stack") should not include "Лот"
+      frame("stack") should not include "Описание"
+    }
+
+    "omits request_id and use_case when the caller did not send them" in {
+      val frame = OperationFrame.grpc(operation, Status.Code.OK, None, 1, None, Some(""))
+      frame.keySet should contain noneOf ("request_id", "use_case")
+    }
+
+    "carries an error category exactly when the code is not OK" in {
+      forAll(Gen.oneOf(Status.Code.values.toSeq)) { (code: Status.Code) =>
+        val frame = OperationFrame.grpc(operation, code, None, 1, None, None)
+        frame.contains("error_category") shouldBe (code != Status.Code.OK)
+        frame.get("error_category").foreach(errorCategories should contain(_))
       }
     }
   }

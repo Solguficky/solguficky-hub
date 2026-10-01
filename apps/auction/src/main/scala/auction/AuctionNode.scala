@@ -1,7 +1,15 @@
 package auction
 
+import auction.catalog.LotCatalogCommands
 import auction.entity.LotEntity
+import auction.entity.LotGateway
+import auction.grpc.AuctionGrpcService
+import auction.grpc.CallerTable
+import auction.grpc.GrpcBoundary
 import auction.persistence.JournalDatabase
+import auction.persistence.SlickLotCatalogStore
+import org.apache.pekko.http.scaladsl.model.HttpRequest
+import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.cluster.MemberStatus
@@ -42,6 +50,25 @@ object AuctionNode {
       newId: () => UUID
   ): ActorRef[ShardingEnvelope[LotEntity.Command]] =
     sharding.init(Entity(LotEntity.TypeKey)(context => LotEntity(context.entityId, clock, newId)))
+
+  /**
+   * gRPC-граница узла: сервис поверх шардинга лотов и каталога, обёрнутый проверкой вызывающего и записью операции.
+   * Entity лота к этому моменту уже зарегистрирована в `sharding`.
+   */
+  def grpc(
+      system: ActorSystem[?],
+      sharding: ClusterSharding,
+      callers: CallerTable,
+      askTimeout: FiniteDuration
+  ): HttpRequest => Future[HttpResponse] = {
+    given ActorSystem[?] = system
+    import system.executionContext
+    val service = AuctionGrpcService(
+      LotGateway.sharded(sharding, askTimeout),
+      LotCatalogCommands(SlickLotCatalogStore(system))
+    )
+    GrpcBoundary(callers, service)
+  }
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {
     val cluster = Cluster(system)
