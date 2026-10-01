@@ -323,13 +323,21 @@ async function retryWhileUnreachable(
 export function openBotWire(endpoints: {
   identityUrl: string;
   meetupsUrl: string;
+  botServiceToken: string;
 }) {
   // Контур проверяет провод, а не трассировку: спаны здесь не записываются.
   const tracing = noopTracing();
-  const identity = createIdentityClient(endpoints.identityUrl, { tracing });
+  // Провод играет бота и предъявляет его токен (ADR-056) тем же транспортом,
+  // что и процесс: сервисы, которые начнут его проверять, примут провод как бота.
+  const serviceToken = endpoints.botServiceToken;
+  const identity = createIdentityClient(endpoints.identityUrl, {
+    tracing,
+    serviceToken,
+  });
   const meetups = createMeetupsClient(endpoints.meetupsUrl, {
     communityTimeZone: contourTimeZone,
     tracing,
+    serviceToken,
   });
   const dispatcher = createDispatcher(meetups, undefined, () =>
     communityDay(new Date(), contourTimeZone),

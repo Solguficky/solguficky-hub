@@ -52,6 +52,20 @@ async function main(): Promise<number> {
     logger.error("TELEGRAM_BOT_TOKEN is not set");
     return 1;
   }
+  // Токен вызывающего (ADR-056) проверяется на старте: без него каждый вызов
+  // сервиса получил бы UNAUTHENTICATED, и дефект развёртывания всплыл бы на
+  // первом человеке, а не в отказе процесса. В запись идёт только имя.
+  // Пробелы по краям Headers срезает молча: такой токен ушёл бы искажённым,
+  // и вызывающий снова получил бы отказ на каждом вызове при зелёном старте.
+  const serviceToken = readEnv("TELEGRAM_BOT_SERVICE_TOKEN");
+  if (serviceToken === undefined || serviceToken.trim() === "") {
+    logger.error("TELEGRAM_BOT_SERVICE_TOKEN is not set");
+    return 1;
+  }
+  if (serviceToken !== serviceToken.trim()) {
+    logger.error("TELEGRAM_BOT_SERVICE_TOKEN has surrounding whitespace");
+    return 1;
+  }
   const environment = parseTelegramEnvironment(
     readEnv("TELEGRAM_BOT_ENVIRONMENT"),
   );
@@ -86,16 +100,21 @@ async function main(): Promise<number> {
   const meetups = createMeetupsClient(meetupsUrl, {
     communityTimeZone,
     tracing,
+    serviceToken,
   });
   const notifications = createNotificationsClient(notificationsUrl, {
     tracing,
+    serviceToken,
   });
   // День сообщества считается тем же поясом, что и у Meetups: иначе граница
   // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
   const dispatcher = createDispatcher(meetups, notifications, () =>
     communityDay(new Date(), communityTimeZone),
   );
-  const identity = createIdentityClient(identityUrl, { tracing });
+  const identity = createIdentityClient(identityUrl, {
+    tracing,
+    serviceToken,
+  });
   const bot = createBot({
     token,
     dispatcher,

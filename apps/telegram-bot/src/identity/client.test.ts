@@ -239,6 +239,7 @@ describe("identity client", () => {
     const abort = vi.spyOn(Http2SessionManager.prototype, "abort");
     const identity = createIdentityClient("http://127.0.0.1:1", {
       tracing: noopTracing(),
+      serviceToken: "bot-token",
     });
     identity.close();
     expect(abort).toHaveBeenCalledOnce();
