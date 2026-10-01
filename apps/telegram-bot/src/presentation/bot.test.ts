@@ -1048,7 +1048,7 @@ describe("presentation adapter", () => {
           call.method === "sendMessage" &&
           JSON.stringify(call.payload).includes("Доступ открыт"),
       );
-      expect(notice?.payload).toMatchObject({ chat_id: "5001" });
+      expect(notice?.payload).toMatchObject({ chat_id: 5001 });
       expect(JSON.stringify(notice?.payload)).toContain("v1:nav:hub");
     });
 
@@ -1062,9 +1062,46 @@ describe("presentation adapter", () => {
       expect(JSON.stringify(calls)).not.toContain("Доступ открыт");
     });
 
-    it("keeps the admission and the admin screen when the notice fails", async () => {
+    it("sends the admin screen before writing to the admitted person", async () => {
+      const identity = admitting(true);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(admitButton));
+
+      const screenAt = calls.findIndex((call) =>
+        JSON.stringify(call.payload).includes("Изменение сохранено."),
+      );
+      const noticeAt = calls.findIndex((call) =>
+        JSON.stringify(call.payload).includes("Доступ открыт"),
+      );
+      expect(screenAt).toBeGreaterThanOrEqual(0);
+      expect(noticeAt).toBeGreaterThan(screenAt);
+    });
+
+    // Писать некуда — ожидаемый исход, как в доставке уведомлений: допуск
+    // записывается обычной записью границы, а не сбоем.
+    it("treats a blocked recipient as an expected outcome", async () => {
       const identity = admitting(true);
       identity.resolveTelegramUserId.mockResolvedValue({ kind: "blocked" });
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(admitButton));
+
+      expect(JSON.stringify(calls)).not.toContain("Доступ открыт");
+      expectBoundary(records[0], {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "manage_community",
+      });
+    });
+
+    it("keeps the admission and the admin screen when Identity is unavailable", async () => {
+      const identity = admitting(true);
+      identity.resolveTelegramUserId.mockResolvedValue({
+        kind: "unavailable",
+        cause: new Error("deadline exceeded"),
+      });
       const { bot, calls, records } = createHarness(identity);
       await bot.init();
       await bot.handleUpdate(callbackUpdate(admitButton));

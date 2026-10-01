@@ -75,7 +75,10 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
-import { telegramTextLimit } from "./notification-message.js";
+import {
+  classifySendFailure,
+  telegramTextLimit,
+} from "./notification-message.js";
 import {
   type CallbackAction,
   type NotifiedMeetupCategory,
@@ -492,20 +495,14 @@ async function handleMessage(
       }
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
-        // Отказ сам становится вопросом: источник принимается только ответом,
-        // а обычное сообщение после отказа уходило мимо формы, и человек не
-        // понимал, почему фотография не прикрепилась.
         if (source === undefined) {
-          questions.delete(questionKey(ctx.chat?.id, replyId));
-          const retry = await ctx.reply(
+          await askAgain(
+            ctx,
+            questions,
+            replyId,
+            pending,
             "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли ответом на это сообщение пересланное сообщение с доступным источником, фотографию или документ.",
-            { reply_markup: { force_reply: true, selective: true } },
           );
-          questions.set(questionKey(ctx.chat?.id, retry.message_id), {
-            ...pending,
-            expiresAt: Date.now() + questionTtlMs,
-          });
-          evictOldestQuestions(questions);
           outcome = {
             level: "info",
             message: "material source rejected",
@@ -542,16 +539,13 @@ async function handleMessage(
       }
       const title = ctx.message?.text?.trim();
       if (title === undefined || title === "" || title.length > 200) {
-        questions.delete(questionKey(ctx.chat?.id, replyId));
-        const prompt = await ctx.reply(
+        await askAgain(
+          ctx,
+          questions,
+          replyId,
+          pending,
           "Название должно быть текстом от 1 до 200 символов. Напиши короткое название.",
-          { reply_markup: { force_reply: true, selective: true } },
         );
-        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
-          ...pending,
-          expiresAt: Date.now() + questionTtlMs,
-        });
-        evictOldestQuestions(questions);
         outcome = {
           level: "info",
           message: "material title rejected",
@@ -1420,31 +1414,36 @@ async function handleCallback(
           : result.kind === "invalid"
             ? "Изменение не сохранилось. Состав перечитан заново."
             : undefined;
+      await renderCommunity(ctx, runtime, person, true, confirmation);
+      outcome = adminOutcome(result, person.identityId);
       // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не
       // узнает. Пишем ему только о настоящей смене состояния: повторное
-      // нажатие по уже допущенному второго сообщения не шлёт.
-      const unnotified =
-        action.kind === "admit-member" && result.kind === "ok" && result.value
-          ? await notifyAdmitted(
-              ctx,
-              runtime,
-              tokenToUuid(action.token),
-              rpcCall(ctx, "manage_community"),
-            )
-          : undefined;
-      await renderCommunity(ctx, runtime, person, true, confirmation);
-      outcome =
-        unnotified === undefined
-          ? adminOutcome(result, person.identityId)
-          : {
-              level: "warn",
-              message: "admitted member not notified",
-              result: "error",
-              use_case: "manage_community",
-              identity_id: person.identityId,
-              error_category: "dependency_unavailable",
-              error: unnotified,
-            };
+      // нажатие по уже допущенному второго сообщения не шлёт. Экран
+      // администратора уходит раньше: сообщение — побочный результат, и
+      // медленный Identity или Telegram не должны его задерживать.
+      if (
+        action.kind === "admit-member" &&
+        result.kind === "ok" &&
+        result.value
+      ) {
+        const failure = await notifyAdmitted(
+          ctx,
+          runtime,
+          tokenToUuid(action.token),
+          rpcCall(ctx, "manage_community"),
+        );
+        if (failure !== undefined) {
+          outcome = {
+            level: "warn",
+            message: "admitted member not notified",
+            result: "error",
+            use_case: "manage_community",
+            identity_id: person.identityId,
+            error_category: failure.category,
+            error: failure.error,
+          };
+        }
+      }
       return;
     }
     if (action.kind === "home") {
@@ -2675,22 +2674,42 @@ async function renderCommunity(
 }
 
 // Сообщение о допуске — побочный результат действия администратора, а не его
-// часть: допуск уже сохранён, поэтому отказ Identity или Telegram здесь не
-// отменяет его и не меняет экран администратора, а возвращается причиной для
-// лога границы.
+// часть: допуск уже сохранён, поэтому отказ Identity или Telegram его не
+// отменяет и возвращается причиной для записи границы. Получатель, которого
+// нет, который заблокирован или сам заблокировал бота, — ожидаемый исход, как
+// в доставке уведомлений: писать ему некуда, и сбоем это не считается.
+// Повтора нет: у бота нет хранилища под отложенное сообщение (ADR-030), а
+// человек и без него попадает в продукт следующим /start.
 async function notifyAdmitted(
   ctx: UpdateContext,
   runtime: BotRuntime,
   identityId: string,
   meta: RpcMetadata,
-): Promise<string | undefined> {
+): Promise<{ category: FailureCategory; error: string } | undefined> {
   const resolver = runtime.identity.resolveTelegramUserId;
-  if (resolver === undefined) return undefined;
+  if (resolver === undefined) {
+    return {
+      category: "unexpected",
+      error: "telegram recipient resolution is not configured",
+    };
+  }
   const recipient = await resolver(identityId, meta);
-  if (recipient.kind !== "resolved") return `recipient ${recipient.kind}`;
+  if (recipient.kind === "not-found" || recipient.kind === "blocked") {
+    return undefined;
+  }
+  if (recipient.kind === "unavailable") {
+    return {
+      category: "dependency_unavailable",
+      error: `recipient ${errorText(recipient.cause)}`,
+    };
+  }
+  if (recipient.kind === "rejected") {
+    return { category: "unexpected", error: `recipient ${recipient.code}` };
+  }
   try {
+    // Личный чат с человеком имеет id самого человека, как в доставке.
     await ctx.api.sendMessage(
-      recipient.telegramUserId.toString(),
+      Number(recipient.telegramUserId),
       "Доступ открыт: теперь тебе видны сходки сообщества.",
       {
         reply_markup: new InlineKeyboard().text(
@@ -2701,7 +2720,13 @@ async function notifyAdmitted(
     );
     return undefined;
   } catch (cause) {
-    return errorText(cause);
+    const sent = classifySendFailure(cause);
+    if (sent.kind === "bot-blocked") return undefined;
+    return {
+      category:
+        sent.kind === "rejected" ? "unexpected" : "dependency_unavailable",
+      error: errorText(cause),
+    };
   }
 }
 
@@ -4065,6 +4090,29 @@ function removeExpiredQuestions(
   for (const [key, question] of questions) {
     if (question.expiresAt <= now) questions.delete(key);
   }
+}
+
+// Отказ в ответе на вопрос формы задаёт вопрос заново: ответ принимается только
+// на конкретный вопрос, и обычное сообщение после отказа уходило мимо формы —
+// человек не понимал, почему фотография не прикрепилась (прогон PER-395).
+// Прежний вопрос снимается только после того, как новый ушёл: упавшая отправка
+// оставляет ждать прежний, а не теряет шаг формы.
+async function askAgain(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  replyId: number,
+  pending: PendingInput,
+  text: string,
+): Promise<void> {
+  const prompt = await ctx.reply(text, {
+    reply_markup: { force_reply: true, selective: true },
+  });
+  questions.delete(questionKey(ctx.chat?.id, replyId));
+  questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+    ...pending,
+    expiresAt: Date.now() + questionTtlMs,
+  });
+  evictOldestQuestions(questions);
 }
 
 function evictOldestQuestions(questions: Map<string, PendingInput>): void {
