@@ -34,6 +34,7 @@ import {
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
+  type TelegramRecipientResolver,
   toResolveIdentityInput,
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
@@ -98,7 +99,8 @@ export type BotRuntime = {
   dispatcher: Dispatcher;
   identity: IdentityResolver &
     Partial<CommunityAdministrator> &
-    Partial<OrganizerResolver>;
+    Partial<OrganizerResolver> &
+    Partial<TelegramRecipientResolver>;
   logger: Logger;
   tracing: Tracing;
   presentation?: "rich" | "plain";
@@ -149,7 +151,7 @@ const formPrompts: Record<FormField, string> = {
 // дословно: человеку нужно увидеть, что его ввод не сохранён, а не догадываться
 // об этом по общему тексту сбоя.
 const conflictText =
-  "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.";
+  "Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.";
 const materialForbiddenText = "Это действие доступно организатору сходки.";
 // Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
 // кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
@@ -490,10 +492,20 @@ async function handleMessage(
       }
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
+        // Отказ сам становится вопросом: источник принимается только ответом,
+        // а обычное сообщение после отказа уходило мимо формы, и человек не
+        // понимал, почему фотография не прикрепилась.
         if (source === undefined) {
-          await ctx.reply(
-            "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли пересланное сообщение с доступным источником, фотографию или документ.",
+          questions.delete(questionKey(ctx.chat?.id, replyId));
+          const retry = await ctx.reply(
+            "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли ответом на это сообщение пересланное сообщение с доступным источником, фотографию или документ.",
+            { reply_markup: { force_reply: true, selective: true } },
           );
+          questions.set(questionKey(ctx.chat?.id, retry.message_id), {
+            ...pending,
+            expiresAt: Date.now() + questionTtlMs,
+          });
+          evictOldestQuestions(questions);
           outcome = {
             level: "info",
             message: "material source rejected",
@@ -1408,8 +1420,31 @@ async function handleCallback(
           : result.kind === "invalid"
             ? "Изменение не сохранилось. Состав перечитан заново."
             : undefined;
+      // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не
+      // узнает. Пишем ему только о настоящей смене состояния: повторное
+      // нажатие по уже допущенному второго сообщения не шлёт.
+      const unnotified =
+        action.kind === "admit-member" && result.kind === "ok" && result.value
+          ? await notifyAdmitted(
+              ctx,
+              runtime,
+              tokenToUuid(action.token),
+              rpcCall(ctx, "manage_community"),
+            )
+          : undefined;
       await renderCommunity(ctx, runtime, person, true, confirmation);
-      outcome = adminOutcome(result, person.identityId);
+      outcome =
+        unnotified === undefined
+          ? adminOutcome(result, person.identityId)
+          : {
+              level: "warn",
+              message: "admitted member not notified",
+              result: "error",
+              use_case: "manage_community",
+              identity_id: person.identityId,
+              error_category: "dependency_unavailable",
+              error: unnotified,
+            };
       return;
     }
     if (action.kind === "home") {
@@ -2639,6 +2674,37 @@ async function renderCommunity(
   return result;
 }
 
+// Сообщение о допуске — побочный результат действия администратора, а не его
+// часть: допуск уже сохранён, поэтому отказ Identity или Telegram здесь не
+// отменяет его и не меняет экран администратора, а возвращается причиной для
+// лога границы.
+async function notifyAdmitted(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  identityId: string,
+  meta: RpcMetadata,
+): Promise<string | undefined> {
+  const resolver = runtime.identity.resolveTelegramUserId;
+  if (resolver === undefined) return undefined;
+  const recipient = await resolver(identityId, meta);
+  if (recipient.kind !== "resolved") return `recipient ${recipient.kind}`;
+  try {
+    await ctx.api.sendMessage(
+      recipient.telegramUserId.toString(),
+      "Доступ открыт: теперь тебе видны сходки сообщества.",
+      {
+        reply_markup: new InlineKeyboard().text(
+          "Ближайшие сходки",
+          "v1:nav:hub",
+        ),
+      },
+    );
+    return undefined;
+  } catch (cause) {
+    return errorText(cause);
+  }
+}
+
 function adminOutcome(
   result: IdentityAdminResult<unknown>,
   identityId: string,
@@ -2908,7 +2974,9 @@ function homeKeyboard(person: {
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard()
     .text("Ближайшие сходки", "v1:nav:hub")
-    .text("Архив", "v1:nav:archive");
+    .text("Архив", "v1:nav:archive")
+    .row()
+    .text("Настройки уведомлений", "v1:notify:global");
   if (isAdministrator(person)) {
     keyboard.row().text("Управление сходками", "v1:manage:menu");
   }
@@ -2926,7 +2994,7 @@ function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
     .text("Обновить", "v1:nav:hub")
     .text("Архив", "v1:nav:archive")
     .row()
-    .text("Уведомления", "v1:notify:global")
+    .text("Настройки уведомлений", "v1:notify:global")
     .row()
     .text("Назад", "v1:nav:start");
 }
@@ -2980,11 +3048,17 @@ function archiveListKeyboard(
 const categoryLabels: Record<NotificationCategory, string> = {
   published: "Новые сходки",
   changes: "Изменения данных и статуса",
-  material: "Новые связанные сообщения",
+  material: "Новые материалы",
   reminder: "Напоминание перед началом",
   organizer: "Сообщения организатора",
   announcement: "Объявления сообщества",
 };
+
+// Новые сходки и объявления сообществу не привязаны ни к какой сходке, и
+// подписаться на них нельзя: они приходят всем, кто их не выключил.
+function withoutSubscription(category: NotificationCategory): boolean {
+  return category === "published" || category === "announcement";
+}
 
 function checkbox(label: string, enabled: boolean): string {
   return `${enabled ? "[x]" : "[ ]"} ${label}`;
@@ -2996,6 +3070,11 @@ const meetupCategoryOrder: readonly MeetupCategory[] = [
   "reminder",
   "organizer",
 ];
+
+// Без подписки карточка объясняет, что она даёт: кнопка настроек сходки
+// появляется только после подписки, и иначе связь между ними не видна.
+const unsubscribedNote =
+  "Подпишись, чтобы получать изменения, материалы и сообщения организатора этой сходки.";
 
 // Перечень строится по действующим значениям, а не по умолчаниям продукта:
 // человек, который раньше включил напоминание или выключил материалы, иначе
@@ -3016,14 +3095,14 @@ function subscriptionNote(
     .filter((state) => state.enabled)
     .map((state) => categoryLabels[state.category].toLowerCase());
   if (enabled.length === 0) {
-    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомления».";
+    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях по сходке».";
   }
   const lines = [
     `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
   ];
   if (known.some((state) => state.category === "reminder" && !state.enabled)) {
     lines.push(
-      "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+      "Напоминание перед началом выключено, включить его можно в «Уведомлениях по сходке».",
     );
   }
   return lines.join(" ");
@@ -3099,15 +3178,26 @@ async function renderMeetupCard(
     }
     // Кнопка подписки рисуется только тогда, когда Notifications ответил:
     // состояние на ней — факт, а не заглушка, и выдуманное «выключены» человек
-    // от настоящего не отличит. Вход в кадр настроек от этого не зависит и
-    // остаётся всегда: иначе один моргнувший ответ отрезает экран целиком.
+    // от настоящего не отличит. Настройки сходки решают, что присылать по
+    // подписке, поэтому без подписки их входа нет: рядом с «Подписаться» он
+    // читался как второй, независимый способ получать уведомления. Когда
+    // Notifications не ответил, вход остаётся: иначе один моргнувший ответ
+    // отрезает экран целиком.
     if (result.subscribed !== undefined) {
-      keyboard.text(
-        result.subscribed ? "Отписаться" : "Подписаться",
-        `v1:notify:sub:${token}:${result.subscribed ? "0" : "1"}`,
-      );
+      keyboard
+        .text(
+          result.subscribed ? "Отписаться от сходки" : "Подписаться на сходку",
+          `v1:notify:sub:${token}:${result.subscribed ? "0" : "1"}`,
+        )
+        .row();
     }
-    keyboard.text("Уведомления", `v1:notify:settings:${token}`).row();
+    if (result.subscribed !== false) {
+      keyboard
+        .text("Уведомления по сходке", `v1:notify:settings:${token}`)
+        .row();
+    }
+    const cardNote =
+      note ?? (result.subscribed === false ? unsubscribedNote : undefined);
     keyboard
       .text("Обновить", `v1:view:${token}`)
       .row()
@@ -3116,7 +3206,7 @@ async function renderMeetupCard(
       const richMessage = {
         html: withNote(
           meetupCardHtml(result.meetup, result.author),
-          note,
+          cardNote,
           "rich",
         ),
       };
@@ -3146,7 +3236,7 @@ async function renderMeetupCard(
     } else {
       const html = withNote(
         meetupCardPlainHtml(result.meetup, result.author),
-        note,
+        cardNote,
         "plain",
       );
       if (edit) {
@@ -3187,8 +3277,18 @@ async function renderNotificationSettings(
   retry: string,
 ): Promise<void> {
   if (result.kind === "global-notification-settings") {
+    // Подзаголовков у клавиатуры нет, поэтому группы называет текст, а кнопки
+    // идут в том же порядке: сначала то, что приходит без подписки.
     const keyboard = new InlineKeyboard();
-    for (const entry of result.categories) {
+    const ordered = [
+      ...result.categories.filter((entry) =>
+        withoutSubscription(entry.category),
+      ),
+      ...result.categories.filter(
+        (entry) => !withoutSubscription(entry.category),
+      ),
+    ];
+    for (const entry of ordered) {
       keyboard
         .text(
           checkbox(categoryLabels[entry.category], entry.enabled),
@@ -3201,7 +3301,11 @@ async function renderNotificationSettings(
       ctx,
       `Уведомления: общие настройки
 
-Отметь, о чём присылать. Настройка действует для всех сходок, включая будущие. Категории, закреплённые отдельно у сходки, она уже не меняет.`,
+Приходят всем, без подписки: новые сходки и объявления сообщества.
+
+По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. Здесь — значение для всех таких сходок, включая будущие. У отдельной сходки его можно поменять в «Уведомлениях по сходке», и тогда общая настройка её уже не меняет.
+
+Отметь, о чём присылать.`,
       keyboard,
     );
     return;
@@ -3221,7 +3325,10 @@ async function renderNotificationSettings(
     // Подписки здесь нет намеренно: действие живёт в карточке P-04, и макет
     // этого экрана его не показывает. Состояние подписки кадр называет
     // текстом, чтобы отметки категорий не читались как «придёт всё это».
-    keyboard.text("Назад", `v1:view:${token}`);
+    keyboard
+      .text("Общие настройки", "v1:notify:global")
+      .row()
+      .text("Назад", `v1:view:${token}`);
     const lines = [
       `Уведомления: ${result.meetup.title}`,
       "",
@@ -3261,7 +3368,7 @@ const meetupCategoryDisabledNotes: Record<NotifiedMeetupCategory, string> = {
   changes:
     "Больше не присылаю по этой сходке изменения данных и статуса, включая снятие с публикации. Включить снова можно в уведомлениях сходки.",
   material:
-    "Больше не присылаю по этой сходке новые связанные сообщения. Включить снова можно в уведомлениях сходки.",
+    "Больше не присылаю по этой сходке новые материалы. Включить снова можно в уведомлениях сходки.",
   organizer:
     "Больше не присылаю по этой сходке сообщения организатора. Включить снова можно в уведомлениях сходки.",
 };

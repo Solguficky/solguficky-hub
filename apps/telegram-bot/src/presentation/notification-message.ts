@@ -103,17 +103,23 @@ export function renderNotification(
             disableMeetupCategoryCallback(meetup.id, "changes"),
           ),
       };
+    // Материал бывает и ссылкой, и файлом, поэтому повод назван материалом, а
+    // не сообщением. Название сходки стоит в кавычках: через двоеточие оно
+    // читалось как название материала, стоящего строкой ниже.
     case "meetup-material": {
       const material = content.materialTitle.trim();
+      const title = meetup.title.trim();
       return {
         text: [
-          headline("Новое связанное сообщение", meetup),
+          title === ""
+            ? "Новый материал у сходки"
+            : `Новый материал у сходки «${title}»`,
           ...(material === "" ? [] : [material]),
         ].join("\n"),
         keyboard: open()
           .row()
           .text(
-            "Не присылать связанные сообщения этой сходки",
+            "Не присылать материалы этой сходки",
             disableMeetupCategoryCallback(meetup.id, "material"),
           ),
       };
@@ -128,7 +134,9 @@ export function renderNotification(
           .text("Не присылать напоминания", disableReminderCallback),
       };
     // Сообщение организатора получают подписчики сходки, поэтому кнопка, как у
-    // изменений, выключает категорию у этой сходки, а не общую.
+    // изменений, выключает категорию у этой сходки, а не общую. «Этой сходки» в
+    // подписи нет: с ним кнопка шире экрана телефона и обрезается, а что
+    // выключено только здесь, говорит ответ на нажатие.
     case "organizer-message":
       return {
         text: withHeadline(
@@ -138,7 +146,7 @@ export function renderNotification(
         keyboard: open()
           .row()
           .text(
-            "Не присылать сообщения организатора этой сходки",
+            "Не присылать сообщения организатора",
             disableMeetupCategoryCallback(meetup.id, "organizer"),
           ),
       };

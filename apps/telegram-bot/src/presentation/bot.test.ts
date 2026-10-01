@@ -21,6 +21,7 @@ import { createIdentityResolver } from "../identity/client.js";
 import type {
   CommunityAdministrator,
   IdentityResolver,
+  TelegramRecipientResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CategoryState, MeetupCategory } from "../notifications/port.js";
@@ -442,6 +443,41 @@ describe("presentation adapter", () => {
     );
   });
 
+  // Источник принимается только ответом на вопрос. Отказ без ForceReply
+  // оставлял следующее сообщение — фотографию — вне формы (прогон PER-395).
+  it("asks for the source again as a question after rejecting one", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "document link",
+        fromId: 42,
+        replyMessageId: 102,
+        replyFromId: 1,
+      }),
+    );
+
+    const rejection = calls.at(-1);
+    expect(rejection?.method).toBe("sendMessage");
+    expect(JSON.stringify(rejection?.payload)).toContain("нельзя дать ссылку");
+    expect(JSON.stringify(rejection?.payload)).toContain('"force_reply":true');
+
+    await bot.handleUpdate(forwardedReplyUpdate(103));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Как назвать материал",
+    );
+  });
+
   it("passes a confirmed file id to Meetups", async () => {
     const meetup = publishedMeetup();
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
@@ -809,6 +845,12 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
+          [
+            {
+              text: "Настройки уведомлений",
+              callback_data: "v1:notify:global",
+            },
+          ],
         ],
       },
     });
@@ -825,6 +867,12 @@ describe("presentation adapter", () => {
           [
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
+          [
+            {
+              text: "Настройки уведомлений",
+              callback_data: "v1:notify:global",
+            },
           ],
           [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
         ],
@@ -958,6 +1006,81 @@ describe("presentation adapter", () => {
     expect(JSON.stringify(calls[1]?.payload)).toContain("@invited");
   });
 
+  // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не узнаёт
+  // (прогон PER-395). Пишем только о настоящей смене состояния.
+  describe("admitted member notice", () => {
+    const admittedId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const admitButton = `v1:community:admit:${uuidToToken(admittedId)}`;
+
+    function admitting(changed: boolean) {
+      const community = vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: { members: [], allowedUsernames: [] },
+        });
+      const admit = vi
+        .fn<CommunityAdministrator["admit"]>()
+        .mockResolvedValue({ kind: "ok", value: changed });
+      const resolveTelegramUserId = vi
+        .fn<TelegramRecipientResolver["resolveTelegramUserId"]>()
+        .mockResolvedValue({ kind: "resolved", telegramUserId: 5001n });
+      return {
+        ...resolvedIdentity(["admin"]),
+        community,
+        admit,
+        resolveTelegramUserId,
+      };
+    }
+
+    it("writes to the admitted person when the state changed", async () => {
+      const identity = admitting(true);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(admitButton));
+
+      expect(identity.resolveTelegramUserId).toHaveBeenCalledWith(
+        admittedId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      const notice = calls.find(
+        (call) =>
+          call.method === "sendMessage" &&
+          JSON.stringify(call.payload).includes("Доступ открыт"),
+      );
+      expect(notice?.payload).toMatchObject({ chat_id: "5001" });
+      expect(JSON.stringify(notice?.payload)).toContain("v1:nav:hub");
+    });
+
+    it("stays silent when the person was already admitted", async () => {
+      const identity = admitting(false);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(admitButton));
+
+      expect(identity.resolveTelegramUserId).not.toHaveBeenCalled();
+      expect(JSON.stringify(calls)).not.toContain("Доступ открыт");
+    });
+
+    it("keeps the admission and the admin screen when the notice fails", async () => {
+      const identity = admitting(true);
+      identity.resolveTelegramUserId.mockResolvedValue({ kind: "blocked" });
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate(admitButton));
+
+      expect(identity.admit).toHaveBeenCalled();
+      expect(JSON.stringify(calls)).toContain("Изменение сохранено.");
+      expectBoundary(records[0], {
+        level: "warn",
+        result: "error",
+        operation: "callback_query",
+        use_case: "manage_community",
+        error_category: "dependency_unavailable",
+      });
+    });
+  });
+
   it("tells apart people without a username created in the same minute", async () => {
     const community = vi
       .fn<CommunityAdministrator["community"]>()
@@ -1089,7 +1212,12 @@ describe("presentation adapter", () => {
               { text: "Обновить", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
-            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            [
+              {
+                text: "Настройки уведомлений",
+                callback_data: "v1:notify:global",
+              },
+            ],
             [{ text: "Назад", callback_data: "v1:nav:start" }],
           ],
         },
@@ -1124,6 +1252,12 @@ describe("presentation adapter", () => {
             [
               { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
+            ],
+            [
+              {
+                text: "Настройки уведомлений",
+                callback_data: "v1:notify:global",
+              },
             ],
             [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
           ],
@@ -1182,7 +1316,12 @@ describe("presentation adapter", () => {
               { text: "Обновить", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
-            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            [
+              {
+                text: "Настройки уведомлений",
+                callback_data: "v1:notify:global",
+              },
+            ],
             [{ text: "Назад", callback_data: "v1:nav:start" }],
           ],
         },
@@ -1877,7 +2016,7 @@ describe("presentation adapter", () => {
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
-          "Сходка уже изменилась. Ваши изменения не сохранены. Проверьте актуальные данные и повторите.",
+          "Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.",
         ),
         reply_markup: { force_reply: true, selective: true },
       },
@@ -2491,6 +2630,12 @@ describe("presentation adapter", () => {
           [
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
+          ],
+          [
+            {
+              text: "Настройки уведомлений",
+              callback_data: "v1:notify:global",
+            },
           ],
         ],
       },
@@ -3235,10 +3380,16 @@ describe("notification frames", () => {
     expect(calls[0]?.method).toBe("answerCallbackQuery");
     expect(calls[0]?.payload).not.toHaveProperty("text");
     const keyboard = screen(calls[1]).reply_markup;
+    // Без подписки входа в настройки сходки нет: они решают, что присылать
+    // по подписке, и рядом с ней читались как второй способ получать
+    // уведомления (прогон PER-395).
     expect(keyboard?.inline_keyboard[0]).toEqual([
-      { text: "Подписаться", callback_data: `v1:notify:sub:${token}:1` },
-      { text: "Уведомления", callback_data: `v1:notify:settings:${token}` },
+      {
+        text: "Подписаться на сходку",
+        callback_data: `v1:notify:sub:${token}:1`,
+      },
     ]);
+    expect(JSON.stringify(keyboard)).not.toContain("v1:notify:settings");
   });
 
   it("offers unsubscribing when the person already follows the meetup", async () => {
@@ -3252,9 +3403,15 @@ describe("notification frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
     const keyboard = screen(calls[1]).reply_markup;
     expect(keyboard?.inline_keyboard[0]?.[0]).toEqual({
-      text: "Отписаться",
+      text: "Отписаться от сходки",
       callback_data: `v1:notify:sub:${token}:0`,
     });
+    expect(keyboard?.inline_keyboard[1]).toEqual([
+      {
+        text: "Уведомления по сходке",
+        callback_data: `v1:notify:settings:${token}`,
+      },
+    ]);
   });
 
   // Notifications не ответил: состояние подписки не показывается вовсе, а не
@@ -3338,10 +3495,10 @@ describe("notification frames", () => {
         ],
       });
       expect(html).toContain(
-        "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые связанные сообщения, сообщения организатора.",
+        "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
       );
       expect(html).toContain(
-        "Напоминание перед началом выключено, включить его можно в «Уведомления».",
+        "Напоминание перед началом выключено, включить его можно в «Уведомлениях по сходке».",
       );
     });
 
@@ -3362,7 +3519,7 @@ describe("notification frames", () => {
       expect(html).toContain(
         "будут приходить: изменения данных и статуса, напоминание перед началом, сообщения организатора.",
       );
-      expect(html).not.toContain("новые связанные сообщения");
+      expect(html).not.toContain("новые материалы");
       expect(html).not.toContain("Напоминание перед началом выключено");
     });
 
@@ -3520,6 +3677,7 @@ describe("notification frames", () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "global-notification-settings",
       categories: [
+        { category: "changes", enabled: true },
         { category: "published", enabled: true },
         { category: "announcement", enabled: false },
       ],
@@ -3528,7 +3686,14 @@ describe("notification frames", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:notify:global"));
     const payload = screen(calls[1]);
-    expect(payload.text).toContain("Настройка действует для всех сходок");
+    // Группы называет текст, а кнопки идут в его порядке: сначала то, что
+    // приходит без подписки, в каком бы порядке ни ответил Notifications.
+    expect(payload.text).toContain("Приходят всем, без подписки");
+    expect(payload.text).toContain("По сходкам, на которые ты подписан");
+    expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
+      text: "[x] Изменения данных и статуса",
+      callback_data: "v1:notify:gset:changes:0",
+    });
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
       text: "[x] Новые сходки",
       callback_data: "v1:notify:gset:published:0",
@@ -3728,7 +3893,7 @@ describe("notification frames", () => {
           [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
           [
             {
-              text: "Не присылать сообщения организатора этой сходки",
+              text: "Не присылать сообщения организатора",
               callback_data: off,
             },
           ],
