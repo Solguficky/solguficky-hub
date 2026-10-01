@@ -75,12 +75,21 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
         this.silo = silo;
         this.channel = channel;
         Owners = owners ?? new StubAuthority();
-        Client = new NotificationsService.NotificationsServiceClient(channel);
+        Client = new NotificationsService.NotificationsServiceClient(SiloUnderTest.AsBot(channel));
     }
 
     public IsolatedDatabase Db { get; }
 
     public NotificationsService.NotificationsServiceClient Client { get; }
+
+    /// <summary>
+    /// Клиент, который предъявляет <paramref name="token" /> вместо токена бота;
+    /// <c>null</c> — вызов без заголовка <c>authorization</c>.
+    /// </summary>
+    public NotificationsService.NotificationsServiceClient ClientPresenting(string? token) =>
+        token is null
+            ? new NotificationsService.NotificationsServiceClient(channel)
+            : new NotificationsService.NotificationsServiceClient(SiloUnderTest.Presenting(channel, token));
 
     /// <summary>Подставленные владельцы. У стенда без подстановки не участвуют.</summary>
     public StubAuthority Owners { get; }

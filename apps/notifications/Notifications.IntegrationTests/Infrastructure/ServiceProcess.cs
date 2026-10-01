@@ -175,6 +175,11 @@ public sealed class ServiceProcess : IDisposable
         start.Environment[NotificationsHost.NatsUrlVariable] = natsUrl;
         start.Environment[CommunityTime.TimeZoneVariable] = SiloUnderTest.CommunityZone;
 
+        foreach (var (name, value) in SiloUnderTest.CallerEnvironment)
+        {
+            start.Environment[name] = value;
+        }
+
         // Режим пода задаёт только сам тест. Унаследованный от раннера
         // KUBERNETES_SERVICE_HOST — CI в поде кластера — иначе сделал бы подом
         // каждый запуск, и сценарии с петлёй отказывали бы на старте.

@@ -66,10 +66,10 @@ HTTP-эндпоинтов health у сервиса нет: Kestrel слушае�
 aspire run -- --profile notifications
 ```
 
-Вне Aspire нужна своя база; адрес берётся из `NOTIFICATIONS_DATABASE_URL` и принимает обе формы — готовую строку Npgsql и URI `postgres://…`. Пояс сообщества `NOTIFICATIONS_COMMUNITY_TIME_ZONE` (IANA) обязателен: без него процесс не стартует:
+Вне Aspire нужна своя база; адрес берётся из `NOTIFICATIONS_DATABASE_URL` и принимает обе формы — готовую строку Npgsql и URI `postgres://…`. Пояс сообщества `NOTIFICATIONS_COMMUNITY_TIME_ZONE` (IANA) обязателен: без него процесс не стартует. Так же обязательны токен бота в таблице вызывающих `NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT` и свой токен `NOTIFICATIONS_SERVICE_TOKEN` ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)): AppHost генерирует оба, а вне него значения задаются руками, и команды сервису идут с `authorization: Bearer <токен бота>`:
 
 ```bash
-NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notifications NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow just notifications-run
+NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notifications NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT=local-bot NOTIFICATIONS_SERVICE_TOKEN=local-notifications just notifications-run
 ```
 
 Миграции применяются при старте процесса, до подъёма силоса: без таблиц membership силос не поднимется.

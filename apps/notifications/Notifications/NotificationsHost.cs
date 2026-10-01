@@ -275,19 +275,37 @@ public static class NotificationsHost
         // объявление сообществу (ADR-028 §7, ADR-051). Адрес не задан — сервис
         // поднимается, а рассылка отвечает UNAVAILABLE: профиль `notifications`
         // соседей не поднимает, и отправка без проверки была бы хуже отказа.
+        // Вызовы владельцев несут свой токен Notifications (ADR-056). Он
+        // разбирается здесь, при сборке хоста, как пояс сообщества: пустое
+        // значение роняет старт, а не каждую рассылку.
+        //
+        // Таблица вызывающих (ADR-056) следует колонке Caller, а не профилю, и
+        // неполная или неоднозначная роняет старт: дефект конфигурации виден
+        // отказом, а не зелёным health при закрытых методах. Свой токен
+        // сверяется с ней же.
+        var callers = CallerTable.FromConfiguration(name => builder.Configuration[name], MethodAccess.Declared);
         var meetupsUrl = builder.Configuration[OwnerAuthority.MeetupsUrlVariable];
         var identityUrl = builder.Configuration[OwnerAuthority.IdentityUrlVariable];
+        var serviceToken = ServiceToken.FromConfiguration(name => builder.Configuration[name], callers);
         builder.Services.AddSingleton<IBroadcastAuthority>(services => new OwnerAuthority(
             string.IsNullOrEmpty(meetupsUrl) ? null : OwnerAuthority.ConnectMeetups(meetupsUrl),
             string.IsNullOrEmpty(identityUrl) ? null : OwnerAuthority.ConnectIdentity(identityUrl),
+            serviceToken,
             services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<BroadcastStore>();
         builder.Services.AddSingleton<BroadcastOperations>();
 
+        builder.Services.AddSingleton(callers);
+
         // Сам gRPC-стек. Без него не поднимаются ни проба, ни рефлексия: обе
-        // маппятся как gRPC-сервисы. Интерцептор пишет запись границы с
-        // request_id и use_case из метаданных вызова, как Identity и Meetups.
-        builder.Services.AddGrpc(options => options.Interceptors.Add<BoundaryLogInterceptor>());
+        // маппятся как gRPC-сервисы. Первым добавленный интерцептор — внешний:
+        // запись границы с request_id и use_case из метаданных вызова, как у
+        // Identity и Meetups, охватывает и отказ проверки вызывающего.
+        builder.Services.AddGrpc(options =>
+        {
+            options.Interceptors.Add<BoundaryLogInterceptor>();
+            options.Interceptors.Add<CallerGateInterceptor>();
+        });
 
         // Готовность — отвечает ли база. Проверка идёт на каждый Check пробы, а не
         // фоном: кэш результатов в мосте выключен по умолчанию, и статус не

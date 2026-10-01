@@ -222,6 +222,102 @@ public class BoundaryLogInterceptorTests
         logger.Records.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Отказ вызывающему (ADR-056) проходит через ту же запись границы:
+    /// UNAUTHENTICATED, категория authorization и причина полем caller_refusal.
+    /// Обработчик при этом не вызывается.
+    /// </summary>
+    [Theory]
+    [InlineData(null, "missing_token")]
+    [InlineData("Bearer meetups-token", "unknown_token")]
+    public async Task UnaryServerHandler_CallerRefused_RecordsRefusalWithoutCaller(string? authorization, string refusal)
+    {
+        var (logger, interceptor) = Create();
+        var context = authorization is null
+            ? new FakeServerCallContext(Product)
+            : new FakeServerCallContext(Product, ("authorization", authorization));
+        var handled = false;
+
+        var thrown = await Should.ThrowAsync<RpcException>(() =>
+            interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (request, call) => Gate().UnaryServerHandler<string, string>(
+                    request,
+                    call,
+                    (_, _) =>
+                    {
+                        handled = true;
+                        return Task.FromResult("answer");
+                    })));
+
+        thrown.StatusCode.ShouldBe(StatusCode.Unauthenticated);
+        handled.ShouldBeFalse();
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Level.ShouldBe(LogLevel.Warning);
+        record.Attributes["grpc_code"].ShouldBe("Unauthenticated");
+        record.Attributes["error_category"].ShouldBe("authorization");
+        record.Attributes["caller_refusal"].ShouldBe(refusal);
+        record.Attributes.ShouldNotContainKey("caller");
+    }
+
+    /// <summary>У not_declared вызывающий опознан, и запись называет его.</summary>
+    [Fact]
+    public async Task UnaryServerHandler_CallerNotDeclared_RecordsRefusalAndCaller()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(
+            "/notifications.v1.NotificationsService/NotYetDeclared",
+            ("authorization", $"Bearer {BotToken}"));
+
+        await Should.ThrowAsync<RpcException>(() =>
+            interceptor.UnaryServerHandler<string, string>(
+                "request",
+                context,
+                (request, call) => Gate().UnaryServerHandler(request, call, (_, _) => Task.FromResult("answer"))));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["caller_refusal"].ShouldBe("not_declared");
+        record.Attributes["caller"].ShouldBe("telegram-bot");
+    }
+
+    /// <summary>Допущенный вызов называет вызывающего; токен не попадает в запись ни в каком поле.</summary>
+    [Fact]
+    public async Task UnaryServerHandler_CallerAdmitted_RecordsCallerAndNoToken()
+    {
+        var (logger, interceptor) = Create();
+        var context = new FakeServerCallContext(Product, ("authorization", $"Bearer {BotToken}"));
+
+        await interceptor.UnaryServerHandler<string, string>(
+            "request",
+            context,
+            (request, call) => Gate().UnaryServerHandler(request, call, (_, _) => Task.FromResult("answer")));
+
+        var record = logger.Records.ShouldHaveSingleItem();
+        record.Attributes["result"].ShouldBe("ok");
+        record.Attributes["caller"].ShouldBe("telegram-bot");
+        record.Attributes.ShouldNotContainKey("caller_refusal");
+        record.Attributes.Values.ShouldAllBe(value => !(value is string && ((string)value).Contains(BotToken)));
+    }
+
+    /// <summary>Проба и рефлексия токена не требуют: их читают AppHost, оркестратор и grpcurl.</summary>
+    [Fact]
+    public async Task CallerGate_HealthProbeWithoutToken_PassesThrough()
+    {
+        var context = new FakeServerCallContext("/grpc.health.v1.Health/Check");
+
+        var answer = await Gate().UnaryServerHandler("request", context, (_, _) => Task.FromResult("serving"));
+
+        answer.ShouldBe("serving");
+    }
+
+    private const string BotToken = "bot-token";
+
+    private static CallerGateInterceptor Gate() =>
+        new(CallerTable.FromConfiguration(
+            name => name == Caller.TelegramBot.TokenVariable ? BotToken : null,
+            MethodAccess.Declared));
+
     private static (RecordingLogger<BoundaryLogInterceptor> Logger, BoundaryLogInterceptor Interceptor) Create()
     {
         var logger = new RecordingLogger<BoundaryLogInterceptor>();
