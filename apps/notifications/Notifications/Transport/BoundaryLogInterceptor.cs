@@ -182,6 +182,21 @@ public sealed class BoundaryLogInterceptor(ILogger<BoundaryLogInterceptor> logge
             fields["use_case"] = useCase;
         }
 
+        // Вызывающего называет решение CallerGateInterceptor, а не заголовок:
+        // имя берётся из совпавшего токена, и сам токен в запись не попадает.
+        if (context.UserState.TryGetValue(CallerGateInterceptor.DecisionKey, out var gate) && gate is GateDecision decision)
+        {
+            if (decision.Caller is { } caller)
+            {
+                fields["caller"] = caller.Node;
+            }
+
+            if (decision.Refusal is { } refusal)
+            {
+                fields["caller_refusal"] = refusal.Field();
+            }
+        }
+
         return fields;
     }
 

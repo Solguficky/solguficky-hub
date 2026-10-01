@@ -24,7 +24,7 @@ public sealed class PreferencesUnderTest : IAsyncDisposable
         this.database = database;
         this.silo = silo;
         this.channel = channel;
-        Client = new NotificationsService.NotificationsServiceClient(channel);
+        Client = new NotificationsService.NotificationsServiceClient(SiloUnderTest.AsBot(channel));
         Health = new Health.HealthClient(channel);
     }
 

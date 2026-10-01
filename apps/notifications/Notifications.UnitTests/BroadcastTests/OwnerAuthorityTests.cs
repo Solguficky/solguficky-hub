@@ -17,6 +17,7 @@ public class OwnerAuthorityTests
     private static readonly Guid Author = Guid.CreateVersion7();
     private static readonly Guid MeetupId = Guid.CreateVersion7();
     private static readonly DateTimeOffset Now = new(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
+    private const string OwnToken = "notifications-token";
 
     private static Forwarded Chain(DateTime? deadline = null, string? requestId = "req-1", string? useCase = "broadcast") =>
         new(requestId, useCase, deadline ?? DateTime.MaxValue, CancellationToken.None);
@@ -54,6 +55,7 @@ public class OwnerAuthorityTests
                 seen.Deadline = deadline;
                 return new CheckGlobalRoleResponse { Granted = await (identityOutcome ?? (() => Task.FromResult(true)))() };
             },
+            OwnToken,
             new FixedClock(Now));
 
     private static Func<Task> Fails(StatusCode code) => () => throw new RpcException(new Status(code, "stub"));
@@ -79,6 +81,7 @@ public class OwnerAuthorityTests
     [InlineData(StatusCode.Cancelled, AuthorityVerdict.Unavailable)]
     [InlineData(StatusCode.InvalidArgument, AuthorityVerdict.Failed)]
     [InlineData(StatusCode.Internal, AuthorityVerdict.Failed)]
+    [InlineData(StatusCode.Unauthenticated, AuthorityVerdict.Failed)]
     public async Task MeetupBroadcast_MeetupsRefuses_MapsStatusToVerdict(StatusCode code, AuthorityVerdict expected)
     {
         var answer = await Authority(new Recorded(), meetupsOutcome: Fails(code)).MeetupBroadcast(Author, MeetupId, Chain());
@@ -113,6 +116,7 @@ public class OwnerAuthorityTests
     [InlineData(StatusCode.DeadlineExceeded, AuthorityVerdict.Unavailable)]
     [InlineData(StatusCode.PermissionDenied, AuthorityVerdict.Failed)]
     [InlineData(StatusCode.Internal, AuthorityVerdict.Failed)]
+    [InlineData(StatusCode.Unauthenticated, AuthorityVerdict.Failed)]
     public async Task CommunityAnnouncement_IdentityRefuses_MapsStatusToVerdict(StatusCode code, AuthorityVerdict expected)
     {
         var answer = await Authority(
@@ -127,7 +131,7 @@ public class OwnerAuthorityTests
     [Fact]
     public async Task MeetupBroadcast_MeetupsUnconfigured_IsUnavailable()
     {
-        var authority = new OwnerAuthority(null, null, new FixedClock(Now));
+        var authority = new OwnerAuthority(null, null, OwnToken, new FixedClock(Now));
 
         (await authority.MeetupBroadcast(Author, MeetupId, Chain())).Verdict.ShouldBe(AuthorityVerdict.Unavailable);
     }
@@ -136,7 +140,7 @@ public class OwnerAuthorityTests
     [Fact]
     public async Task CommunityAnnouncement_IdentityUnconfigured_IsUnavailable()
     {
-        var authority = new OwnerAuthority(null, null, new FixedClock(Now));
+        var authority = new OwnerAuthority(null, null, OwnToken, new FixedClock(Now));
 
         (await authority.CommunityAnnouncement(Author, Chain())).Verdict.ShouldBe(AuthorityVerdict.Unavailable);
     }
@@ -171,5 +175,30 @@ public class OwnerAuthorityTests
 
         seen.Headers!.GetValue("x-request-id").ShouldBe("req-7");
         seen.Headers.Get("x-use-case").ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Вызов владельца несёт свой токен Notifications (ADR-056): по нему
+    /// Meetups узнаёт вызывающего.
+    /// </summary>
+    [Fact]
+    public async Task MeetupBroadcast_Asked_PresentsServiceToken()
+    {
+        var seen = new Recorded();
+
+        await Authority(seen).MeetupBroadcast(Author, MeetupId, Chain());
+
+        seen.Headers!.GetValue("authorization").ShouldBe($"Bearer {OwnToken}");
+    }
+
+    /// <inheritdoc cref="MeetupBroadcast_Asked_PresentsServiceToken" />
+    [Fact]
+    public async Task CommunityAnnouncement_Asked_PresentsServiceToken()
+    {
+        var seen = new Recorded();
+
+        await Authority(seen).CommunityAnnouncement(Author, Chain());
+
+        seen.Headers!.GetValue("authorization").ShouldBe($"Bearer {OwnToken}");
     }
 }

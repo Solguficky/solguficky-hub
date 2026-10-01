@@ -1,3 +1,5 @@
+using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -5,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Notifications.Reminders;
 using Notifications.Replica;
+using Notifications.Transport;
 using Xunit;
 
 namespace Notifications.IntegrationTests.Infrastructure;
@@ -172,6 +175,34 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// </summary>
     public const string CommunityZone = "Europe/Moscow";
 
+    /// <summary>
+    /// Токен бота в таблице вызывающих (ADR-056). Без таблицы сервис не
+    /// стартует, поэтому её получает каждый силос, а не только сценарии
+    /// проверки вызывающего; клиенты стендов предъявляют этот токен.
+    /// </summary>
+    public const string BotToken = "bot-token-under-test";
+
+    /// <summary>Свой токен Notifications: без него сервис не стартует.</summary>
+    public const string OwnToken = "notifications-token-under-test";
+
+    /// <summary>Вызовы по каналу от имени бота: каждый несёт <see cref="BotToken" />, как вызовы настоящего бота.</summary>
+    public static CallInvoker AsBot(ChannelBase channel) => Presenting(channel, BotToken);
+
+    /// <summary>Вызовы по каналу, каждый из которых несёт <c>authorization: Bearer</c> с <paramref name="token" />.</summary>
+    public static CallInvoker Presenting(ChannelBase channel, string token) =>
+        channel.Intercept(metadata =>
+        {
+            metadata.Add("authorization", $"Bearer {token}");
+            return metadata;
+        });
+
+    /// <summary>Таблица и свой токен в форме переменных окружения.</summary>
+    public static IReadOnlyDictionary<string, string> CallerEnvironment { get; } = new Dictionary<string, string>
+    {
+        [Caller.TelegramBot.TokenVariable] = BotToken,
+        [ServiceToken.Variable] = OwnToken,
+    };
+
     /// <remarks>
     /// Повтор безопасен для кластера: оба листенера Orleans биндятся на стадии
     /// <c>RuntimeInitialize - 1</c>, а в membership силос пишет себя позже,
@@ -208,6 +239,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
                 "--urls=http://127.0.0.1:0",
                 .. endpoint.Arguments,
                 $"--{CommunityTime.TimeZoneVariable}={CommunityZone}",
+                .. CallerEnvironment.Select(pair => $"--{pair.Key}={pair.Value}"),
                 .. settings,
             ],
             connectionString,

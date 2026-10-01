@@ -74,7 +74,12 @@ public delegate Task<CheckGlobalRoleResponse> AskIdentity(
 /// задан: профиль без него поднимает сервис, а рассылка честно отвечает
 /// <c>UNAVAILABLE</c>, а не отправляет без проверки.
 /// </remarks>
-public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, TimeProvider clock) : IBroadcastAuthority
+/// <param name="serviceToken">
+/// Свой токен Notifications (ADR-056): каждый вызов владельца несёт его в
+/// <c>authorization</c>, и владелец узнаёт по нему вызывающего.
+/// </param>
+public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, string serviceToken, TimeProvider clock)
+    : IBroadcastAuthority
 {
     /// <summary>Адрес Meetups. Префикс сервиса, как у остальных переменных Notifications.</summary>
     public const string MeetupsUrlVariable = "NOTIFICATIONS_MEETUPS_GRPC_URL";
@@ -150,6 +155,8 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, T
     /// право Identity уже подтвердил, но и ему рассылка отвечает тем же отказом,
     /// что постороннему: таблица отказов не различает «сходки нет» и «права
     /// нет», и Notifications не восполняет различие своей репликой.
+    /// <c>UNAUTHENTICATED</c> — отказ процессу, а не человеку (ADR-056): дефект
+    /// развёртывания, и он уходит в сбой проверки, а не в «права нет».
     /// </summary>
     public static AuthorityAnswer ClassifyMeetups(Status status) =>
         status.StatusCode switch
@@ -187,10 +194,10 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, T
         return own < forwarded.Deadline ? own : forwarded.Deadline;
     }
 
-    /// <summary>Заголовки цепочки: пустые не отправляются.</summary>
-    public static Metadata Headers(Forwarded forwarded)
+    /// <summary>Свой токен и заголовки цепочки; пустые заголовки цепочки не отправляются.</summary>
+    private Metadata Headers(Forwarded forwarded)
     {
-        var headers = new Metadata();
+        var headers = new Metadata { { "authorization", $"Bearer {serviceToken}" } };
 
         if (!string.IsNullOrEmpty(forwarded.RequestId))
         {

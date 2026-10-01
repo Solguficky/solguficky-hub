@@ -1,6 +1,7 @@
 using System.Net;
 using Notifications;
 using Notifications.Reminders;
+using Notifications.Transport;
 
 var databaseUrl = Environment.GetEnvironmentVariable(Migrations.DatabaseUrlVariable);
 
@@ -27,6 +28,19 @@ if (string.IsNullOrEmpty(natsUrl))
 try
 {
     CommunityTime.Parse(Environment.GetEnvironmentVariable(CommunityTime.TimeZoneVariable));
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    return 1;
+}
+
+// Таблица вызывающих и свой токен (ADR-056). Хост проверяет то же при сборке;
+// здесь раньше, до миграций, ради одной строки вместо stack trace.
+try
+{
+    var callers = CallerTable.FromConfiguration(Environment.GetEnvironmentVariable, MethodAccess.Declared);
+    ServiceToken.FromConfiguration(Environment.GetEnvironmentVariable, callers);
 }
 catch (InvalidOperationException ex)
 {
