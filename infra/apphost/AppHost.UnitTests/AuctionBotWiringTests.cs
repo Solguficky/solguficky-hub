@@ -96,32 +96,6 @@ public class AuctionBotWiringTests
         environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("test");
     }
 
-    /// <summary>Гейт срабатывает в сборке графа настоящего AppHost, до старта ресурсов.</summary>
-    [Fact]
-    public async Task AuctionBotProfile_TokenRepeatsHubToken_StopsTheGraph()
-    {
-        string[] args =
-        [
-            "--profile", "auction-bot",
-            "--telegram-environment", "prod",
-            "--Parameters:auction-bot-token", "222:hub",
-            "--Parameters:telegram-bot-token", "222:hub",
-        ];
-
-        var exception = await Should.ThrowAsync<Exception>(() => ResourceNamesAsync(args));
-
-        Flatten(exception).ShouldContain(inner =>
-            inner is InvalidOperationException && inner.Message.Contains("repeats 'telegram-bot-token'", StringComparison.Ordinal));
-    }
-
-    private static IEnumerable<Exception> Flatten(Exception exception)
-    {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            yield return current;
-        }
-    }
-
     /// <summary>
     /// Приложение освобождается до выхода: живой хост остался бы в процессе
     /// после теста и стартовал бы ресурсы рядом с моделями соседних наборов.

@@ -1,4 +1,7 @@
+using AppHost.Configuration.Models;
 using AppHost.Configuration.Services;
+using AppHost.Configuration.Topology;
+using Aspire.Hosting;
 using Microsoft.Extensions.Configuration;
 using Shouldly;
 using Xunit;
@@ -9,6 +12,11 @@ namespace AppHost.UnitTests;
 /// Гейт токена бота аукциона (ADR-044): отсутствующий токен или токен бота хаба
 /// останавливают сборку графа до старта поллеров. Значения токенов не попадают
 /// в причину отказа ни в одной ветке.
+///
+/// Отказ проверяется на setup узла, а не на модели настоящего AppHost: упавший
+/// внутри <c>DistributedApplicationTestingBuilder</c> Program.cs оставлял
+/// перехват тестовой фабрики, и следующая модель в процессе стартовала по-
+/// настоящему — снимок <c>hub</c> получал установщик с <c>npm install</c>.
 /// </summary>
 public class AuctionBotTokenTests
 {
@@ -69,6 +77,26 @@ public class AuctionBotTokenTests
 
         exception.Message.ShouldContain($"repeats '{hubParameter}'");
         exception.Message.ShouldNotContain(Own);
+    }
+
+    /// <summary>Setup узла отказывает до объявления параметра и до ресурса бота.</summary>
+    [Fact]
+    public void Configure_TokenRepeatsHubToken_ThrowsBeforeAddingTheBot()
+    {
+        var builder = DistributedApplication.CreateBuilder(
+            new DistributedApplicationOptions { Args = [], DisableDashboard = true });
+        builder.Configuration.Sources.Clear();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Parameters:auction-bot-token"] = Hub,
+            ["Parameters:telegram-bot-token"] = Hub,
+        });
+        var context = new ServiceGraphContext(builder, new ProfileConfig { Name = "auction-bot" });
+
+        var exception = Should.Throw<InvalidOperationException>(() => AuctionBotSetup.Configure(context));
+
+        exception.Message.ShouldContain("repeats 'telegram-bot-token'");
+        builder.Resources.ShouldBeEmpty();
     }
 
     [Fact]
