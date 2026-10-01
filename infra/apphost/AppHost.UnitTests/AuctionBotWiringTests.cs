@@ -1,54 +1,57 @@
 using AppHost.Configuration;
+using AppHost.Configuration.Models;
+using AppHost.Configuration.Services;
+using AppHost.Configuration.Topology;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
-using Aspire.Hosting.Testing;
-using AppHost.UnitTests.TestUtilities;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Shouldly;
 using Xunit;
+
+using static AppHost.UnitTests.TestUtilities.TestMappings;
 
 namespace AppHost.UnitTests;
 
 /// <summary>
-/// Профиль <c>auction-bot</c> на модели настоящего AppHost (ADR-044): бот
-/// аукциона получает свой токен и ни одной переменной бота хаба, ходит в
-/// Identity и Auction своим токеном вызывающего и не получает maintainer-секрет.
-/// Токены и среда Telegram передаются аргументами: командная строка
-/// перекрывает user-secrets машины, и тест не зависит от того, что у
-/// разработчика в них лежит.
+/// Бот аукциона (ADR-044) на настоящем setup узла: свой токен и ни одной
+/// переменной бота хаба, адреса Identity и Auction, один токен вызывающего с
+/// обоими вызываемыми, maintainer-секрета нет. Identity и Auction заменены
+/// дешёвыми узлами с тем же endpoint.
+///
+/// Модель настоящего AppHost здесь намеренно не собирается: в CI модели
+/// профиля <c>auction-bot</c> в одном процессе с остальными наборами
+/// стартовали по-настоящему, и снимок <c>hub</c> получал установщик с
+/// <c>npm install</c> (PER-431).
 /// </summary>
-[Collection(RealAppHostCollection.Name)]
 public class AuctionBotWiringTests
 {
     private const string AuctionBot = AppHostNames.Resources.AuctionBot;
+    private const string Identity = AppHostNames.Resources.Identity;
+    private const string Auction = AppHostNames.Resources.Auction;
 
-    private static readonly string[] Profile =
-    [
-        "--profile", "auction-bot",
-        "--telegram-environment", "prod",
-        "--Parameters:auction-bot-token", "111:auction",
-        "--Parameters:telegram-bot-token", "222:hub",
-        "--Parameters:telegram-bot-test-token", "333:hub-test",
-    ];
+    private static readonly DistributedApplicationExecutionContext RunMode = new(DistributedApplicationOperation.Run);
 
     [Fact]
-    public async Task AuctionBotProfile_OwnsTheBotWithIdentityAndAuction()
+    public void AuctionBotProfile_OwnsTheBotWithIdentityAndAuction()
     {
-        var services = (await ResourceNamesAsync(Profile))
-            .Where(name => name is AuctionBot
-                or AppHostNames.Resources.Identity
-                or AppHostNames.Resources.Auction
-                or AppHostNames.Resources.TelegramBot)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        // Настоящий appsettings.json AppHost лежит в выходном каталоге теста.
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json")
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Topology:Profile"] = "auction-bot" })
+            .Build();
 
-        services.ShouldBe([AppHostNames.Resources.Auction, AuctionBot, AppHostNames.Resources.Identity]);
+        var profile = ProfileResolver.Resolve(configuration);
+
+        profile.Services.Order(StringComparer.Ordinal).ShouldBe([Auction, AuctionBot, Identity]);
+        profile.Infrastructure.Order(StringComparer.Ordinal).ShouldBe(["nats", "postgres"]);
     }
 
     [Fact]
     public async Task AuctionBot_GetsOnlyItsOwnVariables()
     {
-        var environment = await EnvironmentAsync(Profile, AuctionBot);
+        var (bot, _) = Materialize("prod");
+        var environment = await EnvironmentAsync(bot);
 
         environment.Keys
             .Where(key => !key.StartsWith("OTEL_", StringComparison.Ordinal) && !key.StartsWith("NODE_", StringComparison.Ordinal))
@@ -64,91 +67,93 @@ public class AuctionBotWiringTests
             ]);
         ((ParameterResource)environment["AUCTION_BOT_TOKEN"]).Name.ShouldBe("auction-bot-token");
         environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("prod");
+        ((EndpointReference)environment["IDENTITY_GRPC_URL"]).Resource.Name.ShouldBe(Identity);
+        ((EndpointReference)environment["AUCTION_GRPC_URL"]).Resource.Name.ShouldBe(Auction);
     }
 
-    /// <summary>Своим токеном вызывающего бот ходит и в Identity, и в Auction.</summary>
     [Fact]
-    public async Task AuctionBot_SharesItsCallerTokenWithIdentityAndAuction()
+    public void AuctionBot_WaitsForIdentityAndAuction()
     {
-        var environments = await EnvironmentsAsync(
-            Profile, AuctionBot, AppHostNames.Resources.Identity, AppHostNames.Resources.Auction);
+        var (bot, _) = Materialize("prod");
 
-        var own = environments[AuctionBot]["AUCTION_BOT_SERVICE_TOKEN"];
-        environments[AppHostNames.Resources.Identity]["IDENTITY_CALLER_TOKEN_AUCTION_BOT"].ShouldBeSameAs(own);
-        environments[AppHostNames.Resources.Auction]["AUCTION_CALLER_TOKEN_AUCTION_BOT"].ShouldBeSameAs(own);
+        var awaited = bot.Annotations.OfType<WaitAnnotation>().Select(wait => wait.Resource.Name).ToArray();
+
+        awaited.ShouldContain(Identity);
+        awaited.ShouldContain(Auction);
+    }
+
+    /// <summary>
+    /// Токен вызывающего — один параметр реестра: тот же, который Identity и
+    /// Auction берут в свою таблицу по имени бота.
+    /// </summary>
+    [Fact]
+    public async Task AuctionBot_PresentsTheTokenItsCalleesAccept()
+    {
+        var (bot, context) = Materialize("prod");
+        var environment = await EnvironmentAsync(bot);
+
+        environment["AUCTION_BOT_SERVICE_TOKEN"].ShouldBeSameAs(context.ServiceToken(AuctionBot).Resource);
     }
 
     [Fact]
     public async Task AuctionBot_TestEnvironment_TakesTheTestToken()
     {
-        string[] args =
-        [
-            "--profile", "auction-bot",
-            "--telegram-environment", "test",
-            "--Parameters:auction-bot-test-token", "444:auction-test",
-            "--Parameters:telegram-bot-token", "222:hub",
-            "--Parameters:telegram-bot-test-token", "333:hub-test",
-        ];
-
-        var environment = await EnvironmentAsync(args, AuctionBot);
+        var (bot, _) = Materialize("test");
+        var environment = await EnvironmentAsync(bot);
 
         ((ParameterResource)environment["AUCTION_BOT_TOKEN"]).Name.ShouldBe("auction-bot-test-token");
         environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("test");
     }
 
-    /// <summary>
-    /// Приложение освобождается до выхода: живой хост остался бы в процессе
-    /// после теста и стартовал бы ресурсы рядом с моделями соседних наборов.
-    /// </summary>
-    private static async Task<string[]> ResourceNamesAsync(string[] args)
+    private static (IResource Bot, ServiceGraphContext Context) Materialize(string telegramEnvironment)
     {
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(args, cancellationToken);
-        await using var application = await builder.BuildAsync(cancellationToken);
-        var model = application.Services.GetRequiredService<DistributedApplicationModel>();
-        return [.. model.Resources.Select(resource => resource.Name)];
+        var builder = DistributedApplication.CreateBuilder(
+            new DistributedApplicationOptions { Args = [], DisableDashboard = true });
+
+        // Та же очистка, что в ServiceGraphTests: тест видит только свою топологию.
+        builder.Configuration.Sources.Clear();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Topology:Profiles:auction-bot:Services:0"] = Identity,
+            ["Topology:Profiles:auction-bot:Services:1"] = Auction,
+            ["Topology:Profiles:auction-bot:Services:2"] = AuctionBot,
+            ["telegram-environment"] = telegramEnvironment,
+            ["Parameters:auction-bot-token"] = "111:auction",
+            ["Parameters:auction-bot-test-token"] = "444:auction-test",
+            ["Parameters:telegram-bot-token"] = "222:hub",
+            ["Parameters:telegram-bot-test-token"] = "333:hub-test",
+        });
+
+        var profile = new ProfileConfig { Name = "auction-bot", Services = [Identity, Auction, AuctionBot], Infrastructure = [] };
+        var graph = new ServiceGraph(builder, profile);
+        ServiceGraphContext? captured = null;
+
+        graph.AddService(Identity, [], context => CheapGrpcNode(context, Identity), LocalOnly);
+        graph.AddService(Auction, [], context => CheapGrpcNode(context, Auction), LocalOnly);
+        graph.AddService(AuctionBot, [Identity, Auction], context =>
+        {
+            captured = context;
+            return AuctionBotSetup.Configure(context);
+        }, LocalOnly);
+        graph.Build();
+
+        return (builder.Resources.Single(resource => resource.Name == AuctionBot), captured!);
     }
 
-    private static async Task<Dictionary<string, object>> EnvironmentAsync(string[] args, string resourceName) =>
-        (await EnvironmentsAsync(args, resourceName))[resourceName];
+    private static IResourceBuilder<ContainerResource> CheapGrpcNode(ServiceGraphContext context, string name) =>
+        context.Builder
+            .AddContainer(name, "busybox")
+            .WithHttpEndpoint(targetPort: 8080, name: AppHostNames.Endpoints.Grpc);
 
-    /// <summary>
-    /// Переменные нескольких ресурсов одной модели: параметр токена сравнивается
-    /// по экземпляру, а у двух моделей экземпляры разные.
-    /// </summary>
-    private static async Task<Dictionary<string, Dictionary<string, object>>> EnvironmentsAsync(
-        string[] args,
-        params string[] resourceNames)
+    private static async Task<Dictionary<string, object>> EnvironmentAsync(IResource resource)
     {
         var cancellationToken = TestContext.Current.CancellationToken;
-        var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(args, cancellationToken);
-        await using var application = await builder.BuildAsync(cancellationToken);
-        var executionContext = application.Services.GetRequiredService<DistributedApplicationExecutionContext>();
-        var model = application.Services.GetRequiredService<DistributedApplicationModel>();
-
-        var result = new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
-        foreach (var name in resourceNames)
+        var environment = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var callback in resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
         {
-            var resource = model.Resources.Single(candidate => candidate.Name == name);
-            var environment = new Dictionary<string, object>(StringComparer.Ordinal);
-            foreach (var callback in resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
-            {
-                try
-                {
-                    await callback.Callback(new EnvironmentCallbackContext(executionContext, resource, environment, cancellationToken));
-                }
-                catch (InvalidOperationException exception)
-                    when (name == AppHostNames.Resources.Auction
-                        && exception.Message.Contains("classpath file", StringComparison.Ordinal))
-                {
-                    // CLASSPATH Auction читается из файла, который пишет сборка sbt;
-                    // токены — отдельные callback'и, и этот отказ их не задевает.
-                }
-            }
-
-            result[name] = environment;
+            await callback.Callback(new EnvironmentCallbackContext(RunMode, resource, environment, cancellationToken));
         }
 
-        return result;
+        return environment;
     }
 }
