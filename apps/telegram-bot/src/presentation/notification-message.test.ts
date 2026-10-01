@@ -234,11 +234,12 @@ describe("material notification", () => {
       materialTitle: "Правила",
     };
     expect(renderNotification(content).text).toBe(
-      "Новое связанное сообщение: Настолки у Лёши\nПравила",
+      "Новый материал у сходки «Настолки у Лёши»\nПравила",
     );
     expect(buttons(content)).toEqual([
       expect.objectContaining({ text: "Открыть сходку" }),
       expect.objectContaining({
+        text: "Не присылать материалы этой сходки",
         callback_data: "v1:notify:moff:AZjypHwefTqbIU-OEqs0zw:material",
       }),
     ]);
@@ -251,7 +252,7 @@ describe("material notification", () => {
         meetup,
         materialTitle: " ",
       }).text,
-    ).toBe("Новое связанное сообщение: Настолки у Лёши");
+    ).toBe("Новый материал у сходки «Настолки у Лёши»");
   });
 });
 
@@ -284,7 +285,7 @@ describe("organizer message", () => {
     expect(buttons(organizer("Берите настолки"))).toEqual([
       expect.objectContaining({ text: "Открыть сходку" }),
       expect.objectContaining({
-        text: "Не присылать сообщения организатора этой сходки",
+        text: "Не присылать сообщения организатора",
         callback_data: "v1:notify:moff:AZjypHwefTqbIU-OEqs0zw:organizer",
       }),
     ]);
