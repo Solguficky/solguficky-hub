@@ -10,8 +10,10 @@ namespace AppHost.Configuration.Services;
 /// владеет, среда — в какой Telegram этот узел ходит, и профиля на среду не
 /// заводится. Каждая среда несёт своё имя secret parameter, поэтому прод- и
 /// тест-токен живут под разными ключами user-secrets и не подменяют друг друга.
+/// У бота аукциона своя пара параметров: токены двух ботов независимы и общего
+/// fallback не имеют (ADR-044, «Конфигурация и Aspire»).
 /// </summary>
-internal sealed record TelegramEnvironment(string Value, string TokenParameter)
+internal sealed record TelegramEnvironment(string Value, string TokenParameter, string AuctionBotTokenParameter)
 {
     private const string ConfigurationKey = "Telegram:Environment";
     private const string CommandLineKey = "telegram-environment";
@@ -20,8 +22,8 @@ internal sealed record TelegramEnvironment(string Value, string TokenParameter)
     private static readonly IReadOnlyDictionary<string, TelegramEnvironment> Known =
         new Dictionary<string, TelegramEnvironment>(StringComparer.Ordinal)
         {
-            [DefaultName] = new(DefaultName, "telegram-bot-token"),
-            ["test"] = new("test", "telegram-bot-test-token"),
+            [DefaultName] = new(DefaultName, "telegram-bot-token", "auction-bot-token"),
+            ["test"] = new("test", "telegram-bot-test-token", "auction-bot-test-token"),
         };
 
     /// <summary>
@@ -52,4 +54,7 @@ internal sealed record TelegramEnvironment(string Value, string TokenParameter)
 
         return environment;
     }
+
+    /// <summary>Параметры токена бота хаба во всех средах.</summary>
+    public static IEnumerable<string> HubBotTokenParameters => Known.Values.Select(known => known.TokenParameter);
 }

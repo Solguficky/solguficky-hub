@@ -23,11 +23,12 @@ public class ServiceTokenWiringTests
     private const string Notifications = AppHostNames.Resources.Notifications;
     private const string TelegramBot = AppHostNames.Resources.TelegramBot;
     private const string Auction = AppHostNames.Resources.Auction;
+    private const string AuctionBot = AppHostNames.Resources.AuctionBot;
 
     /// <summary>Колонка Caller в integration.md: вызываемый — его вызывающие.</summary>
     private static readonly Dictionary<string, string[]> Callers = new()
     {
-        [Identity] = [TelegramBot, Meetups, Notifications],
+        [Identity] = [TelegramBot, AuctionBot, Meetups, Notifications],
         [Meetups] = [TelegramBot, Notifications],
         [Notifications] = [TelegramBot],
     };
@@ -44,7 +45,10 @@ public class ServiceTokenWiringTests
 
         foreach (var (callee, callers) in Callers)
         {
-            foreach (var caller in callers)
+            // Бота аукциона hub не поднимает: его пару проверяет
+            // AuctionBotWiringTests на профиле auction-bot. Исключение
+            // названо по имени, чтобы выпавший из hub вызывающий падал здесь.
+            foreach (var caller in callers.Where(caller => caller != AuctionBot))
             {
                 var callerSide = tokens[caller][$"{Env(caller)}_SERVICE_TOKEN"];
                 var calleeSide = tokens[callee][$"{Env(callee)}_CALLER_TOKEN_{Env(caller)}"];
@@ -83,7 +87,7 @@ public class ServiceTokenWiringTests
 
         var expected = new Dictionary<string, string[]>
         {
-            [Identity] = ["IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS", "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"],
+            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS", "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"],
             [Meetups] = ["MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_CALLER_TOKEN_TELEGRAM_BOT", "MEETUPS_SERVICE_TOKEN"],
             [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
             [TelegramBot] = ["TELEGRAM_BOT_SERVICE_TOKEN"],
@@ -104,7 +108,7 @@ public class ServiceTokenWiringTests
 
         // Пустой реестр прошёл бы цикл без единой проверки.
         parameters.Select(parameter => parameter.Name).Order(StringComparer.Ordinal).ToArray().ShouldBe(
-            ["meetups-service-token", "notifications-service-token", "telegram-bot-service-token"]);
+            ["auction-bot-service-token", "meetups-service-token", "notifications-service-token", "telegram-bot-service-token"]);
         foreach (var parameter in parameters)
         {
             parameter.Secret.ShouldBeTrue(parameter.Name);

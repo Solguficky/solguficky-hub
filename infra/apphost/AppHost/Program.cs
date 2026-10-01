@@ -25,6 +25,7 @@ topology.AddService(R.Meetups, [R.Postgres, R.Nats, R.Identity], MeetupsSetup.Co
 topology.AddService(R.Notifications, [R.Postgres, R.Nats, R.Loki, R.Identity, R.Meetups], NotificationsSetup.Configure, P.Workload(NotificationsSetup.Publish));
 topology.AddService(R.TelegramBot, [R.Nats, R.Identity, R.Meetups, R.Notifications], TelegramBotSetup.Configure, P.Workload(TelegramBotSetup.Publish));
 topology.AddService(R.Auction, [R.Postgres], AuctionSetup.Configure, P.NotPublished("outside the MVP (ADR-055)"));
+topology.AddService(R.AuctionBot, [R.Identity, R.Auction], AuctionBotSetup.Configure, P.NotPublished("outside the MVP (ADR-055)"));
 
 topology.Build();
 builder.Build().Run();

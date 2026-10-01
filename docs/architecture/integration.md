@@ -41,7 +41,7 @@ Subjects удалённой аукционной ветки перечислен
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Telegram Bot | Identity |
+| `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Telegram Bot: бот хаба и бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Identity |
 | `IdentityService.ResolveTelegramUserId` | то же | Telegram Bot | Identity |
 | `IdentityService.CheckGlobalRole` | то же | Notifications, Meetups | Identity |
 | `IdentityService.ResolveOrganizerUsername` | то же | Telegram Bot | Identity |
@@ -237,7 +237,7 @@ Identity публикует события о регистрации, выдач
 | `AuctionService.ChooseDisplayName` | то же | то же; предупреждение и выбор имени при первой ставке ([PER-317](https://linear.app/anticnvm/issue/per-317)) | Auction |
 | `AuctionService.GetDisplayNames` | то же | то же | Auction |
 
-Словарь — [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md) с дополнением от 24.09.2026 и [ADR-049](../decisions/ADR-049-auction-live-bid-rule.md); ни одного поля торгов сверх словаря схема не вводит; поля карточки лота — из [ADR-057](../decisions/ADR-057-auction-lot-catalog-as-state.md). Сервер реализован частично ([PER-323](https://linear.app/anticnvm/issue/per-323), [PER-303](https://linear.app/anticnvm/issue/per-303)): `PlaceBid`, `SetProxyLimit`, `WithdrawProxyLimit`, `CreateLotCard` и `EditLotCard` работают, `GetLot` и `ListAuctionLots` отвечают `UNIMPLEMENTED` до проекции ([PER-324](https://linear.app/anticnvm/issue/per-324)). Клиентов ещё нет: это экраны аукциона в ботах. Бот хаба и бот аукциона — разные вызывающие с разными токенами ([Service authentication](#service-authentication)).
+Словарь — [ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md) с дополнением от 24.09.2026 и [ADR-049](../decisions/ADR-049-auction-live-bid-rule.md); ни одного поля торгов сверх словаря схема не вводит; поля карточки лота — из [ADR-057](../decisions/ADR-057-auction-lot-catalog-as-state.md). Сервер реализован частично ([PER-323](https://linear.app/anticnvm/issue/per-323), [PER-303](https://linear.app/anticnvm/issue/per-303)): `PlaceBid`, `SetProxyLimit`, `WithdrawProxyLimit`, `CreateLotCard` и `EditLotCard` работают, `GetLot` и `ListAuctionLots` отвечают `UNIMPLEMENTED` до проекции ([PER-324](https://linear.app/anticnvm/issue/per-324)). Первый клиент — бот аукциона: `GetLot` по кнопке лота ([PER-305](https://linear.app/anticnvm/issue/per-305)), и пока проекции нет, человек видит «аукцион недоступен». У бота хаба клиента Auction ещё нет. Бот хаба и бот аукциона — разные вызывающие с разными токенами ([Service authentication](#service-authentication)).
 
 Из команд торгов в контракте только команды участника. Команды ведущего и организатора — `AdvanceAsk`, `CloseLot` по решению ведущего, `WithdrawLot`, ставка из зала — и команды аукциона ждут вызывающего: консоль ведущего не спроектирована, и RPC без клиента был бы полем «на будущее» в масштабе операции. `OpenLot`, `CloseLot` по дедлайну, `MarkForFinal` и `ResumeLot` шлёт лоту аукцион внутри сервиса, поэтому межсервисной поверхности у них нет вовсе. Новая команда добавляется новым RPC без breaking change: типы значений уже лежат в `auction.proto`.
 
@@ -487,12 +487,13 @@ Bucket объявляет та же таблица топологии AppHost, �
 | Сервис | Свой токен | Таблица вызывающих |
 |---|---|---|
 | Telegram Bot | `TELEGRAM_BOT_SERVICE_TOKEN` | — |
-| Identity | — | `IDENTITY_CALLER_TOKEN_TELEGRAM_BOT`, `IDENTITY_CALLER_TOKEN_MEETUPS`, `IDENTITY_CALLER_TOKEN_NOTIFICATIONS` |
+| Auction Bot | `AUCTION_BOT_SERVICE_TOKEN` | — |
+| Identity | — | `IDENTITY_CALLER_TOKEN_TELEGRAM_BOT`, `IDENTITY_CALLER_TOKEN_AUCTION_BOT`, `IDENTITY_CALLER_TOKEN_MEETUPS`, `IDENTITY_CALLER_TOKEN_NOTIFICATIONS` |
 | Meetups | `MEETUPS_SERVICE_TOKEN` | `MEETUPS_CALLER_TOKEN_TELEGRAM_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS` |
 | Notifications | `NOTIFICATIONS_SERVICE_TOKEN` | `NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT` |
 | Auction | — | `AUCTION_CALLER_TOKEN_TELEGRAM_BOT`, `AUCTION_CALLER_TOKEN_AUCTION_BOT` |
 
-Переменные раздаёт AppHost ([PER-413](https://linear.app/anticnvm/issue/per-413)); читать и проверять их сервисы начинают в своих задачах. Telegram Bot уже предъявляет свой токен в каждом вызове Identity, Meetups и Notifications и без него не стартует ([PER-414](https://linear.app/anticnvm/issue/per-414)). У `ListMeetupStates` вызывающего нет, поэтому строки Notifications в таблице Meetups открывают ему только `CheckMeetupAuthority`. Бот аукциона — узел `auction-bot` из ADR-044 — в таблице Auction уже есть, хотя узла ещё нет: колонка Caller у методов Auction называет его, и таблица следует ей, а не составу запуска. Параметр его токена AppHost заводит без узла.
+Переменные раздаёт AppHost ([PER-413](https://linear.app/anticnvm/issue/per-413)); читать и проверять их сервисы начинают в своих задачах. Telegram Bot уже предъявляет свой токен в каждом вызове Identity, Meetups и Notifications и без него не стартует ([PER-414](https://linear.app/anticnvm/issue/per-414)). У `ListMeetupStates` вызывающего нет, поэтому строки Notifications в таблице Meetups открывают ему только `CheckMeetupAuthority`. Бот аукциона — узел `auction-bot` из ADR-044 — предъявляет `AUCTION_BOT_SERVICE_TOKEN` в каждом вызове Identity и Auction и без него не стартует ([PER-305](https://linear.app/anticnvm/issue/per-305)). В колонку `ResolveIdentity` он попал вместе с этим первым вызовом; Identity таблицу вызывающих пока не проверяет, поэтому строка в нём — подготовленная переменная, а не отказ.
 
 Запись границы об отказе вызывающему — общий формат для всех сервисов, начиная с Auction: `grpc_code=UNAUTHENTICATED`, `error_category=authorization` и поле `caller_refusal` со значением `missing_token`, `unknown_token` или `not_declared`; у допущенного вызова и у `not_declared` поле `caller` называет узел вызывающего. Отдельной категории словаря [logging.md](../standards/observability/logging.md) отказ процессу не заводит: чем он отличается от отказа человеку, говорит `caller_refusal`, а не `error_category`. Токен в запись не попадает ни в каком виде.
 

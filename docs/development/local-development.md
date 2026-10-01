@@ -46,6 +46,14 @@ AppHost объявляет граф узлов и их связи, а профи
 | `notifications-observability` | PostgreSQL, NATS, Loki, Grafana | Notifications |
 | `auction` | PostgreSQL | Auction |
 | `hub` | PostgreSQL, NATS | Identity, Meetups, Notifications, Telegram Bot |
+| `auction-bot` | PostgreSQL, NATS | Identity, Auction, Auction Bot |
+
+Профиль `auction-bot` поднимает бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) с тем, что он зовёт: Identity разрешает личность на нажатие кнопки, Auction отдаёт лот. NATS в нём ради Identity, которому нужен адрес шины для релея outbox. Бот читает свой токен из параметра `auction-bot-token` и получает `AUCTION_BOT_SERVICE_TOKEN`, `IDENTITY_GRPC_URL` и `AUCTION_GRPC_URL`; ни одной переменной бота хаба у него нет. Пустой токен или токен, совпавший с параметром бота хаба в той же конфигурации AppHost, останавливают граф до старта ресурсов, а не спрашиваются в дашборде. Общий пакет `shared/typescript/auction-bot-ui` бот берёт `file:`-зависимостью, и его `prestart` ставит и собирает пакет перед кодогенерацией и сборкой самого бота. Живым прогоном профиль не подтверждён: проводку держат `AuctionBotWiringTests` и `AuctionBotTokenTests` AppHost, поведение `/start` и кнопок — L0-тесты бота.
+
+```powershell
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "Parameters:auction-bot-token" "<токен отдельного бота аукциона>"
+aspire run -- --profile auction-bot
+```
 
 Список `Infrastructure` — это backing stores того контура, который профиль изображает: `infra` показывает инфраструктуру платформы без компонентов, профиль одного сервиса — только те хранилища, которые связывает этот сервис, `hub` — полный локальный контур платформы. Поэтому NATS стоит в `infra`, `hub` и обоих профилях Notifications — единственного сервиса, который шину читает: он собирает из неё реплику чужих фактов ([PER-215](https://linear.app/anticnvm/issue/per-215)) и без адреса шины не стартует. В профилях `identity` и `meetups` его нет: они шину не читают, и в одиночном прогоне контейнер был бы мёртвым грузом. Loki и Grafana — не backing store платформы, а инструмент разбора одного сервиса, поэтому ими владеет только `notifications-observability`, и в `infra` и `hub` их нет.
 
@@ -86,7 +94,7 @@ just aspire infra
 
 Профиль отвечает, каким узлом владеет запуск, а среда Telegram — в какой Telegram этот узел ходит. Оси независимы, поэтому профиля на среду не заводится: среда задаётся `--telegram-environment <name>` или ключом `Telegram:Environment` (env `TELEGRAM__ENVIRONMENT`), по умолчанию `prod`. Неизвестное имя останавливает запуск с перечнем допустимых значений — но, в отличие от неизвестного профиля, только там, где среда что-то значит: её читает setup узла, поэтому запуск без бота в профиле значение не смотрит вовсе.
 
-Среда выбирает и имя секретного параметра: `prod` берёт `telegram-bot-token`, `test` — `telegram-bot-test-token`. Запуск спрашивает ровно один токен, поэтому прод- и тестовый живут под разными ключами и не подменяют друг друга. Боту уходит `TELEGRAM_BOT_ENVIRONMENT`, и при `test` вызовы Bot API идут на `https://api.telegram.org/bot<token>/test/`.
+Среда выбирает и имя секретного параметра: `prod` берёт `telegram-bot-token`, `test` — `telegram-bot-test-token`. Запуск спрашивает ровно один токен, поэтому прод- и тестовый живут под разными ключами и не подменяют друг друга. Боту уходит `TELEGRAM_BOT_ENVIRONMENT`, и при `test` вызовы Bot API идут на `https://api.telegram.org/bot<token>/test/`. Бот аукциона следует той же оси своей парой: `auction-bot-token` и `auction-bot-test-token`, среда — в `AUCTION_BOT_ENVIRONMENT`.
 
 Вход в тестовую среду описан [ADR-046](../decisions/ADR-046-telegram-test-contour.md): клиент Telegram переключается на тестовые дата-центры, аккаунт заводится синтетическим номером вида `99966XYYYY`, токен тестового бота выдаёт тестовый BotFather. Токен кладётся в user-secrets AppHost и в репозиторий не попадает. Порядок важен: среда `test` спрашивает другой параметр, и неинтерактивный запуск на отсутствующем `telegram-bot-test-token` падает вместо приглашения ввести значение.
 

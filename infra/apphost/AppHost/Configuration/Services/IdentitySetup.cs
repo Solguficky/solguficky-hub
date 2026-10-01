@@ -85,6 +85,7 @@ internal static class IdentitySetup
             .AcceptCallers(
                 context,
                 AppHostNames.Resources.TelegramBot,
+                AppHostNames.Resources.AuctionBot,
                 AppHostNames.Resources.Meetups,
                 AppHostNames.Resources.Notifications)
             // Проект .NET получает OTLP-переменные сам, исполняемый файл — только
