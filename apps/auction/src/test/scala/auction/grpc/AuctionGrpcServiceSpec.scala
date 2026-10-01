@@ -11,6 +11,10 @@ import auction.lot.LotFixtures.*
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
+import auction.lot.SetProxyLimit
+import auction.lot.SetProxyLimitRejected
+import auction.lot.WithdrawProxyLimit
+import auction.lot.WithdrawProxyLimitRejected
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
@@ -31,11 +35,25 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private given ExecutionContext = ExecutionContext.parasitic
 
-  /** Шлюз, до которого запрос не должен дойти: любой вызов роняет тест. */
-  private object Unreachable extends LotGateway {
+  /** Шлюз, до которого запрос не должен дойти: любой вызов, который тест не переопределил, роняет тест. */
+  private class Gateway extends LotGateway {
     def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]] =
       fail("the lot was reached")
+
+    def setProxyLimit(
+        lotId: UUID,
+        command: SetProxyLimit,
+        initiator: Initiator
+    ): Future[Either[SetProxyLimitRejected, Envelope]] = fail("the lot was reached")
+
+    def withdrawProxyLimit(
+        lotId: UUID,
+        command: WithdrawProxyLimit,
+        initiator: Initiator
+    ): Future[Either[WithdrawProxyLimitRejected, Envelope]] = fail("the lot was reached")
   }
+
+  private object Unreachable extends Gateway
 
   private object UntouchableStore extends LotCatalogStore {
     private def touched = fail("the catalog store was touched")
@@ -45,9 +63,12 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   }
 
   private def answering(outcome: Future[Either[PlaceBidRejected, Envelope]]): LotGateway =
-    new LotGateway {
-      def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]] =
-        outcome
+    new Gateway {
+      override def placeBid(
+          lotId: UUID,
+          command: PlaceBid,
+          initiator: Initiator
+      ): Future[Either[PlaceBidRejected, Envelope]] = outcome
     }
 
   private def service(lots: LotGateway) = AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore))
@@ -80,8 +101,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "sends the viewer's bid to the addressed lot as a participant" in {
       var seen = Option.empty[(UUID, PlaceBid, Initiator)]
-      val recording = new LotGateway {
-        def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) = {
+      val recording = new Gateway {
+        override def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) = {
           seen = Some((lotId, command, initiator))
           Future.successful(Left(PlaceBidRejected.LotNotOpen))
         }
@@ -116,10 +137,50 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.isNotAdmin shouldBe true
     }
 
-    "answers UNIMPLEMENTED on proxy limits, reads and display names that belong to later slices" in {
+    "refuses a proxy limit and its withdrawal from a viewer without the public role before reaching the lot" in {
+      val member = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER))
+      statusOf(service(Unreachable).setProxyLimit(validLimit.withViewer(member))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(service(Unreachable).withdrawProxyLimit(validWithdrawal.withViewer(member))) shouldBe
+        Status.Code.PERMISSION_DENIED
+    }
+
+    "refuses a malformed proxy limit with INVALID_ARGUMENT before reaching the lot" in {
+      statusOf(service(Unreachable).setProxyLimit(validLimit.clearMax)) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(service(Unreachable).withdrawProxyLimit(validWithdrawal.withOpId("x"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+    }
+
+    "sends the viewer's proxy limit to the addressed lot as the participant's own limit" in {
+      var seen = Option.empty[(UUID, SetProxyLimit, Initiator)]
+      val recording = new Gateway {
+        override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) = {
+          seen = Some((lotId, command, initiator))
+          Future.successful(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice))
+        }
+      }
+      service(recording).setProxyLimit(validLimit).futureValue.getRefused.reason.isProxyBelowCurrentPrice shouldBe true
+      val (lotId, command, initiator) = seen.getOrElse(fail("the lot was not reached"))
+      lotId shouldBe UUID.fromString(lot)
+      initiator shouldBe Initiator.Participant(ParticipantId(UUID.fromString(identity)))
+      command.participant shouldBe ParticipantId(UUID.fromString(identity))
+      command.max shouldBe money(200)
+    }
+
+    "answers a withdrawal without an active limit with NoActiveProxyLimit and a missing lot with NOT_FOUND" in {
+      val none = new Gateway {
+        override def withdrawProxyLimit(lotId: UUID, command: WithdrawProxyLimit, initiator: Initiator) =
+          Future.successful(Left(WithdrawProxyLimitRejected.NoActiveProxyLimit))
+      }
+      service(none).withdrawProxyLimit(validWithdrawal).futureValue.getRefused.reason.isNoActiveProxyLimit shouldBe true
+      val missing = new Gateway {
+        override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) =
+          Future.successful(Left(SetProxyLimitRejected.LotNotFound))
+      }
+      statusOf(service(missing).setProxyLimit(validLimit)) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers UNIMPLEMENTED on reads and display names that belong to later slices" in {
       val auction = service(Unreachable)
-      statusOf(auction.setProxyLimit(wire.SetProxyLimitRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.withdrawProxyLimit(wire.WithdrawProxyLimitRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.getLot(wire.GetLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.listAuctionLots(wire.ListAuctionLotsRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.chooseDisplayName(wire.ChooseDisplayNameRequest())) shouldBe Status.Code.UNIMPLEMENTED

@@ -26,8 +26,8 @@ final case class AntiSnipe(window: Duration, extension: Duration, maxExtensions:
 /**
  * Конфигурация торгов, замороженная на входе в `Trading` (И-10) и пришедшая целиком из `LotOpened` (RFC-011, И-07).
  *
- * Анти-снайп и признак прокси приём ставки пока не читает: их правила — соседние листья. Валюта политики шага совпадает
- * с валютой лота по построению: иначе шаг складывался бы с ценой другой валюты (И-04).
+ * Анти-снайп приём ставки пока не читает: его правило — соседний лист. Признак прокси читает `SetProxyLimit`. Валюта
+ * политики шага совпадает с валютой лота по построению: иначе шаг складывался бы с ценой другой валюты (И-04).
  */
 final case class LotConfig private[lot] (
     currency: CurrencyCode,
@@ -95,11 +95,20 @@ enum Phase {
 }
 
 /**
+ * Действующий прокси-лимит участника (RFC-011, «Состояние лота»).
+ *
+ * `setSeq` — `sequence` события `ProxyLimitSet`, которое его записало: в payload он не входит, а берётся из конверта
+ * (ADR-047), и им П-02 решает равенство максимумов (П-07). `setAt` из RFC не хранится: ни одно правило его не читает, а
+ * время конверта ядро не видит.
+ */
+final case class ProxyLimit(max: Money, setSeq: Long)
+
+/**
  * Состояние лота в торгах (RFC-011, «Состояние лота»).
  *
  * До первой ставки `currentPrice` — стартовая цена, а `leader` пуст (И-02). `deadline` пуст, если лот ведёт человек.
- * Прокси-лимиты, счётчик продлений и отметка финала не представлены: их читают соседние правила, и они появятся вместе
- * с ними.
+ * `proxyLimits` держит И-03 по построению: ключ — участник, и новый лимит заменяет прежний. Счётчик продлений и отметка
+ * финала не представлены: их читают соседние правила, и они появятся вместе с ними.
  */
 final case class TradingState(
     config: LotConfig,
@@ -108,15 +117,20 @@ final case class TradingState(
     leader: Option[ParticipantId],
     leadingBidId: Option[BidId],
     phase: Phase,
-    deadline: Option[Instant]
+    deadline: Option[Instant],
+    proxyLimits: Map[ParticipantId, ProxyLimit]
 )
 
-/** Лот удержан для живого финала: те же цена и лидер, дедлайна и ask нет (П-09). */
+/**
+ * Лот удержан для живого финала: те же цена, лидер и лимиты, дедлайна и ask нет (П-09). Лимит, записанный в удержании,
+ * ждёт финала: пересчёт П-02 здесь не запускается.
+ */
 final case class HeldState(
     config: LotConfig,
     currentPrice: Money,
     leader: Option[ParticipantId],
-    leadingBidId: Option[BidId]
+    leadingBidId: Option[BidId],
+    proxyLimits: Map[ParticipantId, ProxyLimit]
 )
 
 final case class Sale(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
@@ -144,13 +158,22 @@ enum BidSource {
   case Floor
 }
 
-/** Происхождение ставки: ручная команда или производная ставка прокси (П-02). */
+/**
+ * Происхождение ставки: ручная команда или производная ставка прокси (П-02). Ручная несёт канал, через который её
+ * поставили; у производной канала нет — её поставила система в пределах лимита (`ProxyBid` в `auction_events.proto`).
+ */
 enum BidOrigin {
-  case Manual
+  case Manual(source: BidSource)
   case Proxy
 }
 
 final case class PlaceBid(participant: ParticipantId, amount: Money, opId: OpId, source: BidSource)
+
+/** Прокси-лимит участника на лот: новый заменяет прежний, каким бы он ни был (И-03). */
+final case class SetProxyLimit(participant: ParticipantId, max: Money, opId: OpId)
+
+/** Снятие прокси-лимита участником, в том числе лидером (RFC-011, О-3). */
+final case class WithdrawProxyLimit(participant: ParticipantId, opId: OpId)
 
 /**
  * Рождение лота. Отправляет аукцион после своего `LotAdded`, и лот с этой минуты принадлежит ему: аукцион — часть
@@ -184,9 +207,10 @@ enum LotEvent {
       participant: ParticipantId,
       amount: Money,
       previousLeader: Option[ParticipantId],
-      origin: BidOrigin,
-      source: BidSource
+      origin: BidOrigin
   )
+  case ProxyLimitSet(participant: ParticipantId, max: Money)
+  case ProxyLimitWithdrawn(participant: ParticipantId)
 }
 
 /**
@@ -238,4 +262,23 @@ enum PlaceBidRejected {
   case BidderIsLeader
   case BidNotAtNextPrice(expected: Money)
   case BidBelowMinimum(minRequired: Money)
+}
+
+/**
+ * Отказы `SetProxyLimit` (ADR-047). `ProxyDisabledForLot` от входа не зависит и проверяется первым; валюта — до
+ * сравнения с ценой, потому что суммы разных валют не сравниваются (И-04). `ProxyBelowCurrentPrice` — лимит ниже нижней
+ * границы торга; лимит, равный ей, принимается: лидер вправе опустить свой лимит вплоть до текущей цены (RFC-011, О-3).
+ */
+enum SetProxyLimitRejected {
+  case LotNotFound
+  case LotNotOpen
+  case ProxyDisabledForLot
+  case CurrencyMismatch
+  case ProxyBelowCurrentPrice
+}
+
+/** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */
+enum WithdrawProxyLimitRejected {
+  case LotNotFound
+  case NoActiveProxyLimit
 }

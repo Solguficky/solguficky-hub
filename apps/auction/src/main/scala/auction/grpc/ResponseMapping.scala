@@ -6,6 +6,8 @@ import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.Money
 import auction.lot.PlaceBidRejected
+import auction.lot.SetProxyLimitRejected
+import auction.lot.WithdrawProxyLimitRejected
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import io.grpc.Status
@@ -24,6 +26,58 @@ object ResponseMapping {
       case Right(envelope) => Right(accepted(envelope))
       case Left(PlaceBidRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
       case Left(rejected) => Right(wire.PlaceBidResponse().withRefused(wire.PlaceBidRefusal(refusal(rejected))))
+    }
+
+  /**
+   * Принятый лимит ответа не несёт: выросла ли за ним цена, видно в состоянии лота (контракт). Конверт другого события
+   * — дефект ядра, а не отказ.
+   */
+  def setProxyLimit(outcome: Either[SetProxyLimitRejected, Envelope]): Either[Status, wire.SetProxyLimitResponse] =
+    outcome match {
+      case Right(envelope) =>
+        envelope.event match {
+          case _: LotEvent.ProxyLimitSet => Right(wire.SetProxyLimitResponse().withAccepted(wire.ProxyLimitAccepted()))
+          case other =>
+            throw new IllegalStateException(s"lot answered a proxy limit with ${other.getClass.getSimpleName}")
+        }
+      case Left(SetProxyLimitRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
+      case Left(rejected) =>
+        val reason = rejected match {
+          case SetProxyLimitRejected.LotNotOpen => wire.SetProxyLimitRefusal.Reason.LotNotOpen(wire.LotNotOpen())
+          case SetProxyLimitRejected.ProxyBelowCurrentPrice =>
+            wire.SetProxyLimitRefusal.Reason.ProxyBelowCurrentPrice(wire.ProxyBelowCurrentPrice())
+          case SetProxyLimitRejected.ProxyDisabledForLot =>
+            wire.SetProxyLimitRefusal.Reason.ProxyDisabledForLot(wire.ProxyDisabledForLot())
+          case SetProxyLimitRejected.CurrencyMismatch =>
+            wire.SetProxyLimitRefusal.Reason.CurrencyMismatch(wire.CurrencyMismatch())
+          case SetProxyLimitRejected.LotNotFound =>
+            throw new IllegalStateException("LotNotFound is a status, not a refusal value")
+        }
+        Right(wire.SetProxyLimitResponse().withRefused(wire.SetProxyLimitRefusal(reason)))
+    }
+
+  def withdrawProxyLimit(
+      outcome: Either[WithdrawProxyLimitRejected, Envelope]
+  ): Either[Status, wire.WithdrawProxyLimitResponse] =
+    outcome match {
+      case Right(envelope) =>
+        envelope.event match {
+          case _: LotEvent.ProxyLimitWithdrawn =>
+            Right(wire.WithdrawProxyLimitResponse().withAccepted(wire.ProxyLimitWithdrawalAccepted()))
+          case other =>
+            throw new IllegalStateException(s"lot answered a proxy withdrawal with ${other.getClass.getSimpleName}")
+        }
+      case Left(WithdrawProxyLimitRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
+      case Left(WithdrawProxyLimitRejected.NoActiveProxyLimit) =>
+        Right(
+          wire
+            .WithdrawProxyLimitResponse()
+            .withRefused(
+              wire.WithdrawProxyLimitRefusal(
+                wire.WithdrawProxyLimitRefusal.Reason.NoActiveProxyLimit(wire.NoActiveProxyLimit())
+              )
+            )
+        )
     }
 
   def createLotCard(outcome: Either[CatalogRefusal, LotCard]): wire.CreateLotCardResponse =

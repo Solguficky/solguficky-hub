@@ -6,6 +6,8 @@ import auction.lot.CurrencyCode
 import auction.lot.Money
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import org.scalatest.EitherValues
@@ -68,6 +70,26 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       RequestMapping.acting(Some(all)).value.viewer.globalRoles shouldBe GlobalRole.values.toSet
     }
 
+    "maps a well-formed proxy limit and its withdrawal to the viewer's own commands" in {
+      val limit = RequestMapping.setProxyLimit(validLimit).value
+      limit.lotId shouldBe UUID.fromString(lot)
+      limit.limit.participant.value shouldBe UUID.fromString(identity)
+      limit.limit.max shouldBe Money(200, CurrencyCode("RUB"))
+      limit.limit.opId.value shouldBe UUID.fromString(op)
+      val withdrawal = RequestMapping.withdrawProxyLimit(validWithdrawal).value
+      withdrawal.lotId shouldBe UUID.fromString(lot)
+      withdrawal.withdrawal.participant.value shouldBe UUID.fromString(identity)
+      withdrawal.withdrawal.opId.value shouldBe UUID.fromString(op)
+    }
+
+    "names the invalid field of a proxy limit and its withdrawal" in {
+      RequestMapping.setProxyLimit(validLimit.clearMax).left.value shouldBe FormError("max")
+      RequestMapping.setProxyLimit(validLimit.withMax(MoneyMessage(200, "rub"))).left.value shouldBe FormError("max")
+      RequestMapping.setProxyLimit(validLimit.withLotId("")).left.value shouldBe FormError("lot_id")
+      RequestMapping.withdrawProxyLimit(validWithdrawal.clearViewer).left.value shouldBe FormError("viewer")
+      RequestMapping.withdrawProxyLimit(validWithdrawal.withOpId("")).left.value shouldBe FormError("op_id")
+    }
+
     "maps a catalog command with its text as entered" in {
       val card = RequestMapping.card(Some(viewer), lot, "  Лот  ", "").value
       card.lotId.value shouldBe UUID.fromString(lot)
@@ -86,4 +108,8 @@ object RequestMappingSpec {
   val viewer: ViewerMessage = ViewerMessage(identity, Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
 
   val validBid: PlaceBidRequest = PlaceBidRequest(Some(viewer), lot, Some(MoneyMessage(150, "RUB")), op)
+
+  val validLimit: SetProxyLimitRequest = SetProxyLimitRequest(Some(viewer), lot, Some(MoneyMessage(200, "RUB")), op)
+
+  val validWithdrawal: WithdrawProxyLimitRequest = WithdrawProxyLimitRequest(Some(viewer), lot, op)
 }

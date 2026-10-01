@@ -134,9 +134,9 @@ object LotCommands extends Commands {
       val after = nextState(state)
       result.toOption.fold(Prop.falsified :| "run threw") { outcome =>
         val answer = (expected(state), outcome.result) match {
-          case (Expected.Accept(w, a, prev), Right(Decision.Accepted(placed: LotEvent.BidPlaced))) =>
+          case (Expected.Accept(w, a, prev), Right(Decision.Accepted(placed: LotEvent.BidPlaced, _))) =>
             placed.participant == participant(w) && placed.amount == money(a) &&
-            placed.previousLeader == prev.map(participant) && placed.origin == BidOrigin.Manual
+            placed.previousLeader == prev.map(participant) && placed.origin == BidOrigin.Manual(BidSource.Bot)
           case (Expected.Repeat((w, a)), Right(Decision.Repeated(original))) =>
             original.opId == op(opN) && (original.event match {
               case placed: LotEvent.BidPlaced => placed.participant == participant(w) && placed.amount == money(a)

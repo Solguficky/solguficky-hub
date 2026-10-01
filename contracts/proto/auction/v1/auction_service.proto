@@ -166,7 +166,9 @@ message BidderIsLeader {}
 // The currency of the amount differs from the currency of the lot.
 message CurrencyMismatch {}
 
-// The limit does not exceed the current price of the lot.
+// The limit is below the current price of the lot, or below the announced ask
+// when it is higher. A limit equal to that price is accepted: the leader may
+// lower its own limit down to it.
 message ProxyBelowCurrentPrice {}
 
 message ProxyDisabledForLot {}

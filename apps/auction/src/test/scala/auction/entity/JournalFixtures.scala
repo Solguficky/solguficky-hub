@@ -46,7 +46,13 @@ object JournalFixtures {
   val opened: LotEvent.LotOpened = LotEvent.LotOpened(money(10000), tieredConfig, Some(deadline))
 
   val placed: LotEvent.BidPlaced =
-    LotEvent.BidPlaced(bid(1), participant(2), money(10500), Some(participant(1)), BidOrigin.Manual, BidSource.Bot)
+    LotEvent.BidPlaced(bid(1), participant(2), money(10500), Some(participant(1)), BidOrigin.Manual(BidSource.Bot))
+
+  val placedByProxy: LotEvent.BidPlaced = placed.copy(origin = BidOrigin.Proxy)
+
+  val limitSet: LotEvent.ProxyLimitSet = LotEvent.ProxyLimitSet(participant(2), money(20000))
+
+  val limitWithdrawn: LotEvent.ProxyLimitWithdrawn = LotEvent.ProxyLimitWithdrawn(participant(2))
 
   def transaction(opN: Int, initiator: Initiator = Initiator.Scheduler): Transaction =
     Transaction(uuid(2), op(opN), auctionId(1), decidedAt, initiator)

@@ -49,14 +49,23 @@ final case class StoredSchedule(startingPrice: StoredMoney, config: StoredConfig
 
 final case class StoredLotOpened(startingPrice: StoredMoney, config: StoredConfig, deadline: Option[Instant])
 
+/**
+ * `source` есть только у ручной ставки: производную ставку прокси поставила система, а не канал. Строка, записанная до
+ * прокси, несёт его всегда и читается так же.
+ */
 final case class StoredBidPlaced(
     bidId: UUID,
     participant: UUID,
     amount: StoredMoney,
     previousLeader: Option[UUID],
     origin: String,
-    source: String
+    source: Option[String]
 )
+
+/** `setSeq` в payload не входит: это `sequence_number` той же строки (ADR-047). */
+final case class StoredProxyLimitSet(participant: UUID, max: StoredMoney)
+
+final case class StoredProxyLimitWithdrawn(participant: UUID)
 
 /**
  * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки.
@@ -66,8 +75,16 @@ final case class StoredEvent(
     kind: String,
     lotOpened: Option[StoredLotOpened],
     bidPlaced: Option[StoredBidPlaced],
-    lotScheduled: Option[StoredSchedule]
+    lotScheduled: Option[StoredSchedule],
+    proxyLimitSet: Option[StoredProxyLimitSet],
+    proxyLimitWithdrawn: Option[StoredProxyLimitWithdrawn]
 )
+
+object StoredEvent {
+
+  /** Событие данного вида без единой секции; заполненную секцию добавляет `copy`. */
+  def of(kind: String): StoredEvent = StoredEvent(kind, None, None, None, None, None)
+}
 
 /** Поле `actor` конверта ADR-047; в коде его значение — [[Initiator]], чтобы не спорить с актором Pekko. */
 final case class StoredActor(kind: String, id: Option[UUID])
@@ -88,6 +105,13 @@ final case class StoredLotEvent(
     event: StoredEvent
 ) extends JournalSerializable
 
+/** Лимит в snapshot несёт `setSeq`: строки `ProxyLimitSet` до snapshot replay уже не прочитает. */
+final case class StoredProxyLimit(participant: UUID, max: StoredMoney, setSeq: Long)
+
+/**
+ * `proxyLimits` необязателен по форме: snapshot, записанный до прокси-лимитов, его не несёт и читается как торги без
+ * лимитов. Новый snapshot пишет его всегда, в порядке `setSeq`.
+ */
 final case class StoredTrading(
     config: StoredConfig,
     currentPrice: StoredMoney,
@@ -95,14 +119,16 @@ final case class StoredTrading(
     leader: Option[UUID],
     leadingBidId: Option[UUID],
     phase: String,
-    deadline: Option[Instant]
+    deadline: Option[Instant],
+    proxyLimits: Option[List[StoredProxyLimit]]
 )
 
 final case class StoredHeld(
     config: StoredConfig,
     currentPrice: StoredMoney,
     leader: Option[UUID],
-    leadingBidId: Option[UUID]
+    leadingBidId: Option[UUID],
+    proxyLimits: Option[List[StoredProxyLimit]]
 )
 
 final case class StoredSale(winner: UUID, price: StoredMoney, bidId: UUID, at: Instant)
@@ -230,56 +256,114 @@ object LotJournal {
 
   private def storeEvent(event: LotEvent): StoredEvent =
     event match {
-      case LotEvent.LotDrafted(_) =>
-        StoredEvent("LotDrafted", lotOpened = None, bidPlaced = None, lotScheduled = None)
+      case LotEvent.LotDrafted(_) => StoredEvent.of("LotDrafted")
       case LotEvent.LotScheduled(schedule) =>
-        StoredEvent("LotScheduled", lotOpened = None, bidPlaced = None, lotScheduled = Some(storeSchedule(schedule)))
+        StoredEvent.of("LotScheduled").copy(lotScheduled = Some(storeSchedule(schedule)))
       case LotEvent.LotOpened(startingPrice, config, deadline) =>
-        StoredEvent(
-          "LotOpened",
-          lotOpened = Some(StoredLotOpened(storeMoney(startingPrice), storeConfig(config), deadline)),
-          bidPlaced = None,
-          lotScheduled = None
-        )
-      case LotEvent.BidPlaced(bidId, participant, amount, previousLeader, origin, source) =>
-        StoredEvent(
-          "BidPlaced",
-          lotOpened = None,
-          bidPlaced = Some(
-            StoredBidPlaced(
-              bidId = bidId.value,
-              participant = participant.value,
-              amount = storeMoney(amount),
-              previousLeader = previousLeader.map(_.value),
-              origin = origin.toString,
-              source = source.toString
+        StoredEvent
+          .of("LotOpened")
+          .copy(lotOpened = Some(StoredLotOpened(storeMoney(startingPrice), storeConfig(config), deadline)))
+      case LotEvent.BidPlaced(bidId, participant, amount, previousLeader, origin) =>
+        val (originKind, source) = origin match {
+          case BidOrigin.Manual(channel) => ("Manual", Some(channel.toString))
+          case BidOrigin.Proxy => ("Proxy", None)
+        }
+        StoredEvent
+          .of("BidPlaced")
+          .copy(bidPlaced =
+            Some(
+              StoredBidPlaced(
+                bidId = bidId.value,
+                participant = participant.value,
+                amount = storeMoney(amount),
+                previousLeader = previousLeader.map(_.value),
+                origin = originKind,
+                source = source
+              )
             )
-          ),
-          lotScheduled = None
-        )
+          )
+      case LotEvent.ProxyLimitSet(participant, max) =>
+        StoredEvent
+          .of("ProxyLimitSet")
+          .copy(proxyLimitSet = Some(StoredProxyLimitSet(participant.value, storeMoney(max))))
+      case LotEvent.ProxyLimitWithdrawn(participant) =>
+        StoredEvent
+          .of("ProxyLimitWithdrawn")
+          .copy(proxyLimitWithdrawn = Some(StoredProxyLimitWithdrawn(participant.value)))
     }
 
-  private def restoreEvent(stored: StoredEvent, auction: Option[UUID]): LotEvent =
-    (stored.kind, stored.lotOpened, stored.bidPlaced, stored.lotScheduled) match {
-      case ("LotDrafted", None, None, None) =>
+  /** Ровно одна секция, и та, что названа `kind`; у `LotDrafted` — ни одной. Иначе строка испорчена. */
+  private def restoreEvent(stored: StoredEvent, auction: Option[UUID]): LotEvent = {
+    val sections = List(
+      stored.lotOpened,
+      stored.bidPlaced,
+      stored.lotScheduled,
+      stored.proxyLimitSet,
+      stored.proxyLimitWithdrawn
+    ).count(_.isDefined)
+    def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
+    (stored.kind, sections) match {
+      case ("LotDrafted", 0) =>
         auction match {
           case Some(id) => LotEvent.LotDrafted(AuctionId(id))
           case None => corrupted("lot drafted without an auction")
         }
-      case ("LotScheduled", None, None, Some(schedule)) => LotEvent.LotScheduled(restoreSchedule(schedule))
-      case ("LotOpened", Some(opened), None, None) =>
-        LotEvent.LotOpened(restoreMoney(opened.startingPrice), restoreConfig(opened.config), opened.deadline)
-      case ("BidPlaced", None, Some(placed), None) =>
-        LotEvent.BidPlaced(
-          bidId = BidId(placed.bidId),
-          participant = ParticipantId(placed.participant),
-          amount = restoreMoney(placed.amount),
-          previousLeader = placed.previousLeader.map(ParticipantId(_)),
-          origin = restoreEnum("bid origin", placed.origin)(BidOrigin.valueOf),
-          source = restoreEnum("bid source", placed.source)(BidSource.valueOf)
-        )
-      case _ => corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
+      case ("LotScheduled", 1) =>
+        stored.lotScheduled.fold(mismatch)(schedule => LotEvent.LotScheduled(restoreSchedule(schedule)))
+      case ("LotOpened", 1) =>
+        stored.lotOpened.fold(mismatch) { opened =>
+          LotEvent.LotOpened(restoreMoney(opened.startingPrice), restoreConfig(opened.config), opened.deadline)
+        }
+      case ("BidPlaced", 1) =>
+        stored.bidPlaced.fold(mismatch) { placed =>
+          LotEvent.BidPlaced(
+            bidId = BidId(placed.bidId),
+            participant = ParticipantId(placed.participant),
+            amount = restoreMoney(placed.amount),
+            previousLeader = placed.previousLeader.map(ParticipantId(_)),
+            origin = restoreOrigin(placed.origin, placed.source)
+          )
+        }
+      case ("ProxyLimitSet", 1) =>
+        stored.proxyLimitSet.fold(mismatch) { set =>
+          LotEvent.ProxyLimitSet(ParticipantId(set.participant), restoreMoney(set.max))
+        }
+      case ("ProxyLimitWithdrawn", 1) =>
+        stored.proxyLimitWithdrawn.fold(mismatch) { withdrawn =>
+          LotEvent.ProxyLimitWithdrawn(ParticipantId(withdrawn.participant))
+        }
+      case _ => mismatch
     }
+  }
+
+  /** Ручная ставка несёт канал, производная — нет; иное сочетание `decide` не пишет. */
+  private def restoreOrigin(origin: String, source: Option[String]): BidOrigin =
+    (origin, source) match {
+      case ("Manual", Some(channel)) => BidOrigin.Manual(restoreEnum("bid source", channel)(BidSource.valueOf))
+      case ("Proxy", None) => BidOrigin.Proxy
+      case _ => corrupted(s"bid origin $origin with source $source")
+    }
+
+  private def storeLimits(limits: Map[ParticipantId, ProxyLimit]): Option[List[StoredProxyLimit]] =
+    Some(
+      limits.toList
+        .sortBy((_, limit) => limit.setSeq)
+        .map((participant, limit) => StoredProxyLimit(participant.value, storeMoney(limit.max), limit.setSeq))
+    )
+
+  /** Второй лимит участника или лимит в чужой валюте — испорченный snapshot: `decide` таких не пишет (И-03, И-04). */
+  private def restoreLimits(
+      stored: Option[List[StoredProxyLimit]],
+      config: LotConfig
+  ): Map[ParticipantId, ProxyLimit] = {
+    val limits = stored.getOrElse(Nil)
+    if (limits.map(_.participant).distinct.size != limits.size) corrupted("two proxy limits of one participant")
+    limits.map { limit =>
+      val max = restoreMoney(limit.max)
+      if (max.currency != config.currency) corrupted(s"proxy limit in ${max.currency.value}")
+      ParticipantId(limit.participant) -> ProxyLimit(max, limit.setSeq)
+    }.toMap
+  }
 
   private def storeState(state: LotState): StoredLotState =
     state match {
@@ -298,7 +382,8 @@ object LotJournal {
               leader = trading.leader.map(_.value),
               leadingBidId = trading.leadingBidId.map(_.value),
               phase = trading.phase.toString,
-              deadline = trading.deadline
+              deadline = trading.deadline,
+              proxyLimits = storeLimits(trading.proxyLimits)
             )
           ),
           held = None,
@@ -314,7 +399,8 @@ object LotJournal {
               config = storeConfig(held.config),
               currentPrice = storeMoney(held.currentPrice),
               leader = held.leader.map(_.value),
-              leadingBidId = held.leadingBidId.map(_.value)
+              leadingBidId = held.leadingBidId.map(_.value),
+              proxyLimits = storeLimits(held.proxyLimits)
             )
           ),
           sold = None,
@@ -336,24 +422,28 @@ object LotJournal {
       case ("Draft", None, None, None, None) => LotState.Draft
       case ("Scheduled", None, None, None, Some(schedule)) => LotState.Scheduled(restoreSchedule(schedule))
       case ("Trading", Some(trading), None, None, None) =>
+        val config = restoreConfig(trading.config)
         LotState.Trading(
           TradingState(
-            config = restoreConfig(trading.config),
+            config = config,
             currentPrice = restoreMoney(trading.currentPrice),
             ask = trading.ask.map(restoreMoney),
             leader = trading.leader.map(ParticipantId(_)),
             leadingBidId = trading.leadingBidId.map(BidId(_)),
             phase = restoreEnum("phase", trading.phase)(Phase.valueOf),
-            deadline = trading.deadline
+            deadline = trading.deadline,
+            proxyLimits = restoreLimits(trading.proxyLimits, config)
           )
         )
       case ("Held", None, Some(held), None, None) =>
+        val config = restoreConfig(held.config)
         LotState.Held(
           HeldState(
-            config = restoreConfig(held.config),
+            config = config,
             currentPrice = restoreMoney(held.currentPrice),
             leader = held.leader.map(ParticipantId(_)),
-            leadingBidId = held.leadingBidId.map(BidId(_))
+            leadingBidId = held.leadingBidId.map(BidId(_)),
+            proxyLimits = restoreLimits(held.proxyLimits, config)
           )
         )
       case ("Sold", None, None, Some(sale), None) =>

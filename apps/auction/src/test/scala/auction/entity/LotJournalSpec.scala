@@ -46,6 +46,9 @@ final class LotJournalSpec
       )
     )
 
+  /** Тот же лот после лимита, который лидер поставил себе пятой строкой. */
+  private val limitedLot: Lot = Lot.apply(tradingLot, Envelope(5, op(5), limitSet))
+
   /** Эталон пишется так, как его пишет сервис, и сервис читает эталон в то же значение. */
   private def keepsGolden(name: String, stored: StoredLotEvent) = {
     val row = write(kit.system, stored)
@@ -91,26 +94,54 @@ final class LotJournalSpec
       )
     }
 
-    "keep the stored form of a lot snapshot equal to its golden file and read the golden file back" in {
-      val stored = LotJournal.storeLot(tradingLot, sequence = 4)
+    "keep the stored form of a bid placed by a proxy without a source and read the golden file back" in {
+      keepsGolden(
+        "bid-placed-proxy",
+        LotJournal.store(uuid(1), transaction(2, Initiator.Participant(participant(2))), placedByProxy)
+      )
+    }
+
+    "keep the stored form of a proxy limit and its withdrawal equal to their golden files" in {
+      keepsGolden(
+        "proxy-limit-set",
+        LotJournal.store(uuid(1), transaction(2, Initiator.Participant(participant(2))), limitSet)
+      )
+      keepsGolden(
+        "proxy-limit-withdrawn",
+        LotJournal.store(uuid(1), transaction(2, Initiator.Participant(participant(2))), limitWithdrawn)
+      )
+    }
+
+    "keep the stored form of a lot snapshot with its proxy limits equal to its golden file and read it back" in {
+      val stored = LotJournal.storeLot(limitedLot, sequence = 5)
       val row = write(kit.system, stored)
 
       row.manifest shouldBe classOf[StoredLot].getName
       row.json shouldBe mapper.readTree(golden("lot-snapshot"))
       LotJournal.restoreLot(read(kit.system, row.copy(bytes = golden("lot-snapshot"))).asInstanceOf[StoredLot]) shouldBe
-        tradingLot
+        limitedLot
+      tradingOf(limitedLot).proxyLimits shouldBe Map(participant(2) -> limit(20000, setSeq = 5))
+    }
+
+    "read a snapshot written before proxy limits as trading without limits" in {
+      val row =
+        write(kit.system, LotJournal.storeLot(tradingLot, sequence = 4)).copy(bytes = golden("legacy/lot-snapshot"))
+
+      LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe tradingLot
     }
 
     "restore every event and the whole lot with its deduplication window from what it stored" in {
-      List(lotDrafted, lotScheduled, opened, placed).zipWithIndex.foreach { (event, index) =>
-        LotJournal.envelope(index.toLong + 7, storedEvent(event)) shouldBe Envelope(index.toLong + 7, op(1), event)
+      List(lotDrafted, lotScheduled, opened, placed, placedByProxy, limitSet, limitWithdrawn).zipWithIndex.foreach {
+        (event, index) =>
+          LotJournal.envelope(index.toLong + 7, storedEvent(event)) shouldBe Envelope(index.toLong + 7, op(1), event)
       }
       List(
         Lot.initial,
         drafted,
         scheduled(),
         tradingLot,
-        held(price = 700, leader = participant(3)),
+        limitedLot,
+        held(price = 700, leader = participant(3), limits = Map(participant(5) -> limit(900, setSeq = 8))),
         sold(price = 900, winner = participant(4))
       ).foreach(lot => LotJournal.restoreLot(LotJournal.storeLot(lot, sequence = 5)) shouldBe lot)
     }
@@ -161,8 +192,38 @@ final class LotJournalSpec
     "refuse to restore an event whose kind does not match its sections" in {
       val stored = storedEvent(opened)
       val mismatched = stored.copy(event = stored.event.copy(kind = "BidPlaced"))
+      val doubled = storedEvent(limitSet).event.copy(lotOpened = stored.event.lotOpened)
 
       a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, mismatched)
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, stored.copy(event = doubled))
+    }
+
+    "refuse to restore a bid whose origin and source contradict each other" in {
+      val manual = storedEvent(placed)
+      val proxy = storedEvent(placedByProxy)
+      val manualWithout = manual.event.bidPlaced.map(_.copy(source = None))
+      val proxyWith = proxy.event.bidPlaced.map(_.copy(source = Some("Bot")))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(
+        1,
+        manual.copy(event = manual.event.copy(bidPlaced = manualWithout))
+      )
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(
+        1,
+        proxy.copy(event = proxy.event.copy(bidPlaced = proxyWith))
+      )
+    }
+
+    "refuse to restore a snapshot with two limits of one participant or a limit in another currency" in {
+      val stored = LotJournal.storeLot(limitedLot, sequence = 5)
+      val trading = stored.state.trading.get
+      val limits = trading.proxyLimits.get
+      def withLimits(changed: List[StoredProxyLimit]) =
+        stored.copy(state = stored.state.copy(trading = Some(trading.copy(proxyLimits = Some(changed)))))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.restoreLot(withLimits(limits ++ limits.map(_.copy(setSeq = 9))))
+      a[JournalCorrupted] should be thrownBy
+        LotJournal.restoreLot(withLimits(limits.map(l => l.copy(max = l.max.copy(currency = "EUR")))))
     }
 
     "refuse to restore a configuration that breaks the step policy invariant instead of trusting the row" in {

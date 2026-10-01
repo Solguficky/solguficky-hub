@@ -1,5 +1,5 @@
 {
-  "sequence": 5,
+  "sequence": 4,
   "state": {
     "kind": "Trading",
     "trading": {
@@ -45,17 +45,7 @@
       "leader": "00000000-0000-0001-0000-000000000002",
       "leadingBidId": "00000000-0000-0002-0000-000000000001",
       "phase": "Online",
-      "deadline": "2026-10-07T18:00:00Z",
-      "proxyLimits": [
-        {
-          "participant": "00000000-0000-0001-0000-000000000002",
-          "max": {
-            "minorUnits": 20000,
-            "currency": "RUB"
-          },
-          "setSeq": 5
-        }
-      ]
+      "deadline": "2026-10-07T18:00:00Z"
     },
     "held": null,
     "sold": null,
@@ -71,9 +61,7 @@
         "kind": "LotDrafted",
         "lotOpened": null,
         "bidPlaced": null,
-        "lotScheduled": null,
-        "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        "lotScheduled": null
       }
     },
     {
@@ -123,9 +111,7 @@
             },
             "proxyEnabled": true
           }
-        },
-        "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        }
       }
     },
     {
@@ -176,9 +162,7 @@
           "deadline": "2026-10-07T18:00:00Z"
         },
         "bidPlaced": null,
-        "lotScheduled": null,
-        "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        "lotScheduled": null
       }
     },
     {
@@ -199,28 +183,7 @@
           "origin": "Manual",
           "source": "Bot"
         },
-        "lotScheduled": null,
-        "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
-      }
-    },
-    {
-      "sequence": 5,
-      "opId": "00000000-0000-0003-0000-000000000005",
-      "auctionId": null,
-      "event": {
-        "kind": "ProxyLimitSet",
-        "lotOpened": null,
-        "bidPlaced": null,
-        "lotScheduled": null,
-        "proxyLimitSet": {
-          "participant": "00000000-0000-0001-0000-000000000002",
-          "max": {
-            "minorUnits": 20000,
-            "currency": "RUB"
-          }
-        },
-        "proxyLimitWithdrawn": null
+        "lotScheduled": null
       }
     }
   ]

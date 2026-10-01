@@ -10,6 +10,8 @@ import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.LotFixtures.*
 import auction.lot.PlaceBidRejected
+import auction.lot.SetProxyLimitRejected
+import auction.lot.WithdrawProxyLimitRejected
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import io.grpc.Status
@@ -27,7 +29,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
   "response mapping" should {
 
     "answers an accepted bid with the id of the placed bid" in {
-      val placed = LotEvent.BidPlaced(bid(7), participant(1), money(150), None, BidOrigin.Manual, BidSource.Bot)
+      val placed = LotEvent.BidPlaced(bid(7), participant(1), money(150), None, BidOrigin.Manual(BidSource.Bot))
       val response = ResponseMapping.placeBid(Right(Envelope(4, op(1), placed))).value
       response.getAccepted.bidId shouldBe bid(7).value.toString
     }
@@ -51,6 +53,32 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
 
     "answers a bid to a lot that does not exist with NOT_FOUND rather than a refusal" in {
       ResponseMapping.placeBid(Left(PlaceBidRejected.LotNotFound)).left.value.getCode shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers an accepted proxy limit and its withdrawal without data and every refusal as a value" in {
+      val set = LotEvent.ProxyLimitSet(participant(1), money(200))
+      ResponseMapping.setProxyLimit(Right(Envelope(5, op(1), set))).value.outcome.isAccepted shouldBe true
+      val withdrawn = LotEvent.ProxyLimitWithdrawn(participant(1))
+      ResponseMapping.withdrawProxyLimit(Right(Envelope(6, op(2), withdrawn))).value.outcome.isAccepted shouldBe true
+      def limitRefused(rejected: SetProxyLimitRejected) =
+        ResponseMapping.setProxyLimit(Left(rejected)).value.getRefused.reason
+      limitRefused(SetProxyLimitRejected.LotNotOpen).isLotNotOpen shouldBe true
+      limitRefused(SetProxyLimitRejected.ProxyBelowCurrentPrice).isProxyBelowCurrentPrice shouldBe true
+      limitRefused(SetProxyLimitRejected.ProxyDisabledForLot).isProxyDisabledForLot shouldBe true
+      limitRefused(SetProxyLimitRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
+      ResponseMapping
+        .withdrawProxyLimit(Left(WithdrawProxyLimitRejected.NoActiveProxyLimit))
+        .value
+        .getRefused
+        .reason
+        .isNoActiveProxyLimit shouldBe true
+    }
+
+    "answers a proxy command to a lot that does not exist with NOT_FOUND rather than a refusal" in {
+      ResponseMapping.setProxyLimit(Left(SetProxyLimitRejected.LotNotFound)).left.value.getCode shouldBe
+        Status.Code.NOT_FOUND
+      ResponseMapping.withdrawProxyLimit(Left(WithdrawProxyLimitRejected.LotNotFound)).left.value.getCode shouldBe
+        Status.Code.NOT_FOUND
     }
 
     "answers catalog commands with the stored card or a named refusal" in {
