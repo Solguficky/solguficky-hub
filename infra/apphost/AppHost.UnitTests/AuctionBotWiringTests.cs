@@ -13,8 +13,9 @@ namespace AppHost.UnitTests;
 /// Профиль <c>auction-bot</c> на модели настоящего AppHost (ADR-044): бот
 /// аукциона получает свой токен и ни одной переменной бота хаба, ходит в
 /// Identity и Auction своим токеном вызывающего и не получает maintainer-секрет.
-/// Токены передаются аргументами: командная строка перекрывает user-secrets
-/// машины, и тест не зависит от того, что у разработчика в них лежит.
+/// Токены и среда Telegram передаются аргументами: командная строка
+/// перекрывает user-secrets машины, и тест не зависит от того, что у
+/// разработчика в них лежит.
 /// </summary>
 [Collection(RealAppHostCollection.Name)]
 public class AuctionBotWiringTests
@@ -24,6 +25,7 @@ public class AuctionBotWiringTests
     private static readonly string[] Profile =
     [
         "--profile", "auction-bot",
+        "--telegram-environment", "prod",
         "--Parameters:auction-bot-token", "111:auction",
         "--Parameters:telegram-bot-token", "222:hub",
         "--Parameters:telegram-bot-test-token", "333:hub-test",
@@ -82,7 +84,14 @@ public class AuctionBotWiringTests
     [Fact]
     public async Task AuctionBot_TestEnvironment_TakesTheTestToken()
     {
-        string[] args = [.. Profile, "--telegram-environment", "test", "--Parameters:auction-bot-test-token", "444:auction-test"];
+        string[] args =
+        [
+            "--profile", "auction-bot",
+            "--telegram-environment", "test",
+            "--Parameters:auction-bot-test-token", "444:auction-test",
+            "--Parameters:telegram-bot-token", "222:hub",
+            "--Parameters:telegram-bot-test-token", "333:hub-test",
+        ];
 
         var environment = await EnvironmentAsync(args, AuctionBot);
 
@@ -97,6 +106,7 @@ public class AuctionBotWiringTests
         string[] args =
         [
             "--profile", "auction-bot",
+            "--telegram-environment", "prod",
             "--Parameters:auction-bot-token", "222:hub",
             "--Parameters:telegram-bot-token", "222:hub",
         ];

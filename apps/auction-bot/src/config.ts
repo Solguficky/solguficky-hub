@@ -21,10 +21,16 @@ export type ConfigResult =
 export function readConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): ConfigResult {
-  const read = (name: string): string | undefined => env[name];
+  // Пустое значение равно отсутствующему: иначе `""` прошло бы мимо умолчания.
+  const read = (name: string): string | undefined => env[name] || undefined;
   const token = read("AUCTION_BOT_TOKEN");
   if (token === undefined || token.trim() === "") {
     return { ok: false, error: "AUCTION_BOT_TOKEN is not set" };
+  }
+  // Токен с переводом строки из user-secrets прошёл бы гейт AppHost, а Bot API
+  // ответил бы 404 без внятной причины.
+  if (token !== token.trim()) {
+    return { ok: false, error: "AUCTION_BOT_TOKEN has surrounding whitespace" };
   }
   // Токен вызывающего (ADR-056) проверяется на старте: без него каждый вызов
   // Identity и Auction получил бы UNAUTHENTICATED уже на первом человеке.

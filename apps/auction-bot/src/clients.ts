@@ -105,13 +105,8 @@ export function createClients(options: {
   auctionUrl: string;
   serviceToken: string;
 }): Clients {
-  const sessions = [options.identityUrl, options.auctionUrl].map(
-    (url) => new Http2SessionManager(url),
-  );
-  const [identitySession, auctionSession] = sessions as [
-    Http2SessionManager,
-    Http2SessionManager,
-  ];
+  const identitySession = new Http2SessionManager(options.identityUrl);
+  const auctionSession = new Http2SessionManager(options.auctionUrl);
   const interceptors = [presentServiceToken(options.serviceToken)];
   const identity = createClient(
     IdentityService,
@@ -132,7 +127,8 @@ export function createClients(options: {
   return {
     ports: createPorts(identity, auction),
     close() {
-      for (const session of sessions) session.abort();
+      identitySession.abort();
+      auctionSession.abort();
     },
   };
 }

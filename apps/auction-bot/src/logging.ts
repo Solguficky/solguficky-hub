@@ -2,15 +2,29 @@
 // каждого бота (ADR-044, «Процессы и раскладка»).
 export const serviceName = "auction-bot";
 
-// Поля каркаса logging.md, которые бот сейчас пишет. Telegram user id и ник
-// сюда не входят: после разрешения личности пишется `identity_id`.
+export type ErrorCategory =
+  | "authorization"
+  | "invariant"
+  | "dependency_unavailable"
+  | "timeout"
+  | "unexpected";
+
+// Поля каркаса logging.md, которые бот сейчас пишет, и `screen` — какой экран
+// оболочки получил человек. Telegram user id и ник сюда не входят: после
+// разрешения личности пишется `identity_id`.
+//
+// `use_case` бот пока не пишет: в словаре продуктовых сценариев аукционных
+// имён ещё нет, а сценарий вне утверждённого среза не именуется.
 export type LogFields = {
   operation?: string;
-  result?: string;
+  result?: "ok" | "error";
+  duration_us?: number;
   request_id?: string;
   identity_id?: string;
+  error_category?: ErrorCategory;
   error?: string;
   grpc_code?: string;
+  screen?: string;
   signal?: string;
   timeout?: number;
   telegram_environment?: string;

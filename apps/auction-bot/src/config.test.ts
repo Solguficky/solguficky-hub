@@ -74,6 +74,29 @@ describe("readConfig", () => {
     );
   });
 
+  it("refuses a bot token with surrounding whitespace", () => {
+    const result = readConfig({ ...base, AUCTION_BOT_TOKEN: "123:auction\n" });
+    expect(result).toEqual({
+      ok: false,
+      error: "AUCTION_BOT_TOKEN has surrounding whitespace",
+    });
+  });
+
+  it("treats an empty service address as unset", () => {
+    const result = readConfig({
+      ...base,
+      IDENTITY_GRPC_URL: "",
+      AUCTION_GRPC_URL: "",
+    });
+    expect(result).toEqual({
+      ok: true,
+      config: expect.objectContaining({
+        identityUrl: "http://127.0.0.1:50051",
+        auctionUrl: "http://127.0.0.1:8081",
+      }),
+    });
+  });
+
   it("keeps token values out of every refusal", () => {
     const result = readConfig({ ...base, AUCTION_BOT_SERVICE_TOKEN: " t " });
     expect(JSON.stringify(result)).not.toContain("123:auction");

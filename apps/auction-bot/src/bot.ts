@@ -3,9 +3,9 @@ import { Bot, type Context, GrammyError } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
 import type { TelegramEnvironment } from "./config.js";
-import { renderEntryScreen } from "./entry-screen.js";
-import type { Logger } from "./logging.js";
-import { routeAuctionCallback } from "./route.js";
+import { type AuctionEntryScreen, renderEntryScreen } from "./entry-screen.js";
+import type { LogFields, Logger } from "./logging.js";
+import { type RouteOutcome, routeAuctionCallback } from "./route.js";
 
 export type BotOptions = {
   token: string;
@@ -16,7 +16,7 @@ export type BotOptions = {
   botInfo?: UserFromGetMe;
 };
 
-type UpdateContext = Context & { requestId: string };
+type UpdateContext = Context & { requestId: string; startedAt: bigint };
 
 // Адаптер grammY: Telegram заканчивается здесь. Маршрут и оболочка Telegram
 // не знают, бот хаба этот модуль не импортирует (ADR-044).
@@ -29,6 +29,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
 
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();
+    ctx.startedAt = process.hrtime.bigint();
     return next();
   });
 
@@ -39,9 +40,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     const screen = renderEntryScreen({ kind: "welcome" });
     await ctx.reply(screen.text);
     logger.info("update handled", {
-      operation: "start",
-      result: "welcome",
-      request_id: ctx.requestId,
+      ...frame(ctx, "start"),
+      result: "ok",
+      screen: "welcome",
     });
   });
 
@@ -51,7 +52,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     await ctx.answerCallbackQuery().catch((cause: unknown) => {
       logger.warn("answerCallbackQuery failed", {
         request_id: ctx.requestId,
-        error: describe(cause),
+        error: messageOf(cause),
       });
     });
     const outcome = await routeAuctionCallback({
@@ -64,52 +65,102 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       },
       data: ctx.callbackQuery.data,
     });
-    const fields = {
-      operation: "callback",
-      result: outcome.screen.kind,
-      request_id: ctx.requestId,
-      ...(outcome.identityId === undefined
-        ? {}
-        : { identity_id: outcome.identityId }),
-    };
-    if (outcome.failure === undefined) {
-      logger.info("update handled", fields);
-    } else {
-      logger.error("dependency unavailable", {
-        ...fields,
-        error: describe(outcome.failure),
-      });
-    }
     const screen = renderEntryScreen(outcome.screen);
+    const markup = {
+      reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
+    };
     try {
-      await ctx.editMessageText(screen.text, {
-        reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
-      });
+      await ctx.editMessageText(screen.text, markup);
     } catch (cause) {
+      if (!(cause instanceof GrammyError)) throw cause;
       // Тот же экран после повторного нажатия — не отказ.
-      if (
-        cause instanceof GrammyError &&
-        cause.description.includes("message is not modified")
-      ) {
-        return;
+      if (cause.description.includes("message is not modified")) {
+        // ничего не показываем
+      } else if (notEditable(cause.description)) {
+        // Сообщение не редактируется — ответ уходит новым сообщением
+        // (бриф ботов, «Правила края при отказах Telegram»).
+        await ctx.reply(screen.text, markup);
+      } else {
+        throw cause;
       }
-      logger.warn("editMessageText failed", {
-        request_id: ctx.requestId,
-        error: describe(cause),
-      });
+    } finally {
+      log(logger, ctx, outcome);
     }
   });
 
   bot.catch((failure) => {
     logger.error("update failed", {
-      request_id: failure.ctx.requestId,
-      error: describe(failure.error),
+      ...frame(failure.ctx, "update"),
+      result: "error",
+      error_category: "unexpected",
+      error: messageOf(failure.error),
     });
   });
 
   return bot;
 }
 
-function describe(cause: unknown): string {
+function frame(ctx: UpdateContext, operation: string): LogFields {
+  return {
+    operation,
+    request_id: ctx.requestId,
+    duration_us: Number((process.hrtime.bigint() - ctx.startedAt) / 1000n),
+  };
+}
+
+// Исход экрана — в поле `screen`; `result` и класс отказа — по logging.md.
+function log(logger: Logger, ctx: UpdateContext, outcome: RouteOutcome): void {
+  const fields: LogFields = {
+    ...frame(ctx, "callback"),
+    screen: outcome.screen.kind,
+    ...(outcome.identityId === undefined
+      ? {}
+      : { identity_id: outcome.identityId }),
+  };
+  if (outcome.failure !== undefined) {
+    logger.error("update handled", {
+      ...fields,
+      result: "error",
+      error_category: outcome.failure.category,
+      error: outcome.failure.message,
+      ...(outcome.failure.grpcCode === undefined
+        ? {}
+        : { grpc_code: outcome.failure.grpcCode }),
+    });
+    return;
+  }
+  const category = refusalCategory(outcome.screen);
+  if (category === undefined) {
+    logger.info("update handled", { ...fields, result: "ok" });
+  } else {
+    logger.info("update handled", {
+      ...fields,
+      result: "error",
+      error_category: category,
+    });
+  }
+}
+
+function refusalCategory(
+  screen: AuctionEntryScreen,
+): "authorization" | "invariant" | undefined {
+  switch (screen.kind) {
+    case "denied":
+      return "authorization";
+    case "outdated":
+      return "invariant";
+    default:
+      return undefined;
+  }
+}
+
+function notEditable(description: string): boolean {
+  return (
+    description.includes("message can't be edited") ||
+    description.includes("message to edit not found")
+  );
+}
+
+function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }

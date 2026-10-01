@@ -46,8 +46,9 @@ public class ServiceTokenWiringTests
         foreach (var (callee, callers) in Callers)
         {
             // Бота аукциона hub не поднимает: его пару проверяет
-            // AuctionBotWiringTests на профиле auction-bot.
-            foreach (var caller in callers.Where(tokens.ContainsKey))
+            // AuctionBotWiringTests на профиле auction-bot. Исключение
+            // названо по имени, чтобы выпавший из hub вызывающий падал здесь.
+            foreach (var caller in callers.Where(caller => caller != AuctionBot))
             {
                 var callerSide = tokens[caller][$"{Env(caller)}_SERVICE_TOKEN"];
                 var calleeSide = tokens[callee][$"{Env(callee)}_CALLER_TOKEN_{Env(caller)}"];

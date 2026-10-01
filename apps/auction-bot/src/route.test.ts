@@ -1,3 +1,4 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
   type AuctionBotPorts,
   encodeAuctionCallback,
@@ -73,14 +74,15 @@ describe("routeAuctionCallback", () => {
     ["a foreign button", "v1:meetup:x"],
     ["an outdated version", "v9:auc:lot:x"],
     ["a malformed button", "v1:auc:lot:"],
-  ])("answers %s with the outdated screen", async (_name, data) => {
-    const outcome = await routeAuctionCallback({
-      ports: ports(identity({ globalRoles: ["public"] })),
-      user,
-      data,
-    });
-    expect(outcome.screen).toEqual({ kind: "outdated" });
-  });
+  ])(
+    "answers %s with the outdated screen without calling neighbours",
+    async (_name, data) => {
+      const p = ports(new Error("Identity must not be called"));
+      const outcome = await routeAuctionCallback({ ports: p, user, data });
+      expect(outcome).toEqual({ screen: { kind: "outdated" } });
+      expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
+    },
+  );
 
   it("fails closed when Identity is unavailable", async () => {
     const failure = new Error("connect ECONNREFUSED");
@@ -90,14 +92,17 @@ describe("routeAuctionCallback", () => {
       user,
       data: lotButton,
     });
-    expect(outcome).toEqual({ screen: { kind: "unavailable" }, failure });
+    expect(outcome).toEqual({
+      screen: { kind: "unavailable" },
+      failure: { category: "unexpected", message: "connect ECONNREFUSED" },
+    });
     expect(p.auction.getLot).not.toHaveBeenCalled();
   });
 
   it("answers unavailable when Auction refuses the read", async () => {
     const p = ports(identity({ globalRoles: ["public"] }));
     vi.mocked(p.auction.getLot).mockRejectedValueOnce(
-      new Error("UNIMPLEMENTED"),
+      new ConnectError("not implemented", Code.Unimplemented),
     );
     const outcome = await routeAuctionCallback({
       ports: p,
@@ -106,5 +111,18 @@ describe("routeAuctionCallback", () => {
     });
     expect(outcome.screen).toEqual({ kind: "unavailable" });
     expect(outcome.identityId).toBeDefined();
+    expect(outcome.failure).toMatchObject({
+      category: "dependency_unavailable",
+      grpcCode: "Unimplemented",
+    });
+  });
+
+  it("classifies an expired deadline as a timeout", async () => {
+    const outcome = await routeAuctionCallback({
+      ports: ports(new ConnectError("deadline", Code.DeadlineExceeded)),
+      user,
+      data: lotButton,
+    });
+    expect(outcome.failure?.category).toBe("timeout");
   });
 });

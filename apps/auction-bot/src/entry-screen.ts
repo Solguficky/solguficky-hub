@@ -45,7 +45,7 @@ export function renderEntryScreen(screen: AuctionEntryScreen): RenderedScreen {
         text:
           screen.reason === "blocked"
             ? "Доступ к аукциону закрыт."
-            : "Чтобы участвовать в аукционе, отправьте /start.",
+            : "Участие в аукционе пока не открыто.",
         keyboard: [],
       };
     case "outdated":
