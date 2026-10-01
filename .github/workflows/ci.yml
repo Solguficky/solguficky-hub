@@ -26,6 +26,7 @@ jobs:
       telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
+      auction-bot-ui: ${{ steps.filter.outputs.auction-bot-ui }}
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
@@ -86,6 +87,10 @@ jobs:
               # страницу, поэтому её правка обязана поднимать эту джобу: иначе
               # самое частое изменение сайта проходит мимо собственных тестов.
               - 'docs/published/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            auction-bot-ui:
+              - 'shared/typescript/auction-bot-ui/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             apphost:
@@ -413,6 +418,34 @@ jobs:
           name: playwright-report
           path: apps/community-site-api/playwright-report/
           retention-days: 7
+
+  # Общий пакет аукционного интерфейса ботов (ADR-044). Typecheck сначала
+  # собирает пакет: test/boundary.typecheck.ts проверяет `exports` по собранным
+  # декларациям, тем же путём, каким пакет увидит приложение.
+  auction-bot-ui:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.auction-bot-ui == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: shared/typescript/auction-bot-ui/package-lock.json
+      - run: npm ci
+        working-directory: shared/typescript/auction-bot-ui
+      - run: npm run typecheck
+        working-directory: shared/typescript/auction-bot-ui
+      - run: npm run lint
+        working-directory: shared/typescript/auction-bot-ui
+      - run: npm test
+        working-directory: shared/typescript/auction-bot-ui
 
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
   # джобы правка графа или setup-а ресурса, которая не собирается, проходит

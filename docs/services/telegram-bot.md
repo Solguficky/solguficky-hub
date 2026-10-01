@@ -210,7 +210,7 @@ TypeScript, Node.js LTS, grammY. Плагин Conversations для продук�
 v<версия>:<домен>:<действие>[:<аргумент>]…
 ```
 
-Домены: `nav`, `meetup`, `manage`, `mm`, `notify`, `bc`. Идентификаторы сходки и материала — UUIDv7 в base64url (22 символа). Публичный номер сходки в `callback_data` не используется: он не является ключом связи, перебираем и известен только после вставки ([ADR-023](../decisions/ADR-023-meetup-public-number.md)).
+Домены: `nav`, `meetup`, `manage`, `mm`, `notify`, `bc`. Домен `auc` принадлежит общему пакету `shared/typescript/auction-bot-ui` ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)): его кнопки одинаковы в обоих ботах, пишет и разбирает их пакет, а не `parse-callback.ts`. Чужой домен пакет отклоняет ошибкой `AuctionCallbackError` с причиной `foreign`, неизвестную версию — с `outdated`, остальное — с `malformed`. Идентификаторы сходки и материала — UUIDv7 в base64url (22 символа). Публичный номер сходки в `callback_data` не используется: он не является ключом связи, перебираем и известен только после вставки ([ADR-023](../decisions/ADR-023-meetup-public-number.md)).
 
 | Кадр | Кнопка | `callback_data` | Байт |
 |---|---|---|---|
