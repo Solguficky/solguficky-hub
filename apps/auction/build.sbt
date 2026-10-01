@@ -155,5 +155,25 @@ lazy val auction = (project in file("."))
     // L1-сьют называется `*IntegrationSpec`; `AUCTION_INTEGRATION_TESTS=1`
     // оставляет только их, без переменной — только остальные.
     Test / testOptions += Tests.Filter(suite => suite.endsWith("IntegrationSpec") == integrationTests),
+    // Пропуск не равен прохождению (testing-strategy.md), а готового флага у
+    // ScalaTest нет: `ignore`, отменённый `assume` и `pending` sbt считает
+    // прохождением. Итог прогона переводится в провал здесь, а не в рецепте:
+    // CI зовёт `sbt test` напрямую, и проверка в justfile его бы не застала.
+    // Сьюты, которые отсёк фильтр уровня выше, не запускаются и пропуском не
+    // считаются. `testOnly` и `testQuick` идут мимо `executeTests` и правило
+    // не исполняют: рецепты и CI зовут только `test`.
+    Test / executeTests := {
+      val output = (Test / executeTests).value
+      val suites = output.events.values
+      val skipped =
+        suites.map(s => s.ignoredCount + s.canceledCount + s.pendingCount + s.skippedCount).sum
+      if (skipped == 0) output
+      else {
+        streams.value.log.error(
+          s"пропущено тестов: $skipped — пропуск не равен прохождению, прогон считается упавшим"
+        )
+        output.copy(overall = TestResult.Failed)
+      }
+    },
     run / fork := true
   )

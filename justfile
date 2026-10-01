@@ -195,7 +195,9 @@ verify-changed:
     @recipes=$(sh tools/verify/select-recipes.sh) && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes
 
 # Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет
-# прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`.
+# прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`,
+# у vitest reporter'ом vitest.fail-on-skip.ts, у ScalaTest обёрткой
+# `Test / executeTests` в build.sbt.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
 # умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
@@ -734,8 +736,8 @@ contour-up *args="":
 # Провод бота (L2, вход B RFC-012): `bot.handleUpdate` с настоящими клиентами
 # Identity и Meetups на топологии, которую поднимает Contour.Host. Сценарии
 # лежат в tests/contour/bot-wire, kit и зависимости — у бота. Нужно то же, что
-# `contour-test`, и Node. Пустой набор и забытый `.only` роняют прогон
-# (vitest.contour.config.ts); порога числа тестов у vitest нет — PER-358.
+# `contour-test`, и Node. Пустой набор, забытый `.only` и пропущенный тест
+# роняют прогон (vitest.contour.config.ts); порога числа тестов у vitest нет.
 #
 # Провод бота против настоящих Identity и Meetups; в verify не входит
 contour-bot-test: telegram-bot-proto
