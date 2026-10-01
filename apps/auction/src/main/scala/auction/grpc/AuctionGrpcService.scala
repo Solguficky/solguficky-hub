@@ -47,10 +47,29 @@ final class AuctionGrpcService(lots: LotGateway, catalog: LotCatalogCommands)(us
         catalog.edit(card.viewer, card.lotId, card.title, card.description).map(ResponseMapping.editLotCard)
     }
 
-  // Прокси-лимиты — PER-303: в ядре лота их ещё нет.
-  def setProxyLimit(in: wire.SetProxyLimitRequest): Future[wire.SetProxyLimitResponse] = unimplemented
+  def setProxyLimit(in: wire.SetProxyLimitRequest): Future[wire.SetProxyLimitResponse] =
+    RequestMapping.setProxyLimit(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if !command.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(command) =>
+        lots
+          .setProxyLimit(command.lotId, command.limit, Initiator.Participant(command.acting.participant))
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setProxyLimit(outcome).fold(refuse, Future.successful))
+    }
 
-  def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest): Future[wire.WithdrawProxyLimitResponse] = unimplemented
+  def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest): Future[wire.WithdrawProxyLimitResponse] =
+    RequestMapping.withdrawProxyLimit(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if !command.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(command) =>
+        lots
+          .withdrawProxyLimit(command.lotId, command.withdrawal, Initiator.Participant(command.acting.participant))
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.withdrawProxyLimit(outcome).fold(refuse, Future.successful))
+    }
 
   // Чтение лота и списка лотов аукциона — из проекции, PER-324.
   def getLot(in: wire.GetLotRequest): Future[wire.LotSnapshot] = unimplemented
@@ -64,7 +83,7 @@ final class AuctionGrpcService(lots: LotGateway, catalog: LotCatalogCommands)(us
 
   /**
    * Ответа entity не дождались. Команда могла быть принята, поэтому это `DEADLINE_EXCEEDED`, а не `UNAVAILABLE`: повтор
-   * с тем же `op_id` вернёт исходный ответ, а не поставит ставку второй раз.
+   * с тем же `op_id` вернёт исходный ответ, а не запишет команду второй раз.
    */
   private def awaited[T]: PartialFunction[Throwable, Future[T]] = { case _: TimeoutException =>
     refuse(Status.DEADLINE_EXCEEDED.withDescription("lot did not answer in time"))

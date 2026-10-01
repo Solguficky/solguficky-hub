@@ -62,6 +62,16 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       LotEntity.Bid(placeBid(who, amount, opN), Initiator.Participant(participant(who)), _)
     )
 
+  private def limitOf(who: Int, max: Long, opN: Int) =
+    entity.runCommand[Either[SetProxyLimitRejected, Envelope]](
+      LotEntity.SetLimit(setProxyLimit(who, max, opN), Initiator.Participant(participant(who)), _)
+    )
+
+  private def withdrawOf(who: Int, opN: Int) =
+    entity.runCommand[Either[WithdrawProxyLimitRejected, Envelope]](
+      LotEntity.WithdrawLimit(withdrawProxyLimit(who, opN), Initiator.Participant(participant(who)), _)
+    )
+
   "lot entity" should {
 
     "number the events of the lot by their position in the journal" in {
@@ -162,6 +172,64 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       secondDraft.reply shouldBe Left(DraftLotRejected.LotAlreadyExists)
       beforeSchedule.reply shouldBe Left(OpenLotRejected.LotNotScheduled)
       List(beforeDraft.events, secondDraft.events, beforeSchedule.events) shouldBe List(Nil, Nil, Nil)
+    }
+
+    "write a war of two proxies as one transaction per command with exactly one derived bid in each" in {
+      openThrough()
+      val first = limitOf(who = 1, max = 200, opN = 4)
+      val second = limitOf(who = 2, max = 150, opN = 5)
+
+      List(first, second).map(_.events.map(_.event.kind)) shouldBe
+        List(List("ProxyLimitSet", "BidPlaced"), List("ProxyLimitSet", "BidPlaced"))
+      List(first, second).foreach { written =>
+        written.events.map(row => (row.transactionId, row.opId, row.occurredAt, row.actor)).distinct.size shouldBe 1
+        written.events.map(_.eventId).distinct.size shouldBe 2
+      }
+      first.reply.map(envelope => (envelope.sequence, envelope.event)) shouldBe
+        Right((4L, LotEvent.ProxyLimitSet(participant(1), money(200))))
+      second.state.sequence shouldBe 7L
+      val trading = tradingOf(second.state.lot)
+      (trading.currentPrice, trading.leader) shouldBe (money(160), Some(participant(1)))
+      trading.proxyLimits shouldBe Map(
+        participant(1) -> limit(200, setSeq = 4),
+        participant(2) -> limit(150, setSeq = 6)
+      )
+    }
+
+    "answer a repeated limit that produced a derived bid with its original response and write nothing (Т-25)" in {
+      openThrough()
+      val first = limitOf(who = 1, max = 200, opN = 4)
+
+      val repeated = limitOf(who = 1, max = 200, opN = 4)
+      entity.restart()
+      val repeatedAfterRestart = limitOf(who = 1, max = 200, opN = 4)
+
+      List(repeated.events, repeatedAfterRestart.events) shouldBe List(Nil, Nil)
+      List(repeated.reply, repeatedAfterRestart.reply) shouldBe List(first.reply, first.reply)
+    }
+
+    "restore proxy limits with their sequence after a restart from the journal alone (Т-16)" in {
+      openThrough()
+      limitOf(who = 1, max = 200, opN = 4)
+      val beforeRestart = limitOf(who = 2, max = 150, opN = 5).state
+
+      val restarted = entity.restart().state
+
+      restarted shouldBe beforeRestart
+      tradingOf(restarted.lot).proxyLimits shouldBe
+        Map(participant(1) -> limit(200, setSeq = 4), participant(2) -> limit(150, setSeq = 6))
+    }
+
+    "withdraw a limit and refuse a second withdrawal without writing it" in {
+      openThrough()
+      limitOf(who = 1, max = 200, opN = 4)
+      val withdrawn = withdrawOf(who = 1, opN = 5)
+      val again = withdrawOf(who = 1, opN = 6)
+
+      withdrawn.events.map(_.event.kind) shouldBe List("ProxyLimitWithdrawn")
+      tradingOf(withdrawn.state.lot).proxyLimits shouldBe Map.empty
+      again.reply shouldBe Left(WithdrawProxyLimitRejected.NoActiveProxyLimit)
+      again.events shouldBe Nil
     }
 
     "reply to a read with the state of the lot" in {

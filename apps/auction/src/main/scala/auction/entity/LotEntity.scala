@@ -63,6 +63,18 @@ object LotEntity {
   final case class Bid(command: PlaceBid, initiator: Initiator, replyTo: ActorRef[Either[PlaceBidRejected, Envelope]])
       extends Command
 
+  final case class SetLimit(
+      command: SetProxyLimit,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[SetProxyLimitRejected, Envelope]]
+  ) extends Command
+
+  final case class WithdrawLimit(
+      command: WithdrawProxyLimit,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[WithdrawProxyLimitRejected, Envelope]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Lot]) extends Command
 
   /**
@@ -82,7 +94,7 @@ object LotEntity {
     EventSourcedBehavior[Command, StoredLotEvent, State](
       persistenceId = PersistenceId(TypeKey.name, lotId),
       emptyState = State(Lot.initial, 0),
-      commandHandler = (state, command) => handle(state.lot, command, clock, newId),
+      commandHandler = (state, command) => handle(state, command, clock, newId),
       eventHandler = (state, stored) => {
         val sequence = state.sequence + 1
         State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored)), sequence)
@@ -90,7 +102,9 @@ object LotEntity {
     ).snapshotAdapter(LotJournal.snapshotAdapter)
       .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
 
-  private def handle(lot: Lot, command: Command, clock: Clock, newId: () => UUID): Effect[StoredLotEvent, State] =
+  /** Номер следующей строки — `state.sequence + 1`, та же арифметика, что в `eventHandler`. */
+  private def handle(state: State, command: Command, clock: Clock, newId: () => UUID): Effect[StoredLotEvent, State] = {
+    val lot = state.lot
     command match {
       case Draft(draft, initiator, replyTo) =>
         record(lot, Lot.decide(lot, draft), draft.opId, initiator, replyTo, clock, newId)
@@ -99,15 +113,21 @@ object LotEntity {
       case Open(open, initiator, replyTo) =>
         record(lot, Lot.decide(lot, open), open.opId, initiator, replyTo, clock, newId)
       case Bid(bid, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, bid, BidId(newId())), bid.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, bid, BidId(newId()), BidId(newId())), bid.opId, initiator, replyTo, clock, newId)
+      case SetLimit(limit, initiator, replyTo) =>
+        val decision = Lot.decide(lot, limit, state.sequence + 1, BidId(newId()))
+        record(lot, decision, limit.opId, initiator, replyTo, clock, newId)
+      case WithdrawLimit(withdrawal, initiator, replyTo) =>
+        record(lot, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, clock, newId)
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }
+  }
 
   /**
    * Все события одной команды пишутся одним `persist` — одним `AtomicWrite`, который плагин JDBC кладёт в базу одной
-   * транзакцией, — и несут один `op_id`, одну транзакцию, один аукцион и одно время решения (ADR-047). Отказ событий не
-   * пишет.
+   * транзакцией, — и несут один `op_id`, одну транзакцию, один аукцион и одно время решения (ADR-047): событие команды
+   * первым, производные за ним. У каждого события свой `event_id`. Отказ событий не пишет.
    */
   private def record[R](
       lot: Lot,
@@ -121,7 +141,7 @@ object LotEntity {
     decision match {
       case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
       case Right(Decision.Repeated(original)) => Effect.reply(replyTo)(Right(original))
-      case Right(Decision.Accepted(event)) =>
+      case Right(Decision.Accepted(event, derived)) =>
         val auction = Lot
           .auctionOf(lot, event)
           .getOrElse(
@@ -129,7 +149,7 @@ object LotEntity {
           )
         val transaction = Transaction(newId(), opId, auction, clock.instant(), initiator)
         Effect
-          .persist(List(LotJournal.store(newId(), transaction, event)))
+          .persist((event :: derived).map(LotJournal.store(newId(), transaction, _)))
           .thenReply(replyTo)(written => Right(firstOf(written.lot, opId)))
     }
 

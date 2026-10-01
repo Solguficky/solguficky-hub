@@ -3,6 +3,10 @@ package auction.entity
 import auction.lot.Envelope
 import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
+import auction.lot.SetProxyLimit
+import auction.lot.SetProxyLimitRejected
+import auction.lot.WithdrawProxyLimit
+import auction.lot.WithdrawProxyLimitRejected
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout
 
@@ -22,6 +26,20 @@ trait LotGateway {
    * ответ.
    */
   def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]]
+
+  /** Прокси-лимит лоту; неудачное `Future` значит то же, что у ставки. */
+  def setProxyLimit(
+      lotId: UUID,
+      command: SetProxyLimit,
+      initiator: Initiator
+  ): Future[Either[SetProxyLimitRejected, Envelope]]
+
+  /** Снятие прокси-лимита; неудачное `Future` значит то же, что у ставки. */
+  def withdrawProxyLimit(
+      lotId: UUID,
+      command: WithdrawProxyLimit,
+      initiator: Initiator
+  ): Future[Either[WithdrawProxyLimitRejected, Envelope]]
 }
 
 object LotGateway {
@@ -35,5 +53,23 @@ object LotGateway {
         sharding
           .entityRefFor(LotEntity.TypeKey, lotId.toString)
           .ask(replyTo => LotEntity.Bid(command, initiator, replyTo))
+
+      def setProxyLimit(
+          lotId: UUID,
+          command: SetProxyLimit,
+          initiator: Initiator
+      ): Future[Either[SetProxyLimitRejected, Envelope]] =
+        sharding
+          .entityRefFor(LotEntity.TypeKey, lotId.toString)
+          .ask(replyTo => LotEntity.SetLimit(command, initiator, replyTo))
+
+      def withdrawProxyLimit(
+          lotId: UUID,
+          command: WithdrawProxyLimit,
+          initiator: Initiator
+      ): Future[Either[WithdrawProxyLimitRejected, Envelope]] =
+        sharding
+          .entityRefFor(LotEntity.TypeKey, lotId.toString)
+          .ask(replyTo => LotEntity.WithdrawLimit(command, initiator, replyTo))
     }
 }

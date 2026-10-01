@@ -52,6 +52,8 @@
       "deadline": "2026-10-07T18:00:00Z"
     },
     "bidPlaced": null,
-    "lotScheduled": null
+    "lotScheduled": null,
+    "proxyLimitSet": null,
+    "proxyLimitWithdrawn": null
   }
 }

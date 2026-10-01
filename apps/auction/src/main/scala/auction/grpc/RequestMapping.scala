@@ -9,8 +9,12 @@ import auction.lot.Money
 import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
+import auction.lot.SetProxyLimit
+import auction.lot.WithdrawProxyLimit
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 
@@ -27,6 +31,12 @@ final case class Acting(participant: ParticipantId, viewer: Viewer)
 
 /** Ставка, отображённая в домен: лот, которому она адресована, и сама команда. */
 final case class BidCommand(lotId: UUID, bid: PlaceBid, acting: Acting)
+
+/** Прокси-лимит, отображённый в домен; участник лимита — тот, от чьего имени действует смотрящий. */
+final case class LimitCommand(lotId: UUID, limit: SetProxyLimit, acting: Acting)
+
+/** Снятие прокси-лимита, отображённое в домен. */
+final case class WithdrawalCommand(lotId: UUID, withdrawal: WithdrawProxyLimit, acting: Acting)
 
 /** Команда каталога в домене: создание и правка несут одно и то же. */
 final case class CardCommand(lotId: LotId, title: String, description: String, viewer: Viewer)
@@ -49,6 +59,21 @@ object RequestMapping {
       amount <- money("amount", request.amount)
       opId <- uuidV7("op_id", request.opId)
     } yield BidCommand(lotId, PlaceBid(acting.participant, amount, OpId(opId), BidSource.Bot), acting)
+
+  def setProxyLimit(request: SetProxyLimitRequest): Either[FormError, LimitCommand] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      max <- money("max", request.max)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LimitCommand(lotId, SetProxyLimit(acting.participant, max, OpId(opId)), acting)
+
+  def withdrawProxyLimit(request: WithdrawProxyLimitRequest): Either[FormError, WithdrawalCommand] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield WithdrawalCommand(lotId, WithdrawProxyLimit(acting.participant, OpId(opId)), acting)
 
   def card(
       viewer: Option[ViewerMessage],

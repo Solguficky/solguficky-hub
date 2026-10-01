@@ -99,6 +99,12 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
     replies.receiveMessage(patience)
   }
 
+  private def limitOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int, max: Long, opN: Int) = {
+    val replies = kit.createTestProbe[Either[SetProxyLimitRejected, Envelope]]()
+    entity ! LotEntity.SetLimit(setProxyLimit(who, max, opN), Initiator.Participant(participant(who)), replies.ref)
+    replies.receiveMessage(patience)
+  }
+
   private def read(kit: ActorTestKit, entity: ActorRef[LotEntity.Command]): Lot = {
     val replies = kit.createTestProbe[Lot]()
     entity ! LotEntity.Get(replies.ref)
@@ -143,6 +149,41 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
         written.map(_.serializerId).distinct shouldBe List(jacksonId(second))
         written.flatMap(row => floatingPoints(row.payload)) shouldBe Nil
       } finally second.shutdownTestKit()
+    }
+
+    "restore proxy limits with the journal positions that set them and act on them after a restart (Т-16)" in {
+      // Через replay и через snapshot: `setSeq` в payload нет, и после snapshot его держит только он.
+      List(LotEntity.DefaultSnapshotEvery, 2).foreach { snapshotEvery =>
+        val database = freshDatabase()
+        val id = UUID.randomUUID().toString
+        val first = node(database)
+        try {
+          val entity = lot(first, id, snapshotEvery)
+          openOn(first, entity)
+          limitOn(first, entity, who = 1, max = 200, opN = 4)
+          limitOn(first, entity, who = 2, max = 150, opN = 5)
+        } finally first.shutdownTestKit()
+
+        val second = node(database)
+        try {
+          val entity = lot(second, id, snapshotEvery)
+          val restored = tradingOf(read(second, entity))
+
+          restored.proxyLimits shouldBe Map(
+            participant(1) -> limit(200, setSeq = 4),
+            participant(2) -> limit(150, setSeq = 6)
+          )
+          (restored.currentPrice, restored.leader) shouldBe (money(160), Some(participant(1)))
+          // Лимит восстановлен действующим: ручная ставка выше чужого лимита получает ответ прокси лидера.
+          bidOn(second, entity, who = 3, amount = 170, opN = 6).map(_.sequence) shouldBe Right(8L)
+          (tradingOf(read(second, entity)).currentPrice, tradingOf(read(second, entity)).leader) shouldBe
+            (money(180), Some(participant(1)))
+          val written = journal(database, id)
+          written.map(_.sequence) shouldBe (1L to 9L).toList
+          rowsWithOp(database, id, opN = 6) shouldBe 2
+          if (snapshotEvery == 2) snapshots(database, id) should not be empty
+        } finally second.shutdownTestKit()
+      }
     }
 
     "recover from a snapshot and the events after it with the deduplication window of the snapshot" in {
