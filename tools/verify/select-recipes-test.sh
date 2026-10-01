@@ -61,7 +61,10 @@ assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
 assert_selects "aspire.config.json selects apphost" \
     "$always apphost-config-check apphost-build apphost-test apphost-chart-test" aspire.config.json
+assert_selects "shared package selects its own recipes" \
+    "$always auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test" shared/typescript/auction-bot-ui/src/index.ts
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md
+assert_selects "shared prefix match stops at the directory" "$always" shared/typescript/auction-bot-ui-old/readme.md
 
 # A CI filter without local recipes and a glob form the selector does not
 # understand both fail loudly instead of selecting less. The fixtures edit an

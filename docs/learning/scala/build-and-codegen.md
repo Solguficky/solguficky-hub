@@ -2,7 +2,7 @@
 
 Первый Scala-компонент репозитория — `apps/auction`. Разбор объясняет, как устроена его сборка: почему `build.sbt` не конфигурационный файл, что такое ключ и его область, куда попадает сгенерированный из Protobuf код и чем всё это отличается от MSBuild, который читатель уже знает.
 
-Опора — дифф ветки `feature/PER-143` и прогоны `sbt` из той же сессии. Решение об инструменте сборки принято [ADR-048](../../decisions/ADR-048-auction-sbt-and-scalapb-build.md), нормативная форма кода — [languages/scala.md](../../standards/languages/scala.md).
+Опора — дифф ветки `feature/PER-143` и прогоны `sbt` из той же сессии; разделы про обёртку `executeTests` — дифф `build.sbt` ветки `feature/PER-358` и пробы временными сьютами. Решение об инструменте сборки принято [ADR-048](../../decisions/ADR-048-auction-sbt-and-scalapb-build.md), нормативная форма кода — [languages/scala.md](../../standards/languages/scala.md).
 
 ## Механика
 
@@ -96,6 +96,40 @@ s"-release:${IO.read(baseDirectory.value / ".java-version").trim}"
 
 `-release` заставляет компилировать против API указанной платформы, а не той, на которой запущен компилятор. Без него локальная сборка на JDK 25 и сборка CI на другом JDK расходятся молча; с ним несовпадение — ошибка компиляции.
 
+### Переопределение задачи через её же прежнее значение
+
+ScalaTest, как и Vitest, считает прогон с `ignore` успешным. Флага вроде `--fail-skips` у .NET у него нет. Правило «пропуск не равен прохождению» поэтому исполняет сборка: задача, которая запускает тесты, переопределена в `build.sbt`.
+
+```scala
+Test / executeTests := {
+  val output = (Test / executeTests).value
+  val suites = output.events.values
+  val skipped =
+    suites.map(s => s.ignoredCount + s.canceledCount + s.pendingCount + s.skippedCount).sum
+  if (skipped == 0) output
+  else {
+    streams.value.log.error(s"пропущено тестов: $skipped — …")
+    output.copy(overall = TestResult.Failed)
+  }
+}
+```
+
+Внутри определения `Test / executeTests` стоит `(Test / executeTests).value` — ссылка на саму себя. В обычном коде это была бы бесконечная рекурсия. В sbt нет: `:=` не вызывает функцию, а заменяет запись в графе ключей, и `.value` справа указывает на **прежнее** определение ключа, то, что было до этой строки. Новая задача оборачивает старую: старая запускает тесты, новая читает её результат.
+
+Ближайший аналог в MSBuild — таргет с `AfterTargets="VSTest"`, который читает выход предыдущего. Разница в том, что здесь обёртка **заменяет** результат задачи для всех, кто от неё зависит, а не просто исполняется следом.
+
+`executeTests` отдаёт значение `Tests.Output`: итог `overall` и словарь `events` — по `SuiteResult` на сьют. Счётчики в `SuiteResult` уже разложены по видам: `ignoredCount`, `canceledCount`, `pendingCount`, `skippedCount`. Какой из них что значит, решает ScalaTest, а не sbt. Проверено пробой: `"…" ignore {}` приходит как ignored, `assume(false)` — как canceled, `pending` — как pending.
+
+Задача `test` зависит от `executeTests` и бросает `TestsFailedException`, если `overall` не `Passed`. Поэтому подмены `overall` на `Failed` достаточно, чтобы `sbt test` завершился кодом 1. При этом ScalaTest успевает напечатать своё «All tests passed»: он судит только о провалах, а итог переписан уже после него.
+
+### Не все тестовые задачи идут через `executeTests`
+
+`test` строится из `executeTests`, а `testOnly` — нет: у него своё определение, которое запускает выбранные сьюты в обход переопределённого ключа. Проверено: сьют с `ignore`, запущенный `sbt "testOnly auction.ZzSkipProbeSpec"`, даёт `ignored 1` и код 0. Правило в этой форме исполняет только `test`. Рецепты и CI зовут именно его, а `testOnly` остаётся инструментом ручного прогона.
+
+`testQuick` по документации sbt отбирает сьюты тем же синтаксисом, что `testOnly`, и, судя по этому, идёт тем же путём. Пробой это не проверено: проверь сам сьютом с `ignore` и `sbt testQuick`.
+
+Сьюты, которые отсёк `Tests.Filter` в `testOptions`, не запускаются вовсе. В `events` их нет, и пропуском они не считаются. Обратная сторона: если фильтр отсёк **все** сьюты, `events` пуст, сумма ноль, и прогон зелёный, хотя не исполнилось ничего. Это уже вопрос порога числа тестов, а не пропуска.
+
 ## Урок
 
 Переносится на любой следующий компонент репозитория:
@@ -103,6 +137,7 @@ s"-release:${IO.read(baseDirectory.value / ".java-version").trim}"
 - **Кодогенерация принадлежит сборке языка, а не отдельному шагу.** У .NET это `Grpc.Tools` внутри `dotnet build`, у Scala — `sbt-protoc` внутри `compile`. Общий frontend вроде `buf` удобен там, где генератор — отдельный бинарник, и мешает там, где генератор поставляется библиотекой сборки.
 - **Фильтр входа и состав артефакта — независимые вопросы.** Инструмент, сузивший генерацию, не обязан сузить упаковку, и проверять это надо содержимым `target/classes`, а не чтением конфигурации.
 - **Версия платформы объявляется один раз и читается сборкой.** Файл, который читает только CI, гарантирует расхождение: локальная сборка о нём не знает.
+- **Правило гейта живёт в сборке, а не в обёртке вокруг неё.** CI зовёт `sbt test` напрямую, и проверка в рецепте `justfile` его бы не застала. Обёртка задачи действует на любой вызов `test`, но не на соседние задачи: прежде чем полагаться на правило, проверь, через какую задачу оно реально проходит. Тот же выбор в TypeScript — reporter в конфиге Vitest ([typescript/testing.md](../typescript/testing.md)).
 
 ## Почему так, а не иначе
 
@@ -116,6 +151,16 @@ s"-release:${IO.read(baseDirectory.value / ".java-version").trim}"
 Выбран sbt с `sbt-protoc`. Решающим был не вкус, а то, что задача на контракты аукциона заблокирована этим контуром и вводит gRPC: стабы даёт `sbt-pekko-grpc` поверх ScalaPB, то есть плагин того же инструмента. Цена — третий `protoc` в репозитории после `BUF_VERSION` и того, что внутри `Grpc.Tools`.
 
 Холодный старт гасится не сервером, а составом команд: `just auction-verify` выполняет формат, сборку и тесты одной сессией вместо трёх.
+
+Как ронять прогон на пропущенном тесте:
+
+| Вариант | Цена |
+|---|---|
+| Разбор лога sbt в рецепте `justfile` | работает только через `just`; CI зовёт `sbt test` напрямую и правило обходит. К тому же разбор текстового лога ломается от смены формата вывода |
+| Свой `Reporter` ScalaTest через `Test / testOptions` | reporter видит события, но кода возврата sbt не задаёт: его решает итог задачи. Пришлось бы бросать исключение изнутри reporter'а, и сбой выглядел бы как авария, а не как провал прогона |
+| Переопределить `Test / test` | `test` возвращает `Unit`, и счётчиков у него уже нет. Пришлось бы заново вызывать `executeTests` внутри и дублировать логику вывода итогов |
+| Переопределить `Test / testResultLogger` | логгер получает тот же `Tests.Output`, но это хук печати: правило провала, спрятанное в логгере, легко потерять при замене формата вывода. Роняет ли бросок из логгера задачу, не проверялось |
+| Обёртка `Test / executeTests` (выбрано) | правило меняет итог там, где он рождается, и `test` роняет прогон штатным `TestsFailedException`. Цена — `testOnly` правило не исполняет |
 
 ## Схема
 
@@ -132,6 +177,19 @@ flowchart TD
     D -.->|"без фильтра ресурсов<br/>уезжает целиком"| I
 ```
 
+Где правило о пропуске стоит в графе тестовых задач:
+
+```mermaid
+flowchart TD
+    T["sbt test"] --> W["Test / executeTests<br/>обёртка из build.sbt"]
+    W --> O["прежний executeTests<br/>запускает сьюты"]
+    O --> R["Tests.Output<br/>overall + SuiteResult на сьют"]
+    R --> W
+    W -->|"ignored + canceled + pending + skipped > 0"| F["overall = Failed"]
+    F --> X["TestsFailedException<br/>код 1"]
+    Q["sbt testOnly"] -.->|"мимо обёртки"| P["запуск выбранных сьютов<br/>код 0 при ignore"]
+```
+
 ## Первоисточники
 
 - [sbt Reference Manual: ключи и области](https://www.scala-sbt.org/1.x/docs/Scopes.html) — сюда идут за тем, как читается `Compile / PB.generate / includeFilter`.
@@ -139,6 +197,8 @@ flowchart TD
 - [ScalaPB: генерация и sbt-protoc](https://scalapb.github.io/docs/sbt-settings/) — настройки `PB.targets`, `PB.protoSources` и опции генератора.
 - [ScalaPB: standalone-компилятор](https://scalapb.github.io/docs/scalapbc/) — здесь сказано, что native-бинарь плагина есть только для Linux и macOS; на этом держится отказ от варианта с buf.
 - [Scala 3: совместимость и LTS](https://www.scala-lang.org/blog/2022/08/17/long-term-compatibility-plans.html) — откуда взялся единый суффикс `_3`.
+- [sbt: Testing](https://www.scala-sbt.org/1.x/docs/Testing.html) — `test`, `testOnly`, `testQuick`, `testOptions` и `Tests.Filter`: какие задачи вообще есть и чем отбирают сьюты.
+- [Standard: стратегия тестирования](../../standards/testing/testing-strategy.md) — правило «пропуск не равен прохождению», ради которого обёртка и написана.
 
 ## Проверь себя
 
@@ -146,3 +206,6 @@ flowchart TD
 - **Попали ли чужие схемы в артефакт?** Только после чистой сборки: `cd apps/auction && sbt -batch "clean; Test/compile"`, затем `ls target/scala-3.3.7/classes`. Печатает `application.conf`, `auction`, `identity`, `logback.xml` — ни `meetups/`, ни `notifications/`, ни `buf.yaml`. Без `clean` проверка врёт: инкрементальная сборка не удаляет ресурсы, скопированные прошлыми прогонами, и каталоги чужих доменов остаются лежать от сборки до правки.
 - **Какая версия Scala реально собирает проект?** `cd apps/auction && sbt -batch "print scalaVersion"` — должна совпадать с версией `scala3-library` в дереве зависимостей: `sbt -batch "whatDependsOn org.scala-lang scala3-library_3"`.
 - **Что будет, если убрать `grpc = false`?** Компиляция упадёт с `value io is not a member of <root>`: генератор напишет стабы, требующие `io.grpc`, которого в зависимостях нет.
+- **Роняет ли `ignore` прогон?** Временный сьют с `"…" ignore {}`, `assume(false)` и `pending` в `src/test/scala`, затем `just auction-test`. Код 1, строка `Tests: succeeded 130, failed 0, canceled 1, ignored 1, pending 1`, следом «All tests passed» от ScalaTest и `TestsFailedException` от sbt. Проверено.
+- **А через `testOnly`?** Сьют с `ignore` и одним проходящим тестом, `sbt "testOnly auction.ZzSkipProbeSpec"`: `ignored 1` и код 0 — обёртка не участвует. Проверено.
+- **Почему сообщение «пропущено тестов» на Windows нечитаемо?** При выводе в файл JVM на Windows пишет в кодировке консоли cp1251, а остальной вывод sbt идёт в UTF-8. Число и код возврата видны, на Linux строка читается. Чинится кодировкой JVM в `.jvmopts`, это не проверялось.

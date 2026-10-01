@@ -28,6 +28,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `apps/auction/` — Auction на Scala 3 и Apache Pekko: торги лота с gRPC-границей. Сборка sbt, кодогенерация ScalaPB из `contracts/proto` внутри `compile`, одноузловой кластер с Cluster Sharding и split-brain resolver, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL со схемой под Flyway, HTTP-граница с health, который отвечает готовностью кластера и журнала, gRPC-граница `AuctionService` на отдельном порту с проверкой вызывающего по токену (ADR-056) — ставка, прокси-лимиты и команды каталога, чтение пока `UNIMPLEMENTED`, — и тесты ScalaTest — L0 и L1 на Testcontainers; в графе Aspire — узел с базой, запущенный голой JVM. Лот — entity под шардингом со строкой журнала в JSON своей модели хранения: рождение в аукционе, планирование условий, открытие торгов, приём ставки и прокси-лимиты с перебиванием; агрегата аукциона в сервисе нет.
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке, стиль и совместимость схем держат `buf lint` и `buf breaking` в CI.
 - `shared/dotnet/` — общий код .NET-сервисов: ServiceDefaults, его потребляют Meetups и Notifications, и `Container.targets` — правила production-образа SDK-контейнером с отказом сборки на базе без digest, его импортируют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
+- `shared/typescript/auction-bot-ui/` — общий пакет аукционного интерфейса двух ботов ([ADR-044](docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)): шлюз `handleAuctionUpdate(surface, update)`, порты Auction и Identity интерфейсами, каноническое тело экрана `AuctionScreenBody`, `callback_data` домена `auc` с parser и contract suite на подпути `./contract`. Сырые юзкейсы и диспетчер в `exports` не входят, и проверку этого держит typecheck. Ставится своим `npm ci`, как приложения; ни одно приложение его пока не импортирует.
 - `infra/apphost/` — локальная оркестрация .NET Aspire, разложенная как компонент: проект `AppHost/` и его тесты `AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`. Из того же графа `aspire publish` собирает Helm-чарт прода ([ADR-055](docs/decisions/ADR-055-k3s-runtime-from-aspire-chart.md)): каждый узел регистрируется с отображением в чарт, профиль чарта называет `Topology:PublishProfile`, а PostgreSQL и NATS в нём — строки подключения среды.
 - `infra/apphost/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Оба режима проверяются там же: граф публикации — составом workload'ов, снимком `cluster.publish.txt` и отказом на узле без отображения, локальный — снимком `hub.run.txt`; оба снимка лежат в `TestUtilities/Snapshots/`. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
@@ -188,6 +189,14 @@ just community-site-api-typecheck
 just community-site-api-lint
 just community-site-api-test
 # Сборки нет: функцию бандлит Netlify CLI при деплое сайта
+
+# Auction bot UI — зависимости, сборка, typecheck, линт и тесты общего пакета
+just auction-bot-ui-tools
+just auction-bot-ui-build
+just auction-bot-ui-typecheck
+just auction-bot-ui-lint
+just auction-bot-ui-test
+# typecheck сначала собирает пакет: проверка границы читает exports из dist
 
 # Telegram Bot — зависимости, кодогенерация, сборка, тесты, линт и запуск
 just telegram-bot-tools

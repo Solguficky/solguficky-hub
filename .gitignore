@@ -112,7 +112,7 @@ vendor/
 bin/
 
 # ===================================================================
-# Node.js — apps/telegram-bot
+# Node.js — apps/telegram-bot, apps/community-site-api, shared/typescript
 # ===================================================================
 
 node_modules/

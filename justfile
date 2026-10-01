@@ -183,8 +183,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Telegram Bot, API сайта, общий пакет аукционного интерфейса ботов, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -195,16 +195,18 @@ verify-changed:
     @recipes=$(sh tools/verify/select-recipes.sh) && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes
 
 # Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет
-# прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`.
+# прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`,
+# у vitest reporter'ом vitest.fail-on-skip.ts, у ScalaTest обёрткой
+# `Test / executeTests` в build.sbt.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
 # умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
+test-all: identity-test-integration telegram-bot-test telegram-bot-test-integration community-site-api-test auction-bot-ui-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools telegram-bot-tools community-site-api-tools dotnet-tools auction-tools nats-tester-tools
+tools: identity-tools telegram-bot-tools community-site-api-tools auction-bot-ui-tools dotnet-tools auction-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -479,6 +481,29 @@ community-site-api-e2e:
 community-site-serve:
     cd apps/community-site-api && node e2e/server.mjs
 
+# --- Auction bot UI (TypeScript) -------------------------------------------
+#
+# Общий пакет аукционного интерфейса двух ботов (ADR-044). Ставится своим
+# `npm ci`, как приложения: workspace у TypeScript-компонентов нет.
+# `exports` пакета ведут в собранный `dist`, и typecheck сначала собирает
+# пакет — иначе проверка границы в test/boundary.typecheck.ts читала бы
+# устаревшие декларации.
+
+auction-bot-ui-tools:
+    cd shared/typescript/auction-bot-ui && npm ci
+
+auction-bot-ui-build:
+    cd shared/typescript/auction-bot-ui && npm run build
+
+auction-bot-ui-typecheck:
+    cd shared/typescript/auction-bot-ui && npm run typecheck
+
+auction-bot-ui-test:
+    cd shared/typescript/auction-bot-ui && npm test
+
+auction-bot-ui-lint:
+    cd shared/typescript/auction-bot-ui && npm run lint
+
 # --- Meetups (F# / .NET) ---------------------------------------------------
 #
 # Кодогенерация C# — часть `dotnet build` контрактного проекта.
@@ -734,8 +759,8 @@ contour-up *args="":
 # Провод бота (L2, вход B RFC-012): `bot.handleUpdate` с настоящими клиентами
 # Identity и Meetups на топологии, которую поднимает Contour.Host. Сценарии
 # лежат в tests/contour/bot-wire, kit и зависимости — у бота. Нужно то же, что
-# `contour-test`, и Node. Пустой набор и забытый `.only` роняют прогон
-# (vitest.contour.config.ts); порога числа тестов у vitest нет — PER-358.
+# `contour-test`, и Node. Пустой набор, забытый `.only` и пропущенный тест
+# роняют прогон (vitest.contour.config.ts); порога числа тестов у vitest нет.
 #
 # Провод бота против настоящих Identity и Meetups; в verify не входит
 contour-bot-test: telegram-bot-proto

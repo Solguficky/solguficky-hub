@@ -6,7 +6,11 @@ import {
 } from "@connectrpc/connect-node";
 import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
-import { callHeaders, type RpcMetadata } from "../rpc-metadata.js";
+import {
+  callHeaders,
+  presentServiceToken,
+  type RpcMetadata,
+} from "../rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../tracing.js";
 import type {
   CommunityAdministrator,
@@ -57,14 +61,14 @@ export type IdentityClient = IdentityResolver &
 
 export function createIdentityClient(
   baseUrl: string,
-  { tracing, timeoutMs = identityRpcTimeoutMs }: RpcClientOptions,
+  { tracing, serviceToken, timeoutMs = identityRpcTimeoutMs }: RpcClientOptions,
 ): IdentityClient {
   const sessionManager = new Http2SessionManager(baseUrl);
   const transport = createGrpcTransport({
     baseUrl,
     defaultTimeoutMs: timeoutMs,
     sessionManager,
-    interceptors: [traceRpc(tracing)],
+    interceptors: [presentServiceToken(serviceToken), traceRpc(tracing)],
   });
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);

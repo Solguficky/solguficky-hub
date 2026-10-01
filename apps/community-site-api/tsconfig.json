@@ -26,6 +26,7 @@
     "boundary/**/*.mts",
     "page/**/*.ts",
     "e2e/**/*.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "vitest.fail-on-skip.ts"
   ]
 }
