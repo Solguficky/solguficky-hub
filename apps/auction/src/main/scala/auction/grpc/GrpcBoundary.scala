@@ -156,5 +156,7 @@ object GrpcBoundary {
     def editLotCard(in: wire.EditLotCardRequest): Future[wire.EditLotCardResponse] = refuse
     def getLot(in: wire.GetLotRequest): Future[wire.LotSnapshot] = refuse
     def listAuctionLots(in: wire.ListAuctionLotsRequest): Future[wire.ListAuctionLotsResponse] = refuse
+    def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] = refuse
+    def getDisplayNames(in: wire.GetDisplayNamesRequest): Future[wire.GetDisplayNamesResponse] = refuse
   }
 }
