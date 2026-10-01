@@ -116,6 +116,63 @@ return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult de
 
 Провайдер — v8, в конфиге `enabled: false`, включает его флаг в скрипте `coverage`. Порога нет намеренно: `npm run coverage` завершается кодом 0 при 84.25% statements, где недобор дают `main.ts` и ветки `never`, недостижимые по построению.
 
+### Свой reporter как гейт: пропуск роняет прогон
+
+У `dotnet test` есть флаг `--fail-skips`, у Vitest такого нет: прогон с `it.skip` завершается кодом 0. Правило «пропуск не равен прохождению» поэтому исполняет свой reporter — `vitest.fail-on-skip.ts` рядом с конфигом.
+
+Reporter в Vitest — объект с необязательными методами-хуками, которые раннер зовёт по ходу прогона. Это ближе всего к `ITestLoggerWithParameters` у `dotnet test`: наблюдатель, а не участник. Тестов он не запускает и результат не меняет, но в Node у него есть рычаг, которого у логгера .NET нет, — `process.exitCode`:
+
+```ts
+onTestRunEnd(testModules, _unhandledErrors, reason): void {
+  if (reason !== "passed" || this.narrowed) return;
+  const skipped = testModules.flatMap((module) => [
+    ...module.children.allTests("skipped"),
+  ]);
+  if (skipped.length === 0) return;
+  // печать «пропущено тестов: N» со списком имён
+  process.exitCode = 1;
+}
+```
+
+Почему это работает, видно в исходнике раннера. В `vitest/dist/chunks/cli-api.*.js` конец прогона устроен так:
+
+```js
+if (state !== "passed") process.exitCode = 1;
+await this.vitest.report("onTestRunEnd", modules, [...errors], state);
+```
+
+Раннер выставляет код **до** вызова reporter'а и только на провале, а после ничего не сбрасывает. Значит, `exitCode = 1`, выставленный в `onTestRunEnd`, доживает до выхода процесса. Будь порядок обратным, раннер перезаписал бы код reporter'а нулём.
+
+`allTests("skipped")` — генератор по всем тестам модуля с фильтром по состоянию. Состояние `skipped` собирает `.skip`, `.todo`, `skipIf`, `ctx.skip()` и тесты, отсечённые чужим `.only`.
+
+Подключается reporter полем конфига:
+
+```ts
+reporters: ["default", new FailOnSkip()],
+```
+
+`"default"` написан не для красоты. Своё поле `reporters` **заменяет** список по умолчанию, а не дополняет его: без `"default"` пропадает весь штатный вывод, остаются только строки своего reporter'а.
+
+Правило живёт в конфиге, а не в рецепте `justfile`, по одной причине: CI зовёт `npm test` напрямую. Проверку в рецепте он обошёл бы, а конфиг читает любой запуск раннера.
+
+### Три случая, когда «skipped» — не пропуск в коде
+
+Состояние `skipped` шире, чем «кто-то написал `.skip`». Раннер ставит его в трёх случаях, где ронять прогон было бы неверно или бесполезно, и reporter обязан их различать.
+
+**Отбор по имени или строке.** `vitest run -t "откат"` или `vitest run file.test.ts:28` помечает все остальные тесты файла тем же `mode = "skip"`, что и `.skip` в коде. Это видно в `interpretTaskModes` из `@vitest/runner`:
+
+```js
+if (namePattern && !getTaskFullName(t).match(namePattern)) {
+  t.mode = "skip";
+}
+```
+
+По самому тесту эти два случая не различить. Различаются они по прогону: если запуск сузил сам человек, reporter молчит. Признак сужения reporter берёт в двух хуках. `onInit(vitest)` даёт объект раннера, у которого `vitest.config.testNamePattern` — флаг `-t`. `onTestRunStart(specifications)` даёт спецификации запуска, у которых `testLines` и `testIds` — отбор по строке и по id.
+
+**Упавший хук.** Если `beforeAll` бросил исключение, тесты под ним не запускаются и тоже числятся `skipped`. Код уже 1, потому что прогон упал, а сообщение «пропущено тестов: 2» увело бы читателя от настоящей причины. Поэтому reporter проверяет `reason` — третий аргумент `onTestRunEnd` — и молчит на всём, что не `"passed"`.
+
+**Чужой reporter из командной строки.** `--reporter=dot` заменяет поле `reporters` из конфига целиком. Правило снимается вместе со штатным выводом, и прогон с `it.skip` снова зелёный. Рецепты и CI этот флаг не передают. Это граница правила, а не защита от неё.
+
 ## Урок
 
 **Раз тесты не проверяют типы, гейт состоит из двух команд.** Это переносится на любой стек, где раннер сам транспилирует: зелёные тесты не доказывают, что код собирается. В `verify` обе команды стоят рядом именно поэтому.
@@ -125,6 +182,10 @@ return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult de
 **Дедлайн проверяется границей, а не ожиданием.** Два шага — «до срока не сработало» и «на сроке сработало» — доказывают именно правило. Тест, который ждёт настоящие 3 секунды, доказывает только терпение и первым начнёт мигать.
 
 **Наблюдаемость проверяется как контракт.** Один хелпер на каркас полей дешевле, чем ассерты, рассыпанные по тестам, и он ломается сразу, если поле исчезло.
+
+**Правило гейта ставится туда, через что проходит любой запуск.** Рецепт `justfile` — один из входов, и CI с IDE его обходят. Конфиг раннера читают все. Тот же выбор сделан в Scala: обёртка задачи в `build.sbt`, а не разбор лога в рецепте ([scala/build-and-codegen.md](../scala/build-and-codegen.md)).
+
+**Состояние результата не равно намерению автора.** `skipped` склеивает «автор выключил тест», «запускающий отфильтровал» и «хук упал». Проверка, которая читает только состояние, ошибается в обе стороны: роняет отбор по имени и подменяет диагноз упавшего хука. Различать их приходится по контексту прогона, а не по самому тесту.
 
 ## Почему так, а не иначе
 
@@ -139,6 +200,10 @@ return Promise.resolve({ ok: true, result: true as never }); // ApiCallResult de
 | Реальные таймеры и `sleep(3000)` | три секунды на тест и мигание на нагруженной машине; правило стандарта «фиксируй время» нарушено прямо |
 | Порог coverage сейчас | гейт краснеет на `main.ts` и недостижимых ветках `never`, а не на реальном недоборе проверок |
 | Экспортировать внутреннюю функцию «ради теста» | публичная поверхность модуля растёт под давлением теста; `withDeadline` проверяется через `createIdentityResolver`, и этого достаточно |
+| Пропуск ловится разбором `--reporter=json` в рецепте | работает только через `just`; CI зовёт `npm test` напрямую и правило обходит. Плюс второй формат вывода и скрипт разбора рядом с раннером |
+| Пропуск ловится линтером по тексту `.skip` | не видит `skipIf` с условием, `ctx.skip()` внутри теста и тесты, отсечённые чужим `.only`: состояние знает только раннер |
+| Reporter без учёта сужения прогона | `vitest run -t "имя"` падает всегда, потому что отфильтрованные тесты числятся пропущенными. Ручной прогон одного теста становится невозможен |
+| Reporter печатает пропуск и на упавшем прогоне | под упавшим `beforeAll` все тесты `skipped`, и сообщение о пропуске заслоняет исключение хука |
 
 ## Схема
 
@@ -161,6 +226,28 @@ sequenceDiagram
   T->>V: afterEach, useRealTimers()
 ```
 
+Жизненный цикл reporter'а и место, где он выставляет код:
+
+```mermaid
+sequenceDiagram
+  participant V as раннер Vitest
+  participant F as FailOnSkip
+  participant N as процесс Node
+  V->>F: onInit(vitest)
+  Note over F: запомнить config.testNamePattern
+  V->>F: onTestRunStart(specifications)
+  Note over F: narrowed = -t, testLines или testIds
+  Note over V: тесты исполняются
+  V->>N: exitCode = 1, только если прогон упал
+  V->>F: onTestRunEnd(modules, errors, reason)
+  alt reason = passed, прогон не сужен, skipped > 0
+    F->>N: exitCode = 1
+  else иначе
+    F-->>V: ничего
+  end
+  Note over N: exitCode доживает до выхода
+```
+
 ## Первоисточники
 
 - [Vitest: configuring](https://vitest.dev/config/) — `include`, `watch`, `environment`, `globals`.
@@ -169,6 +256,10 @@ sequenceDiagram
 - [Vitest: coverage](https://vitest.dev/guide/coverage) — провайдер v8 и пороги.
 - [Vite: TypeScript](https://vite.dev/guide/features#typescript) — трансформер стирает типы и не проверяет их; отсюда отдельный `tsc`.
 - [TypeScript: utility types](https://www.typescriptlang.org/docs/handbook/utility-types.html) — `Parameters<F>`.
+- [Vitest: Reporters API](https://vitest.dev/api/advanced/reporters) — хуки `onInit`, `onTestRunStart`, `onTestRunEnd` и их аргументы.
+- [Vitest: TestCase](https://vitest.dev/api/advanced/test-case) — `result().state`, `options.mode` и почему `skipped` объединяет `skip`, `todo` и `only`.
+- [Vitest: reporters в конфиге](https://vitest.dev/config/#reporters) — поле заменяет список по умолчанию, а флаг `--reporter` заменяет поле.
+- Исходник `node_modules/vitest/dist/chunks/cli-api.*.js`, метод `end()` — порядок «код на провале, затем `onTestRunEnd`», на котором держится весь приём. Документация этого порядка не обещает, поэтому смотреть сюда при обновлении Vitest.
 - [Standard: стратегия тестирования](../../standards/testing/testing-strategy.md) — уровни и правило про фиксацию времени.
 - Скилл `.skillshare/skills/proj/proj-write-typescript/SKILL.md` — существующий lint/typecheck/test как обязательная тройка, ослабление типа рядом с местом и с причиной.
 
@@ -183,7 +274,17 @@ sequenceDiagram
 - `expect(Promise.resolve(1)).resolves.toBe(2)` без `await` валит тест, а не проходит молча. Проверено.
 - `npm run coverage` завершается кодом 0 при 84.25% statements. Проверено.
 
+Reporter пропусков проверялся на `vitest@4.1.11` в `apps/community-site-api` и `apps/telegram-bot`:
+
+- Временные `it.skip` и `it.todo` в `src/` роняют `just community-site-api-test` и `just telegram-bot-test` кодом 1, в выводе «пропущено тестов: 2» и оба имени. Проверено.
+- `npx vitest run src/document.test.ts -t "откат"` — `3 passed | 9 skipped`, код 0: отбор по имени прогон не роняет. Проверено.
+- `npx vitest run src/document.test.ts:28` — `1 passed | 11 skipped`, код 0. На строке без теста (`:5`) код 1, но это отказ самого Vitest: «No test found … in line 5». Проверено.
+- Файл с `beforeAll`, бросающим исключение, и двумя тестами: `2 skipped`, код 1, сообщения «пропущено тестов» нет. Проверено.
+- Тот же `it.skip` с `--reporter=dot` — код 0: флаг снимает правило. Проверено.
+- Конфиг с `reporters: [new FailOnSkip()]` без `"default"` печатает только строки reporter'а, строки `Tests …` нет. Проверено.
+
 Открытые вопросы, из-за которых статус «вернуться»:
 
 - В текстовом отчёте покрытия нет `main.ts`, `logging.ts`, `acknowledge.ts` и `schemas.ts`, хотя два последних тесты загружают. Отчёт нельзя читать как покрытие модуля целиком, пока не разобрано, что именно отбирает v8-провайдер — проверь `npx vitest run --coverage --coverage.all` и сравни таблицы.
 - Изоляция между файлами не проверялась: утечка фейковых таймеров подтверждена только внутри одного файла. Проверить можно двумя файлами, один из которых не восстанавливает таймеры.
+- Отбор по тегам (`testTagsFilter` в `interpretTaskModes`) reporter как сужение не учитывает: в репозитории тегов нет, и прогон с ними не проверялся. Проверь, когда появятся: тест вне тега получит `skip`, и прогон упадёт.
