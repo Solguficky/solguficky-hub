@@ -12,7 +12,6 @@ import { Kvm } from "@nats-io/kv";
 import { connect, type NatsConnection, nanos } from "@nats-io/transport-node";
 import {
   GenericContainer,
-  getContainerRuntimeClient,
   type StartedTestContainer,
   Wait,
 } from "testcontainers";
@@ -41,14 +40,6 @@ import type {
   NotificationSender,
   SendResult,
 } from "./port.js";
-
-// Без Docker набор пропускается локально, но не в CI: там пропуск выглядел бы
-// как проверенное потребление (то же правило, что у Notifications).
-const dockerAvailable = await getContainerRuntimeClient().then(
-  () => true,
-  () => false,
-);
-const runs = dockerAvailable || process.env["CI"] !== undefined;
 
 // Короткий ack_wait вместо 30 с топологии: потерянный ack возвращается шиной
 // за секунды, и сценарий рестарта укладывается в тест. Остальная конфигурация
@@ -114,7 +105,9 @@ async function waitFor(check: () => Promise<boolean> | boolean): Promise<void> {
   throw new Error("condition not reached in time");
 }
 
-describe.skipIf(!runs)("notification delivery over JetStream", () => {
+// Без Docker набор падает, а не пропускается: пропуск выглядел бы как
+// проверенное потребление (то же правило, что у Notifications и Auction).
+describe("notification delivery over JetStream", () => {
   let container: StartedTestContainer;
   let nats: NatsConnection;
   let js: JetStreamClient;

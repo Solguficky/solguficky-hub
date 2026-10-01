@@ -1,9 +1,13 @@
 import { configDefaults, defineConfig } from "vitest/config";
+import { FailOnSkip } from "./vitest.fail-on-skip.js";
 
 export default defineConfig({
   test: {
     watch: false,
     environment: "node",
+    // Пропуск роняет прогон (vitest.fail-on-skip.ts); `default` перечислен
+    // явно, иначе своё поле reporters снимает штатный вывод.
+    reporters: ["default", new FailOnSkip()],
     // Классификатор отказов и разбор секретов живого контура — L0: живой прогон
     // редок, и сломанный разбор иначе всплыл бы только у владельца.
     // Разбор языка пульта провода бота — тоже L0: пульт живёт на контуре, а его
