@@ -15,6 +15,7 @@ import auction.lot.SetProxyLimit
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimit
 import auction.lot.WithdrawProxyLimitRejected
+import auction.onboarding.FaqAcknowledgements
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
@@ -71,7 +72,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       ): Future[Either[PlaceBidRejected, Envelope]] = outcome
     }
 
-  private def service(lots: LotGateway) = AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore))
+  private object UntouchableFaq extends FaqAcknowledgements {
+    def acknowledged(participant: ParticipantId): Future[Boolean] = fail("the FAQ store was touched")
+    def acknowledge(participant: ParticipantId): Future[Unit] = fail("the FAQ store was touched")
+  }
+
+  private def service(lots: LotGateway, faq: FaqAcknowledgements = UntouchableFaq) =
+    AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore), faq)
 
   private def statusOf(call: Future[?]): Status.Code =
     call.failed.futureValue match {
@@ -80,6 +87,54 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
   "auction grpc service" should {
+
+    "refuses FAQ requests without a valid viewer or public role before storage" in {
+      val auction = service(Unreachable)
+      statusOf(auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.acknowledgeFaq(wire.AcknowledgeFaqRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      val member = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER))
+      statusOf(
+        auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(member)))
+      ) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(member)))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(
+        auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(viewer.withIdentityId("bad"))))
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+      val unknown = viewer.withGlobalRoles(Seq(GlobalRoleMessage.Unrecognized(999)))
+      statusOf(
+        auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(unknown)))
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "records acknowledgement only for the viewer and answers repeated completion successfully" in {
+      var completed = Set.empty[ParticipantId]
+      val faq = new FaqAcknowledgements {
+        def acknowledged(participant: ParticipantId) = Future.successful(completed.contains(participant))
+        def acknowledge(participant: ParticipantId) = {
+          completed += participant
+          Future.successful(())
+        }
+      }
+      val auction = service(Unreachable, faq)
+      val read = wire.GetFaqAcknowledgementRequest(Some(viewer))
+      val finish = wire.AcknowledgeFaqRequest(Some(viewer))
+      auction.getFaqAcknowledgement(read).futureValue.acknowledged shouldBe false
+      auction.acknowledgeFaq(finish).futureValue.acknowledged shouldBe true
+      auction.acknowledgeFaq(finish).futureValue.acknowledged shouldBe true
+      auction.getFaqAcknowledgement(read).futureValue.acknowledged shouldBe true
+      completed shouldBe Set(ParticipantId(UUID.fromString(identity)))
+    }
+
+    "does not report completed onboarding when storage fails" in {
+      val failure = IllegalStateException("storage failed")
+      val faq = new FaqAcknowledgements {
+        def acknowledged(participant: ParticipantId) = Future.failed(failure)
+        def acknowledge(participant: ParticipantId) = Future.failed(failure)
+      }
+      val auction = service(Unreachable, faq)
+      auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(viewer))).failed.futureValue shouldBe failure
+      auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(viewer))).failed.futureValue shouldBe failure
+    }
 
     "refuses a bid from a viewer without the public role before reaching the lot" in {
       val withoutPublic = Seq(

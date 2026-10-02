@@ -25,6 +25,7 @@ async function main(): Promise<number> {
     token: config.token,
     environment: config.environment,
     ports: clients.ports,
+    faq: config.faq,
     logger,
   });
   const shutdown = createShutdown({

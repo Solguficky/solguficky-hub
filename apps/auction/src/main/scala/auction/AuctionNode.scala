@@ -8,6 +8,7 @@ import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
 import auction.persistence.JournalDatabase
 import auction.persistence.SlickLotCatalogStore
+import auction.persistence.SlickFaqAcknowledgements
 import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.actor.typed.ActorRef
@@ -65,7 +66,8 @@ object AuctionNode {
     import system.executionContext
     val service = AuctionGrpcService(
       LotGateway.sharded(sharding, askTimeout),
-      LotCatalogCommands(SlickLotCatalogStore(system))
+      LotCatalogCommands(SlickLotCatalogStore(system)),
+      SlickFaqAcknowledgements(system)
     )
     GrpcBoundary(callers, service)
   }

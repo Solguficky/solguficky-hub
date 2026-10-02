@@ -30,6 +30,8 @@ describe("renderEntryScreen", () => {
     expect(screen.text).toContain("lot-1");
     expect(screen.keyboard).toEqual([
       [{ text: "Обновить", callback_data: "v1:auc:lot:x" }],
+      [{ text: "Правила и FAQ", callback_data: "v1:entry:faq" }],
+      [{ text: "В меню", callback_data: "v1:entry:menu" }],
     ]);
   });
 });

@@ -41,10 +41,10 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
   "journal schema" should {
 
-    "create the journal, tag, snapshot, lot catalog and display name tables on an empty database" in {
+    "create the journal, tag, snapshot, lot catalog, display name and FAQ tables on an empty database" in {
       val database = freshDatabase()
 
-      JournalSchema.migrate(database) shouldBe 3
+      JournalSchema.migrate(database) shouldBe 4
 
       tables(database) should contain allOf (
         "event_journal",
@@ -52,6 +52,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         "snapshot",
         "lot_catalog",
         "auction_display_name",
+        "auction_faq_acknowledgement",
         JournalSchema.HistoryTable
       )
     }
@@ -62,7 +63,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
       JournalSchema.migrate(database) shouldBe 0
 
-      appliedVersions(database) shouldBe List("1", "2", "3")
+      appliedVersions(database) shouldBe List("1", "2", "3", "4")
     }
 
     "let two processes migrating the same empty database at once apply the schema exactly once" in {
@@ -73,8 +74,8 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         60.seconds
       )
 
-      executed.sum shouldBe 3
-      appliedVersions(database) shouldBe List("1", "2", "3")
+      executed.sum shouldBe 4
+      appliedVersions(database) shouldBe List("1", "2", "3", "4")
     }
   }
 }

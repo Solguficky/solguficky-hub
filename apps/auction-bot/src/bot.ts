@@ -4,14 +4,20 @@ import type { UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
 import type { TelegramEnvironment } from "./config.js";
 import { type AuctionEntryScreen, renderEntryScreen } from "./entry-screen.js";
+import type { FaqContent } from "./faq.js";
 import type { LogFields, Logger } from "./logging.js";
-import { type RouteOutcome, routeAuctionCallback } from "./route.js";
+import {
+  type RouteOutcome,
+  routeAuctionCallback,
+  routeAuctionStart,
+} from "./route.js";
 
 export type BotOptions = {
   token: string;
   environment: TelegramEnvironment;
   ports: PortsFactory;
   logger: Logger;
+  faq?: FaqContent;
   // Тесты передают его, чтобы не звать getMe.
   botInfo?: UserFromGetMe;
 };
@@ -37,13 +43,20 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const direct = bot.chatType("private");
 
   direct.command("start", async (ctx) => {
-    const screen = renderEntryScreen({ kind: "welcome" });
-    await ctx.reply(screen.text);
-    logger.info("update handled", {
-      ...frame(ctx, "start"),
-      result: "ok",
-      screen: "welcome",
+    const outcome = await routeAuctionStart({
+      ports: options.ports(ctx.requestId),
+      user: {
+        telegramUserId: ctx.from.id,
+        ...(ctx.from.username === undefined
+          ? {}
+          : { telegramUsername: ctx.from.username }),
+      },
     });
+    const screen = renderEntryScreen(outcome.screen, options.faq);
+    await ctx.reply(screen.text, {
+      reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
+    });
+    log({ logger, ctx, outcome, operation: "start" });
   });
 
   direct.on("callback_query:data", async (ctx) => {
@@ -65,7 +78,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       },
       data: ctx.callbackQuery.data,
     });
-    const screen = renderEntryScreen(outcome.screen);
+    const screen = renderEntryScreen(outcome.screen, options.faq);
     const markup = {
       reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
     };
@@ -84,7 +97,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         throw cause;
       }
     } finally {
-      log(logger, ctx, outcome);
+      log({ logger, ctx, outcome, operation: "callback" });
     }
   });
 
@@ -109,9 +122,15 @@ function frame(ctx: UpdateContext, operation: string): LogFields {
 }
 
 // Исход экрана — в поле `screen`; `result` и класс отказа — по logging.md.
-function log(logger: Logger, ctx: UpdateContext, outcome: RouteOutcome): void {
+function log(input: {
+  logger: Logger;
+  ctx: UpdateContext;
+  outcome: RouteOutcome;
+  operation: "start" | "callback";
+}): void {
+  const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {
-    ...frame(ctx, "callback"),
+    ...frame(ctx, operation),
     screen: outcome.screen.kind,
     ...(outcome.identityId === undefined
       ? {}

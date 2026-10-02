@@ -26,6 +26,8 @@ service AuctionService {
   rpc ListAuctionLots(ListAuctionLotsRequest) returns (ListAuctionLotsResponse);
   rpc ChooseDisplayName(ChooseDisplayNameRequest) returns (ChooseDisplayNameResponse);
   rpc GetDisplayNames(GetDisplayNamesRequest) returns (GetDisplayNamesResponse);
+  rpc GetFaqAcknowledgement(GetFaqAcknowledgementRequest) returns (FaqAcknowledgement);
+  rpc AcknowledgeFaq(AcknowledgeFaqRequest) returns (FaqAcknowledgement);
 }
 
 message Viewer {
@@ -399,4 +401,19 @@ message GetDisplayNamesRequest {
 message GetDisplayNamesResponse {
   // Keyed by participant id. Every requested id is present.
   map<string, DisplayName> names = 1;
+}
+
+message GetFaqAcknowledgementRequest {
+  Viewer viewer = 1;
+}
+
+message AcknowledgeFaqRequest {
+  Viewer viewer = 1;
+}
+
+// Shared across auctions, for the viewer only. No auction id or reading history.
+message FaqAcknowledgement {
+  // True after the viewer explicitly chose to leave the introductory FAQ.
+  // False means the acknowledgement has not been recorded, not lack of access.
+  bool acknowledged = 1;
 }
