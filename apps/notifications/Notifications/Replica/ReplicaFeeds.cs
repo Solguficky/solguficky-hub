@@ -1,9 +1,12 @@
+using Notifications.Messaging;
+
 namespace Notifications.Replica;
 
 /// <summary>
 /// Один поток чужих фактов: откуда читать и как разбирать сообщение.
 /// </summary>
-public sealed record ReplicaFeed(string Source, string Stream, string Durable, Func<ReadOnlyMemory<byte>, Decoded> Decode);
+public sealed record ReplicaFeed(string Source, string Stream, string Durable, Func<ReadOnlyMemory<byte>, Decoded> Decode)
+    : EventFeed(Source, Stream, Durable);
 
 /// <summary>
 /// Потоки, из которых собирается реплика. Имена streams и durable повторяют

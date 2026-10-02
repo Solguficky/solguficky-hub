@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Notifications.Reminders;
 using Notifications.Replica;
+using Notifications.Messaging;
 using Notifications.Transport;
 using Xunit;
 
@@ -106,7 +107,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
 
     private async Task WaitForBinding()
     {
-        var bindings = Service<ReplicaBindings>();
+        var bindings = Service<ConsumerBindings>();
         var bound = bindings.WhenAllBound;
 
         var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

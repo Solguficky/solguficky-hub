@@ -6,13 +6,28 @@
 
 ## Раскладка
 
+Перебитие ставки (PER-326) обрабатывается отдельным модулем `Auction/`: из
+`events.auction.bid_placed` он создаёт `lot_outbid` прежнему лидеру, если лидер
+сменился. Первая ставка и повышение цены собственным proxy факта не создают.
+Получатель задан событием; подписки, категории и реплика Identity не фильтруют
+его. Ключ `event_id` и outbox коммитятся одной транзакцией; новый запоздавший
+повод не отсекается версией. Публикация событий Auction — PER-331, доставка
+аукционным ботом — PER-328, они в этот срез не входят.
+
+`Messaging/` содержит общий транспорт JetStream: привязку к durable, проверку
+retention, чтение, повтор подключения, ACK/NAK/TERM и очистку ключей повтора.
+`Replica/ReplicaHandler` и `Auction/AuctionHandler` отдельно определяют эффект,
+исход обработки и бизнес-лог. Старый ключ `Notifications:Replica` сохраняется
+для общих настроек потребителей. Метрики аукционных поводов живут в
+`notifications.auction`, а не в метриках возраста реплики.
+
 | Проект | Ответственность |
 |---|---|
 | `Notifications` | силос Orleans, co-hosted с gRPC-сервером; миграции, грины, доступ к базе |
 | `Notifications.Contracts` | generated-only: C# из `contracts/proto/notifications/v1` и импортируемого `meetups/v1`, события реплики и клиенты `CheckMeetupAuthority` и `CheckGlobalRole` |
 | `Notifications.UnitTests` | словарь категорий, вывод действующего значения, разбор входящих полей, решение по заданию напоминания, раскладка миграций и строка подключения; базы не требует |
 | `Notifications.IntegrationTests` | ограничения схемы, команды через настоящий gRPC-канал, рестарт силоса, жизненный цикл задания и простой кластера на PostgreSQL через Testcontainers |
-| `Notifications.TestKit` | утилиты обоих тестовых наборов: `EventFactory` — валидные события Meetups и Identity; ссылается только на `Notifications.Contracts` |
+| `Notifications.TestKit` | утилиты обоих тестовых наборов: `EventFactory` — валидные контрактные события Meetups, Identity и Auction; ссылается только на `Notifications.Contracts` |
 
 Внутри `Notifications`: `Migrations.cs` и `Migrations/*.sql` — схема; `NotificationsHost.cs` — composition root; `Domain/` — словарь категорий и вывод действующего значения, без ввода-вывода; `Preferences/` — операции подписок и настроек; `Reminders/` — чистое решение по заданию напоминания, его настройки и sweeper; `Infrastructure/` — доступ к данным; `Transport/` — граница gRPC; `Grains/` — грины.
 

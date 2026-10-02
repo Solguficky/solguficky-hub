@@ -5,8 +5,8 @@ using Meetups.V1;
 namespace Notifications.TestKit;
 
 /// <summary>
-/// Валидные события обоих источников в форме, в которой их публикуют
-/// Meetups и Identity. Тест правит в них ровно то поле, которое проверяет.
+/// Валидные контрактные события Meetups, Identity и Auction.
+/// Тест правит в них ровно то поле, которое проверяет.
 /// </summary>
 /// <remarks>
 /// Фабрика общая для unit- и интеграционного набора и живёт в TestKit, а не
@@ -123,4 +123,37 @@ public static class EventFactory
     }
 
     public static ReadOnlyMemory<byte> Bytes(IMessage message) => message.ToByteArray();
+
+    public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
+        string? leader = null, long version = 3, bool proxy = false) => new()
+    {
+        EventId = NewId(), LotId = lotId, Version = version,
+        OccurredAt = Committed.AddMinutes(version).ToString("O"),
+        State = new global::Auction.V1.LotState
+        {
+            Id = lotId, AuctionId = NewId(),
+            Config = new global::Auction.V1.LotConfig
+            {
+                Currency = "RUB", ProxyEnabled = true,
+                StepPolicy = new global::Auction.V1.StepPolicy { Fixed = new global::Auction.V1.Money { MinorUnits = 100, Currency = "RUB" } },
+                AntiSnipe = new global::Auction.V1.AntiSnipe(),
+            },
+            Trading = new global::Auction.V1.LotTrading
+            {
+                LeaderId = leader ?? NewId(), LeadingBidId = NewId(),
+                CurrentPrice = new global::Auction.V1.Money { MinorUnits = 12300, Currency = "RUB" },
+                Phase = global::Auction.V1.LotPhase.Online,
+            },
+        },
+        BidPlaced = Placed(previousLeader, proxy),
+    };
+
+    private static global::Auction.V1.BidPlaced Placed(string? previous, bool proxy)
+    {
+        var placed = new global::Auction.V1.BidPlaced();
+        if (previous is not null) placed.PreviousLeaderId = previous;
+        if (proxy) placed.Proxy = new global::Auction.V1.ProxyBid();
+        else placed.Manual = new global::Auction.V1.ManualBid { Source = global::Auction.V1.BidSource.Bot };
+        return placed;
+    }
 }

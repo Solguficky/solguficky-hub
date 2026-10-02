@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using Notifications.Broadcasts;
+using Notifications.Auction;
+using Notifications.Messaging;
 using Notifications.Facts;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
@@ -47,6 +49,8 @@ public static class NotificationsHost
     /// <summary>Адрес NATS, из которого сервис читает чужие факты.</summary>
     public const string NatsUrlVariable = "NOTIFICATIONS_NATS_URL";
 
+    public static IReadOnlyList<EventFeed> EventFeeds { get; } = [.. ReplicaFeeds.All, AuctionFeed.Feed];
+
     /// <param name="natsUrl">
     /// Адрес шины. Без него потребители реплики не регистрируются: так тест,
     /// которому шина не нужна, поднимает тот же composition root без неё.
@@ -82,11 +86,13 @@ public static class NotificationsHost
         builder.Services.AddSingleton<ReminderTelemetry>();
         builder.Services.AddSingleton<ReplicaTelemetry>();
         builder.Services.AddSingleton<FactTelemetry>();
+        builder.Services.AddSingleton<AuctionTelemetry>();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics => metrics
                 .AddMeter(ReminderTelemetry.MeterName)
                 .AddMeter(ReplicaTelemetry.MeterName)
-                .AddMeter(FactTelemetry.MeterName));
+                .AddMeter(FactTelemetry.MeterName)
+                .AddMeter(AuctionTelemetry.MeterName));
 
         // Локальный diagnostics-профиль пишет те же логи в Loki через OTLP.
         // Обычные профили продолжают экспортировать их только в Aspire.
@@ -219,10 +225,12 @@ public static class NotificationsHost
         // Реплика чужих фактов (PER-215). Хранилище и чистка ключей не зависят
         // от шины: таблица ключей существует и без неё.
         builder.Services.AddSingleton<ReplicaStore>();
+        builder.Services.AddSingleton<ConsumedEventStore>();
+        builder.Services.AddSingleton<AuctionStore>();
         // Срок хранения ключей сверяет с настоящим стримом сам потребитель при
         // привязке: копия настройки стрима здесь прошла бы молча, когда
         // топология поднимет окно хранения.
-        builder.Services.Configure<ReplicaOptions>(builder.Configuration.GetSection(ReplicaOptions.SectionName));
+        builder.Services.Configure<ConsumerOptions>(builder.Configuration.GetSection(ConsumerOptions.SectionName));
         builder.Services.AddHostedService<ConsumedEventPruner>();
 
         // Адресные факты (PER-216). Порождаются в транзакции реплики, а в шину
@@ -247,8 +255,8 @@ public static class NotificationsHost
             // обращении, и подписка на его события должна его опередить.
             builder.Services.AddHostedService<BusConnectionWatcher>();
 
-            // Готовым экземпляром: см. конструктор ReplicaBindings.
-            builder.Services.AddSingleton(new ReplicaBindings(ReplicaFeeds.All));
+            // Готовым экземпляром: список обязан включать каждый бизнес-модуль.
+            builder.Services.AddSingleton(new ConsumerBindings(EventFeeds));
 
             // AddSingleton, а не AddHostedService: тот регистрирует через
             // TryAddEnumerable по типу реализации, и второй потребитель того же
@@ -256,8 +264,13 @@ public static class NotificationsHost
             foreach (var feed in ReplicaFeeds.All)
             {
                 builder.Services.AddSingleton<IHostedService>(services =>
-                    ActivatorUtilities.CreateInstance<ReplicaConsumer>(services, feed));
+                    ActivatorUtilities.CreateInstance<DurableConsumer>(services, feed,
+                        ActivatorUtilities.CreateInstance<ReplicaHandler>(services, feed)));
             }
+
+            builder.Services.AddSingleton<IHostedService>(services =>
+                ActivatorUtilities.CreateInstance<DurableConsumer>(services, AuctionFeed.Feed,
+                    ActivatorUtilities.CreateInstance<AuctionHandler>(services)));
 
             builder.Services.AddHostedService<NotificationDispatcher>();
         }

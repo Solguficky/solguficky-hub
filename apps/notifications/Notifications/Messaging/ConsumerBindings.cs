@@ -1,7 +1,7 @@
-namespace Notifications.Replica;
+namespace Notifications.Messaging;
 
 /// <summary>
-/// Привязан ли каждый потребитель реплики к своему durable и что мешает тем,
+/// Привязан ли каждый потребитель шины к своему durable и что мешает тем,
 /// кто ещё нет.
 /// </summary>
 /// <remarks>
@@ -13,7 +13,7 @@ namespace Notifications.Replica;
 /// Готовность gRPC признак намеренно не читает: гейтить под на шине —
 /// решение про поведение развёртывания, оно за PER-375.
 /// </remarks>
-public sealed class ReplicaBindings
+public sealed class ConsumerBindings
 {
     private readonly Dictionary<string, Binding> feeds;
 
@@ -22,7 +22,7 @@ public sealed class ReplicaBindings
     /// сам подбирая аргумент, подставил бы пустой список, и признак
     /// «все привязаны» был бы истинным до старта первого потребителя.
     /// </remarks>
-    public ReplicaBindings(IEnumerable<ReplicaFeed> feeds)
+    public ConsumerBindings(IEnumerable<EventFeed> feeds)
     {
         this.feeds = feeds.ToDictionary(feed => feed.Source, _ => new Binding());
         WhenAllBound = AllBoundOrFirstFailure([.. this.feeds.Values.Select(binding => binding.Outcome.Task)]);
@@ -37,7 +37,7 @@ public sealed class ReplicaBindings
     public Task WhenAllBound { get; }
 
     /// <summary>Сколько попыток привязки этого потребителя отказали транзиентно.</summary>
-    public int FailedAttempts(ReplicaFeed feed) => Volatile.Read(ref feeds[feed.Source].FailedAttempts);
+    public int FailedAttempts(EventFeed feed) => Volatile.Read(ref feeds[feed.Source].FailedAttempts);
 
     /// <summary>
     /// Причина, по которой привязки нет: окончательный отказ, если он был у
@@ -55,16 +55,16 @@ public sealed class ReplicaBindings
             .Select(binding => binding.LastFailure)
             .FirstOrDefault(failure => failure is not null);
 
-    public void Retrying(ReplicaFeed feed, Exception failure)
+    public void Retrying(EventFeed feed, Exception failure)
     {
         var binding = feeds[feed.Source];
         binding.LastFailure = failure;
         Interlocked.Increment(ref binding.FailedAttempts);
     }
 
-    public void Bound(ReplicaFeed feed) => feeds[feed.Source].Outcome.TrySetResult();
+    public void Bound(EventFeed feed) => feeds[feed.Source].Outcome.TrySetResult();
 
-    public void Failed(ReplicaFeed feed, Exception failure)
+    public void Failed(EventFeed feed, Exception failure)
     {
         var outcome = feeds[feed.Source].Outcome;
         outcome.TrySetException(failure);

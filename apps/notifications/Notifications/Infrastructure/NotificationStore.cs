@@ -99,6 +99,19 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ON CONFLICT DO NOTHING;
         """;
 
+    /// <summary>Адресат уже определён поводом: без разворота подписок и реплики людей.</summary>
+    public static Task<int> AddAddressed(UnitOfWork work, Notification fact, string type, string causeKind,
+        string causeId, DateTimeOffset now, DateTimeOffset notAfter, CancellationToken cancellationToken) =>
+        work.Execute(InsertSql, new
+        {
+            Type = type, CauseKind = causeKind, CauseId = causeId,
+            MeetupId = (Guid?)null, RequestId = (string?)null,
+            Now = now.UtcDateTime, NotAfter = notAfter.UtcDateTime,
+            Ids = new[] { Guid.Parse(fact.NotificationId) },
+            Recipients = new[] { Guid.Parse(fact.RecipientId) },
+            Payloads = new[] { fact.ToByteArray() },
+        }, cancellationToken);
+
     // Снятие при отмене: неотправленное этой сходки больше не нужно — человек
     // пошёл бы по ссылке на то, чего уже нет. Служебное сообщение о снятии с
     // публикации не снимается: отмена скрытой сходки своего факта не даёт, и

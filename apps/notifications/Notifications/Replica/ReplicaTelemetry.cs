@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using Notifications.Messaging;
 
 namespace Notifications.Replica;
 
@@ -20,15 +21,6 @@ namespace Notifications.Replica;
 public sealed class ReplicaTelemetry : IDisposable
 {
     public const string MeterName = "notifications.replica";
-
-    /// <summary>
-    /// Метр межсервисного счётчика отказов из docs/standards/observability/logging.md.
-    /// ServiceDefaults подписывается на него сам.
-    /// </summary>
-    public const string FailuresMeterName = "solguficky.failures";
-
-    private static readonly Meter FailuresMeter = new(FailuresMeterName);
-    private static readonly Counter<long> Failures = FailuresMeter.CreateCounter<long>(FailuresMeterName);
 
     private readonly Meter meter = new(MeterName);
     private readonly Counter<long> events;
@@ -88,10 +80,7 @@ public sealed class ReplicaTelemetry : IDisposable
 
     /// <summary>Учитывает отказ в межсервисном счётчике по категории норматива.</summary>
     public static void Fail(string errorCategory) =>
-        Failures.Add(
-            1,
-            new KeyValuePair<string, object?>("service", NotificationsHost.ServiceId),
-            new KeyValuePair<string, object?>("error_category", errorCategory));
+        ConsumerFailures.Record(errorCategory);
 
     // Отметка только растёт: события разных агрегатов приходят без общего
     // порядка, и позднее применённое не обязано быть позднее закоммиченным.
