@@ -71,7 +71,7 @@ type MeetupArchiveTests() =
     [<Fact>]
     member _.``A held meetup leaves the actual list and enters the archive``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let id = newId ()
 
@@ -97,7 +97,7 @@ type MeetupArchiveTests() =
     [<Fact>]
     member _.``A cancelled meetup leaves the actual list and enters the archive``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let id = newId ()
 
@@ -125,7 +125,7 @@ type MeetupArchiveTests() =
     [<Fact>]
     member _.``A past scheduled meetup enters the archive without a command or a journal row``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let id = newId ()
 
@@ -154,7 +154,7 @@ type MeetupArchiveTests() =
     [<Fact>]
     member _.``The archive lists dates newest first and keeps undated meetups last``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
 
         let newest = newId ()

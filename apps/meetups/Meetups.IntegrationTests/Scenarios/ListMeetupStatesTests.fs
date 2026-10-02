@@ -8,10 +8,11 @@ open Meetups.V1
 open Swensen.Unquote
 open Xunit
 
-/// Служебное перечисление через настоящий Kestrel и настоящий PostgreSQL. Курсор,
+/// Служебное перечисление через срез и настоящий PostgreSQL. Курсор,
 /// порядок обхода и момент согласованности целиком живут в SQL и в драйвере,
 /// поэтому unit-тесты среза их не достают: там читающая функция подменена. Здесь
-/// проходит ровно тот путь, которым реплика набирает начальное состояние.
+/// проверяется будущий путь реплики ниже gRPC-границы: по ADR-056 у RPC пока
+/// нет объявленного вызывающего, и транспорт отказывает всем.
 ///
 /// Хост поднимается в теле теста, а не class fixture: пропуск без Docker должен
 /// оставаться пропуском, а не падением класса.
@@ -30,17 +31,20 @@ type ListMeetupStatesTests() =
 
         key
 
-    let page (client: MeetupsService.MeetupsServiceClient) token size =
-        client.ListMeetupStates(ListMeetupStatesRequest(PageToken = token, PageSize = size))
+    let page (live: LiveMeetupsHost) token size =
+        Meetups.Slices.ListMeetupStates.Api.handle
+            live.ReadStates
+            (ListMeetupStatesRequest(PageToken = token, PageSize = size))
+        |> fun pending -> pending.GetAwaiter().GetResult()
 
     [<Fact>]
     member _.``The enumeration walks every meetup across its pages``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let created = List.init 3 (fun _ -> createDraft client)
 
-        let first = page client "" 2
-        let second = page client first.NextPageToken 2
+        let first = page live "" 2
+        let second = page live first.NextPageToken 2
 
         let walked =
             Seq.append first.Meetups second.Meetups
@@ -52,12 +56,12 @@ type ListMeetupStatesTests() =
     [<Fact>]
     member _.``A page stops at the requested size and hands back a cursor``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
 
         List.init 3 (fun _ -> createDraft client)
         |> ignore
 
-        let first = page client "" 2
+        let first = page live "" 2
 
         test
             <@
@@ -69,10 +73,10 @@ type ListMeetupStatesTests() =
     [<Fact>]
     member _.``The last page of the enumeration carries no cursor``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         createDraft client |> ignore
 
-        let only = page client "" 50
+        let only = page live "" 50
 
         test <@ only.NextPageToken = "" @>
 
@@ -81,10 +85,10 @@ type ListMeetupStatesTests() =
     [<Fact>]
     member _.``Every page names the UTC moment its snapshot was taken at``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         createDraft client |> ignore
 
-        let moment = (page client "" 50).ConsistentAt
+        let moment = (page live "" 50).ConsistentAt
         let parsed = DateTimeOffset.Parse(moment, CultureInfo.InvariantCulture)
         // Само чтение поля внутри quotation требует адреса структуры, поэтому
         // смещение достаётся значением до утверждения (FS3155).
@@ -98,10 +102,10 @@ type ListMeetupStatesTests() =
     [<Fact>]
     member _.``The enumeration returns whole snapshots with their version``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let key = createDraft client
 
-        let only = page client "" 50
+        let only = page live "" 50
         let snapshot = only.Meetups |> Seq.find (fun m -> m.Id = key)
 
         test
@@ -113,9 +117,7 @@ type ListMeetupStatesTests() =
     [<Fact>]
     member _.``A cursor the service did not issue is refused``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
-
-        let walk () = page client "not-a-token" 50 |> ignore
+        let walk () = page live "not-a-token" 50 |> ignore
         let refused = Rpc.codeOf walk
 
         test <@ refused = Some StatusCode.InvalidArgument @>

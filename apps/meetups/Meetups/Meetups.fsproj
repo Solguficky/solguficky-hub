@@ -61,6 +61,8 @@
     <Compile Include="Observability/PublisherTelemetry.fs" />
     <Compile Include="Observability/DuePublicationTelemetry.fs" />
     <Compile Include="Observability/IncomingMetadata.fs" />
+    <Compile Include="Transport/Callers.fs" />
+    <Compile Include="Transport/CallerGate.fs" />
     <Compile Include="Observability/BoundaryLog.fs" />
     <Compile Include="Transport/MeetupsGrpcService.fs" />
     <Compile Include="Transport/IdentityRoleClient.fs" />

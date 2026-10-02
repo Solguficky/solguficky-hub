@@ -68,7 +68,7 @@ type HiddenMeetupReadTests() =
     [<Fact>]
     member _.``The list does not expose a hidden meetup to an ordinary viewer``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let hiddenId, _ = createDraft client
 
         let returnedIds =
@@ -85,7 +85,7 @@ type HiddenMeetupReadTests() =
     [<Fact>]
     member _.``Materials of a hidden meetup follow the visibility of the meetup``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let hiddenId, hiddenVersion = createDraft client
 
         client.AttachMaterial(
@@ -121,7 +121,7 @@ type HiddenMeetupReadTests() =
     [<Fact>]
     member _.``The archive does not expose a hidden meetup to an ordinary viewer``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let hiddenId, hiddenVersion = createDraft client
 
         client.MarkMeetupHeld(
@@ -148,7 +148,7 @@ type HiddenMeetupReadTests() =
     [<Fact>]
     member _.``Reading by identifier does not expose a hidden meetup to an ordinary viewer``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let hiddenId, _ = createDraft client
 
         let actual =
@@ -166,7 +166,7 @@ type HiddenMeetupReadTests() =
     [<Fact>]
     member _.``A direct-link lookup answers like a lookup of a missing meetup``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let hiddenId, _ = createDraft client
 
         let lookup meetupId =
@@ -188,22 +188,21 @@ type HiddenMeetupReadTests() =
                 && missing = Some(Status(StatusCode.NotFound, "meetup not found"))
             @>
 
-    /// Служебное перечисление — единственное чтение контракта, которое скрытую
-    /// сходку возвращает. Сценарий здесь, а не исключение из инвентаря выше:
-    /// обход мимо правил видимости обязан быть записан утверждением, иначе он
-    /// неотличим от дыры, которую этот набор и сторожит.
+    /// У служебного перечисления нет объявленного вызывающего (ADR-056):
+    /// скрытый снимок не выходит через этот транспорт даже с токеном бота.
     [<Fact>]
-    member _.``The service enumeration returns a hidden meetup by design``() =
+    member _.``The service enumeration does not expose a hidden meetup to an undeclared caller``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
-        let hiddenId, _ = createDraft client
+        let client = AuthenticatedClient.bot live.Channel
+        createDraft client |> ignore
 
-        let returnedIds =
-            client.ListMeetupStates(ListMeetupStatesRequest()).Meetups
-            |> Seq.map _.Id
-            |> Set.ofSeq
+        let refused =
+            Rpc.codeOf (fun () ->
+                client.ListMeetupStates(ListMeetupStatesRequest())
+                |> ignore
+            )
 
-        test <@ returnedIds.Contains hiddenId @>
+        test <@ refused = Some StatusCode.Unauthenticated @>
 
     /// Проверка права — тоже вопрос о сходке, и ответ на него не должен выдавать
     /// скрытую: посторонний получает один и тот же отказ для скрытой и отсутствующей,
@@ -241,7 +240,8 @@ type HiddenMeetupReadTests() =
             |> ignore
 
         use live = new LiveMeetupsHost(configure)
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
+        let authority = AuthenticatedClient.notifications live.Channel
         let hiddenId, _ = createDraft client
         let missingId = (Guid.CreateVersion7()).ToString "D"
 
@@ -251,7 +251,7 @@ type HiddenMeetupReadTests() =
             request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
 
             try
-                client.CheckMeetupAuthority(request) |> ignore
+                authority.CheckMeetupAuthority(request) |> ignore
                 None
             with :? RpcException as refused ->
                 Some refused.Status

@@ -71,6 +71,7 @@ public sealed class MeetupDraftContourTests(ContourFixture contour)
 
         var created = await contour.MeetupsClient.CreateMeetupDraftAsync(
             new CreateMeetupDraftRequest { Viewer = viewer, Id = meetupId },
+            headers: contour.BotCall(),
             deadline: Deadline(),
             cancellationToken: cancellationToken);
 
@@ -80,6 +81,7 @@ public sealed class MeetupDraftContourTests(ContourFixture contour)
 
         var read = await contour.MeetupsClient.GetMeetupAsync(
             new GetMeetupRequest { Viewer = viewer, Id = meetupId },
+            headers: contour.BotCall(),
             deadline: Deadline(),
             cancellationToken: cancellationToken);
 

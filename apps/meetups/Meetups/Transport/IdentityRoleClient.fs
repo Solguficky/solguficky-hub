@@ -52,8 +52,9 @@ let classify (status: Status) : Result<bool, IdentityFailure> =
     | code -> Error(IdentityFailure.Failed $"identity {code}")
 
 /// Заголовки цепочки: пустые не отправляются, как и не записываются в лог.
-let metadata (forwarded: Forwarded) : Metadata =
+let metadata (serviceToken: string) (forwarded: Forwarded) : Metadata =
     let headers = Metadata()
+    headers.Add("authorization", $"Bearer {serviceToken}")
 
     forwarded.RequestId
     |> Option.iter (fun id -> headers.Add("x-request-id", RequestId.value id))
@@ -63,7 +64,7 @@ let metadata (forwarded: Forwarded) : Metadata =
 
     headers
 
-let ask (send: Send) (deadline: TimeSpan) (forwarded: Forwarded) : AskRoles =
+let ask (send: Send) (serviceToken: string) (deadline: TimeSpan) (forwarded: Forwarded) : AskRoles =
     fun (PersonId person) roles ->
         task {
             let request = Identity.V1.CheckGlobalRoleRequest(IdentityId = person.ToString "D")
@@ -73,7 +74,7 @@ let ask (send: Send) (deadline: TimeSpan) (forwarded: Forwarded) : AskRoles =
             try
                 let due = min (DateTime.UtcNow + deadline) forwarded.Deadline
 
-                let! response = send (metadata forwarded) due forwarded.Cancellation request
+                let! response = send (metadata serviceToken forwarded) due forwarded.Cancellation request
                 return Ok response.Granted
             with :? RpcException as declined ->
                 return classify declined.Status

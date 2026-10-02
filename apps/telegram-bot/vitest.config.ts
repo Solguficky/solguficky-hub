@@ -14,6 +14,7 @@ export default defineConfig({
     // синтаксис от контура не зависит.
     include: [
       "src/**/*.test.ts",
+      "testkit/**/*.test.ts",
       "../../tests/telegram-live/**/*.test.ts",
       "../../tests/contour/bot-wire/console/**/*.test.ts",
     ],

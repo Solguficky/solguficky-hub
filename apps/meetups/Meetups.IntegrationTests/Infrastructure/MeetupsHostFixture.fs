@@ -28,15 +28,18 @@ type MeetupsHostFixture() =
     // не годится: Host.build на ней делает failwith уже при разрешении.
     // Порт 0 в --urls: адрес назначает система, параллельные прогоны не конфликтуют.
     let app =
-        Meetups.Host.build
-            [|
-                "--urls=http://127.0.0.1:0"
-                "--MEETUPS_DATABASE_URL=postgres://meetups:none@127.0.0.1:1/meetups?sslmode=disable"
-                "--MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow"
-                // Identity тоже заведомо недостижим: проверка права доходит до
-                // настоящего адаптера и получает отказ транспорта, а не заглушку.
-                "--MEETUPS_IDENTITY_GRPC_URL=http://127.0.0.1:1"
-            |]
+        Meetups.Host.build (
+            Array.append
+                AuthenticatedClient.configuration
+                [|
+                    "--urls=http://127.0.0.1:0"
+                    "--MEETUPS_DATABASE_URL=postgres://meetups:none@127.0.0.1:1/meetups?sslmode=disable"
+                    "--MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow"
+                    // Identity тоже заведомо недостижим: проверка права доходит до
+                    // настоящего адаптера и получает отказ транспорта, а не заглушку.
+                    "--MEETUPS_IDENTITY_GRPC_URL=http://127.0.0.1:1"
+                |]
+        )
 
     // Kestrel слушает уже после StartAsync, поэтому всё, что может бросить после
     // него, обёрнуто: исключение в конструкторе не даёт xUnit позвать Dispose, и

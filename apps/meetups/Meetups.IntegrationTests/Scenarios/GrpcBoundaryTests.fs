@@ -20,7 +20,8 @@ open Xunit
 /// резолвится всегда. Именно поэтому фикстуре и понадобился DSN.
 type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
-    let client = MeetupsService.MeetupsServiceClient(host.Channel)
+    let client = AuthenticatedClient.bot host.Channel
+    let authority = AuthenticatedClient.notifications host.Channel
 
     /// Пустой набор ролей — обычный пользователь (integration.md).
     let viewer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000a")
@@ -78,7 +79,8 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
 
-        let actual = Rpc.codeOf (fun () -> client.CheckMeetupAuthority(request) |> ignore)
+        let actual =
+            Rpc.codeOf (fun () -> authority.CheckMeetupAuthority(request) |> ignore)
 
         test <@ actual = Some StatusCode.Unavailable @>
 
@@ -88,7 +90,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
     member _.``The authority check refuses an empty set of relations with INVALID_ARGUMENT``() =
         let actual =
             Rpc.codeOf (fun () ->
-                client.CheckMeetupAuthority(CheckMeetupAuthorityRequest(IdentityId = viewer.IdentityId, Id = id))
+                authority.CheckMeetupAuthority(CheckMeetupAuthorityRequest(IdentityId = viewer.IdentityId, Id = id))
                 |> ignore
             )
 
