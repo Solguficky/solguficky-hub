@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCallback } from "./parse-callback.js";
+import { parseCallback, traceCallback } from "./parse-callback.js";
 
 describe("callback parser", () => {
   it("parses a meetup card action", () => {
@@ -8,6 +8,22 @@ describe("callback parser", () => {
       token: "AZjypHwefTqbIU-OEqs0zg",
     });
   });
+  it("reads a trace button as the same action marked as a trace", () => {
+    expect(parseCallback("v1:t:view:AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "view-meetup",
+      token: "AZLzpLXGfY6fChssPU5fYA",
+      trace: true,
+    });
+    expect(parseCallback("v1:t:nav:hub")).toEqual({ kind: "hub", trace: true });
+    expect(traceCallback("v1:notify:global")).toBe("v1:t:notify:global");
+    expect(parseCallback("v1:t:view:short")).toEqual({ kind: "malformed" });
+    expect(
+      Buffer.byteLength(
+        traceCallback("v1:notify:settings:AZLzpLXGfY6fChssPU5fYA"),
+      ),
+    ).toBeLessThanOrEqual(64);
+  });
+
   it("distinguishes outdated and malformed callbacks", () => {
     expect(parseCallback("v2:manage:menu")).toEqual({ kind: "outdated" });
     expect(parseCallback("v1:manage:new:not-a-token")).toEqual({

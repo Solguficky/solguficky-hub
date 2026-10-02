@@ -17,46 +17,73 @@ export type ShownScreen = {
   id: ScreenId;
   text: string;
   keyboard: InlineKeyboard;
-  /** Разметка текста; без неё текст уходит как есть. */
-  format?: "HTML";
+  /**
+   * Разметка текста: `HTML` — обычное сообщение с разметкой, `rich` — богатое
+   * сообщение (ADR-034). Без неё текст уходит как есть.
+   */
+  format?: "HTML" | "rich";
+  /** `new` — экран приходит новым сообщением, даже если его открыло нажатие. */
+  delivery?: "auto" | "new";
+  /**
+   * Что остаётся подписью у сообщения с файлом, под которым нажали кнопку: оно
+   * становится следом. Без подписи у него только снимается клавиатура.
+   */
+  fileTrace?: string;
+};
+
+/** Update с тем, что отправителю нужно знать о нажатии. */
+export type ScreenContext = Context & {
+  waiting?: Waiting;
+  /** Кнопка стояла под следом: экран не вправе его затереть. */
+  fresh?: boolean;
 };
 
 /**
- * Единый отправитель экрана. Нажатие правит своё сообщение, команда отвечает
- * новым: править после команды нечего. Правку, которую Telegram не принял,
- * заменяет новое сообщение, а у прежнего снимается клавиатура.
+ * Единый отправитель экрана (дизайн-код, «Доставка»). Нажатие правит своё
+ * сообщение. Новым сообщением экран приходит после команды, из-под следа и
+ * из-под сообщения с файлом: текст у файла Telegram править не даёт. Правку,
+ * которую Telegram не принял, тоже заменяет новое сообщение.
  */
 export async function showScreen(
-  ctx: Context & { waiting?: Waiting },
-  { id, text, keyboard, format }: ShownScreen,
+  ctx: ScreenContext,
+  { id, text, keyboard, format, delivery, fileTrace }: ShownScreen,
 ): Promise<void> {
   const other = {
     ...screenMark(id),
     reply_markup: keyboard,
-    ...(format === undefined ? {} : { parse_mode: format }),
+    ...(format === "HTML" ? { parse_mode: format } : {}),
   };
-  // Экран, открытый командой, править нечем: кнопки под сообщением нет, и
-  // попытка правки дала бы два заведомо неудачных вызова Bot API.
-  if (ctx.callbackQuery === undefined) {
-    await ctx.reply(text, other);
+  const send = (): Promise<unknown> =>
+    format === "rich"
+      ? ctx.replyWithRichMessage({ html: text }, other)
+      : ctx.reply(text, other);
+  const message = ctx.callbackQuery?.message;
+  if (message === undefined || delivery === "new" || ctx.fresh === true) {
+    await send();
     return;
   }
-  const message = ctx.callbackQuery.message;
+  if ("document" in message || "photo" in message) {
+    await leaveFileTrace(ctx, fileTrace);
+    await send();
+    return;
+  }
   // Экран тот же, что под нажатой кнопкой: править нечем, и молчание человек
   // прочёл бы как несработавшую кнопку. Всплывающий текст говорит, что
   // нажатие дошло, — кадр E-09, а на повторе после сбоя — что сбой остался.
-  if (sameScreen(message, text, keyboard, format)) {
+  if (format !== "rich" && sameScreen(message, text, keyboard, format)) {
     await ctx.waiting?.answer(
       id === "refusal" ? "Пока не получилось." : "Без изменений.",
     );
     return;
   }
   try {
-    if (
-      message !== undefined &&
-      ("document" in message || "photo" in message)
-    ) {
-      await ctx.editMessageCaption({ caption: text, ...other });
+    if (format === "rich") {
+      await ctx.api.editMessageText(
+        message.chat.id,
+        message.message_id,
+        { html: text },
+        other,
+      );
     } else {
       await ctx.editMessageText(text, other);
     }
@@ -65,7 +92,7 @@ export async function showScreen(
       return;
     }
     await clearCallbackKeyboard(ctx);
-    await ctx.reply(text, other);
+    await send();
   }
 }
 
@@ -74,6 +101,26 @@ export async function clearCallbackKeyboard(ctx: Context): Promise<void> {
     await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
   } catch {
     // A replacement screen still gets sent below; this is best-effort cleanup.
+  }
+}
+
+// Сообщение с файлом остаётся в истории следом: без клавиатуры и, если
+// действие его касалось, с подписью о том, чем оно кончилось.
+async function leaveFileTrace(
+  ctx: Context,
+  caption: string | undefined,
+): Promise<void> {
+  if (caption === undefined) {
+    await clearCallbackKeyboard(ctx);
+    return;
+  }
+  try {
+    await ctx.editMessageCaption({
+      caption,
+      reply_markup: new InlineKeyboard(),
+    });
+  } catch {
+    // Экран всё равно уходит следом новым сообщением.
   }
 }
 

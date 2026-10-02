@@ -84,6 +84,7 @@ import {
   type NotifiedMeetupCategory,
   parseCallback,
   removableUsernamePattern,
+  traceCallback,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import type { ScreenId } from "./screens/catalog.js";
@@ -308,6 +309,8 @@ type UpdateContext = TracedContext & {
   startedAt?: bigint;
   // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
   waiting?: Waiting;
+  // Кнопка стояла под следом: экран приходит новым сообщением.
+  fresh?: boolean;
 };
 
 type BoundaryOutcome =
@@ -968,6 +971,7 @@ async function handleCallback(
       );
       return;
     }
+    ctx.fresh = action.trace === true;
     useCase = callbackUseCase(action.kind);
     // Вопрос о прошедшей дате задают и в форме создания, и в правке: сценарий
     // тот же, что у ответа текстом, который его породил.
@@ -997,21 +1001,19 @@ async function handleCallback(
     // кнопка остаётся в чате. Меню сервиса за собой не имеет, а вопрос отказал бы
     // лишь после набора ответа, поэтому отказ приходит здесь. Остальные кнопки
     // меню, кроме объявления с его вопросом, бот пропускает: право на них решают
-    // Meetups и Identity (PER-396). Отказ приходит новым сообщением, как и
-    // успешный ответ на эти кнопки: экран, где лежала кнопка, остаётся целым.
+    // Meetups и Identity (PER-396). Отказ приходит правкой, как любой экран.
     if (
       (action.kind === "manage-menu" ||
         action.kind === "ask-allowed-username") &&
       !isAdministrator(person)
     ) {
-      await ctx.reply(
+      await editScreen(
+        ctx,
+        "refusal",
         action.kind === "manage-menu"
           ? managementForbiddenText
           : communityForbiddenText,
-        {
-          ...screenMark("refusal"),
-          reply_markup: new InlineKeyboard().text("Назад", "v1:nav:start"),
-        },
+        new InlineKeyboard().text("Назад", "v1:nav:start"),
       );
       outcome = {
         level: "warn",
@@ -1177,7 +1179,11 @@ async function handleCallback(
             : `${conflictText}\n\nНачни прикрепление заново из карточки сходки.`,
         );
       } else {
-        await renderMaterialResult(ctx, result);
+        await renderMaterialResult(
+          ctx,
+          result,
+          `Прикреплено: ${confirmation.title}`,
+        );
       }
       outcome = screenBoundary(result, {
         ok: ["material-attached"],
@@ -1947,10 +1953,7 @@ async function handleCallback(
       if (person.globalRoles.includes("admin")) {
         keyboard.row().text("Объявление сообществу", "v1:bc:c");
       }
-      await ctx.reply("Управление сходками", {
-        ...screenMark("manage"),
-        reply_markup: keyboard,
-      });
+      await editScreen(ctx, "manage", "Управление сходками", keyboard);
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -2063,7 +2066,10 @@ async function handleCallback(
       if (result.kind === "global-notification-settings") {
         await confirmCategoryDisabled(ctx, {
           note: globalCategoryDisabledNote(action.category),
-          settings: { text: "Настроить уведомления", data: "v1:notify:global" },
+          settings: {
+            text: "Настроить уведомления",
+            data: traceCallback("v1:notify:global"),
+          },
         });
       } else {
         await ctx.reply(
@@ -2098,7 +2104,7 @@ async function handleCallback(
           note: meetupCategoryDisabledNote(action.category),
           settings: {
             text: "Уведомления сходки",
-            data: `v1:notify:settings:${action.token}`,
+            data: traceCallback(`v1:notify:settings:${action.token}`),
           },
         });
       } else if (result.kind === "meetup-not-found") {
@@ -2403,6 +2409,7 @@ async function renderMaterialManagement(
   meetup: MeetupSnapshot,
   canManage = true,
   requestedPage = 0,
+  fileTrace?: string,
 ): Promise<void> {
   const meetupToken = uuidToToken(meetup.id);
   const pageCount = Math.max(
@@ -2458,15 +2465,21 @@ async function renderMaterialManagement(
     keyboard.text("Прикрепить материал", `v1:mm:add:${meetupToken}`).row();
   }
   keyboard.text("К сходке", `v1:view:${meetupToken}`);
-  await editScreen(ctx, "materials", lines.join("\n"), keyboard);
+  await showScreen(ctx, {
+    id: "materials",
+    text: lines.join("\n"),
+    keyboard,
+    ...(fileTrace === undefined ? {} : { fileTrace }),
+  });
 }
 
 async function renderMaterialResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  fileTrace?: string,
 ): Promise<void> {
   if (result.kind === "material-attached") {
-    await renderMaterialManagement(ctx, result.meetup);
+    await renderMaterialManagement(ctx, result.meetup, true, 0, fileTrace);
     return;
   }
   if (result.kind === "material-removed") {
@@ -2789,7 +2802,7 @@ async function notifyAdmitted(
         ...screenMark("access-opened"),
         reply_markup: new InlineKeyboard().text(
           "Ближайшие сходки",
-          "v1:nav:hub",
+          traceCallback("v1:nav:hub"),
         ),
       },
     );
@@ -3282,78 +3295,29 @@ async function renderMeetupCard(
         .text("Уведомления по сходке", `v1:notify:settings:${token}`)
         .row();
     }
-    const cardNote =
-      note ?? (result.subscribed === false ? unsubscribedNote : undefined);
+    // Подсказка о подписке стоит под карточкой и уступает место заметке:
+    // вместе они читались бы как два ответа на одно нажатие.
+    const hint =
+      note === undefined && result.subscribed === false
+        ? unsubscribedNote
+        : undefined;
     keyboard
       .text("Обновить", `v1:view:${token}`)
       .row()
       .text("К списку", "v1:nav:hub");
-    if (presentation === "rich") {
-      const richMessage = {
-        html: withNote(
-          meetupCardHtml(result.meetup, result.author),
-          cardNote,
-          "rich",
-        ),
-      };
-      if (
-        edit &&
-        ctx.chat !== undefined &&
-        ctx.callbackQuery?.message !== undefined
-      ) {
-        try {
-          await ctx.api.editMessageText(
-            ctx.chat.id,
-            ctx.callbackQuery.message.message_id,
-            richMessage,
-            { ...screenMark("card"), reply_markup: keyboard },
-          );
-        } catch (cause) {
-          if (!errorText(cause).includes("message is not modified")) {
-            await clearCallbackKeyboard(ctx);
-            await ctx.replyWithRichMessage(richMessage, {
-              ...screenMark("card"),
-              reply_markup: keyboard,
-            });
-          }
-        }
-      } else {
-        await ctx.replyWithRichMessage(richMessage, {
-          ...screenMark("card"),
-          reply_markup: keyboard,
-        });
-      }
-    } else {
-      const html = withNote(
-        meetupCardPlainHtml(result.meetup, result.author),
-        cardNote,
-        "plain",
-      );
-      if (edit) {
-        try {
-          await ctx.editMessageText(html, {
-            parse_mode: "HTML",
-            ...screenMark("card"),
-            reply_markup: keyboard,
-          });
-        } catch (cause) {
-          if (!errorText(cause).includes("message is not modified")) {
-            await clearCallbackKeyboard(ctx);
-            await ctx.reply(html, {
-              parse_mode: "HTML",
-              ...screenMark("card"),
-              reply_markup: keyboard,
-            });
-          }
-        }
-      } else {
-        await ctx.reply(html, {
-          parse_mode: "HTML",
-          ...screenMark("card"),
-          reply_markup: keyboard,
-        });
-      }
-    }
+    await showScreen(ctx, {
+      id: "card",
+      text: withNotes(
+        presentation === "rich"
+          ? meetupCardHtml(result.meetup, result.author)
+          : meetupCardPlainHtml(result.meetup, result.author),
+        { note, hint },
+        presentation,
+      ),
+      keyboard,
+      format: presentation === "rich" ? "rich" : "HTML",
+      delivery: edit ? "auto" : "new",
+    });
     return;
   }
   const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
@@ -3677,17 +3641,23 @@ function meetupCardHtml(meetup: MeetupSnapshot, author?: MeetupAuthor): string {
   return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
 }
 
-// Заметка идёт под карточкой отдельным абзацем; режимы различаются только
-// разметкой абзаца.
-function withNote(
+// Заметка — ответ на действие человека — стоит первой строкой, над заголовком:
+// экран-результат приходит одним сообщением (дизайн-код, «Доставка»).
+// Подсказка идёт под карточкой. Режимы различаются только разметкой абзаца.
+function withNotes(
   html: string,
-  note: string | undefined,
+  { note, hint }: { note: string | undefined; hint: string | undefined },
   presentation: "rich" | "plain",
 ): string {
-  if (note === undefined) return html;
-  return presentation === "rich"
-    ? `${html}<p>${escapeHtml(note)}</p>`
-    : `${html}\n\n${escapeHtml(note)}`;
+  const paragraph = (text: string | undefined) =>
+    text === undefined
+      ? undefined
+      : presentation === "rich"
+        ? `<p>${escapeHtml(text)}</p>`
+        : escapeHtml(text);
+  return [paragraph(note), html, paragraph(hint)]
+    .filter((part) => part !== undefined)
+    .join(presentation === "rich" ? "" : "\n\n");
 }
 
 function meetupCardPlainHtml(
@@ -4053,12 +4023,16 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "meetup-updated") {
-    await ctx.reply(
+    await renderMeetupCard(
+      ctx,
+      cardFrom(result),
+      false,
+      presentation,
+      true,
       result.archived === true
         ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Ближайших сходках»."
         : "Изменение сохранено.",
     );
-    await renderMeetupCard(ctx, cardFrom(result), false, presentation, true);
     return;
   }
   if (result.kind === "edit-unavailable") {
@@ -4118,12 +4092,16 @@ async function renderFormResult(
   if (result.kind === "publication-scheduled") {
     // О самом срабатывании бот не рассказывает: уведомление о публикации —
     // блок Notifications. Здесь только подтверждение назначения.
-    await ctx.reply(
+    await renderMeetupCard(
+      ctx,
+      cardFrom(result),
+      false,
+      presentation,
+      true,
       result.meetup.publishAt === undefined
         ? "Публикация назначена."
         : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`,
     );
-    await renderMeetupCard(ctx, cardFrom(result), false, presentation, true);
     return;
   }
   if (result.kind === "publication-unavailable") {
@@ -4132,8 +4110,14 @@ async function renderFormResult(
       result.meetup.lifecycle === "cancelled"
         ? "Сходка отменена. Назначить ей публикацию нельзя."
         : "Сходка уже опубликована. Назначать публикацию больше не нужно.";
-    await ctx.reply(text);
-    await renderMeetupCard(ctx, cardFrom(result), false, presentation, true);
+    await renderMeetupCard(
+      ctx,
+      cardFrom(result),
+      false,
+      presentation,
+      true,
+      text,
+    );
     return;
   }
   if (result.kind === "published") {

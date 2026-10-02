@@ -63,7 +63,7 @@ const VersionSchema = z
 // кнопка, которую разбор потом назовёт сломанной, рисоваться не должна.
 export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
-export type CallbackAction =
+type PlainAction =
   | { kind: "home" }
   | { kind: "hub" }
   | { kind: "archive" }
@@ -153,11 +153,29 @@ export type CallbackAction =
   | { kind: "outdated" }
   | { kind: "malformed" };
 
+// Кнопка под следом — уведомлением или сообщением «Доступ открыт» — несёт то же
+// действие, что и кнопка экрана, с пометкой `t`: экран по ней приходит новым
+// сообщением, а след остаётся в истории как был (дизайн-код, «Доставка»).
+export type CallbackAction = PlainAction & { trace?: true };
+
+const tracePrefix = "v1:t:";
+
+/** Данные кнопки следа для действия, которое на экране несёт `data`. */
+export function traceCallback(data: `v1:${string}`): string {
+  return `${tracePrefix}${data.slice("v1:".length)}`;
+}
+
 export function parseCallback(raw: unknown): CallbackAction {
   const parsed = CallbackSchema.safeParse(raw);
   if (!parsed.success) return { kind: "malformed" };
   const parts = parsed.data.split(":");
   if (parts[0] !== "v1") return { kind: "outdated" };
+  if (parsed.data.startsWith(tracePrefix)) {
+    const inner = parseCallback(`v1:${parsed.data.slice(tracePrefix.length)}`);
+    return inner.kind === "malformed" || inner.kind === "outdated"
+      ? inner
+      : { ...inner, trace: true };
+  }
   if (parsed.data === "v1:manage:menu") return { kind: "manage-menu" };
   if (parsed.data === "v1:manage:hidden") return { kind: "manage-hidden" };
   if (parsed.data === "v1:community:list") return { kind: "community" };
