@@ -1643,6 +1643,7 @@ describe("presentation adapter", () => {
       meetupId: meetup.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
   });
 
@@ -1842,6 +1843,7 @@ describe("presentation adapter", () => {
       meetupId: meetup.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(
       restarted.calls.some(
@@ -1933,6 +1935,7 @@ describe("presentation adapter", () => {
       meetupId: meetup.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
   });
 
@@ -2011,6 +2014,7 @@ describe("presentation adapter", () => {
       meetupId: visible.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
   });
@@ -2177,6 +2181,7 @@ describe("presentation adapter", () => {
       intent: "list-visible-meetups",
       requestId: expect.any(String),
       useCase: "find_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
@@ -2502,6 +2507,7 @@ describe("presentation adapter", () => {
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
       requestId: expect.any(String),
       useCase: "view_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls.at(-1)).toMatchObject({
       method: "sendRichMessage",
@@ -2557,6 +2563,7 @@ describe("presentation adapter", () => {
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
       requestId: expect.any(String),
       useCase: "view_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls[0]).toMatchObject({
       method: "sendRichMessage",
@@ -3031,31 +3038,40 @@ describe("presentation adapter", () => {
     expect(typeof records[0]?.fields.stack).toBe("string");
   });
 
-  it("keeps use_case when acknowledging a callback fails", async () => {
+  it("finishes the action when answering the press fails", async () => {
     const { logger, records } = createCapturingLogger();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
     const bot = createBot({
       token: "111:test-token",
-      dispatcher: createDispatcher(),
+      dispatcher: { execute },
       identity: resolvedIdentity(),
       logger,
       tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
-    const failing: Transformer = (_prev, method) =>
-      method === "answerCallbackQuery"
+    const sent: string[] = [];
+    const failing: Transformer = (_prev, method) => {
+      sent.push(method);
+      return method === "answerCallbackQuery"
         ? Promise.reject(new Error("query is too old"))
         : Promise.resolve({ ok: true, result: true as never });
+    };
     bot.api.config.use(failing);
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    // Отказ ответа на нажатие действие не отменяет: карточка всё равно
+    // приходит, а отказ остаётся в записи границы.
+    expect(sent).toEqual(["answerCallbackQuery", "editMessageText"]);
     expectBoundary(records[0], {
-      level: "error",
-      result: "error",
-      error_category: "unexpected",
+      level: "info",
+      result: "ok",
       operation: "callback_query",
       use_case: "view_meetup",
     });
-    expect(records[0]?.fields.error).toBe("query is too old");
+    expect(records[0]?.fields.reply_error).toBe("query is too old");
   });
 
   it("logs malformed callback data without its payload", async () => {
@@ -4221,6 +4237,7 @@ describe("deferred publication frames", () => {
       meetupId: draft.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(
       calls.some((call) =>
@@ -4511,6 +4528,7 @@ describe("past meetup date", () => {
       confirmedPast: true,
       requestId: expect.any(String),
       useCase: "create_meetup",
+      deadlineAt: expect.any(Number),
     });
     expectBoundary(records.at(-1), {
       level: "info",

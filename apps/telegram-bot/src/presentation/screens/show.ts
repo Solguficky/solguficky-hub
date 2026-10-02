@@ -1,4 +1,5 @@
 import { type Context, InlineKeyboard } from "grammy";
+import type { Waiting } from "../waiting.js";
 import type { ScreenId } from "./catalog.js";
 
 // Метка экрана едет вместе с самим вызовом Bot API: grammY переносит параметры
@@ -26,7 +27,7 @@ export type ShownScreen = {
  * заменяет новое сообщение, а у прежнего снимается клавиатура.
  */
 export async function showScreen(
-  ctx: Context,
+  ctx: Context & { waiting?: Waiting },
   { id, text, keyboard, format }: ShownScreen,
 ): Promise<void> {
   const other = {
@@ -40,8 +41,17 @@ export async function showScreen(
     await ctx.reply(text, other);
     return;
   }
+  const message = ctx.callbackQuery.message;
+  // Экран тот же, что под нажатой кнопкой: править нечем, и молчание человек
+  // прочёл бы как несработавшую кнопку. Всплывающий текст говорит, что
+  // нажатие дошло, — кадр E-09, а на повторе после сбоя — что сбой остался.
+  if (sameScreen(message, text, keyboard, format)) {
+    await ctx.waiting?.answer(
+      id === "refusal" ? "Пока не получилось." : "Без изменений.",
+    );
+    return;
+  }
   try {
-    const message = ctx.callbackQuery.message;
     if (
       message !== undefined &&
       ("document" in message || "photo" in message)
@@ -65,6 +75,36 @@ export async function clearCallbackKeyboard(ctx: Context): Promise<void> {
   } catch {
     // A replacement screen still gets sent below; this is best-effort cleanup.
   }
+}
+
+// У размеченного сообщения Telegram возвращает видимый текст и сущности, а не
+// исходный HTML, поэтому сравнивается видимый текст: теги сняты, сущности
+// раскрыты. Разметка бота — только то, что собирает он сам, без вложенности.
+function sameScreen(
+  message: unknown,
+  text: string,
+  keyboard: InlineKeyboard,
+  format: "HTML" | undefined,
+): boolean {
+  if (typeof message !== "object" || message === null) return false;
+  const shown = message as {
+    text?: unknown;
+    reply_markup?: { inline_keyboard?: unknown };
+  };
+  return (
+    shown.text === (format === "HTML" ? visibleText(text) : text) &&
+    JSON.stringify(shown.reply_markup?.inline_keyboard ?? []) ===
+      JSON.stringify(keyboard.inline_keyboard)
+  );
+}
+
+function visibleText(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&amp;", "&");
 }
 
 /** Повторная правка тем же содержимым: Telegram отвечает отказом, человеку это успех. */

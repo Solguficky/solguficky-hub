@@ -97,6 +97,7 @@ import {
   type TracedContext,
   traceUpdate,
 } from "./tracing.js";
+import { startWaiting, type Waiting } from "./waiting.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
 // инфраструктуру (ADR-046). Значения совпадают с опцией grammY, чтобы между
@@ -305,6 +306,8 @@ type PendingInput =
 type UpdateContext = TracedContext & {
   requestId?: string;
   startedAt?: bigint;
+  // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
+  waiting?: Waiting;
 };
 
 type BoundaryOutcome =
@@ -370,6 +373,8 @@ async function handleMessage(
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
+  const waiting = startWaiting(ctx);
+  ctx.waiting = waiting;
   try {
     const parsed = parseUpdate(ctx.update, ctx.me.username);
     // Команда меню, выбранная, пока клиент держит режим ответа на вопрос,
@@ -926,6 +931,7 @@ async function handleMessage(
       outcome = unexpectedOutcome(cause, undefined, useCase);
     }
   } finally {
+    await waiting.finish();
     if (outcome !== undefined) {
       writeBoundary(runtime.logger, ctx, outcome);
     }
@@ -939,9 +945,12 @@ async function handleCallback(
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
+  // Ответ на нажатие уходит вместе с результатом, а не до похода к сервисам:
+  // пока его нет, клиент сам крутит индикатор на кнопке (дизайн-код,
+  // «Ожидание»). Отвечает первый видимый вызов Bot API либо `finish` ниже.
+  const waiting = startWaiting(ctx);
+  ctx.waiting = waiting;
   try {
-    // Разбор чистый и синхронный, поэтому он идёт до подтверждения: ack ничего
-    // не ждёт, а его собственный отказ попадает в запись уже со сценарием.
     const action = parseCallback(ctx.callbackQuery?.data);
     if (action.kind === "malformed") {
       outcome = {
@@ -951,7 +960,6 @@ async function handleCallback(
         error_category: "invariant",
         error: "callback data failed validation",
       };
-      await ctx.answerCallbackQuery();
       await editScreen(
         ctx,
         "refusal",
@@ -970,11 +978,6 @@ async function handleCallback(
     ) {
       useCase = "create_meetup";
     }
-    // Ack без текста: он только гасит индикатор на кнопке, а результат или кадр
-    // E-05 приходит правкой экрана, и всплывающее окно поверх неё ничего не
-    // добавляет (PER-400). Текст здесь уместен только там, где он несёт смысл,
-    // которого на экране нет.
-    await ctx.answerCallbackQuery();
     const retryCallback =
       action.kind === "outdated"
         ? "v1:nav:hub"
@@ -2032,6 +2035,9 @@ async function handleCallback(
         enabled: action.enabled,
         ...rpcCall(ctx, useCase),
       });
+      if (result.kind === "global-notification-settings") {
+        await waiting.answer(toggleToast(action.category, action.enabled));
+      }
       await renderNotificationSettings(ctx, result, "v1:notify:global");
       outcome = screenBoundary(result, {
         ok: ["global-notification-settings"],
@@ -2194,6 +2200,12 @@ async function handleCallback(
           runtime.presentation ?? "rich",
         );
       } else {
+        if (
+          action.kind === "notify-set-meetup" &&
+          result.kind === "meetup-notification-settings"
+        ) {
+          await waiting.answer(toggleToast(action.category, action.enabled));
+        }
         await renderNotificationSettings(
           ctx,
           result,
@@ -2222,6 +2234,7 @@ async function handleCallback(
       outcome = { ...outcome, reply_error: errorText(cause) };
     }
   } finally {
+    await waiting.finish();
     if (outcome !== undefined) {
       writeBoundary(runtime.logger, ctx, outcome);
     }
@@ -3122,6 +3135,13 @@ function withoutSubscription(category: NotificationCategory): boolean {
   return category === "published" || category === "announcement";
 }
 
+// Кадр P-08: подтверждение переключателя всплывающим текстом. Экран после
+// нажатия показывает только новое состояние; что сработало именно это нажатие,
+// говорит ответ на него.
+function toggleToast(category: NotificationCategory, enabled: boolean): string {
+  return `${enabled ? "Включено" : "Выключено"}: ${categoryLabels[category].toLowerCase()}.`;
+}
+
 function checkbox(label: string, enabled: boolean): string {
   return `${enabled ? "[x]" : "[ ]"} ${label}`;
 }
@@ -3346,7 +3366,7 @@ async function renderMeetupCard(
 }
 
 // Оба кадра настроек живут в одном рендере: у них одна механика — список
-// отметок, переключение на месте, `answerCallbackQuery` уже отправлен выше — и
+// отметок, переключение на месте, ответ на нажатие уходит вместе с правкой — и
 // различаются только словарём категорий, заголовком и кнопкой возврата.
 async function renderNotificationSettings(
   ctx: UpdateContext,
@@ -4204,10 +4224,17 @@ function createUuidV7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Метаданные вызова сервиса. Их собирают прямо перед вызовом, поэтому здесь
+// же начинается ожидание человека: с этого момента идёт счёт до «печатает…»,
+// а вызов получает общий дедлайн действия.
 function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
+  ctx.waiting?.begin();
   return {
     ...(ctx.requestId === undefined ? {} : { requestId: ctx.requestId }),
     ...(useCase === undefined ? {} : { useCase }),
+    ...(ctx.waiting === undefined
+      ? {}
+      : { deadlineAt: ctx.waiting.deadlineAt }),
   };
 }
 
@@ -4535,6 +4562,12 @@ function writeBoundary(
     if (outcome.reply_error !== undefined) {
       fields.reply_error = outcome.reply_error;
     }
+  }
+  // Отказ ответа на нажатие действие не отменяет, но в записи остаётся: без
+  // него «кнопка крутилась до лимита» не отличить от обычного успеха.
+  const answerError = ctx.waiting?.answerError;
+  if (answerError !== undefined && fields.reply_error === undefined) {
+    fields.reply_error = answerError;
   }
   logger[outcome.level](outcome.message, fields);
 }

@@ -10,6 +10,7 @@ import {
 } from "../../gen/notifications/v1/notifications_service_pb.js";
 import {
   callHeaders,
+  callTimeoutMs,
   presentServiceToken,
   type RpcMetadata,
 } from "../rpc-metadata.js";
@@ -64,7 +65,7 @@ export function createNotificationsAdapter(
   timeoutMs = 3_000,
 ): Notifications {
   const options = (meta?: RpcMetadata) => ({
-    timeoutMs,
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
   const global = async (
