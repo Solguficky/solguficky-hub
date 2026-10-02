@@ -66,6 +66,9 @@ describe("идемпотентность по журналу Meetups", () => {
     const { adminId, organizer } = await organizerInManagement();
 
     await organizer.presses("Создать сходку");
+    // Перерисовка меню: оно правит своё сообщение, и второй вход в него идёт
+    // с нового стартового экрана.
+    await organizer.says("/start");
     await organizer.presses("Управление сходками");
     await organizer.presses("Создать сходку");
 
