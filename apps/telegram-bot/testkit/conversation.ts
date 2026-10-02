@@ -18,7 +18,20 @@ import { botInfo, type RecordedCall } from "./harness.js";
 
 type Button = { text: string; data: string };
 
-type KeyboardButton = { text: string; callback_data?: string; url?: string };
+const buttonStyles = ["danger", "success", "primary"] as const;
+type ButtonStyle = (typeof buttonStyles)[number];
+
+type KeyboardButton = {
+  text: string;
+  callback_data?: string;
+  url?: string;
+  style?: ButtonStyle;
+};
+
+/** Чем нарисован экран: богатым сообщением, HTML-разметкой или текстом как есть. */
+export type ScreenFormat = "rich" | "html" | "plain";
+
+type ScreenMedia = { kind: "document" | "photo"; fileId: string };
 
 type Screen = {
   messageId: number;
@@ -29,6 +42,12 @@ type Screen = {
   // нажатой кнопки, и бот читает из неё источник материала.
   keyboard: readonly (readonly KeyboardButton[])[];
   asksForReply: boolean;
+  format: ScreenFormat;
+  // Сообщение с файлом: его текст — подпись, и правится оно своим методом.
+  media?: ScreenMedia;
+  // Сообщение, на которое экран отвечает: Telegram возвращает его в нажатии, и
+  // бот читает оттуда текст рассылки.
+  replyTo?: number;
 };
 
 export type Person = {
@@ -46,6 +65,10 @@ export type Person = {
    * как `says`.
    */
   forwardsChannelPost(channel: string, postId: number): Promise<void>;
+  /** Отправляет боту документ. Висит вопрос — это ответ на него, как `says`. */
+  sendsDocument(fileName: string): Promise<void>;
+  /** Отправляет боту фотографию. Висит вопрос — это ответ на него, как `says`. */
+  sendsPhoto(): Promise<void>;
   /** Два нажатия одной кнопки, быстрее, чем бот успевает ответить на первое. */
   pressesTwice(label: string): Promise<void>;
   /** Нажимает кнопку экрана, отрисованного прошлым релизом бота. */
@@ -71,10 +94,25 @@ export type Person = {
   history(): ScreenView[];
 };
 
+export type ButtonView = {
+  text: string;
+  /** `url` открывает клиент Telegram, а не бот: нажать её в проводе нельзя. */
+  kind: "callback" | "url";
+  /** `callback_data` либо адрес: по ним видно правку, не менявшую подписей. */
+  target: string;
+  /** Цвет кнопки, если бот его задал (Bot API 9.4). */
+  style?: ButtonStyle;
+};
+
 export type ScreenView = {
   message: number;
   text: string;
   buttons: string[];
+  /** Клавиатура по рядам, как её отдал бот, вместе с url-кнопками. */
+  rows: ButtonView[][];
+  format: ScreenFormat;
+  /** Сообщение несёт файл, и `text` — его подпись. */
+  media?: ScreenMedia["kind"];
   /** Бот ждёт ответа на это сообщение (ForceReply). */
   awaitsReply: boolean;
 };
@@ -108,11 +146,14 @@ export function startConversation(
   };
 
   const write = async (
-    content: { text: string; forward_origin?: MessageOrigin },
+    content:
+      | { text: string; forward_origin?: MessageOrigin }
+      | Pick<Message.DocumentMessage, "document">
+      | Pick<Message.PhotoMessage, "photo">,
     replyTo?: Screen,
   ): Promise<void> => {
     messageId += 1;
-    const message: Message.TextMessage = {
+    const message = {
       message_id: messageId,
       date: 0,
       chat,
@@ -158,10 +199,42 @@ export function startConversation(
   };
 
   // Сообщение нажатой кнопки приходит в update целиком, как его отдаёт
-  // Telegram: текст и клавиатура с url-кнопками. Бот читает по ним
-  // подтверждение материала — название и источник живут в самом экране.
+  // Telegram: текст или файл с подписью, клавиатура с url-кнопками и
+  // сообщение, на которое экран отвечал. Бот читает по ним подтверждение
+  // материала и текст рассылки — они живут в самом экране, а не в его памяти.
   const press = (screen: Screen, data: string): Promise<unknown> => {
     updateId += 1;
+    const repliedTo =
+      screen.replyTo === undefined
+        ? undefined
+        : screens().find((candidate) => candidate.messageId === screen.replyTo);
+    const message = {
+      message_id: screen.messageId,
+      date: 0,
+      chat,
+      ...pressedContent(screen),
+      ...(screen.keyboard.length === 0
+        ? {}
+        : {
+            reply_markup: {
+              // Клавиатуру записал сам бот: это `reply_markup`, который он
+              // отдал grammY, и Telegram вернул бы её как есть. Тип записи
+              // держит только поля, которые харнесс читает.
+              inline_keyboard: screen.keyboard as InlineKeyboardButton[][],
+            },
+          }),
+      ...(repliedTo === undefined
+        ? {}
+        : {
+            reply_to_message: {
+              message_id: repliedTo.messageId,
+              date: 0,
+              chat,
+              from: { id: botInfo.id, is_bot: true, first_name: "stub" },
+              text: repliedTo.text,
+            },
+          }),
+    };
     return bot.handleUpdate({
       update_id: updateId,
       callback_query: {
@@ -169,33 +242,50 @@ export function startConversation(
         chat_instance: `chat-${userId}`,
         from,
         data,
-        message: {
-          message_id: screen.messageId,
-          date: 0,
-          chat,
-          text: screen.text,
-          ...(screen.keyboard.length === 0
-            ? {}
-            : {
-                reply_markup: {
-                  // Клавиатуру записал сам бот: это `reply_markup`, который он
-                  // отдал grammY, и Telegram вернул бы её как есть. Тип записи
-                  // держит только поля, которые харнесс читает.
-                  inline_keyboard: screen.keyboard as InlineKeyboardButton[][],
-                },
-              }),
-        },
+        message,
       },
-    });
+      // Сообщение с файлом и ответом — другие ветви `Message`, чем текстовое, а
+      // `reply_to_message` в grammY под exactOptionalPropertyTypes не населён
+      // (см. `write`): форму держит запись бота, из которой экран собран.
+    } as Update);
+  };
+
+  const answerable = (): Screen | undefined => {
+    const last = screens().at(-1);
+    return last?.asksForReply === true ? last : undefined;
   };
 
   return {
     async says(text) {
-      const last = screens().at(-1);
-      await write({ text }, last?.asksForReply === true ? last : undefined);
+      await write({ text }, answerable());
+    },
+    async sendsDocument(fileName) {
+      // Идентификатор файла выдаёт Telegram; боту он нужен только как ключ,
+      // который вернётся в подтверждении.
+      const fileId = `contour-document-${userId}-${messageId + 1}`;
+      await write(
+        {
+          document: {
+            file_id: fileId,
+            file_unique_id: fileId,
+            file_name: fileName,
+          },
+        },
+        answerable(),
+      );
+    },
+    async sendsPhoto() {
+      const fileId = `contour-photo-${userId}-${messageId + 1}`;
+      await write(
+        {
+          photo: [
+            { file_id: fileId, file_unique_id: fileId, width: 1, height: 1 },
+          ],
+        },
+        answerable(),
+      );
     },
     async forwardsChannelPost(channel, postId) {
-      const last = screens().at(-1);
       await write(
         {
           // Текст поста бот не читает: ему нужен только источник пересылки.
@@ -212,7 +302,7 @@ export function startConversation(
             date: 0,
           } satisfies MessageOrigin,
         },
-        last?.asksForReply === true ? last : undefined,
+        answerable(),
       );
     },
     async answers(number, text) {
@@ -266,14 +356,57 @@ export function startConversation(
       return screens().length;
     },
     history() {
-      return screens().map((screen) => ({
-        message: screen.messageId,
-        text: screen.text,
-        buttons: screen.buttons.map((button) => button.text),
-        awaitsReply: screen.asksForReply,
-      }));
+      return screens().map(viewOf);
     },
   };
+}
+
+/**
+ * Экраны чата для чтения глазами: то же, что `Person.history()`, но по записи
+ * вызовов Bot API без разговора. Вход L0-теста самой модели экранов.
+ */
+export function readScreenViews(
+  calls: readonly RecordedCall[],
+  chatId: number,
+): ScreenView[] {
+  return readScreens(calls, chatId).map(viewOf);
+}
+
+function viewOf(screen: Screen): ScreenView {
+  return {
+    message: screen.messageId,
+    text: screen.text,
+    buttons: screen.buttons.map((button) => button.text),
+    rows: screen.keyboard.map((row) =>
+      row.map((button) => ({
+        text: button.text,
+        kind: button.callback_data === undefined ? "url" : "callback",
+        target: button.callback_data ?? button.url ?? "",
+        ...(button.style === undefined ? {} : { style: button.style }),
+      })),
+    ),
+    format: screen.format,
+    ...(screen.media === undefined ? {} : { media: screen.media.kind }),
+    awaitsReply: screen.asksForReply,
+  };
+}
+
+// Сообщение с файлом Telegram отдаёт подписью и самим файлом, а не текстом: по
+// этой разнице бот выбирает, править текст или подпись.
+function pressedContent(
+  screen: Screen,
+):
+  | Pick<Message.TextMessage, "text">
+  | (Pick<Message.DocumentMessage, "document"> & { caption: string })
+  | (Pick<Message.PhotoMessage, "photo"> & { caption: string }) {
+  if (screen.media === undefined) return { text: screen.text };
+  const file = {
+    file_id: screen.media.fileId,
+    file_unique_id: screen.media.fileId,
+  };
+  return screen.media.kind === "document"
+    ? { caption: screen.text, document: file }
+    : { caption: screen.text, photo: [{ ...file, width: 1, height: 1 }] };
 }
 
 /** Сходка, которую бот назвал в ссылке для чата: `https://t.me/<бот>?start=m_<токен>`. */
@@ -288,15 +421,26 @@ export function meetupIdFromStartLink(text: string): string {
 type ScreenPayload = {
   chat_id?: unknown;
   text?: unknown;
+  caption?: unknown;
+  document?: unknown;
+  photo?: unknown;
   parse_mode?: unknown;
   rich_message?: { html?: unknown };
   entities?: MessageEntity[];
   message_id?: unknown;
+  reply_parameters?: { message_id?: unknown };
   reply_markup?: {
     force_reply?: boolean;
     inline_keyboard?: KeyboardButton[][];
   };
 };
+
+const sendingMethods: ReadonlySet<string> = new Set([
+  "sendMessage",
+  "sendRichMessage",
+  "sendDocument",
+  "sendPhoto",
+]);
 
 const namedEntities: Record<string, string> = {
   amp: "&",
@@ -343,8 +487,7 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
     if (payload.chat_id !== chatId) return;
     // Номер сообщения повторяет запись харнесса: отправленное сообщение
     // получает `100 + порядковый номер вызова`, правка несёт свой.
-    const sent =
-      call.method === "sendMessage" || call.method === "sendRichMessage";
+    const sent = sendingMethods.has(call.method);
     const messageId = sent
       ? 100 + index + 1
       : typeof payload.message_id === "number"
@@ -352,21 +495,48 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
         : undefined;
     if (messageId === undefined) return;
     const previous = current.get(messageId);
+    // Файл бот отправляет по идентификатору Telegram, а текст такого сообщения
+    // — его подпись.
+    const media = readMedia(payload) ?? previous?.media;
     // Карточка сходки рисуется богатым сообщением (ADR-034): его текст — HTML
     // в `rich_message`, а не в `text`. Запасная карточка приходит в `text` с
     // `parse_mode: "HTML"`. Человек видит оба без разметки, поэтому экран
     // хранит видимый текст, а entities богатого экрана остаются пустыми: DSL
     // читает их только у вопросов ForceReply.
-    const text =
+    const raw =
       typeof payload.text === "string"
-        ? payload.parse_mode === "HTML"
-          ? visibleHtmlText(payload.text)
-          : payload.text
+        ? payload.text
+        : typeof payload.caption === "string"
+          ? payload.caption
+          : undefined;
+    const format: ScreenFormat =
+      payload.rich_message !== undefined
+        ? "rich"
+        : payload.parse_mode === "HTML"
+          ? "html"
+          : "plain";
+    const text =
+      raw !== undefined
+        ? format === "html"
+          ? visibleHtmlText(raw)
+          : raw
         : typeof payload.rich_message?.html === "string"
           ? visibleHtmlText(payload.rich_message.html)
-          : undefined;
+          : // Файл без подписи — тоже сообщение в чате.
+            sent && media !== undefined
+            ? ""
+            : undefined;
+    const replyTo =
+      typeof payload.reply_parameters?.message_id === "number"
+        ? payload.reply_parameters.message_id
+        : previous?.replyTo;
     let next: Screen | undefined;
-    if ((sent || call.method === "editMessageText") && text !== undefined) {
+    if (
+      (sent ||
+        call.method === "editMessageText" ||
+        call.method === "editMessageCaption") &&
+      text !== undefined
+    ) {
       next = {
         messageId,
         text,
@@ -374,6 +544,9 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
         buttons: readButtons(payload),
         keyboard: payload.reply_markup?.inline_keyboard ?? [],
         asksForReply: payload.reply_markup?.force_reply === true,
+        format,
+        ...(media === undefined ? {} : { media }),
+        ...(replyTo === undefined ? {} : { replyTo }),
       };
     } else if (
       call.method === "editMessageReplyMarkup" &&
@@ -390,6 +563,16 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
     current.set(messageId, next);
   });
   return [...current.values()];
+}
+
+function readMedia(payload: ScreenPayload): ScreenMedia | undefined {
+  if (typeof payload.document === "string") {
+    return { kind: "document", fileId: payload.document };
+  }
+  if (typeof payload.photo === "string") {
+    return { kind: "photo", fileId: payload.photo };
+  }
+  return undefined;
 }
 
 function readButtons(payload: ScreenPayload): Button[] {
