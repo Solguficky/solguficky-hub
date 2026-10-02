@@ -6,7 +6,9 @@ import {
   type openDirectClients,
   type Person,
   type ScreenView,
+  type ScreenViolation,
   startConversation,
+  takeViolations,
   usernameFor,
 } from "../../../../apps/telegram-bot/testkit/index.js";
 import {
@@ -75,6 +77,8 @@ export type Reply =
       ack?: Ack;
       /** Сколько бот обрабатывал действие, мс. */
       tookMs: number;
+      /** Нарушения дизайн-кода в экранах этого действия; пусто — поля нет. */
+      lint?: ScreenViolation[];
       /** Предупреждения и ошибки бота за это действие. */
       log: Pick<LogRecord, "level" | "message" | "fields">[];
     }
@@ -173,6 +177,7 @@ export function openConsoleSession(
       throw error;
     }
     const tookMs = Math.round(performance.now() - startedAt);
+    const lint = takeViolations();
     const calls = wire.calls.slice(callsBefore);
     const history = person.history();
     const changed = history
@@ -188,6 +193,7 @@ export function openConsoleSession(
       api: calls.map((call) => describeCall(call, Number(telegramUserId))),
       ...(pressed ? { ack: readAck(calls) } : {}),
       tookMs,
+      ...(lint.length === 0 ? {} : { lint }),
       log: records
         .slice(recordsBefore)
         .filter((record) => record.level === "warn" || record.level === "error")

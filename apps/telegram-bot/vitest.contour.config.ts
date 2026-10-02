@@ -12,6 +12,9 @@ export default defineConfig({
     // Пропуск роняет прогон (vitest.fail-on-skip.ts); `default` перечислен
     // явно, иначе своё поле reporters снимает штатный вывод.
     reporters: ["default", new FailOnSkip()],
+    // Тот же линтер экрана, что на L0: сценарий против настоящих сервисов
+    // отправляет те же экраны.
+    setupFiles: ["./testkit/lint-setup.ts"],
     dir: "../../tests/contour/bot-wire",
     include: ["**/*.test.ts"],
     // Исследующий прогон — не гейт (vitest.explore.config.ts). Суффикс

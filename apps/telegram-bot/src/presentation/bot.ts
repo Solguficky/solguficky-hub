@@ -86,6 +86,12 @@ import {
   removableUsernamePattern,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
+import type { ScreenId } from "./screens/catalog.js";
+import {
+  clearCallbackKeyboard,
+  screenMark,
+  showScreen,
+} from "./screens/show.js";
 import {
   markUpdateFailed,
   type TracedContext,
@@ -516,7 +522,10 @@ async function handleMessage(
         questions.delete(questionKey(ctx.chat?.id, replyId));
         const prompt = await ctx.reply(
           "Как назвать материал в карточке? Напиши короткое название.",
-          { reply_markup: { force_reply: true, selective: true } },
+          {
+            ...screenMark("question"),
+            reply_markup: { force_reply: true, selective: true },
+          },
         );
         questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
           kind: "material-title",
@@ -610,6 +619,7 @@ async function handleMessage(
       if (checked.kind !== "ok") {
         questions.delete(questionKey(ctx.chat?.id, replyId));
         const prompt = await ctx.reply(broadcastBodyRetryText[checked.kind], {
+          ...screenMark("question"),
           reply_markup: { force_reply: true, selective: true },
         });
         questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
@@ -860,6 +870,7 @@ async function handleMessage(
     switch (result.kind) {
       case "message":
         await ctx.reply(result.text, {
+          ...screenMark("menu"),
           reply_markup: homeKeyboard(identity),
         });
         outcome = {
@@ -943,6 +954,7 @@ async function handleCallback(
       await ctx.answerCallbackQuery();
       await editScreen(
         ctx,
+        "refusal",
         "Не получилось прочитать эту кнопку. Открой актуальное меню.",
         new InlineKeyboard().text("К списку", "v1:nav:hub"),
       );
@@ -994,6 +1006,7 @@ async function handleCallback(
           ? managementForbiddenText
           : communityForbiddenText,
         {
+          ...screenMark("refusal"),
           reply_markup: new InlineKeyboard().text("Назад", "v1:nav:start"),
         },
       );
@@ -1040,6 +1053,7 @@ async function handleCallback(
       if (material === undefined || material.source.kind !== "file") {
         await editScreen(
           ctx,
+          "refusal",
           "Материал больше не найден. Открой актуальную карточку сходки.",
           new InlineKeyboard().text(
             "Открыть сходку",
@@ -1094,6 +1108,7 @@ async function handleCallback(
       if (confirmation === undefined) {
         await editScreen(
           ctx,
+          "refusal",
           "Этот экран прикрепления устарел. Начни действие заново из карточки сходки.",
           new InlineKeyboard().text(
             "Открыть сходку",
@@ -1202,6 +1217,7 @@ async function handleCallback(
         // подтверждение повторяется со свежей версией.
         await editScreen(
           ctx,
+          "material-remove-confirm",
           `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
           new InlineKeyboard()
             .text(
@@ -1237,6 +1253,7 @@ async function handleCallback(
       if (action.kind !== "manage-materials" && !canManageMaterials) {
         await editScreen(
           ctx,
+          "refusal",
           materialForbiddenText,
           new InlineKeyboard().text(
             "Открыть сходку",
@@ -1275,6 +1292,7 @@ async function handleCallback(
       ) {
         await editScreen(
           ctx,
+          "refusal",
           "Сходка уже отменена. Изменять её материалы больше нельзя.",
           new InlineKeyboard().text(
             "Открыть сходку",
@@ -1291,7 +1309,10 @@ async function handleCallback(
       } else if (action.kind === "begin-attach-material") {
         const prompt = await ctx.reply(
           `Перешли сообщение или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
-          { reply_markup: { force_reply: true, selective: true } },
+          {
+            ...screenMark("question"),
+            reply_markup: { force_reply: true, selective: true },
+          },
         );
         questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
           kind: "material-source",
@@ -1308,6 +1329,7 @@ async function handleCallback(
         );
         await editScreen(
           ctx,
+          material === undefined ? "refusal" : "material-remove-confirm",
           material === undefined
             ? "Материал уже отсутствует. Оригинал в Telegram не изменён."
             : `Убрать материал «${materialTitle(material, 1)}» из сходки? Оригинал в Telegram останется на месте.`,
@@ -1347,7 +1369,10 @@ async function handleCallback(
     if (action.kind === "ask-allowed-username") {
       const message = await ctx.reply(
         "Какой ник разрешить? Отправь его с @ или без.",
-        { reply_markup: { force_reply: true, selective: true } },
+        {
+          ...screenMark("question"),
+          reply_markup: { force_reply: true, selective: true },
+        },
       );
       questions.set(questionKey(ctx.chat?.id, message.message_id), {
         kind: "allowed-username",
@@ -1452,7 +1477,7 @@ async function handleCallback(
         intent: "start",
       });
       if (result.kind === "message") {
-        await editScreen(ctx, result.text, homeKeyboard(person));
+        await editScreen(ctx, "menu", result.text, homeKeyboard(person));
         outcome = {
           level: "info",
           message: "start screen sent",
@@ -1541,6 +1566,7 @@ async function handleCallback(
       if (meetup.lifecycle === "cancelled") {
         await editScreen(
           ctx,
+          "refusal",
           `Сходка «${meetup.title}» уже отменена. Изменять её больше нельзя.`,
           new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
         );
@@ -1556,6 +1582,7 @@ async function handleCallback(
       if (action.kind === "manage-edit") {
         await editScreen(
           ctx,
+          "edit",
           `Что изменить в сходке «${meetupTitleLabel(meetup.title)}»?`,
           new InlineKeyboard()
             .text("Название", `v1:manage:field:${token}:title`)
@@ -1599,6 +1626,7 @@ async function handleCallback(
       ) {
         await editScreen(
           ctx,
+          "refusal",
           "Состоявшуюся сходку отменить нельзя.",
           new InlineKeyboard().text("Назад", `v1:manage:status:${token}`),
         );
@@ -1608,6 +1636,7 @@ async function handleCallback(
         // состояние, — то же обращение со stale-кнопкой, что и у отмены выше.
         await editScreen(
           ctx,
+          "refusal",
           "Сходка уже отмечена состоявшейся.",
           new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
         );
@@ -1619,6 +1648,7 @@ async function handleCallback(
         // расписанию. Вопрос о моменте здесь закончился бы отказом домена.
         await editScreen(
           ctx,
+          "refusal",
           "Сходка уже опубликована. Назначать публикацию больше не нужно.",
           new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
         );
@@ -1635,6 +1665,7 @@ async function handleCallback(
       ) {
         await editScreen(
           ctx,
+          "refusal",
           "Отложенной публикации у сходки уже нет.",
           new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
         );
@@ -1668,6 +1699,7 @@ async function handleCallback(
             : `v1:manage:status:${token}`;
         await editScreen(
           ctx,
+          "state-confirm",
           `Точно ${stateActionCopy[stateAction].verb} «${meetup.title}»?`,
           new InlineKeyboard()
             .text("Да, продолжить", confirmStateCallback(stateAction, token))
@@ -1771,6 +1803,7 @@ async function handleCallback(
       if (!person.globalRoles.includes("admin")) {
         await editScreen(
           ctx,
+          "refusal",
           broadcastForbiddenText[audience.kind],
           broadcastBackKeyboard(audience),
         );
@@ -1807,6 +1840,7 @@ async function handleCallback(
         question = meetupBroadcastPrompt(meetupTitle);
       }
       const prompt = await ctx.reply(question, {
+        ...screenMark("question"),
         reply_markup: { force_reply: true, selective: true },
       });
       questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
@@ -1830,6 +1864,7 @@ async function handleCallback(
     if (action.kind === "cancel-broadcast") {
       await editScreen(
         ctx,
+        "broadcast-result",
         "Не отправлено. Текст никуда не ушёл.",
         new InlineKeyboard().text("К списку", "v1:nav:hub"),
       );
@@ -1856,6 +1891,7 @@ async function handleCallback(
       if (body === undefined) {
         await editScreen(
           ctx,
+          "refusal",
           "Этот экран подтверждения устарел, и текста рассылки в нём больше нет. Начни рассылку заново. Ничего не отправлено.",
           broadcastBackKeyboard(audience),
         );
@@ -1908,7 +1944,10 @@ async function handleCallback(
       if (person.globalRoles.includes("admin")) {
         keyboard.row().text("Объявление сообществу", "v1:bc:c");
       }
-      await ctx.reply("Управление сходками", { reply_markup: keyboard });
+      await ctx.reply("Управление сходками", {
+        ...screenMark("manage"),
+        reply_markup: keyboard,
+      });
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -2239,7 +2278,10 @@ async function renewConfirmationKeyboard(
   keyboard: InlineKeyboard,
 ): Promise<boolean> {
   try {
-    await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+    await ctx.editMessageReplyMarkup({
+      ...screenMark("material-confirm"),
+      reply_markup: keyboard,
+    });
     return true;
   } catch (cause) {
     return errorText(cause).includes("message is not modified");
@@ -2300,15 +2342,20 @@ async function sendMaterialConfirmation(
   );
   const text = materialConfirmationText(title);
   if (source.kind === "message-link") {
-    await ctx.reply(text, { reply_markup: keyboard });
+    await ctx.reply(text, {
+      ...screenMark("material-confirm"),
+      reply_markup: keyboard,
+    });
   } else if (source.fileKind === "document") {
     await ctx.replyWithDocument(source.fileId, {
       caption: text,
+      ...screenMark("material-confirm"),
       reply_markup: keyboard,
     });
   } else {
     await ctx.replyWithPhoto(source.fileId, {
       caption: text,
+      ...screenMark("material-confirm"),
       reply_markup: keyboard,
     });
   }
@@ -2398,7 +2445,7 @@ async function renderMaterialManagement(
     keyboard.text("Прикрепить материал", `v1:mm:add:${meetupToken}`).row();
   }
   keyboard.text("К сходке", `v1:view:${meetupToken}`);
-  await editScreen(ctx, lines.join("\n"), keyboard);
+  await editScreen(ctx, "materials", lines.join("\n"), keyboard);
 }
 
 async function renderMaterialResult(
@@ -2421,6 +2468,7 @@ async function renderMaterialResult(
         : unavailableText;
   await editScreen(
     ctx,
+    "refusal",
     text,
     new InlineKeyboard().text("К списку", "v1:nav:hub"),
   );
@@ -2516,6 +2564,7 @@ async function sendBroadcastConfirmation(
       : "Выше — текст объявления. Его получат участники сообщества, у которых включены объявления.";
   await ctx.reply(`${recipients}\n\n${broadcastIrreversibleText}`, {
     reply_parameters: { message_id: preview.message_id },
+    ...screenMark("broadcast-confirm"),
     reply_markup: new InlineKeyboard()
       .text("Отправить", confirm)
       .text("Не отправлять", "v1:bc:no"),
@@ -2535,6 +2584,7 @@ async function renderBroadcastResult(
   if (result.kind === "broadcast-accepted") {
     await editScreen(
       ctx,
+      "broadcast-result",
       result.repeated === true
         ? "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт."
         : audience.kind === "meetup"
@@ -2547,18 +2597,25 @@ async function renderBroadcastResult(
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
     await editScreen(
       ctx,
+      "broadcast-result",
       `${broadcastForbiddenText[audience.kind]} Ничего не отправлено.`,
       back,
     );
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
-    await editScreen(ctx, "Сообщение не принято. Ничего не отправлено.", back);
+    await editScreen(
+      ctx,
+      "broadcast-result",
+      "Сообщение не принято. Ничего не отправлено.",
+      back,
+    );
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "conflict") {
     await editScreen(
       ctx,
+      "broadcast-result",
       "С этой кнопки уже отправлен другой текст. Начни рассылку заново.",
       back,
     );
@@ -2568,6 +2625,7 @@ async function renderBroadcastResult(
   // же ключом это выяснит и второй раз её не разошлёт.
   await editScreen(
     ctx,
+    "broadcast-result",
     "Не получилось подтвердить отправку. Это на моей стороне.\n\nНажми «Повторить» через минуту: второй раз сообщение не уйдёт.",
     broadcastBackKeyboard(
       audience,
@@ -2599,6 +2657,7 @@ async function renderCommunity(
     if (edit)
       await editScreen(
         ctx,
+        "refusal",
         text,
         new InlineKeyboard().text("Назад", "v1:manage:menu"),
       );
@@ -2664,9 +2723,11 @@ async function renderCommunity(
   keyboard
     .text("Обновить", "v1:community:list")
     .text("Назад", "v1:manage:menu");
-  if (edit) await editScreen(ctx, lines.join("\n"), keyboard, "HTML");
+  if (edit)
+    await editScreen(ctx, "community", lines.join("\n"), keyboard, "HTML");
   else
     await ctx.reply(lines.join("\n"), {
+      ...screenMark("community"),
       reply_markup: keyboard,
       parse_mode: "HTML",
     });
@@ -2712,6 +2773,7 @@ async function notifyAdmitted(
       Number(recipient.telegramUserId),
       "Доступ открыт: теперь тебе видны сходки сообщества.",
       {
+        ...screenMark("access-opened"),
         reply_markup: new InlineKeyboard().text(
           "Ближайшие сходки",
           "v1:nav:hub",
@@ -2768,7 +2830,7 @@ async function renderMeetupList(
       result.meetups.length === 0
         ? `Пока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.`
         : meetupListText(result.meetups);
-    await editScreen(ctx, text, keyboard);
+    await editScreen(ctx, "upcoming", text, keyboard);
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
@@ -2784,6 +2846,7 @@ async function renderMeetupListFailure(
 ): Promise<void> {
   await editScreen(
     ctx,
+    "refusal",
     `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
     new InlineKeyboard().text("Повторить", retry),
   );
@@ -2816,7 +2879,7 @@ async function renderHiddenMeetupList(
         : ["Скрытые сходки", hidden.map(meetupListLine).join("\n")].join(
             "\n\n",
           );
-    await editScreen(ctx, text, keyboard);
+    await editScreen(ctx, "hidden", text, keyboard);
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
@@ -2834,60 +2897,34 @@ async function renderArchiveList(
       result.meetups.length === 0
         ? `Архив пока пуст.\n\nСюда попадают отменённые, состоявшиеся и прошедшие сходки.`
         : archiveListText(result.meetups);
-    await editScreen(ctx, text, keyboard);
+    await editScreen(ctx, "archive", text, keyboard);
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
     await editScreen(
       ctx,
+      "refusal",
       `Не получилось загрузить архив. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
       new InlineKeyboard().text("Повторить", "v1:nav:archive"),
     );
   }
 }
 
-async function editScreen(
+// Переходная форма единого отправителя: срезы перевёрстки заменяют её
+// экранами-данными, а до тех пор каждое место называет свою запись каталога.
+function editScreen(
   ctx: UpdateContext,
+  id: ScreenId,
   text: string,
   keyboard: InlineKeyboard,
   parseMode?: "HTML",
 ): Promise<void> {
-  const format = parseMode === undefined ? {} : { parse_mode: parseMode };
-  // Экран, открытый командой, править нечем: кнопки под сообщением нет, и
-  // попытка правки дала бы два заведомо неудачных вызова Bot API.
-  if (ctx.callbackQuery === undefined) {
-    await ctx.reply(text, { reply_markup: keyboard, ...format });
-    return;
-  }
-  try {
-    const message = ctx.callbackQuery?.message;
-    if (
-      message !== undefined &&
-      ("document" in message || "photo" in message)
-    ) {
-      await ctx.editMessageCaption({
-        caption: text,
-        reply_markup: keyboard,
-        ...format,
-      });
-    } else {
-      await ctx.editMessageText(text, { reply_markup: keyboard, ...format });
-    }
-  } catch (cause) {
-    if (errorText(cause).includes("message is not modified")) {
-      return;
-    }
-    await clearCallbackKeyboard(ctx);
-    await ctx.reply(text, { reply_markup: keyboard, ...format });
-  }
-}
-
-async function clearCallbackKeyboard(ctx: UpdateContext): Promise<void> {
-  try {
-    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
-  } catch {
-    // A replacement screen still gets sent below; this is best-effort cleanup.
-  }
+  return showScreen(ctx, {
+    id,
+    text,
+    keyboard,
+    ...(parseMode === undefined ? {} : { format: parseMode }),
+  });
 }
 
 function meetupListText(meetups: readonly MeetupSummary[]): string {
@@ -3155,8 +3192,12 @@ async function renderMeetupCard(
   if (result.kind === "meetup-not-found") {
     const text = "Сходка не найдена или больше недоступна.";
     const keyboard = new InlineKeyboard().text("К списку", "v1:nav:hub");
-    if (edit) await editScreen(ctx, text, keyboard);
-    else await ctx.reply(text, { reply_markup: keyboard });
+    if (edit) await editScreen(ctx, "refusal", text, keyboard);
+    else
+      await ctx.reply(text, {
+        ...screenMark("refusal"),
+        reply_markup: keyboard,
+      });
     return;
   }
   if (result.kind === "meetup-card") {
@@ -3245,18 +3286,22 @@ async function renderMeetupCard(
             ctx.chat.id,
             ctx.callbackQuery.message.message_id,
             richMessage,
-            { reply_markup: keyboard },
+            { ...screenMark("card"), reply_markup: keyboard },
           );
         } catch (cause) {
           if (!errorText(cause).includes("message is not modified")) {
             await clearCallbackKeyboard(ctx);
             await ctx.replyWithRichMessage(richMessage, {
+              ...screenMark("card"),
               reply_markup: keyboard,
             });
           }
         }
       } else {
-        await ctx.replyWithRichMessage(richMessage, { reply_markup: keyboard });
+        await ctx.replyWithRichMessage(richMessage, {
+          ...screenMark("card"),
+          reply_markup: keyboard,
+        });
       }
     } else {
       const html = withNote(
@@ -3268,6 +3313,7 @@ async function renderMeetupCard(
         try {
           await ctx.editMessageText(html, {
             parse_mode: "HTML",
+            ...screenMark("card"),
             reply_markup: keyboard,
           });
         } catch (cause) {
@@ -3275,6 +3321,7 @@ async function renderMeetupCard(
             await clearCallbackKeyboard(ctx);
             await ctx.reply(html, {
               parse_mode: "HTML",
+              ...screenMark("card"),
               reply_markup: keyboard,
             });
           }
@@ -3282,6 +3329,7 @@ async function renderMeetupCard(
       } else {
         await ctx.reply(html, {
           parse_mode: "HTML",
+          ...screenMark("card"),
           reply_markup: keyboard,
         });
       }
@@ -3289,8 +3337,12 @@ async function renderMeetupCard(
     return;
   }
   const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
-  if (edit) await editScreen(ctx, unavailableText, keyboard);
-  else await ctx.reply(unavailableText, { reply_markup: keyboard });
+  if (edit) await editScreen(ctx, "refusal", unavailableText, keyboard);
+  else
+    await ctx.reply(unavailableText, {
+      ...screenMark("refusal"),
+      reply_markup: keyboard,
+    });
 }
 
 // Оба кадра настроек живут в одном рендере: у них одна механика — список
@@ -3324,6 +3376,7 @@ async function renderNotificationSettings(
     keyboard.text("К списку", "v1:nav:hub");
     await editScreen(
       ctx,
+      "notify-global",
       `Уведомления: общие настройки
 
 Приходят всем, без подписки: новые сходки и объявления сообщества.
@@ -3372,7 +3425,7 @@ async function renderNotificationSettings(
         "Отметка «отличается» значит, что значение не совпадает с общей настройкой.",
       );
     }
-    await editScreen(ctx, lines.join("\n"), keyboard);
+    await editScreen(ctx, "notify-meetup", lines.join("\n"), keyboard);
     return;
   }
   await renderNotificationFailure(ctx, result, retry);
@@ -3439,19 +3492,19 @@ async function confirmCategoryDisabled(
   const original =
     message !== undefined && "text" in message ? message.text : undefined;
   if (original === undefined) {
-    await editScreen(ctx, note, keyboard);
+    await editScreen(ctx, "notification", note, keyboard);
     return;
   }
   const tail = `\n\n${note}`;
   if (confirmed) {
-    await editScreen(ctx, original, keyboard);
+    await editScreen(ctx, "notification", original, keyboard);
   } else if (original.length + tail.length <= telegramTextLimit) {
-    await editScreen(ctx, `${original}${tail}`, keyboard);
+    await editScreen(ctx, "notification", `${original}${tail}`, keyboard);
   } else {
     // Рассылка у предела длины: заметка под ней не поместится, и правка
     // текста получила бы 400. Текст остаётся, меняются кнопки, а заметка
     // приходит отдельным сообщением.
-    await editScreen(ctx, original, keyboard);
+    await editScreen(ctx, "notification", original, keyboard);
     await ctx.reply(note);
   }
 }
@@ -3467,6 +3520,7 @@ async function renderNotificationFailure(
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
     await editScreen(
       ctx,
+      "refusal",
       forbiddenText,
       new InlineKeyboard().text("К списку", "v1:nav:hub"),
     );
@@ -3477,6 +3531,7 @@ async function renderNotificationFailure(
     // перерисовка по текущему состоянию, а не повтор того же нажатия.
     await editScreen(
       ctx,
+      "refusal",
       "Этот экран устарел. Открой настройки заново.",
       new InlineKeyboard().text("Обновить", retry),
     );
@@ -3485,6 +3540,7 @@ async function renderNotificationFailure(
   if (result.kind === "dependency-rejected" && result.reason === "conflict") {
     await editScreen(
       ctx,
+      "refusal",
       "Это уже сделано. Ничего не изменилось.",
       new InlineKeyboard().text("Обновить", retry),
     );
@@ -3492,6 +3548,7 @@ async function renderNotificationFailure(
   }
   await editScreen(
     ctx,
+    "refusal",
     unavailableText,
     new InlineKeyboard().text("Повторить", retry),
   );
@@ -3531,6 +3588,7 @@ async function renderMeetupStatus(
   keyboard.text("Назад", `v1:view:${token}`);
   await editScreen(
     ctx,
+    "status",
     `Управление статусом\n\n${meetupCardText(meetup, true, author)}`,
     keyboard,
   );
@@ -3555,6 +3613,7 @@ async function renderStateResult(
           : "Сходка уже скрыта из общего списка.";
     await editScreen(
       ctx,
+      "refusal",
       text,
       new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
     );
@@ -3569,6 +3628,7 @@ async function renderStateResult(
     const copy = stateActionCopy[result.action];
     await editScreen(
       ctx,
+      "state-confirm",
       `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
       new InlineKeyboard().text(
         copy.label,
@@ -3585,6 +3645,7 @@ async function renderStateResult(
         : unavailableText;
   await editScreen(
     ctx,
+    "refusal",
     text,
     new InlineKeyboard().text("К списку", "v1:nav:hub"),
   );
@@ -3769,7 +3830,7 @@ async function denyHubAccessIfNeeded(
     ctx.from?.username,
   );
   if (edit) {
-    await editScreen(ctx, text, new InlineKeyboard());
+    await editScreen(ctx, "no-access", text, new InlineKeyboard());
   } else {
     await ctx.reply(text);
   }
@@ -3818,6 +3879,7 @@ async function resolvePerson(
     } else {
       await editScreen(
         ctx,
+        "refusal",
         unavailableText,
         new InlineKeyboard().text("Повторить", retryCallback),
       );
@@ -3843,6 +3905,7 @@ function replyQuestion(ctx: UpdateContext, question: QuestionMessage) {
   return ctx.reply(question.text, {
     entities: question.entities,
     link_preview_options: { is_disabled: true },
+    ...screenMark("question"),
     reply_markup: { force_reply: true, selective: true },
   });
 }
@@ -3915,6 +3978,7 @@ async function renderFormResult(
       await ctx.reply(
         `${lines.join("\n")}\n\nПроверь данные и подтверди публикацию ещё раз.`,
         {
+          ...screenMark("publish-confirm"),
           reply_markup: new InlineKeyboard().text(
             "Опубликовать",
             `v1:manage:publish:${uuidToToken(stored.id)}`,
@@ -3956,6 +4020,7 @@ async function renderFormResult(
     await ctx.reply(
       `Дата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Ближайших сходках». Сохранить её?`,
       {
+        ...screenMark("past-date-confirm"),
         reply_markup: new InlineKeyboard()
           .text(
             "Сохранить дату",
@@ -3978,6 +4043,7 @@ async function renderFormResult(
   }
   if (result.kind === "edit-unavailable") {
     await ctx.reply("Сходка уже отменена. Изменять её больше нельзя.", {
+      ...screenMark("refusal"),
       reply_markup: new InlineKeyboard().text(
         "Открыть сходку",
         `v1:view:${uuidToToken(result.meetup.id)}`,
@@ -3990,6 +4056,7 @@ async function renderFormResult(
     await ctx.reply(
       `Проверь сходку\n\n${meetup.title}\n${formatSchedule(meetup)}\n${meetup.venue}\n\n${meetup.description}`,
       {
+        ...screenMark("form-preview"),
         reply_markup: new InlineKeyboard()
           .text("Опубликовать", `v1:manage:publish:${uuidToToken(meetup.id)}`)
           .row()
@@ -4061,6 +4128,7 @@ async function renderFormResult(
         : "Сходка создана. Теперь она видна в списке.";
     await editScreen(
       ctx,
+      "form-published",
       `${created}\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
       new InlineKeyboard()
         .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
@@ -4105,6 +4173,7 @@ async function askAgain(
   text: string,
 ): Promise<void> {
   const prompt = await ctx.reply(text, {
+    ...screenMark("question"),
     reply_markup: { force_reply: true, selective: true },
   });
   questions.delete(questionKey(ctx.chat?.id, replyId));
