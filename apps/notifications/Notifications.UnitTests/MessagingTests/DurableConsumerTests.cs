@@ -1,19 +1,19 @@
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
-using Notifications.Replica;
+using Notifications.Messaging;
 using Shouldly;
 using Xunit;
 
-namespace Notifications.UnitTests.ReplicaTests;
+namespace Notifications.UnitTests.MessagingTests;
 
-public class ReplicaConsumerTests
+public class DurableConsumerTests
 {
     [Fact]
     public void IsTransient_BusDidNotAnswer_Retries()
     {
-        ReplicaConsumer.IsTransient(new NatsJSApiNoResponseException()).ShouldBeTrue();
-        ReplicaConsumer.IsTransient(new NatsConnectionFailedException("no connection")).ShouldBeTrue();
+        DurableConsumer.IsTransient(new NatsJSApiNoResponseException()).ShouldBeTrue();
+        DurableConsumer.IsTransient(new NatsConnectionFailedException("no connection")).ShouldBeTrue();
     }
 
     [Fact]
@@ -23,13 +23,13 @@ public class ReplicaConsumerTests
         // с таймаутом внутри, а не отдельный тип.
         var failure = new NatsException("can not start to connect nats server", new TimeoutException());
 
-        ReplicaConsumer.IsTransient(failure).ShouldBeTrue();
+        DurableConsumer.IsTransient(failure).ShouldBeTrue();
     }
 
     [Fact]
     public void IsTransient_JetStreamTemporarilyUnavailable_Retries()
     {
-        ReplicaConsumer.IsTransient(ApiError(503, 10008)).ShouldBeTrue();
+        DurableConsumer.IsTransient(ApiError(503, 10008)).ShouldBeTrue();
     }
 
     [Theory]
@@ -39,14 +39,14 @@ public class ReplicaConsumerTests
     [InlineData(503, 10039)] // JetStream not enabled for account
     public void IsTransient_ServerAnsweredWithError_Fails(int code, int errCode)
     {
-        ReplicaConsumer.IsTransient(ApiError(code, errCode)).ShouldBeFalse();
+        DurableConsumer.IsTransient(ApiError(code, errCode)).ShouldBeFalse();
     }
 
     [Fact]
     public void IsTransient_NoJetStreamResponders_Fails()
     {
         // Сервер без JetStream отвечает не кодом 10076, а отсутствием ответчиков.
-        ReplicaConsumer.IsTransient(new NatsNoRespondersException()).ShouldBeFalse();
+        DurableConsumer.IsTransient(new NatsNoRespondersException()).ShouldBeFalse();
     }
 
     [Fact]
@@ -54,14 +54,14 @@ public class ReplicaConsumerTests
     {
         var refused = new NatsServerException("Authorization Violation");
 
-        ReplicaConsumer.IsTransient(refused).ShouldBeFalse();
-        ReplicaConsumer.IsTransient(new NatsException("can not start to connect nats server", refused)).ShouldBeFalse();
+        DurableConsumer.IsTransient(refused).ShouldBeFalse();
+        DurableConsumer.IsTransient(new NatsException("can not start to connect nats server", refused)).ShouldBeFalse();
     }
 
     [Fact]
     public void IsTransient_RetentionMismatch_Fails()
     {
-        ReplicaConsumer.IsTransient(new InvalidOperationException("stream keeps messages longer than keys")).ShouldBeFalse();
+        DurableConsumer.IsTransient(new InvalidOperationException("stream keeps messages longer than keys")).ShouldBeFalse();
     }
 
     internal static NatsJSApiException ApiError(int code, int errCode) =>

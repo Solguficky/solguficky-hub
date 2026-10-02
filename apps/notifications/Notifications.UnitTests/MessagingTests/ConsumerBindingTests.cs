@@ -1,16 +1,17 @@
 using NATS.Client.JetStream;
 using Notifications.Replica;
+using Notifications.Messaging;
 using Shouldly;
 using Xunit;
 
-namespace Notifications.UnitTests.ReplicaTests;
+namespace Notifications.UnitTests.MessagingTests;
 
-public class ReplicaBindingTests
+public class ConsumerBindingTests
 {
     [Fact]
     public void WhenAllBound_OneFeedStillRetrying_Pending()
     {
-        var bindings = new ReplicaBindings(ReplicaFeeds.All);
+        var bindings = new ConsumerBindings(ReplicaFeeds.All);
 
         bindings.Bound(ReplicaFeeds.Meetups);
         bindings.Retrying(ReplicaFeeds.Identity, new NatsJSApiNoResponseException());
@@ -23,7 +24,7 @@ public class ReplicaBindingTests
     [Fact]
     public async Task WhenAllBound_EveryFeedBound_Completes()
     {
-        var bindings = new ReplicaBindings(ReplicaFeeds.All);
+        var bindings = new ConsumerBindings(ReplicaFeeds.All);
 
         bindings.Bound(ReplicaFeeds.Meetups);
         bindings.Bound(ReplicaFeeds.Identity);
@@ -36,8 +37,8 @@ public class ReplicaBindingTests
     {
         // Окончательный отказ одного потребителя важнее транзиентного другого:
         // именно он остановил хост, и ждать второго незачем.
-        var bindings = new ReplicaBindings(ReplicaFeeds.All);
-        var missing = ReplicaConsumerTests.ApiError(404, 10014);
+        var bindings = new ConsumerBindings(ReplicaFeeds.All);
+        var missing = DurableConsumerTests.ApiError(404, 10014);
 
         bindings.Retrying(ReplicaFeeds.Meetups, new NatsJSApiNoResponseException());
         bindings.Failed(ReplicaFeeds.Identity, missing);
@@ -53,7 +54,7 @@ public class ReplicaBindingTests
     {
         // Meetups однажды отказал и привязался, Identity молчит без отказов:
         // старый отказ Meetups не объясняет, почему не привязан Identity.
-        var bindings = new ReplicaBindings(ReplicaFeeds.All);
+        var bindings = new ConsumerBindings(ReplicaFeeds.All);
 
         bindings.Retrying(ReplicaFeeds.Meetups, new NatsJSApiNoResponseException());
         bindings.Bound(ReplicaFeeds.Meetups);

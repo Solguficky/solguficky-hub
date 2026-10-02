@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Options;
-using Notifications.Infrastructure;
 
-namespace Notifications.Replica;
+namespace Notifications.Messaging;
 
 /// <summary>
 /// Периодически снимает ключи дедупликации старше окна хранения. Без него
@@ -12,8 +11,8 @@ namespace Notifications.Replica;
 /// ключ, проживший лишний час, ничего не ломает.
 /// </remarks>
 public sealed class ConsumedEventPruner(
-    ReplicaStore store,
-    IOptions<ReplicaOptions> options,
+    ConsumedEventStore store,
+    IOptions<ConsumerOptions> options,
     TimeProvider clock,
     ILogger<ConsumedEventPruner> logger) : BackgroundService
 {

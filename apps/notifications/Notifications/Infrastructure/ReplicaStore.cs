@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Extensions.Options;
 using Notifications.Facts;
+using Notifications.Messaging;
 using Npgsql;
 using Notifications.Replica;
 
@@ -28,11 +29,6 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         SqlMapper.AddTypeHandler(new PassThrough<TimeOnly>(System.Data.DbType.Time));
     }
 
-    private const string ConsumeSql = """
-        INSERT INTO consumed_event (source, event_id, consumed_at)
-        VALUES (@Source, @EventId, @Now)
-        ON CONFLICT (source, event_id) DO NOTHING;
-        """;
 
     // Прежний снимок для разницы с событием. FOR UPDATE держит строку до конца
     // транзакции: конкурент на том же durable ждёт, и снимок, с которым
@@ -114,7 +110,6 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
     private const string LastIdentitySql = "SELECT MAX(occurred_at) FROM identity_replica;";
 
-    private const string PruneSql = "DELETE FROM consumed_event WHERE consumed_at < @Threshold;";
 
     /// <summary>
     /// Применяет факт: записывает ключ, снимок, если версия новее, и адресные
@@ -126,10 +121,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
-        var consumed = await work.Execute(
-            ConsumeSql,
-            new { fact.Source, fact.EventId, Now = now.UtcDateTime },
-            cancellationToken);
+        var consumed = await ConsumedEventStore.Consume(work, fact.Source, fact.EventId, now, cancellationToken);
 
         if (consumed == 0)
         {
@@ -231,15 +223,6 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
             new CommandDefinition(sql, cancellationToken: cancellationToken));
 
         return last is { } moment ? new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Utc)) : null;
-    }
-
-    /// <summary>Снимает ключи, записанные раньше порога. Возвращает их число.</summary>
-    public async Task<int> Prune(DateTimeOffset threshold, CancellationToken cancellationToken)
-    {
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-
-        return await connection.ExecuteAsync(
-            new CommandDefinition(PruneSql, new { Threshold = threshold.UtcDateTime }, cancellationToken: cancellationToken));
     }
 
     private static object MeetupRow(MeetupFact fact, DateTimeOffset now)

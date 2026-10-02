@@ -34,7 +34,7 @@ public class FactReplicaTests
     /// Пауза между попытками привязки: штатные пять секунд растянули бы тест
     /// повтора, а сам повтор от периода не зависит.
     /// </summary>
-    private static readonly string QuickRetry = $"--{ReplicaOptions.SectionName}:RetryDelay=00:00:00.200";
+    private static readonly string QuickRetry = $"--{Notifications.Messaging.ConsumerOptions.SectionName}:RetryDelay=00:00:00.200";
 
     [Fact]
     public async Task When_MeetupPublishedInStream_Expect_MeetupInReplica()
@@ -232,7 +232,7 @@ public class FactReplicaTests
         await using var nats = await NatsUnderTest.Start();
         await nats.Pause();
         await using var silo = await SiloUnderTest.LaunchOnBus(db.ConnectionString, nats.Url, QuickRetry);
-        var bindings = silo.Service<ReplicaBindings>();
+        var bindings = silo.Service<Notifications.Messaging.ConsumerBindings>();
 
         // Снимается пауза по отказу, а не по часам: до снятия записана хотя бы
         // одна неудачная попытка, а привязки нет — значит, привязка после
@@ -280,7 +280,7 @@ public class FactReplicaTests
         await Execute(db, insert, new { EventId = Guid.NewGuid(), At = now.AddDays(-5).UtcDateTime });
         await Execute(db, insert, new { EventId = Guid.NewGuid(), At = now.AddDays(-1).UtcDateTime });
 
-        var removed = await silo.Service<ReplicaStore>().Prune(now.AddDays(-3), TestContext.Current.CancellationToken);
+        var removed = await silo.Service<Notifications.Messaging.ConsumedEventStore>().Prune(now.AddDays(-3), TestContext.Current.CancellationToken);
 
         removed.ShouldBe(1);
         (await ConsumedKeys(db)).ShouldBe(1);

@@ -12,6 +12,14 @@ namespace AppHost.UnitTests;
 public class JetStreamTopologyTests
 {
     [Fact]
+    public void Durables_AuctionDomain_NotificationsAndTesterReadItsStream()
+    {
+        JetStreamTopology.Streams.Single(stream => stream.Name == "AUCTION_EVENTS").Subject.ShouldBe("events.auction.>");
+        JetStreamTopology.Durables.Where(durable => durable.Stream == "AUCTION_EVENTS")
+            .Select(durable => durable.Durable).ShouldBe(["notifications-auction-events", "nats-tester-auction-events"], ignoreOrder: true);
+    }
+
+    [Fact]
     public void DurableName_ConsumerAndStream_JoinsLowercaseHyphenated() =>
         JetStreamTopology.DurableName("notifications", "MEETUPS_EVENTS").ShouldBe("notifications-meetups-events");
 

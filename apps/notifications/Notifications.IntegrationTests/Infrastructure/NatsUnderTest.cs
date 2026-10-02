@@ -4,6 +4,7 @@ using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
 using Notifications.Facts;
 using Notifications.Replica;
+using Notifications.Messaging;
 using Notifications.V1;
 using Testcontainers.Nats;
 using Xunit;
@@ -63,7 +64,7 @@ public sealed class NatsUnderTest : IAsyncDisposable
         var connection = new NatsConnection(new NatsOpts { Url = container.GetConnectionString() });
         var bus = new NatsUnderTest(container, connection);
 
-        foreach (var feed in ReplicaFeeds.All)
+        foreach (var feed in NotificationsHost.EventFeeds)
         {
             await bus.JetStream.CreateStreamAsync(new StreamConfig(feed.Stream, [Subjects(feed)])
             {
@@ -152,7 +153,7 @@ public sealed class NatsUnderTest : IAsyncDisposable
     }
 
     /// <summary>Сколько сообщений durable ещё не подтверждено потребителем.</summary>
-    public async Task<ulong> Unacknowledged(ReplicaFeed feed)
+    public async Task<ulong> Unacknowledged(EventFeed feed)
     {
         var consumer = await JetStream.GetConsumerAsync(feed.Stream, feed.Durable);
         await consumer.RefreshAsync();
@@ -177,7 +178,7 @@ public sealed class NatsUnderTest : IAsyncDisposable
     }
 
 
-    private static string Subjects(ReplicaFeed feed) => $"events.{feed.Source}.>";
+    private static string Subjects(EventFeed feed) => $"events.{feed.Source}.>";
 
     public async ValueTask DisposeAsync()
     {
