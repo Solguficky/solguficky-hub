@@ -13,6 +13,7 @@ import { createDispatcher } from "../src/application/dispatcher.js";
 import { communityDay } from "../src/community-time.js";
 import { createIdentityClient } from "../src/identity/client.js";
 import { createMeetupsClient } from "../src/meetups/client.js";
+import { presentServiceToken } from "../src/rpc-metadata.js";
 import { noopTracing } from "../src/tracing.js";
 import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 
@@ -89,6 +90,7 @@ export function openDirectClients(environment: ContourEnvironment) {
       baseUrl: environment.meetupsUrl,
       defaultTimeoutMs: directCallTimeoutMs,
       sessionManager: meetupsSessions,
+      interceptors: [presentServiceToken(environment.botServiceToken)],
     }),
   );
   async function asMaintainer(
@@ -235,9 +237,11 @@ export function openDirectClients(environment: ContourEnvironment) {
      * двойное нажатие и успех снаружи неотличимы, поэтому идемпотентность
      * проверяется здесь, а не по экрану.
      *
-     * Таблицы журнала контур наружу не отдаёт, а RPC её не читает. Счёт
-     * выводится из служебного `ListMeetupStates`, который отдаёт полные снимки
-     * без фильтра видимости: состояние и событие пишутся одной транзакцией
+     * Таблицы журнала контур наружу не отдаёт, а RPC её не читает. Автор видит
+     * все свои сходки, включая скрытые и архивные, без роли администратора.
+     * Берём оба viewer-aware списка, читаем снимки через `GetMeetup` и оставляем
+     * только сходки автора. `ListMeetupStates` закрыт для всех (ADR-056).
+     * Состояние и событие пишутся одной транзакцией
      * (ADR-024), а `meetup_events` держит `UNIQUE (meetup_id, version)` с
      * версиями от 1, поэтому сумма версий сходок автора равна числу его строк
      * в журнале. Число сходок ловит второй объект, которого версия одной
@@ -245,18 +249,18 @@ export function openDirectClients(environment: ContourEnvironment) {
      * такого события в модели Meetups сейчас нет.
      */
     async journalOf(authorId: string): Promise<AuthorJournal> {
-      const own: { id: string; version: bigint }[] = [];
-      let pageToken = "";
-      do {
-        const page = await meetups.listMeetupStates({
-          pageToken,
-          pageSize: 100,
-        });
-        own.push(
-          ...page.meetups.filter((meetup) => meetup.author === authorId),
-        );
-        pageToken = page.nextPageToken;
-      } while (pageToken !== "");
+      const viewer = { identityId: authorId, globalRoles: [] };
+      const [current, archived] = await Promise.all([
+        meetups.listVisibleMeetups({ viewer }),
+        meetups.listArchivedMeetups({ viewer }),
+      ]);
+      const ids = new Set(
+        [...current.meetups, ...archived.meetups].map((meetup) => meetup.id),
+      );
+      const snapshots = await Promise.all(
+        [...ids].map((id) => meetups.getMeetup({ viewer, id })),
+      );
+      const own = snapshots.filter((meetup) => meetup.author === authorId);
       return {
         // Сортировка даёт сравнимый набор, а не порядок создания: два ключа
         // одной миллисекунды UUIDv7 друг от друга не упорядочивает.
