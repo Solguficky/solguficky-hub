@@ -1,3 +1,5 @@
+import { type FaqContent, readFaqContent } from "./faq.js";
+
 export type TelegramEnvironment = "prod" | "test";
 
 export type Config = {
@@ -7,6 +9,7 @@ export type Config = {
   identityUrl: string;
   auctionUrl: string;
   logLevel: string;
+  faq: FaqContent;
 };
 
 export type ConfigResult =
@@ -49,6 +52,8 @@ export function readConfig(
   if (environment === undefined) {
     return { ok: false, error: "AUCTION_BOT_ENVIRONMENT must be prod or test" };
   }
+  const faq = readFaqContent(env);
+  if (!faq.ok) return faq;
   return {
     ok: true,
     config: {
@@ -58,6 +63,7 @@ export function readConfig(
       identityUrl: read("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051",
       auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
       logLevel: read("AUCTION_BOT_LOG_LEVEL") ?? "info",
+      faq: faq.content,
     },
   };
 }

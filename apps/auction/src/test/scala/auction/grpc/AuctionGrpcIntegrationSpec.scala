@@ -42,6 +42,48 @@ final class AuctionGrpcIntegrationSpec extends AnyWordSpec with Matchers with Po
 
   private val hubToken = "hub-token"
 
+  "FAQ grpc" should {
+    "store completion through the production boundary only for the auction bot and its viewer" in withNode { node =>
+      val viewer = wire.Viewer("01926f3c-8b7a-7cde-8f00-000000000001", Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
+      val read = wire.GetFaqAcknowledgementRequest(Some(viewer))
+      val finish = wire.AcknowledgeFaqRequest(Some(viewer))
+      node.client
+        .getFaqAcknowledgement()
+        .addHeader("authorization", "Bearer auction")
+        .invoke(read)
+        .futureValue
+        .acknowledged shouldBe false
+      node.client
+        .acknowledgeFaq()
+        .addHeader("authorization", "Bearer auction")
+        .invoke(finish)
+        .futureValue
+        .acknowledged shouldBe true
+      node.client
+        .acknowledgeFaq()
+        .addHeader("authorization", "Bearer auction")
+        .invoke(finish)
+        .futureValue
+        .acknowledged shouldBe true
+      node.client
+        .getFaqAcknowledgement()
+        .addHeader("authorization", "Bearer auction")
+        .invoke(read)
+        .futureValue
+        .acknowledged shouldBe true
+      val other = read.withViewer(viewer.withIdentityId("01926f3c-8b7a-7cde-8f00-000000000002"))
+      node.client
+        .getFaqAcknowledgement()
+        .addHeader("authorization", "Bearer auction")
+        .invoke(other)
+        .futureValue
+        .acknowledged shouldBe false
+      statusOf(
+        node.client.acknowledgeFaq().addHeader("authorization", s"Bearer $hubToken").invoke(finish)
+      ) shouldBe Status.Code.UNAUTHENTICATED
+    }
+  }
+
   private val callers = CallerTable
     .fromConfig(
       ConfigFactory.parseString(s"""auction.grpc.callers { telegram-bot = "$hubToken", auction-bot = "auction" }"""),

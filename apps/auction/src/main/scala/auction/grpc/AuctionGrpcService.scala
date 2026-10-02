@@ -3,6 +3,7 @@ package auction.grpc
 import auction.catalog.LotCatalogCommands
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.onboarding.FaqAcknowledgements
 import auction.v1.auction_service as wire
 import io.grpc.Status
 import org.apache.pekko.grpc.GrpcServiceException
@@ -18,8 +19,9 @@ import scala.concurrent.Future
  * Отказ статусом — неудачное `Future` с `GrpcServiceException`: его превращает в трейлеры сгенерированный обработчик.
  * Описание статуса называет поле или правило, но не значение из запроса.
  */
-final class AuctionGrpcService(lots: LotGateway, catalog: LotCatalogCommands)(using ExecutionContext)
-    extends wire.AuctionService {
+final class AuctionGrpcService(lots: LotGateway, catalog: LotCatalogCommands, faq: FaqAcknowledgements)(using
+    ExecutionContext
+) extends wire.AuctionService {
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
@@ -80,6 +82,20 @@ final class AuctionGrpcService(lots: LotGateway, catalog: LotCatalogCommands)(us
   def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] = unimplemented
 
   def getDisplayNames(in: wire.GetDisplayNamesRequest): Future[wire.GetDisplayNamesResponse] = unimplemented
+
+  def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] =
+    withParticipant(in.viewer)(participant => faq.acknowledged(participant).map(wire.FaqAcknowledgement(_)))
+
+  def acknowledgeFaq(in: wire.AcknowledgeFaqRequest): Future[wire.FaqAcknowledgement] =
+    withParticipant(in.viewer)(participant => faq.acknowledge(participant).map(_ => wire.FaqAcknowledgement(true)))
+
+  private def withParticipant[T](viewer: Option[wire.Viewer])(run: auction.lot.ParticipantId => Future[T]): Future[T] =
+    RequestMapping.acting(viewer) match {
+      case Left(error) => invalid(error)
+      case Right(acting) if !acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(acting) => run(acting.participant)
+    }
 
   /**
    * Ответа entity не дождались. Команда могла быть принята, поэтому это `DEADLINE_EXCEEDED`, а не `UNAVAILABLE`: повтор

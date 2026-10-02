@@ -20,6 +20,8 @@ function rpcs() {
     })),
   };
   const auction = {
+    getFaqAcknowledgement: vi.fn(async () => ({ acknowledged: false })),
+    acknowledgeFaq: vi.fn(async () => ({ acknowledged: true })),
     getLot: vi.fn(async () => ({
       id: "lot-1",
       auctionId: "auc-1",
@@ -38,6 +40,25 @@ function rpcs() {
 }
 
 describe("createPorts", () => {
+  it("does not treat an unconfirmed RPC response as saved completion", async () => {
+    const { auction, ports } = rpcs();
+    auction.acknowledgeFaq.mockResolvedValue({ acknowledged: false });
+    await expect(
+      ports.faq.acknowledge({ identityId: "id-1", globalRoles: ["public"] }),
+    ).rejects.toThrow("did not acknowledge");
+  });
+  it("reads and records FAQ acknowledgement for the viewer with request metadata", async () => {
+    const { auction, ports } = rpcs();
+    const viewer = { identityId: "id-1", globalRoles: ["public"] as const };
+    expect(await ports.faq.acknowledged(viewer)).toBe(false);
+    await ports.faq.acknowledge(viewer);
+    for (const rpc of [auction.getFaqAcknowledgement, auction.acknowledgeFaq]) {
+      expect(rpc).toHaveBeenCalledWith(
+        { viewer: { identityId: "id-1", globalRoles: [GlobalRole.PUBLIC] } },
+        { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
+      );
+    }
+  });
   it("maps the resolved identity and drops the unspecified role", async () => {
     const { identity, ports } = rpcs();
     const resolved = await ports.identity.resolveIdentity({

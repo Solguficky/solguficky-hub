@@ -4,6 +4,7 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import { createBot } from "./bot.js";
 import type { PortsFactory } from "./clients.js";
+import { entryCallback } from "./faq.js";
 import { createLogger, type Logger } from "./logging.js";
 
 const botInfo: UserFromGetMe = {
@@ -65,6 +66,10 @@ const publicPorts: PortsFactory = () => ({
   auction: {
     getLot: async () => ({ lotId, auctionId: lotId, version: 1 }),
   },
+  faq: {
+    acknowledged: async () => true,
+    acknowledge: async () => {},
+  },
 });
 
 function startUpdate(message: NonNullable<Update["message"]>): Update {
@@ -72,7 +77,55 @@ function startUpdate(message: NonNullable<Update["message"]>): Update {
 }
 
 describe("auction bot", () => {
-  it("answers /start with the entry shell and no trading buttons", async () => {
+  it("keeps completion across bot instances and permits reopening FAQ", async () => {
+    let acknowledged = false;
+    const ports: PortsFactory = (requestId) => ({
+      ...publicPorts(requestId),
+      faq: {
+        acknowledged: async () => acknowledged,
+        acknowledge: async () => {
+          acknowledged = true;
+        },
+      },
+    });
+    const first = makeBot(ports);
+    const start = startUpdate({
+      message_id: 1,
+      date: 0,
+      chat: privateChat,
+      from,
+      text: "/start",
+      entities: [{ type: "bot_command", offset: 0, length: 6 }],
+    });
+    await first.bot.handleUpdate(start);
+    expect(first.calls[0]?.payload).toMatchObject({
+      text: expect.stringContaining("Что продаём"),
+    });
+    expect(acknowledged).toBe(false);
+    const press = (action: "menu" | "faq"): Update => ({
+      update_id: 2,
+      callback_query: {
+        id: "entry-cb",
+        from,
+        chat_instance: "ci",
+        data: entryCallback(action),
+        message: { message_id: 7, date: 0, chat: privateChat, text: "old" },
+      },
+    });
+    await first.bot.handleUpdate(press("menu"));
+    expect(acknowledged).toBe(true);
+    const restarted = makeBot(ports);
+    await restarted.bot.handleUpdate(start);
+    expect(restarted.calls[0]?.payload).toMatchObject({
+      text: expect.stringContaining("Выберите раздел"),
+    });
+    await restarted.bot.handleUpdate(press("faq"));
+    expect(restarted.calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Что продаём"),
+    });
+  });
+
+  it("answers /start with the menu for a returning admitted participant", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(
       startUpdate({
@@ -90,7 +143,14 @@ describe("auction bot", () => {
       chat_id: 42,
       text: expect.stringContaining("Аукцион"),
     });
-    expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
+    expect(calls[0]?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Аукционы", callback_data: expect.any(String) }],
+          [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
+        ],
+      },
+    });
   });
 
   it("stays silent in a group", async () => {
@@ -120,6 +180,7 @@ describe("auction bot", () => {
           },
         },
         auction: base.auction,
+        faq: base.faq,
       };
     });
     const { bot, calls } = makeBot(ports);
@@ -152,6 +213,8 @@ describe("auction bot", () => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "Обновить", callback_data: expect.any(String) }],
+          [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
+          [{ text: "В меню", callback_data: expect.any(String) }],
         ],
       },
     });

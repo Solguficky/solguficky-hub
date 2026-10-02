@@ -5,9 +5,7 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import type {
-  AuctionPort,
   GlobalRole,
-  IdentityPort,
   ResolvedIdentity,
   TelegramUser,
   Viewer,
@@ -15,6 +13,7 @@ import type {
 import { AuctionService } from "../gen/auction/v1/auction_service_pb.js";
 import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole as WireRole } from "../gen/identity/v1/roles_pb.js";
+import type { EntryPorts } from "./entry-ports.js";
 
 export const rpcTimeoutMs = 3_000;
 export const requestIdHeader = "x-request-id";
@@ -25,14 +24,14 @@ export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
   "resolveIdentity"
 >;
-export type AuctionRpc = Pick<Client<typeof AuctionService>, "getLot">;
+export type AuctionRpc = Pick<
+  Client<typeof AuctionService>,
+  "getLot" | "getFaqAcknowledgement" | "acknowledgeFaq"
+>;
 
 // Порты пакета метаданных вызова не несут, поэтому они собираются на каждый
 // update: `request_id` края уезжает заголовком в каждый вызов цепочки.
-export type PortsFactory = (requestId: string) => {
-  identity: IdentityPort;
-  auction: AuctionPort;
-};
+export type PortsFactory = (requestId: string) => EntryPorts;
 
 export function createPorts(
   identity: IdentityRpc,
@@ -79,6 +78,33 @@ export function createPorts(
             auctionId: snapshot.auctionId,
             version: Number(snapshot.version),
           };
+        },
+      },
+      faq: {
+        async acknowledged(viewer) {
+          const response = await auction.getFaqAcknowledgement(
+            {
+              viewer: {
+                identityId: viewer.identityId,
+                globalRoles: viewer.globalRoles.map(roleValue),
+              },
+            },
+            options,
+          );
+          return response.acknowledged;
+        },
+        async acknowledge(viewer) {
+          const response = await auction.acknowledgeFaq(
+            {
+              viewer: {
+                identityId: viewer.identityId,
+                globalRoles: viewer.globalRoles.map(roleValue),
+              },
+            },
+            options,
+          );
+          if (!response.acknowledged)
+            throw new Error("Auction did not acknowledge FAQ completion");
         },
       },
     };
