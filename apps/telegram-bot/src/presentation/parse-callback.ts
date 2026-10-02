@@ -99,6 +99,9 @@ type PlainAction =
   | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
+  // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
+  // файлом остаётся следом с подписью, что прикрепления не было.
+  | { kind: "decline-attach-material"; token: string }
   // `version` отсутствует только у кнопки прошлого релиза, которая версии не
   // несла: команду по ней не отправить, и экран отвечает кадром конфликта.
   | {
@@ -124,7 +127,9 @@ type PlainAction =
   | { kind: "begin-community-broadcast" }
   | { kind: "confirm-meetup-broadcast"; token: string; broadcastToken: string }
   | { kind: "confirm-community-broadcast"; broadcastToken: string }
-  | { kind: "cancel-broadcast" }
+  // Токен — сходка, с карточки которой рассылку начали: по нему «Нет»
+  // возвращает к ней; у объявления сообществу токена нет.
+  | { kind: "cancel-broadcast"; token?: string }
   | { kind: "notify-global" }
   | {
       kind: "notify-set-global";
@@ -208,6 +213,9 @@ export function parseCallback(raw: unknown): CallbackAction {
     }
     if (parts.length === 4 && parts[2] === "add") {
       return { kind: "begin-attach-material", token: meetupToken.data };
+    }
+    if (parts.length === 4 && parts[2] === "no") {
+      return { kind: "decline-attach-material", token: meetupToken.data };
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };
@@ -375,6 +383,9 @@ function parseBroadcast(parts: readonly string[]): CallbackAction {
   if (!first.success) return { kind: "malformed" };
   if (parts.length === 4 && parts[2] === "m") {
     return { kind: "begin-meetup-broadcast", token: first.data };
+  }
+  if (parts.length === 4 && parts[2] === "no") {
+    return { kind: "cancel-broadcast", token: first.data };
   }
   if (parts.length === 4 && parts[2] === "cs") {
     return { kind: "confirm-community-broadcast", broadcastToken: first.data };

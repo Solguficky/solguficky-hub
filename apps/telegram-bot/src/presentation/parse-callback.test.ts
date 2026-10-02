@@ -39,6 +39,18 @@ describe("callback parser", () => {
     expect(parseCallback("v1:nav:hub:вторая")).toEqual({ kind: "malformed" });
   });
 
+  it("parses a declined confirmation of a material and of a broadcast", () => {
+    expect(parseCallback("v1:mm:no:AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "decline-attach-material",
+      token: "AZLzpLXGfY6fChssPU5fYA",
+    });
+    expect(parseCallback("v1:bc:no:AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "cancel-broadcast",
+      token: "AZLzpLXGfY6fChssPU5fYA",
+    });
+    expect(parseCallback("v1:bc:no")).toEqual({ kind: "cancel-broadcast" });
+  });
+
   it("distinguishes outdated and malformed callbacks", () => {
     expect(parseCallback("v2:manage:menu")).toEqual({ kind: "outdated" });
     expect(parseCallback("v1:manage:new:not-a-token")).toEqual({

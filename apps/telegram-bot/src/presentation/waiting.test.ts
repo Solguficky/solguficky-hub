@@ -206,7 +206,8 @@ describe("waiting", () => {
 
     await bot.handleUpdate(
       press("v1:nav:hub", {
-        text: shown?.text,
+        // Telegram возвращает видимый текст, без разметки.
+        text: shown?.text?.replace(/<[^>]+>/g, ""),
         reply_markup: {
           inline_keyboard: JSON.parse(
             JSON.stringify(shown?.reply_markup?.inline_keyboard),

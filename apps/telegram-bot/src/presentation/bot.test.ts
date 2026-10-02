@@ -33,6 +33,7 @@ import {
 } from "./bot.js";
 import { publishMomentQuestion } from "./edit-question.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
+import { refusalText } from "./screens/kit.js";
 
 function messageUpdate(text = "/start"): Update {
   return {
@@ -194,6 +195,17 @@ function resolvedIdentity(
       blocked,
     }),
   };
+}
+
+// Telegram возвращает в нажатии видимый текст сообщения, а не его разметку:
+// так тест отдаёт боту то, что тот получил бы на самом деле.
+function visible(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&amp;", "&");
 }
 
 function sendMessageEntities(call: RecordedCall | undefined): unknown {
@@ -359,7 +371,9 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Это действие доступно организатору сходки." },
+      payload: {
+        text: refusalText("Это действие доступно организатору сходки."),
+      },
     });
     expectBoundary(records[0], {
       level: "warn",
@@ -424,7 +438,7 @@ describe("presentation adapter", () => {
     expect(callbackData.endsWith(`:${meetup.version}`)).toBe(true);
     await bot.handleUpdate(
       callbackMessageUpdate(callbackData, {
-        text: confirmation.payload.text,
+        text: visible(String(confirmation.payload.text)),
         reply_markup: keyboard,
       }),
     );
@@ -887,9 +901,10 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
-    expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
+    // За кадром ожидания экранов нет, и кнопок у него нет.
+    expect(JSON.stringify(calls[0]?.payload)).not.toContain("callback_data");
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
       level: "warn",
@@ -911,7 +926,7 @@ describe("presentation adapter", () => {
     );
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe(blockedHubAccessText);
+    expect(sendMessageText(calls[0])).toBe(refusalText(blockedHubAccessText));
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
       level: "warn",
@@ -936,11 +951,13 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText(resolvedId, undefined) },
+      payload: {
+        text: refusalText(pendingHubAccessText(resolvedId, undefined)),
+      },
     });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("v1:nav:hub");
     expect(sendMessageText(calls[2])).toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
     expect(records.map((record) => record.fields.error)).toEqual([
       "hub_access_pending",
@@ -958,7 +975,9 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText(resolvedId, undefined) },
+      payload: {
+        text: refusalText(pendingHubAccessText(resolvedId, undefined)),
+      },
     });
   });
 
@@ -968,7 +987,7 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(sendMessageText(calls[0])).not.toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
   });
 
@@ -1177,7 +1196,9 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Управлять составом сообщества может только администратор.",
+        text: refusalText(
+          "Управлять составом сообщества может только администратор.",
+        ),
       },
     });
     expectBoundary(records[0], {
@@ -1198,9 +1219,11 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
     expect(sendMessageText(calls[0])).not.toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
-    expect(sendMessageText(calls[0])).not.toBe(blockedHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(
+      refusalText(blockedHubAccessText),
+    );
     expectBoundary(records[0], {
       level: "error",
       result: "error",
@@ -1218,7 +1241,7 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(sendMessageText(calls[0])).toBe(
-      "Сходка не найдена или больше недоступна.",
+      refusalText("Сходка не найдена или больше недоступна."),
     );
     expectBoundary(records[0], {
       level: "warn",
@@ -1671,6 +1694,7 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1712,6 +1736,7 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -2082,8 +2107,14 @@ describe("presentation adapter", () => {
           inline_keyboard: [
             [
               {
-                text: "Опубликовать",
+                text: "Да, опубликовать",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -2458,7 +2489,7 @@ describe("presentation adapter", () => {
       await bot.init();
       await bot.handleUpdate(update());
 
-      const sent = JSON.stringify(calls.map((call) => call.payload));
+      const sent = visible(JSON.stringify(calls.map((call) => call.payload)));
       expect(sent).toContain(shown);
       if (also !== undefined) expect(sent).toContain(also);
       expect(sent).not.toContain("SENTINEL-397");
@@ -2517,11 +2548,16 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(sendMessageText(calls[0])).toBe(
-      "Сходка не найдена или больше недоступна.",
+      refusalText("Сходка не найдена или больше недоступна."),
     );
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
-        inline_keyboard: [[{ text: "К списку", callback_data: "v1:nav:hub" }]],
+        inline_keyboard: [
+          [
+            { text: "‹ Ближайшие", callback_data: "v1:nav:hub" },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
       },
     });
   });
@@ -2740,6 +2776,7 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -2754,7 +2791,7 @@ describe("presentation adapter", () => {
     );
     await bot.init();
     await bot.handleUpdate(messageUpdate("/meetups"));
-    expect(sendMessageText(calls[0])).toBe(blockedHubAccessText);
+    expect(sendMessageText(calls[0])).toBe(refusalText(blockedHubAccessText));
     expect(execute).not.toHaveBeenCalled();
     expect(records[0]?.fields.error).toBe("hub_access_blocked");
   });
@@ -3415,6 +3452,131 @@ describe("trace buttons", () => {
   });
 });
 
+describe("confirmations", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const materialToken = "AZnA3gAAAAAAAABfP4Lqmw";
+  const keyboardOf = (call: RecordedCall | undefined) =>
+    (
+      call?.payload as
+        | { reply_markup?: { inline_keyboard?: unknown } }
+        | undefined
+    )?.reply_markup?.inline_keyboard;
+
+  it("asks before removing a material with a red verb answer", async () => {
+    const meetup = {
+      ...publishedMeetup(),
+      materials: [
+        {
+          id: tokenToUuid(materialToken),
+          title: "Афиша",
+          source: { kind: "file" as const, fileId: "bot-file-id" },
+        },
+      ],
+    };
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:mm:rm:${token}:${materialToken}`),
+    );
+
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: "<b>Убрать материал?</b>\n\n«Афиша» исчезнет из сходки. Оригинал в Telegram останется на месте.",
+    });
+    expect(keyboardOf(calls.at(-1))).toEqual([
+      [
+        {
+          text: "Да, убрать материал",
+          callback_data: `v1:mm:cr:${token}:${materialToken}:1`,
+          style: "danger",
+        },
+      ],
+      [{ text: "Нет", callback_data: `v1:mm:list:${token}` }],
+    ]);
+  });
+
+  it("leaves a declined file as a trace and returns to the materials", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:mm:no:${token}`, {
+        caption: "Прикрепить материал?\n\nНазвание: Афиша",
+        document: { file_id: "bot-file-id", file_unique_id: "unique" },
+      }),
+    );
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageCaption",
+      "sendMessage",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({ caption: "Не прикреплено." });
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "attach-material" }),
+    );
+    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
+  });
+
+  it("asks before a broadcast with a red answer and returns a refusal to the meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${token}`));
+    const question = calls.findLastIndex(
+      (call) => call.method === "sendMessage",
+    );
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Встречаемся у входа",
+        fromId: 42,
+        replyMessageId: 100 + question + 1,
+        replyFromId: 1,
+      }),
+    );
+
+    const confirm = calls.at(-1);
+    expect(sendMessageText(confirm)).toContain("<b>Отправить подписчикам?</b>");
+    expect(keyboardOf(confirm)).toEqual([
+      [
+        {
+          text: "Да, отправить",
+          callback_data: expect.stringMatching(/^v1:bc:ms:/),
+          style: "danger",
+        },
+      ],
+      [{ text: "Нет", callback_data: `v1:bc:no:${token}` }],
+    ]);
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:no:${token}`));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: "<b>Не отправлено.</b> Текст никуда не ушёл.",
+    });
+    expect(keyboardOf(calls.at(-1))).toEqual([
+      [
+        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+        { text: "Меню", callback_data: "v1:nav:start" },
+      ],
+    ]);
+  });
+});
+
 describe("telegram environment", () => {
   it("reads an absent or empty variable as production", () => {
     expect(parseTelegramEnvironment(undefined)).toBe("prod");
@@ -3725,7 +3887,7 @@ describe("notification frames", () => {
   // Отказ по природе, а не один «сбой на моей стороне»: «Повторить» на отказе
   // по праву и на устаревшем экране не лечит ничего.
   it.each([
-    ["forbidden", "Это действие тебе недоступно.", "v1:nav:hub"],
+    ["forbidden", "Это действие тебе недоступно.", "v1:nav:start"],
     ["invalid", "Этот экран устарел.", "v1:notify:global"],
     ["conflict", "Это уже сделано.", "v1:notify:global"],
   ])(
@@ -3887,9 +4049,11 @@ describe("notification frames", () => {
       ]);
       const payload = screen(calls[1]);
       expect(payload.text).toContain("Это на моей стороне");
-      // Повтор — та же кнопка в уведомлении: своя кнопка у отказа дописала бы
-      // успех под текстом отказа.
-      expect(payload.reply_markup).toBeUndefined();
+      // Повтор — та же кнопка в уведомлении: своя кнопка повтора у отказа
+      // дописала бы успех под текстом отказа. Выход у кадра один — меню.
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Меню", callback_data: "v1:nav:start" }],
+      ]);
     });
 
     // Настройка у сходки сильнее общей, поэтому подтверждение не обещает
@@ -4442,7 +4606,9 @@ describe("deferred publication frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+        text: refusalText(
+          "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+        ),
       },
     });
   });
@@ -4516,7 +4682,7 @@ describe("deferred publication frames", () => {
 
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Отложенной публикации у сходки уже нет." },
+      payload: { text: refusalText("Отложенной публикации у сходки уже нет.") },
     });
   });
 });
@@ -4560,13 +4726,14 @@ describe("past meetup date", () => {
           inline_keyboard: [
             [
               {
-                text: "Сохранить дату",
+                text: "Да, сохранить дату",
                 callback_data: `v1:manage:past:${token}:c:210920261930`,
               },
             ],
             [
               {
-                text: "Ввести другую",
+                // «Нет» задаёт вопрос о дате заново.
+                text: "Нет",
                 callback_data: `v1:manage:past-retry:${token}:c`,
               },
             ],
@@ -4752,9 +4919,9 @@ describe("broadcast frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Управление сходками доступно администратору.",
+        text: refusalText("Управление сходками доступно администратору."),
         reply_markup: {
-          inline_keyboard: [[{ text: "Назад", callback_data: "v1:nav:start" }]],
+          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
         },
       },
     });
@@ -4808,7 +4975,9 @@ describe("broadcast frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Управлять составом сообщества может только администратор.",
+        text: refusalText(
+          "Управлять составом сообщества может только администратор.",
+        ),
       },
     });
     expectBoundary(records[0], {
@@ -4833,7 +5002,11 @@ describe("broadcast frames", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Писать подписчикам может только организатор сходки." },
+      payload: {
+        text: refusalText(
+          "Писать подписчикам может только организатор сходки.",
+        ),
+      },
     });
     expectBoundary(records[0], {
       level: "warn",
@@ -4938,7 +5111,11 @@ describe("broadcast frames", () => {
     );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Объявление принято к отправке участникам сообщества." },
+      payload: {
+        text: refusalText(
+          "Объявление принято к отправке участникам сообщества.",
+        ),
+      },
     });
     expectBoundary(records[0], {
       level: "info",
@@ -4974,7 +5151,9 @@ describe("broadcast frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Писать подписчикам может только организатор сходки. Ничего не отправлено.",
+        text: refusalText(
+          "Писать подписчикам может только организатор сходки. Ничего не отправлено.",
+        ),
       },
     });
     expectBoundary(records[0], {
@@ -5007,7 +5186,9 @@ describe("broadcast frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт.",
+        text: refusalText(
+          "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт.",
+        ),
       },
     });
   });

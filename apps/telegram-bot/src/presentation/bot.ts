@@ -64,7 +64,7 @@ import {
 } from "./edit-question.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
-  materialConfirmationText,
+  materialConfirmationHtml,
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
@@ -87,7 +87,19 @@ import {
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import type { ScreenId } from "./screens/catalog.js";
-import { escapeHtml } from "./screens/kit.js";
+import {
+  confirmKeyboard,
+  escapeHtml,
+  heading,
+  menuOnly,
+  refusalText,
+  retryLabel,
+  toCard,
+  toManage,
+  toMaterials,
+  toUpcoming,
+  withNav,
+} from "./screens/kit.js";
 import {
   archiveScreen,
   cardScreen,
@@ -109,6 +121,7 @@ import {
 } from "./screens/notifications.js";
 import {
   clearCallbackKeyboard,
+  type ShownScreen,
   screenMark,
   showScreen,
 } from "./screens/show.js";
@@ -489,7 +502,7 @@ async function handleMessage(
       }
       if (!identity.person.globalRoles.includes("admin")) {
         questions.delete(questionKey(ctx.chat?.id, replyId));
-        await ctx.reply(materialForbiddenText);
+        await showRefusal(ctx, materialForbiddenText, menuOnly());
         outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
         return;
       }
@@ -603,7 +616,11 @@ async function handleMessage(
       }
       if (!identity.person.globalRoles.includes("admin")) {
         questions.delete(questionKey(ctx.chat?.id, replyId));
-        await ctx.reply(broadcastForbiddenText[audience.kind]);
+        await showRefusal(
+          ctx,
+          broadcastForbiddenText[audience.kind],
+          menuOnly(),
+        );
         outcome = broadcastForbiddenOutcome(identity.person, meetupId);
         return;
       }
@@ -757,8 +774,10 @@ async function handleMessage(
       ctx.message?.reply_to_message?.from?.id === ctx.me.id
     ) {
       useCase = "create_meetup";
-      await ctx.reply(
+      await showRefusal(
+        ctx,
         "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
+        menuOnly(),
       );
       outcome = {
         level: "info",
@@ -946,11 +965,10 @@ async function handleCallback(
         error_category: "invariant",
         error: "callback data failed validation",
       };
-      await editScreen(
+      await showRefusal(
         ctx,
-        "refusal",
         "Не получилось прочитать эту кнопку. Открой актуальное меню.",
-        new InlineKeyboard().text("К списку", "v1:nav:hub"),
+        menuOnly(),
       );
       return;
     }
@@ -990,13 +1008,12 @@ async function handleCallback(
         action.kind === "ask-allowed-username") &&
       !isAdministrator(person)
     ) {
-      await editScreen(
+      await showRefusal(
         ctx,
-        "refusal",
         action.kind === "manage-menu"
           ? managementForbiddenText
           : communityForbiddenText,
-        new InlineKeyboard().text("Назад", "v1:nav:start"),
+        menuOnly(),
       );
       outcome = {
         level: "warn",
@@ -1039,14 +1056,10 @@ async function handleCallback(
           candidate.id === materialId && candidate.source.kind === "file",
       );
       if (material === undefined || material.source.kind !== "file") {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Материал больше не найден. Открой актуальную карточку сходки.",
-          new InlineKeyboard().text(
-            "Открыть сходку",
-            `v1:view:${action.token}`,
-          ),
+          exitToCard(action.token),
         );
         outcome = {
           level: "warn",
@@ -1066,8 +1079,10 @@ async function handleCallback(
         material.title,
       );
       if (delivery.kind === "failed") {
-        await ctx.reply(
+        await showRefusal(
+          ctx,
           "Не получилось показать материал. Возможно, файл больше недоступен или Telegram временно не отвечает.",
+          exitToCard(action.token),
         );
         outcome = unexpectedOutcome(
           delivery.cause,
@@ -1094,14 +1109,10 @@ async function handleCallback(
         ctx.callbackQuery?.message,
       );
       if (confirmation === undefined) {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Этот экран прикрепления устарел. Начни действие заново из карточки сходки.",
-          new InlineKeyboard().text(
-            "Открыть сходку",
-            `v1:view:${action.token}`,
-          ),
+          exitToCard(action.token),
         );
         outcome = {
           level: "warn",
@@ -1165,6 +1176,7 @@ async function handleCallback(
         await renderMaterialResult(
           ctx,
           result,
+          action.token,
           `Прикреплено: ${confirmation.title}`,
         );
       }
@@ -1207,24 +1219,21 @@ async function handleCallback(
         // Уже убранный материал Meetups отдаёт успехом по любой версии, а кнопка
         // без версии проверяет это сама, так что здесь он ещё на месте:
         // подтверждение повторяется со свежей версией.
-        await editScreen(
+        const material = result.meetup.materials.find(
+          (candidate) => candidate.id === materialId,
+        );
+        await showScreen(
           ctx,
-          "material-remove-confirm",
-          `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
-          new InlineKeyboard()
-            .text(
-              "Да, убрать",
-              confirmRemoveCallback(
-                action.token,
-                action.materialToken,
-                result.meetup.version,
-              ),
-            )
-            .row()
-            .text("Нет", `v1:mm:list:${action.token}`),
+          removeConfirmScreen({
+            token: action.token,
+            materialToken: action.materialToken,
+            version: result.meetup.version,
+            title: material === undefined ? "" : materialTitle(material, 1),
+            note: `${conflictText} Проверь данные и подтверди действие ещё раз.`,
+          }),
         );
       } else {
-        await renderMaterialResult(ctx, result);
+        await renderMaterialResult(ctx, result, action.token);
       }
       outcome = screenBoundary(result, {
         ok: ["material-removed"],
@@ -1237,21 +1246,18 @@ async function handleCallback(
     }
     if (
       action.kind === "manage-materials" ||
+      action.kind === "decline-attach-material" ||
       action.kind === "begin-attach-material" ||
       action.kind === "remove-material"
     ) {
       const meetupId = tokenToUuid(action.token);
       const canManageMaterials = person.globalRoles.includes("admin");
-      if (action.kind !== "manage-materials" && !canManageMaterials) {
-        await editScreen(
-          ctx,
-          "refusal",
-          materialForbiddenText,
-          new InlineKeyboard().text(
-            "Открыть сходку",
-            `v1:view:${action.token}`,
-          ),
-        );
+      if (
+        action.kind !== "manage-materials" &&
+        action.kind !== "decline-attach-material" &&
+        !canManageMaterials
+      ) {
+        await showRefusal(ctx, materialForbiddenText, exitToCard(action.token));
         outcome = materialForbiddenOutcome(person, meetupId);
         return;
       }
@@ -1280,16 +1286,13 @@ async function handleCallback(
       }
       if (
         current.meetup.lifecycle === "cancelled" &&
-        action.kind !== "manage-materials"
+        action.kind !== "manage-materials" &&
+        action.kind !== "decline-attach-material"
       ) {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Сходка уже отменена. Изменять её материалы больше нельзя.",
-          new InlineKeyboard().text(
-            "Открыть сходку",
-            `v1:view:${action.token}`,
-          ),
+          exitToCard(action.token),
         );
       } else if (action.kind === "manage-materials") {
         await renderMaterialManagement(
@@ -1297,6 +1300,14 @@ async function handleCallback(
           current.meetup,
           canManageMaterials,
           action.page ?? 0,
+        );
+      } else if (action.kind === "decline-attach-material") {
+        await renderMaterialManagement(
+          ctx,
+          current.meetup,
+          canManageMaterials,
+          0,
+          "Не прикреплено.",
         );
       } else if (action.kind === "begin-attach-material") {
         const prompt = await ctx.reply(
@@ -1319,29 +1330,23 @@ async function handleCallback(
         const material = current.meetup.materials.find(
           (candidate) => candidate.id === materialId,
         );
-        await editScreen(
-          ctx,
-          material === undefined ? "refusal" : "material-remove-confirm",
-          material === undefined
-            ? "Материал уже отсутствует. Оригинал в Telegram не изменён."
-            : `Убрать материал «${materialTitle(material, 1)}» из сходки? Оригинал в Telegram останется на месте.`,
-          material === undefined
-            ? new InlineKeyboard().text(
-                "К материалам",
-                `v1:mm:list:${action.token}`,
-              )
-            : new InlineKeyboard()
-                .text(
-                  "Да, убрать",
-                  confirmRemoveCallback(
-                    action.token,
-                    action.materialToken,
-                    current.meetup.version,
-                  ),
-                )
-                .row()
-                .text("Нет", `v1:mm:list:${action.token}`),
-        );
+        if (material === undefined) {
+          await showRefusal(
+            ctx,
+            "Материал уже отсутствует. Оригинал в Telegram не изменён.",
+            withNav(new InlineKeyboard(), toMaterials(action.token)),
+          );
+        } else {
+          await showScreen(
+            ctx,
+            removeConfirmScreen({
+              token: action.token,
+              materialToken: action.materialToken,
+              version: current.meetup.version,
+              title: materialTitle(material, 1),
+            }),
+          );
+        }
       }
       outcome = {
         level: "info",
@@ -1570,11 +1575,10 @@ async function handleCallback(
       const meetup = current.meetup;
       const token = uuidToToken(meetup.id);
       if (meetup.lifecycle === "cancelled") {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           `Сходка «${meetup.title}» уже отменена. Изменять её больше нельзя.`,
-          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+          exitToCard(token),
         );
         outcome = {
           level: "info",
@@ -1621,21 +1625,19 @@ async function handleCallback(
         action.kind === "manage-cancel" &&
         meetup.lifecycle === "held"
       ) {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Состоявшуюся сходку отменить нельзя.",
-          new InlineKeyboard().text("Назад", `v1:manage:status:${token}`),
+          exitToCard(token),
         );
       } else if (action.kind === "manage-hold" && meetup.lifecycle === "held") {
         // Устаревшая кнопка: кто-то уже отметил сходку состоявшейся. Confirm
         // здесь был бы подтверждением действия, которое уже не изменит
         // состояние, — то же обращение со stale-кнопкой, что и у отмены выше.
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Сходка уже отмечена состоявшейся.",
-          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+          exitToCard(token),
         );
       } else if (
         action.kind === "manage-publish-later" &&
@@ -1643,11 +1645,10 @@ async function handleCallback(
       ) {
         // Устаревшая кнопка (E-04): сходку уже опубликовали — вручную или по
         // расписанию. Вопрос о моменте здесь закончился бы отказом домена.
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Сходка уже опубликована. Назначать публикацию больше не нужно.",
-          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+          exitToCard(token),
         );
       } else if (action.kind === "manage-publish-later") {
         await renderFormResult(
@@ -1660,11 +1661,10 @@ async function handleCallback(
         action.kind === "manage-unschedule" &&
         meetup.publishAt === undefined
       ) {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Отложенной публикации у сходки уже нет.",
-          new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
+          exitToCard(token),
         );
       } else if (action.kind === "manage-publish") {
         // Публикация — единственное действие статуса, которое не перечитывает
@@ -1792,11 +1792,10 @@ async function handleCallback(
       // прислать и без неё. Отказ приходит до набора текста, а окончательное
       // решение о праве всё равно принимает Notifications на отправке.
       if (!person.globalRoles.includes("admin")) {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           broadcastForbiddenText[audience.kind],
-          broadcastBackKeyboard(audience),
+          broadcastExit(audience),
         );
         outcome = broadcastForbiddenOutcome(person, meetupId);
         return;
@@ -1853,11 +1852,13 @@ async function handleCallback(
       return;
     }
     if (action.kind === "cancel-broadcast") {
-      await editScreen(
+      await showFrame(
         ctx,
         "broadcast-result",
         "Не отправлено. Текст никуда не ушёл.",
-        new InlineKeyboard().text("К списку", "v1:nav:hub"),
+        action.token === undefined
+          ? withNav(new InlineKeyboard(), toManage)
+          : exitToCard(action.token),
       );
       outcome = {
         level: "info",
@@ -1880,11 +1881,10 @@ async function handleCallback(
         audience.kind === "meetup" ? audience.meetupId : undefined;
       const body = parseBroadcastPreview(ctx.callbackQuery?.message, ctx.me.id);
       if (body === undefined) {
-        await editScreen(
+        await showRefusal(
           ctx,
-          "refusal",
           "Этот экран подтверждения устарел, и текста рассылки в нём больше нет. Начни рассылку заново. Ничего не отправлено.",
-          broadcastBackKeyboard(audience),
+          broadcastExit(audience),
         );
         outcome = {
           level: "warn",
@@ -2042,10 +2042,13 @@ async function handleCallback(
           },
         });
       } else {
-        await ctx.reply(
+        await showRefusal(
+          ctx,
           result.kind === "dependency-rejected" && result.reason === "forbidden"
             ? forbiddenText
             : unavailableText,
+          menuOnly(),
+          "new",
         );
       }
       outcome = screenBoundary(result, {
@@ -2082,14 +2085,20 @@ async function handleCallback(
         // найдена» не значит «не выключено»: сходку могли скрыть между
         // уведомлением и нажатием. Текст не обещает ни того, ни другого, а
         // говорит то, что верно в обоих случаях.
-        await ctx.reply(
+        await showRefusal(
+          ctx,
           "Сходка больше недоступна: пока её снова не опубликуют, уведомлений по ней не будет.",
+          menuOnly(),
+          "new",
         );
       } else {
-        await ctx.reply(
+        await showRefusal(
+          ctx,
           result.kind === "dependency-rejected" && result.reason === "forbidden"
             ? forbiddenText
             : unavailableText,
+          menuOnly(),
+          "new",
         );
       }
       outcome = screenBoundary(result, {
@@ -2302,16 +2311,14 @@ function materialConfirmationKeyboard(
   version: number,
   source: MeetupMaterialSource,
 ): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  if (source.kind === "message-link") {
-    keyboard.url("Открыть источник", source.url).row();
-  }
-  return keyboard
-    .text(
-      "Прикрепить",
-      confirmAttachCallback(meetupToken, materialToken, version),
-    )
-    .text("Отмена", `v1:view:${meetupToken}`);
+  return confirmKeyboard({
+    yes: "Да, прикрепить",
+    yesData: confirmAttachCallback(meetupToken, materialToken, version),
+    noData: `v1:mm:no:${meetupToken}`,
+    ...(source.kind === "message-link"
+      ? { lead: { text: "Открыть источник ↗", url: source.url } }
+      : {}),
+  });
 }
 
 async function sendMaterialConfirmation(
@@ -2321,33 +2328,55 @@ async function sendMaterialConfirmation(
   title: string,
   source: MaterialInputSource,
 ): Promise<void> {
-  const meetupToken = uuidToToken(meetupId);
-  const materialToken = uuidToToken(createUuidV7());
-  const keyboard = materialConfirmationKeyboard(
-    meetupToken,
-    materialToken,
-    version,
-    source,
-  );
-  const text = materialConfirmationText(title);
+  const other = {
+    ...screenMark("material-confirm"),
+    parse_mode: "HTML" as const,
+    reply_markup: materialConfirmationKeyboard(
+      uuidToToken(meetupId),
+      uuidToToken(createUuidV7()),
+      version,
+      source,
+    ),
+  };
+  const text = materialConfirmationHtml(title, escapeHtml);
   if (source.kind === "message-link") {
-    await ctx.reply(text, {
-      ...screenMark("material-confirm"),
-      reply_markup: keyboard,
-    });
+    await ctx.reply(text, other);
   } else if (source.fileKind === "document") {
-    await ctx.replyWithDocument(source.fileId, {
-      caption: text,
-      ...screenMark("material-confirm"),
-      reply_markup: keyboard,
-    });
+    await ctx.replyWithDocument(source.fileId, { caption: text, ...other });
   } else {
-    await ctx.replyWithPhoto(source.fileId, {
-      caption: text,
-      ...screenMark("material-confirm"),
-      reply_markup: keyboard,
-    });
+    await ctx.replyWithPhoto(source.fileId, { caption: text, ...other });
   }
+}
+
+// Подтверждение удаления: исчезнет только привязка, оригинал остаётся. `note`
+// — почему вопрос задан снова.
+function removeConfirmScreen(confirm: {
+  token: string;
+  materialToken: string;
+  version: number;
+  title: string;
+  note?: string;
+}): ShownScreen {
+  return {
+    id: "material-remove-confirm",
+    text: [
+      ...(confirm.note === undefined ? [] : [escapeHtml(confirm.note), ""]),
+      heading("Убрать материал?"),
+      "",
+      `${confirm.title === "" ? "Привязка" : `«${escapeHtml(confirm.title)}»`} исчезнет из сходки. Оригинал в Telegram останется на месте.`,
+    ].join("\n"),
+    keyboard: confirmKeyboard({
+      yes: "Да, убрать материал",
+      yesData: confirmRemoveCallback(
+        confirm.token,
+        confirm.materialToken,
+        confirm.version,
+      ),
+      noData: `v1:mm:list:${confirm.token}`,
+      danger: true,
+    }),
+    format: "HTML",
+  };
 }
 
 async function sendStoredMaterialFile(
@@ -2390,6 +2419,7 @@ async function renderMaterialManagement(
 async function renderMaterialResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  meetupToken: string,
   fileTrace?: string,
 ): Promise<void> {
   if (result.kind === "material-attached") {
@@ -2406,12 +2436,7 @@ async function renderMaterialResult(
       : result.kind === "dependency-rejected" && result.reason === "invalid"
         ? invalidMeetupText(result)
         : unavailableText;
-  await editScreen(
-    ctx,
-    "refusal",
-    text,
-    new InlineKeyboard().text("К списку", "v1:nav:hub"),
-  );
+  await showRefusal(ctx, text, exitToCard(meetupToken));
 }
 
 function materialForbiddenOutcome(
@@ -2454,16 +2479,16 @@ function meetupBroadcastPrompt(title: string): string {
   return `Что написать подписчикам сходки «${meetupTitleLabel(title)}»? Пришли текст ответом на это сообщение. До отправки я покажу, как он выглядит, и спрошу подтверждение.`;
 }
 
-function broadcastBackKeyboard(
+function broadcastExit(
   audience: BroadcastAudience,
   keyboard = new InlineKeyboard(),
 ): InlineKeyboard {
-  return audience.kind === "meetup"
-    ? keyboard.text(
-        "Открыть сходку",
-        `v1:view:${uuidToToken(audience.meetupId)}`,
-      )
-    : keyboard.text("К управлению", "v1:manage:menu");
+  return withNav(
+    keyboard,
+    audience.kind === "meetup"
+      ? toCard(uuidToToken(audience.meetupId))
+      : toManage,
+  );
 }
 
 function broadcastForbiddenOutcome(
@@ -2502,13 +2527,27 @@ async function sendBroadcastConfirmation(
     audience.kind === "meetup"
       ? `Выше — текст для подписчиков сходки «${meetupTitleLabel(meetupTitle ?? "")}». Его получат те из них, у кого включены сообщения организатора.`
       : "Выше — текст объявления. Его получат участники сообщества, у которых включены объявления.";
-  await ctx.reply(`${recipients}\n\n${broadcastIrreversibleText}`, {
-    reply_parameters: { message_id: preview.message_id },
-    ...screenMark("broadcast-confirm"),
-    reply_markup: new InlineKeyboard()
-      .text("Отправить", confirm)
-      .text("Не отправлять", "v1:bc:no"),
-  });
+  const question =
+    audience.kind === "meetup"
+      ? "Отправить подписчикам?"
+      : "Отправить объявление?";
+  await ctx.reply(
+    `${heading(question)}\n\n${escapeHtml(recipients)}\n\n${broadcastIrreversibleText}`,
+    {
+      reply_parameters: { message_id: preview.message_id },
+      parse_mode: "HTML",
+      ...screenMark("broadcast-confirm"),
+      reply_markup: confirmKeyboard({
+        yes: "Да, отправить",
+        yesData: confirm,
+        noData:
+          audience.kind === "meetup"
+            ? `v1:bc:no:${uuidToToken(audience.meetupId)}`
+            : "v1:bc:no",
+        danger: true,
+      }),
+    },
+  );
 }
 
 // Отказ Notifications отвечает кадром из принятого набора: E-01 по праву, E-05
@@ -2520,9 +2559,9 @@ async function renderBroadcastResult(
   audience: BroadcastAudience,
   retry: string,
 ): Promise<void> {
-  const back = broadcastBackKeyboard(audience);
+  const back = broadcastExit(audience);
   if (result.kind === "broadcast-accepted") {
-    await editScreen(
+    await showFrame(
       ctx,
       "broadcast-result",
       result.repeated === true
@@ -2535,7 +2574,7 @@ async function renderBroadcastResult(
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
-    await editScreen(
+    await showFrame(
       ctx,
       "broadcast-result",
       `${broadcastForbiddenText[audience.kind]} Ничего не отправлено.`,
@@ -2544,7 +2583,7 @@ async function renderBroadcastResult(
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
-    await editScreen(
+    await showFrame(
       ctx,
       "broadcast-result",
       "Сообщение не принято. Ничего не отправлено.",
@@ -2553,7 +2592,7 @@ async function renderBroadcastResult(
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "conflict") {
-    await editScreen(
+    await showFrame(
       ctx,
       "broadcast-result",
       "С этой кнопки уже отправлен другой текст. Начни рассылку заново.",
@@ -2563,14 +2602,11 @@ async function renderBroadcastResult(
   }
   // Сбой и истёкший срок ответа не говорят, принята ли рассылка: повтор с тем
   // же ключом это выяснит и второй раз её не разошлёт.
-  await editScreen(
+  await showFrame(
     ctx,
     "broadcast-result",
     "Не получилось подтвердить отправку. Это на моей стороне.\n\nНажми «Повторить» через минуту: второй раз сообщение не уйдёт.",
-    broadcastBackKeyboard(
-      audience,
-      new InlineKeyboard().text("Повторить", retry).row(),
-    ),
+    broadcastExit(audience, new InlineKeyboard().text(retryLabel, retry)),
   );
 }
 
@@ -2594,14 +2630,12 @@ async function renderCommunity(
   if (result.kind !== "ok") {
     const text =
       result.kind === "forbidden" ? communityForbiddenText : unavailableText;
-    if (edit)
-      await editScreen(
-        ctx,
-        "refusal",
-        text,
-        new InlineKeyboard().text("Назад", "v1:manage:menu"),
-      );
-    else await ctx.reply(text);
+    await showRefusal(
+      ctx,
+      text,
+      withNav(new InlineKeyboard(), toManage),
+      edit ? undefined : "new",
+    );
     return result;
   }
   const pending = result.value.members.filter((member) => !member.admitted);
@@ -2783,11 +2817,10 @@ async function renderMeetupListFailure(
   ctx: UpdateContext,
   retry: string,
 ): Promise<void> {
-  await editScreen(
+  await showRefusal(
     ctx,
-    "refusal",
     `Не получилось загрузить сходки. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
-    new InlineKeyboard().text("Повторить", retry),
+    exitRetry(retry),
   );
 }
 
@@ -2821,13 +2854,49 @@ async function renderArchiveList(
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
-    await editScreen(
+    await showRefusal(
       ctx,
-      "refusal",
       `Не получилось загрузить архив. Это на моей стороне.\n\nПопробуй ещё раз через минуту.`,
-      new InlineKeyboard().text("Повторить", "v1:nav:archive"),
+      exitRetry("v1:nav:archive"),
     );
   }
+}
+
+// Кадр отказа или итоговый кадр: первое предложение жирным вместо заголовка
+// и выход последним рядом. Тексты кадров ошибок по смыслу не меняются.
+function showFrame(
+  ctx: UpdateContext,
+  id: "refusal" | "broadcast-result" | "no-access",
+  text: string,
+  keyboard: InlineKeyboard,
+  delivery?: "new",
+): Promise<void> {
+  return showScreen(ctx, {
+    id,
+    text: refusalText(text),
+    keyboard,
+    format: "HTML",
+    ...(delivery === undefined ? {} : { delivery }),
+  });
+}
+
+function showRefusal(
+  ctx: UpdateContext,
+  text: string,
+  keyboard: InlineKeyboard,
+  delivery?: "new",
+): Promise<void> {
+  return showFrame(ctx, "refusal", text, keyboard, delivery);
+}
+
+/** Выход к карточке сходки: `[‹ Сходка] [Меню]`. */
+function exitToCard(token: string): InlineKeyboard {
+  return withNav(new InlineKeyboard(), toCard(token));
+}
+
+/** Повтор после сбоя и выход: `[Повторить]` и `[Меню]`. */
+function exitRetry(data: string): InlineKeyboard {
+  return menuOnly(new InlineKeyboard().text(retryLabel, data));
 }
 
 // Переходная форма единого отправителя: срезы перевёрстки заменяют её
@@ -2984,14 +3053,12 @@ async function renderMeetupCard(
   note?: string,
 ): Promise<void> {
   if (result.kind === "meetup-not-found") {
-    const text = "Сходка не найдена или больше недоступна.";
-    const keyboard = new InlineKeyboard().text("К списку", "v1:nav:hub");
-    if (edit) await editScreen(ctx, "refusal", text, keyboard);
-    else
-      await ctx.reply(text, {
-        ...screenMark("refusal"),
-        reply_markup: keyboard,
-      });
+    await showRefusal(
+      ctx,
+      "Сходка не найдена или больше недоступна.",
+      withNav(new InlineKeyboard(), toUpcoming),
+      edit ? undefined : "new",
+    );
     return;
   }
   if (result.kind === "meetup-card") {
@@ -3009,13 +3076,12 @@ async function renderMeetupCard(
     });
     return;
   }
-  const keyboard = new InlineKeyboard().text("Повторить", "v1:nav:hub");
-  if (edit) await editScreen(ctx, "refusal", unavailableText, keyboard);
-  else
-    await ctx.reply(unavailableText, {
-      ...screenMark("refusal"),
-      reply_markup: keyboard,
-    });
+  await showRefusal(
+    ctx,
+    unavailableText,
+    exitRetry("v1:nav:hub"),
+    edit ? undefined : "new",
+  );
 }
 
 // Оба кадра настроек живут в одном рендере: у них одна механика — список
@@ -3124,40 +3190,28 @@ async function renderNotificationFailure(
   retry: string,
 ): Promise<void> {
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
-    await editScreen(
-      ctx,
-      "refusal",
-      forbiddenText,
-      new InlineKeyboard().text("К списку", "v1:nav:hub"),
-    );
+    await showRefusal(ctx, forbiddenText, menuOnly());
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
     // Кнопка, которую сервис не принял, построена по устаревшему экрану:
     // перерисовка по текущему состоянию, а не повтор того же нажатия.
-    await editScreen(
+    await showRefusal(
       ctx,
-      "refusal",
       "Этот экран устарел. Открой настройки заново.",
-      new InlineKeyboard().text("Обновить", retry),
+      exitRetry(retry),
     );
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "conflict") {
-    await editScreen(
+    await showRefusal(
       ctx,
-      "refusal",
       "Это уже сделано. Ничего не изменилось.",
-      new InlineKeyboard().text("Обновить", retry),
+      exitRetry(retry),
     );
     return;
   }
-  await editScreen(
-    ctx,
-    "refusal",
-    unavailableText,
-    new InlineKeyboard().text("Повторить", retry),
-  );
+  await showRefusal(ctx, unavailableText, exitRetry(retry));
 }
 
 async function renderStateResult(
@@ -3177,12 +3231,7 @@ async function renderStateResult(
         : result.reason === "not-scheduled"
           ? "Отложенной публикации у сходки уже нет."
           : "Сходка уже скрыта из общего списка.";
-    await editScreen(
-      ctx,
-      "refusal",
-      text,
-      new InlineKeyboard().text("Открыть сходку", `v1:view:${token}`),
-    );
+    await showRefusal(ctx, text, exitToCard(token));
     return;
   }
   if (result.kind === "meetup-not-found") {
@@ -3207,12 +3256,7 @@ async function renderStateResult(
       : result.kind === "dependency-rejected" && result.reason === "forbidden"
         ? forbiddenText
         : unavailableText;
-  await editScreen(
-    ctx,
-    "refusal",
-    text,
-    new InlineKeyboard().text("К списку", "v1:nav:hub"),
-  );
+  await showRefusal(ctx, text, menuOnly());
 }
 
 async function denyHubAccessIfNeeded(
@@ -3230,11 +3274,13 @@ async function denyHubAccessIfNeeded(
     identity.person.identityId,
     ctx.from?.username,
   );
-  if (edit) {
-    await editScreen(ctx, "no-access", text, new InlineKeyboard());
-  } else {
-    await ctx.reply(text);
-  }
+  await showFrame(
+    ctx,
+    "no-access",
+    text,
+    new InlineKeyboard(),
+    edit ? undefined : "new",
+  );
   return hubAccessOutcome(access, identity.person.identityId, useCase);
 }
 
@@ -3275,16 +3321,11 @@ async function resolvePerson(
     rpcCall(ctx, useCase),
   );
   if (resolved.kind !== "resolved") {
-    if (retryCallback === undefined) {
-      await ctx.reply(unavailableText);
-    } else {
-      await editScreen(
-        ctx,
-        "refusal",
-        unavailableText,
-        new InlineKeyboard().text("Повторить", retryCallback),
-      );
-    }
+    await showRefusal(
+      ctx,
+      unavailableText,
+      retryCallback === undefined ? menuOnly() : exitRetry(retryCallback),
+    );
     return {
       kind: "failed",
       outcome: identityFailureOutcome(resolved, useCase),
@@ -3376,16 +3417,17 @@ async function renderFormResult(
     // Публикация подтверждается повторно по обновлённым данным: кнопка снова
     // несёт снимок, который человек только что видел.
     if (result.field === undefined) {
-      await ctx.reply(
-        `${lines.join("\n")}\n\nПроверь данные и подтверди публикацию ещё раз.`,
-        {
-          ...screenMark("publish-confirm"),
-          reply_markup: new InlineKeyboard().text(
-            "Опубликовать",
-            `v1:manage:publish:${uuidToToken(stored.id)}`,
-          ),
-        },
-      );
+      await showScreen(ctx, {
+        id: "publish-confirm",
+        text: `${refusalText(lines.join("\n"))}\n\nПроверь данные и подтверди публикацию ещё раз.`,
+        keyboard: confirmKeyboard({
+          yes: "Да, опубликовать",
+          yesData: `v1:manage:publish:${uuidToToken(stored.id)}`,
+          noData: `v1:view:${uuidToToken(stored.id)}`,
+        }),
+        format: "HTML",
+        delivery: "new",
+      });
       return;
     }
     // Правка поля: сохранённый ввод показан, но повторно не отправляется — его
@@ -3418,19 +3460,19 @@ async function renderFormResult(
     const token = uuidToToken(result.meetup.id);
     const mode = result.editing === true ? "e" : "c";
     const value = formatLocalMoment(result.schedule);
-    await ctx.reply(
-      `Дата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Ближайших сходках». Сохранить её?`,
-      {
-        ...screenMark("past-date-confirm"),
-        reply_markup: new InlineKeyboard()
-          .text(
-            "Сохранить дату",
-            `v1:manage:past:${token}:${mode}:${pastScheduleDigits(result.schedule)}`,
-          )
-          .row()
-          .text("Ввести другую", `v1:manage:past-retry:${token}:${mode}`),
-      },
-    );
+    await showScreen(ctx, {
+      id: "past-date-confirm",
+      text: `${heading("Сохранить прошедшую дату?")}\n\nДата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Ближайших сходках».`,
+      // «Нет» задаёт вопрос о дате заново: человек чаще ошибся в дате, чем
+      // передумал её менять.
+      keyboard: confirmKeyboard({
+        yes: "Да, сохранить дату",
+        yesData: `v1:manage:past:${token}:${mode}:${pastScheduleDigits(result.schedule)}`,
+        noData: `v1:manage:past-retry:${token}:${mode}`,
+      }),
+      format: "HTML",
+      delivery: "new",
+    });
     return;
   }
   if (result.kind === "meetup-updated") {
@@ -3447,13 +3489,12 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "edit-unavailable") {
-    await ctx.reply("Сходка уже отменена. Изменять её больше нельзя.", {
-      ...screenMark("refusal"),
-      reply_markup: new InlineKeyboard().text(
-        "Открыть сходку",
-        `v1:view:${uuidToToken(result.meetup.id)}`,
-      ),
-    });
+    await showRefusal(
+      ctx,
+      "Сходка уже отменена. Изменять её больше нельзя.",
+      exitToCard(uuidToToken(result.meetup.id)),
+      "new",
+    );
     return;
   }
   if (result.kind === "preview") {
@@ -3552,16 +3593,17 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "dependency-rejected") {
-    if (result.reason === "invalid") {
-      await ctx.reply(invalidMeetupText(result));
-      return;
-    }
-    if (result.reason === "conflict") {
-      await ctx.reply(conflictText);
-      return;
-    }
-    await ctx.reply(
-      result.reason === "forbidden" ? forbiddenText : unavailableText,
+    await showRefusal(
+      ctx,
+      result.reason === "invalid"
+        ? invalidMeetupText(result)
+        : result.reason === "conflict"
+          ? conflictText
+          : result.reason === "forbidden"
+            ? forbiddenText
+            : unavailableText,
+      menuOnly(),
+      "new",
     );
   }
 }
@@ -3677,6 +3719,7 @@ function callbackUseCase(
     | "manage-retry-past-schedule"
     | "manage-materials"
     | "begin-attach-material"
+    | "decline-attach-material"
     | "confirm-attach-material"
     | "remove-material"
     | "confirm-remove-material"
@@ -3713,6 +3756,7 @@ function callbackUseCase(
     case "manage-retry-past-schedule":
     case "manage-materials":
     case "begin-attach-material":
+    case "decline-attach-material":
     case "confirm-attach-material":
     case "remove-material":
     case "confirm-remove-material":
@@ -3883,7 +3927,7 @@ async function replyFailClosed(
   outcome: BoundaryOutcome,
 ): Promise<BoundaryOutcome> {
   try {
-    await ctx.reply(unavailableText);
+    await showRefusal(ctx, unavailableText, menuOnly());
     return outcome;
   } catch (cause) {
     if (outcome.result === "error") {
