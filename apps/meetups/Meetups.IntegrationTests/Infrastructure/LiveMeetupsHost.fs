@@ -32,11 +32,13 @@ type LiveMeetupsHost(configure: IServiceCollection -> unit) =
             // Порт 0: адрес назначает система, параллельные прогоны не конфликтуют.
             Meetups.Host.buildWith
                 configure
-                [|
-                    "--urls=http://127.0.0.1:0"
-                    $"--{Meetups.Migrations.DatabaseUrlVariable}={db.ConnectionString}"
-                    $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
-                |]
+                (Array.append
+                    AuthenticatedClient.configuration
+                    [|
+                        "--urls=http://127.0.0.1:0"
+                        $"--{Meetups.Migrations.DatabaseUrlVariable}={db.ConnectionString}"
+                        $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
+                    |])
         with _ ->
             (db :> IDisposable).Dispose()
             reraise ()
@@ -64,6 +66,10 @@ type LiveMeetupsHost(configure: IServiceCollection -> unit) =
     new() = new LiveMeetupsHost(ignore)
 
     member _.Channel = channel
+
+    /// SQL-пагинация остаётся проверяемой ниже закрытого ListMeetupStates RPC.
+    member _.ReadStates =
+        Meetups.Slices.ListMeetupStates.Composition.buildRead app.Services
 
     /// Нужен утверждениям про строки: отказ по праву обязан не только вернуть код,
     /// но и ничего не записать.

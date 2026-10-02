@@ -32,7 +32,13 @@ type private Recorder(respond: unit -> Task<Identity.V1.CheckGlobalRoleResponse>
             respond ()
 
 let private runWith (incoming: Forwarded) (send: IdentityRoleClient.Send) =
-    IdentityRoleClient.ask send (TimeSpan.FromSeconds 2.0) incoming Sample.authorId (Set.singleton Administrator)
+    IdentityRoleClient.ask
+        send
+        "meetups-token"
+        (TimeSpan.FromSeconds 2.0)
+        incoming
+        Sample.authorId
+        (Set.singleton Administrator)
     |> Async.AwaitTask
     |> Async.RunSynchronously
 
@@ -65,6 +71,7 @@ let ``The adapter asks Identity about the person with the roles it was given`` (
                <= DateTime.UtcNow + TimeSpan.FromSeconds 2.0
             && headers.GetValue "x-request-id" = "req-1"
             && headers.GetValue "x-use-case" = "manual_broadcast"
+            && headers.GetValue "authorization" = "Bearer meetups-token"
         @>
 
 [<Fact>]
@@ -79,12 +86,17 @@ let ``A refusal by Identity is a refusal of the right`` () =
 let ``Absent chain values are not forwarded`` () =
     let headers =
         IdentityRoleClient.metadata
+            "meetups-token"
             { forwarded with
                 RequestId = None
                 UseCase = None
             }
 
-    test <@ headers.Count = 0 @>
+    test
+        <@
+            headers.Count = 1
+            && headers.GetValue "authorization" = "Bearer meetups-token"
+        @>
 
 /// Вызывающий, который ждёт меньше двух секунд, ограничивает и вызов Identity, а его
 /// отмена отменяет и этот вызов: иначе Meetups отвечал бы в закрытый поток.

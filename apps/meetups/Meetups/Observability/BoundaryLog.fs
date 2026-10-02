@@ -9,6 +9,7 @@ open Grpc.Core.Interceptors
 open Microsoft.Extensions.Logging
 open Meetups
 open Meetups.Infrastructure
+open Meetups.Transport
 
 /// Транспортная граница сервиса: заполняет каркас записи об операции из
 /// docs/standards/observability/logging.md. Каркас заполняет граница, а не
@@ -66,7 +67,7 @@ type BoundaryLogInterceptor(logger: ILogger<BoundaryLogInterceptor>) =
         ]
         |> optional "request_id" (requestId context)
         |> optional "use_case" (useCase context)
-        |> fun fields -> fields @ extras
+        |> fun fields -> fields @ CallerGate.fields context @ extras
 
     /// reraise() внутри task недоступен: он разрешён только прямо в with-блоке.
     /// Capture().Throw() сохраняет исходный stack.

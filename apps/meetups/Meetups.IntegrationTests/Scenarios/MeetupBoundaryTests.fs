@@ -85,7 +85,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``An administrator drives a meetup from draft to visible over gRPC``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let id = newId ()
         let key = id.ToString "D"
@@ -155,7 +155,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A stale snapshot is refused as ABORTED over the wire``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let first = administrator ()
         let second = otherAdministrator ()
         let id = newId ()
@@ -212,7 +212,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``Listing meetups from an empty database answers with an empty page``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
 
         let response =
             client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ()))
@@ -222,7 +222,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``Meetups are listed by date with day first and no date last``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
 
         createPublished client admin (newId ()) "No date" None
@@ -255,7 +255,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``An ordinary viewer gets the stored meetup snapshot``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let id = newId ()
         let expectedId = id.ToString "D"
         let scheduled = today.AddDays 30
@@ -278,7 +278,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A missing meetup answers NOT_FOUND``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
 
         let actual =
             Rpc.codeOf (fun () ->
@@ -291,7 +291,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A hidden meetup is visible only to its author and administrators``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let author = administrator ()
         let id = newId ()
         let key = id.ToString "D"
@@ -332,7 +332,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``The boundary fills the log frame for a read call``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
 
         client.ListVisibleMeetups(ListVisibleMeetupsRequest(Viewer = ordinary ()))
         |> ignore
@@ -353,7 +353,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A repeated create by the same administrator writes nothing new``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let id = newId ()
         let key = id.ToString "D"
@@ -375,7 +375,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A foreign draft and a missing meetup answer with the same code``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let key = (newId ()).ToString "D"
 
         client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = administrator (), Id = key))
@@ -404,7 +404,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``Publishing a titleless draft is refused as FAILED_PRECONDITION``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let key = (newId ()).ToString "D"
 
@@ -424,7 +424,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A refused command leaves no state and no journal row``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let id = newId ()
 
         let actual =
@@ -443,7 +443,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A scheduled publication is returned to whoever sees the meetup``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
         let id = newId ()
         let key = id.ToString "D"
@@ -502,7 +502,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A past moment and a published meetup are refused with different codes``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let admin = administrator ()
 
         let draftKey = (newId ()).ToString "D"
@@ -556,7 +556,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A command stores the request id it came with next to its event``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let id = newId ()
         let headers = Metadata()
         headers.Add("x-request-id", "req-bot-frame")
@@ -572,7 +572,7 @@ type MeetupBoundaryTests() =
     [<Fact>]
     member _.``A command without a usable request id stores none``() =
         use live = new LiveMeetupsHost()
-        let client = MeetupsService.MeetupsServiceClient(live.Channel)
+        let client = AuthenticatedClient.bot live.Channel
         let bare = newId ()
         let oversized = newId ()
         let headers = Metadata()

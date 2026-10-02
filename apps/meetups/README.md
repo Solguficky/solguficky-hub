@@ -56,6 +56,8 @@ Meetups/
   Observability/DispatchTelemetry.fs  бэклог и возраст старейшей неотправленной записи
   Observability/DuePublicationTelemetry.fs  размер набора и просрочка старейшего момента
   Observability/BoundaryLog.fs        интерцептор каркаса лога
+  Transport/Callers.fs                таблица токенов вызывающих и проверка собственного
+  Transport/CallerGate.fs             матрица допуска и интерцептор аутентификации
   Transport/MeetupsGrpcService.fs     диспетчер пятнадцати операций
   Transport/OutboxDispatchWorker.fs   фоновая граница журнала: расписание тиков и их запись
   Transport/DuePublicationWorker.fs   фоновая граница отложенной публикации
@@ -149,6 +151,10 @@ Dapper не знает `DateOnly` и `TimeOnly` как параметры, хо�
 
 ## Транспорт и готовность
 
+По [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) каждый доменный вызов несёт `authorization: Bearer <token>`. Матрица `MethodAccess` повторяет колонку Caller [каталога](../../docs/architecture/integration.md#meetups-grpc): бот хаба вызывает четырнадцать пользовательских RPC, Notifications — только `CheckMeetupAuthority`; `ListMeetupStates` пока закрыт для всех. Нет токена, неизвестный токен или вызывающий не объявлен у метода — `UNAUTHENTICATED` до диспетчера. `PERMISSION_DENIED` остаётся отказом человеку по праву. Логгер стоит снаружи интерцептора допуска и пишет `caller` и `caller_refusal`, никогда значение секрета. Health и reflection токена не требуют, обхода на loopback нет.
+
+Три обязательных значения: `MEETUPS_CALLER_TOKEN_TELEGRAM_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_SERVICE_TOKEN`. Пустота или отсутствие значения, совпадение токенов вызывающих и совпадение собственного с одним из них останавливают запуск до миграций. AppHost генерирует и раздаёт значения сам; при `just meetups-run` их задаёт окружение. Identity-клиент предъявляет собственный токен на `CheckGlobalRole`, сохраняя срок, отмену и заголовки цепочки.
+
 Kestrel настроен на h2c: gRPC без TLS требует HTTP/2, а plaintext-endpoint без ALPN не умеет договариваться о версии. Отсюда два следствия:
 
 - `MapDefaultEndpoints` из ServiceDefaults не вызывается — `/health` и `/alive` на таком endpoint недостижимы;
@@ -214,8 +220,8 @@ grpcurl -plaintext localhost:<порт> list
 Автотесты покрывают сам сервис; руками проверяется то, что Aspire собрал его работающим — привязка `MEETUPS_DATABASE_URL` и `MEETUPS_COMMUNITY_TIME_ZONE`, endpoint `grpc` и reflection. Минимальный сценарий: `list` показывает `meetups.v1.MeetupsService`; `CreateMeetupDraft` со смотрящим, у которого `"global_roles": ["GLOBAL_ROLE_ADMIN"]`, отвечает снимком с `version: 1`; после заполнения атрибутов и `PublishMeetup` оба запроса чтения возвращают тот же снимок, а `ListArchivedMeetups` остаётся пустым, пока сходка актуальна:
 
 ```bash
-grpcurl -plaintext -d '{"viewer":{"identityId":"0199c0de-0000-7000-8000-00000000000a"}}' localhost:<порт> meetups.v1.MeetupsService/ListVisibleMeetups
-grpcurl -plaintext -d '{"viewer":{"identityId":"0199c0de-0000-7000-8000-00000000000a"},"id":"0199c0de-0000-7000-8000-000000000001"}' localhost:<порт> meetups.v1.MeetupsService/GetMeetup
+grpcurl -plaintext -H "authorization: Bearer $MEETUPS_CALLER_TOKEN_TELEGRAM_BOT" -d '{"viewer":{"identityId":"0199c0de-0000-7000-8000-00000000000a"}}' localhost:<порт> meetups.v1.MeetupsService/ListVisibleMeetups
+grpcurl -plaintext -H "authorization: Bearer $MEETUPS_CALLER_TOKEN_TELEGRAM_BOT" -d '{"viewer":{"identityId":"0199c0de-0000-7000-8000-00000000000a"},"id":"0199c0de-0000-7000-8000-000000000001"}' localhost:<порт> meetups.v1.MeetupsService/GetMeetup
 ```
 
 Карточка по отсутствующему `id` отвечает `Code: NotFound`, а запрос без `viewer` — `Code: InvalidArgument`. Идентификатор в запросе — каноническая строка UUIDv7 в нижнем регистре с дефисами, иначе граница ответит `InvalidArgument`. Список и карточка скрывают чужой черновик по `visibility`: тот же `GetMeetup` от смотрящего, который не автор и не администратор, отвечает `Code: NotFound`.

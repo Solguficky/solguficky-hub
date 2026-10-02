@@ -744,12 +744,15 @@ type MeetupCommandTests() =
         // use, а не let: приложение держит singleton NpgsqlDataSource, и его пул
         // соединений обязан закрыться раньше, чем изолированная база будет удалена.
         use app =
-            Meetups.Host.build
-                [|
-                    "--urls=http://127.0.0.1:0"
-                    $"--{Meetups.Migrations.DatabaseUrlVariable}={dsn}"
-                    $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
-                |]
+            Meetups.Host.build (
+                Array.append
+                    AuthenticatedClient.configuration
+                    [|
+                        "--urls=http://127.0.0.1:0"
+                        $"--{Meetups.Migrations.DatabaseUrlVariable}={dsn}"
+                        $"--{Meetups.Infrastructure.CommunityTime.TimeZoneVariable}=Europe/Moscow"
+                    |]
+            )
 
         let deps = Meetups.Slices.CreateMeetupDraft.Composition.buildDeps app.Services None
 

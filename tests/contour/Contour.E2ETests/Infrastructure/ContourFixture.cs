@@ -31,6 +31,10 @@ public sealed class ContourFixture : IAsyncLifetime
     public Metadata MaintainerCall() =>
         new() { { "authorization", $"Bearer {Contour.MaintainerToken}" } };
 
+    /// <summary>Токен бота для пользовательских операций Meetups (ADR-056).</summary>
+    public Metadata BotCall() =>
+        new() { { "authorization", $"Bearer {Contour.BotServiceToken}" } };
+
     public async ValueTask InitializeAsync()
     {
         contour = await ContourHost.StartAsync(TestContext.Current.CancellationToken);

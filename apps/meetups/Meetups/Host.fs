@@ -23,6 +23,16 @@ open OpenTelemetry.Metrics
 let buildWith (configure: IServiceCollection -> unit) (args: string array) : WebApplication =
     let builder = WebApplication.CreateBuilder(args)
 
+    // Проверяется до построения хоста, а не лениво на первом доменном вызове.
+    let callers =
+        CallerTable.FromConfiguration((fun name -> builder.Configuration[name]), MethodAccess.declared)
+
+    let serviceToken =
+        ServiceToken.fromConfiguration (fun name -> builder.Configuration[name]) callers
+
+    builder.Services.AddSingleton<CallerTable> callers
+    |> ignore
+
     builder.AddServiceDefaults() |> ignore
 
     // h2c: gRPC без TLS требует HTTP/2, а plaintext-endpoint без ALPN не умеет
@@ -35,6 +45,9 @@ let buildWith (configure: IServiceCollection -> unit) (args: string array) : Web
 
     builder.Services.AddGrpc(fun options ->
         options.Interceptors.Add<BoundaryLogInterceptor>()
+        |> ignore
+
+        options.Interceptors.Add<CallerGateInterceptor>()
         |> ignore
     )
     |> ignore
@@ -153,7 +166,9 @@ let buildWith (configure: IServiceCollection -> unit) (args: string array) : Web
         let send = IdentityRoleClient.connect url
 
         builder.Services.AddSingleton<CheckMeetupAuthority.Port>(
-            CheckMeetupAuthority.Port.Connected(IdentityRoleClient.ask send IdentityRoleClient.defaultDeadline)
+            CheckMeetupAuthority.Port.Connected(
+                IdentityRoleClient.ask send serviceToken IdentityRoleClient.defaultDeadline
+            )
         )
         |> ignore
 
