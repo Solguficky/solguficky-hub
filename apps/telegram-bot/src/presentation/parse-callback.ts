@@ -65,10 +65,11 @@ export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
 type PlainAction =
   | { kind: "home" }
-  | { kind: "hub" }
-  | { kind: "archive" }
+  // Списки листаются: страница едет в кнопке листания, без неё — первая.
+  | { kind: "hub"; page?: number }
+  | { kind: "archive"; page?: number }
   | { kind: "manage-menu" }
-  | { kind: "manage-hidden" }
+  | { kind: "manage-hidden"; page?: number }
   | { kind: "community" }
   | { kind: "ask-allowed-username" }
   | { kind: "admit-member"; token: string }
@@ -185,6 +186,8 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };
+  const listed = parseListPage(parts);
+  if (listed !== undefined) return listed;
   if (parts.length === 3 && parts[1] === "view") {
     const viewToken = TokenSchema.safeParse(parts[2]);
     return viewToken.success
@@ -335,6 +338,24 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "confirm-unschedule")
     return { kind: "manage-confirm-unschedule", token: token.data };
   return { kind: "malformed" };
+}
+
+// Кнопка листания: `v1:nav:hub:<страница>`, `v1:nav:archive:<страница>`,
+// `v1:manage:hidden:<страница>`. Страница за пределами списка — не ошибка
+// разбора: экран откроет последнюю.
+function parseListPage(parts: readonly string[]): CallbackAction | undefined {
+  if (parts.length !== 4) return undefined;
+  const kind =
+    parts[1] === "nav" && parts[2] === "hub"
+      ? "hub"
+      : parts[1] === "nav" && parts[2] === "archive"
+        ? "archive"
+        : parts[1] === "manage" && parts[2] === "hidden"
+          ? "manage-hidden"
+          : undefined;
+  if (kind === undefined) return undefined;
+  const page = z.coerce.number().int().nonnegative().safeParse(parts[3]);
+  return page.success ? { kind, page: page.data } : { kind: "malformed" };
 }
 
 /// Цифры кнопки обратно в тот вид, в котором дату вводят: форма разбирает и

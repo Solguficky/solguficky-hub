@@ -12,6 +12,7 @@ import {
 } from "../../../apps/telegram-bot/testkit/index.js";
 import {
   fillsMeetupForm,
+  listedAs,
   memberAllowedBy,
   organizerAtStart,
   titleFor,
@@ -49,7 +50,7 @@ describe("сценарий первого среза", () => {
     await member.presses("Ближайшие сходки");
     expect(member.sees()).not.toContain(title);
 
-    await organizer.presses("Управление сходками");
+    await organizer.presses("Управление");
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, title);
     expect(organizer.sees()).toContain("Проверь сходку");
@@ -57,9 +58,11 @@ describe("сценарий первого среза", () => {
     if (draftId === undefined) throw new Error("черновик не заведён");
 
     // Отрицательная половина: черновик уже в Meetups, но для солегуфика его нет.
-    await member.presses("Обновить");
+    // Список перечитывается при каждом открытии: «Обновить» у него нет.
+    await member.presses("‹ Меню");
+    await member.presses("Ближайшие сходки");
     expect(member.sees()).not.toContain(title);
-    expect(member.buttons()).not.toContain(title);
+    expect(member.buttons()).not.toContain(listedAs(title));
     await member.opensLink(draftId);
     const hiddenAnswer = member.sees();
     await member.opensLink(unusedMeetupId());
@@ -74,8 +77,8 @@ describe("сценарий первого среза", () => {
     // P-03 и P-04: тот же человек видит сходку в списке и её карточку.
     await member.says("/start");
     await member.presses("Ближайшие сходки");
-    expect(member.buttons()).toContain(title);
-    await member.presses(title);
+    expect(member.buttons()).toContain(listedAs(title));
+    await member.presses(listedAs(title));
     expect(member.sees()).toContain(title);
     expect(member.sees()).toContain("Циферблат");
     expect(member.sees()).toContain("Берём свои игры");
@@ -91,7 +94,7 @@ describe("сценарий первого среза", () => {
     await member.says("/start");
 
     expect(member.buttons()).toContain("Ближайшие сходки");
-    expect(member.buttons()).not.toContain("Управление сходками");
+    expect(member.buttons()).not.toContain("Управление");
   });
 
   it("E-01: создать сходку после отзыва роли отказывает Meetups, и журнал не растёт", async () => {
@@ -106,7 +109,7 @@ describe("сценарий первого среза", () => {
     await person.says("/start");
     await direct.grantAdmin(telegramUserId);
     await person.says("/start");
-    await person.presses("Управление сходками");
+    await person.presses("Управление");
     const personId = await direct.identityOf(telegramUserId);
     await direct.revokeAdmin(personId);
 

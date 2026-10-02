@@ -14,8 +14,10 @@ import {
   hubAccessText,
 } from "../application/hub-access.js";
 import {
+  type CommunityToday,
   formatLocalMoment,
   formatSchedule,
+  utcToday,
 } from "../application/meetup-form.js";
 import type {
   BroadcastAudience,
@@ -39,12 +41,9 @@ import {
 } from "../identity/port.js";
 import type { LogFields, Logger } from "../logging.js";
 import type {
-  ArchivedMeetupSummary,
-  MeetupMaterial,
   MeetupMaterialSource,
   MeetupSchedule,
   MeetupSnapshot,
-  MeetupSummary,
 } from "../meetups/port.js";
 import type {
   CategoryState,
@@ -88,6 +87,26 @@ import {
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import type { ScreenId } from "./screens/catalog.js";
+import { escapeHtml } from "./screens/kit.js";
+import {
+  archiveScreen,
+  cardScreen,
+  editFieldsScreen,
+  hiddenScreen,
+  materialsScreen,
+  materialTitle,
+  meetupTitleLabel,
+  stateConfirmScreen,
+  statusScreen,
+  upcomingScreen,
+} from "./screens/meetup.js";
+import { isAdministrator, manageScreen, menuScreen } from "./screens/menu.js";
+import {
+  categoryLabels,
+  globalNotificationsScreen,
+  meetupNotificationsScreen,
+  toggleToast,
+} from "./screens/notifications.js";
 import {
   clearCallbackKeyboard,
   screenMark,
@@ -116,6 +135,9 @@ export type BotRuntime = {
   tracing: Tracing;
   presentation?: "rich" | "plain";
   environment?: TelegramEnvironment;
+  // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
+  // сходка, и называет год у даты. Тот же источник, что у формы.
+  today?: CommunityToday;
 };
 
 export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
@@ -180,37 +202,6 @@ type ProductUseCase =
   | "send_broadcast";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
-const materialPageSize = 8;
-const materialCardLimit = 20;
-
-// Общая форма для трёх действий смены состояния: кадр подтверждения и повтор
-// после конфликта версий говорят об одном и том же действии одними словами.
-const stateActionCopy: Record<
-  MeetupStateAction,
-  { verb: string; label: string; confirmAction: string }
-> = {
-  unpublish: {
-    verb: "скрыть сходку из общего списка",
-    label: "Скрыть из списка",
-    confirmAction: "confirm-unpublish",
-  },
-  cancel: {
-    verb: "отменить сходку",
-    label: "Отменить сходку",
-    confirmAction: "confirm-cancel",
-  },
-  hold: {
-    verb: "отметить сходку состоявшейся",
-    label: "Отметить состоявшейся",
-    confirmAction: "confirm-hold",
-  },
-  unschedule: {
-    verb: "отменить отложенную публикацию сходки",
-    label: "Отменить отложенную публикацию",
-    confirmAction: "confirm-unschedule",
-  },
-};
-
 const publishMomentPrompt =
   "Когда опубликовать сходку? Напиши дату и время по времени сообщества: ДД.ММ.ГГГГ ЧЧ:ММ";
 // Прошедший момент — отдельный отказ со своим текстом, а не «не разобрал
@@ -239,14 +230,6 @@ const stateActionByCallback: Record<
   "manage-unschedule": "unschedule",
   "manage-confirm-unschedule": "unschedule",
 };
-
-function confirmStateCallback(
-  action: MeetupStateAction,
-  token: string,
-): string {
-  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}`;
-}
-const materialDisplayTitleLimit = 80;
 
 type PendingQuestion = {
   kind: "meetup";
@@ -311,6 +294,8 @@ type UpdateContext = TracedContext & {
   waiting?: Waiting;
   // Кнопка стояла под следом: экран приходит новым сообщением.
   fresh?: boolean;
+  // Сегодняшний день сообщества для этого update.
+  today?: CommunityToday;
 };
 
 type BoundaryOutcome =
@@ -351,6 +336,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     const requestId = randomUUID();
     ctx.requestId = requestId;
     ctx.startedAt = process.hrtime.bigint();
+    ctx.today = runtime.today ?? utcToday;
     // Спан открывается в первом middleware: всё, что ниже, включая вызовы Bot
     // API и gRPC, становится его потомком.
     return traceUpdate({ tracing: runtime.tracing, ctx, requestId, next });
@@ -877,10 +863,7 @@ async function handleMessage(
     }
     switch (result.kind) {
       case "message":
-        await ctx.reply(result.text, {
-          ...screenMark("menu"),
-          reply_markup: homeKeyboard(identity),
-        });
+        await showScreen(ctx, menuScreen(identity, result.text));
         outcome = {
           level: "info",
           message: "start reply sent",
@@ -1486,7 +1469,7 @@ async function handleCallback(
         intent: "start",
       });
       if (result.kind === "message") {
-        await editScreen(ctx, "menu", result.text, homeKeyboard(person));
+        await showScreen(ctx, menuScreen(person, result.text));
         outcome = {
           level: "info",
           message: "start screen sent",
@@ -1503,11 +1486,25 @@ async function handleCallback(
       return;
     }
     if (action.kind === "hub" || action.kind === "outdated") {
-      outcome = await openNavScreen(ctx, runtime, person, "hub", useCase);
+      outcome = await openNavScreen(
+        ctx,
+        runtime,
+        person,
+        "hub",
+        useCase,
+        action.kind === "hub" ? action.page : undefined,
+      );
       return;
     }
     if (action.kind === "archive") {
-      outcome = await openNavScreen(ctx, runtime, person, "archive", useCase);
+      outcome = await openNavScreen(
+        ctx,
+        runtime,
+        person,
+        "archive",
+        useCase,
+        action.page,
+      );
       return;
     }
     if (action.kind === "view-meetup") {
@@ -1589,19 +1586,7 @@ async function handleCallback(
         return;
       }
       if (action.kind === "manage-edit") {
-        await editScreen(
-          ctx,
-          "edit",
-          `Что изменить в сходке «${meetupTitleLabel(meetup.title)}»?`,
-          new InlineKeyboard()
-            .text("Название", `v1:manage:field:${token}:title`)
-            .text("Дата и время", `v1:manage:field:${token}:schedule`)
-            .row()
-            .text("Место", `v1:manage:field:${token}:venue`)
-            .text("Описание", `v1:manage:field:${token}:description`)
-            .row()
-            .text("Назад", `v1:view:${token}`),
-        );
+        await showScreen(ctx, editFieldsScreen(meetup));
       } else if (action.kind === "manage-field") {
         await renderFormResult(
           ctx,
@@ -1628,7 +1613,10 @@ async function handleCallback(
           runtime.presentation ?? "rich",
         );
       } else if (action.kind === "manage-status") {
-        await renderMeetupStatus(ctx, meetup, current.author);
+        await showScreen(
+          ctx,
+          statusScreen(meetup, current.author, communityToday(ctx)),
+        );
       } else if (
         action.kind === "manage-cancel" &&
         meetup.lifecycle === "held"
@@ -1699,21 +1687,15 @@ async function handleCallback(
         });
         return;
       } else {
-        const stateAction = stateActionByCallback[action.kind];
-        // «Отметить состоявшейся» открывается с карточки напрямую, а не через
-        // подменю статуса (PER-230), поэтому и отказ возвращает туда же.
-        const back =
-          action.kind === "manage-hold"
-            ? `v1:view:${token}`
-            : `v1:manage:status:${token}`;
-        await editScreen(
+        // Все действия смены состояния живут в «Статусе», и отказ от
+        // подтверждения возвращает туда.
+        await showScreen(
           ctx,
-          "state-confirm",
-          `Точно ${stateActionCopy[stateAction].verb} «${meetup.title}»?`,
-          new InlineKeyboard()
-            .text("Да, продолжить", confirmStateCallback(stateAction, token))
-            .row()
-            .text("Нет", back),
+          stateConfirmScreen({
+            action: stateActionByCallback[action.kind],
+            meetup,
+            back: `v1:manage:status:${token}`,
+          }),
         );
       }
       outcome = {
@@ -1787,7 +1769,7 @@ async function handleCallback(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderHiddenMeetupList(ctx, result);
+      await renderHiddenMeetupList(ctx, result, action.page);
       outcome = screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "hidden meetup list sent",
@@ -1941,19 +1923,7 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-menu") {
-      const id = createUuidV7();
-      const keyboard = new InlineKeyboard()
-        .text("Создать сходку", `v1:manage:new:${uuidToToken(id)}`)
-        .row()
-        .text("Скрытые сходки", "v1:manage:hidden")
-        .row()
-        .text("Состав сообщества", "v1:community:list");
-      // Объявление видит только администратор: сервис откажет остальным и так,
-      // но вход, который ведёт в отказ после набора текста, хуже его отсутствия.
-      if (person.globalRoles.includes("admin")) {
-        keyboard.row().text("Объявление сообществу", "v1:bc:c");
-      }
-      await editScreen(ctx, "manage", "Управление сходками", keyboard);
+      await showScreen(ctx, manageScreen(person, uuidToToken(createUuidV7())));
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -2411,64 +2381,8 @@ async function renderMaterialManagement(
   requestedPage = 0,
   fileTrace?: string,
 ): Promise<void> {
-  const meetupToken = uuidToToken(meetup.id);
-  const pageCount = Math.max(
-    1,
-    Math.ceil(meetup.materials.length / materialPageSize),
-  );
-  const page = Math.min(requestedPage, pageCount - 1);
-  const pageStart = page * materialPageSize;
-  const materials = meetup.materials.slice(
-    pageStart,
-    pageStart + materialPageSize,
-  );
-  const lines = [
-    "Материалы сходки",
-    meetup.title,
-    ...(pageCount === 1 ? [] : [`Страница ${page + 1} из ${pageCount}`]),
-    "",
-    meetup.materials.length === 0
-      ? "Пока ничего не прикреплено."
-      : materials
-          .map(
-            (material, index) =>
-              `${pageStart + index + 1}. ${displayMaterialTitle(material, pageStart + index + 1)}`,
-          )
-          .join("\n"),
-  ];
-  const keyboard = new InlineKeyboard();
-  for (const [index, material] of materials.entries()) {
-    const materialToken = uuidToToken(material.id);
-    const title = buttonText(
-      displayMaterialTitle(material, pageStart + index + 1),
-    );
-    if (material.source.kind === "message-link") {
-      keyboard.url(title, material.source.url);
-    } else {
-      keyboard.text(title, `v1:mm:file:${meetupToken}:${materialToken}`);
-    }
-    if (canManage) {
-      keyboard.text("Убрать", `v1:mm:rm:${meetupToken}:${materialToken}`);
-    }
-    keyboard.row();
-  }
-  if (pageCount > 1) {
-    if (page > 0) {
-      keyboard.text("←", `v1:mm:list:${meetupToken}:${page - 1}`);
-    }
-    if (page + 1 < pageCount) {
-      keyboard.text("→", `v1:mm:list:${meetupToken}:${page + 1}`);
-    }
-    keyboard.row();
-  }
-  if (canManage) {
-    keyboard.text("Прикрепить материал", `v1:mm:add:${meetupToken}`).row();
-  }
-  keyboard.text("К сходке", `v1:view:${meetupToken}`);
   await showScreen(ctx, {
-    id: "materials",
-    text: lines.join("\n"),
-    keyboard,
+    ...materialsScreen(meetup, canManage, requestedPage),
     ...(fileTrace === undefined ? {} : { fileTrace }),
   });
 }
@@ -2849,14 +2763,13 @@ function adminOutcome(
 async function renderMeetupList(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  page = 0,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
-    const keyboard = meetupListKeyboard(result.meetups);
-    const text =
-      result.meetups.length === 0
-        ? `Пока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.`
-        : meetupListText(result.meetups);
-    await editScreen(ctx, "upcoming", text, keyboard);
+    await showScreen(
+      ctx,
+      upcomingScreen(result.meetups, page, communityToday(ctx)),
+    );
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
@@ -2881,31 +2794,13 @@ async function renderMeetupListFailure(
 async function renderHiddenMeetupList(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  page = 0,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
-    const hidden = result.meetups.filter(
-      (meetup) => meetup.visibility === "hidden",
+    await showScreen(
+      ctx,
+      hiddenScreen(result.meetups, page, communityToday(ctx)),
     );
-    const keyboard = new InlineKeyboard();
-    for (const meetup of hidden) {
-      keyboard
-        .text(
-          meetupTitleLabel(meetup.title),
-          `v1:view:${uuidToToken(meetup.id)}`,
-        )
-        .row();
-    }
-    keyboard.text("Обновить", "v1:manage:hidden").row();
-    keyboard.text("Назад", "v1:manage:menu");
-    // Незаконченный черновик и снятая с публикации сходка в контракте не
-    // различаются, поэтому раздел говорит о скрытых, а не о черновиках.
-    const text =
-      hidden.length === 0
-        ? "Скрытых сходок нет.\n\nЗдесь появляются черновики и сходки, снятые с публикации."
-        : ["Скрытые сходки", hidden.map(meetupListLine).join("\n")].join(
-            "\n\n",
-          );
-    await editScreen(ctx, "hidden", text, keyboard);
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
@@ -2916,14 +2811,13 @@ async function renderHiddenMeetupList(
 async function renderArchiveList(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
+  page = 0,
 ): Promise<void> {
   if (result.kind === "archived-meetup-list") {
-    const keyboard = archiveListKeyboard(result.meetups);
-    const text =
-      result.meetups.length === 0
-        ? `Архив пока пуст.\n\nСюда попадают отменённые, состоявшиеся и прошедшие сходки.`
-        : archiveListText(result.meetups);
-    await editScreen(ctx, "archive", text, keyboard);
+    await showScreen(
+      ctx,
+      archiveScreen(result.meetups, page, communityToday(ctx)),
+    );
     return;
   }
   if (result.kind === "dependency-rejected" || result.kind === "rejected") {
@@ -2953,25 +2847,6 @@ function editScreen(
   });
 }
 
-function meetupListText(meetups: readonly MeetupSummary[]): string {
-  const dated = meetups.filter((meetup) => meetup.schedule !== undefined);
-  const undated = meetups.filter((meetup) => meetup.schedule === undefined);
-  const sections = [
-    meetupSection("С датой", dated),
-    meetupSection("Без даты", undated),
-  ].filter((section) => section !== undefined);
-  return ["Ближайшие сходки", ...sections].join("\n\n");
-}
-
-function meetupSection(
-  heading: string,
-  meetups: readonly MeetupSummary[],
-): string | undefined {
-  return meetups.length === 0
-    ? undefined
-    : `${heading}\n${meetups.map(meetupListLine).join("\n")}`;
-}
-
 // Экраны, куда ведут и кнопки навигации, и команды меню. Кнопка правит своё
 // сообщение, команда отвечает новым — это решает editScreen, а не вызывающий.
 async function openNavScreen(
@@ -2980,6 +2855,7 @@ async function openNavScreen(
   person: Person,
   screen: NavScreen,
   useCase: ProductUseCase,
+  page = 0,
 ): Promise<BoundaryOutcome> {
   switch (screen) {
     case "hub": {
@@ -2988,7 +2864,7 @@ async function openNavScreen(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderMeetupList(ctx, result);
+      await renderMeetupList(ctx, result, page);
       return screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "meetup list sent",
@@ -3002,7 +2878,7 @@ async function openNavScreen(
         intent: "list-archived-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderArchiveList(ctx, result);
+      await renderArchiveList(ctx, result, page);
       return screenBoundary(result, {
         ok: ["archived-meetup-list"],
         okMessage: "archive list sent",
@@ -3049,127 +2925,12 @@ function navScreenUseCase(screen: NavScreen): ProductUseCase {
   }
 }
 
-// Управлять сходками и составом может только администратор: так решают Meetups
-// и Identity, и вход, который ведёт в отказ, хуже его отсутствия.
-function isAdministrator(person: { globalRoles: readonly string[] }): boolean {
-  return person.globalRoles.includes("admin");
-}
-
-// Главный экран — ответ на /start. Возврат на него с других экранов правит то
-// же сообщение той же клавиатурой, поэтому она собрана в одном месте.
-function homeKeyboard(person: {
-  globalRoles: readonly string[];
-}): InlineKeyboard {
-  const keyboard = new InlineKeyboard()
-    .text("Ближайшие сходки", "v1:nav:hub")
-    .text("Архив", "v1:nav:archive")
-    .row()
-    .text("Настройки уведомлений", "v1:notify:global");
-  if (isAdministrator(person)) {
-    keyboard.row().text("Управление сходками", "v1:manage:menu");
-  }
-  return keyboard;
-}
-
-function meetupListKeyboard(meetups: readonly MeetupSummary[]): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  for (const meetup of meetups) {
-    keyboard
-      .text(meetupTitleLabel(meetup.title), `v1:view:${uuidToToken(meetup.id)}`)
-      .row();
-  }
-  return keyboard
-    .text("Обновить", "v1:nav:hub")
-    .text("Архив", "v1:nav:archive")
-    .row()
-    .text("Настройки уведомлений", "v1:notify:global")
-    .row()
-    .text("Назад", "v1:nav:start");
-}
-
-// Порядок задаёт Meetups (ListArchivedMeetups: новейшая дата первой, без даты —
-// последними), поэтому список не группируется и не пересортировывается, в
-// отличие от meetupListText.
-function archiveListText(meetups: readonly ArchivedMeetupSummary[]): string {
-  return ["Архив сходок", meetups.map(archivedMeetupListLine).join("\n")].join(
-    "\n\n",
-  );
-}
-
-function archivedMeetupListLine(meetup: ArchivedMeetupSummary): string {
-  const label = scheduleLabel(meetup.schedule);
-  const status = archiveStatusLabel(meetup.status);
-  const title = meetupTitleLabel(meetup.title);
-  return label === undefined
-    ? `• ${title} (${status})`
-    : `• ${label} — ${title} (${status})`;
-}
-
-function archiveStatusLabel(status: ArchivedMeetupSummary["status"]): string {
-  switch (status) {
-    case "held":
-      return "состоялась";
-    case "cancelled":
-      return "отменена";
-    case "past":
-      return "прошла";
-  }
-}
-
-function archiveListKeyboard(
-  meetups: readonly ArchivedMeetupSummary[],
-): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  for (const meetup of meetups) {
-    keyboard
-      .text(meetupTitleLabel(meetup.title), `v1:view:${uuidToToken(meetup.id)}`)
-      .row();
-  }
-  return keyboard
-    .text("Обновить", "v1:nav:archive")
-    .text("Ближайшие сходки", "v1:nav:hub");
-}
-
-// Ярлыки повторяют строки макета P-07 дословно: экран настроек обязан называть
-// категории теми же словами, что и продуктовая таблица, иначе «изменения»
-// придётся сопоставлять по догадке.
-const categoryLabels: Record<NotificationCategory, string> = {
-  published: "Новые сходки",
-  changes: "Изменения данных и статуса",
-  material: "Новые материалы",
-  reminder: "Напоминание перед началом",
-  organizer: "Сообщения организатора",
-  announcement: "Объявления сообщества",
-};
-
-// Новые сходки и объявления сообществу не привязаны ни к какой сходке, и
-// подписаться на них нельзя: они приходят всем, кто их не выключил.
-function withoutSubscription(category: NotificationCategory): boolean {
-  return category === "published" || category === "announcement";
-}
-
-// Кадр P-08: подтверждение переключателя всплывающим текстом. Экран после
-// нажатия показывает только новое состояние; что сработало именно это нажатие,
-// говорит ответ на него.
-function toggleToast(category: NotificationCategory, enabled: boolean): string {
-  return `${enabled ? "Включено" : "Выключено"}: ${categoryLabels[category].toLowerCase()}.`;
-}
-
-function checkbox(label: string, enabled: boolean): string {
-  return `${enabled ? "[x]" : "[ ]"} ${label}`;
-}
-
 const meetupCategoryOrder: readonly MeetupCategory[] = [
   "changes",
   "material",
   "reminder",
   "organizer",
 ];
-
-// Без подписки карточка объясняет, что она даёт: кнопка настроек сходки
-// появляется только после подписки, и иначе связь между ними не видна.
-const unsubscribedNote =
-  "Подпишись, чтобы получать изменения, материалы и сообщения организатора этой сходки.";
 
 // Перечень строится по действующим значениям, а не по умолчаниям продукта:
 // человек, который раньше включил напоминание или выключил материалы, иначе
@@ -3190,14 +2951,14 @@ function subscriptionNote(
     .filter((state) => state.enabled)
     .map((state) => categoryLabels[state.category].toLowerCase());
   if (enabled.length === 0) {
-    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях по сходке».";
+    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
   }
   const lines = [
     `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
   ];
   if (known.some((state) => state.category === "reminder" && !state.enabled)) {
     lines.push(
-      "Напоминание перед началом выключено, включить его можно в «Уведомлениях по сходке».",
+      "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",
     );
   }
   return lines.join(" ");
@@ -3234,88 +2995,16 @@ async function renderMeetupCard(
     return;
   }
   if (result.kind === "meetup-card") {
-    const token = uuidToToken(result.meetup.id);
-    const keyboard = new InlineKeyboard();
-    if (manageable && result.meetup.lifecycle !== "cancelled") {
-      keyboard
-        .text("Изменить", `v1:manage:edit:${token}`)
-        .text("Статус", `v1:manage:status:${token}`)
-        .row();
-      if (result.meetup.lifecycle === "planned") {
-        keyboard.text("Отметить состоявшейся", `v1:manage:hold:${token}`).row();
-      }
-      keyboard
-        .text(
-          `Материалы (${result.meetup.materials.length})`,
-          `v1:mm:list:${token}`,
-        )
-        .row();
-    } else if (result.meetup.materials.length > materialCardLimit) {
-      keyboard
-        .text(
-          `Все материалы (${result.meetup.materials.length})`,
-          `v1:mm:list:${token}`,
-        )
-        .row();
-    }
-    // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
-    // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.
-    if (manageable) {
-      keyboard.text("Написать подписчикам", `v1:bc:m:${token}`).row();
-    }
-    for (const [index, material] of result.meetup.materials
-      .slice(0, materialCardLimit)
-      .entries()) {
-      if (material.source.kind === "file") {
-        keyboard
-          .text(
-            buttonText(displayMaterialTitle(material, index + 1)),
-            `v1:mm:file:${token}:${uuidToToken(material.id)}`,
-          )
-          .row();
-      }
-    }
-    // Кнопка подписки рисуется только тогда, когда Notifications ответил:
-    // состояние на ней — факт, а не заглушка, и выдуманное «выключены» человек
-    // от настоящего не отличит. Настройки сходки решают, что присылать по
-    // подписке, поэтому без подписки их входа нет: рядом с «Подписаться» он
-    // читался как второй, независимый способ получать уведомления. Когда
-    // Notifications не ответил, вход остаётся: иначе один моргнувший ответ
-    // отрезает экран целиком.
-    if (result.subscribed !== undefined) {
-      keyboard
-        .text(
-          result.subscribed ? "Отписаться от сходки" : "Подписаться на сходку",
-          `v1:notify:sub:${token}:${result.subscribed ? "0" : "1"}`,
-        )
-        .row();
-    }
-    if (result.subscribed !== false) {
-      keyboard
-        .text("Уведомления по сходке", `v1:notify:settings:${token}`)
-        .row();
-    }
-    // Подсказка о подписке стоит под карточкой и уступает место заметке:
-    // вместе они читались бы как два ответа на одно нажатие.
-    const hint =
-      note === undefined && result.subscribed === false
-        ? unsubscribedNote
-        : undefined;
-    keyboard
-      .text("Обновить", `v1:view:${token}`)
-      .row()
-      .text("К списку", "v1:nav:hub");
     await showScreen(ctx, {
-      id: "card",
-      text: withNotes(
-        presentation === "rich"
-          ? meetupCardHtml(result.meetup, result.author)
-          : meetupCardPlainHtml(result.meetup, result.author),
-        { note, hint },
+      ...cardScreen({
+        meetup: result.meetup,
+        author: result.author,
+        subscribed: result.subscribed,
+        manageable,
+        note,
         presentation,
-      ),
-      keyboard,
-      format: presentation === "rich" ? "rich" : "HTML",
+        today: communityToday(ctx),
+      }),
       delivery: edit ? "auto" : "new",
     });
     return;
@@ -3338,78 +3027,11 @@ async function renderNotificationSettings(
   retry: string,
 ): Promise<void> {
   if (result.kind === "global-notification-settings") {
-    // Подзаголовков у клавиатуры нет, поэтому группы называет текст, а кнопки
-    // идут в том же порядке: сначала то, что приходит без подписки.
-    const keyboard = new InlineKeyboard();
-    const ordered = [
-      ...result.categories.filter((entry) =>
-        withoutSubscription(entry.category),
-      ),
-      ...result.categories.filter(
-        (entry) => !withoutSubscription(entry.category),
-      ),
-    ];
-    for (const entry of ordered) {
-      keyboard
-        .text(
-          checkbox(categoryLabels[entry.category], entry.enabled),
-          `v1:notify:gset:${entry.category}:${entry.enabled ? "0" : "1"}`,
-        )
-        .row();
-    }
-    keyboard.text("К списку", "v1:nav:hub");
-    await editScreen(
-      ctx,
-      "notify-global",
-      `Уведомления: общие настройки
-
-Приходят всем, без подписки: новые сходки и объявления сообщества.
-
-По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. Здесь — значение для всех таких сходок, включая будущие. У отдельной сходки его можно поменять в «Уведомлениях по сходке», и тогда общая настройка её уже не меняет.
-
-Отметь, о чём присылать.`,
-      keyboard,
-    );
+    await showScreen(ctx, globalNotificationsScreen(result.categories));
     return;
   }
   if (result.kind === "meetup-notification-settings") {
-    const token = uuidToToken(result.meetup.id);
-    const keyboard = new InlineKeyboard();
-    for (const entry of result.categories) {
-      const label = checkbox(categoryLabels[entry.category], entry.enabled);
-      keyboard
-        .text(
-          entry.differsFromGlobal ? `${label} · отличается` : label,
-          `v1:notify:set:${token}:${entry.category}:${entry.enabled ? "0" : "1"}`,
-        )
-        .row();
-    }
-    // Подписки здесь нет намеренно: действие живёт в карточке P-04, и макет
-    // этого экрана его не показывает. Состояние подписки кадр называет
-    // текстом, чтобы отметки категорий не читались как «придёт всё это».
-    keyboard
-      .text("Общие настройки", "v1:notify:global")
-      .row()
-      .text("Назад", `v1:view:${token}`);
-    const lines = [
-      `Уведомления: ${result.meetup.title}`,
-      "",
-      result.subscribed
-        ? "Ты следишь за этой сходкой."
-        : "Ты за этой сходкой не следишь: придут только те уведомления, которым подписка не нужна. Подписаться можно из карточки.",
-      "",
-      "Отметь, о чём присылать. Настройка действует только для этой сходки.",
-      // Следствие принятого контракта, названное человеку до нажатия, а не
-      // после: операции снятия переопределения на проводе нет, и вернуть
-      // «как везде» изнутри кадра будет уже нельзя.
-      "Переключение здесь закрепляет значение за этой сходкой: общая настройка его больше не меняет.",
-    ];
-    if (result.categories.some((entry) => entry.differsFromGlobal)) {
-      lines.push(
-        "Отметка «отличается» значит, что значение не совпадает с общей настройкой.",
-      );
-    }
-    await editScreen(ctx, "notify-meetup", lines.join("\n"), keyboard);
+    await showScreen(ctx, meetupNotificationsScreen(result));
     return;
   }
   await renderNotificationFailure(ctx, result, retry);
@@ -3538,46 +3160,6 @@ async function renderNotificationFailure(
   );
 }
 
-async function renderMeetupStatus(
-  ctx: UpdateContext,
-  meetup: MeetupSnapshot,
-  author: MeetupAuthor | undefined,
-): Promise<void> {
-  const token = uuidToToken(meetup.id);
-  const keyboard = new InlineKeyboard();
-  if (meetup.visibility === "visible") {
-    keyboard.text("Скрыть из списка", `v1:manage:unpublish:${token}`).row();
-  } else {
-    keyboard.text("Опубликовать", `v1:manage:republish:${token}`).row();
-    // Отложенность — выбор момента внутри публикации, а не отдельный
-    // сценарий (ADR-024): кнопка стоит рядом с «Опубликовать», а назначенный
-    // момент меняется тем же вопросом.
-    keyboard
-      .text(
-        meetup.publishAt === undefined
-          ? "Опубликовать позже"
-          : "Перенести публикацию",
-        `v1:manage:publish-later:${token}`,
-      )
-      .row();
-    if (meetup.publishAt !== undefined) {
-      keyboard
-        .text(stateActionCopy.unschedule.label, `v1:manage:unschedule:${token}`)
-        .row();
-    }
-  }
-  if (meetup.lifecycle === "planned") {
-    keyboard.text("Отменить сходку", `v1:manage:cancel:${token}`).row();
-  }
-  keyboard.text("Назад", `v1:view:${token}`);
-  await editScreen(
-    ctx,
-    "status",
-    `Управление статусом\n\n${meetupCardText(meetup, true, author)}`,
-    keyboard,
-  );
-}
-
 async function renderStateResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
@@ -3608,16 +3190,14 @@ async function renderStateResult(
     return;
   }
   if (result.kind === "conflict" && result.action !== undefined) {
-    const token = uuidToToken(result.meetup.id);
-    const copy = stateActionCopy[result.action];
-    await editScreen(
+    await showScreen(
       ctx,
-      "state-confirm",
-      `${conflictText}\n\nПроверь данные и подтверди действие ещё раз.`,
-      new InlineKeyboard().text(
-        copy.label,
-        confirmStateCallback(result.action, token),
-      ),
+      stateConfirmScreen({
+        action: result.action,
+        meetup: result.meetup,
+        back: `v1:manage:status:${uuidToToken(result.meetup.id)}`,
+        note: `${conflictText} Проверь данные и подтверди действие ещё раз.`,
+      }),
     );
     return;
   }
@@ -3633,175 +3213,6 @@ async function renderStateResult(
     text,
     new InlineKeyboard().text("К списку", "v1:nav:hub"),
   );
-}
-
-function meetupCardHtml(meetup: MeetupSnapshot, author?: MeetupAuthor): string {
-  const lines = meetupCardText(meetup, false, author).split("\n");
-  const title = escapeHtml(lines.shift() ?? "");
-  return `<h1>${title}</h1><p>${lines.map(escapeHtml).join("<br>")}${materialHtml(meetup)}</p>`;
-}
-
-// Заметка — ответ на действие человека — стоит первой строкой, над заголовком:
-// экран-результат приходит одним сообщением (дизайн-код, «Доставка»).
-// Подсказка идёт под карточкой. Режимы различаются только разметкой абзаца.
-function withNotes(
-  html: string,
-  { note, hint }: { note: string | undefined; hint: string | undefined },
-  presentation: "rich" | "plain",
-): string {
-  const paragraph = (text: string | undefined) =>
-    text === undefined
-      ? undefined
-      : presentation === "rich"
-        ? `<p>${escapeHtml(text)}</p>`
-        : escapeHtml(text);
-  return [paragraph(note), html, paragraph(hint)]
-    .filter((part) => part !== undefined)
-    .join(presentation === "rich" ? "" : "\n\n");
-}
-
-function meetupCardPlainHtml(
-  meetup: MeetupSnapshot,
-  author?: MeetupAuthor,
-): string {
-  const lines = meetupCardText(meetup, false, author).split("\n");
-  const title = escapeHtml(lines.shift() ?? "");
-  return `<b>${title}</b>\n${lines.map(escapeHtml).join("\n")}${materialHtml(meetup, "\n")}`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function meetupCardText(
-  meetup: MeetupSnapshot,
-  includeMaterials = true,
-  author?: MeetupAuthor,
-): string {
-  const lifecycle =
-    meetup.lifecycle === "cancelled"
-      ? "отменена"
-      : meetup.lifecycle === "held"
-        ? "состоялась"
-        : "запланирована";
-  const visibility = meetup.visibility === "hidden" ? "скрыта" : "видна";
-  const when = formatSchedule(meetup);
-  const venue = meetup.venue === "" ? "не указано" : meetup.venue;
-  const description =
-    meetup.description === ""
-      ? "Описание пока не добавлено."
-      : meetup.description;
-  // Назначенный момент стоит сразу под статусом: «скрыта» без него читается
-  // как «черновик забыт», а с ним — как «ждёт публикации».
-  const pending =
-    meetup.publishAt === undefined
-      ? ""
-      : `\nПубликация назначена на ${formatLocalMoment(meetup.publishAt)}`;
-  // Автор стоит под статусом и только тогда, когда его есть чем назвать:
-  // нет ника или Identity не ответил — строки нет, без заглушки (PER-404).
-  const authorLine =
-    author === undefined
-      ? ""
-      : author.kind === "self"
-        ? "\nВы автор этой сходки"
-        : `\nАвтор: @${author.telegramUsername}`;
-  const card = `${meetupTitleLabel(meetup.title)}\nСтатус: ${lifecycle}, ${visibility}${pending}${authorLine}\n\nКогда: ${when}\nГде: ${venue}\n\n${description}`;
-  if (!includeMaterials || meetup.materials.length === 0) return card;
-  const materials = meetup.materials
-    .slice(0, materialCardLimit)
-    .map(
-      (material, index) =>
-        `${index + 1}. ${displayMaterialTitle(material, index + 1)}`,
-    )
-    .join("\n");
-  return `${card}\n\nМатериалы:\n${materials}${materialOverflowText(meetup)}`;
-}
-
-function materialHtml(meetup: MeetupSnapshot, separator = "<br>"): string {
-  if (meetup.materials.length === 0) return "";
-  const materials = meetup.materials
-    .slice(0, materialCardLimit)
-    .map((material, index) => {
-      const label = escapeHtml(displayMaterialTitle(material, index + 1));
-      return material.source.kind === "message-link"
-        ? `${index + 1}. <a href="${escapeHtml(material.source.url)}">${label}</a>`
-        : `${index + 1}. ${label} (файл)`;
-    });
-  return `${separator}${separator}Материалы:${separator}${materials.join(separator)}${materialOverflowHtml(meetup, separator)}`;
-}
-
-function materialTitle(material: MeetupMaterial, index: number): string {
-  const title = material.title.trim();
-  return title === "" ? `Материал ${index}` : title;
-}
-
-function displayMaterialTitle(material: MeetupMaterial, index: number): string {
-  const title = materialTitle(material, index);
-  return title.length <= materialDisplayTitleLimit
-    ? title
-    : `${title.slice(0, materialDisplayTitleLimit - 1)}…`;
-}
-
-function materialOverflowText(meetup: MeetupSnapshot): string {
-  const hidden = meetup.materials.length - materialCardLimit;
-  return hidden > 0 ? `\n…и ещё ${hidden}. Открой раздел «Материалы».` : "";
-}
-
-function materialOverflowHtml(
-  meetup: MeetupSnapshot,
-  separator: string,
-): string {
-  const hidden = meetup.materials.length - materialCardLimit;
-  return hidden > 0
-    ? `${separator}…и ещё ${hidden}. Открой раздел «Материалы».`
-    : "";
-}
-
-function buttonText(value: string): string {
-  return value.length <= 64 ? value : `${value.slice(0, 61)}…`;
-}
-
-function meetupListLine(meetup: MeetupSummary): string {
-  const label = scheduleLabel(meetup.schedule);
-  const title = meetupTitleLabel(meetup.title);
-  // Скрытую сходку видят только автор и администратор (ADR-022); без пометки
-  // она читалась бы в общем списке как опубликованная.
-  const hidden = meetup.visibility === "hidden" ? " (скрыта)" : "";
-  return label === undefined
-    ? `• ${title}${hidden}`
-    : `• ${label} — ${title}${hidden}`;
-}
-
-// Черновик получает название вторым шагом формы, и брошенный на первом вопросе
-// остаётся с пустым: Telegram не принимает кнопку без текста, а строка списка
-// и карточка без подписи не читаются.
-function meetupTitleLabel(title: string): string {
-  return title.trim() === "" ? "Без названия" : title;
-}
-
-function scheduleLabel(
-  schedule: MeetupSummary["schedule"],
-): string | undefined {
-  if (schedule === undefined) return undefined;
-  const { year, month, day } = schedule;
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const monthLabel = new Intl.DateTimeFormat("ru-RU", {
-    month: "short",
-    timeZone: "UTC",
-  })
-    .format(date)
-    .replaceAll(".", "");
-  const weekdayLabel = new Intl.DateTimeFormat("ru-RU", {
-    weekday: "short",
-    timeZone: "UTC",
-  })
-    .format(date)
-    .replaceAll(".", "");
-  return `${day} ${monthLabel}, ${weekdayLabel}`;
 }
 
 async function denyHubAccessIfNeeded(
@@ -4194,6 +3605,10 @@ function evictOldestQuestions(questions: Map<string, PendingInput>): void {
     if (oldest === undefined) return;
     questions.delete(oldest);
   }
+}
+
+function communityToday(ctx: UpdateContext) {
+  return (ctx.today ?? utcToday)();
 }
 
 function createUuidV7(): string {

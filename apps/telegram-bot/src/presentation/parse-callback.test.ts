@@ -24,6 +24,21 @@ describe("callback parser", () => {
     ).toBeLessThanOrEqual(64);
   });
 
+  it("parses the page of a list within the byte budget", () => {
+    expect(parseCallback("v1:nav:hub:2")).toEqual({ kind: "hub", page: 2 });
+    expect(parseCallback("v1:nav:archive:0")).toEqual({
+      kind: "archive",
+      page: 0,
+    });
+    expect(parseCallback("v1:manage:hidden:11")).toEqual({
+      kind: "manage-hidden",
+      page: 11,
+    });
+    expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
+    expect(parseCallback("v1:nav:hub:-1")).toEqual({ kind: "malformed" });
+    expect(parseCallback("v1:nav:hub:вторая")).toEqual({ kind: "malformed" });
+  });
+
   it("distinguishes outdated and malformed callbacks", () => {
     expect(parseCallback("v2:manage:menu")).toEqual({ kind: "outdated" });
     expect(parseCallback("v1:manage:new:not-a-token")).toEqual({

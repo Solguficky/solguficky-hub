@@ -300,7 +300,9 @@ describe("presentation adapter", () => {
     expect(serialized.indexOf("Опрос: кто идёт")).toBeLessThan(
       serialized.indexOf("Афиша"),
     );
-    expect(serialized).toContain("v1:mm:file:");
+    // Кнопок файлов на карточке нет: файл открывается из «Материалов».
+    expect(serialized).not.toContain("v1:mm:file:");
+    expect(serialized).toContain("v1:mm:list:AZLzpLXGfY6fChssPU5fYA");
   });
 
   it("paginates a long material collection for every meetup viewer", async () => {
@@ -335,7 +337,7 @@ describe("presentation adapter", () => {
       .filter((call) => call.method === "editMessageText")
       .at(-1);
     expect(page).toMatchObject({
-      payload: { text: expect.stringContaining("Страница 1 из 4") },
+      payload: { text: expect.stringContaining("<b>Материалы · 1 из 4</b>") },
     });
     expect(JSON.stringify(page?.payload)).toContain(
       "v1:mm:list:AZLzpLXGfY6fChssPU5fYA:1",
@@ -522,7 +524,7 @@ describe("presentation adapter", () => {
     ]);
     expect(calls[1]?.payload).toMatchObject({ caption: "Прикреплено: Афиша" });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("callback_data");
-    expect(sendMessageText(calls[2])).toContain("Материалы сходки");
+    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
   });
 
   it("removes a material only after confirming that the original stays", async () => {
@@ -852,12 +854,7 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [
-            {
-              text: "Настройки уведомлений",
-              callback_data: "v1:notify:global",
-            },
-          ],
+          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
         ],
       },
     });
@@ -875,13 +872,8 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [
-            {
-              text: "Настройки уведомлений",
-              callback_data: "v1:notify:global",
-            },
-          ],
-          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+          [{ text: "Управление", callback_data: "v1:manage:menu" }],
         ],
       },
     });
@@ -1251,20 +1243,11 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("ни одной запланированной сходки"),
+        text: "<b>Ближайшие сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.",
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: "Обновить", callback_data: "v1:nav:hub" },
-              { text: "Архив", callback_data: "v1:nav:archive" },
-            ],
-            [
-              {
-                text: "Настройки уведомлений",
-                callback_data: "v1:notify:global",
-              },
-            ],
-            [{ text: "Назад", callback_data: "v1:nav:start" }],
+            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1292,20 +1275,15 @@ describe("presentation adapter", () => {
       method: "editMessageText",
       payload: {
         message_id: 9,
-        text: "Привет. Главный экран.",
+        text: "<b>Меню</b>\n\nПривет. Главный экран.",
         reply_markup: {
           inline_keyboard: [
             [
               { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
-            [
-              {
-                text: "Настройки уведомлений",
-                callback_data: "v1:notify:global",
-              },
-            ],
-            [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            [{ text: "Управление", callback_data: "v1:manage:menu" }],
           ],
         },
       },
@@ -1335,40 +1313,29 @@ describe("presentation adapter", () => {
         },
       ],
     });
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-08-01T12:00Z") });
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringMatching(
-          /^Ближайшие сходки\n\nС датой\n• 15 авг, сб — Настолки\n\nБез даты\n• Без даты$/,
-        ),
+        text: "<b>Ближайшие сходки</b>\n\nС датой\n• 15 августа, сб — Настолки\n\nБез даты\n• Без даты",
         reply_markup: {
           inline_keyboard: [
+            [
+              {
+                text: "15 августа · Настолки",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+              },
+            ],
             [
               {
                 text: "Без даты",
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [
-              {
-                text: "Настолки",
-                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
-              },
-            ],
-            [
-              { text: "Обновить", callback_data: "v1:nav:hub" },
-              { text: "Архив", callback_data: "v1:nav:archive" },
-            ],
-            [
-              {
-                text: "Настройки уведомлений",
-                callback_data: "v1:notify:global",
-              },
-            ],
-            [{ text: "Назад", callback_data: "v1:nav:start" }],
+            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1399,7 +1366,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Ближайшие сходки\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
+        text: "<b>Ближайшие сходки</b>\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
       },
     });
   });
@@ -1423,7 +1390,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Ближайшие сходки\n\nБез даты\n• Без названия",
+        text: "<b>Ближайшие сходки</b>\n\nБез даты\n• Без названия",
         reply_markup: {
           inline_keyboard: expect.arrayContaining([
             [
@@ -1497,7 +1464,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Скрытые сходки\n\n• Без названия (скрыта)",
+        text: "<b>Скрытые сходки</b>\n\n• Без названия",
         reply_markup: {
           inline_keyboard: [
             [
@@ -1506,8 +1473,10 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [{ text: "Обновить", callback_data: "v1:manage:hidden" }],
-            [{ text: "Назад", callback_data: "v1:manage:menu" }],
+            [
+              { text: "‹ Управление", callback_data: "v1:manage:menu" },
+              { text: "Меню", callback_data: "v1:nav:start" },
+            ],
           ],
         },
       },
@@ -1540,8 +1509,10 @@ describe("presentation adapter", () => {
         text: expect.stringContaining("Скрытых сходок нет."),
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Обновить", callback_data: "v1:manage:hidden" }],
-            [{ text: "Назад", callback_data: "v1:manage:menu" }],
+            [
+              { text: "‹ Управление", callback_data: "v1:manage:menu" },
+              { text: "Меню", callback_data: "v1:nav:start" },
+            ],
           ],
         },
       },
@@ -1619,19 +1590,20 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("Точно отметить сходку состоявшейся"),
+        text: "<b>Отметить сходку состоявшейся?</b>\n\n«Настолки»",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, продолжить",
+                text: "Да, отметить состоявшейся",
                 callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
+                style: "danger",
               },
             ],
             [
               {
                 text: "Нет",
-                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -1883,12 +1855,13 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("Точно скрыть сходку"),
+        text: "<b>Скрыть сходку из общего списка?</b>\n\n«Настолки»",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, продолжить",
+                // Скрытие обратимо, поэтому кнопка не красится.
+                text: "Да, скрыть из списка",
                 callback_data:
                   "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA",
               },
@@ -2155,9 +2128,16 @@ describe("presentation adapter", () => {
           inline_keyboard: [
             [
               {
-                text: "Отменить сходку",
+                text: "Да, отменить сходку",
                 callback_data:
                   "v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA",
+                style: "danger",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -2685,12 +2665,7 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [
-            {
-              text: "Настройки уведомлений",
-              callback_data: "v1:notify:global",
-            },
-          ],
+          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
         ],
       },
     });
@@ -2742,7 +2717,7 @@ describe("presentation adapter", () => {
       expect.objectContaining({ intent: "view-global-notifications" }),
     );
     expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
-    expect(sendMessageText(calls[0])).toContain("Уведомления: общие настройки");
+    expect(sendMessageText(calls[0])).toContain("<b>Уведомления</b>");
     expectBoundary(records[0], {
       level: "info",
       result: "ok",
@@ -3538,15 +3513,15 @@ describe("notification frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
     const keyboard = screen(calls[1]).reply_markup;
     expect(keyboard?.inline_keyboard[0]?.[0]).toEqual({
-      text: "Отписаться от сходки",
+      text: "Отписаться",
       callback_data: `v1:notify:sub:${token}:0`,
     });
-    expect(keyboard?.inline_keyboard[1]).toEqual([
-      {
-        text: "Уведомления по сходке",
-        callback_data: `v1:notify:settings:${token}`,
-      },
-    ]);
+    // Отписка и настройки подписки стоят одним рядом: под карточкой не больше
+    // пяти рядов.
+    expect(keyboard?.inline_keyboard[0]?.[1]).toEqual({
+      text: "Уведомления сходки",
+      callback_data: `v1:notify:settings:${token}`,
+    });
   });
 
   // Notifications не ответил: состояние подписки не показывается вовсе, а не
@@ -3589,7 +3564,7 @@ describe("notification frames", () => {
       .flat()
       .map((button) => button.callback_data);
     expect(data).toContain(`v1:notify:sub:${token}:0`);
-    expect(data).toContain(`v1:view:${token}`);
+    expect(data).toContain(`v1:notify:settings:${token}`);
   });
 
   // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
@@ -3633,7 +3608,7 @@ describe("notification frames", () => {
         "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
       );
       expect(html).toContain(
-        "Напоминание перед началом выключено, включить его можно в «Уведомлениях по сходке».",
+        "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",
       );
     });
 
@@ -3780,7 +3755,7 @@ describe("notification frames", () => {
     },
   );
 
-  it("renders the meetup frame with checkboxes, the divergence mark and the pinning warning", async () => {
+  it("renders the meetup frame with toggles, the divergence line and the pinning warning", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-notification-settings",
       meetup,
@@ -3794,18 +3769,26 @@ describe("notification frames", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:notify:settings:${token}`));
     const payload = screen(calls[1]);
-    expect(payload.text).toContain("Уведомления: Настолки у Лёши");
     expect(payload.text).toContain(
-      "Переключение здесь закрепляет значение за этой сходкой",
+      "<b>Уведомления сходки</b>\n\n«Настолки у Лёши»",
+    );
+    expect(payload.text).toContain("закрепляется за ней");
+    // Расхождение с общей настройкой называет текст, а не подпись кнопки.
+    expect(payload.text).toContain(
+      "Отличаются от общих: напоминание перед началом.",
     );
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
-      text: "[x] Изменения данных и статуса",
+      text: "Вкл · Изменения данных и статуса",
       callback_data: `v1:notify:set:${token}:changes:0`,
     });
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "[x] Напоминание перед началом · отличается",
+      text: "Вкл · Напоминание перед началом",
       callback_data: `v1:notify:set:${token}:reminder:0`,
     });
+    expect(payload.reply_markup?.inline_keyboard.at(-1)).toEqual([
+      { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+      { text: "Меню", callback_data: "v1:nav:start" },
+    ]);
   });
 
   it("renders the global frame over the whole dictionary", async () => {
@@ -3826,15 +3809,15 @@ describe("notification frames", () => {
     expect(payload.text).toContain("Приходят всем, без подписки");
     expect(payload.text).toContain("По сходкам, на которые ты подписан");
     expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
-      text: "[x] Изменения данных и статуса",
+      text: "Вкл · Изменения данных и статуса",
       callback_data: "v1:notify:gset:changes:0",
     });
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
-      text: "[x] Новые сходки",
+      text: "Вкл · Новые сходки",
       callback_data: "v1:notify:gset:published:0",
     });
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "[ ] Объявления сообщества",
+      text: "Выкл · Объявления сообщества",
       callback_data: "v1:notify:gset:announcement:1",
     });
   });
@@ -4242,8 +4225,9 @@ describe("deferred publication frames", () => {
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
-    expect(payloadText(calls.at(-1))).toContain(
-      "Публикация назначена на 01.10.2026 19:30",
+    // На карточке момент читается, а не вводится: дата словами.
+    expect(payloadText(calls.at(-1))).toMatch(
+      /Публикация назначена на 1 октября( 2026)?, чт, 19:30/,
     );
 
     meetup = unscheduledDraft();
@@ -4490,12 +4474,12 @@ describe("deferred publication frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Точно отменить отложенную публикацию сходки «Настолки»?",
+        text: "<b>Отменить отложенную публикацию?</b>\n\n«Настолки»",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, продолжить",
+                text: "Да, отменить публикацию",
                 callback_data: `v1:manage:confirm-unschedule:${token}`,
               },
             ],
@@ -4797,7 +4781,7 @@ describe("broadcast frames", () => {
     ]);
     expect(calls[1]?.payload).toMatchObject({
       message_id: 9,
-      text: "Управление сходками",
+      text: "<b>Управление</b>",
     });
   });
 
@@ -5119,7 +5103,7 @@ describe("meetup author", () => {
       meetup: publishedMeetup(),
       author: { kind: "self" },
     });
-    expect(payload).toContain("Вы автор этой сходки");
+    expect(payload).toContain("Ты автор этой сходки");
     expect(payload).not.toContain("Автор:");
   });
 
@@ -5147,7 +5131,7 @@ describe("meetup author", () => {
       meetup: publishedMeetup(),
     });
     expect(payload).not.toContain("Автор:");
-    expect(payload).not.toContain("Вы автор");
+    expect(payload).not.toContain("Ты автор");
   });
 
   it("keeps the author line on the card redrawn after a state change", async () => {

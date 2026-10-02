@@ -33,7 +33,7 @@ async function organizerInManagement() {
     adminId,
     person: organizer,
   } = await organizerAtStart(wire, direct);
-  await organizer.presses("Управление сходками");
+  await organizer.presses("Управление");
   return { telegramUserId, adminId, organizer };
 }
 
@@ -69,7 +69,7 @@ describe("идемпотентность по журналу Meetups", () => {
     // Перерисовка меню: оно правит своё сообщение, и второй вход в него идёт
     // с нового стартового экрана.
     await organizer.says("/start");
-    await organizer.presses("Управление сходками");
+    await organizer.presses("Управление");
     await organizer.presses("Создать сходку");
 
     const journal = await direct.journalOf(adminId);

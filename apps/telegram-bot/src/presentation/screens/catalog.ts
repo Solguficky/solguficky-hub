@@ -53,7 +53,6 @@ export const screenCatalog = {
     nav: "root",
     title: "Меню",
     backName: "Меню",
-    legacy: true,
   },
   upcoming: {
     class: "screen",
@@ -61,7 +60,6 @@ export const screenCatalog = {
     title: "Ближайшие сходки",
     parent: "menu",
     backName: "Ближайшие",
-    legacy: true,
   },
   archive: {
     class: "screen",
@@ -69,14 +67,12 @@ export const screenCatalog = {
     title: "Архив",
     parent: "menu",
     backName: "Архив",
-    legacy: true,
   },
   "notify-global": {
     class: "screen",
     nav: "tree",
     title: "Уведомления",
     parent: "menu",
-    legacy: true,
   },
   manage: {
     class: "screen",
@@ -84,7 +80,6 @@ export const screenCatalog = {
     title: "Управление",
     parent: "menu",
     backName: "Управление",
-    legacy: true,
   },
   hidden: {
     class: "screen",
@@ -92,7 +87,6 @@ export const screenCatalog = {
     title: "Скрытые сходки",
     parent: "manage",
     backName: "Скрытые",
-    legacy: true,
   },
   community: {
     class: "screen",
@@ -109,21 +103,18 @@ export const screenCatalog = {
     parent: meetupListParent,
     backName: "Сходка",
     maxRows: 5,
-    legacy: true,
   },
   edit: {
     class: "screen",
     nav: "tree",
     title: "Изменить сходку",
     parent: "card",
-    legacy: true,
   },
   status: {
     class: "screen",
     nav: "tree",
     title: "Статус",
     parent: "card",
-    legacy: true,
   },
   materials: {
     class: "screen",
@@ -131,14 +122,12 @@ export const screenCatalog = {
     title: "Материалы",
     parent: "card",
     backName: "Материалы",
-    legacy: true,
   },
   "notify-meetup": {
     class: "screen",
     nav: "tree",
     title: "Уведомления сходки",
     parent: "card",
-    legacy: true,
   },
   "form-preview": {
     class: "screen",
@@ -152,7 +141,7 @@ export const screenCatalog = {
     parent: "manage",
     legacy: true,
   },
-  "state-confirm": { class: "screen", nav: "confirm", legacy: true },
+  "state-confirm": { class: "screen", nav: "confirm" },
   "past-date-confirm": { class: "screen", nav: "confirm", legacy: true },
   "publish-confirm": { class: "screen", nav: "confirm", legacy: true },
   "material-confirm": { class: "screen", nav: "confirm", legacy: true },

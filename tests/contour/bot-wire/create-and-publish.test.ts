@@ -35,7 +35,7 @@ describe("провод бота", () => {
     const year = new Date().getUTCFullYear() + 1;
 
     await organizer.says("/start");
-    await organizer.presses("Управление сходками");
+    await organizer.presses("Управление");
     await organizer.presses("Создать сходку");
     await organizer.says("Настолки в контуре");
     await organizer.says(`12.06.${year} 19:00`);
