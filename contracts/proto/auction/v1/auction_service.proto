@@ -3,10 +3,12 @@ syntax = "proto3";
 package auction.v1;
 
 import "auction/v1/auction.proto";
+import "auction/v1/auction_events.proto";
 import "identity/v1/roles.proto";
 
-// Commands of a participant, commands of the lot catalog, reads of a lot, of its
-// image and of the display names of participants.
+// Commands of a participant, commands of the lot catalog, the birth of an auction
+// at a meetup and the registry of its lots, reads of a lot, of its image, of the
+// display names of participants and of auctions.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -14,8 +16,8 @@ import "identity/v1/roles.proto";
 // replayed and which conditions still answer with a status are documented in
 // docs/architecture/integration.md, section "Auction gRPC".
 //
-// Trading commands of the auctioneer, of the organizer and of the auction are
-// deliberately absent.
+// Trading commands of the auctioneer and the commands that schedule and run an
+// auction are deliberately absent.
 service AuctionService {
   rpc PlaceBid(PlaceBidRequest) returns (PlaceBidResponse);
   rpc SetProxyLimit(SetProxyLimitRequest) returns (SetProxyLimitResponse);
@@ -29,6 +31,11 @@ service AuctionService {
   rpc GetFaqAcknowledgement(GetFaqAcknowledgementRequest) returns (FaqAcknowledgement);
   rpc AcknowledgeFaq(AcknowledgeFaqRequest) returns (FaqAcknowledgement);
   rpc GetLotImage(GetLotImageRequest) returns (LotImage);
+  rpc DraftAuction(DraftAuctionRequest) returns (DraftAuctionResponse);
+  rpc AddLot(AddLotRequest) returns (AddLotResponse);
+  rpc RemoveLot(RemoveLotRequest) returns (RemoveLotResponse);
+  rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
+  rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
 }
 
 message Viewer {
@@ -278,7 +285,7 @@ message GetLotRequest {
 message ListAuctionLotsRequest {
   Viewer viewer = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens.
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
   string auction_id = 2;
 
   // Opaque token returned as next_page_token. Empty starts an enumeration.
@@ -302,7 +309,7 @@ message LotSnapshot {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens.
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
   string auction_id = 2;
 
   // The trading conditions. Set by the first LotScheduled and replaceable until the
@@ -341,7 +348,7 @@ message LotSnapshot {
 message ChooseDisplayNameRequest {
   Viewer viewer = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens.
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
   string auction_id = 2;
 
   // Exactly one is set.
@@ -401,7 +408,7 @@ enum DisplayNameKind {
 message GetDisplayNamesRequest {
   Viewer viewer = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens.
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
   string auction_id = 2;
 
   // Canonical lowercase UUIDv7 with hyphens: identity ids of participants, the
@@ -447,4 +454,199 @@ message LotImage {
   // The version of these bytes. It may be newer than the version a preceding read
   // returned, when the image changed in between.
   string version = 3;
+}
+
+message DraftAuctionRequest {
+  // The administrator who enables the auction. Global roles grant no right here:
+  // the right is checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup to enable the auction at.
+  // There is no auction id in the request: the server derives it.
+  string meetup_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message DraftAuctionResponse {
+  // Exactly one is set. An auction that already exists is accepted, not refused.
+  oneof outcome {
+    DraftAuctionAccepted accepted = 1;
+    DraftAuctionRefusal refused = 2;
+  }
+}
+
+message DraftAuctionAccepted {
+  // Canonical lowercase UUID with hyphens, version 5: derived by the server from
+  // meetup_id, the same value on every call for one meetup. It carries no time.
+  // A caller does not compute it.
+  string auction_id = 1;
+
+  // true when the meetup already had an auction: nothing was recorded, and
+  // auction_id names the existing one. false is a real value: this call created it.
+  bool already_existed = 2;
+}
+
+message DraftAuctionRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+  }
+}
+
+message AddLotRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the id of the lot card, which the lot
+  // takes.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message AddLotResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotAdditionAccepted accepted = 1;
+    AddLotRefusal refused = 2;
+  }
+}
+
+message LotAdditionAccepted {}
+
+message AddLotRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    LotsFrozen lots_frozen = 3;
+  }
+}
+
+message RemoveLotRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message RemoveLotResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotRemovalAccepted accepted = 1;
+    RemoveLotRefusal refused = 2;
+  }
+}
+
+message LotRemovalAccepted {}
+
+message RemoveLotRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    LotsFrozen lots_frozen = 3;
+    LotNotInAuction lot_not_in_auction = 4;
+  }
+}
+
+// The meetup did not confirm the viewer as its administrator.
+message NotMeetupAdministrator {}
+
+// The meetup does not exist for the viewer. Only an administrator learns it.
+message MeetupNotFound {}
+
+// The registry of the auction is frozen: prebidding has started.
+message LotsFrozen {}
+
+// The lot is not in the registry of the auction.
+message LotNotInAuction {}
+
+message GetMeetupAuctionRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string meetup_id = 2;
+}
+
+message GetMeetupAuctionResponse {
+  // Unset when the meetup has no auction: absent, not an error. A draft is
+  // returned here, unlike in ListAuctions.
+  AuctionSnapshot auction = 1;
+}
+
+message ListAuctionsRequest {
+  Viewer viewer = 1;
+
+  // Which auctions to list. UNSPECIFIED is not a value.
+  AuctionListing listing = 2;
+
+  // Opaque token returned as next_page_token. Empty starts an enumeration.
+  string page_token = 3;
+
+  // 0 selects the server default.
+  int32 page_size = 4;
+}
+
+// A selection of auctions by status. A draft is in none of them.
+enum AuctionListing {
+  AUCTION_LISTING_UNSPECIFIED = 0;
+
+  // Scheduled and not finished: from scheduled to in_final.
+  AUCTION_LISTING_ACTIVE = 1;
+
+  // Finished.
+  AUCTION_LISTING_FINISHED = 2;
+}
+
+message ListAuctionsResponse {
+  repeated AuctionSnapshot auctions = 1;
+
+  // Opaque continuation token. Empty means that the enumeration is complete.
+  string next_page_token = 2;
+}
+
+// The state of an auction as a read returns it. Field numbers and status types
+// match auction.v1.AuctionState so that the two stay readable side by side.
+message AuctionSnapshot {
+  // The meetup is not here: a list must not lead from an auction to its meetup,
+  // and a read by meetup already names it.
+  reserved 4;
+  reserved "meetup_id";
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string id = 1;
+
+  // Unset on a draft. Replaceable until prebidding starts, frozen after.
+  AuctionConfig config = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the registry of the auction. The
+  // order carries no meaning.
+  repeated string lot_ids = 3;
+
+  // Where the auction is. Exactly one is set.
+  oneof status {
+    AuctionState.Draft draft = 10;
+    AuctionState.Scheduled scheduled = 11;
+    AuctionState.Prebidding prebidding = 12;
+    AuctionState.Settling settling = 13;
+    AuctionState.Break on_break = 14;
+    AuctionState.LineupFrozen lineup_frozen = 15;
+    AuctionState.Final in_final = 16;
+    AuctionState.Finished finished = 17;
+  }
 }

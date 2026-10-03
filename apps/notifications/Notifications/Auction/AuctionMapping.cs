@@ -54,7 +54,7 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("bid_placed subject does not match occasion");
         }
-        if (message.State is not { Trading: { } trading } state || state.Id != message.LotId || !Id(state.AuctionId, out _))
+        if (message.State is not { Trading: { } trading } state || state.Id != message.LotId || !AuctionId(state.AuctionId))
         {
             return new AuctionDecoded.Poison("bid_placed state does not identify a trading lot and its auction");
         }
@@ -89,4 +89,10 @@ public static class AuctionMapping
     private static bool Id(string value, out Guid id) =>
         Guid.TryParseExact(value, "D", out id) && value == id.ToString() &&
         value[14] == '7' && value[19] is '8' or '9' or 'a' or 'b';
+
+    // Аукцион сходки несёт UUIDv5, выведенный из её идентификатора (ADR-047,
+    // дополнение 2026-10-03); UUIDv7 остаётся у аукциона без сходки.
+    private static bool AuctionId(string value) =>
+        Guid.TryParseExact(value, "D", out var id) && value == id.ToString() &&
+        value[14] is '5' or '7' && value[19] is '8' or '9' or 'a' or 'b';
 }

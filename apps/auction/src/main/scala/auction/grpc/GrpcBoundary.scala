@@ -161,5 +161,10 @@ object GrpcBoundary {
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] = refuse
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest): Future[wire.FaqAcknowledgement] = refuse
     def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = refuse
+    def draftAuction(in: wire.DraftAuctionRequest): Future[wire.DraftAuctionResponse] = refuse
+    def addLot(in: wire.AddLotRequest): Future[wire.AddLotResponse] = refuse
+    def removeLot(in: wire.RemoveLotRequest): Future[wire.RemoveLotResponse] = refuse
+    def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
+    def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
   }
 }
