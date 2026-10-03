@@ -71,6 +71,11 @@ trait PostgresFixture extends BeforeAndAfterAll { self: Suite =>
           |}
           |# Несколько ActorSystem с кластером в одной JVM регистрируют свои MBean.
           |pekko.cluster.jmx.multi-mbeans-in-same-jvm = on
+          |# Тест часто гасит узел через миллисекунды после старта, когда экземпляры
+          |# проекции ещё ждут координатора шардинга. Регион тогда ждёт их весь
+          |# таймаут фазы — 10 секунд, ровно предел shutdownTestKit, — и остановка
+          |# падает. Сервис так рано не останавливают, поэтому сокращение только здесь.
+          |pekko.coordinated-shutdown.phases.cluster-sharding-shutdown-region.timeout = 2s
           |""".stripMargin
         )
         .withFallback(ConfigFactory.parseResourcesAnySyntax("application"))

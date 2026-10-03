@@ -16,6 +16,8 @@ import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimit
 import auction.lot.WithdrawProxyLimitRejected
 import auction.onboarding.FaqAcknowledgements
+import auction.projection.LotSnapshotView
+import auction.projection.LotViews
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
@@ -77,8 +79,14 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def acknowledge(participant: ParticipantId): Future[Unit] = fail("the FAQ store was touched")
   }
 
-  private def service(lots: LotGateway, faq: FaqAcknowledgements = UntouchableFaq) =
-    AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore), faq)
+  private object UntouchableViews extends LotViews {
+    def find(lotId: UUID): Future[Option[LotSnapshotView]] = fail("the read model was touched")
+    def page(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
+      fail("the read model was touched")
+  }
+
+  private def service(lots: LotGateway, faq: FaqAcknowledgements = UntouchableFaq, views: LotViews = UntouchableViews) =
+    AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore), faq, views)
 
   private def statusOf(call: Future[?]): Status.Code =
     call.failed.futureValue match {
@@ -234,10 +242,68 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(service(missing).setProxyLimit(validLimit)) shouldBe Status.Code.NOT_FOUND
     }
 
-    "answers UNIMPLEMENTED on reads and display names that belong to later slices" in {
+    "refuses a read from a viewer without the public role before touching the read model" in {
+      val member = Some(viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER)))
+      statusOf(service(Unreachable).getLot(wire.GetLotRequest(member, lot))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(service(Unreachable).listAuctionLots(wire.ListAuctionLotsRequest(member, lot))) shouldBe
+        Status.Code.PERMISSION_DENIED
+    }
+
+    "refuses a malformed read with INVALID_ARGUMENT before touching the read model" in {
       val auction = service(Unreachable)
-      statusOf(auction.getLot(wire.GetLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.listAuctionLots(wire.ListAuctionLotsRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.getLot(wire.GetLotRequest(Some(viewer), "lot"))) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot, "forged"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot, "", -1))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers NOT_FOUND to a lot the read model does not hold" in {
+      val empty = new LotViews {
+        def find(lotId: UUID) = Future.successful(None)
+        def page(auctionId: UUID, after: Option[UUID], limit: Int) = Future.successful(Nil)
+      }
+      statusOf(service(Unreachable, views = empty).getLot(wire.GetLotRequest(Some(viewer), lot))) shouldBe
+        Status.Code.NOT_FOUND
+    }
+
+    "answers a lot from the read model as the viewer sees it" in {
+      val held = new LotViews {
+        def find(lotId: UUID) =
+          Future.successful(Some(LotSnapshotView(lotId, auctionId(1).value, 3, trading(price = 120), None)))
+        def page(auctionId: UUID, after: Option[UUID], limit: Int) = fail("a page was read")
+      }
+      val snapshot = service(Unreachable, views = held).getLot(wire.GetLotRequest(Some(viewer), lot)).futureValue
+      snapshot.id shouldBe lot
+      snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(120, "RUB"))
+    }
+
+    "pages the lots of an auction and continues after the last lot it answered" in {
+      val ids = (1 to 5).map(n => new UUID(0x01926f3c8b7a7cdeL, 0x8f00000000000000L | n.toLong)).toList
+      val catalog = new LotViews {
+        def find(lotId: UUID) = fail("a single lot was read")
+        def page(auctionId: UUID, after: Option[UUID], limit: Int) =
+          Future.successful(
+            ids
+              .filter(id => after.forall(id.compareTo(_) > 0))
+              .take(limit)
+              .map(LotSnapshotView(_, auctionId, 1, drafted, None))
+          )
+      }
+      val auction = service(Unreachable, views = catalog)
+      val first = auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot, "", 2)).futureValue
+      first.lots.map(_.id) shouldBe ids.take(2).map(_.toString)
+      val second =
+        auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot, first.nextPageToken, 2)).futureValue
+      second.lots.map(_.id) shouldBe ids.slice(2, 4).map(_.toString)
+      val last =
+        auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot, second.nextPageToken, 2)).futureValue
+      last.lots.map(_.id) shouldBe ids.drop(4).map(_.toString)
+      last.nextPageToken shouldBe ""
+    }
+
+    "answers UNIMPLEMENTED on display names that belong to a later slice" in {
+      val auction = service(Unreachable)
       statusOf(auction.chooseDisplayName(wire.ChooseDisplayNameRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.getDisplayNames(wire.GetDisplayNamesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }

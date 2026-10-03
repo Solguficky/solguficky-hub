@@ -12,12 +12,16 @@ import auction.lot.PlaceBid
 import auction.lot.SetProxyLimit
 import auction.lot.WithdrawProxyLimit
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction_service.GetLotRequest
+import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.UUID
 
 /**
@@ -37,6 +41,12 @@ final case class LimitCommand(lotId: UUID, limit: SetProxyLimit, acting: Acting)
 
 /** Снятие прокси-лимита, отображённое в домен. */
 final case class WithdrawalCommand(lotId: UUID, withdrawal: WithdrawProxyLimit, acting: Acting)
+
+/** Чтение одного лота. */
+final case class LotQuery(lotId: UUID, acting: Acting)
+
+/** Страница лотов аукциона: после `after` по возрастанию `lot_id`, не больше `limit`. */
+final case class LotsQuery(auctionId: UUID, after: Option[UUID], limit: Int, acting: Acting)
 
 /** Команда каталога в домене: создание и правка несут одно и то же. */
 final case class CardCommand(lotId: LotId, title: String, description: String, viewer: Viewer)
@@ -86,6 +96,29 @@ object RequestMapping {
       id <- uuidV7("lot_id", lotId)
     } yield CardCommand(LotId(id), title, description, acting.viewer)
 
+  def getLot(request: GetLotRequest): Either[FormError, LotQuery] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+    } yield LotQuery(lotId, acting)
+
+  def listAuctionLots(request: ListAuctionLotsRequest): Either[FormError, LotsQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auctionId <- uuidV7("auction_id", request.auctionId)
+      after <- PageToken.decode(request.pageToken).toRight(FormError("page_token"))
+      limit <- pageSize(request.pageSize)
+    } yield LotsQuery(auctionId, after, limit, acting)
+
+  /** Размер страницы по умолчанию и предел: больший запрошенный размер сужается, а не отвергается. */
+  val DefaultPageSize: Int = 50
+  val MaxPageSize: Int = 100
+
+  private def pageSize(requested: Int): Either[FormError, Int] =
+    if (requested < 0) Left(FormError("page_size"))
+    else if (requested == 0) Right(DefaultPageSize)
+    else Right(math.min(requested, MaxPageSize))
+
   /**
    * Смотрящий. Роль, которой сервис не знает, — `UNSPECIFIED` или значение из чужой версии схемы, — нарушение формы, а
    * не «обычный пользователь»: молча отброшенная роль спрятала бы ошибку вызывающего.
@@ -116,7 +149,10 @@ object RequestMapping {
     }
 
   private def uuidV7(field: String, value: String): Either[FormError, UUID] =
-    if (CanonicalUuidV7.matches(value)) Right(UUID.fromString(value)) else Left(FormError(field))
+    canonicalUuidV7(value).toRight(FormError(field))
+
+  private[grpc] def canonicalUuidV7(value: String): Option[UUID] =
+    Option.when(CanonicalUuidV7.matches(value))(UUID.fromString(value))
 
   private def money(field: String, value: Option[MoneyMessage]): Either[FormError, Money] =
     value match {
@@ -124,4 +160,25 @@ object RequestMapping {
         Right(Money(message.minorUnits, CurrencyCode(message.currency)))
       case _ => Left(FormError(field))
     }
+}
+
+/**
+ * Токен продолжения `ListAuctionLots`: последний отданный `lot_id` в base64url. Непрозрачен для вызывающего по
+ * контракту, но не секрет: подделанный токен даёт ту же выборку, что и честный с тем же `lot_id`, — лоты аукциона после
+ * него, которые смотрящий и так вправе читать.
+ */
+object PageToken {
+
+  def encode(lotId: UUID): String =
+    Base64.getUrlEncoder.withoutPadding.encodeToString(lotId.toString.getBytes(StandardCharsets.US_ASCII))
+
+  /** Пустой токен — начало перечисления, `Some(None)`; токен, который не выдавал сервис, — `None`. */
+  def decode(token: String): Option[Option[UUID]] =
+    if (token.isEmpty) Some(None)
+    else
+      try
+        RequestMapping
+          .canonicalUuidV7(new String(Base64.getUrlDecoder.decode(token), StandardCharsets.US_ASCII))
+          .map(Some(_))
+      catch { case _: IllegalArgumentException => None }
 }

@@ -7,14 +7,19 @@ import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
+import auction.telemetry.ProjectionMetrics
+import auction.telemetry.Telemetry
 import com.typesafe.config.ConfigFactory
 import net.logstash.logback.argument.StructuredArguments
+import org.apache.pekko.Done
+import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.http.scaladsl.Http
 import org.slf4j.LoggerFactory
 
 import java.time.Clock
+import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.DurationConverters.*
 import scala.util.Failure
@@ -26,7 +31,7 @@ import scala.util.control.NonFatal
  * Точка входа Auction Service.
  *
  * Доменной логики торгов здесь нет и не будет: composition root собирает конфигурацию, схему журнала, actor system с
- * кластером, entity лота в шардинге, HTTP-границу с health и gRPC-границу.
+ * кластером, entity лота в шардинге, проекцию лота в read model с метриками, HTTP-границу с health и gRPC-границу.
  */
 object Main {
 
@@ -38,6 +43,7 @@ object Main {
     val grpcConfig = AuctionConfig.grpcFromConfig(config)
     val readinessTimeout: FiniteDuration = config.getDuration("auction.readiness-timeout").toScala
     val askTimeout: FiniteDuration = config.getDuration("auction.grpc.ask-timeout").toScala
+    val backlogTimeout: FiniteDuration = config.getDuration("auction.projection.backlog-timeout").toScala
 
     val database = DatabaseSettings.fromConfig(config) match {
       case Right(settings) => settings
@@ -62,13 +68,21 @@ object Main {
       StructuredArguments.keyValue("migrations_executed", migrations)
     )
 
+    val telemetry = Telemetry.fromEnvironment()
+
     given system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "auction", config)
     import system.executionContext
+
+    // Последний экспорт метрик — при штатной остановке, после остановки проекции.
+    CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseBeforeActorSystemTerminate, "auction-telemetry") {
+      () => Future { telemetry.close(); Done }
+    }
 
     // Узел, который стартует сервис, и узел L1-тестов собираются одинаково.
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
+    AuctionNode.startProjection(system, ProjectionMetrics(telemetry.getMeter("auction"), clock), backlogTimeout)
     val readiness = AuctionNode.readiness(system, readinessTimeout)
 
     Http()

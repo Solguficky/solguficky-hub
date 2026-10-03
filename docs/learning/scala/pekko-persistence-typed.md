@@ -101,6 +101,24 @@ eventHandler = (state, stored) => {
 
 `.withRetention(RetentionCriteria.snapshotEvery(100, keepNSnapshots = 2))` велит Pekko сохранять состояние после каждого сотого события и держать два последних snapshot. События при этом не удаляются: журнал остаётся источником истины. `.snapshotAdapter(...)` переводит состояние в класс хранения и обратно, так же как для событий это делает модель хранения из ADR-058.
 
+### Тег — метка события при записи
+
+`withTagger` добавляет к поведению функцию «событие → набор тегов». Pekko зовёт её при записи, и плагин JDBC кладёт каждый тег строкой в таблицу `event_tag` рядом со строкой журнала. Читающая сторона потом выбирает события по тегу (`eventsByTag`) — так устроена проекция, разбор в [pekko-projection.md](pekko-projection.md).
+
+У лота тег один и от события не зависит, поэтому он считается один раз внутри `Behaviors.setup`, где уже есть `ActorSystem`:
+
+```scala
+Behaviors.setup { context =>
+  val persistenceId = PersistenceId(TypeKey.name, lotId)
+  val tag = Set(LotTags.of(Persistence(context.system.classicSystem).sliceForPersistenceId(persistenceId.id)))
+  EventSourcedBehavior[Command, StoredLotEvent, State](...)
+    ...
+    .withTagger(_ => tag)
+}
+```
+
+`sliceForPersistenceId` — функция Pekko: `math.abs(persistenceId.hashCode % 1024)` (`Persistence.scala` в source-jar 1.6.0). `String.hashCode` в Java задан спецификацией языка, поэтому номер одинаков на любой JVM, а тег — его остаток от деления на 4. Важно, что тег пишется в момент append и потом не меняется: событие, записанное без тега или с другим тегом, остаётся таким навсегда. Смена формулы — переписывание `event_tag`, а не правка кода ([ADR-061](../../decisions/ADR-061-auction-journal-tag-slices.md)).
+
 ## Урок
 
 - **Функция вида «дай текущий X» у фреймворка может читать не твоё состояние, а состояние того, кто сейчас держит управление.** `lastSequenceNumber` верна внутри обработчиков в устойчивом состоянии и ошибается в переходном — при выполнении из stash сразу после восстановления. Там, где значение выводится из собственных данных, его надёжнее вывести самому.

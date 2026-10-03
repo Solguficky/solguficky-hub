@@ -7,6 +7,10 @@ import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
 import auction.persistence.JournalDatabase
+import auction.persistence.SlickLotViews
+import auction.projection.LotProjection
+import auction.projection.LotViewHandler
+import auction.telemetry.ProjectionMetrics
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
 import org.apache.pekko.http.scaladsl.model.HttpRequest
@@ -53,8 +57,17 @@ object AuctionNode {
     sharding.init(Entity(LotEntity.TypeKey)(context => LotEntity(context.entityId, clock, newId)))
 
   /**
-   * gRPC-граница узла: сервис поверх шардинга лотов и каталога, обёрнутый проверкой вызывающего и записью операции.
-   * Entity лота к этому моменту уже зарегистрирована в `sharding`.
+   * Проекция журнала лотов в read model (ADR-045). Метрики отставания регистрируются вместе с ней; `backlogTimeout`
+   * ограничивает запрос к базе на сборе метрики.
+   */
+  def startProjection(system: ActorSystem[?], metrics: ProjectionMetrics, backlogTimeout: FiniteDuration): Unit = {
+    LotProjection.init(system, metrics, () => LotViewHandler(system))
+    metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(system, backlogTimeout))
+  }
+
+  /**
+   * gRPC-граница узла: сервис поверх шардинга лотов, каталога и read model лота, обёрнутый проверкой вызывающего и
+   * записью операции. Entity лота к этому моменту уже зарегистрирована в `sharding`.
    */
   def grpc(
       system: ActorSystem[?],
@@ -67,7 +80,8 @@ object AuctionNode {
     val service = AuctionGrpcService(
       LotGateway.sharded(sharding, askTimeout),
       LotCatalogCommands(SlickLotCatalogStore(system)),
-      SlickFaqAcknowledgements(system)
+      SlickFaqAcknowledgements(system),
+      SlickLotViews(system)
     )
     GrpcBoundary(callers, service)
   }
