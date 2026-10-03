@@ -383,7 +383,9 @@ describe("decodeNotification", () => {
     ] as const)("decodes a request for circle %s", (circle, expected) => {
       expect(decodeNotification(requested(circle))).toMatchObject({
         kind: "ok",
-        notification: { content: { kind: "access-requested", circle: expected } },
+        notification: {
+          content: { kind: "access-requested", circle: expected },
+        },
       });
     });
 

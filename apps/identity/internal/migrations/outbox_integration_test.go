@@ -122,10 +122,10 @@ func TestOutboxSnapshotMustMatchOccasion(t *testing.T) {
 		{"no role on grant", "role_granted", nil, "{}", false},
 		{"unknown occasion", "profile_renamed", nil, "{}", false},
 		{"unknown snapshot role", "profile_unblocked", nil, "{owner}", false},
-		{"application without circle", "application_submitted", nil, "{}", false},
-		{"application for admin", "application_submitted", adminRole, "{}", false},
-		{"application while blocked", "application_submitted", "public", "{}", true},
-		{"application for held circle", "application_submitted", "member", "{member,public}", false},
+		{"application without circle", applicationSubmitted, nil, "{}", false},
+		{"application for admin", applicationSubmitted, adminRole, "{}", false},
+		{"application while blocked", applicationSubmitted, publicRole, "{}", true},
+		{"application for held circle", applicationSubmitted, "member", "{member,public}", false},
 	}
 	for _, tc := range cases {
 		tx := beginTx(t, db)
@@ -151,7 +151,7 @@ func TestOutboxAcceptsApplicationForCircleNotHeld(t *testing.T) {
 	tx := beginTx(t, db)
 	mustTxExec(t, tx, `UPDATE profiles SET version = version + 1 WHERE id = $1`, identityID)
 	mustTxExec(t, tx, insertOutboxSQL,
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3872", identityID, 2, "application_submitted", "member", "{public}", false)
+		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3872", identityID, 2, applicationSubmitted, "member", "{public}", false)
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit application event: %v", err)
 	}
@@ -195,7 +195,11 @@ func TestDownMigrationRemovesOutbox(t *testing.T) {
 	execMigrationTest(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3862', 9362)`)
 }
 
-const adminRole = "admin"
+const (
+	adminRole            = "admin"
+	publicRole           = "public"
+	applicationSubmitted = "application_submitted"
+)
 
 const insertOutboxSQL = `
 INSERT INTO identity_outbox (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at)
