@@ -36,7 +36,7 @@ public class GraphSnapshotTests
     [Fact]
     public Task Cluster_PublishModel_MatchesSnapshot() =>
         MatchAsync(
-            ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()],
+            PublishArgs(),
             "cluster.publish.txt");
 
     [Theory]
@@ -46,20 +46,10 @@ public class GraphSnapshotTests
     {
         var beforeStartCalls = 0;
         var guard = new StartGuard();
-        string[] args = publish
-            ? ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()]
-            : ["--profile", "hub"];
+        var args = SnapshotArgs(publish);
 
         await GraphSnapshot.RenderAsync(args, TestContext.Current.CancellationToken, builder =>
         {
-            builder.AppHostAssembly.ShouldBe(typeof(AppHostTopology).Assembly);
-            builder.Environment.ApplicationName.ShouldBe("AppHost");
-            builder.Environment.ContentRootPath.ShouldBe(builder.AppHostDirectory);
-            builder.Environment.IsDevelopment().ShouldBeTrue();
-            File.Exists(Path.Combine(builder.AppHostDirectory, "AppHost.csproj")).ShouldBeTrue();
-            builder.ExecutionContext.IsPublishMode.ShouldBe(publish);
-            builder.Configuration["Topology:PublishProfile"].ShouldBe("cluster");
-
             builder.OnBeforeStart((_, _) =>
             {
                 Interlocked.Increment(ref beforeStartCalls);
@@ -73,6 +63,28 @@ public class GraphSnapshotTests
         guard.StartCalls.ShouldBe(0);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Snapshot_Bootstrap_UsesAppHostConfiguration(bool publish)
+    {
+        await GraphSnapshot.RenderAsync(SnapshotArgs(publish), TestContext.Current.CancellationToken, builder =>
+        {
+            builder.AppHostAssembly.ShouldBe(typeof(AppHostTopology).Assembly);
+            builder.Environment.ApplicationName.ShouldBe("AppHost");
+            builder.Environment.ContentRootPath.ShouldBe(builder.AppHostDirectory);
+            builder.Environment.IsDevelopment().ShouldBeTrue();
+            File.Exists(Path.Combine(builder.AppHostDirectory, "AppHost.csproj")).ShouldBeTrue();
+            builder.ExecutionContext.IsPublishMode.ShouldBe(publish);
+            builder.Configuration["Topology:PublishProfile"].ShouldBe("cluster");
+        });
+    }
+
+    private static string[] PublishArgs() =>
+        ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()];
+
+    private static string[] SnapshotArgs(bool publish) => publish ? PublishArgs() : ["--profile", "hub"];
+
     [Fact]
     public async Task Hub_Rendering_IsStableAcrossOtherModels()
     {
@@ -80,7 +92,7 @@ public class GraphSnapshotTests
         var first = await GraphSnapshot.RenderAsync(["--profile", "hub"], cancellationToken);
 
         await GraphSnapshot.RenderAsync(
-            ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()],
+            PublishArgs(),
             cancellationToken);
         await GraphSnapshot.RenderAsync(["--profile", "identity"], cancellationToken);
 
