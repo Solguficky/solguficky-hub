@@ -1,7 +1,7 @@
 import type { Consumer } from "@nats-io/jetstream";
 import { metrics } from "@opentelemetry/api";
 import { countFailure, type FailureCategory } from "../failures.js";
-import type { LogFields, Logger } from "../logging.js";
+import { type LogFields, type Logger, serviceName } from "../logging.js";
 import {
   type DeliverNotification,
   type DeliveryDecision,
@@ -17,7 +17,7 @@ import { decodeNotification } from "./notification.js";
 // отсутствует, а не заполняется заглушкой (logging.md).
 export const notificationSubject = "events.notifications.notification_created";
 export const notificationStream = "NOTIFICATIONS_EVENTS";
-export const notificationDurable = "hub-bot-notifications-events";
+export const notificationDurable = `${serviceName}-notifications-events`;
 
 // Бот держит у себя одно сообщение. Таймер ack_wait durable (30 с) идёт с
 // выдачи, а обработка последовательная: сообщение, ждущее в буфере за зависшими
@@ -214,7 +214,7 @@ function errorText(cause: unknown): string {
 }
 
 function record(outcome: string): void {
-  deliveries.add(1, { service: "hub-bot", outcome });
+  deliveries.add(1, { service: serviceName, outcome });
 }
 
 function elapsedUs(started: number): number {

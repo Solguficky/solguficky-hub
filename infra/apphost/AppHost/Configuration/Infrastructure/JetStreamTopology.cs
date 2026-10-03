@@ -52,11 +52,11 @@ internal static class JetStreamTopology
     /// </remarks>
     public static readonly IReadOnlyList<ConsumerStreams> Consumers =
     [
-        new("notifications", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS"]),
+        new(AppHostNames.Resources.Notifications, ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS"]),
 
         // Канал доставки (PER-217). Durable свой у каждого канала: общий на все
         // каналы сделал бы их конкурентами за одно сообщение.
-        new("hub-bot", ["NOTIFICATIONS_EVENTS"]),
+        new(AppHostNames.Resources.HubBot, ["NOTIFICATIONS_EVENTS"]),
         new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS", "NOTIFICATIONS_EVENTS"]),
     ];
 
@@ -74,7 +74,7 @@ internal static class JetStreamTopology
     /// </remarks>
     public static readonly IReadOnlyList<KeyValueSpec> KeyValueBuckets =
     [
-        new("hub-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
+        new($"{AppHostNames.Resources.HubBot}-deliveries", MaxAge + TimeSpan.FromDays(1)),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>
