@@ -86,9 +86,10 @@ func (s identityService) revokeRole(ctx context.Context, identityID, role string
 	return changed, nil
 }
 
-// grantHubAdmission выдаёт обе роли допуска к хабу одной транзакцией: круги
-// вложенные (member входит в public), и допуск половинкой инвариант
-// ADR-043 нарушает. Идемпотентность сохраняется по каждой роли отдельно.
+// grantHubAdmission — ручной допуск хаба. Он же решение по открытой заявке на
+// member (ADR-060, пункт 11): заявка получает исход «допущена» до выдачи, а
+// остальные заявки человека закрывает сама выдача. Строка профиля блокируется
+// раньше строки заявки, как во всех путях выдачи.
 func (s identityService) grantHubAdmission(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -96,16 +97,37 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	blocked, err := lockProfile(ctx, tx, identityID)
+	if err != nil {
+		return false, roleStorageError("grant hub admission", err)
+	}
+	if blocked {
+		return false, errProfileBlocked
+	}
+	if err := admitOpenApplication(ctx, tx, identityID, performedBy); err != nil {
+		return false, internal("admit open application", err)
+	}
+	anyChanged, err := grantHubAdmissionTx(ctx, tx, identityID, performedBy)
+	if err != nil {
+		return false, roleStorageError("grant hub admission", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, internal("commit", err)
+	}
+	return anyChanged, nil
+}
+
+// grantHubAdmissionTx выдаёт обе роли допуска к хабу одной транзакцией: круги
+// вложенные (member входит в public), и допуск половинкой инвариант
+// ADR-043 нарушает. Идемпотентность сохраняется по каждой роли отдельно.
+func grantHubAdmissionTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	anyChanged := false
 	for _, role := range hubAdmissionRoles {
 		changed, err := grantRoleTx(ctx, tx, identityID, role, performedBy)
 		if err != nil {
-			return false, roleStorageError("grant hub admission", err)
+			return false, err
 		}
 		anyChanged = anyChanged || changed
-	}
-	if err := tx.Commit(); err != nil {
-		return false, internal("commit", err)
 	}
 	return anyChanged, nil
 }
@@ -117,6 +139,10 @@ func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, perfo
 // grantRoleTxWithReason выдаёт роль и, если announce, выпускает role_granted.
 // Без события выдача проходит только внутри регистрации: там её несёт снимок
 // profile_registered той же транзакции.
+//
+// Через эту функцию идёт выдача любым путём, поэтому здесь же выдача закрывает
+// открытые заявки на свой и более слабые круги и снимает отказы по ним
+// (ADR-060, пункты 8 и 13): путь, который её обойдёт, не появится незаметно.
 func grantRoleTxWithReason(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -142,6 +168,12 @@ func grantRoleTxWithReason(
 	}
 	changed, err := changed(result)
 	if err != nil {
+		return false, err
+	}
+	// Следствия для заявок не зависят от того, была ли роль уже активна: круг у
+	// человека есть, и открытая заявка на него или отказ по нему ложны в любом
+	// случае.
+	if err := closeApplicationsOnGrant(ctx, tx, identityID, role, performedBy); err != nil {
 		return false, err
 	}
 	if !changed {
