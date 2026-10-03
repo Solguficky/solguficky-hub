@@ -7,6 +7,9 @@ import "identity/v1/roles.proto";
 // Resolves Telegram identities and exposes authenticated maintainer operations.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+  // Entry on /start: establishes the identity like ResolveIdentity and reports
+  // what became of the requested role.
+  rpc RequestRole(RequestRoleRequest) returns (RequestRoleResponse);
   // Resolves an internal id back to the Telegram user id of that profile. It is
   // a separate operation and not a mode of ResolveIdentity: that one establishes
   // an identity and creates the profile at first contact, while this one must
@@ -87,6 +90,63 @@ message ResolveIdentityResponse {
   // derived from global_roles: blocking revokes active roles, so an empty set
   // alone does not distinguish a blocked profile from one that never started.
   bool blocked = 3;
+}
+
+message RequestRoleRequest {
+  // Telegram user id taken from the /start update. The caller establishes it
+  // at its own trusted boundary; this message carries no proof of that.
+  int64 telegram_user_id = 1;
+
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+
+  // The circle the calling surface accepts: GLOBAL_ROLE_MEMBER or
+  // GLOBAL_ROLE_PUBLIC.
+  GlobalRole requested_role = 3;
+
+  // Channel code from the deep link payload "s_<code>", without the "s_"
+  // prefix. Untrusted and passed as received; an empty code after "s_" is sent
+  // as an empty string. Absent when the payload carries no "s_" prefix.
+  optional string source_code = 4;
+
+  // Telegram first_name from the same update, for the moderation card.
+  string first_name = 5;
+}
+
+// What became of the requested role. Only GRANTED_BY_ALLOWLIST means the call
+// itself granted it.
+enum RoleRequestOutcome {
+  // No value: an outcome unknown to the consumer. The consumer reads it as a
+  // refusal.
+  ROLE_REQUEST_OUTCOME_UNSPECIFIED = 0;
+
+  // The requested role was active before the call.
+  ROLE_REQUEST_OUTCOME_ALREADY_HELD = 1;
+
+  // An allowed usernames entry was redeemed by this call and granted the role.
+  ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST = 2;
+
+  // An application for the role is open: created by this call or left by an
+  // earlier one. The two are not distinguished.
+  ROLE_REQUEST_OUTCOME_PENDING = 3;
+
+  // An earlier application for this role was declined.
+  ROLE_REQUEST_OUTCOME_DECLINED = 4;
+
+  // The profile is blocked.
+  ROLE_REQUEST_OUTCOME_BLOCKED = 5;
+}
+
+message RequestRoleResponse {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Active platform-wide roles after the call, same meaning as in
+  // ResolveIdentityResponse. May hold roles other than the requested one, for
+  // example ones an allowed usernames entry granted alongside it.
+  repeated GlobalRole global_roles = 2;
+
+  RoleRequestOutcome outcome = 3;
 }
 
 message ResolveTelegramUserIdRequest {
