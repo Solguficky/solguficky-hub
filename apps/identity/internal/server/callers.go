@@ -48,6 +48,11 @@ var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_ListAllowedUsernames_FullMethodName:     {CallerTelegramBot},
 	identityv1.IdentityService_AddAllowedUsername_FullMethodName:       {CallerTelegramBot},
 	identityv1.IdentityService_RemoveAllowedUsername_FullMethodName:    {CallerTelegramBot},
+	identityv1.IdentityService_ReadApplicationQueue_FullMethodName:     {CallerTelegramBot},
+	identityv1.IdentityService_AdmitApplication_FullMethodName:         {CallerTelegramBot},
+	identityv1.IdentityService_DeclineApplication_FullMethodName:       {CallerTelegramBot},
+	identityv1.IdentityService_ListRefusedApplications_FullMethodName:  {CallerTelegramBot},
+	identityv1.IdentityService_ReconsiderApplication_FullMethodName:    {CallerTelegramBot},
 }
 
 // maintainerMethods защищает секрет ADR-037, а не таблица вызывающих: гейт их
