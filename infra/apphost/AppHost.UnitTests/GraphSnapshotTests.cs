@@ -1,5 +1,9 @@
 using System.Runtime.CompilerServices;
+using AppHost.Configuration;
 using AppHost.UnitTests.TestUtilities;
+using Aspire.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Shouldly;
 using Xunit;
 
@@ -12,12 +16,13 @@ namespace AppHost.UnitTests;
 /// же изменением, и тогда оно видно на ревью, а не только в живом прогоне или
 /// на кластере.
 /// </summary>
-[Collection(RealAppHostCollection.Name)]
 public class GraphSnapshotTests
 {
     /// <summary>
     /// Локальный граф <c>hub</c> не меняется от того, что к нему добавили
-    /// публикацию: снимок записан на коде до ветки публикации.
+    /// публикацию: снимок записан на коде до ветки публикации. Фаза снимка —
+    /// после Build, до BeforeStartEvent: installer всегда node без install args.
+    /// Команда npm install появляется только при подготовке настоящего запуска.
     /// </summary>
     [Fact]
     public Task Hub_RunModel_MatchesSnapshot() =>
@@ -31,8 +36,82 @@ public class GraphSnapshotTests
     [Fact]
     public Task Cluster_PublishModel_MatchesSnapshot() =>
         MatchAsync(
-            ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()],
+            PublishArgs(),
             "cluster.publish.txt");
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Snapshot_Rendering_DoesNotStartLifecycle(bool publish)
+    {
+        var beforeStartCalls = 0;
+        var guard = new StartGuard();
+        var args = SnapshotArgs(publish);
+
+        await GraphSnapshot.RenderAsync(args, TestContext.Current.CancellationToken, builder =>
+        {
+            builder.OnBeforeStart((_, _) =>
+            {
+                Interlocked.Increment(ref beforeStartCalls);
+                throw new InvalidOperationException("Snapshot must not execute BeforeStartEvent.");
+            });
+            builder.Services.AddSingleton<IHostedService>(guard);
+        });
+
+        // RenderAsync уже освободил приложение: disposal тоже не должен запускать его.
+        beforeStartCalls.ShouldBe(0);
+        guard.StartCalls.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Snapshot_Bootstrap_UsesAppHostConfiguration(bool publish)
+    {
+        await GraphSnapshot.RenderAsync(SnapshotArgs(publish), TestContext.Current.CancellationToken, builder =>
+        {
+            builder.AppHostAssembly.ShouldBe(typeof(AppHostTopology).Assembly);
+            builder.Environment.ApplicationName.ShouldBe("AppHost");
+            builder.Environment.ContentRootPath.ShouldBe(builder.AppHostDirectory);
+            builder.Environment.IsDevelopment().ShouldBeTrue();
+            File.Exists(Path.Combine(builder.AppHostDirectory, "AppHost.csproj")).ShouldBeTrue();
+            builder.ExecutionContext.IsPublishMode.ShouldBe(publish);
+            builder.Configuration["Topology:PublishProfile"].ShouldBe("cluster");
+        });
+    }
+
+    private static string[] PublishArgs() =>
+        ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()];
+
+    private static string[] SnapshotArgs(bool publish) => publish ? PublishArgs() : ["--profile", "hub"];
+
+    [Fact]
+    public async Task Hub_Rendering_IsStableAcrossOtherModels()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var first = await GraphSnapshot.RenderAsync(["--profile", "hub"], cancellationToken);
+
+        await GraphSnapshot.RenderAsync(
+            PublishArgs(),
+            cancellationToken);
+        await GraphSnapshot.RenderAsync(["--profile", "identity"], cancellationToken);
+
+        var last = await GraphSnapshot.RenderAsync(["--profile", "hub"], cancellationToken);
+        Lines(last).ShouldBe(Lines(first));
+    }
+
+    private sealed class StartGuard : IHostedService
+    {
+        public int StartCalls { get; private set; }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            StartCalls++;
+            throw new InvalidOperationException("Snapshot must not start hosted services.");
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
 
     private static async Task MatchAsync(string[] args, string snapshot)
     {
