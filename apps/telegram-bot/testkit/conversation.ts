@@ -545,6 +545,11 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
       typeof payload.reply_parameters?.message_id === "number"
         ? payload.reply_parameters.message_id
         : previous?.replyTo;
+    // Удалённое сообщение из чата исчезает: так бот закрывает вопрос.
+    if (call.method === "deleteMessage") {
+      current.delete(messageId);
+      return;
+    }
     let next: Screen | undefined;
     if (
       (sent ||

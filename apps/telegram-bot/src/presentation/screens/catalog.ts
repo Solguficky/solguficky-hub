@@ -11,6 +11,7 @@ export type MessageClass = "screen" | "question" | "trace";
  * - `tree` — `[‹ Родитель] [Меню]`, у детей меню — `[‹ Меню]`;
  * - `confirm` — `[Да, …]` и `[Нет]` двумя рядами;
  * - `question` — режим ответа и `[Отмена]`;
+ * - `choice` — выбор кнопками: `[Отмена]` последним рядом и без режима ответа;
  * - `exit` — кадр отказа: «Повторить», возврат или «Меню»;
  * - `free` — след: клавиатура принадлежит самому сообщению;
  * - `none` — клавиатуры нет вовсе.
@@ -20,6 +21,7 @@ export type NavRule =
   | "tree"
   | "confirm"
   | "question"
+  | "choice"
   | "exit"
   | "free"
   | "none";
@@ -163,6 +165,9 @@ export const screenCatalog = {
   "community-close-confirm": { class: "screen", nav: "confirm" },
   "broadcast-result": { class: "screen", nav: "exit" },
   question: { class: "question", nav: "question" },
+  // Выбор даты кнопками: экран, а не вопрос. Режима ответа у него нет, поэтому
+  // выбор кнопкой ничего за собой не оставляет, а сам экран правится на месте.
+  "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
   notification: { class: "trace", nav: "free" },

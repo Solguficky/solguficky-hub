@@ -1729,7 +1729,7 @@
           <h4>Что зафиксировано</h4>
           <ul>
             <li>Форма спрашивает только название. Остальные поля человек заполняет с черновика в своём порядке (<a href="design-code.md#форма-создания">дизайн-код</a>).</li>
-            <li>Под каждым вопросом стоит «Отмена»: она ничего не пишет в сервисы и правит вопрос в экран, с которого он задан.</li>
+            <li>Под каждым вопросом стоит «Отмена»: она ничего не пишет в сервисы, удаляет вопрос и присылает экран, с которого он задан, новым сообщением: правка вопроса на мобильном клиенте режим ответа не снимает.</li>
             <li>Своего хранилища у бота нет: шаг вопроса едет в кнопке «Отмена» и возвращается вместе с ответом, а введённое лежит в черновике Meetups (<a href="../../decisions/ADR-030-telegram-bot.md">ADR-030</a>). Ответ на вопрос формы переживает рестарт процесса.</li>
             <li>Экран, с которого задан вопрос, теряет клавиатуру в момент нажатия: в чате не остаётся двух живых наборов кнопок.</li>
           </ul>
@@ -1742,28 +1742,29 @@
     <div class="frame-head"><span class="fid">A-04</span><h3>Дата: заготовки дня</h3><span class="chip ok">решено</span></div>
     <div class="frame-body">
       <div class="stage">
-        <div class="stage-label">вопрос о дате, шаг 1</div>
+        <div class="stage-label">выбор даты, шаг 1</div>
         <div class="phone">
           <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
           <div class="tg-chat">
-            <div class="row bot"><div class="bubble">Когда встречаемся? Выбери день или напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ</div>
+            <div class="row bot"><div class="bubble">Когда встречаемся? Выбери день.</div>
               <div class="kb">
                 <div class="kb-row"><div class="key">чт 13</div><div class="key">пт 14</div><div class="key press">сб 15</div><div class="key">вс 16</div></div>
                 <div class="kb-row"><div class="key">сб 22</div><div class="key">вс 23</div></div>
+                <div class="kb-row"><div class="key">Другая дата</div></div>
                 <div class="kb-row"><div class="key muted">Отмена</div></div>
               </div>
             </div>
           </div>
         </div>
-        <div class="stage-note">Ответ текстом работает на любом шаге: заготовки его не заменяют.</div>
+        <div class="stage-note">Это экран, а не вопрос: режим ответа не включается. Дату текстом спрашивает «Другая дата».</div>
       </div>
       <div class="meta">
         <dl class="meta-list">
           <dt>Роль</dt><dd>Администратор</dd>
           <dt>Контекст</dt><dd>Нажато «Дата и время» на черновике A-06 или в правке A-09</dd>
-          <dt>Действие</dt><dd>Выбирает день кнопкой либо пишет дату и время целиком</dd>
-          <dt>Переход</dt><dd>кнопка дня -> A-05; текст -> A-06 или карточка; непонятный ввод -> E-02</dd>
-          <dt>Механика</dt><dd>заготовки стоят в клавиатуре вопроса над «Отменой»; день едет в кнопке цифрами <code>ДДММГГГГ</code></dd>
+          <dt>Действие</dt><dd>Выбирает день кнопкой либо нажимает «Другая дата» и пишет дату и время целиком</dd>
+          <dt>Переход</dt><dd>кнопка дня -> A-05; «Другая дата» -> вопрос с режимом ответа и «Отменой»; его ответ -> A-06 или карточка; непонятный ввод -> E-02</dd>
+          <dt>Механика</dt><dd>заготовки стоят на экране без <code>force_reply</code>: ответ кнопкой не оставляет режим ответа висеть; день едет в кнопке цифрами <code>ДДММГГГГ</code></dd>
         </dl>
         <div class="decided">
           <h4>Что зафиксировано</h4>
@@ -1782,11 +1783,11 @@
     <div class="frame-head"><span class="fid">A-05</span><h3>Дата: заготовки времени</h3><span class="chip ok">решено</span></div>
     <div class="frame-body">
       <div class="stage">
-        <div class="stage-label">вопрос о дате, шаг 2</div>
+        <div class="stage-label">выбор даты, шаг 2</div>
         <div class="phone">
           <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
           <div class="tg-chat">
-            <div class="row bot"><div class="bubble">15 августа, сб — во сколько? Выбери время или напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ</div>
+            <div class="row bot"><div class="bubble">15 августа, сб — во сколько?</div>
               <div class="kb">
                 <div class="kb-row"><div class="key">12:00</div><div class="key">15:00</div><div class="key">17:00</div><div class="key">18:00</div></div>
                 <div class="kb-row"><div class="key press">19:00</div><div class="key">19:30</div><div class="key">20:00</div><div class="key">21:00</div></div>
@@ -1796,7 +1797,7 @@
             </div>
           </div>
         </div>
-        <div class="stage-note">Тот же вопрос, что в A-04: выбор дня правит его на месте.</div>
+        <div class="stage-note">Тот же экран, что в A-04: выбор дня правит его на месте, выбор времени — в результат.</div>
       </div>
       <div class="meta">
         <dl class="meta-list">

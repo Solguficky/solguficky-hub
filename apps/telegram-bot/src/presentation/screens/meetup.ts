@@ -465,7 +465,8 @@ export function draftScreen(view: {
       meetup.publishAt === undefined
         ? "Опубликовать позже"
         : "Перенести публикацию",
-      `v1:manage:publish-later:${token}`,
+      // `d` — источник вопроса: «Отмена» под ним вернёт на черновик.
+      `v1:manage:publish-later:${token}:d`,
     );
   return {
     id: "draft",

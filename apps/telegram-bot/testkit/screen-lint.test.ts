@@ -49,6 +49,7 @@ const catalog: Record<string, ScreenEntry> = {
   },
   confirm: { class: "screen", nav: "confirm" },
   question: { class: "question", nav: "question" },
+  "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
   notification: { class: "trace", nav: "free" },
@@ -270,13 +271,35 @@ describe("inspectCall", () => {
     // Правка вопроса на месте режима ответа не несёт: его поставила отправка.
     expect(
       rulesOf("editMessageText", {
-        text: "Во сколько?",
-        reply_markup: {
-          inline_keyboard: [[key("19:00"), key("19:30")], [key("Отмена")]],
-        },
+        text: "Где встречаемся?",
+        reply_markup: { inline_keyboard: [[key("Отмена")]] },
         [screenTag]: "question",
       }),
     ).toEqual([]);
+  });
+
+  it("holds the date choice to a cancel row and no reply mode", () => {
+    const choice = (markup: Record<string, unknown>) =>
+      rulesOf("editMessageText", {
+        text: "<b>Дата и время</b>\n\nКогда встречаемся? Выбери день.",
+        parse_mode: "HTML",
+        reply_markup: markup,
+        [screenTag]: "date-presets",
+      });
+    const rows = [
+      [key("чт 1"), key("пт 2"), key("сб 3"), key("вс 4")],
+      [key("Другая дата")],
+    ];
+
+    expect(choice({ inline_keyboard: [...rows, [key("Отмена")]] })).toEqual([]);
+    // Режим ответа остался бы висеть в клиенте после выбора кнопкой.
+    expect(
+      choice({
+        force_reply: true,
+        inline_keyboard: [...rows, [key("Отмена")]],
+      }),
+    ).toEqual(["nav"]);
+    expect(choice({ inline_keyboard: rows })).toEqual(["nav"]);
   });
 
   it("keeps the cancel and refresh words where they belong", () => {

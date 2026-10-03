@@ -76,10 +76,12 @@ import {
 import {
   type CallbackAction,
   type NotifiedMeetupCategory,
+  type PublishOrigin,
   parseCallback,
   type QuestionStep,
   questionData,
   traceCallback,
+  type WhenMode,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import { RepliedKeyboardSchema } from "./schemas.js";
@@ -126,11 +128,8 @@ import {
   toggleToast,
 } from "./screens/notifications.js";
 import {
-  dayPresetKeyboard,
-  type ScheduleQuestion,
-  schedulePrompt,
-  timePresetKeyboard,
-  timePresetText,
+  datePresetsScreen,
+  scheduleTypePrompt,
 } from "./screens/schedule-presets.js";
 import {
   clearCallbackKeyboard,
@@ -201,7 +200,7 @@ function invalidMeetupText(result: { precondition?: true }): string {
 }
 const formPrompts: Record<FormField, string> = {
   title: "Как называется сходка?",
-  schedule: schedulePrompt,
+  schedule: scheduleTypePrompt,
   venue: "Где встречаемся?",
   description: "Добавь короткое описание сходки.",
 };
@@ -237,6 +236,14 @@ const publishMomentRetryText: Record<PublishMomentRetry, string> = {
   past: "Это время уже прошло или его нельзя назначить по времени сообщества. Назначь публикацию на момент в будущем: ДД.ММ.ГГГГ ЧЧ:ММ",
   conflict: `${conflictText}\n\n${publishMomentPrompt}`,
 };
+
+// То же над экраном выбора даты: там формат ввода не нужен, дату жмут кнопкой.
+const publishMomentRetryLead: Record<PublishMomentRetry, string> = {
+  unparsed: "Не получилось разобрать дату.",
+  past: "Это время уже прошло или его нельзя назначить по времени сообщества.",
+  conflict: conflictText,
+};
+const textNeededHint = "Нужен ответ текстом.";
 
 // Одна таблица «кнопка → действие» для шага вопроса и шага подтверждения:
 // новое действие смены состояния добавляется строкой, а не двумя цепочками.
@@ -290,6 +297,8 @@ type PendingMaterialTitle = {
 type PendingPublishMoment = {
   kind: "publish-moment";
   meetupId: string;
+  // Экран, с которого вопрос задан: туда возвращает «Отмена».
+  origin: PublishOrigin;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -320,6 +329,8 @@ type UpdateContext = TracedContext & {
   waiting?: Waiting;
   // Кнопка стояла под следом: экран приходит новым сообщением.
   fresh?: boolean;
+  // Сообщение нажатой кнопки удалено: править и снимать у него нечего.
+  pressedGone?: boolean;
   // Сегодняшний день сообщества для этого update.
   today?: CommunityToday;
 };
@@ -394,12 +405,14 @@ async function handleMessage(
     const parsed = parseUpdate(ctx.update, ctx.me.username);
     // Команда меню, выбранная, пока клиент держит режим ответа на вопрос,
     // приходит ответом на него. Это команда, а не значение поля: разбор ответа
-    // её не видит, а вопрос остаётся ждать настоящего ответа.
+    // её не видит. Человек ушёл от вопроса, и брошенный вопрос удаляется:
+    // иначе клиент держал бы режим ответа на него и дальше.
     const command = parsed.kind === "start" || parsed.kind === "screen";
     const replyId = command
       ? undefined
       : ctx.message?.reply_to_message?.message_id;
     removeExpiredQuestions(questions, Date.now());
+    if (command) await dropOpenQuestions(ctx, questions);
     // Ответ принят либо отвергнут окончательно: вопрос больше не ждёт, и его
     // «Отмена» снимается. После сбоя сервиса вопрос остаётся открытым — тот же
     // ответ можно прислать ещё раз.
@@ -455,6 +468,7 @@ async function handleMessage(
           ? {
               kind: "publish-moment" as const,
               meetupId: tokenToUuid(recoveredMoment.token),
+              origin: "status" as const,
               telegramUserId: ctx.from?.id ?? 0,
               expiresAt: Date.now() + questionTtlMs,
             }
@@ -491,13 +505,16 @@ async function handleMessage(
         meetupId: pending.meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await answered(result);
+      // Старый вопрос закрывается после того, как ушёл ответ на него: упавшая
+      // отправка нового вопроса не теряет шаг.
       await renderFormResult(
         ctx,
         result,
         questions,
         runtime.presentation ?? "rich",
+        pending.origin,
       );
+      await answered(result);
       outcome = screenBoundary(result, {
         ok: [
           "ask-publish-moment",
@@ -787,13 +804,13 @@ async function handleMessage(
         meetupId: pending.meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await answered(result);
       await renderFormResult(
         ctx,
         result,
         questions,
         runtime.presentation ?? "rich",
       );
+      await answered(result);
       outcome = screenBoundary(result, {
         ok: [
           "ask",
@@ -809,6 +826,46 @@ async function handleMessage(
         useCase,
         meetupId: pending.meetupId,
       });
+      return;
+    }
+    // Ответ без текста — фото, стикер, голос — значением не является. Вопрос
+    // задаётся заново с подсказкой: клиент снова открывает режим ответа, а шаг
+    // не теряется.
+    if (
+      replyId !== undefined &&
+      pending !== undefined &&
+      (pending.kind === "meetup" ||
+        pending.kind === "allowed-username" ||
+        pending.kind === "publish-moment") &&
+      ctx.message?.text === undefined
+    ) {
+      useCase =
+        pending.kind === "allowed-username"
+          ? "manage_community"
+          : pending.kind === "meetup" && pending.mode === "create"
+            ? "create_meetup"
+            : "update_meetup";
+      if (ctx.from?.id === pending.telegramUserId) {
+        const asked =
+          repliedMessage !== undefined && "text" in repliedMessage
+            ? repliedMessage.text
+            : undefined;
+        await askQuestion(
+          ctx,
+          questions,
+          bodyOf(pending),
+          asked === undefined || asked.startsWith(textNeededHint)
+            ? (asked ?? textNeededHint)
+            : `${textNeededHint}\n${asked}`,
+          replyId,
+        );
+      }
+      outcome = {
+        level: "info",
+        message: "non-text answer asked again",
+        result: "ok",
+        use_case: useCase,
+      };
       return;
     }
     if (
@@ -1005,16 +1062,22 @@ async function handleCallback(
   ctx.waiting = waiting;
   try {
     const pressed = parseCallback(ctx.callbackQuery?.data);
-    // «Отмена» под вопросом: вопрос правится в экран, с которого задан. Дальше
-    // нажатие идёт как обычная кнопка этого экрана.
+    // «Отмена» под вопросом: вопрос удаляется, а экран, с которого он задан,
+    // приходит новым сообщением. Правка вопроса на месте режим ответа в
+    // клиенте не снимает (зонд PER-443); она остаётся запасным путём, когда
+    // Telegram удалить сообщение не дал. Дальше нажатие идёт как обычная
+    // кнопка этого экрана.
     const action: ScreenAction =
       pressed.kind === "question" ? cancelTarget(pressed.step) : pressed;
+    const pressedId = ctx.callbackQuery?.message?.message_id;
     if (pressed.kind === "question") {
-      const asked = ctx.callbackQuery?.message?.message_id;
-      if (asked !== undefined) {
-        questions.delete(questionKey(ctx.chat?.id, asked));
+      if (pressedId !== undefined) {
+        questions.delete(questionKey(ctx.chat?.id, pressedId));
       }
+      ctx.pressedGone = await deletePressed(ctx);
     }
+    // Нажатие вне вопроса — человек ушёл от него: брошенные вопросы удаляются.
+    await dropOpenQuestions(ctx, questions, pressedId);
     if (action.kind === "malformed") {
       outcome = {
         level: "warn",
@@ -1030,16 +1093,18 @@ async function handleCallback(
       );
       return;
     }
-    ctx.fresh = action.trace === true;
+    ctx.fresh = action.trace === true || ctx.pressedGone === true;
     useCase = callbackUseCase(action.kind);
     // Вопрос о прошедшей дате задают и в форме создания, и в правке: сценарий
     // тот же, что у ответа текстом, который его породил.
     if (
-      (action.kind === "manage-confirm-past-schedule" ||
-        action.kind === "manage-retry-past-schedule" ||
-        action.kind === "manage-pick-day" ||
-        action.kind === "manage-pick-schedule") &&
-      !action.editing
+      ((action.kind === "manage-confirm-past-schedule" ||
+        action.kind === "manage-retry-past-schedule") &&
+        !action.editing) ||
+      ((action.kind === "manage-pick-day" ||
+        action.kind === "manage-pick-schedule" ||
+        action.kind === "manage-type-schedule") &&
+        action.mode === "c")
     ) {
       useCase = "create_meetup";
     }
@@ -1750,9 +1815,8 @@ async function handleCallback(
           );
         }
       } else if (action.kind === "manage-retry-past-schedule") {
-        // Кадр подтверждения одноразовый: после любого ответа его кнопки
-        // снимаются, иначе старое «Сохранить дату» откатило бы дату позже.
-        await clearCallbackKeyboard(ctx);
+        // Кадр подтверждения одноразовый: он правится в экран выбора даты,
+        // и старое «Сохранить дату» не откатит дату позже.
         await renderFormResult(
           ctx,
           {
@@ -1803,6 +1867,7 @@ async function handleCallback(
           { kind: "ask-publish-moment", meetup },
           questions,
           runtime.presentation ?? "rich",
+          action.origin,
         );
       } else if (
         action.kind === "manage-unschedule" &&
@@ -1879,23 +1944,15 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-pick-day") {
-      // Заготовки правят сам вопрос: день сменяется временем на месте, и шаг
-      // формы остаётся в кнопке «Отмена». Сервис здесь не нужен.
-      const question = scheduleQuestion(action.token, action.editing);
-      const today = communityToday(ctx);
+      // Экран выбора даты правится на месте: день сменяется временем. Сервис
+      // здесь не нужен.
       await showScreen(
         ctx,
-        action.picked === undefined
-          ? {
-              id: "question",
-              text: schedulePrompt,
-              keyboard: dayPresetKeyboard(question, today),
-            }
-          : {
-              id: "question",
-              text: timePresetText(action.picked.day, today),
-              keyboard: timePresetKeyboard(question, action.picked.digits),
-            },
+        datePresetsScreen({
+          picker: { token: action.token, mode: action.mode },
+          today: communityToday(ctx),
+          picked: action.picked,
+        }),
       );
       outcome = {
         level: "info",
@@ -1903,6 +1960,40 @@ async function handleCallback(
         result: "ok",
         use_case: useCase,
         meetup_id: tokenToUuid(action.token),
+      };
+      return;
+    }
+    if (action.kind === "manage-type-schedule") {
+      // «Другая дата»: экран выбора уступает место вопросу. Он удаляется, а не
+      // остаётся без кнопок — иначе над вопросом висел бы тот же вопрос.
+      const meetupId = tokenToUuid(action.token);
+      ctx.pressedGone = await deletePressed(ctx);
+      const origin = publishOriginOf(action.mode);
+      await askQuestion(
+        ctx,
+        questions,
+        origin === undefined
+          ? {
+              kind: "meetup",
+              mode: action.mode === "e" ? "edit" : "create",
+              field: "schedule",
+              meetupId,
+              telegramUserId: ctx.from?.id ?? 0,
+            }
+          : {
+              kind: "publish-moment",
+              meetupId,
+              origin,
+              telegramUserId: ctx.from?.id ?? 0,
+            },
+        origin === undefined ? formPrompts.schedule : publishMomentPrompt,
+      );
+      outcome = {
+        level: "info",
+        message: "schedule question asked",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: meetupId,
       };
       return;
     }
@@ -1916,31 +2007,44 @@ async function handleCallback(
         await clearCallbackKeyboard(ctx);
       }
       const meetupId = tokenToUuid(action.token);
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: action.editing ? "update-meetup-field" : "set-meetup-field",
-        field: "schedule",
-        value: action.value,
-        meetupId,
-        ...(action.kind === "manage-confirm-past-schedule"
-          ? { confirmedPast: true as const }
-          : {}),
-        ...rpcCall(ctx, useCase),
-      });
-      // Кнопка времени — ответ на вопрос, и закрывает его так же, как ответ
-      // текстом: при сбое сервиса вопрос с заготовками остаётся ждать.
-      if (action.kind === "manage-pick-schedule" && !retryable(result)) {
-        const pressed = ctx.callbackQuery?.message?.message_id;
-        if (pressed !== undefined) {
-          questions.delete(questionKey(ctx.chat?.id, pressed));
-        }
-        await clearCallbackKeyboard(ctx);
-      }
+      // Кнопка времени несёт тот же ответ, что и текст, и идёт тем же разбором:
+      // дата сходки — в форму, момент публикации — в назначение. Экран выбора
+      // правится в результат на месте, а при сбое сервиса остаётся как был.
+      const origin =
+        action.kind === "manage-pick-schedule"
+          ? publishOriginOf(action.mode)
+          : undefined;
+      const editing =
+        action.kind === "manage-pick-schedule"
+          ? action.mode === "e"
+          : action.editing;
+      const result = await runtime.dispatcher.execute(
+        origin !== undefined
+          ? {
+              identity: person,
+              intent: "schedule-publication",
+              value: action.value,
+              meetupId,
+              ...rpcCall(ctx, useCase),
+            }
+          : {
+              identity: person,
+              intent: editing ? "update-meetup-field" : "set-meetup-field",
+              field: "schedule",
+              value: action.value,
+              meetupId,
+              ...(action.kind === "manage-confirm-past-schedule"
+                ? { confirmedPast: true as const }
+                : {}),
+              ...rpcCall(ctx, useCase),
+            },
+      );
       await renderFormResult(
         ctx,
         result,
         questions,
         runtime.presentation ?? "rich",
+        origin,
       );
       outcome = screenBoundary(result, {
         ok: [
@@ -1950,6 +2054,9 @@ async function handleCallback(
           "meetup-updated",
           "edit-unavailable",
           "confirm-past-schedule",
+          "ask-publish-moment",
+          "publication-scheduled",
+          "publication-unavailable",
         ],
         okMessage:
           action.kind === "manage-pick-schedule"
@@ -3528,7 +3635,12 @@ async function renderFormResult(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   questions: Map<string, PendingInput>,
   presentation: "rich" | "plain",
+  // Экран, с которого назначают публикацию: нужен только вопросу о её моменте.
+  origin: PublishOrigin = "status",
 ): Promise<void> {
+  // Дату по нажатию выбирают кнопками на экране без режима ответа. Вопрос
+  // текстом остаётся ответу на вопрос: человек уже пишет, и ему нужен формат.
+  const pressed = ctx.callbackQuery !== undefined;
   if (result.kind === "ask" || result.kind === "edit-ask") {
     const currentValue =
       result.field === "schedule"
@@ -3536,6 +3648,23 @@ async function renderFormResult(
         : result.meetup[result.field] === ""
           ? "не задано"
           : result.meetup[result.field];
+    if (result.field === "schedule" && pressed) {
+      await showScreen(
+        ctx,
+        datePresetsScreen({
+          picker: {
+            token: uuidToToken(result.meetup.id),
+            mode: result.kind === "edit-ask" ? "e" : "c",
+          },
+          today: communityToday(ctx),
+          lead: [
+            ...(result.kind === "edit-ask" ? [`Сейчас: ${currentValue}`] : []),
+            ...(result.error === undefined ? [] : [result.error]),
+          ].join("\n"),
+        }),
+      );
+      return;
+    }
     // Отказ Meetups причины не называет, поэтому рядом с ним стоит сам вопрос
     // поля: без него человек теряет формат даты и не знает, что вводить.
     const ask =
@@ -3587,6 +3716,20 @@ async function renderFormResult(
       });
       return;
     }
+    if (result.field === "schedule" && pressed) {
+      await showScreen(
+        ctx,
+        datePresetsScreen({
+          picker: {
+            token: uuidToToken(stored.id),
+            mode: result.editing === true ? "e" : "c",
+          },
+          today: communityToday(ctx),
+          lead: lines.join("\n"),
+        }),
+      );
+      return;
+    }
     // Правка поля: сохранённый ввод показан, но повторно не отправляется — его
     // вводят заново, уже по актуальным данным. Режим вопроса сохраняет ту же
     // форму (создание или редактирование), в которой конфликт случился.
@@ -3621,15 +3764,16 @@ async function renderFormResult(
         noData: `v1:manage:past-retry:${token}:${mode}`,
       }),
       format: "HTML",
-      delivery: "new",
     });
     return;
   }
   if (result.kind === "meetup-updated") {
+    // После ответа текстом нажатого сообщения нет, и карточка приходит новой;
+    // после выбора кнопкой она правит экран выбора на месте.
     await renderMeetupCard(
       ctx,
       cardFrom(result),
-      false,
+      true,
       presentation,
       true,
       result.archived === true
@@ -3643,7 +3787,6 @@ async function renderFormResult(
       ctx,
       "Сходка уже отменена. Изменять её больше нельзя.",
       exitToCard(uuidToToken(result.meetup.id)),
-      "new",
     );
     return;
   }
@@ -3675,6 +3818,20 @@ async function renderFormResult(
       result.meetup.publishAt === undefined
         ? ""
         : `Сейчас назначено: ${formatLocalMoment(result.meetup.publishAt)}\n`;
+    if (pressed) {
+      await showScreen(
+        ctx,
+        datePresetsScreen({
+          picker: {
+            token: uuidToToken(result.meetup.id),
+            mode: origin === "draft" ? "d" : "p",
+          },
+          today: communityToday(ctx),
+          lead: `${current}${result.retry === undefined ? "" : publishMomentRetryLead[result.retry]}`.trim(),
+        }),
+      );
+      return;
+    }
     const prompt =
       result.retry === undefined
         ? publishMomentPrompt
@@ -3685,6 +3842,7 @@ async function renderFormResult(
       {
         kind: "publish-moment",
         meetupId: result.meetup.id,
+        origin,
         telegramUserId: ctx.from?.id ?? 0,
       },
       `${current}${prompt}`,
@@ -3697,7 +3855,7 @@ async function renderFormResult(
     await renderMeetupCard(
       ctx,
       cardFrom(result),
-      false,
+      true,
       presentation,
       true,
       result.meetup.publishAt === undefined
@@ -3715,7 +3873,7 @@ async function renderFormResult(
     await renderMeetupCard(
       ctx,
       cardFrom(result),
-      false,
+      true,
       presentation,
       true,
       text,
@@ -3782,7 +3940,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         field: pending.field,
       };
     case "publish-moment":
-      return { kind: "publish-moment", token: uuidToToken(pending.meetupId) };
+      return {
+        kind: "publish-moment",
+        token: uuidToToken(pending.meetupId),
+        origin: pending.origin,
+      };
     case "material-source":
       return {
         kind: "material-source",
@@ -3826,6 +3988,7 @@ function pendingOf(
       return {
         kind: "publish-moment",
         meetupId: tokenToUuid(step.token),
+        origin: step.origin,
         telegramUserId,
         expiresAt,
       };
@@ -3871,7 +4034,10 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         ? { kind: "manage-draft", token: step.token }
         : { kind: "view-meetup", token: step.token };
     case "publish-moment":
-      return { kind: "manage-status", token: step.token };
+      // Отложенную публикацию назначают из «Статуса» и с черновика.
+      return step.origin === "draft"
+        ? { kind: "manage-draft", token: step.token }
+        : { kind: "manage-status", token: step.token };
     case "material-source":
     case "material-title":
       return { kind: "manage-materials", token: step.token };
@@ -3920,20 +4086,13 @@ async function askQuestion(
   text: string,
   replaces?: number,
 ): Promise<void> {
-  if (ctx.callbackQuery !== undefined) {
+  if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
     await clearCallbackKeyboard(ctx);
   }
-  // Вопрос о дате несёт заготовки дня над «Отменой»; остальные — её одну.
-  const keyboard =
-    pending.kind === "meetup" && pending.field === "schedule"
-      ? dayPresetKeyboard(
-          scheduleQuestion(
-            uuidToToken(pending.meetupId),
-            pending.mode === "edit",
-          ),
-          communityToday(ctx),
-        )
-      : new InlineKeyboard().text(cancelLabel, questionData(stepOf(pending)));
+  const keyboard = new InlineKeyboard().text(
+    cancelLabel,
+    questionData(stepOf(pending)),
+  );
   const prompt = await ctx.reply(text, {
     ...screenMark("question"),
     reply_markup: {
@@ -3957,17 +4116,52 @@ async function askQuestion(
   evictOldestQuestions(questions);
 }
 
-function scheduleQuestion(token: string, editing: boolean): ScheduleQuestion {
-  return {
-    token,
-    mode: editing ? "e" : "c",
-    cancelData: questionData({
-      kind: "field",
-      mode: editing ? "edit" : "create",
-      token,
-      field: "schedule",
-    }),
-  };
+/** Момент публикации выбирают в режимах `p` и `d`; остальные — дата сходки. */
+function publishOriginOf(mode: WhenMode): PublishOrigin | undefined {
+  return mode === "p" ? "status" : mode === "d" ? "draft" : undefined;
+}
+
+// Тело ожидаемого ответа из записи карты: срок жизни вопрос получит заново.
+function bodyOf(pending: PendingInput): PendingBody {
+  const { expiresAt: _expiresAt, ...body } = pending;
+  return body;
+}
+
+/** Удаляет сообщение нажатой кнопки; `false` — Telegram удалить не дал. */
+async function deletePressed(ctx: UpdateContext): Promise<boolean> {
+  try {
+    await ctx.deleteMessage();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Брошенные вопросы: человек не ответил и не отменил, а пошёл дальше. Пока
+// вопрос висит, мобильный клиент включает режим ответа на него при каждом
+// входе в чат, а снимает его только удаление сообщения (зонд PER-443). Бот
+// помнит вопросы в памяти процесса: после рестарта удалять нечего, и такие
+// вопросы остаются. `except` — сообщение нажатой кнопки: с ним разбирается
+// само нажатие.
+async function dropOpenQuestions(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  except?: number,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  const prefix = `${chatId}:`;
+  for (const key of [...questions.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    const messageId = Number(key.slice(prefix.length));
+    if (messageId === except) continue;
+    questions.delete(key);
+    try {
+      await ctx.api.deleteMessage(chatId, messageId);
+    } catch {
+      // Сообщение уже удалено или старше, чем Telegram даёт удалять.
+    }
+  }
 }
 
 // Вопрос, на который ответ принят, больше не ждёт: «Отмена» под ним снимается.
@@ -4067,6 +4261,7 @@ function callbackUseCase(
     | "manage-confirm-past-schedule"
     | "manage-pick-day"
     | "manage-pick-schedule"
+    | "manage-type-schedule"
     | "manage-retry-past-schedule"
     | "manage-materials"
     | "begin-attach-material"
@@ -4108,6 +4303,7 @@ function callbackUseCase(
     case "manage-retry-past-schedule":
     case "manage-pick-day":
     case "manage-pick-schedule":
+    case "manage-type-schedule":
     case "manage-materials":
     case "begin-attach-material":
     case "decline-attach-material":
