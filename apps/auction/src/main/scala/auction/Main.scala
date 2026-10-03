@@ -7,7 +7,9 @@ import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
+import auction.publication.PublicationSettings
 import auction.telemetry.ProjectionMetrics
+import auction.telemetry.PublicationMetrics
 import auction.telemetry.Telemetry
 import com.typesafe.config.ConfigFactory
 import net.logstash.logback.argument.StructuredArguments
@@ -31,7 +33,8 @@ import scala.util.control.NonFatal
  * Точка входа Auction Service.
  *
  * Доменной логики торгов здесь нет и не будет: composition root собирает конфигурацию, схему журнала, actor system с
- * кластером, entity лота в шардинге, проекцию лота в read model с метриками, HTTP-границу с health и gRPC-границу.
+ * кластером, entity лота в шардинге, проекцию лота в read model с метриками, публикацию фактов лота в шину,
+ * HTTP-границу с health и gRPC-границу.
  */
 object Main {
 
@@ -44,6 +47,7 @@ object Main {
     val readinessTimeout: FiniteDuration = config.getDuration("auction.readiness-timeout").toScala
     val askTimeout: FiniteDuration = config.getDuration("auction.grpc.ask-timeout").toScala
     val backlogTimeout: FiniteDuration = config.getDuration("auction.projection.backlog-timeout").toScala
+    val publication = PublicationSettings.fromConfig(config)
 
     val database = DatabaseSettings.fromConfig(config) match {
       case Right(settings) => settings
@@ -82,7 +86,15 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-    AuctionNode.startProjection(system, ProjectionMetrics(telemetry.getMeter("auction"), clock), backlogTimeout)
+    val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
+    AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
+    AuctionNode.startPublication(
+      system,
+      projectionMetrics,
+      PublicationMetrics(telemetry.getMeter("auction")),
+      publication,
+      backlogTimeout
+    )
     val readiness = AuctionNode.readiness(system, readinessTimeout)
 
     Http()

@@ -23,6 +23,7 @@ val slickVersion = "3.5.1"
 val postgresqlVersion = "42.7.13"
 val flywayVersion = "13.8.0"
 val testcontainersScalaVersion = "0.44.1"
+val jnatsVersion = "2.26.3"
 
 // Интеграционный уровень (L1) поднимает PostgreSQL в Docker и в `just verify`
 // не входит (testing-strategy.md). Отбор идёт по имени сьюта, а не по тегу
@@ -99,6 +100,9 @@ lazy val auction = (project in file("."))
       "ch.qos.logback" % "logback-classic" % logbackVersion,
       "net.logstash.logback" % "logstash-logback-encoder" % logstashEncoderVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
+      // Публикация фактов лота в JetStream (ADR-003): официальный Java-клиент
+      // NATS, тот же, что ведёт команда NATS для Go и .NET у соседних сервисов.
+      "io.nats" % "jnats" % jnatsVersion,
       "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-persistence-testkit" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-http-testkit" % pekkoHttpVersion % Test,

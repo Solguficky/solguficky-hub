@@ -25,37 +25,47 @@ import scala.concurrent.Await
 import scala.concurrent.duration.FiniteDuration
 
 /**
- * Проекция журнала лотов в read model (ADR-045): по экземпляру на тег [[LotTags]] под `ShardedDaemonProcess`, offset и
- * read model одной транзакцией `JdbcProjection.exactlyOnce`. После рестарта экземпляр читает сохранённый offset своего
+ * Проекция журнала лотов (ADR-045): по экземпляру на тег [[LotTags]] под `ShardedDaemonProcess`, offset и запись
+ * обработчика одной транзакцией `JdbcProjection.exactlyOnce`. После рестарта экземпляр читает сохранённый offset своего
  * тега и продолжает со следующего события, а не переигрывает журнал.
+ *
+ * Проекций журнала лотов две, и у каждой своё имя, а значит свой offset: read model [[Name]] и публикация фактов
+ * [[PublicationName]]. Отказ одной не задерживает другую.
  */
 object LotProjection {
 
   val Name: String = "lot-view"
+
+  val PublicationName: String = "lot-publication"
 
   type Envelope = EventEnvelope[StoredLotEvent]
 
   /**
    * Запускает экземпляры проекции на узле.
    *
+   * @param name
+   *   имя проекции — [[Name]] или [[PublicationName]]: ключ её offset и имя процесса
    * @param handler
-   *   обработчик на каждый запуск экземпляра; рабочий — [[LotViewHandler]], тест подменяет его обёрткой
+   *   обработчик на каждый запуск экземпляра; рабочий — [[LotViewHandler]] или `LotPublicationHandler`, тест подменяет
+   *   его обёрткой
    */
   def init(
       system: ActorSystem[?],
+      name: String,
       metrics: ProjectionMetrics,
       handler: () => JdbcHandler[Envelope, JdbcSession]
   ): Unit =
     ShardedDaemonProcess(system).init[ProjectionBehavior.Command](
-      Name,
+      name,
       LotTags.Count,
-      index => ProjectionBehavior(projection(system, LotTags.all(index), metrics, handler)),
+      index => ProjectionBehavior(projection(system, name, LotTags.all(index), metrics, handler)),
       ShardedDaemonProcessSettings(system),
       Some(ProjectionBehavior.Stop)
     )
 
   def projection(
       system: ActorSystem[?],
+      name: String,
       tag: String,
       metrics: ProjectionMetrics,
       handler: () => JdbcHandler[Envelope, JdbcSession]
@@ -63,7 +73,7 @@ object LotProjection {
     val source = journal(system)
     JdbcProjection
       .exactlyOnce(
-        ProjectionId(Name, tag),
+        ProjectionId(name, tag),
         EventSourcedProvider.eventsByTag[StoredLotEvent](system, JdbcReadJournal.Identifier, tag),
         () => new PooledJdbcSession(source.source),
         handler
@@ -76,13 +86,13 @@ object LotProjection {
    * событий по тегу у Pekko Persistence JDBC — `ordering` строки журнала, общий для всех тегов, поэтому считается число
    * строк, а не разность номеров: она включала бы события чужих тегов.
    */
-  def backlog(system: ActorSystem[?], timeout: FiniteDuration): () => Map[String, Long] = {
+  def backlog(system: ActorSystem[?], name: String, timeout: FiniteDuration): () => Map[String, Long] = {
     val database = journal(system)
     val tags = LotTags.all
     () => {
       val behind =
         sql"""SELECT t.tag, COUNT(*) FROM event_tag t
-              LEFT JOIN pekko_projection_offset_store o ON o.projection_name = $Name AND o.projection_key = t.tag
+              LEFT JOIN pekko_projection_offset_store o ON o.projection_name = $name AND o.projection_key = t.tag
               WHERE t.tag = ANY(${tags.mkString("{", ",", "}")}::varchar[])
                 AND t.event_id > COALESCE(o.current_offset::bigint, 0)
               GROUP BY t.tag""".as[(String, Long)]

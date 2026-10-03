@@ -63,7 +63,17 @@ internal static class AuctionSetup
                 context,
                 AppHostNames.Resources.AuctionDb,
                 "AUCTION_DATABASE_PASSWORD",
-                database => ReferenceExpression.Create($"{database.Resource.Parent.PasswordParameter}"));
+                database => ReferenceExpression.Create($"{database.Resource.Parent.PasswordParameter}"))
+            // Адрес шины для релея фактов лота. Узла nats в запуске нет — bind
+            // молчит, и Auction поднимается без релея: проекция публикации пишет
+            // outbox, и факты уйдут, когда адрес появится. WaitFor внутри bind ждёт
+            // и применения топологии JetStream (NatsSetup), поэтому первая
+            // публикация не встречает отсутствующий стрим AUCTION_EVENTS.
+            .BindConnection<ExecutableResource, IResourceWithConnectionString>(
+                context,
+                AppHostNames.Resources.Nats,
+                "AUCTION_NATS_URL",
+                nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
 
         build.WithParentRelationship(auction);
 
