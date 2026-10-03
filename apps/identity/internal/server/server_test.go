@@ -46,7 +46,7 @@ func newConnWithToken(t *testing.T, db *sql.DB, token string) *grpc.ClientConn {
 	t.Cleanup(func() { _ = lis.Close() })
 
 	log := slog.New(slog.DiscardHandler)
-	srv := server.New(log, db, token)
+	srv := server.New(log, db, token, server.NewTestCallers(t, token))
 	t.Cleanup(srv.Stop)
 	go func() {
 		_ = srv.Serve(lis)
@@ -58,6 +58,7 @@ func newConnWithToken(t *testing.T, db *sql.DB, token string) *grpc.ClientConn {
 			return lis.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		server.PresentDeclaredCaller(),
 	)
 	if err != nil {
 		t.Fatalf("dial: %v", err)

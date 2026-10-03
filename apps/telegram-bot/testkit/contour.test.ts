@@ -2,11 +2,13 @@ import http2 from "node:http2";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { MeetupVisibility } from "../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../gen/meetups/v1/meetups_service_pb.js";
 import { openDirectClients } from "./contour.js";
 
 const botServiceToken = "contour-bot-token";
+const maintainerToken = "contour-maintainer-token";
 const author = "author";
 const snapshots = [
   { id: "z-draft", author, version: 1n, visibility: MeetupVisibility.HIDDEN },
@@ -17,18 +19,38 @@ const viewers: { identityId: string; globalRoles: number[] }[] = [];
 let server: http2.Http2Server;
 let direct: ReturnType<typeof openDirectClients>;
 
-function requireBot(context: HandlerContext): void {
-  if (
-    context.requestHeader.get("authorization") !== `Bearer ${botServiceToken}`
-  ) {
-    throw new ConnectError("missing bot token", Code.Unauthenticated);
+function requireToken(context: HandlerContext, token: string): void {
+  if (context.requestHeader.get("authorization") !== `Bearer ${token}`) {
+    throw new ConnectError("unexpected caller", Code.Unauthenticated);
   }
 }
+
+function requireBot(context: HandlerContext): void {
+  requireToken(context, botServiceToken);
+}
+
+const identityId = "0192f8a0-0000-7000-8000-000000000001";
 
 beforeAll(async () => {
   server = http2.createServer(
     connectNodeAdapter({
-      routes: (router) =>
+      routes: (router) => {
+        // Identity проверяет вызывающего так же, как Meetups (ADR-056), а
+        // maintainer-RPC — своим секретом ADR-037.
+        router.service(IdentityService, {
+          resolveIdentity(_request, context) {
+            requireBot(context);
+            return { identityId };
+          },
+          addAllowedUsername(_request, context) {
+            requireBot(context);
+            return {};
+          },
+          grantAdminRole(_request, context) {
+            requireToken(context, maintainerToken);
+            return { changed: true };
+          },
+        });
         router.service(MeetupsService, {
           listVisibleMeetups(request, context) {
             requireBot(context);
@@ -60,7 +82,8 @@ beforeAll(async () => {
               Code.Unauthenticated,
             );
           },
-        }),
+        });
+      },
     }),
   );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -72,7 +95,7 @@ beforeAll(async () => {
   direct = openDirectClients({
     identityUrl: url,
     meetupsUrl: url,
-    maintainerToken: "contour-maintainer-token",
+    maintainerToken,
     botServiceToken,
   });
 });
@@ -99,6 +122,12 @@ describe("direct contour clients", () => {
       meetupIds: [],
       events: 0,
     });
+  });
+
+  it("presents the bot token to Identity without overriding the maintainer secret", async () => {
+    expect(await direct.grantAdmin(42n)).toBe(identityId);
+    expect(await direct.identityOf(42n)).toBe(identityId);
+    await direct.allowUsername(identityId, "member");
   });
 
   it("presents the bot token on direct commands too", async () => {

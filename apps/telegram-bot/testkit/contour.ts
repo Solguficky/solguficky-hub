@@ -76,6 +76,9 @@ export function readContourEnvironment(
 export function openDirectClients(environment: ContourEnvironment) {
   const identitySessions = new Http2SessionManager(environment.identityUrl);
   const meetupsSessions = new Http2SessionManager(environment.meetupsUrl);
+  // Токен бота Identity — заголовком вызова, а не интерцептором транспорта, как
+  // у Meetups: тот же клиент шлёт maintainer-RPC, и интерцептор перетёр бы их
+  // секрет ADR-037 токеном бота.
   const identity = createClient(
     IdentityService,
     createGrpcTransport({
@@ -84,6 +87,9 @@ export function openDirectClients(environment: ContourEnvironment) {
       sessionManager: identitySessions,
     }),
   );
+  const asBot = {
+    headers: { authorization: `Bearer ${environment.botServiceToken}` },
+  };
   const meetups = createClient(
     MeetupsService,
     createGrpcTransport({
@@ -141,7 +147,10 @@ export function openDirectClients(environment: ContourEnvironment) {
      * иначе сценарий остался бы зелёным при сломанном хранении ролей.
      */
     async grantAdmin(telegramUserId: bigint): Promise<string> {
-      const resolved = await identity.resolveIdentity({ telegramUserId });
+      const resolved = await identity.resolveIdentity(
+        { telegramUserId },
+        asBot,
+      );
       await asMaintainer((options) =>
         identity.grantAdminRole({ identityId: resolved.identityId }, options),
       );
@@ -162,14 +171,20 @@ export function openDirectClients(environment: ContourEnvironment) {
      * путём, что в продукте, а не выдачей в обход Identity.
      */
     async allowUsername(adminId: string, username: string): Promise<void> {
-      await identity.addAllowedUsername({
-        actor: { identityId: adminId, globalRoles: [GlobalRole.ADMIN] },
-        username,
-      });
+      await identity.addAllowedUsername(
+        {
+          actor: { identityId: adminId, globalRoles: [GlobalRole.ADMIN] },
+          username,
+        },
+        asBot,
+      );
     },
     /** Профиль, который Identity уже завёл для этого Telegram id. */
     async identityOf(telegramUserId: bigint): Promise<string> {
-      const resolved = await identity.resolveIdentity({ telegramUserId });
+      const resolved = await identity.resolveIdentity(
+        { telegramUserId },
+        asBot,
+      );
       return resolved.identityId;
     },
     async readAsAdmin(identityId: string, meetupId: string) {

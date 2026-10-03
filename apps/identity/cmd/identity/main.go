@@ -49,6 +49,16 @@ func run() int {
 		addr = ":50051"
 	}
 
+	// Таблица вызывающих проверяется до базы и листенера: неполная или
+	// неоднозначная таблица останавливает процесс, а не оставляет зелёный health
+	// при закрытых методах (ADR-056). Ошибка называет переменные, не значения.
+	maintainerToken := os.Getenv("IDENTITY_MAINTAINER_TOKEN")
+	callers, err := server.LoadCallers(os.Getenv, maintainerToken)
+	if err != nil {
+		log.Error("caller tokens invalid", "service", server.ServiceName, "error", err)
+		return 1
+	}
+
 	// Телеметрия закрывается после сервера и релея: defer исполняются в обратном
 	// порядке, и последние спаны и метрики успевают уйти до закрытия логов.
 	traces, closeTelemetry, err := startTelemetry(ctx, log)
@@ -78,7 +88,7 @@ func run() int {
 	}
 	defer stopRelay()
 
-	srv := server.New(log, db, os.Getenv("IDENTITY_MAINTAINER_TOKEN"), server.WithTracerProvider(traces))
+	srv := server.New(log, db, maintainerToken, callers, server.WithTracerProvider(traces))
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String())

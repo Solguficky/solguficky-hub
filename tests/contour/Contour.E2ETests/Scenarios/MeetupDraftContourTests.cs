@@ -40,6 +40,7 @@ public sealed class MeetupDraftContourTests(ContourFixture contour)
 
         var resolved = await contour.IdentityClient.ResolveIdentityAsync(
             new ResolveIdentityRequest { TelegramUserId = telegramUserId },
+            headers: contour.BotCall(),
             deadline: Deadline(),
             cancellationToken: cancellationToken);
 
@@ -59,6 +60,7 @@ public sealed class MeetupDraftContourTests(ContourFixture contour)
         // из ответа Identity, иначе выдача роли осталась бы непроверенной.
         var admin = await contour.IdentityClient.ResolveIdentityAsync(
             new ResolveIdentityRequest { TelegramUserId = telegramUserId },
+            headers: contour.BotCall(),
             deadline: Deadline(),
             cancellationToken: cancellationToken);
 

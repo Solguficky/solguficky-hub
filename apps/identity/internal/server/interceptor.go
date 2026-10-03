@@ -153,8 +153,9 @@ func errorText(err error) string {
 func unaryLogging(log *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		start := time.Now()
+		ctx, note := withCallerNote(ctx)
 		resp, err := handler(ctx, req)
-		logRPC(ctx, log, info.FullMethod, start, req, resp, err)
+		logRPC(ctx, log, info.FullMethod, start, req, resp, note.decision, err)
 		return resp, err
 	}
 }
@@ -163,7 +164,12 @@ func streamLogging(log *slog.Logger) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		start := time.Now()
 		err := handler(srv, ss)
-		logRPC(ss.Context(), log, info.FullMethod, start, nil, nil, err)
+		// Потоковых RPC у IdentityService нет, а health и reflection гейт не
+		// проверяет, поэтому заметки о вызывающем у потока нет: контекст потока
+		// заменяется только обёрткой с полем context, которую запрещает
+		// containedctx. Отказ гейта на будущем потоке всё равно уйдёт сюда
+		// записью UNAUTHENTICATED, только без caller_refusal.
+		logRPC(ss.Context(), log, info.FullMethod, start, nil, nil, gateDecision{}, err)
 		return err
 	}
 }
@@ -214,7 +220,7 @@ func mustFailureCounter() metric.Int64Counter {
 	return counter
 }
 
-func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req, resp any, err error) {
+func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req, resp any, caller gateDecision, err error) {
 	result := resultOK
 	if err != nil {
 		result = resultError
@@ -239,6 +245,14 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	// бота.
 	if id := loggedIdentityID(req, resp); id != "" {
 		attrs = append(attrs, slog.String("identity_id", id))
+	}
+	// Вызывающий назван только проверенным именем и фиксированной причиной
+	// отказа: значение authorization в запись не идёт ни в каком виде (ADR-056).
+	if caller.caller != "" {
+		attrs = append(attrs, slog.String("caller", string(caller.caller)))
+	}
+	if caller.refusal != "" {
+		attrs = append(attrs, slog.String("caller_refusal", caller.refusal))
 	}
 	if err == nil {
 		// Успех границы пишется на info, как у Meetups и бота: один фильтр по
