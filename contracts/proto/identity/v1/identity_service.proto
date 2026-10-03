@@ -7,10 +7,8 @@ import "identity/v1/roles.proto";
 // Resolves Telegram identities and exposes authenticated maintainer operations.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
-  // Entry on /start: establishes the identity like ResolveIdentity and then
-  // either finds the requested role already held, grants it from the allowed
-  // usernames list, or leaves an application for an administrator. It never
-  // grants a role merely because it was requested.
+  // Entry on /start: establishes the identity like ResolveIdentity and reports
+  // what became of the requested role.
   rpc RequestRole(RequestRoleRequest) returns (RequestRoleResponse);
   // Resolves an internal id back to the Telegram user id of that profile. It is
   // a separate operation and not a mode of ResolveIdentity: that one establishes
@@ -103,24 +101,23 @@ message RequestRoleRequest {
   optional string telegram_username = 2;
 
   // The circle the calling surface accepts: GLOBAL_ROLE_MEMBER or
-  // GLOBAL_ROLE_PUBLIC. Any other value is rejected, not mapped.
+  // GLOBAL_ROLE_PUBLIC.
   GlobalRole requested_role = 3;
 
   // Channel code from the deep link payload "s_<code>", without the "s_"
-  // prefix. Untrusted: an unknown or malformed code is kept as an unknown
-  // source and never fails the call. Absent when /start came without one.
+  // prefix. Untrusted and passed as received; an empty code after "s_" is sent
+  // as an empty string. Absent when the payload carries no "s_" prefix.
   optional string source_code = 4;
 
-  // Telegram first_name from the same update, shown on the moderation card.
-  // Kept only by an application this call creates.
+  // Telegram first_name from the same update, for the moderation card.
   string first_name = 5;
 }
 
-// What happened to the requested role on this call. Only GRANTED_BY_ALLOWLIST
-// is a grant made by the call itself.
+// What became of the requested role. Only GRANTED_BY_ALLOWLIST means the call
+// itself granted it.
 enum RoleRequestOutcome {
-  // No value: an older server or an outcome unknown to the consumer. The
-  // consumer reads it as a refusal.
+  // No value: an outcome unknown to the consumer. The consumer reads it as a
+  // refusal.
   ROLE_REQUEST_OUTCOME_UNSPECIFIED = 0;
 
   // The requested role was active before the call.
@@ -133,11 +130,10 @@ enum RoleRequestOutcome {
   // earlier one. The two are not distinguished.
   ROLE_REQUEST_OUTCOME_PENDING = 3;
 
-  // An earlier application for this role was declined and not reconsidered;
-  // no new application is opened.
+  // An earlier application for this role was declined.
   ROLE_REQUEST_OUTCOME_DECLINED = 4;
 
-  // The profile is blocked: nothing is granted and no application is opened.
+  // The profile is blocked.
   ROLE_REQUEST_OUTCOME_BLOCKED = 5;
 }
 
