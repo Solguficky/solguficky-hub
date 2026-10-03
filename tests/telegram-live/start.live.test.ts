@@ -4,7 +4,7 @@ import {
   describe,
   expect,
   it,
-} from "../../apps/telegram-bot/testkit/index.js";
+} from "../../apps/hub-bot/testkit/index.js";
 import { type LiveDriver, openLiveDriver } from "./driver.js";
 import { classifyFailure } from "./failure.js";
 import { pickLiveSecrets, readSecretStore } from "./session.js";

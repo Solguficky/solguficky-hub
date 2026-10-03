@@ -1,6 +1,6 @@
-name: Image Telegram Bot
+name: Image Hub Bot
 
-# Production-образ Telegram Bot по apps/telegram-bot/Containerfile. Pull request
+# Production-образ Hub Bot по apps/hub-bot/Containerfile. Pull request
 # только собирает образ и проверяет его: в GHCR ничего не пишется, и права
 # записи код из PR не получает. Push в develop публикует образ — кандидата на
 # stage. Мерж в main образ не пересобирает: на прод едет тот же digest, что
@@ -12,18 +12,18 @@ name: Image Telegram Bot
 on:
   pull_request:
     paths:
-      - 'apps/telegram-bot/**'
+      - 'apps/hub-bot/**'
       - 'contracts/proto/**'
       - 'tools/image/**'
-      - '.github/workflows/image-telegram-bot.yml'
+      - '.github/workflows/image-hub-bot.yml'
       - '.github/workflows/image-publish.yml'
   push:
     branches: [develop]
     paths:
-      - 'apps/telegram-bot/**'
+      - 'apps/hub-bot/**'
       - 'contracts/proto/**'
       - 'tools/image/**'
-      - '.github/workflows/image-telegram-bot.yml'
+      - '.github/workflows/image-hub-bot.yml'
       - '.github/workflows/image-publish.yml'
   workflow_dispatch:
 
@@ -36,10 +36,10 @@ jobs:
       contents: read
     uses: ./.github/workflows/image-publish.yml
     with:
-      image-name: telegram-bot
+      image-name: hub-bot
       builder: containerfile
-      containerfile: apps/telegram-bot/Containerfile
-      node-lock: apps/telegram-bot/package-lock.json
+      containerfile: apps/hub-bot/Containerfile
+      node-lock: apps/hub-bot/package-lock.json
       publish: false
 
   publish:
@@ -47,7 +47,7 @@ jobs:
     # Публикации по очереди: тег sha-<коммит> одного прогона не должен
     # перевесить другой, пока первый читает digest и аттестует его.
     concurrency:
-      group: image-telegram-bot-publish
+      group: image-hub-bot-publish
       cancel-in-progress: false
     permissions:
       contents: read
@@ -57,8 +57,8 @@ jobs:
       artifact-metadata: write
     uses: ./.github/workflows/image-publish.yml
     with:
-      image-name: telegram-bot
+      image-name: hub-bot
       builder: containerfile
-      containerfile: apps/telegram-bot/Containerfile
-      node-lock: apps/telegram-bot/package-lock.json
+      containerfile: apps/hub-bot/Containerfile
+      node-lock: apps/hub-bot/package-lock.json
       publish: true

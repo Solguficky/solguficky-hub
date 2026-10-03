@@ -11,7 +11,7 @@ namespace Notifications.Transport;
 public sealed record Caller(string Node)
 {
     /// <summary>Бот хаба.</summary>
-    public static readonly Caller TelegramBot = new("telegram-bot");
+    public static readonly Caller HubBot = new("hub-bot");
 
     /// <summary>
     /// Переменная, из которой AppHost отдаёт токен вызывающего: имя узла в

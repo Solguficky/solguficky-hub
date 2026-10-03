@@ -1,6 +1,6 @@
 # Lint и format одним `biome check`
 
-Скелет Telegram Bot — первый TypeScript-процесс в репозитории, и у него впервые появляется линтер. Этот файл объясняет, что делает Biome на строках среза и почему выбран он, а не ESLint. Устройство компонента и таблица toolchain — в [брифе](../../services/telegram-bot.md); модуль TypeScript — в [module-and-types.md](../typescript/module-and-types.md). Это не ADR: сравнение не меняет границу системы.
+Скелет Hub Bot — первый TypeScript-процесс в репозитории, и у него впервые появляется линтер. Этот файл объясняет, что делает Biome на строках среза и почему выбран он, а не ESLint. Устройство компонента и таблица toolchain — в [брифе](../../services/telegram-bot.md); модуль TypeScript — в [module-and-types.md](../typescript/module-and-types.md). Это не ADR: сравнение не меняет границу системы.
 
 ## Механика
 
@@ -8,20 +8,20 @@
 
 Biome — отдельная программа, не плагин TypeScript. Она читает `.ts` своим парсером и не вызывает `tsc`. Ближайший аналог в .NET — Roslyn analyzer плюс `.editorconfig`, но здесь lint, format и assist живут в одном бинарнике и одной команде.
 
-`apps/telegram-bot/package.json` объявляет два скрипта:
+`apps/hub-bot/package.json` объявляет два скрипта:
 
 ```json
 "lint": "biome check .",
 "format": "biome format --write ."
 ```
 
-`biome check` по своей справке «Checks the specified files for formatting, linting, and assist actions». Это не «только lint»: одна команда смотрит стиль, правила и автоправки вроде сортировки импортов. `--write` нет — в CI и в `just telegram-bot-lint` команда только сообщает, не переписывает файлы. `biome format --write .` — отдельный проход, когда формат нужно применить.
+`biome check` по своей справке «Checks the specified files for formatting, linting, and assist actions». Это не «только lint»: одна команда смотрит стиль, правила и автоправки вроде сортировки импортов. `--write` нет — в CI и в `just hub-bot-lint` команда только сообщает, не переписывает файлы. `biome format --write .` — отдельный проход, когда формат нужно применить.
 
 `npx biome --version` в этом пакете печатает `2.5.11`. Тот же номер стоит в `devDependencies` как `@biomejs/biome`.
 
 ### Конфиг — три независимых тумблера
 
-`apps/telegram-bot/biome.json` включает три механизма отдельно:
+`apps/hub-bot/biome.json` включает три механизма отдельно:
 
 ```json
 "linter": { "enabled": true, "rules": { "preset": "recommended" } },
@@ -41,7 +41,7 @@ ESLint с `@typescript-eslint` так и работает: поднимает п
 
 ### Спор с `noPropertyAccessFromIndexSignature`
 
-`tsconfig.json` включает `noPropertyAccessFromIndexSignature`: `process.env.TELEGRAM_BOT_TOKEN` — ошибка TS4111, нужен индекс. Правило Biome `useLiteralKeys` предлагает обратное: `fields["error"]` упростить до `fields.error`. Это не баг одного из инструментов — разные модели доступа к индексированному типу.
+`tsconfig.json` включает `noPropertyAccessFromIndexSignature`: `process.env.HUB_BOT_TOKEN` — ошибка TS4111, нужен индекс. Правило Biome `useLiteralKeys` предлагает обратное: `fields["error"]` упростить до `fields.error`. Это не баг одного из инструментов — разные модели доступа к индексированному типу.
 
 Скелет обходит спор формой кода, а не выключением правила. `readEnv(name)` принимает строку и индексирует ею `process.env`. Поля лога в `LogFields` перечислены явно, без `Record<string, …>`: тогда и `tsc`, и Biome принимают точку. Общий приём: не спорь с двумя проверками, измени форму так, чтобы обе видели одно и то же.
 
@@ -79,7 +79,7 @@ Biome форматирует переводом строки LF: в справк
 | `lineEnding: "auto"` вместо `eol=lf` в `.gitattributes` | проверка перестанет падать, но формат станет зависеть от ОС автора: `biome format --write` на Windows перепишет весь пакет в CRLF, а нормализация индекса это спрячет. Лечится причина, а не симптом |
 | `lineEnding: "crlf"` | тот же файл на Linux-раннере CI сразу станет неотформатированным |
 
-Сравнение не тянет на ADR: граница Telegram Bot и выбор grammY уже в [ADR-030](../../decisions/ADR-030-telegram-bot.md). Здесь выбирается инструмент проверки файлов внутри уже принятого стека.
+Сравнение не тянет на ADR: граница Hub Bot и выбор grammY уже в [ADR-030](../../decisions/ADR-030-telegram-bot.md). Здесь выбирается инструмент проверки файлов внутри уже принятого стека.
 
 ## Схема
 
@@ -93,7 +93,7 @@ flowchart LR
   tsc --> types["типы"]
 ```
 
-`just telegram-bot-lint` и джоба `telegram-bot` в CI вызывают `npm run lint` → `biome check .`. Типы туда не входят: их проверяет соседний `npm run typecheck`.
+`just hub-bot-lint` и джоба `hub-bot` в CI вызывают `npm run lint` → `biome check .`. Типы туда не входят: их проверяет соседний `npm run typecheck`.
 
 ## Первоисточники
 

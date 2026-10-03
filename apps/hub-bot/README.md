@@ -1,4 +1,4 @@
-# Telegram Bot
+# Hub Bot
 
 Первый TypeScript-компонент платформы. Принимает `/start` в личном чате, разрешает личность через Identity, показывает полученный из Meetups список видимых сходок и карточку сходки, включая переход по deep link `m_<uuid>`, и ведёт форму создания сходки, сохраняя каждый шаг в Meetups. Карточка показывает материалы в порядке Meetups: ссылки открываются по названию, файлы отправляются отдельной кнопкой. Администратор может привязать пересланное сообщение или Telegram-файл и удалить привязку после явного подтверждения. Список разделяет сходки с датой и без неё; пустой ответ и недоступность Meetups показаны разными экранами.
 
@@ -9,34 +9,34 @@
 Из корня репозитория:
 
 ```bash
-just telegram-bot-tools
-just telegram-bot-proto
-just telegram-bot-build
-just telegram-bot-typecheck
-just telegram-bot-test
-just telegram-bot-test-integration
-just telegram-bot-lint
-just telegram-bot-run
+just hub-bot-tools
+just hub-bot-proto
+just hub-bot-build
+just hub-bot-typecheck
+just hub-bot-test
+just hub-bot-test-integration
+just hub-bot-lint
+just hub-bot-run
 ```
 
-`just telegram-bot-tools` ставит зависимости через `npm ci`. Без него кодогенерация не находит `protoc-gen-es`.
+`just hub-bot-tools` ставит зависимости через `npm ci`. Без него кодогенерация не находит `protoc-gen-es`.
 
-`just telegram-bot-test` гоняет unit и component tests без Docker: наборы `*.integration.test.ts` исключены в `vitest.config.ts`. Их, с Testcontainers, гоняет `just telegram-bot-test-integration` по `vitest.integration.config.ts`; он входит в `just test-all` и CI, а в `just verify` — нет.
+`just hub-bot-test` гоняет unit и component tests без Docker: наборы `*.integration.test.ts` исключены в `vitest.config.ts`. Их, с Testcontainers, гоняет `just hub-bot-test-integration` по `vitest.integration.config.ts`; он входит в `just test-all` и CI, а в `just verify` — нет.
 
-Токен бота — `TELEGRAM_BOT_TOKEN` (обязателен для процесса). Токен бота как вызывающего Identity, Meetups и Notifications ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) — `TELEGRAM_BOT_SERVICE_TOKEN`, тоже обязателен: без него процесс не стартует, а с ним каждый gRPC-вызов несёт `authorization: Bearer <токен>` рядом с `x-request-id` и `x-use-case`. Заголовок ставит транспорт клиента, значение в лог не пишется. Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`; адрес Notifications — `NOTIFICATIONS_GRPC_URL`, по умолчанию `http://127.0.0.1:50053`. Уровень лога — `TELEGRAM_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При заданном `OTEL_EXPORTER_OTLP_ENDPOINT` (его выставляет AppHost) записи уходят ещё и по OTLP в Structured logs dashboard, с тем же порогом; stdout остаётся. По тому же адресу уходят метрики и трейсы: корневой спан `telegram.update <тип>` на каждый update, дочерние спаны вызовов Bot API и gRPC-вызовов Identity, Meetups и Notifications, а W3C `traceparent` в заголовках продолжает трейс в этих сервисах. Без адреса трассировка no-op, и бот работает как прежде.
+Токен бота — `HUB_BOT_TOKEN` (обязателен для процесса). Токен бота как вызывающего Identity, Meetups и Notifications ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) — `HUB_BOT_SERVICE_TOKEN`, тоже обязателен: без него процесс не стартует, а с ним каждый gRPC-вызов несёт `authorization: Bearer <токен>` рядом с `x-request-id` и `x-use-case`. Заголовок ставит транспорт клиента, значение в лог не пишется. Адрес Identity — `IDENTITY_GRPC_URL`, по умолчанию `http://127.0.0.1:50051`; адрес Meetups — `MEETUPS_GRPC_URL`, по умолчанию `http://127.0.0.1:50052`; адрес Notifications — `NOTIFICATIONS_GRPC_URL`, по умолчанию `http://127.0.0.1:50053`. Уровень лога — `HUB_BOT_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При заданном `OTEL_EXPORTER_OTLP_ENDPOINT` (его выставляет AppHost) записи уходят ещё и по OTLP в Structured logs dashboard, с тем же порогом; stdout остаётся. По тому же адресу уходят метрики и трейсы: корневой спан `telegram.update <тип>` на каждый update, дочерние спаны вызовов Bot API и gRPC-вызовов Identity, Meetups и Notifications, а W3C `traceparent` в заголовках продолжает трейс в этих сервисах. Без адреса трассировка no-op, и бот работает как прежде.
 
-Среда Telegram — `TELEGRAM_BOT_ENVIRONMENT`: без переменной процесс работает против продакшна, значение `test` уводит вызовы Bot API в [выделенную тестовую среду](../../docs/decisions/ADR-046-telegram-test-contour.md) на `https://api.telegram.org/bot<token>/test/`. Допустимые значения — `prod` и `test`; любое другое останавливает процесс, а не откатывает его к продакшну. Токен тестового бота выдаёт тестовый BotFather и с продакшн-токеном не взаимозаменяем.
+Среда Telegram — `HUB_BOT_ENVIRONMENT`: без переменной процесс работает против продакшна, значение `test` уводит вызовы Bot API в [выделенную тестовую среду](../../docs/decisions/ADR-046-telegram-test-contour.md) на `https://api.telegram.org/bot<token>/test/`. Допустимые значения — `prod` и `test`; любое другое останавливает процесс, а не откатывает его к продакшну. Токен тестового бота выдаёт тестовый BotFather и с продакшн-токеном не взаимозаменяем.
 
-Часовой пояс сообщества — `TELEGRAM_BOT_COMMUNITY_TIME_ZONE`, имя IANA вроде `Europe/Moscow`, обязательно. В нём карточка показывает назначенный момент публикации, который Meetups отдаёт мгновением UTC. Значение должно совпадать с `MEETUPS_COMMUNITY_TIME_ZONE`: AppHost задаёт обоим одной константой. Пустое или неизвестное имя останавливает процесс на старте.
+Часовой пояс сообщества — `HUB_BOT_COMMUNITY_TIME_ZONE`, имя IANA вроде `Europe/Moscow`, обязательно. В нём карточка показывает назначенный момент публикации, который Meetups отдаёт мгновением UTC. Значение должно совпадать с `MEETUPS_COMMUNITY_TIME_ZONE`: AppHost задаёт обоим одной константой. Пустое или неизвестное имя останавливает процесс на старте.
 
-Карточка по умолчанию отправляется Rich Message. Для операторского отката весь процесс переключается на плоский текст через `TELEGRAM_BOT_PRESENTATION=plain`; допустимые значения — `rich` и `plain`.
+Карточка по умолчанию отправляется Rich Message. Для операторского отката весь процесс переключается на плоский текст через `HUB_BOT_PRESENTATION=plain`; допустимые значения — `rich` и `plain`.
 
 Тесты не ходят в Telegram и не требуют токена.
 
 ## Production-образ
 
 ```bash
-just telegram-bot-image
+just hub-bot-image
 just image-checks-test
 ```
 
@@ -51,10 +51,10 @@ just image-checks-test
 
 Read-only rootfs проверен запуском с `--read-only --cap-drop=all --security-opt no-new-privileges`: процесс разбирает конфигурацию и доходит до подключения к NATS, на диск не пишет.
 
-Публикацию делает только CI: `.github/workflows/image-telegram-bot.yml` вызывает переиспользуемый `image-publish.yml` веткой `containerfile`. В отличие от образов .NET, базы, токен и состав `/app` проверяются до публикации, и образ, который их не прошёл, в GHCR не попадает; uid проверяется общим шагом уже по опубликованному digest, и образ, не прошедший его, остаётся в GHCR без attestation. Pull request собирает и проверяет образ, ничего не записывая в реестр. Push в `develop` публикует `ghcr.io/solguficky/telegram-bot`, снимает SBOM, сканирует его в режиме report-only и выпускает attestation на registry digest; digest печатается в summary прогона. Происхождение проверяет та же команда, что и хост перед выкаткой:
+Публикацию делает только CI: `.github/workflows/image-hub-bot.yml` вызывает переиспользуемый `image-publish.yml` веткой `containerfile`. В отличие от образов .NET, базы, токен и состав `/app` проверяются до публикации, и образ, который их не прошёл, в GHCR не попадает; uid проверяется общим шагом уже по опубликованному digest, и образ, не прошедший его, остаётся в GHCR без attestation. Pull request собирает и проверяет образ, ничего не записывая в реестр. Push в `develop` публикует `ghcr.io/solguficky/hub-bot`, снимает SBOM, сканирует его в режиме report-only и выпускает attestation на registry digest; digest печатается в summary прогона. Происхождение проверяет та же команда, что и хост перед выкаткой:
 
 ```bash
-gh attestation verify oci://ghcr.io/solguficky/telegram-bot@sha256:<digest> --repo Solguficky/solguficky-hub --signer-workflow Solguficky/solguficky-hub/.github/workflows/image-publish.yml --source-ref refs/heads/develop
+gh attestation verify oci://ghcr.io/solguficky/hub-bot@sha256:<digest> --repo Solguficky/solguficky-hub --signer-workflow Solguficky/solguficky-hub/.github/workflows/image-publish.yml --source-ref refs/heads/develop
 ```
 
 Ссылку AppHost на этот `Containerfile` в режиме публикации добавляет PER-370: Aspire ищет Dockerfile только в каталоге приложения и с его контекстом.

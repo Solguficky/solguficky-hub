@@ -1,6 +1,6 @@
 # Тесты на TypeScript
 
-Тесты Telegram Bot запускает Vitest — раннер поверх Vite. Файл объясняет, что он делает с `.ts` и чего принципиально не делает, как подменяется сосед без мок-фреймворка и как проверяется дедлайн, не ожидая три секунды. Устройство модуля и типов — [module-and-types.md](module-and-types.md); что именно проверяется у границы Telegram — [grammy/bot-adapter.md](../grammy/bot-adapter.md); уровни и правила — [standard: стратегия тестирования](../../standards/testing/testing-strategy.md). Тот же вопрос в другом стеке — [go/testing.md](../go/testing.md), и различия ниже отмечены.
+Тесты Hub Bot запускает Vitest — раннер поверх Vite. Файл объясняет, что он делает с `.ts` и чего принципиально не делает, как подменяется сосед без мок-фреймворка и как проверяется дедлайн, не ожидая три секунды. Устройство модуля и типов — [module-and-types.md](module-and-types.md); что именно проверяется у границы Telegram — [grammy/bot-adapter.md](../grammy/bot-adapter.md); уровни и правила — [standard: стратегия тестирования](../../standards/testing/testing-strategy.md). Тот же вопрос в другом стеке — [go/testing.md](../go/testing.md), и различия ниже отмечены.
 
 ## Механика
 
@@ -40,7 +40,7 @@ const wrong: number = "not a number";
 
 завершается `Tests 2 passed`, а `npx tsc --noEmit -p tsconfig.json` на том же файле печатает `error TS2322: Type 'string' is not assignable to type 'number'`.
 
-Отсюда две отдельные команды в гейте — `just telegram-bot-typecheck` и `just telegram-bot-test`, — и обе стоят в `verify`. Зелёный `npm test` не означает, что модуль компилируется; в .NET такое состояние недостижимо, потому что тесты собираются тем же компилятором.
+Отсюда две отдельные команды в гейте — `just hub-bot-typecheck` и `just hub-bot-test`, — и обе стоят в `verify`. Зелёный `npm test` не означает, что модуль компилируется; в .NET такое состояние недостижимо, потому что тесты собираются тем же компилятором.
 
 ### Подмена соседа — тип, а не мок-фреймворк
 

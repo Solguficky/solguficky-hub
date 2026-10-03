@@ -1,8 +1,4 @@
-import {
-  describe,
-  expect,
-  it,
-} from "../../../apps/telegram-bot/testkit/index.js";
+import { describe, expect, it } from "../../../apps/hub-bot/testkit/index.js";
 import { type ChatMessage, ChatScreens, screenOf } from "./chat.js";
 
 // L0: модель экранов живого пульта из сообщений mtcute. Сообщение — объект с

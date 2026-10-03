@@ -33,7 +33,7 @@ export type ContourEnvironment = {
   identityUrl: string;
   meetupsUrl: string;
   maintainerToken: string;
-  /** Токен вызывающего Telegram Bot (ADR-056): провод играет бота. */
+  /** Токен вызывающего Hub Bot (ADR-056): провод играет бота. */
   botServiceToken: string;
 };
 
@@ -41,7 +41,7 @@ const variables = {
   identityUrl: "IDENTITY_GRPC_URL",
   meetupsUrl: "MEETUPS_GRPC_URL",
   maintainerToken: "IDENTITY_MAINTAINER_TOKEN",
-  botServiceToken: "TELEGRAM_BOT_SERVICE_TOKEN",
+  botServiceToken: "HUB_BOT_SERVICE_TOKEN",
 } as const;
 
 /**

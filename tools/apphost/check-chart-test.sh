@@ -53,7 +53,7 @@ EOF
 # tree CASE - a rendered tree with the four MVP workloads
 tree() {
     work="$scratch/$1"
-    for name in identity meetups notifications telegram-bot; do
+    for name in identity meetups notifications hub-bot; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
@@ -87,7 +87,7 @@ work=$(tree good)
 assert_passes "four workloads by the rules pass" "$work"
 
 work=$(tree bot-without-probes)
-sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/telegram-bot/deployment.yaml"
+sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
 assert_passes "the bot is the one workload allowed without probes" "$work"
 
 work=$(tree two-replicas)
@@ -103,8 +103,8 @@ sed -i 's/  strategy:/  strategy:\n    rollingUpdate:\n      maxSurge: 0/' "$wor
 assert_fails "a rollingUpdate block next to Recreate" "notifications: rollingUpdate next to Recreate" "$work"
 
 work=$(tree image-tag)
-sed -i "s|telegram-bot@$digest|telegram-bot:latest|" "$work/solguficky-hub/templates/telegram-bot/deployment.yaml"
-assert_fails "an image by tag" "telegram-bot: image 'ghcr.io/solguficky/telegram-bot:latest' is not pinned" "$work"
+sed -i "s|hub-bot@$digest|hub-bot:latest|" "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
+assert_fails "an image by tag" "hub-bot: image 'ghcr.io/solguficky/hub-bot:latest' is not pinned" "$work"
 
 work=$(tree root)
 sed -i '/runAsNonRoot/d' "$work/solguficky-hub/templates/identity/deployment.yaml"

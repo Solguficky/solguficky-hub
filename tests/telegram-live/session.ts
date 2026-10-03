@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { MemoryStorage, TelegramClient } from "@mtcute/node";
 
 // Секреты живого контура лежат в user-secrets AppHost рядом с
-// `telegram-bot-test-token` (ADR-046, «Граница данных»): второго хранилища
+// `hub-bot-test-token` (ADR-046, «Граница данных»): второго хранилища
 // репозиторий не заводит. Файл — единственная точка входа для Node
 // (`just telegram-live-login`), поэтому относительных импортов в нём нет:
 // type stripping не переписывает `.js` в `.ts`.
@@ -121,7 +121,7 @@ export type MeetupPayloads = {
 };
 
 // Та же форма, что у регулярки бота
-// (apps/telegram-bot/src/presentation/schemas.ts): payload другой формы бот
+// (apps/hub-bot/src/presentation/schemas.ts): payload другой формы бот
 // молча принимает за чистый `/start`, и отрицательный путь зеленел бы, не
 // дойдя до Meetups.
 const meetupPayload = /(?:^|\?start=)(m_[A-Za-z0-9_-]{22})$/;

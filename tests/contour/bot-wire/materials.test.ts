@@ -8,7 +8,7 @@ import {
   openBotWire,
   openDirectClients,
   readContourEnvironment,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 import { fillsMeetupForm, organizerAtStart, titleFor } from "./steps.js";
 
 // Материалы сходки через настоящий Meetups. Команды материала несут

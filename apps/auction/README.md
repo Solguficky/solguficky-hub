@@ -43,7 +43,7 @@ just aspire auction
 | `AUCTION_HTTP_PORT` | `8080` | порт HTTP-границы |
 | `AUCTION_GRPC_HOST` | `127.0.0.1` | адрес, на котором сервис слушает gRPC |
 | `AUCTION_GRPC_PORT` | `8081` | порт gRPC-границы, h2c |
-| `AUCTION_CALLER_TOKEN_TELEGRAM_BOT` | нет, обязательна | токен бота хаба как вызывающего ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) |
+| `AUCTION_CALLER_TOKEN_HUB_BOT` | нет, обязательна | токен бота хаба как вызывающего ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) |
 | `AUCTION_CALLER_TOKEN_AUCTION_BOT` | нет, обязательна | токен бота аукциона как вызывающего; значение отличается от токена бота хаба |
 | `AUCTION_DATABASE_JDBC_URL` | нет, обязательна | JDBC URL базы Auction без учётных данных, `jdbc:postgresql://<хост>:<порт>/auction` |
 | `AUCTION_DATABASE_USER` | нет, обязательна | пользователь базы |
@@ -56,7 +56,7 @@ just aspire auction
 ## Проверка
 
 ```bash
-AUCTION_HTTP_PORT=8080 AUCTION_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/auction AUCTION_DATABASE_USER=postgres AUCTION_DATABASE_PASSWORD=postgres AUCTION_CALLER_TOKEN_TELEGRAM_BOT=hub-local AUCTION_CALLER_TOKEN_AUCTION_BOT=auction-local just auction-run
+AUCTION_HTTP_PORT=8080 AUCTION_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/auction AUCTION_DATABASE_USER=postgres AUCTION_DATABASE_PASSWORD=postgres AUCTION_CALLER_TOKEN_HUB_BOT=hub-local AUCTION_CALLER_TOKEN_AUCTION_BOT=auction-local just auction-run
 ```
 
 ```bash

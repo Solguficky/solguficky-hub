@@ -41,24 +41,24 @@ Subjects удалённой аукционной ветки перечислен
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Telegram Bot: бот хаба и бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Identity |
-| `IdentityService.RequestRole` | то же | Telegram Bot: бот хаба и бот аукциона | Identity |
-| `IdentityService.ResolveTelegramUserId` | то же | Telegram Bot | Identity |
+| `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Hub Bot и Auction Bot ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Identity |
+| `IdentityService.RequestRole` | то же | Hub Bot и Auction Bot | Identity |
+| `IdentityService.ResolveTelegramUserId` | то же | Hub Bot | Identity |
 | `IdentityService.CheckGlobalRole` | то же | Notifications, Meetups | Identity |
-| `IdentityService.ResolveOrganizerUsername` | то же | Telegram Bot | Identity |
+| `IdentityService.ResolveOrganizerUsername` | то же | Hub Bot | Identity |
 | `IdentityService.GrantAdminRole` | то же | Maintainer (`grpcurl`) | Identity |
 | `IdentityService.RevokeAdminRole` | то же | Maintainer (`grpcurl`) | Identity |
-| `IdentityService.ListCommunityMembers` | то же | Telegram Bot | Identity |
-| `IdentityService.AdmitCommunityMember` | то же | Telegram Bot | Identity |
-| `IdentityService.BlockCommunityMember` | то же | Telegram Bot | Identity |
-| `IdentityService.ListAllowedUsernames` | то же | Telegram Bot | Identity |
-| `IdentityService.AddAllowedUsername` | то же | Telegram Bot | Identity |
-| `IdentityService.RemoveAllowedUsername` | то же | Telegram Bot | Identity |
-| `IdentityService.ReadApplicationQueue` | то же | Telegram Bot | Identity |
-| `IdentityService.AdmitApplication` | то же | Telegram Bot | Identity |
-| `IdentityService.DeclineApplication` | то же | Telegram Bot | Identity |
-| `IdentityService.ListRefusedApplications` | то же | Telegram Bot | Identity |
-| `IdentityService.ReconsiderApplication` | то же | Telegram Bot | Identity |
+| `IdentityService.ListCommunityMembers` | то же | Hub Bot | Identity |
+| `IdentityService.AdmitCommunityMember` | то же | Hub Bot | Identity |
+| `IdentityService.BlockCommunityMember` | то же | Hub Bot | Identity |
+| `IdentityService.ListAllowedUsernames` | то же | Hub Bot | Identity |
+| `IdentityService.AddAllowedUsername` | то же | Hub Bot | Identity |
+| `IdentityService.RemoveAllowedUsername` | то же | Hub Bot | Identity |
+| `IdentityService.ReadApplicationQueue` | то же | Hub Bot | Identity |
+| `IdentityService.AdmitApplication` | то же | Hub Bot | Identity |
+| `IdentityService.DeclineApplication` | то же | Hub Bot | Identity |
+| `IdentityService.ListRefusedApplications` | то же | Hub Bot | Identity |
+| `IdentityService.ReconsiderApplication` | то же | Hub Bot | Identity |
 
 Запрос: `telegram_user_id` (`int64`) и `telegram_username`, если ник есть. Ответ: `identity_id` канонической UUIDv7-строкой, `global_roles` из `GlobalRole` и отметка блокировки `blocked` (`bool`) отдельным полем ([PER-254](https://linear.app/anticnvm/issue/per-254)). Словарь ролей — четыре значения: `GLOBAL_ROLE_MAINTAINER`, `GLOBAL_ROLE_ADMIN`, `GLOBAL_ROLE_MEMBER`, `GLOBAL_ROLE_PUBLIC`; пустой набор — обычный пользователь, порядок значений контракт не обещает. `blocked` — не роль и не отсутствие ролей: блокировка отзывает активные роли, поэтому по пустому набору заблокированный неотличим от человека, который ни разу не начинал, и отметка читается отдельно, а не выводится из набора. Поле обычное, без presence: отсутствие поля у старого сервера читается как «не заблокирован», доступа это не ослабляет — доступ решает набор ролей, а отметка выбирает только текст отказа ([ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md), [ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). Отметка передаётся только в ответе разрешения личности: в `Viewer` Meetups её нет, доменное решение о доступе принимается по ролям.
 
@@ -96,9 +96,9 @@ Subjects удалённой аукционной ветки перечислен
 
 Других путей к выдаче в вызове нет: ни один исход не означает роль, выданную только потому, что её попросили. `outcome` говорит о запрошенном круге, а `global_roles` — обо всех ролях: в боте хаба запись аукционного списка гасится и выдаёт `public`, а исход остаётся `PENDING` на `member`. Заблокированный и `declined` отличимы от «на рассмотрении» самим исходом, поэтому отдельного поля `blocked` в ответе нет: `BLOCKED` ставится тогда и только тогда, когда стоит отметка. Ответ с `BLOCKED` потребитель читает как отказ, даже если в `global_roles` осталась роль: блокировка мимо ядра оставила бы её активной, и исход здесь главнее набора — та же страховка, что у `CheckGlobalRole`. Нулевое значение `UNSPECIFIED` — неизвестный потребителю исход — и любой статус, кроме `OK`, тоже читаются как отказ, fail-closed. Пока Identity метод не реализовал, он отвечает `UNIMPLEMENTED` ([PER-266](https://linear.app/anticnvm/issue/per-266)), и это такой же отказ. На `/start` бот вызывает `RequestRole` вместо `ResolveIdentity`, а не вслед за ним: личность разрешается один раз на update, и белый список гасит одна операция.
 
-Неположительный `telegram_user_id` и `requested_role` вне `GLOBAL_ROLE_MEMBER` и `GLOBAL_ROLE_PUBLIC` метод отвергает `INVALID_ARGUMENT`: роль просят только по кругу поверхности, а `admin` и `maintainer` через этот вызов не просят. Вызывающие — бот хаба и бот аукциона; каждый доказывает себя своим токеном по [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) (`TELEGRAM_BOT_SERVICE_TOKEN` и `AUCTION_BOT_SERVICE_TOKEN`), а не maintainer-секретом, и, когда Identity включит проверку вызывающих, любой другой вызывающий получит `UNAUTHENTICATED` ([Service authentication](#service-authentication)); до неё метод, как и остальные методы Identity, вызывающего не различает. Какой круг просит какой бот, Identity по токену не сверяет: правило словаря держит его в стороне от поверхностей. Цена — ошибка поверхности меняет исход модерации: бот хаба, попросивший по ошибке `public`, ставит заявку, отказ по которой — блокировка, а не `declined`. Актора в запросе нет: человек на `/start` ещё не установлен, его устанавливает сам вызов.
+Неположительный `telegram_user_id` и `requested_role` вне `GLOBAL_ROLE_MEMBER` и `GLOBAL_ROLE_PUBLIC` метод отвергает `INVALID_ARGUMENT`: роль просят только по кругу поверхности, а `admin` и `maintainer` через этот вызов не просят. Вызывающие — бот хаба и бот аукциона; каждый доказывает себя своим токеном по [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) (`HUB_BOT_SERVICE_TOKEN` и `AUCTION_BOT_SERVICE_TOKEN`), а не maintainer-секретом, и, когда Identity включит проверку вызывающих, любой другой вызывающий получит `UNAUTHENTICATED` ([Service authentication](#service-authentication)); до неё метод, как и остальные методы Identity, вызывающего не различает. Какой круг просит какой бот, Identity по токену не сверяет: правило словаря держит его в стороне от поверхностей. Цена — ошибка поверхности меняет исход модерации: бот хаба, попросивший по ошибке `public`, ставит заявку, отказ по которой — блокировка, а не `declined`. Актора в запросе нет: человек на `/start` ещё не установлен, его устанавливает сам вызов.
 
-Модерацию заявок ведут пять методов: `ReadApplicationQueue`, `AdmitApplication`, `DeclineApplication`, `ListRefusedApplications` и `ReconsiderApplication` ([ADR-060](../decisions/ADR-060-auction-access-premoderation.md), пункты 8–14 и 20–23; [PER-436](https://linear.app/anticnvm/issue/per-436)). Вызывающий у всех пяти один — бот хаба: карточка очереди и список отказанных открываются из меню администратора хаба ([PER-439](https://linear.app/anticnvm/issue/per-439), [PER-440](https://linear.app/anticnvm/issue/per-440)), а бот аукциона экранов модератора не держит. Право доказывается двумя слоями, как у команд состава. Процесс предъявляет `TELEGRAM_BOT_SERVICE_TOKEN` по [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md): когда Identity включит проверку вызывающих, любой другой вызывающий получит `UNAUTHENTICATED` ([Service authentication](#service-authentication)). Человек приходит полем `actor` — личность и роли, которые бот установил из того же update: без `GLOBAL_ROLE_ADMIN` в наборе Identity отвечает `PERMISSION_DENIED`. Методы реализованы в [PER-437](https://linear.app/anticnvm/issue/per-437); заявку на `/start` ставит `RequestRole` ([PER-266](https://linear.app/anticnvm/issue/per-266)), и до него очередь наполняют только ожидающие хаба, перенесённые миграцией.
+Модерацию заявок ведут пять методов: `ReadApplicationQueue`, `AdmitApplication`, `DeclineApplication`, `ListRefusedApplications` и `ReconsiderApplication` ([ADR-060](../decisions/ADR-060-auction-access-premoderation.md), пункты 8–14 и 20–23; [PER-436](https://linear.app/anticnvm/issue/per-436)). Вызывающий у всех пяти один — бот хаба: карточка очереди и список отказанных открываются из меню администратора хаба ([PER-439](https://linear.app/anticnvm/issue/per-439), [PER-440](https://linear.app/anticnvm/issue/per-440)), а бот аукциона экранов модератора не держит. Право доказывается двумя слоями, как у команд состава. Процесс предъявляет `HUB_BOT_SERVICE_TOKEN` по [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md): когда Identity включит проверку вызывающих, любой другой вызывающий получит `UNAUTHENTICATED` ([Service authentication](#service-authentication)). Человек приходит полем `actor` — личность и роли, которые бот установил из того же update: без `GLOBAL_ROLE_ADMIN` в наборе Identity отвечает `PERMISSION_DENIED`. Методы реализованы в [PER-437](https://linear.app/anticnvm/issue/per-437); заявку на `/start` ставит `RequestRole` ([PER-266](https://linear.app/anticnvm/issue/per-266)), и до него очередь наполняют только ожидающие хаба, перенесённые миграцией.
 
 `ReadApplicationQueue` читает одну очередь на обе поверхности: открытые заявки на `member` и `public` вместе, от старых к новым по паре (`created_at`, `application_id`). Без `after` ответ — самая старая открытая заявка, с `after` — первая строго после этой пары. Курсор — ключ, а не ссылка: заявка, на которой стоит курсор, к следующему чтению может быть уже решена, и ответом всё равно будет следующая открытая после неё, а не `NOT_FOUND`. Бот хранит курсор в `callback_data` кнопки «Пропустить» ([ADR-030](../decisions/ADR-030-telegram-bot.md): своего хранилища у экрана нет). Поэтому `created_at` несёт ровно миллисекундную точность, и Identity хранит и упорядочивает момент создания с той же точностью, а не с более тонкой: иначе заявка из `.123456` стояла бы после курсора `.123` сама за собой, и «Пропустить» возвращал бы ту же карточку. Бот может упаковать курсор короче — `application_id` токеном в 22 символа и момент числом миллисекунд, — если вернёт тот же момент и тот же id; Identity сравнивает момент, а не строку. Ответ без `application` значит, что после курсора открытых заявок нет. К началу очереди чтение не заворачивает, и «Пропустить» на последней карточке сообщает о конце очереди. `position` — номер карточки среди открытых, считая с единицы, `total` — число открытых заявок; оба числа и сама карточка берутся из одного снимка, поэтому в одном ответе `position` не больше `total`. Из них и собирается «Заявка N из M». Очередь разбирают параллельно, поэтому между чтениями числа сдвигаются, и это не ошибка.
 
@@ -112,26 +112,26 @@ Subjects удалённой аукционной ветки перечислен
 
 Коды отказа у всех пяти методов — те же, что у команд состава. `PERMISSION_DENIED` — нет `actor` или у актора нет `admin`. `INVALID_ARGUMENT` — `identity_id` актора не UUID, `application_id` не в канонической форме, у курсора пусто хотя бы одно поле или `created_at` не RFC 3339. `NOT_FOUND` — неизвестный `application_id` в решении или пересмотре. `FAILED_PRECONDITION` — пересмотр заявки, не закрытой отказом, или `DECLINED` у заблокированного профиля.
 
-Каждый вызов Identity и Meetups, начатый Telegram update, получает метаданные gRPC `x-request-id` и `x-use-case`. Telegram Bot создаёт `request_id` один раз на границе update и передаёт `use_case` того сценария, который начал человек; оба сервиса только принимают эти значения и записывают структурными полями. В Protobuf payload запросов они не входят. `request_id` команды, которая порождает доменное событие, Meetups дополнительно сохраняет в строке журнала и публикует полем конверта события ([PER-227](https://linear.app/anticnvm/issue/per-227)); `use_case` в журнал не входит. Вызов без заголовков допустим для health check и ручной диагностики: новый идентификатор принимающий сервис не создаёт, а `use_case` не выводит из своего метода.
+Каждый вызов Identity и Meetups, начатый Telegram update, получает метаданные gRPC `x-request-id` и `x-use-case`. Hub Bot создаёт `request_id` один раз на границе update и передаёт `use_case` того сценария, который начал человек; оба сервиса только принимают эти значения и записывают структурными полями. В Protobuf payload запросов они не входят. `request_id` команды, которая порождает доменное событие, Meetups дополнительно сохраняет в строке журнала и публикует полем конверта события ([PER-227](https://linear.app/anticnvm/issue/per-227)); `use_case` в журнал не входит. Вызов без заголовков допустим для health check и ручной диагностики: новый идентификатор принимающий сервис не создаёт, а `use_case` не выводит из своего метода.
 
 ### Meetups gRPC
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `MeetupsService.CreateMeetupDraft` | `meetups.v1` в `contracts/proto/meetups/v1/meetups_service.proto`; типы значений — `contracts/proto/meetups/v1/meetups.proto` | Telegram Bot | Meetups |
-| `MeetupsService.ChangeMeetupAttributes` | то же | Telegram Bot | Meetups |
-| `MeetupsService.SetMeetupSchedule` | то же | Telegram Bot | Meetups |
-| `MeetupsService.PublishMeetup` | то же | Telegram Bot | Meetups |
-| `MeetupsService.ScheduleMeetupPublication` | то же | Telegram Bot | Meetups |
-| `MeetupsService.CancelMeetupPublication` | то же | Telegram Bot | Meetups |
-| `MeetupsService.UnpublishMeetup` | то же | Telegram Bot | Meetups |
-| `MeetupsService.CancelMeetup` | то же | Telegram Bot | Meetups |
-| `MeetupsService.AttachMaterial` | то же | Telegram Bot | Meetups |
-| `MeetupsService.RemoveMaterial` | то же | Telegram Bot | Meetups |
-| `MeetupsService.MarkMeetupHeld` | то же | Telegram Bot | Meetups |
-| `MeetupsService.ListVisibleMeetups` | то же | Telegram Bot | Meetups |
-| `MeetupsService.ListArchivedMeetups` | то же | Telegram Bot | Meetups |
-| `MeetupsService.GetMeetup` | то же | Telegram Bot | Meetups |
+| `MeetupsService.CreateMeetupDraft` | `meetups.v1` в `contracts/proto/meetups/v1/meetups_service.proto`; типы значений — `contracts/proto/meetups/v1/meetups.proto` | Hub Bot | Meetups |
+| `MeetupsService.ChangeMeetupAttributes` | то же | Hub Bot | Meetups |
+| `MeetupsService.SetMeetupSchedule` | то же | Hub Bot | Meetups |
+| `MeetupsService.PublishMeetup` | то же | Hub Bot | Meetups |
+| `MeetupsService.ScheduleMeetupPublication` | то же | Hub Bot | Meetups |
+| `MeetupsService.CancelMeetupPublication` | то же | Hub Bot | Meetups |
+| `MeetupsService.UnpublishMeetup` | то же | Hub Bot | Meetups |
+| `MeetupsService.CancelMeetup` | то же | Hub Bot | Meetups |
+| `MeetupsService.AttachMaterial` | то же | Hub Bot | Meetups |
+| `MeetupsService.RemoveMaterial` | то же | Hub Bot | Meetups |
+| `MeetupsService.MarkMeetupHeld` | то же | Hub Bot | Meetups |
+| `MeetupsService.ListVisibleMeetups` | то же | Hub Bot | Meetups |
+| `MeetupsService.ListArchivedMeetups` | то же | Hub Bot | Meetups |
+| `MeetupsService.GetMeetup` | то же | Hub Bot | Meetups |
 | `MeetupsService.ListMeetupStates` | gRPC | — (вызывающего нет; первым ожидается Notifications) | Meetups |
 | `MeetupsService.CheckMeetupAuthority` | то же | Notifications ([PER-225](https://linear.app/anticnvm/issue/per-225)) | Meetups |
 
@@ -143,7 +143,7 @@ Subjects удалённой аукционной ветки перечислен
 
 `ListVisibleMeetups`, `ListArchivedMeetups` и `GetMeetup` реализованы тремя query slices поверх одного reader API. Reader принимает смотрящего и только две области выборки — весь список или один `MeetupId` — и читает существующую таблицу `meetups`, без отдельной проекции. Актуальный список отдаёт видимые сходки, которые ещё не в архиве, архив — видимые, которые в него ушли. Разделение считает доменное правило по расписанию и календарному дню сообщества: состоявшаяся и отменённая уходят в архив сразу, планируемая — когда её последняя названная дата стала раньше сегодняшней; `NoDate` и `Tentative` прошедшими не становятся, время из расписания не выдумывается. День сообщества считает обязательный IANA-пояс `MEETUPS_COMMUNITY_TIME_ZONE`. Актуальный список сортируется по календарной дате; запись без даты идёт последней, дата без времени — раньше времени в тот же день, равные расписания остаются без дополнительного порядка. Архив читается обратным порядком — новейшая дата первой, — и сходки без даты идут в нём последними. Карточка по отсутствующему id отвечает `NOT_FOUND`.
 
-Фильтр видимости стоит внутри reader, а не в Telegram Bot и не в отдельных RPC: смотрящий видит видимую сходку, свою собственную и — администратором — любую. Правило объявлено доменом в `Access.canView` и применяется на выборке равносильным предикатом, поэтому оба пользовательских запроса получают его одинаково. `ListMeetupStates` идёт мимо этого фильтра сознательно: он служебный, смотрящего не принимает и правил человеческой видимости не применяет.
+Фильтр видимости стоит внутри reader, а не в Hub Bot и не в отдельных RPC: смотрящий видит видимую сходку, свою собственную и — администратором — любую. Правило объявлено доменом в `Access.canView` и применяется на выборке равносильным предикатом, поэтому оба пользовательских запроса получают его одинаково. `ListMeetupStates` идёт мимо этого фильтра сознательно: он служебный, смотрящего не принимает и правил человеческой видимости не применяет.
 
 `CreateMeetupDraft` принимает `id` — каноническую UUIDv7-строку, которую генерирует вызывающая сторона; это же ключ идемпотентности ([ADR-030](../decisions/ADR-030-telegram-bot.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md)). Отдельного поля ключа нет. Meetups атомарно связывает пару (автор, `id`) с черновиком: ключ уникален в пределах автора и живёт вместе со строкой сходки. Повтор с тем же `id` и тем же смотрящим возвращает текущий снимок и не создаёт вторую запись. Повтор с тем же `id` и другим смотрящим неотличим от «не найдено».
 
@@ -181,22 +181,22 @@ Subjects удалённой аукционной ветки перечислен
 
 ADR-031 фиксирует доменное событие и строку журнала, а [ADR-035](../decisions/ADR-035-meetups-dispatch-mark-in-journal.md) — чем публикация отмечает отправленное. Конверт публикации, subject'ы и wire-формат описаны в разделе [Meetups NATS](#meetups-nats); публикует их адаптер из журнала ([PER-209](https://linear.app/anticnvm/issue/per-209)) с подтверждением по ack JetStream. `ListMeetupStates` создаёт источник начального состояния для будущей реплики Notifications, но не реализует саму реплику.
 
-Wire-схемы gRPC API для Telegram Bot и reminders ещё не приняты.
+Wire-схемы gRPC API для Hub Bot и reminders ещё не приняты.
 
 ### Notifications gRPC
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `NotificationsService.SubscribeToMeetup` | `notifications.v1` в `contracts/proto/notifications/v1/notifications_service.proto` | Telegram Bot | Notifications |
-| `NotificationsService.UnsubscribeFromMeetup` | то же | Telegram Bot | Notifications |
-| `NotificationsService.SetGlobalCategoryPreference` | то же | Telegram Bot | Notifications |
-| `NotificationsService.SetMeetupCategoryPreference` | то же | Telegram Bot | Notifications |
-| `NotificationsService.GetGlobalNotificationPreferences` | то же | Telegram Bot | Notifications |
-| `NotificationsService.GetMeetupNotificationPreferences` | то же | Telegram Bot | Notifications |
-| `NotificationsService.BroadcastToMeetupSubscribers` | то же | Telegram Bot | Notifications |
-| `NotificationsService.BroadcastToCommunity` | то же | Telegram Bot | Notifications |
+| `NotificationsService.SubscribeToMeetup` | `notifications.v1` в `contracts/proto/notifications/v1/notifications_service.proto` | Hub Bot | Notifications |
+| `NotificationsService.UnsubscribeFromMeetup` | то же | Hub Bot | Notifications |
+| `NotificationsService.SetGlobalCategoryPreference` | то же | Hub Bot | Notifications |
+| `NotificationsService.SetMeetupCategoryPreference` | то же | Hub Bot | Notifications |
+| `NotificationsService.GetGlobalNotificationPreferences` | то же | Hub Bot | Notifications |
+| `NotificationsService.GetMeetupNotificationPreferences` | то же | Hub Bot | Notifications |
+| `NotificationsService.BroadcastToMeetupSubscribers` | то же | Hub Bot | Notifications |
+| `NotificationsService.BroadcastToCommunity` | то же | Hub Bot | Notifications |
 
-Восемь синхронных операций — это command plane [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md): управление подписками, настройками категорий и обеими ручными рассылками. Event plane — потребление событий Meetups и Identity — в контракт среза не входит и остаётся непринятым. В MVP единственный клиент — Telegram Bot, но это свойство текущего состава платформы, а не контракта: мини-приложение становится вторым клиентом того же API.
+Восемь синхронных операций — это command plane [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md): управление подписками, настройками категорий и обеими ручными рассылками. Event plane — потребление событий Meetups и Identity — в контракт среза не входит и остаётся непринятым. В MVP единственный клиент — Hub Bot, но это свойство текущего состава платформы, а не контракта: мини-приложение становится вторым клиентом того же API.
 
 Каждый запрос предъявляет `identity_id` — каноническую UUIDv7-строку человека, к которому относится команда. **Сообщения с ролями здесь нет, и его отсутствие содержательно.** У обоих соседей такое сообщение есть: `meetups.v1.Viewer` и `identity.v1.IdentityActor` несут `global_roles`, потому что оба домена принимают решение о доступе по ролям сами — Meetups по правилам сходки, Identity по наличию роли `admin` у команд администратора. Notifications не принимает такого решения ни разу: подписки и настройки человек меняет себе, а право на обе рассылки проверяется синхронным вызовом владельца ресурса на самой команде. Поле с ролями означало бы, что заявление вызывающего что-то решает, — ровно то, от чего ADR-028 отказался фразой «проверка стоит на самой команде, а не в вызывающем интерфейсе». Готового разрешения, роли организатора и признака доставки в запросах нет по той же причине.
 
@@ -245,7 +245,7 @@ Wire-схемы gRPC API для Telegram Bot и reminders ещё не приня
 
 Реплика нужна рассылке по сходке ради карточки `MeetupCard` в `OrganizerMessage`, а не ради права. Если Meetups право подтвердил, а реплика сходку ещё не знает, карточку собрать не из чего: сервис отвечает `UNAVAILABLE` и ключ не принимает, поэтому повтор с тем же `id` проходит, когда реплика догонит. Отказом по праву такой исход не является — право уже подтверждено владельцем.
 
-Потребитель у `notifications/v1` один — сам сервис: `Notifications.Contracts` генерирует из него сервер, и шесть операций подписок и настроек реализованы ([PER-213](https://linear.app/anticnvm/issue/per-213)). Обе рассылки реализованы ([PER-225](https://linear.app/anticnvm/issue/per-225)). Клиент у контракта один — Telegram Bot: подписки и настройки он вызывает с [PER-214](https://linear.app/anticnvm/issue/per-214), обе рассылки — с [PER-226](https://linear.app/anticnvm/issue/per-226). Для проверки права `Notifications.Contracts` генерирует клиентов `identity/v1/identity_service.proto` и `meetups/v1/meetups_service.proto`; вызываются из них только `CheckGlobalRole` и `CheckMeetupAuthority`. Кодогенерация Identity и Telegram Bot сужает вход фильтром `paths`, а `Meetups.Contracts` перечисляет файлы поимённо, поэтому схему нового домена не читает ни одна джоба потребителя. Компиляцию модуля держит отдельная джоба `contracts` и рецепт `just contracts-build`, входящий в `verify`. Стиль и совместимость схем держат `just contracts-check` и та же джоба: `buf lint` по `contracts/proto/buf.yaml` и `buf breaking` против `origin/develop`.
+Потребитель у `notifications/v1` один — сам сервис: `Notifications.Contracts` генерирует из него сервер, и шесть операций подписок и настроек реализованы ([PER-213](https://linear.app/anticnvm/issue/per-213)). Обе рассылки реализованы ([PER-225](https://linear.app/anticnvm/issue/per-225)). Клиент у контракта один — Hub Bot: подписки и настройки он вызывает с [PER-214](https://linear.app/anticnvm/issue/per-214), обе рассылки — с [PER-226](https://linear.app/anticnvm/issue/per-226). Для проверки права `Notifications.Contracts` генерирует клиентов `identity/v1/identity_service.proto` и `meetups/v1/meetups_service.proto`; вызываются из них только `CheckGlobalRole` и `CheckMeetupAuthority`. Кодогенерация Identity и Hub Bot сужает вход фильтром `paths`, а `Meetups.Contracts` перечисляет файлы поимённо, поэтому схему нового домена не читает ни одна джоба потребителя. Компиляцию модуля держит отдельная джоба `contracts` и рецепт `just contracts-build`, входящий в `verify`. Стиль и совместимость схем держат `just contracts-check` и та же джоба: `buf lint` по `contracts/proto/buf.yaml` и `buf breaking` против `origin/develop`.
 
 Соответствие кадрам макета неполное, и это надо назвать прямо. Кадр есть у четырёх операций: `SetMeetupCategoryPreference` и `GetMeetupNotificationPreferences` стоят за P-07, где переключаются ровно те четыре категории, которые сходка может нести, а `SubscribeToMeetup` и `UnsubscribeFromMeetup` — за P-07 и P-13.
 
@@ -257,18 +257,18 @@ Wire-схемы gRPC API для Telegram Bot и reminders ещё не приня
 
 Notifications публикует наружу не команду каналу, а факт «человеку положено такое уведомление»: явный получатель во внутреннем идентификаторе, тип уведомления со структурированными данными — типизированным `oneof`, а не строковым кодом со свободным словарём. Готового текста и `chat_id` в сообщении нет, обратных событий о доставке нет. Команда `commands.telegram.send_message` из удалённой аукционной ветки формой будущего контракта не является: она несла `chat_id` и готовый текст, то есть ровно то, от чего [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) отказался. Словарь типов уведомлений принят и описан ниже: это межсервисный контракт, он меняется согласованно с потребителями.
 
-Identity публикует события о регистрации, выдаче и отзыве роли и о блокировке: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) вводит эти события, [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md) заменяет в них смену статуса допуска сменой роли). Текст ADR-028 говорит про статус допуска и задним числом не переписывается; действующей формулировкой является эта. Схема принята и описана в разделе «Identity NATS» ниже. Telegram Bot устанавливает Telegram identity из принятого апдейта: вход идёт long polling, доверенностью служит владение bot token, входящего HTTP и secret token у компонента нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity разрешает Telegram user id во внутренний id и глобальные роли, а Meetups принимает доменные authorization-решения. Статус допуска входит в полную модель ADR-026, но в контракт среза не входит; его место занимают роли и отметка блокировки ([ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md)), и они внесены в ответ `ResolveIdentity` ([PER-254](https://linear.app/anticnvm/issue/per-254)) и в снимок исходящих событий о ролях и блокировке. Authentication material через Identity не проходит.
+Identity публикует события о регистрации, выдаче и отзыве роли и о блокировке: их потребляет Notifications, который ведёт по ним собственную реплику ([ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) вводит эти события, [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md) заменяет в них смену статуса допуска сменой роли). Текст ADR-028 говорит про статус допуска и задним числом не переписывается; действующей формулировкой является эта. Схема принята и описана в разделе «Identity NATS» ниже. Hub Bot устанавливает Telegram identity из принятого апдейта: вход идёт long polling, доверенностью служит владение bot token, входящего HTTP и secret token у компонента нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity разрешает Telegram user id во внутренний id и глобальные роли, а Meetups принимает доменные authorization-решения. Статус допуска входит в полную модель ADR-026, но в контракт среза не входит; его место занимают роли и отметка блокировки ([ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md)), и они внесены в ответ `ResolveIdentity` ([PER-254](https://linear.app/anticnvm/issue/per-254)) и в снимок исходящих событий о ролях и блокировке. Authentication material через Identity не проходит.
 
 ### Auction gRPC
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
-| `AuctionService.PlaceBid` | `auction.v1` в `contracts/proto/auction/v1/auction_service.proto`; типы значений — `contracts/proto/auction/v1/auction.proto` | Telegram Bot: бот хаба и бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Auction |
+| `AuctionService.PlaceBid` | `auction.v1` в `contracts/proto/auction/v1/auction_service.proto`; типы значений — `contracts/proto/auction/v1/auction.proto` | Hub Bot и Auction Bot ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Auction |
 | `AuctionService.SetProxyLimit` | то же | то же | Auction |
 | `AuctionService.WithdrawProxyLimit` | то же | то же | Auction |
 | `AuctionService.CreateLotCard` | то же | то же; форма лота администратора в общем пакете экранов ([PER-319](https://linear.app/anticnvm/issue/per-319)) | Auction |
 | `AuctionService.EditLotCard` | то же | то же | Auction |
-| `AuctionService.GetLot` | то же | Telegram Bot: бот хаба и бот аукциона ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Auction |
+| `AuctionService.GetLot` | то же | Hub Bot и Auction Bot ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Auction |
 | `AuctionService.ListAuctionLots` | то же | то же | Auction |
 | `AuctionService.ChooseDisplayName` | то же | то же; предупреждение и выбор имени при первой ставке ([PER-317](https://linear.app/anticnvm/issue/per-317)) | Auction |
 | `AuctionService.GetDisplayNames` | то же | то же | Auction |
@@ -389,13 +389,13 @@ Subject называет повод, сообщение на всех повод
 
 | Subject | Message | Producer | Consumers |
 |---|---|---|---|
-| `events.notifications.notification_created` | `notifications.v1.Notification` в `contracts/proto/notifications/v1/notifications.proto` | Notifications | каналы доставки: Telegram Bot для типов сходок и ручных рассылок, бот аукциона для типов аукциона |
+| `events.notifications.notification_created` | `notifications.v1.Notification` в `contracts/proto/notifications/v1/notifications.proto` | Notifications | каналы доставки: Hub Bot для типов сходок и ручных рассылок, бот аукциона для типов аукциона |
 
 Производитель у всех типов один — Notifications; потребитель выбирается по ветке `oneof type`:
 
 | Ветка | Повод | Задача производителя | Канал |
 |---|---|---|---|
-| `meetup_published`, `meetup_changed`, `meetup_material`, `meetup_reminder`, `organizer_message`, `community_announcement`, `meetup_unpublished` | события Meetups, задание напоминания, команды ручной рассылки | [PER-216](https://linear.app/anticnvm/issue/per-216), [PER-218](https://linear.app/anticnvm/issue/per-218), [PER-364](https://linear.app/anticnvm/issue/per-364), [PER-225](https://linear.app/anticnvm/issue/per-225) | Telegram Bot ([PER-217](https://linear.app/anticnvm/issue/per-217)) |
+| `meetup_published`, `meetup_changed`, `meetup_material`, `meetup_reminder`, `organizer_message`, `community_announcement`, `meetup_unpublished` | события Meetups, задание напоминания, команды ручной рассылки | [PER-216](https://linear.app/anticnvm/issue/per-216), [PER-218](https://linear.app/anticnvm/issue/per-218), [PER-364](https://linear.app/anticnvm/issue/per-364), [PER-225](https://linear.app/anticnvm/issue/per-225) | Hub Bot ([PER-217](https://linear.app/anticnvm/issue/per-217)) |
 | `lot_outbid` | `events.auction.bid_placed` | [PER-326](https://linear.app/anticnvm/issue/per-326) | бот аукциона ([PER-328](https://linear.app/anticnvm/issue/per-328)) |
 | `lot_purchased` | `events.auction.lot_sold` | [PER-327](https://linear.app/anticnvm/issue/per-327) | бот аукциона ([PER-328](https://linear.app/anticnvm/issue/per-328)) |
 
@@ -490,7 +490,7 @@ Subject называет повод, сообщение на всех повод
 | `notifications-identity-events` | `IDENTITY_EVENTS` | `events.identity.>` | Notifications, реплика доступа |
 | `notifications-auction-events` | `AUCTION_EVENTS` | `events.auction.>` | Notifications, отдельный модуль поводов Auction; сейчас `bid_placed` |
 | `nats-tester-auction-events` | `AUCTION_EVENTS` | `events.auction.>` | `tools/nats-tester`, ручная проверка |
-| `telegram-bot-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | Telegram Bot, канал доставки уведомлений |
+| `hub-bot-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | Hub Bot, канал доставки уведомлений |
 | `nats-tester-meetups-events` | `MEETUPS_EVENTS` | `events.meetups.>` | `tools/nats-tester`, ручная проверка |
 | `nats-tester-identity-events` | `IDENTITY_EVENTS` | `events.identity.>` | то же |
 | `nats-tester-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | то же |
@@ -505,7 +505,7 @@ Subject называет повод, сообщение на всех повод
 
 | Bucket | Владелец | Ключ | Хранение |
 |---|---|---|---|
-| `telegram-bot-deliveries` | Telegram Bot, журнал попыток доставки | `notification_id` | `file`, одна версия на ключ, `max_age` — окно стрима плюс сутки |
+| `hub-bot-deliveries` | Hub Bot, журнал попыток доставки | `notification_id` | `file`, одна версия на ключ, `max_age` — окно стрима плюс сутки |
 
 Bucket объявляет та же таблица топологии AppHost, что и durable, по тому же доводу: настройки хранения не расходятся по двум языкам, а потребитель к bucket только привязывается и без него не стартует ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md)). Срок жизни записи длиннее окна стрима: запись обязана пережить последнюю повторную выдачу своего сообщения.
 
@@ -514,7 +514,7 @@ Bucket объявляет та же таблица топологии AppHost, �
 Доставка at-least-once, и защита от повтора двухслойная.
 
 - **Publisher** ставит заголовок `Nats-Msg-Id` равным `event_id` конверта; у адресного факта, где конверта события нет, — равным `notification_id`. Повтор той же публикации внутри окна стрима сервер отбрасывает. Это оптимизация, а не гарантия: повтор после окна и повторную доставку потребителю после потерянного ack она не ловит. Правило исполняют адаптеры Meetups ([PER-209](https://linear.app/anticnvm/issue/per-209)) и Identity ([PER-210](https://linear.app/anticnvm/issue/per-210)), релей адресных фактов Notifications ([PER-216](https://linear.app/anticnvm/issue/per-216)) и релей фактов лота Auction ([PER-331](https://linear.app/anticnvm/issue/per-331)). Адаптеры Meetups и Identity и релей Auction дополнительно ставят `Nats-Expected-Stream` — `MEETUPS_EVENTS`, `IDENTITY_EVENTS` и `AUCTION_EVENTS`: публикация мимо стрима становится отказом сервера, а не тихо принятым сообщением, и ack с пометкой повтора считается подтверждением.
-- **Потребитель** даёт гарантию. Ключ — `event_id` из конверта, тот же при любом повторе. Потребитель записывает обработанный `event_id` в своё хранилище той же транзакцией, что и эффект события, и сообщение с уже записанным ключом подтверждает, не применяя: без ack сервер вернёт его снова. Реплика вдобавок сравнивает `version` ([Meetups NATS](#meetups-nats), [Identity NATS](#identity-nats)): `event_id` отсекает повтор того же события, `version` — более старое событие, пришедшее позже нового. Где лежит хранилище ключей и сколько оно их держит — решение потребителя; держать его меньше окна хранения стрима нельзя. У Notifications это таблица `consumed_event` с ключами восемь дней ([services/notifications.md](../services/notifications.md#как-реплика-устроена)); у канала доставки — bucket `telegram-bot-deliveries` с ключом `notification_id` и тем же сроком.
+- **Потребитель** даёт гарантию. Ключ — `event_id` из конверта, тот же при любом повторе. Потребитель записывает обработанный `event_id` в своё хранилище той же транзакцией, что и эффект события, и сообщение с уже записанным ключом подтверждает, не применяя: без ack сервер вернёт его снова. Реплика вдобавок сравнивает `version` ([Meetups NATS](#meetups-nats), [Identity NATS](#identity-nats)): `event_id` отсекает повтор того же события, `version` — более старое событие, пришедшее позже нового. Где лежит хранилище ключей и сколько оно их держит — решение потребителя; держать его меньше окна хранения стрима нельзя. У Notifications это таблица `consumed_event` с ключами восемь дней ([services/notifications.md](../services/notifications.md#как-реплика-устроена)); у канала доставки — bucket `hub-bot-deliveries` с ключом `notification_id` и тем же сроком.
 
 Порядок топология не обещает: redelivery возвращает неподтверждённое сообщение после уже выданных, поэтому защита потребителя остаётся на `version`, а не на порядке доставки.
 
@@ -523,27 +523,27 @@ Bucket объявляет та же таблица топологии AppHost, �
 Принято [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), реализация идёт: токены обеим сторонам раздаёт AppHost, а проверяют их Auction ([PER-323](https://linear.app/anticnvm/issue/per-323)), Notifications ([PER-417](https://linear.app/anticnvm/issue/per-417)), Meetups ([PER-416](https://linear.app/anticnvm/issue/per-416)) и Identity ([PER-415](https://linear.app/anticnvm/issue/per-415)).
 
 - Каждый вызывающий процесс несёт свой секрет в `authorization: Bearer <token>`. Бот хаба, бот аукциона, Meetups и Notifications — разные вызывающие; maintainer-секрет [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md) к ним не относится и ими не заменяется.
-- Вызываемый узнаёт вызывающего по совпавшему токену и допускает его только к методам, где тот объявлен. Объявление — колонка Caller таблиц этого каталога; вызывающий «внутренние сервисы» не бывает, он называется по имени. «Telegram Bot» в колонке — бот хаба; бот аукциона — отдельный вызывающий и попадает в колонку `ResolveIdentity` и других методов вместе со своим первым вызовом ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)), а не заранее: объявление вызывающего без токена сервис не стартует. Строки «Maintainer (`grpcurl`)» — не вызывающий этой таблицы: их защищает секрет ADR-037.
+- Вызываемый узнаёт вызывающего по совпавшему токену и допускает его только к методам, где тот объявлен. Объявление — колонка Caller таблиц этого каталога; вызывающий «внутренние сервисы» не бывает, он называется по имени. «Hub Bot» в колонке — бот хаба; бот аукциона — отдельный вызывающий и попадает в колонку `ResolveIdentity` и других методов вместе со своим первым вызовом ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)), а не заранее: объявление вызывающего без токена сервис не стартует. Строки «Maintainer (`grpcurl`)» — не вызывающий этой таблицы: их защищает секрет ADR-037.
 - Любой отказ по вызывающему — нет токена, неизвестный токен, вызывающий не из колонки Caller — `UNAUTHENTICATED`: `PERMISSION_DENIED` остаётся доменным «у человека права нет». Метод без объявленного вызывающего не принимает никого. Health и reflection токена не требуют. Сервис с неоднозначной или неполной таблицей токенов не стартует.
 - В test и production gRPC, PostgreSQL и NATS достижимы только из своей среды и нужных ей служебных компонентов кластера, не с хоста и не через loopback; выполнение подтверждает отрицательный тест из аккаунтов хоста вне среды вместе с положительным изнутри среды, в каком бы рантайме среда ни работала. Оператор ходит клиентом внутри среды.
 - Локально AppHost генерирует токен на каждого вызывающего и отдаёт его обеим сторонам; обхода проверки на loopback нет.
-- Таблица вызываемого — по переменной окружения на вызывающего, а не одна строка со списком: имя вызывающего стоит в имени переменной и из значения не разбирается. Вызывающий читает свой токен из `<CALLER>_SERVICE_TOKEN`, вызываемый — токен каждого своего вызывающего из `<CALLEE>_CALLER_TOKEN_<CALLER>`. `<CALLER>` и `<CALLEE>` — имя узла AppHost в верхнем регистре с `_` вместо `-`: `telegram-bot` становится `TELEGRAM_BOT`. Пустая или отсутствующая переменная вызывающего, объявленного у метода, — неполная таблица.
+- Таблица вызываемого — по переменной окружения на вызывающего, а не одна строка со списком: имя вызывающего стоит в имени переменной и из значения не разбирается. Вызывающий читает свой токен из `<CALLER>_SERVICE_TOKEN`, вызываемый — токен каждого своего вызывающего из `<CALLEE>_CALLER_TOKEN_<CALLER>`. `<CALLER>` и `<CALLEE>` — имя узла AppHost в верхнем регистре с `_` вместо `-`: `hub-bot` становится `HUB_BOT`. Пустая или отсутствующая переменная вызывающего, объявленного у метода, — неполная таблица.
 - Таблица вызываемого полна при любом составе запуска: она следует колонке Caller, а не профилю. Поэтому контур, где провод играет бота без его узла, и одиночные профили получают полную таблицу, а сервис, который никого не вызывает, своего токена не получает.
 
 | Сервис | Свой токен | Таблица вызывающих |
 |---|---|---|
-| Telegram Bot | `TELEGRAM_BOT_SERVICE_TOKEN` | — |
+| Hub Bot | `HUB_BOT_SERVICE_TOKEN` | — |
 | Auction Bot | `AUCTION_BOT_SERVICE_TOKEN` | — |
-| Identity | — | `IDENTITY_CALLER_TOKEN_TELEGRAM_BOT`, `IDENTITY_CALLER_TOKEN_AUCTION_BOT`, `IDENTITY_CALLER_TOKEN_MEETUPS`, `IDENTITY_CALLER_TOKEN_NOTIFICATIONS` |
-| Meetups | `MEETUPS_SERVICE_TOKEN` | `MEETUPS_CALLER_TOKEN_TELEGRAM_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS` |
-| Notifications | `NOTIFICATIONS_SERVICE_TOKEN` | `NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT` |
-| Auction | — | `AUCTION_CALLER_TOKEN_TELEGRAM_BOT`, `AUCTION_CALLER_TOKEN_AUCTION_BOT` |
+| Identity | — | `IDENTITY_CALLER_TOKEN_HUB_BOT`, `IDENTITY_CALLER_TOKEN_AUCTION_BOT`, `IDENTITY_CALLER_TOKEN_MEETUPS`, `IDENTITY_CALLER_TOKEN_NOTIFICATIONS` |
+| Meetups | `MEETUPS_SERVICE_TOKEN` | `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS` |
+| Notifications | `NOTIFICATIONS_SERVICE_TOKEN` | `NOTIFICATIONS_CALLER_TOKEN_HUB_BOT` |
+| Auction | — | `AUCTION_CALLER_TOKEN_HUB_BOT`, `AUCTION_CALLER_TOKEN_AUCTION_BOT` |
 
 Meetups проверяет вызывающего интерцептором перед диспетчером ([PER-416](https://linear.app/anticnvm/issue/per-416)): четырнадцать пользовательских методов принимают только бота хаба, `CheckMeetupAuthority` — только Notifications, `ListMeetupStates` закрыт для всех. Перед стартом проверяются оба токена вызывающих и собственный токен: отсутствие, пустота, совпадение токенов вызывающих или собственного с одним из них останавливают процесс, не раскрывая значения. Вызов `CheckGlobalRole` из Meetups предъявляет `MEETUPS_SERVICE_TOKEN` вместе с заголовками цепочки; `UNAUTHENTICATED` от Identity сводится к `INTERNAL`, а не к отсутствию права у человека.
 
 Identity проверяет вызывающего интерцептором внутри записи границы ([PER-415](https://linear.app/anticnvm/issue/per-415)): `ResolveIdentity` и `RequestRole` принимают бота хаба и бота аукциона, `CheckGlobalRole` — Meetups и Notifications, остальные доменные методы — только бота хаба. `GrantAdminRole` и `RevokeAdminRole` гейт пропускает к проверке ADR-037: токен вызывающего их не открывает, а maintainer-секрет не открывает доменных методов. Перед стартом проверяются все четыре токена: отсутствие, пустота, совпадение двух вызывающих или вызывающего с `IDENTITY_MAINTAINER_TOKEN` останавливают процесс, не раскрывая значения.
 
-Переменные раздаёт AppHost ([PER-413](https://linear.app/anticnvm/issue/per-413)); читать и проверять их сервисы начинают в своих задачах. Telegram Bot уже предъявляет свой токен в каждом вызове Identity, Meetups и Notifications и без него не стартует ([PER-414](https://linear.app/anticnvm/issue/per-414)). Notifications так же предъявляет свой токен в `CheckMeetupAuthority` и `CheckGlobalRole` и без него не стартует ([PER-417](https://linear.app/anticnvm/issue/per-417)); `UNAUTHENTICATED` от владельца права рассылка отдаёт сбоем проверки — `INTERNAL`, — а не отказом по праву. Порядок выкатки — сначала вызывающий предъявляет токен, потом вызываемый его проверяет: поэтому Meetups включает проверку после Notifications, а Identity — после обоих. У `ListMeetupStates` вызывающего нет, поэтому строки Notifications в таблице Meetups открывают ему только `CheckMeetupAuthority`. Бот аукциона — узел `auction-bot` из ADR-044 — предъявляет `AUCTION_BOT_SERVICE_TOKEN` в каждом вызове Identity и Auction и без него не стартует ([PER-305](https://linear.app/anticnvm/issue/per-305)). В колонку `ResolveIdentity` он попал вместе с этим первым вызовом, и Identity принимает его там по токену. В колонку `RequestRole` оба бота объявлены контрактом ([PER-304](https://linear.app/anticnvm/issue/per-304)) до первого вызова ([PER-316](https://linear.app/anticnvm/issue/per-316)): правило «вместе с первым вызовом» держит токен, а он у обоих уже есть, и новой переменной объявление не требует.
+Переменные раздаёт AppHost ([PER-413](https://linear.app/anticnvm/issue/per-413)); читать и проверять их сервисы начинают в своих задачах. Hub Bot уже предъявляет свой токен в каждом вызове Identity, Meetups и Notifications и без него не стартует ([PER-414](https://linear.app/anticnvm/issue/per-414)). Notifications так же предъявляет свой токен в `CheckMeetupAuthority` и `CheckGlobalRole` и без него не стартует ([PER-417](https://linear.app/anticnvm/issue/per-417)); `UNAUTHENTICATED` от владельца права рассылка отдаёт сбоем проверки — `INTERNAL`, — а не отказом по праву. Порядок выкатки — сначала вызывающий предъявляет токен, потом вызываемый его проверяет: поэтому Meetups включает проверку после Notifications, а Identity — после обоих. У `ListMeetupStates` вызывающего нет, поэтому строки Notifications в таблице Meetups открывают ему только `CheckMeetupAuthority`. Бот аукциона — узел `auction-bot` из ADR-044 — предъявляет `AUCTION_BOT_SERVICE_TOKEN` в каждом вызове Identity и Auction и без него не стартует ([PER-305](https://linear.app/anticnvm/issue/per-305)). В колонку `ResolveIdentity` он попал вместе с этим первым вызовом, и Identity принимает его там по токену. В колонку `RequestRole` оба бота объявлены контрактом ([PER-304](https://linear.app/anticnvm/issue/per-304)) до первого вызова ([PER-316](https://linear.app/anticnvm/issue/per-316)): правило «вместе с первым вызовом» держит токен, а он у обоих уже есть, и новой переменной объявление не требует.
 
 Запись границы об отказе вызывающему — общий формат для всех сервисов, начиная с Auction: `grpc_code=UNAUTHENTICATED`, `error_category=authorization` и поле `caller_refusal` со значением `missing_token`, `unknown_token` или `not_declared`; у допущенного вызова и у `not_declared` поле `caller` называет узел вызывающего. Отдельной категории словаря [logging.md](../standards/observability/logging.md) отказ процессу не заводит: чем он отличается от отказа человеку, говорит `caller_refusal`, а не `error_category`. Токен в запись не попадает ни в каком виде.
 
@@ -594,7 +594,7 @@ Schema Registry — не одно бинарное решение:
 
 ## Delivery semantics
 
-- Действующий consumer среди сервисов один — Notifications читает `notifications-meetups-events` и `notifications-identity-events` и собирает из них реплику чужих фактов ([services/notifications.md](../services/notifications.md), PER-215). Он привязывается к своему durable, а не заводит обычную subscription. Subject уведомления публикует релей Notifications из своего outbox (PER-216), а читает канал доставки — Telegram Bot через `telegram-bot-notifications-events` (PER-217). Выбор канала между дублем и потерей — дубль: отметка «доставлено» пишется после ответа Telegram ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md)).
+- Действующий consumer среди сервисов один — Notifications читает `notifications-meetups-events` и `notifications-identity-events` и собирает из них реплику чужих фактов ([services/notifications.md](../services/notifications.md), PER-215). Он привязывается к своему durable, а не заводит обычную subscription. Subject уведомления публикует релей Notifications из своего outbox (PER-216), а читает канал доставки — Hub Bot через `hub-bot-notifications-events` (PER-217). Выбор канала между дублем и потерей — дубль: отметка «доставлено» пишется после ответа Telegram ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md)).
 - Durable consumers, redelivery, deduplication и idempotency должны проектироваться совместно.
 - Наличие `op_id` в части команд само по себе не обеспечивает идемпотентность: consumer должен сохранять или проверять обработанные операции.
 - Требования к допустимой потере, повтору и порядку задаются отдельно для каждого сценария.
@@ -617,7 +617,7 @@ Read model вводится, когда query-нагрузка, UX или изо
 - health и readiness checks: пустое имя в `grpc.health.v1` отвечает liveness и базу не спрашивает, полное имя основного gRPC-сервиса отвечает readiness и `SERVING` только при отвечающей базе ([ADR-054](../decisions/ADR-054-storage-unavailability-visible-outside.md));
 - недоступность собственной базы сервис отдаёт кодом `UNAVAILABLE` раньше дедлайна вызывающего, а запись границы несёт тот же `grpc_code` и `error_category: dependency_unavailable`; дефект SQL на живом соединении этим кодом не отвечает ([ADR-054](../decisions/ADR-054-storage-unavailability-visible-outside.md));
 - метрики ошибок, latency и delivery attempts;
-- trace первого вертикального среза Telegram Bot → Identity → Meetups;
+- trace первого вертикального среза Hub Bot → Identity → Meetups;
 - операторский способ увидеть и повторить неуспешное действие без ручной правки БД.
 
 Локально телеметрию показывает Aspire dashboard, а Loki/Grafana — только диагностический профиль. Для продакшена [ADR-053](../decisions/ADR-053-production-observability-otlp-better-stack.md) выбрал OTLP через Collector на хосте и бэкенд Better Stack; подключение на хосте — работа [PER-80](https://linear.app/anticnvm/issue/per-80). Наличие конфигурации не подтверждает работающую наблюдаемость.

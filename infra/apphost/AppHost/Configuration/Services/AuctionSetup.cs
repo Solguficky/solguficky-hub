@@ -32,7 +32,7 @@ internal static class AuctionSetup
             .WithEndpoint(scheme: "http", name: AppHostNames.Endpoints.Grpc, env: "AUCTION_GRPC_PORT")
             // Вызывающие — по колонке Caller в integration.md. Без полной таблицы
             // сервис не стартует, поэтому она приходит и в профиле без ботов.
-            .AcceptCallers(context, AppHostNames.Resources.TelegramBot, AppHostNames.Resources.AuctionBot)
+            .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.AuctionBot)
             // Метрики проекции уходят по OTLP (ADR-053): исполняемый файл получает
             // OTEL-переменные только так. Без OTEL_EXPORTER_OTLP_ENDPOINT сервис
             // экспорт метрик выключает сам.

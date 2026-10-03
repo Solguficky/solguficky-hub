@@ -168,7 +168,7 @@ export type BotRuntime = {
 export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
 
 /**
- * Разбирает значение `TELEGRAM_BOT_ENVIRONMENT`. Отсутствие переменной — это
+ * Разбирает значение `HUB_BOT_ENVIRONMENT`. Отсутствие переменной — это
  * продакшн; любое неизвестное значение — `undefined`, а не молчаливый откат к
  * умолчанию: опечатка в переменной должна останавливать процесс, а не уводить
  * его в другую среду.

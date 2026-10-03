@@ -15,7 +15,7 @@ import {
   type Person,
   readContourEnvironment,
   startConversation,
-} from "../../../../apps/telegram-bot/testkit/index.js";
+} from "../../../../apps/hub-bot/testkit/index.js";
 import { checkStep, type Finding, type Step } from "./oracles.js";
 import { forSequence, type Random } from "./random.js";
 
@@ -64,7 +64,7 @@ type Coverage = {
 };
 
 // Пути — от корня репозитория, а не от cwd: npm запускает vitest из
-// `apps/telegram-bot`, а человек пишет путь отчёта так, как его напечатал рецепт.
+// `apps/hub-bot`, а человек пишет путь отчёта так, как его напечатал рецепт.
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const reportDir = resolve(repoRoot, ".work/explore/");
 

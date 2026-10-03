@@ -10,7 +10,7 @@ import {
   openBotWire,
   openDirectClients,
   readContourEnvironment,
-} from "../../../../apps/telegram-bot/testkit/index.js";
+} from "../../../../apps/hub-bot/testkit/index.js";
 import { CommandError, help, parseCommand } from "./commands.js";
 import { openLatency } from "./latency.js";
 import { openConsoleSession, type Reply } from "./session.js";

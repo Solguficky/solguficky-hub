@@ -1,5 +1,5 @@
 {
-  "name": "telegram-bot",
+  "name": "hub-bot",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "proto": "cd ../.. && buf generate --template apps/telegram-bot/buf.gen.yaml",
+    "proto": "cd ../.. && buf generate --template apps/hub-bot/buf.gen.yaml",
     "prestart": "npm run proto && npm run build",
     "start": "node dist/src/main.js",
     "build": "tsc -p tsconfig.build.json",

@@ -4,7 +4,7 @@ using AppHost.Configuration.Topology;
 
 namespace AppHost.Configuration.Services;
 
-internal static class TelegramBotSetup
+internal static class HubBotSetup
 {
     // Проб нет: у бота нет ни порта, ни health-эндпоинта, а exec-проба «процесс
     // жив» дала бы сигнал, которому нельзя верить. Остаётся рестарт по выходу.
@@ -21,8 +21,8 @@ internal static class TelegramBotSetup
             context,
             TelegramEnvironment.Resolve(context.Builder.Configuration),
             context.Builder.AddJavaScriptApp(
-                AppHostNames.Resources.TelegramBot,
-                RepositoryPaths.App(context.Builder, "telegram-bot"),
+                AppHostNames.Resources.HubBot,
+                RepositoryPaths.App(context.Builder, "hub-bot"),
                 "start"));
 
     /// <summary>
@@ -35,9 +35,9 @@ internal static class TelegramBotSetup
                 context,
                 TelegramEnvironment.Production,
                 context.Builder.AddDockerfile(
-                    AppHostNames.Resources.TelegramBot,
+                    AppHostNames.Resources.HubBot,
                     RepositoryPaths.Root(context.Builder),
-                    "apps/telegram-bot/Containerfile"))
+                    "apps/hub-bot/Containerfile"))
             .AsClusterWorkload(Cluster);
 
     private static IResourceBuilder<T> Wire<T>(
@@ -53,16 +53,16 @@ internal static class TelegramBotSetup
         var token = context.Builder.AddParameter(environment.TokenParameter, secret: true);
 
         return bot
-            .WithEnvironment("TELEGRAM_BOT_TOKEN", token)
+            .WithEnvironment("HUB_BOT_TOKEN", token)
             // Не путать с токеном Bot API выше: этим бот доказывает себя
             // Identity, Meetups и Notifications (ADR-056).
             .WithServiceToken(context)
-            .WithEnvironment("TELEGRAM_BOT_ENVIRONMENT", environment.Value)
+            .WithEnvironment("HUB_BOT_ENVIRONMENT", environment.Value)
             // Бот показывает назначенный момент публикации в поясе сообщества,
             // а Meetups отдаёт его мгновением UTC. Значение общее с Meetups
             // (CommunityTime): разные пояса у двух сервисов дали бы карточку,
             // которая врёт о времени публикации на разницу поясов.
-            .WithEnvironment("TELEGRAM_BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
+            .WithEnvironment("HUB_BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Notifications, "grpc", "NOTIFICATIONS_GRPC_URL")
@@ -72,7 +72,7 @@ internal static class TelegramBotSetup
             .BindConnection<T, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,
-                "TELEGRAM_BOT_NATS_URL",
+                "HUB_BOT_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
     }
 }

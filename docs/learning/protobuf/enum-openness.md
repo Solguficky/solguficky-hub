@@ -61,7 +61,7 @@ flowchart LR
 
 ## Проверь себя
 
-- **Что прочитает бот, если Identity пришлёт `GlobalRole = 99`, и что с ним сделает?** Ответ: рантайм сохранит `99` (открытый enum), а `roleName` вернёт `undefined` и `flatMap` его выбросит. Команда: `cd apps/telegram-bot && npx vitest run src/identity/client.test.ts -t "unknown role value"`.
+- **Что прочитает бот, если Identity пришлёт `GlobalRole = 99`, и что с ним сделает?** Ответ: рантайм сохранит `99` (открытый enum), а `roleName` вернёт `undefined` и `flatMap` его выбросит. Команда: `cd apps/hub-bot && npx vitest run src/identity/client.test.ts -t "unknown role value"`.
 - **Что ответит Meetups на `Viewer` только с ролью `public`?** Ответ: `PERMISSION_DENIED` — роль известна словарю, но правила на неё нет. Команда: `dotnet test --solution apps/meetups/Meetups.sln --filter "Commands refuse a viewer carrying only new or unknown roles by right"`.
 - **Почему добавление пятого значения не требует `v2`?** Ответ: номер поля и тип не меняются, старый потребитель игнорирует неизвестное значение. Опора: раздел «Совместимость» в [protobuf.md](../../standards/contracts/protobuf.md).
 - **Чем закрытый enum отличается на чтении?** Ответ: неизвестное число уходит в unknown fields, а не в поле. Опора: `from-binary.js:184-204`.

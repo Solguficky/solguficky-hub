@@ -19,9 +19,9 @@ Notifications отвечает на вопрос **«кому и что поло
 
 ## Две плоскости взаимодействия
 
-**Command plane — синхронный gRPC.** Управление подписками, настройками категорий и ручными рассылками. Вызывающая сторона предъявляет внутренний идентификатор человека; из какого интерфейса пришла команда, сервис не знает. В MVP единственный клиент — Telegram Bot, но это свойство текущего состава платформы, а не контракта: мини-приложение становится вторым клиентом того же API, а не вторым путём.
+**Command plane — синхронный gRPC.** Управление подписками, настройками категорий и ручными рассылками. Вызывающая сторона предъявляет внутренний идентификатор человека; из какого интерфейса пришла команда, сервис не знает. В MVP единственный клиент — Hub Bot, но это свойство текущего состава платформы, а не контракта: мини-приложение становится вторым клиентом того же API, а не вторым путём.
 
-**Вызывающий доказывает себя токеном** ([ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), [PER-417](https://linear.app/anticnvm/issue/per-417)). Каждая команда несёт `authorization: Bearer <token>`, и сервис по совпавшему токену узнаёт вызывающего, а допускает его по таблице «метод → вызывающие» в `Transport/CallerGate.cs`, которая повторяет колонку Caller [каталога](../architecture/integration.md#notifications-grpc): сегодня все восемь методов принимают только бота. Нет токена, неизвестный токен, вызывающий не из колонки — `UNAUTHENTICATED` до обработчика, и запись границы называет причину полем `caller_refusal`, а опознанного вызывающего — полем `caller`. Health и reflection токена не требуют. Таблицу сервис читает из `NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT` и без неё не стартует, как и без своего токена `NOTIFICATIONS_SERVICE_TOKEN`, который несут его вызовы Meetups и Identity; свой токен, совпавший с токеном вызывающего, — та же неоднозначная таблица, и старт отказывает.
+**Вызывающий доказывает себя токеном** ([ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), [PER-417](https://linear.app/anticnvm/issue/per-417)). Каждая команда несёт `authorization: Bearer <token>`, и сервис по совпавшему токену узнаёт вызывающего, а допускает его по таблице «метод → вызывающие» в `Transport/CallerGate.cs`, которая повторяет колонку Caller [каталога](../architecture/integration.md#notifications-grpc): сегодня все восемь методов принимают только бота. Нет токена, неизвестный токен, вызывающий не из колонки — `UNAUTHENTICATED` до обработчика, и запись границы называет причину полем `caller_refusal`, а опознанного вызывающего — полем `caller`. Health и reflection токена не требуют. Таблицу сервис читает из `NOTIFICATIONS_CALLER_TOKEN_HUB_BOT` и без неё не стартует, как и без своего токена `NOTIFICATIONS_SERVICE_TOKEN`, который несут его вызовы Meetups и Identity; свой токен, совпавший с токеном вызывающего, — та же неоднозначная таблица, и старт отказывает.
 
 **Event plane — потребление шины.** События Meetups и Identity в Protobuf через NATS JetStream. Из одного и того же потока сервис делает две разные вещи: порождает поводы к уведомлению и поддерживает реплику. Синхронных запросов в чужие сервисы в горячем пути рассылки нет.
 
@@ -356,7 +356,7 @@ JetStream участвует в первой границе, но не заме�
 | Identity | вне MVP: метод перечисления состава, когда понадобится наполнение и пересборка реплики |
 | Identity | метод разрешения внутреннего идентификатора в Telegram id |
 | Identity | синхронная проверка глобальной роли для объявления сообществу — `IdentityService.CheckGlobalRole`, реализован в [PER-232](https://linear.app/anticnvm/issue/per-232) |
-| Telegram Bot | роль потребителя уведомлений: собственный durable consumer `telegram-bot-notifications-events`, резолвинг получателя, рендеринг текста, retry и журнал попыток в JetStream KV ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md); устройство — [бриф бота](telegram-bot.md#доставка-уведомлений)) |
+| Hub Bot | роль потребителя уведомлений: собственный durable consumer `hub-bot-notifications-events`, резолвинг получателя, рендеринг текста, retry и журнал попыток в JetStream KV ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md); имена уточнены ADR-044 от 2026-10-03; устройство — [бриф бота](telegram-bot.md#доставка-уведомлений)) |
 
 Метод разрешения внутреннего идентификатора в Telegram id нужен каналу, а не Notifications: в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь. Он принят отдельным вызовом `IdentityService.ResolveTelegramUserId` ([integration.md](../architecture/integration.md)), реализован в [PER-231](https://linear.app/anticnvm/issue/per-231).
 
@@ -387,5 +387,5 @@ Quiet hours и группировка уведомлений в первую в�
 
 - Разбор дефектов прежнего обработчика: [архив](../archive/services/auction-domain-and-lessons.md)
 - [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md), [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md), [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md)
-- Соседи: [Meetups](meetups.md), [Identity](identity.md), [Telegram Bot](telegram-bot.md)
+- Соседи: [Meetups](meetups.md), [Identity](identity.md), [Hub Bot](telegram-bot.md)
 - [integration.md](../architecture/integration.md), [product/overview.md](../product/overview.md)

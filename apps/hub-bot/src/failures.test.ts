@@ -37,7 +37,7 @@ describe("countFailure", () => {
     expect(counter?.dataPoints).toEqual([
       expect.objectContaining({
         value: 1,
-        attributes: { service: "telegram-bot", error_category: "visibility" },
+        attributes: { service: "hub-bot", error_category: "visibility" },
       }),
     ]);
   });

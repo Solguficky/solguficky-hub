@@ -38,7 +38,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Identity, R.Meetups, R.Notifications, R.TelegramBot]);
+            .ShouldBe([R.HubBot, R.Identity, R.Meetups, R.Notifications]);
     }
 
     /// <summary>
@@ -48,7 +48,7 @@ public class ClusterPublishTests
     /// </summary>
     [Theory]
     [InlineData(R.Identity, "apps/identity/Containerfile")]
-    [InlineData(R.TelegramBot, "apps/telegram-bot/Containerfile")]
+    [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {
         var builder = await PublishModelAsync();

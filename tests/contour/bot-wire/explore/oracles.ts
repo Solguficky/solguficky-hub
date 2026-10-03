@@ -1,7 +1,7 @@
 import {
   failureCategories,
   type LogRecord,
-} from "../../../../apps/telegram-bot/testkit/index.js";
+} from "../../../../apps/hub-bot/testkit/index.js";
 
 // Оракулы — каркас записи из docs/standards/observability/logging.md, а не
 // ожидания о тексте экранов: исследование ищет нарушения правил, которые

@@ -4,10 +4,10 @@
 # Docker находит файл по имени сам, podman получает его через --ignorefile.
 *
 !contracts/proto
-!apps/telegram-bot/package.json
-!apps/telegram-bot/package-lock.json
-!apps/telegram-bot/buf.gen.yaml
-!apps/telegram-bot/tsconfig.json
-!apps/telegram-bot/tsconfig.build.json
-!apps/telegram-bot/src
+!apps/hub-bot/package.json
+!apps/hub-bot/package-lock.json
+!apps/hub-bot/buf.gen.yaml
+!apps/hub-bot/tsconfig.json
+!apps/hub-bot/tsconfig.build.json
+!apps/hub-bot/src
 **/*.test.ts

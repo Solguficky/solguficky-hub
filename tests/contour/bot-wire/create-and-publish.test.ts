@@ -10,7 +10,7 @@ import {
   openDirectClients,
   readContourEnvironment,
   startConversation,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 
 // Требование 1 из RFC-012: сценарий «создал и опубликовал» проходится без
 // единой телеграмовской структуры, против настоящих Identity и Meetups.

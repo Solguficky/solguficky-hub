@@ -12,7 +12,7 @@ import java.security.MessageDigest
 enum Caller(val node: String) {
 
   /** Бот хаба. */
-  case TelegramBot extends Caller("telegram-bot")
+  case HubBot extends Caller("hub-bot")
 
   /** Бот аукциона (ADR-044). */
   case AuctionBot extends Caller("auction-bot")

@@ -21,16 +21,16 @@ public class ServiceTokenWiringTests
     private const string Identity = AppHostNames.Resources.Identity;
     private const string Meetups = AppHostNames.Resources.Meetups;
     private const string Notifications = AppHostNames.Resources.Notifications;
-    private const string TelegramBot = AppHostNames.Resources.TelegramBot;
+    private const string HubBot = AppHostNames.Resources.HubBot;
     private const string Auction = AppHostNames.Resources.Auction;
     private const string AuctionBot = AppHostNames.Resources.AuctionBot;
 
     /// <summary>Колонка Caller в integration.md: вызываемый — его вызывающие.</summary>
     private static readonly Dictionary<string, string[]> Callers = new()
     {
-        [Identity] = [TelegramBot, AuctionBot, Meetups, Notifications],
-        [Meetups] = [TelegramBot, Notifications],
-        [Notifications] = [TelegramBot],
+        [Identity] = [HubBot, AuctionBot, Meetups, Notifications],
+        [Meetups] = [HubBot, Notifications],
+        [Notifications] = [HubBot],
     };
 
     private static readonly string[] Hub = ["--profile", "hub"];
@@ -87,10 +87,10 @@ public class ServiceTokenWiringTests
 
         var expected = new Dictionary<string, string[]>
         {
-            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS", "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"],
-            [Meetups] = ["MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_CALLER_TOKEN_TELEGRAM_BOT", "MEETUPS_SERVICE_TOKEN"],
-            [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
-            [TelegramBot] = ["TELEGRAM_BOT_SERVICE_TOKEN"],
+            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS"],
+            [Meetups] = ["MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
+            [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
+            [HubBot] = ["HUB_BOT_SERVICE_TOKEN"],
         };
 
         tokens.Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe(expected.Keys.Order(StringComparer.Ordinal).ToArray());
@@ -108,7 +108,7 @@ public class ServiceTokenWiringTests
 
         // Пустой реестр прошёл бы цикл без единой проверки.
         parameters.Select(parameter => parameter.Name).Order(StringComparer.Ordinal).ToArray().ShouldBe(
-            ["auction-bot-service-token", "meetups-service-token", "notifications-service-token", "telegram-bot-service-token"]);
+            ["auction-bot-service-token", "hub-bot-service-token", "meetups-service-token", "notifications-service-token"]);
         foreach (var parameter in parameters)
         {
             parameter.Secret.ShouldBeTrue(parameter.Name);
@@ -125,11 +125,11 @@ public class ServiceTokenWiringTests
     {
         var tokens = await TokensAsync(Contour);
 
-        tokens.ShouldNotContainKey(TelegramBot);
-        tokens[Identity].ShouldContainKey("IDENTITY_CALLER_TOKEN_TELEGRAM_BOT");
-        tokens[Meetups].ShouldContainKey("MEETUPS_CALLER_TOKEN_TELEGRAM_BOT");
-        tokens[Meetups]["MEETUPS_CALLER_TOKEN_TELEGRAM_BOT"]
-            .ShouldBeSameAs(tokens[Identity]["IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"]);
+        tokens.ShouldNotContainKey(HubBot);
+        tokens[Identity].ShouldContainKey("IDENTITY_CALLER_TOKEN_HUB_BOT");
+        tokens[Meetups].ShouldContainKey("MEETUPS_CALLER_TOKEN_HUB_BOT");
+        tokens[Meetups]["MEETUPS_CALLER_TOKEN_HUB_BOT"]
+            .ShouldBeSameAs(tokens[Identity]["IDENTITY_CALLER_TOKEN_HUB_BOT"]);
     }
 
     /// <summary>
@@ -144,8 +144,8 @@ public class ServiceTokenWiringTests
 
         tokens.Keys.ShouldBe([Auction]);
         tokens[Auction].Keys.Order(StringComparer.Ordinal).ToArray()
-            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_TELEGRAM_BOT"]);
-        tokens[Auction]["AUCTION_CALLER_TOKEN_TELEGRAM_BOT"].Name.ShouldBe("telegram-bot-service-token");
+            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_HUB_BOT"]);
+        tokens[Auction]["AUCTION_CALLER_TOKEN_HUB_BOT"].Name.ShouldBe("hub-bot-service-token");
         tokens[Auction]["AUCTION_CALLER_TOKEN_AUCTION_BOT"].Name.ShouldBe("auction-bot-service-token");
     }
 
@@ -156,9 +156,9 @@ public class ServiceTokenWiringTests
     [Fact]
     public async Task ServiceToken_ValueConfigured_OverridesTheGeneratedOne()
     {
-        var tokens = await TokensAsync(Contour, ("Parameters:telegram-bot-service-token", "configured-bot-token"));
+        var tokens = await TokensAsync(Contour, ("Parameters:hub-bot-service-token", "configured-bot-token"));
 
-        var value = await tokens[Identity]["IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"]
+        var value = await tokens[Identity]["IDENTITY_CALLER_TOKEN_HUB_BOT"]
             .GetValueAsync(TestContext.Current.CancellationToken);
 
         value.ShouldBe("configured-bot-token");

@@ -3,7 +3,7 @@ import {
   defaultTestDc,
   writeStringSession,
 } from "@mtcute/core/utils.js";
-import { describe, expect, it } from "../../apps/telegram-bot/testkit/index.js";
+import { describe, expect, it } from "../../apps/hub-bot/testkit/index.js";
 import { assertTestSession } from "./driver.js";
 import { TelegramLiveFailure } from "./failure.js";
 

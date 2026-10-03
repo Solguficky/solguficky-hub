@@ -32,8 +32,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-WORKLOADS = {"identity", "meetups", "notifications", "telegram-bot"}
-WITHOUT_PROBES = {"telegram-bot"}
+WORKLOADS = {"identity", "meetups", "notifications", "hub-bot"}
+WITHOUT_PROBES = {"hub-bot"}
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob", "Pod"}
 
 KIND = re.compile(r'^kind:\s*"?(\w+)"?\s*$', re.M)

@@ -71,10 +71,10 @@ expect_code SOLG-IMG-TOKEN "$work/layer.log" sh "$here/check-no-token.sh" solg-c
 mkdir "$work/arg"
 cat >"$work/arg/Containerfile" <<EOF
 FROM $base
-ARG TELEGRAM_BOT_TOKEN
+ARG HUB_BOT_TOKEN
 RUN true
 EOF
-"$engine" build -q -t solg-canary-arg --build-arg "TELEGRAM_BOT_TOKEN=$token" -f "$work/arg/Containerfile" "$work/arg" >/dev/null
+"$engine" build -q -t solg-canary-arg --build-arg "HUB_BOT_TOKEN=$token" -f "$work/arg/Containerfile" "$work/arg" >/dev/null
 expect_code SOLG-IMG-TOKEN "$work/arg.log" sh "$here/check-no-token.sh" solg-canary-arg
 
 echo "Image checks reject a tag-pinned base, a stray buf version, a token in a layer and a token in a build argument."

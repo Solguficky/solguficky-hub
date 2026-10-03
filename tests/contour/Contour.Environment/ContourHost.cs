@@ -104,7 +104,7 @@ public sealed class ContourHost : IAsyncDisposable
             cancellationToken);
 
         builder.Configuration["Parameters:identity-maintainer-token"] = maintainerToken;
-        builder.Configuration["Parameters:telegram-bot-service-token"] = botServiceToken;
+        builder.Configuration["Parameters:hub-bot-service-token"] = botServiceToken;
 
         DetachDataVolume(builder);
 

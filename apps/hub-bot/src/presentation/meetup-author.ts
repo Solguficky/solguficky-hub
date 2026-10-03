@@ -26,7 +26,7 @@ function isCardResult(result: ExecuteResult): result is CardResult {
   return (cardKinds as readonly string[]).includes(result.kind);
 }
 
-// Identity зовёт представление, а не приложение (apps/telegram-bot/AGENTS.md):
+// Identity зовёт представление, а не приложение (apps/hub-bot/AGENTS.md):
 // диспетчер про Identity не знает, и автора к его результату дописывает эта
 // обёртка. Ник спрашивается только по автору из снимка, который Meetups уже
 // отдал этому зрителю: видимость решает Meetups, и карточка, которую зрителю

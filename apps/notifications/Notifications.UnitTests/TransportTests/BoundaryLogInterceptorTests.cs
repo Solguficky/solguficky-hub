@@ -278,7 +278,7 @@ public class BoundaryLogInterceptorTests
 
         var record = logger.Records.ShouldHaveSingleItem();
         record.Attributes["caller_refusal"].ShouldBe("not_declared");
-        record.Attributes["caller"].ShouldBe("telegram-bot");
+        record.Attributes["caller"].ShouldBe("hub-bot");
     }
 
     /// <summary>Допущенный вызов называет вызывающего; токен не попадает в запись ни в каком поле.</summary>
@@ -295,7 +295,7 @@ public class BoundaryLogInterceptorTests
 
         var record = logger.Records.ShouldHaveSingleItem();
         record.Attributes["result"].ShouldBe("ok");
-        record.Attributes["caller"].ShouldBe("telegram-bot");
+        record.Attributes["caller"].ShouldBe("hub-bot");
         record.Attributes.ShouldNotContainKey("caller_refusal");
         record.Attributes.Values.ShouldAllBe(value => !(value is string && ((string)value).Contains(BotToken)));
     }
@@ -315,7 +315,7 @@ public class BoundaryLogInterceptorTests
 
     private static CallerGateInterceptor Gate() =>
         new(CallerTable.FromConfiguration(
-            name => name == Caller.TelegramBot.TokenVariable ? BotToken : null,
+            name => name == Caller.HubBot.TokenVariable ? BotToken : null,
             MethodAccess.Declared));
 
     private static (RecordingLogger<BoundaryLogInterceptor> Logger, BoundaryLogInterceptor Interceptor) Create()

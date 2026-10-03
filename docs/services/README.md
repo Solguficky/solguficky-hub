@@ -4,7 +4,7 @@ Service brief описывает ответственность, жизненн�
 
 | Компонент | Слой | Brief |
 |---|---|---|
-| Telegram Bot | MVP | [telegram-bot.md](telegram-bot.md) |
+| Hub Bot | MVP | [telegram-bot.md](telegram-bot.md) |
 | Auction Bot | Future | [telegram-bot.md](telegram-bot.md) |
 | Meetups | MVP | [meetups.md](meetups.md) |
 | Identity | MVP | [identity.md](identity.md) |

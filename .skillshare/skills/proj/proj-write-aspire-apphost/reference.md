@@ -77,18 +77,18 @@ using AppHost.Configuration.Topology;
 
 namespace AppHost.Configuration.Services;
 
-internal static class TelegramBotSetup
+internal static class HubBotSetup
 {
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context)
     {
-        var token = context.Builder.AddParameter("telegram-bot-token", secret: true);
+        var token = context.Builder.AddParameter("hub-bot-token", secret: true);
 
         return context.Builder
             .AddJavaScriptApp(
-                AppHostNames.Resources.TelegramBot,
-                RepositoryPaths.App(context.Builder, "telegram-bot"),
+                AppHostNames.Resources.HubBot,
+                RepositoryPaths.App(context.Builder, "hub-bot"),
                 "start")
-            .WithEnvironment("TELEGRAM_BOT_TOKEN", token)
+            .WithEnvironment("HUB_BOT_TOKEN", token)
             .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL");
     }
 }
@@ -144,7 +144,7 @@ identity.WithEnvironment(
 ## 5. Секрет
 
 ```csharp
-var token = context.Builder.AddParameter("telegram-bot-token", secret: true);
+var token = context.Builder.AddParameter("hub-bot-token", secret: true);
 ```
 
 Объявляется внутри setup того компонента, которому нужен: профиль без этого компонента не спросит токен. Значение живёт в user secrets AppHost (`UserSecretsId` в `AppHost.csproj`), не в `appsettings*.json` и не в переменной в justfile.
@@ -184,7 +184,7 @@ identity.WithHealthCheck(HealthCheck);
 ```bash
 just aspire identity
 just aspire hub -- --run-services identity
-just aspire hub -- --skip-services telegram-bot
+just aspire hub -- --skip-services hub-bot
 TOPOLOGY__PROFILE=infra aspire run
 ```
 

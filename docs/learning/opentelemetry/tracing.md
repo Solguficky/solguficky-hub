@@ -132,7 +132,7 @@ opts = append(opts, trace.WithLinks(link))
 
 ```mermaid
 sequenceDiagram
-    participant Bot as Telegram Bot
+    participant Bot as Hub Bot
     participant Srv as Identity gRPC
     participant DB as PostgreSQL
     participant Relay as Relay outbox

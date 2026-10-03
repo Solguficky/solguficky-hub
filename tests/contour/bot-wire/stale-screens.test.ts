@@ -8,7 +8,7 @@ import {
   openDirectClients,
   readContourEnvironment,
   unusedMeetupId,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 import {
   fillsMeetupForm,
   listedAs,

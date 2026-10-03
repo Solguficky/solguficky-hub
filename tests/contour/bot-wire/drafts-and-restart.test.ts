@@ -8,7 +8,7 @@ import {
   openDirectClients,
   readContourEnvironment,
   unusedMeetupId,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 import { organizerAtStart } from "./steps.js";
 
 // Висящие вопросы формы — угловые случаи 7 и 8. Черновик живёт в Meetups, а

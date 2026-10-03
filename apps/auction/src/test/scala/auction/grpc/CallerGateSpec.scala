@@ -12,7 +12,7 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
 
   private val table = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { telegram-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
       MethodAccess.declared
     )
     .value
@@ -25,12 +25,12 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
       List("GetFaqAcknowledgement", "AcknowledgeFaq").foreach { method =>
         CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)
         CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe
-          GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.TelegramBot))
+          GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.HubBot))
       }
     }
 
     "admits a declared caller that presents its bearer token" in {
-      CallerGate.decide(table, placeBid, Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.TelegramBot)
+      CallerGate.decide(table, placeBid, Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
       CallerGate.decide(table, placeBid, Some("bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)
     }
 
@@ -50,9 +50,9 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
 
     "refuses a known caller on a method that does not declare it and names the caller" in {
       CallerGate.decide(table, Some("Unknown"), Some("Bearer hub")) shouldBe
-        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.TelegramBot))
+        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.HubBot))
       CallerGate.decide(table, None, Some("Bearer hub")) shouldBe
-        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.TelegramBot))
+        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.HubBot))
     }
   }
 

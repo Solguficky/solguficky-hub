@@ -34,5 +34,5 @@ function failures(): Counter {
 }
 
 export function countFailure(category: FailureCategory): void {
-  failures().add(1, { service: "telegram-bot", error_category: category });
+  failures().add(1, { service: "hub-bot", error_category: category });
 }

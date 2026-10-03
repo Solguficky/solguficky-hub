@@ -22,8 +22,8 @@ internal sealed record TelegramEnvironment(string Value, string TokenParameter, 
     private static readonly IReadOnlyDictionary<string, TelegramEnvironment> Known =
         new Dictionary<string, TelegramEnvironment>(StringComparer.Ordinal)
         {
-            [DefaultName] = new(DefaultName, "telegram-bot-token", "auction-bot-token"),
-            ["test"] = new("test", "telegram-bot-test-token", "auction-bot-test-token"),
+            [DefaultName] = new(DefaultName, "hub-bot-token", "auction-bot-token"),
+            ["test"] = new("test", "hub-bot-test-token", "auction-bot-test-token"),
         };
 
     /// <summary>

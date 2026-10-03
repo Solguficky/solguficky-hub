@@ -14,8 +14,8 @@ namespace AppHost.Configuration.Extensions;
 /// следует графу вызовов — колонке Caller в integration.md, — а не составу
 /// профиля.
 ///
-/// Имена переменных выводятся из имён узлов: <c>telegram-bot</c> становится
-/// <c>TELEGRAM_BOT</c>. Вызывающий читает <c>&lt;CALLER&gt;_SERVICE_TOKEN</c>,
+/// Имена переменных выводятся из имён узлов: <c>hub-bot</c> становится
+/// <c>HUB_BOT</c>. Вызывающий читает <c>&lt;CALLER&gt;_SERVICE_TOKEN</c>,
 /// вызываемый — по переменной <c>&lt;CALLEE&gt;_CALLER_TOKEN_&lt;CALLER&gt;</c>
 /// на каждого вызывающего.
 /// </summary>

@@ -5,7 +5,7 @@ import {
   type Person,
   startConversation,
   usernameFor,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 
 // Шаги, которые сценарии провода проходят одинаково. Файл не `*.test.ts`, и
 // vitest его как набор не собирает.

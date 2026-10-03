@@ -8,7 +8,7 @@
 
 `shared/typescript/auction-bot-ui/` — общий пакет аукционного интерфейса бота хаба и бота аукциона ([ADR-044](../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). Доменных типов торгов в нём нет: он держит модель экрана и кнопок и ходит в Auction через порт, а правила торгов остаются у сервиса. Каталог TypeScript-пакета называется kebab-case, как каталоги компонентов в `apps/`.
 
-Каталог .NET-проекта называется именем проекта, а не kebab-case: так же устроены `apps/meetups/Meetups` и `apps/meetups/Meetups.Contracts`. Kebab-case остаётся у каталогов компонентов (`apps/telegram-bot`), которые проектом .NET не являются.
+Каталог .NET-проекта называется именем проекта, а не kebab-case: так же устроены `apps/meetups/Meetups` и `apps/meetups/Meetups.Contracts`. Kebab-case остаётся у каталогов компонентов (`apps/hub-bot`), которые проектом .NET не являются.
 
 ## Что попадает сюда
 

@@ -63,9 +63,9 @@ docs: Require an umbrella only for related tasks
 Неверно:
 
 ```
-telegram-bot: fail-closed callback handling (PER-64)   # идентификатор в хвосте, заголовок не из Linear
+hub-bot: fail-closed callback handling (PER-64)        # идентификатор в хвосте, заголовок не из Linear
 Meetups: enforce ADR-022 visibility in the read path   # задача есть, префикса [PER-N] нет
-telegram-bot: реализовать карточку сходки (PER-62)     # свой заголовок вместо названия задачи
+hub-bot: реализовать карточку сходки (PER-62)          # свой заголовок вместо названия задачи
 docs: Требовать локальную чистку рабочих деревьев      # задачи нет, но заголовок смешанный
 ```
 

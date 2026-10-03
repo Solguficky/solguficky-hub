@@ -58,7 +58,7 @@ public class CallerAuthenticationTests
     /// миграций, поэтому база процессу не нужна.
     /// </summary>
     [Theory]
-    [InlineData("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT")]
+    [InlineData("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT")]
     [InlineData(ServiceToken.Variable)]
     public async Task When_TokenVariableEmpty_Expect_ServiceRefusesToStart(string variable)
     {
@@ -85,6 +85,6 @@ public class CallerAuthenticationTests
             environment);
 
         exitCode.ShouldBe(1);
-        output.ShouldContain($"{ServiceToken.Variable} equals the caller token of telegram-bot");
+        output.ShouldContain($"{ServiceToken.Variable} equals the caller token of hub-bot");
     }
 }

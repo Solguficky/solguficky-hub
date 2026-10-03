@@ -5,7 +5,7 @@ import type { DeliveryJournal, DeliveryRecord } from "./port.js";
 // Bucket объявляет платформа рядом с durable (ADR-050, ADR-052), бот к нему
 // только привязывается: создай его бот сам, настройки хранения разошлись бы с
 // таблицей топологии молча.
-export const deliveryJournalBucket = "telegram-bot-deliveries";
+export const deliveryJournalBucket = "hub-bot-deliveries";
 
 const RecordSchema = z.object({
   state: z.enum(["delivered", "dropped", "retrying"]),

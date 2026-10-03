@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
-const token = process.env["TELEGRAM_BOT_TOKEN"];
+const token = process.env["HUB_BOT_TOKEN"];
 const privateChatId = process.env["PRIVATE_CHAT_ID"];
 const groupChatId = process.env["GROUP_CHAT_ID"];
 const receiverUserId = process.env["RECEIVER_USER_ID"];
-const presentation = process.env["TELEGRAM_BOT_PRESENTATION"] ?? "rich";
+const presentation = process.env["HUB_BOT_PRESENTATION"] ?? "rich";
 
 if (token === undefined || token === "" || privateChatId === undefined || privateChatId === "") {
-  process.stderr.write("TELEGRAM_BOT_TOKEN and PRIVATE_CHAT_ID are required\n");
+  process.stderr.write("HUB_BOT_TOKEN and PRIVATE_CHAT_ID are required\n");
   process.exit(2);
 }
 
 if (presentation !== "rich" && presentation !== "plain") {
-  process.stderr.write("TELEGRAM_BOT_PRESENTATION must be rich or plain\n");
+  process.stderr.write("HUB_BOT_PRESENTATION must be rich or plain\n");
   process.exit(2);
 }
 

@@ -40,7 +40,7 @@ Milestone и зонт отвечают на разные вопросы. Milesto
 
 | Ось | Метки |
 |---|---|
-| `SFG` — компонент | `Meetups`, `Identity`, `Notifications`, `Telegram Bot`, `Auction`, `Auction Bot`, `Platform` |
+| `SFG` — компонент | `Meetups`, `Identity`, `Notifications`, `Hub Bot`, `Auction`, `Auction Bot`, `Platform` |
 | `Type` — род задачи | `Feature`, `Bug`, `Epic`, `Incident`, `Refactoring` |
 | `Area` — характер работы | `Research`, `Chore`, `Infrastructure`, `Tech Debt` |
 | вне групп | `Decision`, `Improvement` |
@@ -96,7 +96,7 @@ Milestone и зонт отвечают на разные вопросы. Milesto
 
 **Лимит объёма.** Контекст — до трёх строк, «Что сделать» и «Критерии приёмки» — до шести пунктов каждый. Не помещается — задача не декомпозирована, и это сигнал резать, а не писать длиннее. Задача читается с одного экрана: никто не должен продираться через сгенерированный текст, чтобы понять, что от него хотят.
 
-**Заголовки** короткие, с глагола, без деталей реализации: «Спроектировать Telegram Bot», а не «Оформить ADR по стеку Telegram Bot (TypeScript + grammY)».
+**Заголовки** короткие, с глагола, без деталей реализации: «Спроектировать Hub Bot», а не «Оформить ADR по стеку Hub Bot (TypeScript + grammY)».
 
 ## Шаблон зонта
 

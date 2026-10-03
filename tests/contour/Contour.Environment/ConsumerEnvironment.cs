@@ -17,7 +17,7 @@ namespace Contour.Environment;
 public static class ConsumerEnvironment
 {
     public const string MaintainerTokenVariable = "IDENTITY_MAINTAINER_TOKEN";
-    public const string BotServiceTokenVariable = "TELEGRAM_BOT_SERVICE_TOKEN";
+    public const string BotServiceTokenVariable = "HUB_BOT_SERVICE_TOKEN";
 
     // Префикс, а не одно имя: Aspire выставляет вместе с адресом экспортёра
     // протокол, заголовки и имя сервиса, и без адреса они бессмысленны.

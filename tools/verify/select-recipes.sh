@@ -29,14 +29,14 @@ workflow=${VERIFY_SELECT_WORKFLOW:-$root/.github/workflows/ci.yml}
 # here fails the selection: a new CI job without local recipes is a decision,
 # not a default. `contour` is not part of `verify` and is skipped on purpose.
 always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
-groups="contracts identity telegram-bot community-site-api auction-bot-ui auction-bot apphost meetups notifications auction nats-tester"
+groups="contracts identity hub-bot community-site-api auction-bot-ui auction-bot apphost meetups notifications auction nats-tester"
 skipped_filters="contour"
 
 recipes_of() {
     case $1 in
         contracts) echo "contracts-build contracts-check contracts-codegen-buf" ;;
         identity) echo "identity-build identity-test identity-test-log-check identity-lint" ;;
-        telegram-bot) echo "telegram-bot-typecheck telegram-bot-lint telegram-bot-test telegram-bot-build" ;;
+        hub-bot) echo "hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build" ;;
         community-site-api) echo "community-site-api-typecheck community-site-api-lint community-site-api-test" ;;
         auction-bot-ui) echo "auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test" ;;
         auction-bot) echo "auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" ;;

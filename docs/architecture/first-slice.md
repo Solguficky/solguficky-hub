@@ -27,7 +27,7 @@ Meetups не существует ни как исполняемый серви�
 sequenceDiagram
     actor S as Солегуфик
     actor A as Администратор
-    participant B as Telegram Bot
+    participant B as Hub Bot
     participant I as Identity
     participant M as Meetups
 
@@ -187,7 +187,7 @@ E-05 и E-09, а не заводят свои ([PER-214](https://linear.app/anti
 ## Связанные документы
 
 - [Архитектурный обзор](overview.md)
-- [Meetups](../services/meetups.md), [Identity](../services/identity.md), [Telegram Bot](../services/telegram-bot.md)
+- [Meetups](../services/meetups.md), [Identity](../services/identity.md), [Hub Bot](../services/telegram-bot.md)
 - [Продукт и границы MVP](../product/overview.md)
 - [ADR-022](../decisions/ADR-022-meetup-state-axes-and-visibility.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), [ADR-032](../decisions/ADR-032-drop-meetup-public-number.md), [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)
 - [Макет Bot UI](../design/bot/README.md)

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "../../apps/telegram-bot/testkit/index.js";
+import { describe, expect, it } from "../../apps/hub-bot/testkit/index.js";
 import {
   parseSecretsListing,
   pickLiveSecrets,
