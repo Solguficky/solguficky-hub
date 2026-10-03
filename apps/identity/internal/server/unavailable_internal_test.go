@@ -250,7 +250,7 @@ func TestReadinessFollowsDatabase(t *testing.T) {
 	t.Parallel()
 
 	db := &fakePinger{}
-	srv := New(slog.New(slog.DiscardHandler), new(sql.DB), "")
+	srv := New(slog.New(slog.DiscardHandler), new(sql.DB), "", NewTestCallers(t, ""))
 	probe := readiness{Server: srv.health, db: db}
 
 	check := func(service string) healthgrpc.HealthCheckResponse_ServingStatus {
@@ -296,7 +296,7 @@ func TestReadinessFollowsDatabase(t *testing.T) {
 func TestReadinessRefusesWatch(t *testing.T) {
 	t.Parallel()
 
-	srv := New(slog.New(slog.DiscardHandler), new(sql.DB), "")
+	srv := New(slog.New(slog.DiscardHandler), new(sql.DB), "", NewTestCallers(t, ""))
 	probe := readiness{Server: srv.health, db: &fakePinger{}}
 	err := probe.Watch(&healthgrpc.HealthCheckRequest{Service: ReadinessService}, nil)
 	if status.Code(err) != codes.Unimplemented {
@@ -316,7 +316,7 @@ func dialUnreachable(t *testing.T) (*grpc.ClientConn, *capture) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	logs := &capture{}
-	srv := New(slog.New(logs), db, "")
+	srv := New(slog.New(logs), db, "", NewTestCallers(t, ""))
 	lis := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = lis.Close() })
 	t.Cleanup(srv.Stop)
@@ -328,6 +328,7 @@ func dialUnreachable(t *testing.T) (*grpc.ClientConn, *capture) {
 			return lis.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		PresentDeclaredCaller(),
 	)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
