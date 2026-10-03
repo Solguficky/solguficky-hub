@@ -62,6 +62,14 @@ const retiredLabels: ReadonlySet<string> = new Set([
   "Да, продолжить",
 ]);
 
+// Пары, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
+// пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
+// PER-402, и отдельным рядом она вывела бы карточку за пять рядов.
+const namedPairs: ReadonlySet<string> = new Set([
+  "Изменить|Статус",
+  "Отписаться|Уведомления сходки",
+]);
+
 type Catalog = Readonly<Record<string, ScreenEntry>>;
 
 /** Каталог передаётся только в тестах самого линтера; в работе он один. */
@@ -219,13 +227,27 @@ function checkRules(
   if (rows.length > maxRows) {
     found.push(["rows", `рядов ${rows.length}, потолок ${maxRows}`]);
   }
-  for (const row of rows) {
+  rows.forEach((row, index) => {
     // Шире двух — только ряд коротких заготовок вроде времени или листания.
     const short = row.every((button) => button.text.length <= 6);
     if (row.length > (short ? 4 : 2)) {
       found.push(["rows", `в ряду ${row.length} кнопок: ${describeRow(row)}`]);
+      return;
     }
-  }
+    // Две в ряду — только у пар, которые дизайн-код называет поимённо: ряд
+    // навигации, разделы меню, листание и заготовки, «Изменить» со «Статусом»,
+    // материал с «Убрать».
+    const pair = labels(row).join("|");
+    const allowed =
+      short ||
+      index === rows.length - 1 ||
+      entry.nav === "root" ||
+      namedPairs.has(pair) ||
+      row.some((button) => button.text === "Убрать");
+    if (row.length === 2 && !allowed) {
+      found.push(["rows", `пара вне дизайн-кода: ${describeRow(row)}`]);
+    }
+  });
 
   for (const button of buttons) {
     if (

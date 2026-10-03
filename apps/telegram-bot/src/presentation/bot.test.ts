@@ -1194,6 +1194,53 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("keeps the same person on screen and says so when the admission is not saved", async () => {
+    const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [
+              {
+                identityId: firstId,
+                telegramUsername: "first",
+                admitted: false,
+              },
+              {
+                identityId: secondId,
+                telegramUsername: "second",
+                admitted: false,
+              },
+            ],
+            allowedUsernames: [],
+          },
+        }),
+      admit: vi.fn<CommunityAdministrator["admit"]>().mockResolvedValue({
+        kind: "unavailable",
+        cause: new Error("deadline exceeded"),
+      }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        `v1:cm:ad:${uuidToToken(firstId)}:${uuidToToken(secondId)}`,
+      ),
+    );
+
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Не получилось сохранить. Попробуй ещё раз.",
+    });
+    expect(calls[1]?.payload).toMatchObject({
+      text: expect.stringContaining("@first"),
+    });
+  });
+
   it("shows the next person in the queue after an admission", async () => {
     const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
     const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
@@ -2261,7 +2308,7 @@ describe("presentation adapter", () => {
       },
     });
     expect(sendMessageText(conflict)).toContain("Сейчас: Чужая правка");
-    expect(sendMessageText(conflict)).toContain("Ваше значение: Моя правка");
+    expect(sendMessageText(conflict)).toContain("Твоё значение: Моя правка");
     expectBoundary(records.at(-1), {
       level: "warn",
       result: "error",
@@ -4862,6 +4909,8 @@ describe("deferred publication frames", () => {
               text: "Дата и время",
               callback_data: `v1:manage:draft:${draftToken}:schedule`,
             },
+          ],
+          [
             {
               text: "Место",
               callback_data: `v1:manage:draft:${draftToken}:venue`,
@@ -4871,10 +4920,6 @@ describe("deferred publication frames", () => {
             {
               text: "Описание",
               callback_data: `v1:manage:draft:${draftToken}:description`,
-            },
-            {
-              text: "Название",
-              callback_data: `v1:manage:draft:${draftToken}:title`,
             },
           ],
           [
@@ -5061,6 +5106,47 @@ describe("deferred publication frames", () => {
         operation: "callback_query",
         use_case: "create_meetup",
       });
+    });
+
+    it("keeps the question waiting when the service fails under a time preset", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "timeout",
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:031020261930`),
+      );
+
+      // Клавиатура вопроса на месте: и заготовки, и ответ текстом ещё работают.
+      expect(calls.map((call) => call.method)).not.toContain(
+        "editMessageReplyMarkup",
+      );
+      expect(calls.at(-1)?.method).toBe("sendMessage");
+    });
+
+    it("shows the card when the answer lands on an already published meetup", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "draft",
+        meetup: { ...draft, visibility: "visible" },
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:031020261930`),
+      );
+
+      const shown = JSON.stringify(calls.at(-1)?.payload);
+      expect(shown).toContain("Изменение сохранено.");
+      expect(shown).toContain("v1:manage:status:");
+      expect(shown).not.toContain("v1:manage:draft:");
     });
 
     it("sends a time preset of the edit form to the edit command", async () => {

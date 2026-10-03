@@ -153,7 +153,6 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     parent: "hidden",
-    maxRows: 5,
   },
   "state-confirm": { class: "screen", nav: "confirm" },
   "past-date-confirm": { class: "screen", nav: "confirm" },

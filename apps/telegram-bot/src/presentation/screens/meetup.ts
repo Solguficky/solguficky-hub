@@ -407,10 +407,10 @@ export function draftScreen(view: {
   const token = uuidToToken(meetup.id);
   const keyboard = new InlineKeyboard()
     .text("Дата и время", `v1:manage:draft:${token}:schedule`)
+    .row()
     .text("Место", `v1:manage:draft:${token}:venue`)
     .row()
     .text("Описание", `v1:manage:draft:${token}:description`)
-    .text("Название", `v1:manage:draft:${token}:title`)
     .row()
     .text("Опубликовать", `v1:manage:publish:${token}`)
     .row()
@@ -443,9 +443,11 @@ export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
     keyboard: withNav(
       new InlineKeyboard()
         .text("Название", `v1:manage:field:${token}:title`)
+        .row()
         .text("Дата и время", `v1:manage:field:${token}:schedule`)
         .row()
         .text("Место", `v1:manage:field:${token}:venue`)
+        .row()
         .text("Описание", `v1:manage:field:${token}:description`),
       toCard(token),
     ),

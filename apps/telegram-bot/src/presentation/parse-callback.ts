@@ -49,16 +49,16 @@ const FormModeSchema = z.enum(["c", "e"]);
 // ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
 // правки, восстановимые по сущностям сообщения.
 const PastScheduleSchema = z.string().regex(/^\d{12}$/);
-// Версия карточки, с которой человек начал действие с материалом. Её несёт
-// кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
-// места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
-// что остаётся до 64 (PER-393).
 // Страница списка в кнопке: только цифры, без пустой строки и экспоненты,
 // которые `z.coerce.number()` принял бы за число.
 const PageSchema = z
   .string()
   .regex(/^\d{1,4}$/)
   .transform(Number);
+// Версия карточки, с которой человек начал действие с материалом. Её несёт
+// кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
+// места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
+// что остаётся до 64 (PER-393).
 const VersionSchema = z
   .string()
   .regex(/^[1-9]\d{0,8}$/)
@@ -295,7 +295,7 @@ export function parseCallback(raw: unknown): CallbackAction {
       if (parts[4] === undefined) {
         return { kind: "manage-materials", token: meetupToken.data };
       }
-      const page = z.coerce.number().int().nonnegative().safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[4]);
       return page.success
         ? { kind: "manage-materials", token: meetupToken.data, page: page.data }
         : { kind: "malformed" };
@@ -533,7 +533,7 @@ function parseListPage(parts: readonly string[]): CallbackAction | undefined {
           ? "manage-hidden"
           : undefined;
   if (kind === undefined) return undefined;
-  const page = z.coerce.number().int().nonnegative().safeParse(parts[3]);
+  const page = PageSchema.safeParse(parts[3]);
   return page.success ? { kind, page: page.data } : { kind: "malformed" };
 }
 

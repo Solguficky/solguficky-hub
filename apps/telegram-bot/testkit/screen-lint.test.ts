@@ -236,6 +236,23 @@ describe("inspectCall", () => {
     ).toEqual(["style"]);
   });
 
+  it("allows two buttons in a row only for the pairs the design code names", () => {
+    const tree = (rows: unknown[][]) =>
+      rulesOf("sendMessage", {
+        text: "<b>Архив</b>",
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [...rows, [key("‹ Меню")]],
+        },
+        [screenTag]: "archive",
+      });
+
+    expect(tree([[key("Место"), key("Описание")]])).toEqual(["rows"]);
+    expect(tree([[key("Изменить"), key("Статус")]])).toEqual([]);
+    expect(tree([[key("Программа вечера"), key("Убрать")]])).toEqual([]);
+    expect(tree([[key("←"), key("→")]])).toEqual([]);
+  });
+
   it("holds a question to the reply mode and a cancel button", () => {
     const question = (markup: Record<string, unknown>) =>
       rulesOf("sendMessage", {

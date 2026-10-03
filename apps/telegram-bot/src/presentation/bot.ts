@@ -82,6 +82,7 @@ import {
   traceCallback,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
+import { RepliedKeyboardSchema } from "./schemas.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -1529,16 +1530,23 @@ async function handleCallback(
             : "Состояние уже было актуальным."
           : result.kind === "invalid"
             ? "Изменение не сохранилось. Состав перечитан заново."
-            : undefined;
-      if (toast !== undefined) await waiting.answer(toast);
+            : result.kind === "forbidden"
+              ? "Это может только администратор."
+              : "Не получилось сохранить. Попробуй ещё раз.";
+      await waiting.answer(toast);
+      // Отказ оставляет на экране того же человека: уйди очередь к следующему,
+      // несохранённое решение выглядело бы принятым.
+      const saved = result.kind === "ok";
       await renderCommunity(
         ctx,
         runtime,
         person,
         action.kind === "admit-member"
-          ? pendingView(action.next)
+          ? pendingView(saved ? action.next : action.token)
           : action.kind === "block-member"
-            ? viewOfOrigin(action.origin)
+            ? saved || action.origin.kind === "admitted"
+              ? viewOfOrigin(action.origin)
+              : pendingView(action.token)
             : { kind: "usernames", page: action.page },
       );
       outcome = adminOutcome(result, person.identityId);
@@ -1708,9 +1716,15 @@ async function handleCallback(
           runtime.presentation ?? "rich",
         );
       } else if (action.kind === "manage-draft" && action.field !== undefined) {
+        // Под устаревшим черновиком сходку уже опубликовали: вопрос идёт как
+        // точечная правка, и ответ вернёт карточку, а не черновик.
         await renderFormResult(
           ctx,
-          { kind: "ask", field: action.field, meetup },
+          {
+            kind: meetup.visibility === "visible" ? "edit-ask" : "ask",
+            field: action.field,
+            meetup,
+          },
           questions,
           runtime.presentation ?? "rich",
         );
@@ -1896,13 +1910,10 @@ async function handleCallback(
       action.kind === "manage-confirm-past-schedule" ||
       action.kind === "manage-pick-schedule"
     ) {
-      // Кнопки снимаются до команды: второе нажатие того же кадра или нажатие
-      // после «Ввести другую» не должно переписать дату ещё раз.
-      await clearCallbackKeyboard(ctx);
-      // Кнопка времени — ответ на вопрос: вопрос под ней больше не ждёт.
-      const pressed = ctx.callbackQuery?.message?.message_id;
-      if (action.kind === "manage-pick-schedule" && pressed !== undefined) {
-        questions.delete(questionKey(ctx.chat?.id, pressed));
+      // Кадр подтверждения одноразовый: его кнопки снимаются до команды, чтобы
+      // нажатие после «Нет» не переписало дату ещё раз.
+      if (action.kind === "manage-confirm-past-schedule") {
+        await clearCallbackKeyboard(ctx);
       }
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
@@ -1916,6 +1927,15 @@ async function handleCallback(
           : {}),
         ...rpcCall(ctx, useCase),
       });
+      // Кнопка времени — ответ на вопрос, и закрывает его так же, как ответ
+      // текстом: при сбое сервиса вопрос с заготовками остаётся ждать.
+      if (action.kind === "manage-pick-schedule" && !retryable(result)) {
+        const pressed = ctx.callbackQuery?.message?.message_id;
+        if (pressed !== undefined) {
+          questions.delete(questionKey(ctx.chat?.id, pressed));
+        }
+        await clearCallbackKeyboard(ctx);
+      }
       await renderFormResult(
         ctx,
         result,
@@ -3531,7 +3551,7 @@ async function renderFormResult(
       stored.description,
       ...(result.input === undefined
         ? []
-        : ["", `Ваше значение: ${result.input}`]),
+        : ["", `Твоё значение: ${result.input}`]),
     ];
     // Публикация подтверждается повторно по обновлённым данным: кнопка снова
     // несёт снимок, который человек только что видел.
@@ -3606,6 +3626,18 @@ async function renderFormResult(
       "Сходка уже отменена. Изменять её больше нельзя.",
       exitToCard(uuidToToken(result.meetup.id)),
       "new",
+    );
+    return;
+  }
+  if (result.kind === "draft" && result.meetup.visibility === "visible") {
+    // Ответ на вопрос формы пришёл после публикации: черновика уже нет.
+    await renderMeetupCard(
+      ctx,
+      cardFrom(result),
+      true,
+      presentation,
+      true,
+      "Изменение сохранено.",
     );
     return;
   }
@@ -3839,14 +3871,10 @@ function cancelTarget(step: QuestionStep): ScreenAction {
 }
 
 function questionStepOf(replied: unknown): QuestionStep | undefined {
-  const keyboard = (
-    replied as { reply_markup?: { inline_keyboard?: unknown } } | undefined
-  )?.reply_markup?.inline_keyboard;
-  if (!Array.isArray(keyboard)) return undefined;
-  for (const button of keyboard.flat()) {
-    const action = parseCallback(
-      (button as { callback_data?: unknown } | undefined)?.callback_data,
-    );
+  const parsed = RepliedKeyboardSchema.safeParse(replied);
+  if (!parsed.success) return undefined;
+  for (const button of parsed.data.reply_markup.inline_keyboard.flat()) {
+    const action = parseCallback(button.callback_data);
     if (action.kind === "question") return action.step;
   }
   return undefined;
@@ -3904,6 +3932,9 @@ async function askQuestion(
   questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
     ...pending,
     expiresAt: Date.now() + questionTtlMs,
+    // `PendingBody` — тот же union без срока жизни: разворот его варианта с
+    // `expiresAt` даёт вариант `PendingInput`, но TypeScript распределённый
+    // `Omit` обратно в union не сводит.
   } as PendingInput);
   evictOldestQuestions(questions);
 }
