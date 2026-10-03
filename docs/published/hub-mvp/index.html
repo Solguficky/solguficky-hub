@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Solguficky Hub: что умеет первая версия бота сходок, как пройдёт показ и что решаем дальше.">
+<title>Solguficky Hub: первая версия</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  /* Оформление то же, что у страницы «Аукцион 2026»: плотная сетка, мелкие
+     моношрифтовые метки, серые заливки вместо рамок, три серых, один кирпичный
+     и один синий. Тёмная тема меняет только значения токенов. Отличия: страница
+     только для чтения, поэтому полей, фильтров и заметок здесь нет; появились
+     кадр чата — сообщение бота с рядами кнопок — и таблицы; без JavaScript
+     тема идёт за системой, поэтому тёмные токены повторены в медиазапросе. */
+  :root {
+    color-scheme: light;
+    --paper: #fbfbfa;
+    --fill: #eeeeec;
+    --fill-2: #e2e2e0;
+    --ink: #17191b;
+    --muted: #56595c;
+    --line: #cbcbc9;
+    --accent: #a8331b;
+    --accent-quiet: #f0cfc7;
+    --cold: #14459c;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #121316;
+    --fill: #1c1e22;
+    --fill-2: #24272c;
+    --ink: #eceae4;
+    --muted: #9b9b95;
+    --line: #3c3f44;
+    --accent: #e2724d;
+    --accent-quiet: #401809;
+    --cold: #86adf2;
+  }
+  /* Без JavaScript выбор темы недоступен, и страница идёт за системой. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      color-scheme: dark;
+      --paper: #121316; --fill: #1c1e22; --fill-2: #24272c; --ink: #eceae4;
+      --muted: #9b9b95; --line: #3c3f44; --accent: #e2724d; --accent-quiet: #401809;
+      --cold: #86adf2;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.5 "Golos Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .shell { width: min(1060px, calc(100% - 48px)); margin: 0 auto; padding-bottom: 90px; }
+
+  h1, h2, h3 { font-family: inherit; font-weight: 600; letter-spacing: -.02em; margin: 0; }
+  p { margin: 0 0 12px; max-width: 70ch; }
+  p:last-child { margin-bottom: 0; }
+  a { color: var(--cold); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--cold); outline-offset: 2px; }
+  strong { font-weight: 600; }
+
+  .eyebrow, .badge, .toc a, .note-kind, .lane h3, .tool-label, .section-number,
+  .toc h2, .status-table th, .diff-table th {
+    font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+    font-size: 12px; letter-spacing: .03em; text-transform: uppercase;
+  }
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 12px; top: 12px; z-index: 5; background: var(--ink);
+                color: var(--paper); padding: 10px 14px; }
+
+  button { font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+           background: transparent; color: var(--ink); padding: 9px 12px;
+           border: 0; box-shadow: inset 0 0 0 1px var(--line); }
+  button:hover { background: var(--fill); }
+  button[aria-pressed="true"] { background: var(--ink); color: var(--paper); box-shadow: none; }
+  .segmented { display: inline-flex; flex-wrap: wrap; }
+  .segmented button + button { margin-left: -1px; }
+
+  /* ------------------------------------------------------------------ шапка */
+  .hero { padding: 42px 0 30px; }
+  .hero .eyebrow { display: block; color: var(--muted); margin-bottom: 12px; }
+  h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.05; }
+  .lede { font-size: clamp(16px, 2vw, 19px); color: var(--muted); margin: 12px 0 0; }
+  .disclaimer { max-width: 62ch; margin: 18px 0 0; padding: 12px 15px; font-size: 14px;
+                color: var(--muted); background: var(--fill); box-shadow: inset 3px 0 0 var(--line); }
+
+  /* ----------------------------------------------------- содержание слева */
+  /* minmax(0, 1fr): без него единственная колонка растягивается по самой
+     широкой таблице, и на телефоне вся страница уезжает за правый край. */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 44px; align-items: start; }
+  .sidebar { position: sticky; top: 22px; align-self: start; padding-top: 4px; }
+  .toc h2 { font-weight: 700; color: var(--ink); margin: 0 0 10px;
+            padding-bottom: 9px; box-shadow: inset 0 -2px 0 var(--ink); }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc a { display: block; color: var(--muted); text-decoration: none; padding: 11px 0;
+           box-shadow: inset 0 -1px 0 var(--line); }
+  .toc a:hover { color: var(--ink); }
+  .prefs { margin-top: 26px; }
+  .prefs .tool-label { display: block; color: var(--muted); margin-bottom: 8px; }
+  .print-button { margin-top: 22px; }
+
+  /* ------------------------------------------------------------------ разделы */
+  .chapter { padding-top: 54px; }
+  .section-number { display: block; color: var(--accent); margin-bottom: 8px; }
+  h2 { font-size: clamp(23px, 3.4vw, 31px); line-height: 1.1; margin-bottom: 16px; }
+  h3 { font-size: clamp(18px, 2.4vw, 21px); line-height: 1.2; margin: 30px 0 10px; }
+  figure { margin: 20px 0; }
+  figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; }
+  .muted { color: var(--muted); }
+  main ul { margin: 0 0 12px; padding-left: 20px; max-width: 70ch; }
+  main ul li { margin-bottom: 5px; }
+
+  /* Метка состояния. Три значения на всю страницу: проверено живым прогоном,
+     сделано в боте без живой проверки, предмет будущего решения. */
+  .badge { display: inline-block; color: var(--muted); }
+  .badge.live { color: var(--cold); }
+  .badge.next { color: var(--accent); }
+  .legend { list-style: none; margin: 18px 0; padding: 0; display: grid; gap: 2px; }
+  .legend li { background: var(--fill); padding: 12px 16px; font-size: 15px; margin: 0; }
+  .legend .badge { display: block; margin-bottom: 3px; }
+
+  .flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .flow li { background: var(--fill); padding: 16px 18px; margin: 0; }
+  .flow b { display: block; font-size: 17px; font-weight: 600; margin-bottom: 3px; }
+  .flow span { color: var(--muted); font-size: 15px; }
+  .flow .final { background: var(--accent); color: var(--paper); }
+  .flow .final span { color: var(--accent-quiet); }
+
+  .parallel { display: grid; gap: 2px; margin: 18px 0; }
+  .lane { background: var(--fill); padding: 18px 20px; }
+  .lane.remote { background: var(--fill-2); }
+  /* Заголовок дорожки — третий уровень: она стоит прямо под заголовком главы,
+     и уровень пропускать нельзя. Вид — моношрифтовая метка, как у остальных. */
+  .lane h3 { font-weight: 400; color: var(--muted); margin: 0 0 10px; line-height: 1.5; }
+  .lane.remote h3 { color: var(--accent); }
+  .lane ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+  .lane li { font-size: 15px; margin: 0; }
+
+  .journey { list-style: none; margin: 18px 0; padding: 0; counter-reset: j; display: grid; gap: 2px; }
+  .journey li { counter-increment: j; background: var(--fill); padding: 16px 18px; margin: 0; }
+  .journey h3 { font-size: 17px; margin: 0 0 3px; }
+  .journey h3::before { content: counter(j, decimal-leading-zero);
+                        font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
+                        font-size: 11px; color: var(--muted); margin-right: 9px; letter-spacing: 0; }
+  .journey p { color: var(--muted); font-size: 15px; margin: 0; }
+
+  /* ------------------------------------------------------------- кадр чата */
+  /* Сообщение бота — заливка без обводки, кнопка под ним — обводка без
+     заливки: то же правило, которым страница отличает контент от кнопок.
+     Кнопки кадра ничего не делают, поэтому это span, а не button. */
+  .frames { display: grid; gap: 22px 26px; margin: 20px 0; align-items: start; }
+  .frame { margin: 0; min-width: 0; }
+  .frame .who { display: block; margin-bottom: 6px; }
+  .chat { background: var(--fill); padding: 12px; display: grid; gap: 6px; }
+  .bubble { background: var(--paper); padding: 10px 12px; font-size: 14px; line-height: 1.45;
+            white-space: pre-line; overflow-wrap: anywhere; max-width: 100%; }
+  .bubble.me { justify-self: end; background: var(--fill-2); max-width: 85%; }
+  .bubble b { font-weight: 600; }
+  .keys { display: grid; gap: 4px; }
+  .keys .row { display: flex; gap: 4px; }
+  .key { flex: 1; text-align: center; font-size: 13px; line-height: 1.2; padding: 8px 6px;
+         box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); overflow-wrap: anywhere; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden;
+        clip-path: inset(50%); white-space: nowrap; }
+
+  /* --------------------------------------------------------------- таблицы */
+  .table-wrap { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px; }
+  th { color: var(--muted); font-weight: 400; box-shadow: inset 0 -2px 0 var(--ink); }
+  tbody tr:nth-child(odd) { background: var(--fill); }
+  tbody tr:nth-child(even) { background: var(--fill-2); }
+  td .badge { white-space: nowrap; }
+
+  /* -------------------------------------------------- вставки внутри текста */
+  .note { background: var(--fill); margin: 16px 0; padding: 13px 16px 14px 17px;
+          box-shadow: inset 3px 0 0 var(--muted); }
+  .note-kind { display: block; color: var(--muted); margin-bottom: 6px; }
+  .note p { font-size: 15px; margin: 0 0 8px; }
+  .note p:last-of-type { margin-bottom: 0; }
+  .note ul { margin: 0; padding-left: 19px; font-size: 15px; }
+  .note[data-kind="q"] { box-shadow: inset 3px 0 0 var(--cold); }
+  .note[data-kind="q"] .note-kind { color: var(--cold); }
+  .note[data-kind="risk"] { box-shadow: inset 3px 0 0 var(--accent); }
+  .note[data-kind="risk"] .note-kind { color: var(--accent); }
+
+  footer { margin-top: 54px; display: flex; flex-wrap: wrap; gap: 8px; }
+  footer a { display: inline-block; color: var(--muted); text-decoration: none; padding: 11px 14px;
+             font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; font-size: 12px;
+             text-transform: uppercase; box-shadow: inset 0 0 0 1px var(--line); }
+  footer a:hover { color: var(--ink); }
+
+  :target { scroll-margin-top: 14px; }
+
+  @media (min-width: 900px) {
+    .layout { grid-template-columns: 218px minmax(0, 1fr); }
+    main { max-width: 760px; }
+  }
+  @media (max-width: 899px) {
+    .layout { gap: 0; }
+    .sidebar { position: static; display: flex; flex-wrap: wrap; gap: 22px 30px; align-items: flex-end;
+               padding-bottom: 8px; }
+    .toc { flex: 1 1 100%; }
+    .toc ol { display: flex; flex-wrap: wrap; gap: 2px; }
+    .toc a { background: var(--fill); padding: 9px 12px; box-shadow: none; }
+    .prefs, .print-button { margin-top: 0; }
+  }
+  @media (min-width: 760px) {
+    .parallel, .frames { grid-template-columns: 1fr 1fr; }
+    .legend { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .shell { width: calc(100% - 32px); }
+    /* Колонка состояния — главное в таблице: на телефоне метка переносится,
+       а не уезжает за край прокручиваемой обёртки. */
+    th, td { padding: 8px; }
+    td .badge { white-space: normal; }
+  }
+
+  @media print {
+    :root, :root[data-theme="dark"], :root:not([data-theme]) {
+      color-scheme: light;
+      --paper: #ffffff; --fill: #f1f1ef; --fill-2: #e6e6e4; --ink: #111; --muted: #444;
+      --line: #bbb; --accent: #962c15; --accent-quiet: #f2d5cd; --cold: #0d3a8a;
+    }
+    body { font-size: 10.5pt; }
+    .shell { width: auto; }
+    .sidebar, .skip, footer { display: none !important; }
+    .layout { display: block; }
+    main { max-width: none; }
+    .chapter { padding-top: 24px; }
+    .frame, .note, .lane, .flow li, .journey li, tr { break-inside: avoid; }
+    a { text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">К содержанию документа</a>
+<div class="shell">
+  <header class="hero" id="top">
+    <span class="eyebrow">Solguficky · бот сходок</span>
+    <h1>Solguficky Hub: первая версия</h1>
+    <p class="lede">Что бот уже умеет, как пройдёт показ и что решаем дальше</p>
+    <p class="disclaimer">Страница сопровождает показ работающего бота и его не заменяет. Кадры чата
+      свёрстаны по текстам, которые бот отправляет на самом деле, но это не снимки экрана: в Telegram
+      они выглядят как обычные сообщения с кнопками. Названия сходок, имена и ники в кадрах вымышлены.
+      Страницу собрал ИИ по документам проекта; если что-то не сходится с тем, что вы увидите на
+      показе, прав бот.</p>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <nav class="toc" aria-label="Содержание">
+        <h2>Содержание</h2>
+        <ol>
+          <li><a href="#why">01 · Зачем это</a></li>
+          <li><a href="#scope">02 · Что входит</a></li>
+          <li><a href="#member">03 · Путь участника</a></li>
+          <li><a href="#admin">04 · Путь администратора</a></li>
+          <li><a href="#notifications">05 · Уведомления</a></li>
+          <li><a href="#failures">06 · Когда что-то не так</a></li>
+          <li><a href="#changes">07 · Отличия от макета</a></li>
+          <li><a href="#limits">08 · Ограничения</a></li>
+          <li><a href="#demo">09 · Как пройдёт показ</a></li>
+          <li><a href="#next">10 · Что дальше</a></li>
+        </ol>
+      </nav>
+      <div class="prefs" hidden>
+        <span class="tool-label">Тема</span>
+        <div class="segmented" role="group" aria-label="Тема оформления">
+          <button type="button" data-theme-set="light" aria-pressed="true">Светлая</button>
+          <button type="button" data-theme-set="dark" aria-pressed="false">Тёмная</button>
+        </div>
+      </div>
+      <button class="print-button" type="button" hidden>Печатная версия</button>
+    </aside>
+    <main id="content">
+
+      <section class="chapter" id="why" aria-labelledby="why-title">
+        <span class="section-number">01</span>
+        <h2 id="why-title">Зачем это</h2>
+        <p>Сейчас сходки живут в большом закрепе на месяц и в истории чата. Это работает, но у способа
+          есть цена — и для того, кто закреп ведёт, и для того, кто его читает.</p>
+        <div class="parallel">
+          <div class="lane">
+            <h3>Администратору</h3>
+            <ul>
+              <li>Большое сообщение неудобно править, и при правке легко перетереть актуальное.</li>
+              <li>Ссылки, опросы и уточнения приходится собирать по чату руками.</li>
+              <li>Заинтересованных людей надо помнить и сообщать им об изменениях лично.</li>
+            </ul>
+          </div>
+          <div class="lane">
+            <h3>Участнику</h3>
+            <ul>
+              <li>Закреп разрастается, и в нём трудно найти своё.</li>
+              <li>Изменения по конкретной сходке приходится искать в истории чата.</li>
+              <li>Опросы и полезные сообщения теряют связь со сходкой.</li>
+            </ul>
+          </div>
+        </div>
+        <p>Solguficky Hub — бот в личном чате, который хранит сведения о сходке в одном месте и
+          связывает её с сообщениями из чата. Обсуждения и опросы остаются в Telegram: бот их не
+          заменяет, а помогает найти.</p>
+        <h3>Как читать эту страницу</h3>
+        <p>Что должно быть в первой версии, утверждено до разработки — это глава 02. Метки ниже
+          показывают, что из утверждённого уже работает, а что остаётся вариантом на будущее.</p>
+        <ul class="legend">
+          <li><span class="badge live">Проверено вживую</span>Сценарий пройден в настоящем Telegram с
+            трёх аккаунтов: администратора, участника и человека без допуска.</li>
+          <li><span class="badge">Сделано</span>Есть в боте, но в живую проверку ещё не входило.
+            На показе посмотрим вместе.</li>
+          <li><span class="badge next">Дальше</span>Не сделано. Вариант развития, по которому нужно
+            решение.</li>
+        </ul>
+        <div class="note" data-kind="fact"><span class="note-kind">Оговорка</span>
+          <p>Метка относится к сценарию, а не к виду экрана. Живые проверки шли 27 сентября и
+            1 октября 2026 года; 3 октября экраны перевёрстаны по единым правилам — меню, подписи
+            кнопок, выбор даты. Кадры ниже показывают новую вёрстку. Она проверена автоматическими
+            тестами, а целиком в Telegram мы увидим её на показе.</p></div>
+      </section>
+
+      <section class="chapter" id="scope" aria-labelledby="scope-title">
+        <span class="section-number">02</span>
+        <h2 id="scope-title">Что входит в первую версию</h2>
+        <p>Цель первой версии — провести одну живую сходку так, чтобы бот был основным местом, где
+          о ней узнают.</p>
+        <div class="parallel">
+          <div class="lane">
+            <h3>Входит</h3>
+            <ul>
+              <li>Вход по <code>/start</code> и допуск: список разрешённых ников или ручной допуск.</li>
+              <li>Закрытие доступа человеку без удаления его профиля.</li>
+              <li>Создание и правка сходки, публикация сразу или позже, снятие с публикации.</li>
+              <li>Список ближайших сходок, архив и карточка сходки.</li>
+              <li>Материалы сходки: ссылки на сообщения чата и файлы.</li>
+              <li>Подписка на сходку и настройка, о чём присылать.</li>
+            </ul>
+          </div>
+          <div class="lane remote">
+            <h3>Не входит</h3>
+            <ul>
+              <li>Список участников и ответы «пойду / не пойду».</li>
+              <li>Разбор результатов опросов Telegram.</li>
+              <li>Сообщения бота в общем чате и автообновляемый закреп.</li>
+              <li>Предложение сходки обычным участником.</li>
+              <li>Mini App.</li>
+              <li>Аукцион: он проектируется отдельно.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="note" data-kind="fact"><span class="note-kind">Принцип</span>
+          <p>Бот не читает общий чат. Сообщение попадает к сходке только тогда, когда администратор сам
+            переслал его боту. О человеке хранятся идентификатор Telegram, ник, роли, отметка о
+            допуске, его подписки и настройки уведомлений; у сходки и материала — кто их завёл.
+            Переписка и факт участия в сходках не сохраняются.</p></div>
+      </section>
+
+      <section class="chapter" id="member" aria-labelledby="member-title">
+        <span class="section-number">03</span>
+        <h2 id="member-title">Путь участника</h2>
+        <ol class="journey">
+          <li><h3>Нажимает /start</h3><p>Ник есть в списке разрешённых — доступ открывается сразу. Нет —
+            человек видит, что заявка ждёт проверки, и к кому обратиться.</p></li>
+          <li><h3>Открывает «Ближайшие сходки»</h3><p>Список кнопками: дата и название. Прошедшие,
+            отменённые и состоявшиеся лежат в «Архиве».</p></li>
+          <li><h3>Читает карточку</h3><p>Статус, автор, когда, где, описание и материалы. Ссылка на
+            сообщение чата открывает оригинал в Telegram.</p></li>
+          <li><h3>Подписывается</h3><p>Отдельным явным действием. Ответ в опросе подпиской не
+            считается.</p></li>
+          <li><h3>Получает уведомления</h3><p>Только те, что выбрал. Под уведомлением стоит кнопка,
+            которая отключает его категорию.</p></li>
+        </ol>
+        <div class="frames">
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Человек без допуска</span>
+            <div class="chat">
+              <div class="bubble me">/start</div>
+              <div class="bubble">Заявка на доступ ждёт проверки.
+
+Пока сходки не видны. Напиши администратору в общем чате сообщества — он найдёт заявку по твоему нику.</div>
+            </div>
+            <figcaption>У человека без ника вместо этого назван короткий код заявки: по нему его
+              находят в списке.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Участник</span>
+            <div class="chat">
+              <div class="bubble"><b>Меню</b>
+
+Привет. Здесь живёт информация о сходках солегуфиков.
+
+Можно посмотреть, что запланировано, открыть связанные сообщения из чата и подписаться на уведомления о конкретной сходке.
+
+Писать буду только по твоей подписке.</div>
+              <div class="keys">
+                <div class="row"><span class="key">Ближайшие сходки</span><span class="key">Архив</span></div>
+                <div class="row"><span class="key">Уведомления</span></div>
+              </div>
+            </div>
+            <figcaption>У администратора под этими кнопками есть ещё одна — «Управление». Последняя
+              фраза приветствия неточна: новые сходки и объявления приходят и без подписки, пока их
+              не отключили. Вопрос о формулировке — в конце страницы.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Участник</span>
+            <div class="chat">
+              <div class="bubble"><b>Ближайшие сходки</b>
+
+С датой
+• 17 октября, сб — Настолки у Лёши
+• 24 октября, сб — Прогулка по набережной</div>
+              <div class="keys">
+                <div class="row"><span class="key">17 октября · Настолки у Лёши</span></div>
+                <div class="row"><span class="key">24 октября · Прогулка по набережной</span></div>
+                <div class="row"><span class="key">‹ Меню</span></div>
+              </div>
+            </div>
+            <figcaption>Экран один: нажатие кнопки меняет это же сообщение, а не присылает новое.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Участник</span>
+            <div class="chat">
+              <div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована, видна
+Автор: @lesha_sgf
+
+Когда: 17 октября, сб, 19:00
+Где: Циферблат, Ленина 5
+
+Берём свои игры, места хватит на 12 человек.
+
+Материалы:
+1. Опрос: кто идёт
+
+Подпишись, чтобы получать изменения, материалы и сообщения организатора этой сходки.</div>
+              <div class="keys">
+                <div class="row"><span class="key">Материалы (1)</span></div>
+                <div class="row"><span class="key">Подписаться на сходку</span></div>
+                <div class="row"><span class="key">‹ Ближайшие</span><span class="key">Меню</span></div>
+              </div>
+            </div>
+            <figcaption>После подписки вместо одной кнопки стоят две: «Отписаться» и «Уведомления
+              сходки».</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="chapter" id="admin" aria-labelledby="admin-title">
+        <span class="section-number">04</span>
+        <h2 id="admin-title">Путь администратора</h2>
+        <p>Отдельного бота для администратора нет: тот же чат, в меню на одну кнопку больше. Права
+          проверяются при каждом нажатии, а не только при показе кнопки.</p>
+        <div class="table-wrap">
+          <table class="status-table">
+            <thead><tr><th scope="col">Действие</th><th scope="col">Как выглядит</th><th scope="col">Состояние</th></tr></thead>
+            <tbody>
+              <tr><td>Создать сходку</td><td>Один вопрос — название. Дальше черновик, поля заполняются
+                в любом порядке.</td><td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Выбрать дату</td><td>Кнопки ближайших дней и времени; другую дату можно написать
+                текстом.</td><td><span class="badge">Сделано</span></td></tr>
+              <tr><td>Опубликовать</td><td>Отдельная кнопка. Без названия опубликовать нельзя,
+                остальные поля могут быть пустыми.</td><td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Изменить после публикации</td><td>Правится одно поле, остальные не
+                трогаются.</td><td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Отменить сходку</td><td>С подтверждением. Подписчики получают сообщение об
+                отмене.</td><td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Прикрепить и убрать материал</td><td>Переслать боту сообщение или отправить фото,
+                дать название и подтвердить.</td><td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Написать подписчикам сходки</td><td>Текст, предпросмотр, подтверждение.</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Объявление сообществу</td><td>То же, но всем, кто не отключил объявления.</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Допустить человека</td><td>«Состав сообщества»: очередь заявок и список
+                разрешённых ников.</td><td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Опубликовать позже</td><td>Назначить дату и время публикации.</td>
+                <td><span class="badge">Сделано</span></td></tr>
+              <tr><td>Скрыть из списка</td><td>Снять с публикации; сходка остаётся в «Скрытых».</td>
+                <td><span class="badge">Сделано</span></td></tr>
+              <tr><td>Отметить состоявшейся</td><td>Сходка уходит в архив.</td>
+                <td><span class="badge">Сделано</span></td></tr>
+              <tr><td>Закрыть доступ</td><td>С подтверждением; профиль не удаляется.</td>
+                <td><span class="badge">Сделано</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="frames">
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Администратор</span>
+            <div class="chat">
+              <div class="bubble"><b>Настолки у Лёши</b>
+Статус: запланирована, скрыта
+
+Когда: дата не задана
+Где: не указано
+
+Описание пока не добавлено.</div>
+              <div class="keys">
+                <div class="row"><span class="key">Дата и время</span></div>
+                <div class="row"><span class="key">Место</span></div>
+                <div class="row"><span class="key">Описание</span></div>
+                <div class="row"><span class="key">Опубликовать</span></div>
+                <div class="row"><span class="key">Опубликовать позже</span></div>
+                <div class="row"><span class="key">‹ Скрытые</span><span class="key">Меню</span></div>
+              </div>
+            </div>
+            <figcaption>Черновик. Из формы можно выйти в любой момент: он останется в «Скрытых
+              сходках».</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Администратор</span>
+            <div class="chat">
+              <div class="bubble">Сходка опубликована. Теперь она видна в списке. Ссылка для чата: t.me/…?start=…
+
+<b>Настолки у Лёши</b>
+Статус: запланирована, видна
+Ты автор этой сходки
+
+Когда: 17 октября, сб, 19:00
+Где: Циферблат, Ленина 5
+
+Берём свои игры, места хватит на 12 человек.</div>
+              <div class="keys">
+                <div class="row"><span class="key">Изменить</span><span class="key">Статус</span></div>
+                <div class="row"><span class="key">Материалы (0)</span></div>
+                <div class="row"><span class="key">Написать подписчикам</span></div>
+                <div class="row"><span class="key">Уведомления сходки</span></div>
+                <div class="row"><span class="key">‹ Ближайшие</span><span class="key">Меню</span></div>
+              </div>
+            </div>
+            <figcaption>Ссылку в общий чат отправляет человек: сам бот туда не пишет.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Администратор</span>
+            <div class="chat">
+              <div class="bubble"><b>Ожидают допуска</b>
+
+@new_solegufik
+
+В очереди: 1</div>
+              <div class="keys">
+                <div class="row"><span class="key">Допустить</span></div>
+                <div class="row"><span class="key">Закрыть</span></div>
+                <div class="row"><span class="key">Обновить</span></div>
+                <div class="row"><span class="key">‹ Состав</span><span class="key">Меню</span></div>
+              </div>
+            </div>
+            <figcaption>Заявки разбираются по одной. Допущенный получает сообщение «Доступ открыт:
+              теперь тебе видны сходки сообщества».</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Администратор</span>
+            <div class="chat">
+              <div class="bubble">Перешли сообщение или отправь фотографию либо документ для сходки «Настолки у Лёши». Я не читаю чат целиком: связь появится только после твоего подтверждения.</div>
+              <div class="keys"><div class="row"><span class="key">Отмена</span></div></div>
+              <div class="bubble me">Переслано из: Солегуфики
+Кто идёт в субботу? Голосуем до среды</div>
+              <div class="bubble">Как назвать материал в карточке? Напиши короткое название.</div>
+              <div class="keys"><div class="row"><span class="key">Отмена</span></div></div>
+              <div class="bubble me">Опрос: кто идёт</div>
+            </div>
+            <figcaption>После названия бот отдельным сообщением спрашивает подтверждение, и только
+              тогда материал появляется в карточке. Хранятся ссылка и название, а не копия
+              сообщения. Удаление материала оригинал в чате не трогает.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="chapter" id="notifications" aria-labelledby="notifications-title">
+        <span class="section-number">05</span>
+        <h2 id="notifications-title">Уведомления</h2>
+        <p>Две разные вещи: <strong>подписка</strong> — «слежу за этой сходкой», и
+          <strong>категории</strong> — что именно присылать. Категории настраиваются для всех сходок
+          сразу и отдельно у конкретной. Неотключаемых уведомлений нет.</p>
+        <div class="table-wrap">
+          <table class="status-table">
+            <thead><tr><th scope="col">Категория</th><th scope="col">Кому приходит</th><th scope="col">По умолчанию</th><th scope="col">Состояние</th></tr></thead>
+            <tbody>
+              <tr><td>Новые сходки</td><td>Всем допущенным</td><td>Включено</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Объявления сообщества</td><td>Всем допущенным</td><td>Включено</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Изменения данных и статуса</td><td>Подписчикам сходки</td><td>Включено</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Новые материалы</td><td>Подписчикам сходки</td><td>Включено</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Напоминание перед началом</td><td>Подписчикам сходки, за сутки</td><td>Выключено</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+              <tr><td>Сообщения организатора</td><td>Подписчикам сходки</td><td>Включено</td>
+                <td><span class="badge live">Проверено вживую</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Тот, кто сам совершил действие, уведомления о нём не получает. Вживую это проверено на
+          рассылках: автор сообщения подписчикам и автор объявления своих сообщений не получили. Для
+          публикации сходки правило то же, но в живую проверку оно ещё не входило.</p>
+        <div class="frames">
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Участник</span>
+            <div class="chat">
+              <div class="bubble">Новая сходка: Настолки у Лёши
+17.10.2026 19:00
+Место: Циферблат, Ленина 5</div>
+              <div class="keys">
+                <div class="row"><span class="key">Открыть сходку</span></div>
+                <div class="row"><span class="key">Не присылать новые сходки</span></div>
+              </div>
+            </div>
+            <figcaption>Приходит без подписки: иначе новую сходку по-прежнему легко пропустить.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Подписчик</span>
+            <div class="chat">
+              <div class="bubble">Изменения в сходке: Настолки у Лёши
+Изменилось: дата и время
+17.10.2026 20:00
+Место: Циферблат, Ленина 5</div>
+              <div class="keys">
+                <div class="row"><span class="key">Открыть сходку</span></div>
+                <div class="row"><span class="key">Не присылать изменения этой сходки</span></div>
+              </div>
+            </div>
+            <figcaption>Сообщение называет, что изменилось, и показывает, как стало.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Подписчик</span>
+            <div class="chat">
+              <div class="bubble">Напоминание: Настолки у Лёши
+17.10.2026 19:00
+Место: Циферблат, Ленина 5</div>
+              <div class="keys">
+                <div class="row"><span class="key">Открыть сходку</span></div>
+                <div class="row"><span class="key">Не присылать напоминания</span></div>
+              </div>
+            </div>
+            <figcaption>За сутки до начала и только если у сходки задано время. По отменённой сходке
+              напоминание не приходит.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Участник</span>
+            <div class="chat">
+              <div class="bubble"><b>Уведомления</b>
+
+Приходят всем, без подписки: новые сходки и объявления сообщества.
+
+По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. […]
+
+Нажми на категорию, чтобы включить или выключить её.</div>
+              <div class="keys">
+                <div class="row"><span class="key">Вкл · Новые сходки</span></div>
+                <div class="row"><span class="key">Вкл · Объявления сообщества</span></div>
+                <div class="row"><span class="key">Вкл · Изменения данных и статуса</span></div>
+                <div class="row"><span class="key">Вкл · Новые материалы</span></div>
+                <div class="row"><span class="key">Выкл · Напоминание перед началом</span></div>
+                <div class="row"><span class="key">Вкл · Сообщения организатора</span></div>
+                <div class="row"><span class="key">‹ Меню</span></div>
+              </div>
+            </div>
+            <figcaption>Общие настройки. Текст экрана здесь сокращён.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="chapter" id="failures" aria-labelledby="failures-title">
+        <span class="section-number">06</span>
+        <h2 id="failures-title">Когда что-то идёт не так</h2>
+        <p>Бот не молчит и не показывает пустой список вместо ошибки. На каждый сбой есть свой ответ
+          человеческим языком.</p>
+        <div class="frames">
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Сервис остановлен</span>
+            <div class="chat">
+              <div class="bubble"><b>Не получилось загрузить сходки.</b> Это на моей стороне.
+
+Попробуй ещё раз через минуту.</div>
+              <div class="keys">
+                <div class="row"><span class="key">Повторить</span></div>
+                <div class="row"><span class="key">Меню</span></div>
+              </div>
+            </div>
+            <figcaption>После запуска сервиса то же действие проходит.</figcaption>
+          </figure>
+          <figure class="frame">
+            <span class="badge who"><span class="sr">Кадр чата. </span>Сходку изменили во время правки</span>
+            <div class="chat">
+              <div class="bubble">Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.
+
+Проверь материал и подтверди прикрепление ещё раз.</div>
+            </div>
+            <figcaption>Чужая правка не перетирается молча — то, чего не умеет закреп. Здесь сходку
+              изменили, пока администратор прикреплял материал.</figcaption>
+          </figure>
+        </div>
+        <ul>
+          <li><span class="badge live">Проверено вживую</span> Каждая из четырёх частей системы
+            останавливалась посреди сценария. Сообщения не терялись и не приходили дважды: изменение,
+            сделанное при остановленных уведомлениях, дошло одним сообщением после запуска.</li>
+          <li><span class="badge live">Проверено вживую</span> Напоминание, срок которого пришёлся на
+            простой, было отправлено один раз после восстановления.</li>
+          <li><span class="badge live">Проверено вживую</span> Ни на одном шаге не пришлось править
+            данные в базе руками.</li>
+          <li><span class="badge">Сделано</span> Человек без прав, нажавший кнопку управления из старого
+            сообщения, получает отказ: «Управление сходками доступно администратору».</li>
+          <li><span class="badge">Сделано</span> Человек с закрытым доступом видит: «Доступ к Solguficky
+            Hub закрыт» — и к кому обратиться.</li>
+        </ul>
+      </section>
+
+      <section class="chapter" id="changes" aria-labelledby="changes-title">
+        <span class="section-number">07</span>
+        <h2 id="changes-title">Что изменилось относительно макета</h2>
+        <p>До разработки был нарисован макет экранов. Часть решений в нём была помечена как гипотезы
+          и открытые вопросы — реализация их закрыла, и не всегда так, как было нарисовано.</p>
+        <div class="table-wrap">
+          <table class="diff-table">
+            <thead><tr><th scope="col">В макете</th><th scope="col">В боте</th></tr></thead>
+            <tbody>
+              <tr><td>Приветствие с двумя кнопками, затем список сходок как главный экран</td>
+                <td>Главный экран — «Меню» с разделами: ближайшие сходки, архив, уведомления,
+                  управление</td></tr>
+              <tr><td>Вход по одноразовой ссылке-приглашению</td>
+                <td>Приглашений нет. Допуск — по списку ников или вручную из «Состава сообщества»</td></tr>
+              <tr><td>Экранов администратора для допуска людей не было</td>
+                <td>Есть «Состав сообщества»: очередь заявок, допущенные, разрешённые ники</td></tr>
+              <tr><td>Бот не обещал сообщить о допуске</td>
+                <td>Допущенный получает сообщение «Доступ открыт»</td></tr>
+              <tr><td>«Организатор: Лёша» и строка «Обновлено»</td>
+                <td>«Автор: @ник» — чтобы было кому написать. Строки «Обновлено» нет</td></tr>
+              <tr><td>В части кадров один статус: запланирована, перенесена, отменена, завершена</td>
+                <td>Везде две независимые оси: ход сходки и видимость. «Перенесена» — это просто новая
+                  дата</td></tr>
+              <tr><td>«Связанные сообщения» — только ссылки на сообщения чата; подпись вручную или
+                  из начала оригинала</td>
+                <td>«Материалы» — ссылки и файлы: фото и документы. Название всегда вводит
+                  администратор, текст оригинала не используется</td></tr>
+              <tr><td>Кроме пересылки боту — команда в общем чате, под вопросом</td>
+                <td>Только пересылка в личный чат с ботом. В общем чате бота нет вовсе</td></tr>
+              <tr><td>В меню управления — список сходок со счётчиками</td>
+                <td>Разделы: создать сходку, скрытые сходки, состав сообщества, объявление</td></tr>
+              <tr><td>Кнопки «Отключить все» и «Отписаться от всего»</td>
+                <td>Таких кнопок нет: категории выключаются по одной, отписка — в карточке</td></tr>
+              <tr><td>Под уведомлением кнопка «Настроить уведомления»</td>
+                <td>Под уведомлением кнопка, которая сразу отключает его категорию</td></tr>
+              <tr><td>Сводка «Мои уведомления» со списком подписок</td>
+                <td>Сводки нет. В меню — общие настройки категорий</td></tr>
+              <tr><td>В кадрах напоминание «за 2 часа»</td>
+                <td>За сутки</td></tr>
+              <tr><td>Уведомление «было 19:00, стало 20:00»</td>
+                <td>Называет, что изменилось, и показывает новое значение. Старое значение в
+                  уведомление не передаётся</td></tr>
+              <tr><td>После правки вопрос «Сообщить 7 подписчикам?»</td>
+                <td>Вопроса нет: изменение уходит подписчикам, у которых категория включена. Число
+                  подписчиков не показывается</td></tr>
+              <tr><td>Рассылок от администратора не было</td>
+                <td>Есть «Написать подписчикам» и «Объявление сообществу»</td></tr>
+              <tr><td>Судьба прошедших и отменённых сходок — открытый вопрос</td>
+                <td>Отдельный раздел «Архив». Из него ничего не удаляется</td></tr>
+              <tr><td>Отказ в правах — всплывающим окном</td>
+                <td>Отказ — обычным сообщением на месте экрана</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">Без изменений остались основа навигации — один экран, который меняется на
+          месте, — текст закрытого доступа, ответ при недоступном сервисе, обещание не читать чат и
+          место для будущих модулей сходки в карточке. Исчезающие сообщения и невидимые команды в
+          общем чате, которые макет рассматривал как вариант, не используются.</p>
+      </section>
+
+      <section class="chapter" id="limits" aria-labelledby="limits-title">
+        <span class="section-number">08</span>
+        <h2 id="limits-title">Ограничения</h2>
+        <div class="note" data-kind="risk"><span class="note-kind">Что важно знать до показа</span>
+          <ul>
+            <li>Бот пока работает на компьютере разработчика и под отдельным именем. Постоянного
+              запуска и бота сообщества ещё нет.</li>
+            <li>Администратор не узнаёт о новой заявке на доступ, пока сам не откроет «Состав
+              сообщества». Уведомления о заявке пока нет.</li>
+            <li>Первую роль администратора выдаёт тот, кто обслуживает систему. Дальше из бота
+              назначить администратора нельзя.</li>
+            <li>Вернуть закрытый доступ из бота нельзя.</li>
+            <li>Бот не может написать человеку, который его не запускал или заблокировал: такие
+              уведомления не доходят, и это ограничение Telegram.</li>
+            <li>Если оригинал прикреплённого сообщения удалили в чате, бот об этом не узнает: ссылку
+              убирает администратор.</li>
+            <li>Редкий повтор уведомления после сетевого сбоя возможен: Telegram не даёт гарантии
+              «ровно один раз».</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="chapter" id="demo" aria-labelledby="demo-title">
+        <span class="section-number">09</span>
+        <h2 id="demo-title">Как пройдёт показ</h2>
+        <p>Показ идёт в настоящем Telegram на тестовых данных: отдельный бот и три аккаунта —
+          администратор, участник и человек без допуска. Реальным участникам сообщества ничего не
+          придёт.</p>
+        <figure>
+          <ol class="flow">
+            <li><b>01 → Вход</b><span>Человек без допуска нажимает /start и видит, что заявка ждёт
+              проверки. Администратор допускает его, приходит «Доступ открыт».</span></li>
+            <li><b>02 → Сходка</b><span>Администратор создаёт сходку, выбирает дату кнопками и
+              публикует. Участник получает «Новую сходку».</span></li>
+            <li><b>03 → Карточка и подписка</b><span>Участник находит сходку в списке, открывает
+              карточку и подписывается.</span></li>
+            <li><b>04 → Изменение</b><span>Администратор переносит время. Подписчик получает
+              сообщение о том, что изменилось.</span></li>
+            <li><b>05 → Материал</b><span>Администратор пересылает боту сообщение с опросом и даёт ему
+              название. Оно появляется в карточке.</span></li>
+            <li><b>06 → Рассылки</b><span>Сообщение подписчикам сходки и объявление сообществу.
+              Участник отключает объявления кнопкой под сообщением.</span></li>
+            <li><b>07 → Сбой</b><span>Останавливаем часть системы посреди действия: понятный отказ,
+              затем повтор проходит.</span></li>
+            <li class="final"><b>08 → Вопросы</b><span>Что принять как есть, что поправить до первой
+              живой сходки, что отложить.</span></li>
+          </ol>
+          <figcaption>Напоминание за сутки покажем на сходке, заведённой заранее.</figcaption>
+        </figure>
+      </section>
+
+      <section class="chapter" id="next" aria-labelledby="next-title">
+        <span class="section-number">10</span>
+        <h2 id="next-title">Что дальше</h2>
+        <p>Ничего из этого раздела не начато, и порядок не обещан. Это варианты, и выбор среди них
+          зависит от того, что покажет первая живая сходка.</p>
+        <div class="table-wrap">
+          <table class="status-table">
+            <thead><tr><th scope="col">Вариант</th><th scope="col">Что даёт</th><th scope="col">Состояние</th></tr></thead>
+            <tbody>
+              <tr><td>Уведомление администратору о заявке</td><td>Не нужно самому проверять очередь</td>
+                <td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Постоянный запуск бота сообщества</td><td>Бот доступен всегда, а не на время
+                показа</td><td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Организаторы без роли администратора</td><td>Сходку ведёт тот, кто её проводит</td>
+                <td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Предложение сходки участником</td><td>Идея сходки приходит через бота, а не в
+                личку</td><td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Ответы об участии и список участников</td><td>Заменяет опрос «кто идёт»</td>
+                <td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Опрос из карточки сходки</td><td>Опрос создаётся и прикрепляется одним действием</td>
+                <td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Модули сходки</td><td>Отдельные механики вокруг сходки: аукцион, выбор фильма,
+                попутки</td><td><span class="badge next">Дальше</span></td></tr>
+              <tr><td>Mini App</td><td>Экран внутри Telegram вместо сообщений с кнопками — если
+                появится сценарий, который в бота не помещается</td>
+                <td><span class="badge next">Дальше</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note" data-kind="q"><span class="note-kind">Вопросы к показу</span>
+          <ul>
+            <li>Что из показанного можно принять без изменений?</li>
+            <li>Что обязательно поправить до первой живой сходки?</li>
+            <li>Хватает ли бота с кнопками, или уже виден сценарий, которому нужен Mini App?</li>
+            <li>Кто, кроме администраторов, должен вести сходки?</li>
+            <li>Достаточно ли шести категорий уведомлений и верны ли значения по умолчанию?</li>
+            <li>Устраивает ли допуск по списку ников, или нужны ссылки-приглашения?</li>
+            <li>Приветствие обещает писать «только по твоей подписке», но новые сходки и объявления
+              приходят всем. Менять обещание или умолчания?</li>
+          </ul>
+        </div>
+      </section>
+
+      <footer><a href="#top">↑ Solguficky Hub</a><a href="/">Все материалы</a></footer>
+    </main>
+  </div>
+</div>
+<script>
+(() => {
+  // Страница читается целиком и без скрипта: он добавляет только выбор темы и
+  // печать. Хранилище может быть недоступно — тогда выбор живёт до перезагрузки.
+  const root = document.documentElement;
+  const key = 'hub-mvp-theme';
+  const read = () => { try { return localStorage.getItem(key); } catch { return null; } };
+  const write = value => { try { localStorage.setItem(key, value); } catch { /* без хранилища */ } };
+
+  const buttons = [...document.querySelectorAll('[data-theme-set]')];
+  const set = (value, remember) => {
+    root.setAttribute('data-theme', value);
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.themeSet === value)));
+    if (remember) write(value);
+  };
+  buttons.forEach(button => button.addEventListener('click', () => set(button.dataset.themeSet, true)));
+
+  // Тема по умолчанию — системная; выбор читателя её перекрывает.
+  const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const stored = read();
+  set(stored === 'light' || stored === 'dark' ? stored : systemDark ? 'dark' : 'light', false);
+
+  document.querySelector('.prefs').hidden = false;
+  const print = document.querySelector('.print-button');
+  print.hidden = false;
+  print.addEventListener('click', () => window.print());
+})();
+</script>
+</body>
+</html>
