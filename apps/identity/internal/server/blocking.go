@@ -26,15 +26,7 @@ ORDER BY role`
 )
 
 // blockIdentity ставит отметку блокировки и отзывает все активные роли одной
-// транзакцией: без отметки отзыв не защитил бы будущую выдачу, а без отзыва
-// заблокированный сохранил бы доступ. Журнал получает одну строку: отзыв ролей —
-// следствие одного решения, а не отдельные решения, и метка времени у них общая,
-// потому что now() внутри транзакции не меняется. Событие тоже одно —
-// profile_blocked с пустым набором ролей. Отсутствие активных ролей после
-// блокировки — инвариант, поэтому уже заблокированный профиль не повод выйти
-// рано: роли могли остаться от блокировки мимо этой функции, и они отзываются.
-// Перехода там нет, поэтому каждая роль отзывается обычным отзывом со своей
-// строкой журнала и своим role_revoked.
+// транзакцией — «Закрыть» на экране состава. Устройство перехода — blockTx.
 func (s identityService) blockIdentity(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -42,20 +34,41 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, p
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	changed, err := blockTx(ctx, tx, identityID, performedBy)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, internal("commit", err)
+	}
+	return changed, nil
+}
+
+// blockTx ставит отметку блокировки и отзывает все активные роли: без отметки
+// отзыв не защитил бы будущую выдачу, а без отзыва заблокированный сохранил бы
+// доступ. Журнал получает одну строку: отзыв ролей — следствие одного решения, а
+// не отдельные решения, и метка времени у них общая, потому что now() внутри
+// транзакции не меняется. Событие тоже одно — profile_blocked с пустым набором
+// ролей. Отсутствие активных ролей после блокировки — инвариант, поэтому уже
+// заблокированный профиль не повод выйти рано: роли могли остаться от
+// блокировки мимо этой функции, и они отзываются. Перехода там нет, поэтому
+// каждая роль отзывается обычным отзывом со своей строкой журнала и своим
+// role_revoked.
+//
+// Блокировка закрывает все открытые заявки человека исходом «закрыта
+// блокировкой» (ADR-060, пункт 8). Отказ по заявке в public закрывает свою
+// заявку отказом раньше этого вызова, и она здесь уже не открыта.
+func blockTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
 		return false, roleStorageError("block identity", err)
 	}
+	if _, err := closeApplicationsOnBlock(ctx, tx, identityID, performedBy); err != nil {
+		return false, internal("close applications on block", err)
+	}
 
 	if blocked {
-		revoked, err := revokeLeftoverRoles(ctx, tx, identityID, performedBy)
-		if err != nil || !revoked {
-			return false, err
-		}
-		if err := tx.Commit(); err != nil {
-			return false, internal("commit", err)
-		}
-		return true, nil
+		return revokeLeftoverRoles(ctx, tx, identityID, performedBy)
 	}
 
 	if _, err := tx.ExecContext(ctx, blockProfileSQL, identityID); err != nil {
@@ -74,15 +87,11 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, p
 	if err := outbox.Append(ctx, tx, identityID, outbox.ProfileBlocked, ""); err != nil {
 		return false, internal("announce block", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return false, internal("commit", err)
-	}
 	return true, nil
 }
 
-// unblockIdentity снимает отметку и не возвращает ни одной роли: отзыв был
-// записью revoked_at, а повторный допуск начинается заново, выдачей роли
-// отдельным решением.
+// unblockIdentity снимает отметку блокировки прежним путём. Устройство
+// перехода — unblockTx.
 func (s identityService) unblockIdentity(ctx context.Context, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -90,6 +99,20 @@ func (s identityService) unblockIdentity(ctx context.Context, identityID string,
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	changed, err := unblockTx(ctx, tx, identityID, performedBy)
+	if err != nil || !changed {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, internal("commit", err)
+	}
+	return true, nil
+}
+
+// unblockTx снимает отметку и не возвращает ни одной роли: отзыв был записью
+// revoked_at, а повторный допуск начинается заново, выдачей роли отдельным
+// решением. Пересмотр отказа делает эту выдачу в той же транзакции.
+func unblockTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
 		return false, roleStorageError("unblock identity", err)
@@ -109,9 +132,6 @@ func (s identityService) unblockIdentity(ctx context.Context, identityID string,
 	}
 	if err := outbox.Append(ctx, tx, identityID, outbox.ProfileUnblocked, ""); err != nil {
 		return false, internal("announce unblock", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, internal("commit", err)
 	}
 	return true, nil
 }
