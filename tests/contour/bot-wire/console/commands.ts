@@ -6,14 +6,25 @@
 //   <имя> answer <n> <текст>       ответить на n-й вопрос бота в чате
 //   <имя> press <подпись>          нажать кнопку по подписи
 //   <имя> link <uuid сходки>       открыть ссылку на сходку из чата сообщества
+//   <имя> forward <канал> <пост>   переслать боту пост публичного канала
+//   <имя> document <имя файла>     отправить боту документ
+//   <имя> photo                    отправить боту фотографию
 //   <имя> look                     показать экраны чата, ничего не делая
 //   people                         кто заведён
 //   restart                        рестарт процесса бота: память о вопросах теряется
+//   slow <сервис> <мс>             задержать запросы бота к identity или meetups; 0 снимает
 //   help                           эта справка
 //   quit                           остановить пульт; контур снимет Contour.Host
 
 export const roles = ["admin", "member", "guest"] as const;
 export type Role = (typeof roles)[number];
+
+export const slowServices = ["identity", "meetups"] as const;
+export type SlowService = (typeof slowServices)[number];
+
+// Дольше минуты ждать нечего: дедлайн RPC у бота — секунды, и задержка выше
+// него уже неотличима от сервиса, который не отвечает вовсе.
+export const maxDelayMs = 60_000;
 
 export type Command =
   | { kind: "new"; who: string; role: Role }
@@ -21,9 +32,13 @@ export type Command =
   | { kind: "answer"; who: string; number: number; text: string }
   | { kind: "press"; who: string; label: string }
   | { kind: "link"; who: string; meetupId: string }
+  | { kind: "forward"; who: string; channel: string; postId: number }
+  | { kind: "document"; who: string; fileName: string }
+  | { kind: "photo"; who: string }
   | { kind: "look"; who: string }
   | { kind: "people" }
   | { kind: "restart" }
+  | { kind: "slow"; service: SlowService; delayMs: number }
   | { kind: "help" }
   | { kind: "quit" };
 
@@ -33,13 +48,25 @@ export const help = [
   "<имя> answer <n> <текст>       ответить на n-й вопрос бота в чате",
   "<имя> press <подпись>          нажать кнопку по подписи",
   "<имя> link <uuid>              открыть ссылку на сходку из чата сообщества",
+  "<имя> forward <канал> <пост>   переслать боту пост публичного канала: alice forward solguficky 77",
+  "<имя> document <имя файла>     отправить боту документ",
+  "<имя> photo                    отправить боту фотографию",
   "<имя> look                     экраны чата без действия",
   "people                         кто заведён",
   "restart                        рестарт процесса бота",
+  "slow <сервис> <мс>             задержать запросы бота к identity или meetups; 0 снимает задержку",
   "quit                           остановить пульт",
 ];
 
-const globalWords = new Set(["new", "people", "restart", "help", "quit"]);
+const globalWords = new Set([
+  "new",
+  "people",
+  "restart",
+  "slow",
+  "help",
+  "quit",
+]);
+const channelPattern = /^[A-Za-z][A-Za-z0-9_]{3,31}$/;
 const namePattern = /^[a-z][a-z0-9_-]{0,31}$/;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,6 +104,20 @@ export function parseCommand(line: string): Command {
       }
       return { kind: "new", who, role };
     }
+    case "slow": {
+      const [service, delay] = splitWord(rest);
+      if (!isSlowService(service)) {
+        throw new CommandError(
+          `сервис «${service}» задержать нельзя; допустимы ${slowServices.join(", ")}`,
+        );
+      }
+      if (!/^\d+$/.test(delay) || Number(delay) > maxDelayMs) {
+        throw new CommandError(
+          `задержка «${delay}» — не целое число миллисекунд от 0 до ${maxDelayMs}`,
+        );
+      }
+      return { kind: "slow", service, delayMs: Number(delay) };
+    }
   }
 
   const who = head;
@@ -104,6 +145,27 @@ export function parseCommand(line: string): Command {
         throw new CommandError(`«${tail}» — не UUID сходки`);
       }
       return { kind: "link", who, meetupId: tail.toLowerCase() };
+    case "forward": {
+      const [channel, post] = splitWord(tail);
+      if (!channelPattern.test(channel)) {
+        throw new CommandError(
+          `«${channel}» — не ник канала: латиница, цифры и _, от 4 знаков, без @`,
+        );
+      }
+      // Номер уезжает в ссылку на пост числом: за пределом точных целых он
+      // округлился бы до соседнего поста.
+      if (!/^[1-9]\d*$/.test(post) || !Number.isSafeInteger(Number(post))) {
+        throw new CommandError(`номер поста «${post}» — не целое от 1`);
+      }
+      return { kind: "forward", who, channel, postId: Number(post) };
+    }
+    case "document":
+      return { kind: "document", who, fileName: nonEmpty(tail, "имя файла") };
+    case "photo":
+      if (tail !== "") {
+        throw new CommandError("photo не принимает аргументов");
+      }
+      return { kind: "photo", who };
     case "look":
       if (tail !== "") {
         throw new CommandError("look не принимает аргументов");
@@ -111,7 +173,7 @@ export function parseCommand(line: string): Command {
       return { kind: "look", who };
     default:
       throw new CommandError(
-        `действие «${action}» неизвестно; допустимы say, answer, press, link, look`,
+        `действие «${action}» неизвестно; допустимы say, answer, press, link, forward, document, photo, look`,
       );
   }
 }
@@ -131,6 +193,10 @@ function checkName(who: string): void {
 
 function isRole(value: string): value is Role {
   return (roles as readonly string[]).includes(value);
+}
+
+function isSlowService(value: string): value is SlowService {
+  return (slowServices as readonly string[]).includes(value);
 }
 
 function nonEmpty(value: string, what: string): string {

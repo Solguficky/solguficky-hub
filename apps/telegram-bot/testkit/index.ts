@@ -19,6 +19,7 @@ export {
   usernameFor,
 } from "./contour.js";
 export {
+  type ButtonView,
   meetupIdFromStartLink,
   type Person,
   type ScreenView,

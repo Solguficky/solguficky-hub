@@ -316,6 +316,7 @@
     <span class="chip info">Слой: MVP</span>
     <span class="chip ok">Базовая навигация: B — один хаб-экран, решено</span>
     <span class="chip new">Учтён Bot API 10.2 от 14 июля 2026</span>
+    <span class="chip ok">Дизайн-код экранов: принят, кадры не перерисованы</span>
     <span class="chip out">PNG-экспорты: не создаются в этой итерации</span>
   </div>
 </header>
@@ -438,7 +439,33 @@
       <td><code>disable_notification</code></td>
       <td>Управляет звуком, но не заменяет продуктовые правила частоты и quiet hours</td>
     </tr>
+    <tr>
+      <td>Цвет кнопки</td>
+      <td><code>InlineKeyboardButton.style</code>: <code>danger</code>, <code>success</code>, <code>primary</code></td>
+      <td>Bot API 9.4. Берётся только <code>danger</code> у подтверждения необратимого действия; <code>disabled</code> из Bot API 10.3 на клиентах выглядит обычной кнопкой и нажимается, поэтому не используется</td>
+    </tr>
+    <tr>
+      <td>Вопрос с кнопкой «Отмена»</td>
+      <td><code>InlineKeyboardMarkup.force_reply</code> вместе с <code>inline_keyboard</code></td>
+      <td>Bot API 10.3. Клавиатура вопроса возвращается в <code>reply_to_message</code> ответа, поэтому шаг живёт в <code>callback_data</code> кнопки. В Web K режим ответа сам не открывается</td>
+    </tr>
+    <tr>
+      <td>Карточка сходки</td>
+      <td><code>sendRichMessage</code>, <code>editMessageText</code> с <code>rich_message</code></td>
+      <td>Одно сообщение правится из rich в текст и обратно; текст у сообщения с файлом не правится вовсе, поэтому экран в таком сообщении не живёт</td>
+    </tr>
+    <tr>
+      <td>Ожидание после нажатия</td>
+      <td>индикатор кнопки до <code>answerCallbackQuery</code>, <code>sendChatAction</code></td>
+      <td>Telegram принимает ответ на нажатие через 12 секунд и отвергает через 15; индикаторы видны на Desktop и мобильных клиентах, в Web K — нет</td>
+    </tr>
   </table>
+
+  <div class="note">
+    <b>Общие правила экранов</b> — навигация, клавиатура, доставка результата, вопросы, формат и ожидание — приняты
+    в <a href="design-code.md">дизайн-коде</a>. Кадры ниже под него ещё не перерисованы: подписи возврата, «Обновить»
+    и чекбоксы в них прежние, перерисовка идёт вместе с перевёрсткой экранов.
+  </div>
 
   <div class="note">
     <b>Чего в макете нет намеренно.</b>
@@ -2541,7 +2568,7 @@
   </article>
 
   <article class="frame t-e" id="E-08">
-    <div class="frame-head"><span class="fid">E-08</span><h3>Долгий ответ</h3><span class="chip hyp">гипотеза</span></div>
+    <div class="frame-head"><span class="fid">E-08</span><h3>Долгий ответ</h3><span class="chip ok">решено</span></div>
     <div class="frame-body">
       <div class="stage">
         <div class="stage-label">между нажатием и результатом</div>
@@ -2563,12 +2590,15 @@
           <dt>Контекст</dt><dd>Ответ backend занимает заметное время</dd>
           <dt>Действие</dt><dd>Ждёт или нажимает ещё раз (см. E-09)</dd>
           <dt>Переход</dt><dd>-> целевой экран или -> E-05</dd>
-          <dt>Механика</dt><dd>ранний <code>answerCallbackQuery</code> без текста снимает индикатор загрузки на кнопке; всплывающего окна нет, результат приходит редактированием</dd>
+          <dt>Механика</dt><dd><code>answerCallbackQuery</code> уходит вместе с результатом, и до него клиент сам крутит индикатор на кнопке; через секунду без результата бот шлёт <code>sendChatAction</code>. На все сервисы 5 секунд, дальше E-05; взятое в работу нажатие получает ответ не позже 8 секунд. Промежуточного кадра нет, результат приходит редактированием</dd>
         </dl>
         <div class="qs">
+          <h4>Решение</h4>
+          <ul>
+            <li>Правило ожидания принято в <a href="design-code.md#ожидание">дизайн-коде</a>. В коде бота сегодня прежний порядок — ранний ответ на нажатие без текста; новый входит с перевёрсткой, <a href="https://linear.app/anticnvm/issue/per-444">PER-444</a>.</li>
+          </ul>
           <h4>Открытые вопросы</h4>
           <ul>
-            <li>Порог, после которого показывается промежуточное состояние.</li>
             <li>Поведение при упоре в rate limit Telegram: очередь, задержка или отказ с текстом.</li>
           </ul>
         </div>

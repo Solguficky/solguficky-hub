@@ -12,6 +12,7 @@ import {
   readContourEnvironment,
 } from "../../../../apps/telegram-bot/testkit/index.js";
 import { CommandError, help, parseCommand } from "./commands.js";
+import { openLatency } from "./latency.js";
 import { openConsoleSession, type Reply } from "./session.js";
 
 // Пульт провода бота: человек или агент ведёт разговор с ботом по шагу — пишет,
@@ -40,81 +41,92 @@ const transcript = resolve(
 
 const environment = readContourEnvironment();
 const direct = openDirectClients(environment);
-const wire = openBotWire(environment);
 
 beforeAll(async () => {
   await direct.waitUntilReachable();
 });
 
 afterAll(() => {
-  wire.close();
   direct.close();
 });
 
 describe("bot wire console", () => {
   it("serves commands until quit", async () => {
     mkdirSync(transcriptDir, { recursive: true });
-    const session = openConsoleSession(wire, direct);
+    // Бот ходит к сервисам через прокси задержки (`slow`), прямые клиенты —
+    // мимо него: заведение людей и проверка итога не ждут вместе с ботом.
+    const latency = await openLatency(environment);
+    const wire = openBotWire({
+      ...environment,
+      identityUrl: latency.identityUrl,
+      meetupsUrl: latency.meetupsUrl,
+    });
+    const session = openConsoleSession(wire, direct, latency);
 
-    await new Promise<void>((resolveServed, rejectServed) => {
-      const server = createServer((request, response) => {
-        const answer = (status: number, reply: Reply): void => {
-          response.writeHead(status, {
-            "content-type": "application/json; charset=utf-8",
-          });
-          response.end(`${JSON.stringify(reply, bigintAsString, 2)}\n`);
-        };
+    try {
+      await new Promise<void>((resolveServed, rejectServed) => {
+        const server = createServer((request, response) => {
+          const answer = (status: number, reply: Reply): void => {
+            response.writeHead(status, {
+              "content-type": "application/json; charset=utf-8",
+            });
+            response.end(`${JSON.stringify(reply, bigintAsString, 2)}\n`);
+          };
 
-        if (request.method === "GET") {
-          // Готовность и справка разом: пульт слушает только после ответа
-          // обоих сервисов.
-          answer(200, { ok: true, kind: "help", commands: help });
-          return;
-        }
-        if (request.method !== "POST") {
-          answer(405, { ok: false, error: "команда — строка в теле POST" });
-          return;
-        }
-        readBody(request)
-          .then(async (line) => {
-            let reply: Reply;
-            let status = 200;
-            try {
-              reply = await session.execute(parseCommand(line));
-            } catch (error) {
-              // Ошибка команды — 400: её исправляет человек за пультом.
-              // Остальное — отказ провода или сервиса, 500, и сообщение как есть.
-              status = error instanceof CommandError ? 400 : 500;
-              reply = {
+          if (request.method === "GET") {
+            // Готовность и справка разом: пульт слушает только после ответа
+            // обоих сервисов.
+            answer(200, { ok: true, kind: "help", commands: help });
+            return;
+          }
+          if (request.method !== "POST") {
+            answer(405, { ok: false, error: "команда — строка в теле POST" });
+            return;
+          }
+          readBody(request)
+            .then(async (line) => {
+              let reply: Reply;
+              let status = 200;
+              try {
+                reply = await session.execute(parseCommand(line));
+              } catch (error) {
+                // Ошибка команды — 400: её исправляет человек за пультом.
+                // Остальное — отказ провода или сервиса, 500, и сообщение как есть.
+                status = error instanceof CommandError ? 400 : 500;
+                reply = {
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              }
+              appendFileSync(
+                transcript,
+                `${JSON.stringify({ at: new Date().toISOString(), command: line, status, reply }, bigintAsString)}\n`,
+              );
+              answer(status, reply);
+              if (reply.ok && reply.kind === "quit") {
+                server.close(() => resolveServed());
+                server.closeAllConnections();
+              }
+            })
+            .catch((error: unknown) => {
+              answer(400, {
                 ok: false,
                 error: error instanceof Error ? error.message : String(error),
-              };
-            }
-            appendFileSync(
-              transcript,
-              `${JSON.stringify({ at: new Date().toISOString(), command: line, status, reply }, bigintAsString)}\n`,
-            );
-            answer(status, reply);
-            if (reply.ok && reply.kind === "quit") {
-              server.close(() => resolveServed());
-              server.closeAllConnections();
-            }
-          })
-          .catch((error: unknown) => {
-            answer(400, {
-              ok: false,
-              error: error instanceof Error ? error.message : String(error),
+              });
             });
-          });
+        });
+        server.once("error", rejectServed);
+        server.listen(port, "127.0.0.1", () => {
+          console.log(
+            `bot-console: ready on http://127.0.0.1:${port}/ ; ` +
+              `transcript ${relative(repoRoot, transcript)}`,
+          );
+        });
       });
-      server.once("error", rejectServed);
-      server.listen(port, "127.0.0.1", () => {
-        console.log(
-          `bot-console: ready on http://127.0.0.1:${port}/ ; ` +
-            `transcript ${relative(repoRoot, transcript)}`,
-        );
-      });
-    });
+    } finally {
+      wire.close();
+      await latency.close();
+    }
   });
 });
 

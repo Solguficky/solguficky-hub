@@ -44,6 +44,34 @@ describe("язык пульта", () => {
     expect(parseCommand("people")).toEqual({ kind: "people" });
   });
 
+  it("разбирает пересылку поста, файл и задержку сервиса", () => {
+    expect(parseCommand("alice forward solguficky_contour 77")).toEqual({
+      kind: "forward",
+      who: "alice",
+      channel: "solguficky_contour",
+      postId: 77,
+    });
+    expect(parseCommand("alice document Программа вечера.pdf")).toEqual({
+      kind: "document",
+      who: "alice",
+      fileName: "Программа вечера.pdf",
+    });
+    expect(parseCommand("alice photo")).toEqual({
+      kind: "photo",
+      who: "alice",
+    });
+    expect(parseCommand("slow meetups 2500")).toEqual({
+      kind: "slow",
+      service: "meetups",
+      delayMs: 2500,
+    });
+    expect(parseCommand("slow identity 0")).toEqual({
+      kind: "slow",
+      service: "identity",
+      delayMs: 0,
+    });
+  });
+
   it.each([
     ["", "пустая"],
     ["new alice owner", "роль"],
@@ -54,6 +82,15 @@ describe("язык пульта", () => {
     ["alice answer 0 да", "номер"],
     ["alice link m_abc", "UUID"],
     ["restart now", "аргумент"],
+    ["new slow admin", "имя"],
+    ["alice forward @канал 77", "ник канала"],
+    ["alice forward solguficky 0", "номер поста"],
+    ["alice forward solguficky 9007199254740993", "номер поста"],
+    ["alice document", "имя файла"],
+    ["alice photo лишнее", "аргумент"],
+    ["slow notifications 100", "сервис"],
+    ["slow meetups быстро", "задержка"],
+    ["slow meetups 60001", "задержка"],
   ])("отвергает «%s» с причиной про %s", (line, reason) => {
     expect(() => parseCommand(line)).toThrow(CommandError);
     expect(() => parseCommand(line)).toThrow(new RegExp(reason, "i"));

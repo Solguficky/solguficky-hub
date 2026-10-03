@@ -9,7 +9,13 @@ import {
   startConversation,
   usernameFor,
 } from "../../../../apps/telegram-bot/testkit/index.js";
-import { type Command, CommandError, help, type Role } from "./commands.js";
+import {
+  type Command,
+  CommandError,
+  help,
+  type Role,
+  type SlowService,
+} from "./commands.js";
 
 // Исполнение команд пульта поверх провода бота. Человек здесь тот же `Person`,
 // что в сценариях L2: пульт — это сценарий, который пишут по шагу, глядя на
@@ -17,6 +23,7 @@ import { type Command, CommandError, help, type Role } from "./commands.js";
 
 type Wire = ReturnType<typeof openBotWire>;
 type Direct = ReturnType<typeof openDirectClients>;
+type Slowdown = { slow(service: SlowService, delayMs: number): void };
 
 type Member = {
   role: Role;
@@ -31,10 +38,17 @@ export type ChangedScreen = ScreenView & {
   meetupId?: string;
 };
 
+/**
+ * Ответ бота на нажатие: всплывающий текст, если он был. `null` — бот на
+ * нажатие не ответил, и индикатор на кнопке у человека остался бы крутиться.
+ */
+export type Ack = { text?: string; alert?: boolean } | null;
+
 export type Reply =
   | { ok: true; kind: "help"; commands: string[] }
   | { ok: true; kind: "quit" }
   | { ok: true; kind: "restart" }
+  | { ok: true; kind: "slow"; service: SlowService; delayMs: number }
   | {
       ok: true;
       kind: "people";
@@ -51,6 +65,16 @@ export type Reply =
       last: ScreenView | null;
       /** Подписи, которые сейчас можно нажать на любом экране чата. */
       pressable: string[];
+      /**
+       * Методы Bot API, которые бот вызвал за действие, по порядку: по ним
+       * видно, ушёл ли ответ на нажатие раньше правки экрана и был ли индикатор
+       * ожидания. Сообщение не этому человеку помечено «→ другому».
+       */
+      api: string[];
+      /** Ответ на нажатие; у действия без нажатия поля нет. */
+      ack?: Ack;
+      /** Сколько бот обрабатывал действие, мс. */
+      tookMs: number;
       /** Предупреждения и ошибки бота за это действие. */
       log: Pick<LogRecord, "level" | "message" | "fields">[];
     }
@@ -64,7 +88,11 @@ export type Reply =
     }
   | { ok: false; error: string };
 
-export function openConsoleSession(wire: Wire, direct: Direct) {
+export function openConsoleSession(
+  wire: Wire,
+  direct: Direct,
+  slowdown: Slowdown,
+) {
   const people = new Map<string, Member>();
   let firstAdminId: string | undefined;
 
@@ -124,13 +152,16 @@ export function openConsoleSession(wire: Wire, direct: Direct) {
   async function act(
     who: string,
     action: (person: Person) => Promise<void>,
+    pressed = false,
   ): Promise<Reply> {
-    const { person } = member(who);
+    const { person, telegramUserId } = member(who);
     const before = new Map(
       person.history().map((screen) => [screen.message, screen]),
     );
     const records = wire.records;
     const recordsBefore = records.length;
+    const callsBefore = wire.calls.length;
+    const startedAt = performance.now();
     try {
       await action(person);
     } catch (error) {
@@ -141,6 +172,8 @@ export function openConsoleSession(wire: Wire, direct: Direct) {
       }
       throw error;
     }
+    const tookMs = Math.round(performance.now() - startedAt);
+    const calls = wire.calls.slice(callsBefore);
     const history = person.history();
     const changed = history
       .filter((screen) => !sameScreen(before.get(screen.message), screen))
@@ -152,6 +185,9 @@ export function openConsoleSession(wire: Wire, direct: Direct) {
       changed,
       last: history.at(-1) ?? null,
       pressable: person.pressable(),
+      api: calls.map((call) => describeCall(call, Number(telegramUserId))),
+      ...(pressed ? { ack: readAck(calls) } : {}),
+      tookMs,
       log: records
         .slice(recordsBefore)
         .filter((record) => record.level === "warn" || record.level === "error")
@@ -168,6 +204,14 @@ export function openConsoleSession(wire: Wire, direct: Direct) {
       case "restart":
         wire.restart();
         return { ok: true, kind: "restart" };
+      case "slow":
+        slowdown.slow(command.service, command.delayMs);
+        return {
+          ok: true,
+          kind: "slow",
+          service: command.service,
+          delayMs: command.delayMs,
+        };
       case "people":
         return {
           ok: true,
@@ -187,9 +231,23 @@ export function openConsoleSession(wire: Wire, direct: Direct) {
           person.answers(command.number, command.text),
         );
       case "press":
-        return act(command.who, (person) => person.presses(command.label));
+        return act(
+          command.who,
+          (person) => person.presses(command.label),
+          true,
+        );
       case "link":
         return act(command.who, (person) => person.opensLink(command.meetupId));
+      case "forward":
+        return act(command.who, (person) =>
+          person.forwardsChannelPost(command.channel, command.postId),
+        );
+      case "document":
+        return act(command.who, (person) =>
+          person.sendsDocument(command.fileName),
+        );
+      case "photo":
+        return act(command.who, (person) => person.sendsPhoto());
       case "look": {
         const { person } = member(command.who);
         return {
@@ -215,13 +273,35 @@ export function openConsoleSession(wire: Wire, direct: Direct) {
   };
 }
 
+// Ряды сравниваются целиком: правка, которая меняет только раскладку или цвет
+// кнопки, — тоже изменение экрана.
 function sameScreen(left: ScreenView | undefined, right: ScreenView): boolean {
   return (
     left !== undefined &&
     left.text === right.text &&
     left.awaitsReply === right.awaitsReply &&
-    left.buttons.join("\u0000") === right.buttons.join("\u0000")
+    left.format === right.format &&
+    JSON.stringify(left.rows) === JSON.stringify(right.rows)
   );
+}
+
+type Call = Wire["calls"][number];
+
+function describeCall(call: Call, chatId: number): string {
+  const target = (call.payload as { chat_id?: unknown }).chat_id;
+  return target === undefined || target === chatId
+    ? call.method
+    : `${call.method} → другому`;
+}
+
+function readAck(calls: readonly Call[]): Ack {
+  const answer = calls.find((call) => call.method === "answerCallbackQuery");
+  if (answer === undefined) return null;
+  const payload = answer.payload as { text?: unknown; show_alert?: unknown };
+  return {
+    ...(typeof payload.text === "string" ? { text: payload.text } : {}),
+    ...(payload.show_alert === true ? { alert: true } : {}),
+  };
 }
 
 function describeChange(screen: ScreenView, existed: boolean): ChangedScreen {
