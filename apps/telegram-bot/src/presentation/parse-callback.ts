@@ -45,6 +45,13 @@ const TargetStateSchema = z.enum(["0", "1"]);
 // Режим формы, в которой спросили о прошедшей дате: `c` — создание, `e` —
 // правка. От него зависит следующий шаг после ответа.
 const FormModeSchema = z.enum(["c", "e"]);
+// Чья дата выбирается кнопками: `c` — дата сходки в форме создания, `e` — в
+// правке, `p` — момент отложенной публикации из «Статуса», `d` — он же с
+// черновика. От источника зависит, куда возвращает «Отмена».
+const WhenModeSchema = z.enum(["c", "e", "p", "d"]);
+export type WhenMode = z.infer<typeof WhenModeSchema>;
+/** Экран, с которого назначают отложенную публикацию. */
+export type PublishOrigin = "status" | "draft";
 // Прошедшая дата едет в кнопке подтверждения цифрами `ДДММГГГГЧЧММ`: так
 // ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
 // правки, восстановимые по сущностям сообщения.
@@ -115,7 +122,7 @@ type PlainAction =
   | { kind: "manage-confirm-cancel"; token: string }
   | { kind: "manage-hold"; token: string }
   | { kind: "manage-confirm-hold"; token: string }
-  | { kind: "manage-publish-later"; token: string }
+  | { kind: "manage-publish-later"; token: string; origin: PublishOrigin }
   | { kind: "manage-unschedule"; token: string }
   | { kind: "manage-confirm-unschedule"; token: string }
   | {
@@ -125,21 +132,23 @@ type PlainAction =
       value: string;
     }
   | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
-  // Заготовки вопроса о дате: без дня — выбор дня, с днём — выбор времени.
+  // Экран выбора даты: без дня — выбор дня, с днём — выбор времени.
   | {
       kind: "manage-pick-day";
       token: string;
-      editing: boolean;
+      mode: WhenMode;
       picked?: { digits: string; day: CommunityDay };
     }
-  // Кнопка времени — полный ответ на вопрос о дате, в том виде, в котором
-  // дату вводят текстом.
+  // Кнопка времени — полный ответ о дате, в том виде, в котором дату вводят
+  // текстом.
   | {
       kind: "manage-pick-schedule";
       token: string;
-      editing: boolean;
+      mode: WhenMode;
       value: string;
     }
+  // «Другая дата»: даты среди заготовок нет, и её спрашивают текстом.
+  | { kind: "manage-type-schedule"; token: string; mode: WhenMode }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
   // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
@@ -209,7 +218,7 @@ type PlainAction =
 /** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
 export type QuestionStep =
   | { kind: "field"; mode: "create" | "edit"; token: string; field: FormField }
-  | { kind: "publish-moment"; token: string }
+  | { kind: "publish-moment"; token: string; origin: PublishOrigin }
   // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
   // подтверждения и уходит в `expected_version` (PER-393).
   | { kind: "material-source"; token: string; version: number }
@@ -226,7 +235,8 @@ export function questionData(step: QuestionStep): string {
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
-      return `v1:q:pm:${step.token}`;
+      // `pd` — вопрос задан с черновика: «Отмена» возвращает на него.
+      return `v1:q:${step.origin === "draft" ? "pd" : "pm"}:${step.token}`;
     case "material-source":
       return `v1:q:ms:${step.token}:${step.version}`;
     case "material-title":
@@ -420,12 +430,24 @@ export function parseCallback(raw: unknown): CallbackAction {
       : { kind: "malformed" };
   }
   if ((parts.length === 5 || parts.length === 6) && parts[2] === "when") {
-    const mode = FormModeSchema.safeParse(parts[4]);
-    if (!mode.success) return { kind: "malformed" };
-    const editing = mode.data === "e";
+    const parsedMode = WhenModeSchema.safeParse(parts[4]);
+    if (!parsedMode.success) return { kind: "malformed" };
+    const mode = parsedMode.data;
     const digits = parts[5];
     if (digits === undefined) {
-      return { kind: "manage-pick-day", token: token.data, editing };
+      return { kind: "manage-pick-day", token: token.data, mode };
+    }
+    if (digits === "t") {
+      return { kind: "manage-type-schedule", token: token.data, mode };
+    }
+    // «Отмена» экрана выбора даты — обычный возврат на экран, с которого дату
+    // открыли: режима ответа у него нет, и снимать нечего.
+    if (digits === "x") {
+      return mode === "e"
+        ? { kind: "view-meetup", token: token.data }
+        : mode === "p"
+          ? { kind: "manage-status", token: token.data }
+          : { kind: "manage-draft", token: token.data };
     }
     const day = dayFromDigits(digits.slice(0, 8));
     if (day === undefined) return { kind: "malformed" };
@@ -433,7 +455,7 @@ export function parseCallback(raw: unknown): CallbackAction {
       return {
         kind: "manage-pick-day",
         token: token.data,
-        editing,
+        mode,
         picked: { digits, day },
       };
     }
@@ -441,7 +463,7 @@ export function parseCallback(raw: unknown): CallbackAction {
       ? {
           kind: "manage-pick-schedule",
           token: token.data,
-          editing,
+          mode,
           value: pastScheduleValue(digits),
         }
       : { kind: "malformed" };
@@ -473,7 +495,14 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "confirm-hold")
     return { kind: "manage-confirm-hold", token: token.data };
   if (parts.length === 4 && parts[2] === "publish-later")
-    return { kind: "manage-publish-later", token: token.data };
+    return {
+      kind: "manage-publish-later",
+      token: token.data,
+      origin: "status",
+    };
+  // `d` — кнопка стоит на черновике: «Отмена» вернёт на него, а не в «Статус».
+  if (parts.length === 5 && parts[2] === "publish-later" && parts[4] === "d")
+    return { kind: "manage-publish-later", token: token.data, origin: "draft" };
   if (parts.length === 4 && parts[2] === "unschedule")
     return { kind: "manage-unschedule", token: token.data };
   if (parts.length === 4 && parts[2] === "confirm-unschedule")
@@ -489,7 +518,9 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 4) {
     switch (parts[2]) {
       case "pm":
-        return { kind: "publish-moment", token: token.data };
+        return { kind: "publish-moment", token: token.data, origin: "status" };
+      case "pd":
+        return { kind: "publish-moment", token: token.data, origin: "draft" };
       case "mt":
         return { kind: "material-title", token: token.data };
       case "bm":

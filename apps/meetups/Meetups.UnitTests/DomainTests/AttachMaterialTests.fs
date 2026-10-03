@@ -6,7 +6,7 @@ open Swensen.Unquote
 open Xunit
 
 let private attach (state: MeetupState) =
-    Meetup.decideAttachMaterial Sample.authorId Sample.otherMaterialId "Афиша" (FileId "file-1") state
+    Meetup.decideAttachMaterial Sample.authorId Sample.otherMaterialId "Афиша" (FileId("file-1", OtherFile)) state
 
 [<Fact>]
 let ``When a material is attached expect an event with the first position`` () =
@@ -16,7 +16,7 @@ let ``When a material is attached expect an event with the first position`` () =
                 Id = Sample.otherMaterialId
                 Position = 1
                 Title = "Афиша"
-                Source = FileId "file-1"
+                Source = FileId("file-1", OtherFile)
                 BoundBy = Sample.authorId
             }
 
@@ -57,7 +57,7 @@ let ``When the same material id is attached again expect no event`` () =
             Sample.authorId
             Sample.materialId
             "Афиша"
-            (FileId "file-1")
+            (FileId("file-1", OtherFile))
             (Existing Sample.withMaterial)
 
     test <@ repeat = Ok None @>
@@ -71,7 +71,7 @@ let ``When the material is already attached to a cancelled meetup expect no even
             Sample.authorId
             Sample.materialId
             "Другое название"
-            (FileId "file-2")
+            (FileId("file-2", OtherFile))
             (Existing Sample.cancelledWithMaterial)
 
     test <@ repeat = Ok None @>

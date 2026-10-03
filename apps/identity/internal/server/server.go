@@ -35,7 +35,9 @@ func WithTracerProvider(tp trace.TracerProvider) Option {
 	return func(c *config) { c.tracerProvider = tp }
 }
 
-func New(log *slog.Logger, db *sql.DB, maintainerToken string, opts ...Option) *Server {
+// New собирает сервер. callers — таблица вызывающих из LoadCallers; нулевое
+// значение Callers не узнаёт ни одного токена и закрывает каждый доменный метод.
+func New(log *slog.Logger, db *sql.DB, maintainerToken string, callers Callers, opts ...Option) *Server {
 	cfg := config{tracerProvider: tracenoop.NewTracerProvider()}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -52,11 +54,13 @@ func New(log *slog.Logger, db *sql.DB, maintainerToken string, opts ...Option) *
 		grpc.ChainUnaryInterceptor(
 			unaryRequestIDSpan(),
 			unaryLogging(log),
+			unaryCallerGate(callers),
 			unaryRecovery(),
 		),
 		grpc.ChainStreamInterceptor(
 			streamRequestIDSpan(),
 			streamLogging(log),
+			streamCallerGate(callers),
 			streamRecovery(),
 		),
 	)

@@ -35,7 +35,7 @@ import {
   withNav,
   withPager,
 } from "./kit.js";
-import type { ShownScreen } from "./show.js";
+import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 // Экраны сходки: списки, карточка и её подэкраны. Каждая функция — чистый
 // сборщик: по данным возвращает экран, который отправит единый отправитель.
@@ -292,6 +292,34 @@ function materialLines(meetup: MeetupSnapshot): string[] {
   ];
 }
 
+// Постеры карточки (дизайн-код, «Карточка сходки»): материалы-фото в порядке
+// коллекции. Потолок держит карточку обозримой; остальные открываются из
+// «Материалов».
+const posterLimit = 10;
+
+function posters(meetup: MeetupSnapshot): ScreenPhoto[] {
+  return meetup.materials
+    .flatMap((material) =>
+      material.source.kind === "file" && material.source.fileKind === "photo"
+        ? [material.source.fileId]
+        : [],
+    )
+    .slice(0, posterLimit)
+    .map((fileId, index) => ({ id: `p${index + 1}`, fileId }));
+}
+
+// Один постер стоит фотографией, несколько — каруселью: у карусели из одного
+// кадра листать нечего.
+function posterBlock(photos: readonly ScreenPhoto[]): string | undefined {
+  const images = photos.map(
+    (photo) => `<img src="tg://photo?id=${photo.id}"/>`,
+  );
+  if (images.length === 0) return undefined;
+  return images.length === 1
+    ? images[0]
+    : `<tg-slideshow>${images.join("")}</tg-slideshow>`;
+}
+
 export type CardView = {
   meetup: MeetupSnapshot;
   author?: MeetupAuthor | undefined;
@@ -303,6 +331,11 @@ export type CardView = {
   note?: string | undefined;
   presentation: "rich" | "plain";
   today: CommunityDay;
+  /**
+   * `false` — карточка без постеров: так она приходит повторно, когда Telegram
+   * не принял сообщение с фото, например файл больше недоступен.
+   */
+  posters?: boolean;
 };
 
 // Без подписки карточка объясняет, что она даёт: кнопка настроек сходки
@@ -360,11 +393,23 @@ export function cardScreen(view: CardView): ShownScreen {
     note === undefined && view.subscribed === false
       ? unsubscribedHint
       : undefined;
+  // Постеры — только в богатой карточке: обычное сообщение несёт либо текст,
+  // либо файл, и с файлом оно перестало бы правиться на месте.
+  const photos =
+    presentation === "rich" && view.posters !== false ? posters(meetup) : [];
   return {
     id: "card",
-    text: cardText({ title, body, note, hint, presentation }),
+    text: cardText({
+      title,
+      body,
+      note,
+      hint,
+      presentation,
+      posters: posterBlock(photos),
+    }),
     keyboard: withNav(keyboard, meetupParent(meetup, today)),
     format: presentation === "rich" ? "rich" : "HTML",
+    ...(photos.length === 0 ? {} : { media: photos }),
   };
 }
 
@@ -376,6 +421,8 @@ function cardText(parts: {
   note?: string | undefined;
   hint?: string | undefined;
   presentation: "rich" | "plain";
+  /** Готовый блок постеров богатой карточки: стоит сразу под её телом. */
+  posters?: string | undefined;
 }): string {
   const { title, body, presentation } = parts;
   const paragraph = (text: string | undefined) =>
@@ -386,7 +433,7 @@ function cardText(parts: {
         : escapeHtml(text);
   const card =
     presentation === "rich"
-      ? `<h1>${title}</h1><p>${body.join("<br>")}</p>`
+      ? `<h1>${title}</h1><p>${body.join("<br>")}</p>${parts.posters ?? ""}`
       : `<b>${title}</b>\n${body.join("\n")}`;
   return [paragraph(parts.note), card, paragraph(parts.hint)]
     .filter((part) => part !== undefined)
@@ -418,7 +465,8 @@ export function draftScreen(view: {
       meetup.publishAt === undefined
         ? "Опубликовать позже"
         : "Перенести публикацию",
-      `v1:manage:publish-later:${token}`,
+      // `d` — источник вопроса: «Отмена» под ним вернёт на черновик.
+      `v1:manage:publish-later:${token}:d`,
     );
   return {
     id: "draft",

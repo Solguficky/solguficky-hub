@@ -1,10 +1,19 @@
 import { InlineKeyboard } from "grammy";
 import type { CommunityDay } from "../../community-time.js";
-import { cancelLabel, nextRow, readableDay } from "./kit.js";
+import type { WhenMode } from "../parse-callback.js";
+import {
+  cancelLabel,
+  escapeHtml,
+  heading,
+  nextRow,
+  readableDay,
+} from "./kit.js";
+import type { ShownScreen } from "./show.js";
 
-// Кнопки-заготовки вопроса о дате (дизайн-код, «Дата и время»): сначала день,
-// затем время. Они стоят в клавиатуре самого вопроса над «Отменой», а ответ
-// текстом остаётся запасным путём для даты, которой среди заготовок нет.
+// Выбор даты кнопками (дизайн-код, «Дата и время»): сначала день, затем время.
+// Это обычный экран без режима ответа: он правится на месте, а выбор кнопкой
+// режим ответа за собой не оставляет. Дату, которой среди заготовок нет,
+// человек пишет текстом — кнопка «Другая дата» задаёт для этого вопрос.
 
 const weekdayFormat = new Intl.DateTimeFormat("ru-RU", {
   weekday: "short",
@@ -20,8 +29,12 @@ const timePresets = [
   ["19:00", "19:30", "20:00", "21:00"],
 ] as const;
 
-export const schedulePrompt =
-  "Когда встречаемся? Выбери день или напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ";
+export const otherDateLabel = "Другая дата";
+const otherDayLabel = "Другой день";
+
+/** Вопрос о дате сходки текстом: его задаёт «Другая дата». */
+export const scheduleTypePrompt =
+  "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ";
 
 function addDays(day: CommunityDay, offset: number): Date {
   return new Date(Date.UTC(day.year, day.month - 1, day.day + offset));
@@ -42,23 +55,36 @@ function dayButtonLabel(date: Date): string {
   return `${weekdayFormat.format(date)} ${date.getUTCDate()}`;
 }
 
-/** Кому и в каком режиме задан вопрос: из этого собираются данные кнопок. */
-export type ScheduleQuestion = {
+/** Чью дату выбирают: из этого собираются данные кнопок. */
+export type DatePicker = {
   token: string;
-  /** `c` — форма создания, `e` — правка; как у кнопки прошедшей даты. */
-  mode: "c" | "e";
-  /** Данные кнопки «Отмена»: шаг вопроса. */
-  cancelData: string;
+  /**
+   * `c` — дата сходки в форме создания, `e` — в правке, `p` — момент
+   * отложенной публикации из «Статуса», `d` — он же с черновика.
+   */
+  mode: WhenMode;
 };
 
-function whenData(question: ScheduleQuestion, digits?: string): string {
-  const base = `v1:manage:when:${question.token}:${question.mode}`;
-  return digits === undefined ? base : `${base}:${digits}`;
+// Хвост данных: цифры дня или момента, `t` — «Другая дата», `x` — «Отмена».
+function whenData(picker: DatePicker, tail?: string): string {
+  const base = `v1:manage:when:${picker.token}:${picker.mode}`;
+  return tail === undefined ? base : `${base}:${tail}`;
+}
+
+// «Отмена» здесь — возврат на экран, с которого дату открыли: режима ответа у
+// выбора кнопками нет, и снимать нечего.
+function withExit(
+  keyboard: InlineKeyboard,
+  picker: DatePicker,
+): InlineKeyboard {
+  nextRow(keyboard).text(otherDateLabel, whenData(picker, "t"));
+  nextRow(keyboard).text(cancelLabel, whenData(picker, "x"));
+  return keyboard;
 }
 
 /** Первый шаг: ближайшие дни и выходные двух недель, которых среди них нет. */
 export function dayPresetKeyboard(
-  question: ScheduleQuestion,
+  picker: DatePicker,
   today: CommunityDay,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
@@ -66,7 +92,7 @@ export function dayPresetKeyboard(
     addDays(today, offset),
   );
   for (const date of near) {
-    keyboard.text(dayButtonLabel(date), whenData(question, dayDigits(date)));
+    keyboard.text(dayButtonLabel(date), whenData(picker, dayDigits(date)));
   }
   const weekends = Array.from(
     { length: weekendHorizon - nearDays },
@@ -76,15 +102,14 @@ export function dayPresetKeyboard(
     .slice(0, weekendLimit);
   nextRow(keyboard);
   for (const date of weekends) {
-    keyboard.text(dayButtonLabel(date), whenData(question, dayDigits(date)));
+    keyboard.text(dayButtonLabel(date), whenData(picker, dayDigits(date)));
   }
-  nextRow(keyboard).text(cancelLabel, question.cancelData);
-  return keyboard;
+  return withExit(keyboard, picker);
 }
 
 /** Второй шаг: время выбранного дня и возврат к выбору дня. */
 export function timePresetKeyboard(
-  question: ScheduleQuestion,
+  picker: DatePicker,
   digits: string,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
@@ -93,15 +118,44 @@ export function timePresetKeyboard(
     for (const time of row) {
       keyboard.text(
         time,
-        whenData(question, `${digits}${time.replace(":", "")}`),
+        whenData(picker, `${digits}${time.replace(":", "")}`),
       );
     }
   }
-  nextRow(keyboard).text("Другой день", whenData(question));
-  nextRow(keyboard).text(cancelLabel, question.cancelData);
-  return keyboard;
+  nextRow(keyboard).text(otherDayLabel, whenData(picker));
+  return withExit(keyboard, picker);
 }
 
-export function timePresetText(day: CommunityDay, today: CommunityDay): string {
-  return `${readableDay(day, today)} — во сколько? Выбери время или напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ`;
+/**
+ * Экран выбора даты. `picked` — выбранный день: с ним экран спрашивает время.
+ * `lead` — что стоит над вопросом: текущее значение или причина, по которой
+ * прошлый выбор не принят; это текст, а не разметка.
+ */
+export function datePresetsScreen(view: {
+  picker: DatePicker;
+  today: CommunityDay;
+  picked?: { digits: string; day: CommunityDay } | undefined;
+  lead?: string | undefined;
+}): ShownScreen {
+  const { picker, today, picked, lead } = view;
+  const publication = picker.mode === "p" || picker.mode === "d";
+  const ask =
+    picked !== undefined
+      ? `${readableDay(picked.day, today)} — во сколько?`
+      : publication
+        ? "Когда опубликовать сходку? Выбери день. Время — по времени сообщества."
+        : "Когда встречаемся? Выбери день.";
+  return {
+    id: "date-presets",
+    text: [
+      heading(publication ? "Публикация" : "Дата и время"),
+      ...(lead === undefined || lead === "" ? [] : [escapeHtml(lead)]),
+      ask,
+    ].join("\n\n"),
+    keyboard:
+      picked === undefined
+        ? dayPresetKeyboard(picker, today)
+        : timePresetKeyboard(picker, picked.digits),
+    format: "HTML",
+  };
 }

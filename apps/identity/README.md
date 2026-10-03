@@ -27,7 +27,7 @@ just aspire hub
 
 Фактический endpoint при таком запуске смотри в Aspire dashboard или `aspire describe`; фиксированный `localhost:50051` относится только к ручному `just identity-run` без переопределения адреса.
 
-По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, строка подключения к PostgreSQL — `IDENTITY_DATABASE_URL` (обязательна), секрет служебных RPC — `IDENTITY_MAINTAINER_TOKEN` (пустое или отсутствующее значение закрывает методы), уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При старте процесс применяет миграции из `internal/migrations/` и только потом начинает слушать. Пул `database/sql` ограничен 16 открытыми соединениями, время жизни соединения — 30 минут. Успешный RPC пишется на `Info`, как у Meetups и бота; успешная проба `grpc.health.v1` остаётся на `Debug`, потому что идёт каждые несколько секунд. Успешные maintainer-вызовы дополнительно пишут на `Info` запись о выдаче или снятии роли с `identity_id` цели и без значения секрета. При заданном `OTEL_EXPORTER_OTLP_ENDPOINT` (его выставляет AppHost) те же записи уходят ещё и по OTLP в Structured logs dashboard, с тем же порогом `IDENTITY_LOG_LEVEL`; stdout остаётся. Тот же адрес включает трейсы: серверный спан на каждый RPC продолжает трейс из входящего `traceparent` и несёт `request_id` вызывающего атрибутом, запросы к PostgreSQL внутри него — дочерние спаны с текстом запроса без параметров, а публикация outbox — свой спан со ссылкой на трейс запроса. Пробы `grpc.health.v1` и запросы вне спана — тик релея, миграции — не трассируются. Без адреса провайдер трейсов пустой, и сервис работает как прежде.
+По умолчанию сервис слушает `:50051`. Адрес задаётся `IDENTITY_GRPC_ADDR`, строка подключения к PostgreSQL — `IDENTITY_DATABASE_URL` (обязательна), секрет служебных RPC — `IDENTITY_MAINTAINER_TOKEN` (пустое или отсутствующее значение закрывает методы), токены вызывающих — `IDENTITY_CALLER_TOKEN_TELEGRAM_BOT`, `IDENTITY_CALLER_TOKEN_AUCTION_BOT`, `IDENTITY_CALLER_TOKEN_MEETUPS` и `IDENTITY_CALLER_TOKEN_NOTIFICATIONS` (обязательны, [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)), уровень лога — `IDENTITY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, по умолчанию `info`). При старте процесс применяет миграции из `internal/migrations/` и только потом начинает слушать. Пул `database/sql` ограничен 16 открытыми соединениями, время жизни соединения — 30 минут. Успешный RPC пишется на `Info`, как у Meetups и бота; успешная проба `grpc.health.v1` остаётся на `Debug`, потому что идёт каждые несколько секунд. Успешные maintainer-вызовы дополнительно пишут на `Info` запись о выдаче или снятии роли с `identity_id` цели и без значения секрета. При заданном `OTEL_EXPORTER_OTLP_ENDPOINT` (его выставляет AppHost) те же записи уходят ещё и по OTLP в Structured logs dashboard, с тем же порогом `IDENTITY_LOG_LEVEL`; stdout остаётся. Тот же адрес включает трейсы: серверный спан на каждый RPC продолжает трейс из входящего `traceparent` и несёт `request_id` вызывающего атрибутом, запросы к PostgreSQL внутри него — дочерние спаны с текстом запроса без параметров, а публикация outbox — свой спан со ссылкой на трейс запроса. Пробы `grpc.health.v1` и запросы вне спана — тик релея, миграции — не трассируются. Без адреса провайдер трейсов пустой, и сервис работает как прежде.
 
 Адрес NATS для релея outbox — `IDENTITY_NATS_URL`. Без него релей не запускается: сервис работает, а события копятся в таблице `identity_outbox` и уйдут, когда адрес появится. С адресом процесс раз в секунду публикует очередь в стрим `IDENTITY_EVENTS`; устройство и поля лога тика — [бриф](../../docs/services/identity.md#outbox-и-релей).
 
@@ -59,9 +59,13 @@ gh attestation verify oci://ghcr.io/solguficky/identity@sha256:<digest> --repo S
 ```bash
 grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 grpcurl -plaintext -d '{"service": "identity.v1.IdentityService"}'   localhost:50051 grpc.health.v1.Health/Check
-grpcurl -plaintext -d '{"telegram_user_id": 1}' \
+export IDENTITY_CALLER_TOKEN_TELEGRAM_BOT='<bot-token>'
+grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_CALLER_TOKEN_TELEGRAM_BOT}" \
+  -d '{"telegram_user_id": 1}' \
   localhost:50051 identity.v1.IdentityService/ResolveIdentity
 ```
+
+Доменный метод принимает только вызывающих из колонки Caller [каталога](../../docs/architecture/integration.md#identity-grpc) и узнаёт их по токену в `authorization: Bearer <token>`. Нет заголовка, токен неизвестен или вызывающий не объявлен у метода — `UNAUTHENTICATED`, а причину называет поле `caller_refusal` записи границы; у допущенного вызова поле `caller` называет узел вызывающего, значение токена в запись не попадает. Health и reflection токена не требуют, `GrantAdminRole` и `RevokeAdminRole` открывает только maintainer-секрет. Таблица проверяется до миграций и листенера: пустое или отсутствующее значение, два вызывающих с одним значением или значение, равное `IDENTITY_MAINTAINER_TOKEN`, останавливают процесс, и ошибка называет переменные, а не значения.
 
 Пустое имя в пробе отвечает liveness и базу не спрашивает; имя `identity.v1.IdentityService` отвечает готовностью и при недоступной базе даёт `NOT_SERVING`. Недоступная база отвечает доменному вызову `UNAVAILABLE` за одну-две секунды: предел подключения сервис ставит сам, если `IDENTITY_DATABASE_URL` не задал `connect_timeout` ([ADR-054](../../docs/decisions/ADR-054-storage-unavailability-visible-outside.md)).
 
@@ -81,10 +85,10 @@ grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_MAINTAINER_TOKEN}" \
 
 Повтор операции успешен с `changed: false`. Выдача заблокированному профилю отвечает `FAILED_PRECONDITION`, отличимо от `NOT_FOUND` для отсутствующего профиля; каждое изменение ложится в журнал доступа в той же транзакции. Не передавайте секрет параметром `-vv` и не печатайте его в журнал.
 
-Проверка глобальной роли секрета не требует: вызывающий называет роли, которые принимает, и получает `granted`. Ответ читается из текущего состояния, так что после `RevokeAdminRole` тот же вызов сразу отвечает `false`:
+Проверка глобальной роли maintainer-секрета не требует, её принимают токены Meetups и Notifications: вызывающий называет роли, которые принимает, и получает `granted`. Ответ читается из текущего состояния, так что после `RevokeAdminRole` тот же вызов сразу отвечает `false`:
 
 ```bash
-grpcurl -plaintext \
+grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_CALLER_TOKEN_MEETUPS}" \
   -d '{"identity_id":"<identity-id>","accepted_roles":["GLOBAL_ROLE_ADMIN"]}' \
   localhost:50051 identity.v1.IdentityService/CheckGlobalRole
 ```

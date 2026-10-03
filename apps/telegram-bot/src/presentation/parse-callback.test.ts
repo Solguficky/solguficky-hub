@@ -146,8 +146,22 @@ describe("callback parser", () => {
 
   it("parses deferred publication actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
+    // Кнопка черновика несёт источник: «Отмена» под вопросом вернёт на него.
+    for (const [callback, origin] of [
+      [`v1:manage:publish-later:${token}`, "status"],
+      [`v1:manage:publish-later:${token}:d`, "draft"],
+    ] as const) {
+      expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
+      expect(parseCallback(callback)).toEqual({
+        kind: "manage-publish-later",
+        token,
+        origin,
+      });
+    }
+    expect(parseCallback(`v1:manage:publish-later:${token}:s`)).toEqual({
+      kind: "malformed",
+    });
     const expected = {
-      [`v1:manage:publish-later:${token}`]: "manage-publish-later",
       [`v1:manage:unschedule:${token}`]: "manage-unschedule",
       [`v1:manage:confirm-unschedule:${token}`]: "manage-confirm-unschedule",
     };
@@ -540,7 +554,8 @@ describe("notification callbacks", () => {
         `v1:q:fc:${token}:title`,
         { kind: "field", mode: "create", token, field: "title" },
       ],
-      [`v1:q:pm:${token}`, { kind: "publish-moment", token }],
+      [`v1:q:pm:${token}`, { kind: "publish-moment", token, origin: "status" }],
+      [`v1:q:pd:${token}`, { kind: "publish-moment", token, origin: "draft" }],
       [
         `v1:q:ms:${token}:999999999`,
         { kind: "material-source", token, version: 999999999 },
@@ -562,21 +577,49 @@ describe("notification callbacks", () => {
     expect(parseCallback(`v1:manage:when:${token}:c`)).toEqual({
       kind: "manage-pick-day",
       token,
-      editing: false,
+      mode: "c",
     });
     expect(parseCallback(`v1:manage:when:${token}:e:03102026`)).toEqual({
       kind: "manage-pick-day",
       token,
-      editing: true,
+      mode: "e",
       picked: { digits: "03102026", day: { year: 2026, month: 10, day: 3 } },
     });
-    const moment = `v1:manage:when:${token}:e:031020261930`;
-    expect(Buffer.byteLength(moment)).toBeLessThanOrEqual(64);
-    expect(parseCallback(moment)).toEqual({
-      kind: "manage-pick-schedule",
+    // Момент публикации выбирается теми же кнопками в режимах `p` и `d`.
+    for (const mode of ["c", "e", "p", "d"] as const) {
+      const moment = `v1:manage:when:${token}:${mode}:031020261930`;
+      expect(Buffer.byteLength(moment)).toBeLessThanOrEqual(64);
+      expect(parseCallback(moment)).toEqual({
+        kind: "manage-pick-schedule",
+        token,
+        mode,
+        value: "03.10.2026 19:30",
+      });
+    }
+  });
+
+  it("asks for another date by text and cancels back to the screen the date was opened from", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:manage:when:${token}:d:t`)).toEqual({
+      kind: "manage-type-schedule",
       token,
-      editing: true,
-      value: "03.10.2026 19:30",
+      mode: "d",
+    });
+    expect(parseCallback(`v1:manage:when:${token}:c:x`)).toEqual({
+      kind: "manage-draft",
+      token,
+    });
+    expect(parseCallback(`v1:manage:when:${token}:d:x`)).toEqual({
+      kind: "manage-draft",
+      token,
+    });
+    expect(parseCallback(`v1:manage:when:${token}:e:x`)).toEqual({
+      kind: "view-meetup",
+      token,
+    });
+    expect(parseCallback(`v1:manage:when:${token}:p:x`)).toEqual({
+      kind: "manage-status",
+      token,
     });
   });
 
@@ -585,6 +628,8 @@ describe("notification callbacks", () => {
     for (const data of [
       `v1:manage:when:${token}`,
       `v1:manage:when:${token}:x`,
+      `v1:manage:when:${token}:q:t`,
+      `v1:manage:when:${token}:c:y`,
       `v1:manage:when:${token}:c:31022026`,
       `v1:manage:when:${token}:c:0310202`,
       `v1:manage:when:${token}:c:0310202619`,

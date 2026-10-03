@@ -277,6 +277,40 @@ let ``A payload written before materials existed reads with an empty collection`
 
     test <@ MeetupEventPayload.toSnapshot eventId payload = Meetup.toSnapshot Sample.titled @>
 
+/// Событие, записанное до PER-443, вида файла не несёт: читатель обязан прочитать
+/// файл как «не фото», а не остановить очередь публикации.
+[<Fact>]
+let ``A payload written before file kinds existed reads the file as not a photo`` () =
+    let photo =
+        { Sample.material with
+            Source = FileId("AgACAgIAAxkBAAI", Photo)
+        }
+
+    let snapshot =
+        { Meetup.toSnapshot Sample.titled with
+            Materials = [ photo ]
+        }
+
+    let node = parse snapshot
+    let source = node["materials"].AsArray().[0].AsObject().["source"].AsObject()
+
+    test <@ source["file_kind"].GetValue<string>() = "photo" @>
+    test <@ MeetupEventPayload.toSnapshot eventId (node.ToJsonString()) = snapshot @>
+
+    source.Remove "file_kind" |> ignore
+
+    let aged =
+        { snapshot with
+            Materials =
+                [
+                    { photo with
+                        Source = FileId("AgACAgIAAxkBAAI", OtherFile)
+                    }
+                ]
+        }
+
+    test <@ MeetupEventPayload.toSnapshot eventId (node.ToJsonString()) = aged @>
+
 [<Fact>]
 let ``Only the material occasions carry a material id`` () =
     let (MaterialId attached) = Sample.material.Id

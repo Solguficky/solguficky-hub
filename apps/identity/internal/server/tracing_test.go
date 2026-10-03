@@ -123,7 +123,7 @@ func newTracedConn(t *testing.T) (*tracetest.SpanRecorder, *grpc.ClientConn) {
 	lis := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = lis.Close() })
 
-	srv := server.New(slog.New(slog.DiscardHandler), new(sql.DB), "", server.WithTracerProvider(provider))
+	srv := server.New(slog.New(slog.DiscardHandler), new(sql.DB), "", server.NewTestCallers(t, ""), server.WithTracerProvider(provider))
 	t.Cleanup(srv.Stop)
 	go func() {
 		_ = srv.Serve(lis)
@@ -135,6 +135,7 @@ func newTracedConn(t *testing.T) (*tracetest.SpanRecorder, *grpc.ClientConn) {
 			return lis.DialContext(ctx)
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		server.PresentDeclaredCaller(),
 	)
 	if err != nil {
 		t.Fatalf("dial: %v", err)

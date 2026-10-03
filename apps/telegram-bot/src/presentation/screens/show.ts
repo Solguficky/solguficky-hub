@@ -22,6 +22,12 @@ export type ShownScreen = {
    * сообщение (ADR-034). Без неё текст уходит как есть.
    */
   format?: "HTML" | "rich";
+  /**
+   * Фото богатого сообщения: текст ссылается на них как `tg://photo?id=<id>`.
+   * Сообщение с ними остаётся богатым, а не «сообщением с файлом»: оно правится
+   * на месте в обе стороны (зонд PER-443).
+   */
+  media?: readonly ScreenPhoto[];
   /** `new` — экран приходит новым сообщением, даже если его открыло нажатие. */
   delivery?: "auto" | "new";
   /**
@@ -30,6 +36,8 @@ export type ShownScreen = {
    */
   fileTrace?: string;
 };
+
+export type ScreenPhoto = { id: string; fileId: string };
 
 /** Update с тем, что отправителю нужно знать о нажатии. */
 export type ScreenContext = Context & {
@@ -46,8 +54,19 @@ export type ScreenContext = Context & {
  */
 export async function showScreen(
   ctx: ScreenContext,
-  { id, text, keyboard, format, delivery, fileTrace }: ShownScreen,
+  { id, text, keyboard, format, delivery, fileTrace, media }: ShownScreen,
 ): Promise<void> {
+  const rich = {
+    html: text,
+    ...(media === undefined || media.length === 0
+      ? {}
+      : {
+          media: media.map((photo) => ({
+            id: photo.id,
+            media: { type: "photo" as const, media: photo.fileId },
+          })),
+        }),
+  };
   const other = {
     ...screenMark(id),
     reply_markup: keyboard,
@@ -55,7 +74,7 @@ export async function showScreen(
   };
   const send = (): Promise<unknown> =>
     format === "rich"
-      ? ctx.replyWithRichMessage({ html: text }, other)
+      ? ctx.replyWithRichMessage(rich, other)
       : ctx.reply(text, other);
   const message = ctx.callbackQuery?.message;
   if (message === undefined || delivery === "new" || ctx.fresh === true) {
@@ -81,7 +100,7 @@ export async function showScreen(
       await ctx.api.editMessageText(
         message.chat.id,
         message.message_id,
-        { html: text },
+        rich,
         other,
       );
     } else {

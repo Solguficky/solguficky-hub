@@ -805,6 +805,43 @@ let ``Attaching a material with an empty source is refused as INVALID_ARGUMENT``
 
     test <@ codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched request) = Some StatusCode.InvalidArgument @>
 
+/// Вид описывает файл: ссылка «с видом фото» — не второе написание ссылки.
+[<Fact>]
+let ``Attaching a message link with a file kind is refused as INVALID_ARGUMENT`` () =
+    let request =
+        Meetups.V1.AttachMaterialRequest(
+            Viewer = administrator (),
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
+            Title = "Афиша",
+            Source =
+                Meetups.V1.MeetupMaterialSource(
+                    MessageLink = "https://t.me/solguficky/42",
+                    FileKind = Meetups.V1.MeetupMaterialFileKind.Photo
+                )
+        )
+
+    test <@ codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched request) = Some StatusCode.InvalidArgument @>
+
+/// Число вне перечисления прислал более новый клиент: записать файл как «не фото»
+/// значило бы молча потерять вид.
+[<Fact>]
+let ``Attaching a file with an unknown file kind is refused as INVALID_ARGUMENT`` () =
+    let request =
+        Meetups.V1.AttachMaterialRequest(
+            Viewer = administrator (),
+            Id = meetupId,
+            MaterialId = "0199c0de-0000-7000-8000-0000000000a1",
+            Title = "Афиша",
+            Source =
+                Meetups.V1.MeetupMaterialSource(
+                    FileId = "AgACAgIAAxkBAAI",
+                    FileKind = enum<Meetups.V1.MeetupMaterialFileKind> 99
+                )
+        )
+
+    test <@ codeOf (fun () -> AttachMaterial.Api.handle Attach.untouched request) = Some StatusCode.InvalidArgument @>
+
 [<Fact>]
 let ``Attaching a material with a non-canonical material id is refused as INVALID_ARGUMENT`` () =
     let request =
@@ -842,6 +879,42 @@ let ``A successful attachment answers with the material in the snapshot`` () =
             && material.Title = Sample.material.Title
             && material.Source.SourceCase = Meetups.V1.MeetupMaterialSource.SourceOneofCase.MessageLink
         @>
+
+/// Вид файла из запроса доезжает до события: фото записывается фото, файл без
+/// вида — «не фото» (PER-443).
+[<Theory>]
+[<InlineData(1, true)>]
+[<InlineData(0, false)>]
+let ``A file is committed with the kind the request carried`` (kind: int, photo: bool) =
+    let mutable committed = None
+
+    let deps =
+        Attach.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.titled)))
+            (fun _ _ _ event ->
+                committed <- Some event
+                Task.FromResult(Ok(Meetup.toSnapshot Sample.titled))
+            )
+
+    let request = Attach.request (administrator ())
+
+    request.Source <-
+        Meetups.V1.MeetupMaterialSource(
+            FileId = "AgACAgIAAxkBAAI",
+            FileKind = enum<Meetups.V1.MeetupMaterialFileKind> kind
+        )
+
+    (AttachMaterial.Api.handle deps request).GetAwaiter().GetResult()
+    |> ignore
+
+    let expected = FileId("AgACAgIAAxkBAAI", (if photo then Photo else OtherFile))
+
+    let source =
+        match committed with
+        | Some(MeetupMaterialAttached material) -> Some material.Source
+        | _ -> None
+
+    test <@ source = Some expected @>
 
 [<Fact>]
 let ``Removing a material is refused for an ordinary viewer before the store`` () =

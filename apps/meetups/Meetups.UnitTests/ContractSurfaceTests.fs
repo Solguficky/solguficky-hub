@@ -289,7 +289,7 @@ let ``The value types live apart from the service schema`` () =
         @>
 
 [<Fact>]
-let ``Schema declares only the lifecycle, visibility and relation enums`` () =
+let ``Schema declares only the lifecycle, visibility, relation and file kind enums`` () =
     let actual = enums |> List.map (fun e -> e.Name) |> Set.ofList
 
     let expected =
@@ -297,6 +297,7 @@ let ``Schema declares only the lifecycle, visibility and relation enums`` () =
             "MeetupLifecycle"
             "MeetupVisibility"
             "MeetupRelation"
+            "MeetupMaterialFileKind"
         ]
         |> set
 
@@ -482,6 +483,19 @@ let ``A material carries its id, its title and exactly one source`` () =
         )
         |> List.ofSeq
 
+    // Вид файла стоит рядом с oneof, а не третьей его веткой: он описывает
+    // `file_id`, а не заводит ещё один вид источника (PER-443).
+    let besideSource =
+        MeetupMaterialSource.Descriptor.Fields.InDeclarationOrder()
+        |> Seq.filter (fun f -> isNull f.ContainingOneof)
+        |> Seq.map (fun f -> f.Name, string f.FieldType)
+        |> List.ofSeq
+
+    let fileKinds =
+        MeetupMaterialFileKind.GetValues<MeetupMaterialFileKind>()
+        |> Seq.map (fun kind -> string kind, int kind)
+        |> List.ofSeq
+
     let snapshotMaterials =
         MeetupSnapshot.Descriptor.Fields.InDeclarationOrder()
         |> Seq.filter (fun f -> f.Name = "materials")
@@ -499,6 +513,8 @@ let ``A material carries its id, its title and exactly one source`` () =
                 "source.message_link"
                 "source.file_id"
             ]
+            && besideSource = [ "file_kind", "Enum" ]
+            && fileKinds = [ "Unspecified", 0; "Photo", 1 ]
             && snapshotMaterials = [ "materials", FieldType.Message, true ]
         @>
 

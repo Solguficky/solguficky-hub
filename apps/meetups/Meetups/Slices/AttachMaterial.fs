@@ -146,11 +146,23 @@ module Api =
             if isNull (box value) then
                 Error(Contract.invalid "source" "is required")
             else
+                let kind = value.FileKind
+
                 match value.SourceCase with
                 | Meetups.V1.MeetupMaterialSource.SourceOneofCase.MessageLink when value.MessageLink <> "" ->
-                    Ok(MessageLink value.MessageLink)
+                    // Вид описывает файл: у ссылки его нет, и ссылка «с видом фото»
+                    // отвергается, а не дочитывается как обычная.
+                    if kind = Meetups.V1.MeetupMaterialFileKind.Unspecified then
+                        Ok(MessageLink value.MessageLink)
+                    else
+                        Error(Contract.invalid "source.file_kind" "must be unspecified for a message link")
                 | Meetups.V1.MeetupMaterialSource.SourceOneofCase.FileId when value.FileId <> "" ->
-                    Ok(FileId value.FileId)
+                    match kind with
+                    | Meetups.V1.MeetupMaterialFileKind.Unspecified -> Ok(FileId(value.FileId, OtherFile))
+                    | Meetups.V1.MeetupMaterialFileKind.Photo -> Ok(FileId(value.FileId, Photo))
+                    // Число вне перечисления прислал более новый клиент: записать
+                    // его как «не фото» значило бы молча потерять вид.
+                    | _ -> Error(Contract.invalid "source.file_kind" "is not a known file kind")
                 | _ -> Error(Contract.invalid "source" "must set exactly one non-empty source")
 
     let private toCommand (request: Meetups.V1.AttachMaterialRequest) : Result<Command, Contract.InvalidRequest> =

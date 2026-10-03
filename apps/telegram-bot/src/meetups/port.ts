@@ -9,9 +9,14 @@ export type MeetupSchedule = {
   minutes: number;
 };
 
+// Вид файла — то, чем Telegram его прислал (PER-443): `file_id` фото нельзя
+// отправить документом и наоборот. `document` — любой файл, который не фото,
+// в том числе прикреплённый до появления вида: его вид не записан.
+export type MaterialFileKind = "photo" | "document";
+
 export type MeetupMaterialSource =
   | { kind: "message-link"; url: string }
-  | { kind: "file"; fileId: string };
+  | { kind: "file"; fileId: string; fileKind: MaterialFileKind };
 
 export type MeetupMaterial = {
   id: string;

@@ -52,6 +52,101 @@ const rows = (screen: {
     row.map((button) => button.text),
   );
 
+describe("card posters", () => {
+  const photo = (index: number) => ({
+    id: `0199c0de-0000-7000-8000-00000000000${index}`,
+    title: `Афиша ${index}`,
+    source: {
+      kind: "file" as const,
+      fileId: `photo-${index}`,
+      fileKind: "photo" as const,
+    },
+  });
+  const cardOf = (
+    materials: MeetupSnapshot["materials"],
+    overrides: { presentation?: "rich" | "plain"; posters?: boolean } = {},
+  ) =>
+    cardScreen({
+      meetup: meetup({ materials }),
+      manageable: false,
+      subscribed: true,
+      presentation: "rich",
+      today,
+      ...overrides,
+    });
+
+  it("shows several photos as a slideshow in the collection order", () => {
+    const screen = cardOf([
+      photo(1),
+      {
+        id: "0199c0de-0000-7000-8000-000000000009",
+        title: "Программа",
+        source: { kind: "file", fileId: "pdf", fileKind: "document" },
+      },
+      {
+        id: "0199c0de-0000-7000-8000-000000000008",
+        title: "Опрос",
+        source: { kind: "message-link", url: "https://t.me/c/1/2" },
+      },
+      photo(2),
+    ]);
+
+    expect(screen.media).toEqual([
+      { id: "p1", fileId: "photo-1" },
+      { id: "p2", fileId: "photo-2" },
+    ]);
+    expect(screen.text).toContain(
+      '</p><tg-slideshow><img src="tg://photo?id=p1"/><img src="tg://photo?id=p2"/></tg-slideshow>',
+    );
+    expect(screen.text).not.toContain("pdf");
+  });
+
+  it("shows a single photo without a slideshow", () => {
+    const screen = cardOf([photo(1)]);
+
+    expect(screen.media).toEqual([{ id: "p1", fileId: "photo-1" }]);
+    expect(screen.text).toContain('<img src="tg://photo?id=p1"/>');
+    expect(screen.text).not.toContain("tg-slideshow");
+  });
+
+  it("carries no media without photos, in the plain card and when posters are off", () => {
+    const document = {
+      id: "0199c0de-0000-7000-8000-000000000009",
+      title: "Программа",
+      source: {
+        kind: "file" as const,
+        fileId: "pdf",
+        fileKind: "document" as const,
+      },
+    };
+
+    for (const screen of [
+      cardOf([document]),
+      cardOf([photo(1), photo(2)], { presentation: "plain" }),
+      cardOf([photo(1), photo(2)], { posters: false }),
+    ]) {
+      expect(screen.media).toBeUndefined();
+      expect(screen.text).not.toContain("tg://photo");
+    }
+  });
+
+  it("stops at ten posters", () => {
+    const screen = cardOf(
+      Array.from({ length: 12 }, (_, index) => ({
+        ...photo(1),
+        id: `0199c0de-0000-7000-8000-0000000000${(index + 16).toString(16)}`,
+        source: {
+          kind: "file" as const,
+          fileId: `photo-${index}`,
+          fileKind: "photo" as const,
+        },
+      })),
+    );
+
+    expect(screen.media).toHaveLength(10);
+  });
+});
+
 describe("meetupParent", () => {
   it("returns a planned visible meetup to the upcoming list", () => {
     expect(meetupParent(meetup(), today).name).toBe("Ближайшие");
@@ -214,7 +309,11 @@ describe("cardScreen", () => {
               {
                 id: "0199c0de-0000-7000-8000-000000000002",
                 title: "Афиша",
-                source: { kind: "file", fileId: "bot-file-id" },
+                source: {
+                  kind: "file",
+                  fileId: "bot-file-id",
+                  fileKind: "document",
+                },
               },
             ],
           }),
@@ -301,7 +400,11 @@ describe("materialsScreen", () => {
     title: `Материал ${index + 1}`,
     source:
       index === 0
-        ? { kind: "file" as const, fileId: "bot-file-id" }
+        ? {
+            kind: "file" as const,
+            fileId: "bot-file-id",
+            fileKind: "document" as const,
+          }
         : { kind: "message-link" as const, url: `https://t.me/c/1/${index}` },
   }));
 

@@ -854,7 +854,13 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
-        MeetupCommands.attach source secondEvent (MeetupId meetupId) MeetupCommands.materialId "Афиша" (FileId "file-1")
+        MeetupCommands.attach
+            source
+            secondEvent
+            (MeetupId meetupId)
+            MeetupCommands.materialId
+            "Афиша"
+            (FileId("file-1", OtherFile))
         |> ignore
 
         let stateTransaction = MeetupCommands.transactionOf dsn "meetups" "id" meetupId
@@ -873,7 +879,13 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
-        MeetupCommands.attach source secondEvent (MeetupId meetupId) MeetupCommands.materialId "Афиша" (FileId "file-1")
+        MeetupCommands.attach
+            source
+            secondEvent
+            (MeetupId meetupId)
+            MeetupCommands.materialId
+            "Афиша"
+            (FileId("file-1", OtherFile))
         |> ignore
 
         MeetupCommands.remove source thirdEvent (MeetupId meetupId) MeetupCommands.materialId
@@ -913,7 +925,7 @@ type MeetupCommandTests() =
                 (MeetupId meetupId)
                 MeetupCommands.otherMaterialId
                 "Вторая"
-                (FileId "file-2")
+                (FileId("file-2", OtherFile))
             |> ignore
 
         use fresh = MeetupCommands.source dsn
@@ -965,7 +977,7 @@ type MeetupCommandTests() =
             (MeetupId meetupId)
             MeetupCommands.otherMaterialId
             "Вторая"
-            (FileId "file-2")
+            (FileId("file-2", Photo))
         |> ignore
 
         let removed =
@@ -984,7 +996,7 @@ type MeetupCommandTests() =
                 Id = MeetupCommands.otherMaterialId
                 Position = 2
                 Title = "Вторая"
-                Source = FileId "file-2"
+                Source = FileId("file-2", Photo)
                 BoundBy = MeetupCommands.author
             }
 
@@ -1020,7 +1032,7 @@ type MeetupCommandTests() =
                 (MeetupId meetupId)
                 MeetupCommands.materialId
                 "Афиша"
-                (FileId "file-1")
+                (FileId("file-1", OtherFile))
 
         let repeat =
             MeetupCommands.attach

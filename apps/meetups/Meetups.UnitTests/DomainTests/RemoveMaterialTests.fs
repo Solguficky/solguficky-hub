@@ -38,7 +38,7 @@ let ``Removing one material leaves the others in place`` () =
             Id = Sample.otherMaterialId
             Position = 2
             Title = "Вторая афиша"
-            Source = FileId "file-2"
+            Source = FileId("file-2", OtherFile)
             BoundBy = Sample.authorId
         }
 
