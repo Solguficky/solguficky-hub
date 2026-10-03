@@ -145,11 +145,7 @@ let ``Caller gate should refuse known callers on methods that do not declare the
 [<Fact>]
 let ``Caller gate should close enumeration and future methods to every known caller`` () =
     for method in [ "ListMeetupStates"; "FutureMethod" ] do
-        for caller in
-            [
-                Caller.HubBot
-                Caller.Notifications
-            ] do
+        for caller in [ Caller.HubBot; Caller.Notifications ] do
             let decision =
                 CallerGate.decide table (path method) $"Bearer {read caller.TokenVariable}"
 
@@ -164,10 +160,7 @@ let ``Caller gate should close enumeration and future methods to every known cal
 [<Fact>]
 let ``Caller table should reject every missing or blank declared token without disclosing values`` () =
     let errors =
-        [
-            Caller.HubBot
-            Caller.Notifications
-        ]
+        [ Caller.HubBot; Caller.Notifications ]
         |> List.collect (fun caller ->
             [ null; ""; "  " ]
             |> List.map (fun value ->
