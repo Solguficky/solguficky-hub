@@ -2,7 +2,7 @@
 
 Auction Service на Scala 3 и Apache Pekko. Ответственность сервиса — [бриф](../../docs/services/auction.md), стек — [ADR-045](../../docs/decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), сборка и кодогенерация — [ADR-048](../../docs/decisions/ADR-048-auction-sbt-and-scalapb-build.md).
 
-Сейчас здесь одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, каталог карточек лота, HTTP-граница с health-эндпоинтом, gRPC-граница `AuctionService` с проверкой вызывающего, кодогенерация Protobuf из `contracts/proto` и тесты. По gRPC открыты ставка (`PlaceBid`) и команды каталога (`CreateLotCard`, `EditLotCard`); прокси-лимиты и чтение отвечают `UNIMPLEMENTED` до своих листов. Агрегата аукциона в сервисе нет.
+Сейчас здесь одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, каталог карточек лота, HTTP-граница с health-эндпоинтом, gRPC-граница `AuctionService` с проверкой вызывающего, кодогенерация Protobuf из `contracts/proto` и тесты. По gRPC открыты ставка (`PlaceBid`), прокси-лимиты, команды каталога (`CreateLotCard`, `EditLotCard`) и чтение лота (`GetLot`, `ListAuctionLots`) из read model проекции; имя участника отвечает `UNIMPLEMENTED` до своего листа. Агрегата аукциона в сервисе нет.
 
 Нужны JDK версии из `.java-version` и sbt. Ни то, ни другое репозиторий не ставит: `just auction-tools` прогревает уже установленный sbt. Одного `update` для этого мало, поэтому рецепт гонит ещё генерацию и проверку формата — `protocbridge` тянет бинарник protoc на первой генерации, а `scalafmt-core` подтягивается на первой проверке. Отсюда два следствия: рецепт оставляет в `target/` вывод кодогенерации и краснеет на неотформатированном коде, то есть повторяет вердикт `just auction-lint` до гейта.
 
@@ -21,7 +21,7 @@ just auction-build
 # Тесты L0, Docker не нужен
 just auction-test
 
-# Тесты L1: схема, журнал, шардинг и готовность на PostgreSQL в Testcontainers; нужен Docker
+# Тесты L1: схема, журнал, шардинг, проекция и готовность на PostgreSQL в Testcontainers; нужен Docker
 just auction-test-integration
 
 # Гейт форматирования и само форматирование
@@ -48,6 +48,7 @@ just aspire auction
 | `AUCTION_DATABASE_JDBC_URL` | нет, обязательна | JDBC URL базы Auction без учётных данных, `jdbc:postgresql://<хост>:<порт>/auction` |
 | `AUCTION_DATABASE_USER` | нет, обязательна | пользователь базы |
 | `AUCTION_DATABASE_PASSWORD` | нет, обязательна | пароль базы |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | нет | адрес OTLP-коллектора для метрик проекции; без него экспорт метрик выключен. Остальные `OTEL_*` читает SDK, их подставляет AppHost |
 
 Переопределение живёт в `src/main/resources/application.conf`: код читает готовое значение и о способе переопределения не знает. На старте сервис применяет схему журнала миграциями Flyway; без переменных базы, без токена любого из вызывающих, с одинаковыми токенами у двух вызывающих или при отказе миграции он завершается с ненулевым кодом и называет причину, но не значение токена.
 

@@ -7,11 +7,13 @@ import auction.entity.UuidV7
 import auction.lot.*
 import auction.lot.LotFixtures.*
 import auction.persistence.JournalSchema
+import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import com.typesafe.config.ConfigFactory
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
+import io.opentelemetry.api.OpenTelemetry
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
@@ -21,6 +23,7 @@ import org.apache.pekko.grpc.GrpcClientSettings
 import org.apache.pekko.grpc.scaladsl.SingleResponseRequestBuilder
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.util.Timeout
+import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.Seconds
@@ -36,7 +39,12 @@ import scala.concurrent.duration.*
  * Ставка через gRPC на узле, собранном так же, как в `Main`: кластер, шардинг лота, журнал и каталог на PostgreSQL и
  * граница с проверкой вызывающего. Клиент ходит по проводу с токеном бота хаба, как будет ходить бот.
  */
-final class AuctionGrpcIntegrationSpec extends AnyWordSpec with Matchers with PostgresFixture with ScalaFutures {
+final class AuctionGrpcIntegrationSpec
+    extends AnyWordSpec
+    with Matchers
+    with PostgresFixture
+    with ScalaFutures
+    with Eventually {
 
   implicit override val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(30, Seconds))
 
@@ -102,6 +110,11 @@ final class AuctionGrpcIntegrationSpec extends AnyWordSpec with Matchers with Po
       val clock = Clock.systemUTC()
       val sharding = AuctionNode.join(kit.system)
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
+      AuctionNode.startProjection(
+        kit.system,
+        ProjectionMetrics(OpenTelemetry.noop().getMeter("auction"), clock),
+        5.seconds
+      )
       val binding = Http()
         .newServerAt("127.0.0.1", 0)
         .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds))
@@ -117,11 +130,11 @@ final class AuctionGrpcIntegrationSpec extends AnyWordSpec with Matchers with Po
   private given Timeout = Timeout(20.seconds)
 
   /** Лот в торгах: рождение, планирование со стартовой ценой 100 и шагом 10, открытие. */
-  private def tradingLot(node: Node): UUID = {
+  private def tradingLot(node: Node, auction: AuctionId = auctionId(1)): UUID = {
     val id = UuidV7.generator(Clock.systemUTC())()
     val lot = node.sharding.entityRefFor(LotEntity.TypeKey, id.toString)
     lot
-      .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, _))
+      .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1, of = auction), Initiator.Scheduler, _))
       .futureValue
       .isRight shouldBe true
     lot
@@ -171,6 +184,37 @@ final class AuctionGrpcIntegrationSpec extends AnyWordSpec with Matchers with Po
         asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)))
       response.futureValue.outcome.isAccepted shouldBe true
       currentPrice(node, lotId) shouldBe money(150)
+    }
+
+    "places a bid through the wire and answers the new price through GetLot and ListAuctionLots" in withNode { node =>
+      // Аукцион с идентификатором по контракту: ListAuctionLots принимает только канонический UUIDv7.
+      val auction = AuctionId(UuidV7.generator(Clock.systemUTC())())
+      val lotId = tradingLot(node, auction)
+      val bidder = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+      asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, bidder)).futureValue.outcome.isAccepted shouldBe true
+      // GetLot читает read model, которую пишет проекция: новая цена приходит с её задержкой, а не сразу.
+      eventually {
+        val snapshot =
+          asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(bidder), lotId.toString)).futureValue
+        snapshot.version shouldBe 4
+        snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(150, "RUB"))
+        snapshot.getTrading.leaderId shouldBe Some(bidder.identityId)
+        snapshot.nextPrice shouldBe Some(MoneyMessage(160, "RUB"))
+      }
+      val listed = asHubBot(node.client.listAuctionLots())
+        .invoke(wire.ListAuctionLotsRequest(Some(bidder), auction.value.toString))
+        .futureValue
+      listed.lots.map(_.id) shouldBe Seq(lotId.toString)
+      listed.nextPageToken shouldBe ""
+    }
+
+    "answers NOT_FOUND through GetLot for a lot that was never drafted" in withNode { node =>
+      val unknown = UuidV7.generator(Clock.systemUTC())().toString
+      statusOf(
+        asHubBot(node.client.getLot()).invoke(
+          wire.GetLotRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), unknown)
+        )
+      ) shouldBe Status.Code.NOT_FOUND
     }
 
     "answers a bid below the minimum with the minimum price and leaves the price as it was" in withNode { node =>

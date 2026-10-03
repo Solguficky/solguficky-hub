@@ -1,9 +1,12 @@
 package auction.entity
 
 import auction.lot.*
+import auction.projection.LotTags
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
+import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
+import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.persistence.typed.scaladsl.Effect
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
@@ -91,16 +94,22 @@ object LotEntity {
       newId: () => UUID,
       snapshotEvery: Int = DefaultSnapshotEvery
   ): Behavior[Command] =
-    EventSourcedBehavior[Command, StoredLotEvent, State](
-      persistenceId = PersistenceId(TypeKey.name, lotId),
-      emptyState = State(Lot.initial, 0),
-      commandHandler = (state, command) => handle(state, command, clock, newId),
-      eventHandler = (state, stored) => {
-        val sequence = state.sequence + 1
-        State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored)), sequence)
-      }
-    ).snapshotAdapter(LotJournal.snapshotAdapter)
-      .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
+    Behaviors.setup { context =>
+      val persistenceId = PersistenceId(TypeKey.name, lotId)
+      // Тег один на лот и вычисляется один раз: срез зависит только от persistence id (LotTags).
+      val tag = Set(LotTags.of(Persistence(context.system.classicSystem).sliceForPersistenceId(persistenceId.id)))
+      EventSourcedBehavior[Command, StoredLotEvent, State](
+        persistenceId = persistenceId,
+        emptyState = State(Lot.initial, 0),
+        commandHandler = (state, command) => handle(state, command, clock, newId),
+        eventHandler = (state, stored) => {
+          val sequence = state.sequence + 1
+          State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored)), sequence)
+        }
+      ).snapshotAdapter(LotJournal.snapshotAdapter)
+        .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
+        .withTagger(_ => tag)
+    }
 
   /** Номер следующей строки — `state.sequence + 1`, та же арифметика, что в `eventHandler`. */
   private def handle(state: State, command: Command, clock: Clock, newId: () => UUID): Effect[StoredLotEvent, State] = {

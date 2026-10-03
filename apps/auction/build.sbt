@@ -16,6 +16,8 @@ val scalaCheckBridgeVersion = "3.2.19.0"
 val logbackVersion = "1.5.18"
 val logstashEncoderVersion = "8.1"
 val pekkoPersistenceJdbcVersion = "1.3.0"
+val pekkoProjectionVersion = "1.1.0"
+val openTelemetryVersion = "1.66.0"
 // Версия, с которой собран pekko-persistence-jdbc выше; меняется вместе с ним.
 val slickVersion = "3.5.1"
 val postgresqlVersion = "42.7.13"
@@ -73,6 +75,17 @@ lazy val auction = (project in file("."))
       // discovery выше.
       "org.apache.pekko" %% "pekko-persistence-query" % pekkoVersion,
       "org.apache.pekko" %% "pekko-persistence-jdbc" % pekkoPersistenceJdbcVersion,
+      // Проекция журнала в read model: offset и read model одной JDBC-транзакцией
+      // (ADR-045). Модули проекции собраны против более ранней Pekko, и её модули
+      // поднимаются до общей версии строками выше.
+      "org.apache.pekko" %% "pekko-projection-jdbc" % pekkoProjectionVersion,
+      "org.apache.pekko" %% "pekko-projection-eventsourced" % pekkoProjectionVersion,
+      // Метрики уходят по OTLP без SDK конкретного вендора (ADR-053); адрес и имя
+      // сервиса — из переменных OTEL_*, которые подставляет окружение.
+      "io.opentelemetry" % "opentelemetry-api" % openTelemetryVersion,
+      "io.opentelemetry" % "opentelemetry-sdk" % openTelemetryVersion,
+      "io.opentelemetry" % "opentelemetry-sdk-extension-autoconfigure" % openTelemetryVersion,
+      "io.opentelemetry" % "opentelemetry-exporter-otlp" % openTelemetryVersion,
       // Строка журнала и snapshot лота — JSON через отдельную модель хранения
       // (ADR о формате журнала): Protobuf остаётся межсервисным форматом.
       "org.apache.pekko" %% "pekko-serialization-jackson" % pekkoVersion,
@@ -89,6 +102,7 @@ lazy val auction = (project in file("."))
       "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-persistence-testkit" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-http-testkit" % pekkoHttpVersion % Test,
+      "io.opentelemetry" % "opentelemetry-sdk-testing" % openTelemetryVersion % Test,
       "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
       "org.scalatestplus" %% "scalacheck-1-18" % scalaCheckBridgeVersion % Test,
       "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
