@@ -11,7 +11,7 @@
 
 Telegram-вход нужен первому вертикальному срезу: без него у среза нет наблюдаемого ответа человеку. Стек TypeScript + grammY принят владельцем раньше этого ADR и уже стоит в [overview.md](../architecture/overview.md), но устройство компонента оставалось незакреплённым, а три вопроса были помечены в документах как «решается в ADR Gateway»: диалоговое состояние, ключ идемпотентности создания и формат `callback_data`.
 
-Разбор вариантов по восьми осям выполнен в [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). Сюда вынесены только решения с дорогим откатом; правила реализации живут в [брифе компонента](../services/telegram-bot.md).
+Разбор вариантов по восьми осям выполнен в [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md). Сюда вынесены только решения с дорогим откатом; правила реализации живут в [брифе компонента](../services/hub-bot.md).
 
 Действующие ограничения:
 
@@ -136,6 +136,6 @@ Telegram-вход нужен первому вертикальному срез�
 - RFC: [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md) — разбор восьми осей и отвергнутые варианты
 - Standards: [observability/logging.md](../standards/observability/logging.md)
 - Другие ADR: [ADR-026](ADR-026-identity-mvp-model-and-access.md), [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md), [ADR-023](ADR-023-meetup-public-number.md), [ADR-020](ADR-020-uuidv7-identifiers.md), [ADR-007](ADR-007-polyglot-service-stacks.md)
-- Сервис: [Telegram Bot](../services/telegram-bot.md)
+- Сервис: [Telegram Bot](../services/hub-bot.md)
 - Архитектура: [first-slice.md](../architecture/first-slice.md), [integration.md](../architecture/integration.md), [decision-matrix.html](../architecture/decision-matrix.html)
 - Макет: [storyboard.html](../design/bot/storyboard.html)

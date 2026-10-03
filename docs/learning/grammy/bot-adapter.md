@@ -1,8 +1,8 @@
 # Адаптер grammY
 
-grammY — библиотека для Telegram Bot API поверх Node. В этом репозитории она держит единственную границу, на которую приходит человек: `apps/telegram-bot/src/presentation/`. Файл объясняет, как поток update от Telegram превращается в вызов кода, где у библиотеки швы для тестов и наблюдаемости и почему обработчик ловит свои отказы сам.
+grammY — библиотека для Telegram Bot API поверх Node. В этом репозитории она держит единственную границу, на которую приходит человек: `apps/hub-bot/src/presentation/`. Файл объясняет, как поток update от Telegram превращается в вызов кода, где у библиотеки швы для тестов и наблюдаемости и почему обработчик ловит свои отказы сам.
 
-Язык, типы и клиент Identity — [typescript/module-and-types.md](../typescript/module-and-types.md); чем и как это проверяется — [typescript/testing.md](../typescript/testing.md); состав полей записи — [standard: логирование](../../standards/observability/logging.md); границы компонента — [бриф](../../services/telegram-bot.md) и [ADR-030](../../decisions/ADR-030-telegram-bot.md).
+Язык, типы и клиент Identity — [typescript/module-and-types.md](../typescript/module-and-types.md); чем и как это проверяется — [typescript/testing.md](../typescript/testing.md); состав полей записи — [standard: логирование](../../standards/observability/logging.md); границы компонента — [бриф](../../services/hub-bot.md) и [ADR-030](../../decisions/ADR-030-telegram-bot.md).
 
 ## Механика
 
@@ -120,7 +120,7 @@ type Transformer = <M extends Methods<R>>(
 Каркас полей задан [стандартом](../../standards/observability/logging.md); здесь важно только то, чем его закрывает именно grammY.
 
 - `operation` — имя обработчика update: `"message"` или `"callback_query"`, по тому, какое поле пришло в апдейте. Одна константа на обе границы не подходит: записи тогда нельзя собрать по исполнявшемуся коду.
-- `request_id` — `randomUUID()` в первой middleware. Telegram Bot — край цепочки, идентификатор больше взять неоткуда.
+- `request_id` — `randomUUID()` в первой middleware. Hub Bot — край цепочки, идентификатор больше взять неоткуда.
 - `duration_us` — `Number((process.hrtime.bigint() - started) / 1000n)`. `process.hrtime.bigint()` даёт наносекунды монотонных часов, аналог `Stopwatch.GetTimestamp()`; `Date.now()` не годится, он ходит вместе с системным временем. Деление на `1000n` — целочисленное деление bigint, поэтому микросекунды выходят целым числом без плавающей точки.
 - `use_case` опускается у проигнорированного и у неразобранного update: сценария человек не начинал либо он не восстановим из недоверенного ввода. Пустой строкой поле не заполняется — стандарт требует именно опустить.
 - Обе границы — `handleMessage` и `handleCallback` — держат запись в `try/finally`: ветка присваивает исход, а пишется он один раз на выходе. Поэтому поглощённый update оставляет ровно одну запись независимо от того, чем кончился, а `bot.catch` остаётся только для отказов вне обработчиков. Ветка, которая возвращается молча, — это молчаливо пропавшая запись, а не отсутствие события: чужой ответ на вопрос формы и нечитаемая кнопка тоже поглощают update. Отказ увеличивает `solguficky.failures` внутри `writeBoundary`, а не в обработчике: счётчик и запись рождаются одним вызовом.
@@ -155,7 +155,7 @@ const currentIsPhoto = current !== undefined && "photo" in current;
 
 ### Режим ответа живёт в клиенте, а не в сообщении
 
-Вопрос бота хаба — обычное сообщение с `reply_markup`, в котором стоят сразу два поля: `force_reply: true` и `inline_keyboard` с кнопкой «Отмена» (`apps/telegram-bot/src/presentation/bot.ts`, функция `askQuestion`). `force_reply` — просьба к клиенту Telegram открыть поле ввода в режиме «ответ на это сообщение». Аналог в .NET — `Focus()` на поле формы: сервер просит, а исполняет и помнит это клиент.
+Вопрос бота хаба — обычное сообщение с `reply_markup`, в котором стоят сразу два поля: `force_reply: true` и `inline_keyboard` с кнопкой «Отмена» (`apps/hub-bot/src/presentation/bot.ts`, функция `askQuestion`). `force_reply` — просьба к клиенту Telegram открыть поле ввода в режиме «ответ на это сообщение». Аналог в .NET — `Focus()` на поле формы: сервер просит, а исполняет и помнит это клиент.
 
 Отсюда поведение, которого в типах grammY не видно и которое показал только живой мобильный клиент (зонд PER-443, таблица «Что проверено и чем» в [дизайн-коде](../../design/bot/design-code.md)):
 
@@ -176,7 +176,7 @@ if (pressed.kind === "question") {
 
 `deletePressed` — обёртка над `ctx.deleteMessage()`, которая возвращает `false` вместо исключения. Флаг `pressedGone` читает отправитель экрана: сообщения под нажатием больше нет, править нечего, экран уходит новым сообщением.
 
-Удаление — вызов Bot API, и он проходит через тот же transformer, что и остальные. В `apps/telegram-bot/src/presentation/waiting.ts` transformer ожидания считает первый «видимый» вызов результатом нажатия и перед ним отвечает на `callback_query`. Удаление ничего не показывает, поэтому оно стоит в списке тихих методов:
+Удаление — вызов Bot API, и он проходит через тот же transformer, что и остальные. В `apps/hub-bot/src/presentation/waiting.ts` transformer ожидания считает первый «видимый» вызов результатом нажатия и перед ним отвечает на `callback_query`. Удаление ничего не показывает, поэтому оно стоит в списке тихих методов:
 
 ```ts
 const quietMethods: ReadonlySet<string> = new Set([
@@ -200,11 +200,11 @@ if (photo !== undefined) {
 }
 ```
 
-Это `apps/telegram-bot/src/presentation/material-input.ts`. Вид едет дальше вместе с идентификатором — в порт `MeetupMaterialSource` и в поле `file_kind` контракта `meetups.v1`. Аналогия из .NET — `Content-Type`, сохранённый рядом с ключом blob: по одному ключу его не восстановить.
+Это `apps/hub-bot/src/presentation/material-input.ts`. Вид едет дальше вместе с идентификатором — в порт `MeetupMaterialSource` и в поле `file_kind` контракта `meetups.v1`. Аналогия из .NET — `Content-Type`, сохранённый рядом с ключом blob: по одному ключу его не восстановить.
 
 ### Rich-сообщение с фото остаётся rich-сообщением
 
-Bot API 10 добавил богатые сообщения: `sendRichMessage` и `editMessageText` с полем `rich_message`. Текст — HTML с блоками, а файлы подключаются отдельным списком `media` и ссылкой `tg://photo?id=<id>` из разметки (`apps/telegram-bot/src/presentation/screens/show.ts`):
+Bot API 10 добавил богатые сообщения: `sendRichMessage` и `editMessageText` с полем `rich_message`. Текст — HTML с блоками, а файлы подключаются отдельным списком `media` и ссылкой `tg://photo?id=<id>` из разметки (`apps/hub-bot/src/presentation/screens/show.ts`):
 
 ```ts
 const rich = {
@@ -364,4 +364,4 @@ flowchart TD
 
 - `bot.catch` в `createBot` не покрыт ни одним тестом: все тесты границы идут через `handleUpdate`, а он туда не заходит. Проверить его можно через `bot.handleUpdates([...])` или живым long polling — сделай это, когда появится живой бот.
 - `writeBoundary` в `bot.catch` читает `ctx.startedAt`, который ставит первая middleware. Если отказ случится в ней самой, `elapsedUs(undefined)` даст `TypeError: Cannot mix BigInt and other types` уже внутри обработчика ошибок — проверено отдельным вычислением. Сейчас туда попадают только `randomUUID` и `hrtime`, которые не бросают, но защиты нет.
-- Как поведёт себя `bot.stop()` посреди обработки update и хватает ли 15 секунд форсирующего таймера — проверь на живом боте: `TELEGRAM_BOT_TOKEN=... just telegram-bot-run`, затем SIGTERM во время ответа.
+- Как поведёт себя `bot.stop()` посреди обработки update и хватает ли 15 секунд форсирующего таймера — проверь на живом боте: `HUB_BOT_TOKEN=... just hub-bot-run`, затем SIGTERM во время ответа.

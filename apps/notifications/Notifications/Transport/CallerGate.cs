@@ -17,7 +17,7 @@ public static class MethodAccess
 {
     private static readonly string ServicePrefix = $"/{NotificationsService.Descriptor.FullName}/";
 
-    private static readonly IReadOnlySet<Caller> Bot = new HashSet<Caller> { Caller.TelegramBot };
+    private static readonly IReadOnlySet<Caller> Bot = new HashSet<Caller> { Caller.HubBot };
 
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<Caller>> ByMethod =
         new Dictionary<string, IReadOnlySet<Caller>>(StringComparer.Ordinal)

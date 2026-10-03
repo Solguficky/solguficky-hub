@@ -2850,7 +2850,7 @@
     <tr><td>Нужен ли способ <code>/attach</code> в группе, работает ли он при Privacy Mode и как бот отвечает в чате</td><td>A-12</td><td>продукт, тишина бота, проверка платформы</td><td>проверка живым ботом, затем решение владельца</td></tr>
     <tr><td>Показывать ли число подписчиков организатору</td><td>A-08, E-07</td><td>privacy</td><td>продуктовое решение</td></tr>
     <tr><td>Где живёт диалоговое состояние и что с ним при перезапуске</td><td>A-03 ... A-06, E-02</td><td>техника</td><td>закрыто: <a href="../../decisions/ADR-030-telegram-bot.md">ADR-030</a> — своего хранилища нет, шаг восстанавливается из сообщения, черновик в Meetups; привязка висящего вопроса к черновику и полю держится картой в памяти процесса и теряется при рестарте</td></tr>
-    <tr><td>Формат <code>callback_data</code>, версия экрана и судьба старых сообщений</td><td>P-03, E-04</td><td>техника</td><td>закрыто: <a href="../../decisions/ADR-030-telegram-bot.md">ADR-030</a> — версия формата обязательна, старый экран лечится при нажатии; грамматика в <a href="../../services/telegram-bot.md">брифе</a></td></tr>
+    <tr><td>Формат <code>callback_data</code>, версия экрана и судьба старых сообщений</td><td>P-03, E-04</td><td>техника</td><td>закрыто: <a href="../../decisions/ADR-030-telegram-bot.md">ADR-030</a> — версия формата обязательна, старый экран лечится при нажатии; грамматика в <a href="../../services/hub-bot.md">брифе</a></td></tr>
     <tr><td>Где обеспечивается идемпотентность нажатий, дедупликация и retry доставки</td><td>E-09, P-09</td><td>техника</td><td>нажатия закрыты: <a href="../../decisions/ADR-030-telegram-bot.md">ADR-030</a> — целевое состояние плюс ключ создания. Retry доставки — вместе с эпиками уведомлений</td></tr>
     <tr><td>Как бот узнаёт роль и что делает при недоступности Identity</td><td>A-01, E-05</td><td>техника</td><td>закрыто: <a href="../../decisions/ADR-026-identity-mvp-model-and-access.md">ADR-026</a> — синхронный вызов на каждом действии, fail-closed</td></tr>
     <tr><td>Владелец подписки: Meetups или Notifications</td><td>P-07</td><td>граница сервисов</td><td>RFC-005</td></tr>
@@ -2890,7 +2890,7 @@
 <footer class="doc-foot">
   Связанные документы:
   <a href="../../product/overview.md">Продукт и границы MVP</a>,
-  <a href="../../services/telegram-bot.md">Telegram Bot</a>,
+  <a href="../../services/hub-bot.md">Hub Bot</a>,
   <a href="../../services/meetups.md">Meetups Service</a>,
   <a href="../../services/notifications.md">Notifications Service</a>,
   <a href="../../services/identity.md">Identity Service</a>,

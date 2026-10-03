@@ -10,7 +10,7 @@ import {
   readContourEnvironment,
   startConversation,
   unreachableUrl,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 
 // Кадр E-05: сбой соседа и пустой результат — разные экраны. Identity
 // настоящий, Meetups недоступен: отказ проходит настоящий транспорт и

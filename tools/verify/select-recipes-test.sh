@@ -57,6 +57,8 @@ assert_selects "identity selects identity" \
     "$always identity-build identity-test identity-test-log-check identity-lint" apps/identity/cmd/identity/main.go
 assert_selects "identity test tooling selects identity" \
     "$always identity-build identity-test identity-test-log-check identity-lint" tools/identity/check-test-log.py
+assert_selects "hub bot selects its own recipes" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build" apps/hub-bot/src/main.ts
 assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
 assert_selects "aspire.config.json selects apphost" \

@@ -95,12 +95,12 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 	}{
 		{name: "no header", method: resolve, refusal: refusalMissingToken},
 		{name: "empty bearer", method: resolve, authorization: []string{"Bearer "}, refusal: refusalMissingToken},
-		{name: "other scheme", method: resolve, authorization: []string{"Basic " + CallerTokens[CallerTelegramBot]}, refusal: refusalMissingToken},
-		{name: "two headers", method: resolve, authorization: []string{bearer(CallerTelegramBot), bearer(CallerTelegramBot)}, refusal: refusalMissingToken},
+		{name: "other scheme", method: resolve, authorization: []string{"Basic " + CallerTokens[CallerHubBot]}, refusal: refusalMissingToken},
+		{name: "two headers", method: resolve, authorization: []string{bearer(CallerHubBot), bearer(CallerHubBot)}, refusal: refusalMissingToken},
 		{name: "unknown token", method: resolve, authorization: []string{"Bearer stranger"}, refusal: refusalUnknownToken},
 		{name: "maintainer secret", method: resolve, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "meetups on resolve", method: resolve, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
-		{name: "bot on check role", method: checkRole, authorization: []string{bearer(CallerTelegramBot)}, refusal: refusalNotDeclared, caller: CallerTelegramBot},
+		{name: "bot on check role", method: checkRole, authorization: []string{bearer(CallerHubBot)}, refusal: refusalNotDeclared, caller: CallerHubBot},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,7 +149,7 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 		method string
 		caller Caller
 	}{
-		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerTelegramBot},
+		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerHubBot},
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerAuctionBot},
 		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerMeetups},
 		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerNotifications},
@@ -185,7 +185,7 @@ func TestCallerTokenDoesNotOpenMaintainerMethods(t *testing.T) {
 	t.Parallel()
 
 	client, _, logs := dialGate(t)
-	ctx := metadata.AppendToOutgoingContext(t.Context(), "authorization", bearer(CallerTelegramBot))
+	ctx := metadata.AppendToOutgoingContext(t.Context(), "authorization", bearer(CallerHubBot))
 
 	_, err := client.GrantAdminRole(ctx, &identityv1.GrantAdminRoleRequest{IdentityId: "0192f8a0-0000-7000-8000-000000000001"})
 	if status.Code(err) != codes.Unauthenticated {
@@ -297,13 +297,13 @@ func TestLoadCallersRefusesAmbiguousOrIncompleteTable(t *testing.T) {
 		},
 		{
 			name:   "value equals maintainer secret",
-			change: func(env map[string]string) { env["IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"] = gateMaintainer },
-			want:   "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT equals IDENTITY_MAINTAINER_TOKEN",
+			change: func(env map[string]string) { env["IDENTITY_CALLER_TOKEN_HUB_BOT"] = gateMaintainer },
+			want:   "IDENTITY_CALLER_TOKEN_HUB_BOT equals IDENTITY_MAINTAINER_TOKEN",
 		},
 		{
 			name:   "value equals maintainer secret up to whitespace",
-			change: func(env map[string]string) { env["IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"] = gateMaintainer + "\n" },
-			want:   "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT equals IDENTITY_MAINTAINER_TOKEN",
+			change: func(env map[string]string) { env["IDENTITY_CALLER_TOKEN_HUB_BOT"] = gateMaintainer + "\n" },
+			want:   "IDENTITY_CALLER_TOKEN_HUB_BOT equals IDENTITY_MAINTAINER_TOKEN",
 		},
 	}
 	for _, tc := range tests {

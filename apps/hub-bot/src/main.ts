@@ -45,11 +45,11 @@ function closeLogs(): Promise<void> {
 
 async function main(): Promise<number> {
   logs = startLogs(serviceName);
-  const logLevel = readEnv("TELEGRAM_BOT_LOG_LEVEL") ?? "info";
+  const logLevel = readEnv("HUB_BOT_LOG_LEVEL") ?? "info";
   const logger = createLogger(logLevel, logs.logger);
-  const token = readEnv("TELEGRAM_BOT_TOKEN");
+  const token = readEnv("HUB_BOT_TOKEN");
   if (token === undefined || token === "") {
-    logger.error("TELEGRAM_BOT_TOKEN is not set");
+    logger.error("HUB_BOT_TOKEN is not set");
     return 1;
   }
   // Токен вызывающего (ADR-056) проверяется на старте: без него каждый вызов
@@ -57,42 +57,38 @@ async function main(): Promise<number> {
   // первом человеке, а не в отказе процесса. В запись идёт только имя.
   // Пробелы по краям Headers срезает молча: такой токен ушёл бы искажённым,
   // и вызывающий снова получил бы отказ на каждом вызове при зелёном старте.
-  const serviceToken = readEnv("TELEGRAM_BOT_SERVICE_TOKEN");
+  const serviceToken = readEnv("HUB_BOT_SERVICE_TOKEN");
   if (serviceToken === undefined || serviceToken.trim() === "") {
-    logger.error("TELEGRAM_BOT_SERVICE_TOKEN is not set");
+    logger.error("HUB_BOT_SERVICE_TOKEN is not set");
     return 1;
   }
   if (serviceToken !== serviceToken.trim()) {
-    logger.error("TELEGRAM_BOT_SERVICE_TOKEN has surrounding whitespace");
+    logger.error("HUB_BOT_SERVICE_TOKEN has surrounding whitespace");
     return 1;
   }
-  const environment = parseTelegramEnvironment(
-    readEnv("TELEGRAM_BOT_ENVIRONMENT"),
-  );
+  const environment = parseTelegramEnvironment(readEnv("HUB_BOT_ENVIRONMENT"));
   if (environment === undefined) {
-    logger.error("TELEGRAM_BOT_ENVIRONMENT must be prod or test");
+    logger.error("HUB_BOT_ENVIRONMENT must be prod or test");
     return 1;
   }
   const identityUrl = readEnv("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051";
   const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
   const notificationsUrl =
     readEnv("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053";
-  const natsUrl = readEnv("TELEGRAM_BOT_NATS_URL") ?? "nats://127.0.0.1:4222";
-  const presentationRaw = readEnv("TELEGRAM_BOT_PRESENTATION") ?? "rich";
+  const natsUrl = readEnv("HUB_BOT_NATS_URL") ?? "nats://127.0.0.1:4222";
+  const presentationRaw = readEnv("HUB_BOT_PRESENTATION") ?? "rich";
   if (presentationRaw !== "rich" && presentationRaw !== "plain") {
-    logger.error("TELEGRAM_BOT_PRESENTATION must be rich or plain");
+    logger.error("HUB_BOT_PRESENTATION must be rich or plain");
     return 1;
   }
   // Пояс проверяется на старте, как у Meetups: без него карточка не может
   // показать назначенный момент публикации, а опечатка в имени пояса иначе
   // всплыла бы только на первом черновике с назначенной публикацией.
   const communityTimeZone = parseTimeZone(
-    readEnv("TELEGRAM_BOT_COMMUNITY_TIME_ZONE"),
+    readEnv("HUB_BOT_COMMUNITY_TIME_ZONE"),
   );
   if (communityTimeZone === undefined) {
-    logger.error(
-      "TELEGRAM_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
-    );
+    logger.error("HUB_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name");
     return 1;
   }
   const metrics = startMetrics();
@@ -199,7 +195,7 @@ async function main(): Promise<number> {
     if (shutdown.requested) {
       return 0;
     }
-    logger.info("telegram-bot starting", {
+    logger.info(`${serviceName} starting`, {
       service: serviceName,
       telegram_environment: environment,
     });

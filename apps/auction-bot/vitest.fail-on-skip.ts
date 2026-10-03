@@ -26,7 +26,7 @@ import type {
 // - флаг `--reporter` в командной строке заменяет reporters конфига и
 //   снимает правило вместе со штатным выводом.
 //
-// Копии лежат в apps/telegram-bot и apps/community-site-api: общего
+// Копии лежат в apps/hub-bot и apps/community-site-api: общего
 // TypeScript-модуля для них в shared/ нет.
 export class FailOnSkip implements Reporter {
   private vitest: Vitest | undefined;

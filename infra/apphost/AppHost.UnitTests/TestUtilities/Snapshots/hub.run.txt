@@ -2,15 +2,54 @@ auction-bot-service-token: ParameterResource
   secret: True
 auction-db: PostgresDatabaseResource
   health: auction-db_check
+hub-bot: JavaScriptAppResource
+  command: npm
+  workdir: <repo>/apps/hub-bot
+  arg: run
+  arg: start
+  env: HUB_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: HUB_BOT_ENVIRONMENT=prod
+  env: HUB_BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: HUB_BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: HUB_BOT_TOKEN={hub-bot-token.value}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
+  env: NODE_ENV=development
+  env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  waits: hub-bot-installer WaitForCompletion
+  waits: identity WaitUntilHealthy
+  waits: meetups WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  waits: notifications WaitUntilHealthy
+  relationship: Reference hub-bot-service-token
+  relationship: Reference hub-bot-token
+  relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: Reference nats-password
+  relationship: Reference notifications
+  relationship: WaitFor hub-bot-installer
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  relationship: WaitFor notifications
+hub-bot-installer: JavaScriptInstallerResource
+  command: node
+  workdir: <repo>/apps/hub-bot
+  relationship: Parent hub-bot
+hub-bot-service-token: ParameterResource
+  secret: True
+hub-bot-token: ParameterResource
+  secret: True
 identity: ExecutableResource
   command: <repo>/apps/identity/bin/identity
   workdir: <repo>/apps/identity
   endpoint: grpc http port= target= proxied=True external=False
   env: ASPIRE_IDENTITY_GRPC_PORT={identity.bindings.grpc.targetPort}
   env: IDENTITY_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
-  env: IDENTITY_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
   env: IDENTITY_DATABASE_URL=postgresql://postgres:{postgres-password.value}@{postgres.bindings.tcp.host}:{postgres.bindings.tcp.port}/identity?sslmode=disable
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
@@ -20,6 +59,7 @@ identity: ExecutableResource
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
   relationship: Reference auction-bot-service-token
+  relationship: Reference hub-bot-service-token
   relationship: Reference identity
   relationship: Reference identity-maintainer-token
   relationship: Reference meetups-service-token
@@ -28,7 +68,6 @@ identity: ExecutableResource
   relationship: Reference notifications-service-token
   relationship: Reference postgres
   relationship: Reference postgres-password
-  relationship: Reference telegram-bot-service-token
   relationship: WaitFor identity-build
   relationship: WaitFor identity-db
   relationship: WaitFor nats
@@ -59,8 +98,8 @@ meetups: ProjectResource
   env: ASPNETCORE_URLS={meetups.bindings.grpc.scheme}://localhost:{meetups.bindings.grpc.targetPort}
   env: DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=true
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
+  env: MEETUPS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: MEETUPS_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
-  env: MEETUPS_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
   env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: MEETUPS_DATABASE_URL={postgres.connectionString};Database=meetups;SSL Mode=Disable
   env: MEETUPS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -70,13 +109,13 @@ meetups: ProjectResource
   waits: meetups-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
+  relationship: Reference hub-bot-service-token
   relationship: Reference identity
   relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference nats-password
   relationship: Reference notifications-service-token
   relationship: Reference postgres
-  relationship: Reference telegram-bot-service-token
   relationship: WaitFor identity
   relationship: WaitFor meetups-db
   relationship: WaitFor nats
@@ -107,7 +146,7 @@ notifications: ProjectResource
   env: ASPNETCORE_URLS={notifications.bindings.grpc.scheme}://localhost:{notifications.bindings.grpc.targetPort}
   env: DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=true
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
-  env: NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT={telegram-bot-service-token.value}
+  env: NOTIFICATIONS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: NOTIFICATIONS_DATABASE_URL={postgres.connectionString};Database=notifications;SSL Mode=Disable
   env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -119,13 +158,13 @@ notifications: ProjectResource
   waits: nats WaitUntilHealthy
   waits: notifications-db WaitUntilHealthy
   waits: postgres WaitUntilHealthy
+  relationship: Reference hub-bot-service-token
   relationship: Reference identity
   relationship: Reference meetups
   relationship: Reference nats
   relationship: Reference nats-password
   relationship: Reference notifications-service-token
   relationship: Reference postgres
-  relationship: Reference telegram-bot-service-token
   relationship: WaitFor identity
   relationship: WaitFor meetups
   relationship: WaitFor nats
@@ -149,42 +188,3 @@ postgres: PostgresServerResource
   env: POSTGRES_USER=postgres
   mount: Volume solguficky-<tree>-postgres-data -> /var/lib/postgresql/data
   health: postgres_check
-telegram-bot: JavaScriptAppResource
-  command: npm
-  workdir: <repo>/apps/telegram-bot
-  arg: run
-  arg: start
-  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
-  env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
-  env: NODE_ENV=development
-  env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
-  env: TELEGRAM_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
-  env: TELEGRAM_BOT_ENVIRONMENT=prod
-  env: TELEGRAM_BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
-  env: TELEGRAM_BOT_SERVICE_TOKEN={telegram-bot-service-token.value}
-  env: TELEGRAM_BOT_TOKEN={telegram-bot-token.value}
-  waits: identity WaitUntilHealthy
-  waits: meetups WaitUntilHealthy
-  waits: nats WaitUntilHealthy
-  waits: notifications WaitUntilHealthy
-  waits: telegram-bot-installer WaitForCompletion
-  relationship: Reference identity
-  relationship: Reference meetups
-  relationship: Reference nats
-  relationship: Reference nats-password
-  relationship: Reference notifications
-  relationship: Reference telegram-bot-service-token
-  relationship: Reference telegram-bot-token
-  relationship: WaitFor identity
-  relationship: WaitFor meetups
-  relationship: WaitFor nats
-  relationship: WaitFor notifications
-  relationship: WaitFor telegram-bot-installer
-telegram-bot-installer: JavaScriptInstallerResource
-  command: node
-  workdir: <repo>/apps/telegram-bot
-  relationship: Parent telegram-bot
-telegram-bot-service-token: ParameterResource
-  secret: True
-telegram-bot-token: ParameterResource
-  secret: True

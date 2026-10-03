@@ -142,7 +142,7 @@ describe("notification delivery over JetStream", () => {
       name: notificationStream,
       subjects: ["events.notifications.>"],
     });
-    const durable = `telegram-bot-notifications-events-${run}`;
+    const durable = `hub-bot-notifications-events-${run}`;
     await jsm.consumers.add(notificationStream, {
       durable_name: durable,
       ack_policy: AckPolicy.Explicit,
@@ -152,7 +152,7 @@ describe("notification delivery over JetStream", () => {
     });
     consumer = await js.consumers.get(notificationStream, durable);
     journal = createKvJournal(
-      await new Kvm(nats).create(`telegram-bot-deliveries-${run}`),
+      await new Kvm(nats).create(`hub-bot-deliveries-${run}`),
     );
   });
 

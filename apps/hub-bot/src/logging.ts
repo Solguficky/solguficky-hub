@@ -1,4 +1,4 @@
-export const serviceName = "telegram-bot";
+export const serviceName = "hub-bot";
 
 import type {
   AnyValueMap,

@@ -12,7 +12,7 @@ import (
 // CallerTokens — токены вызывающих тестового сервера. Экспорт в _test-файле
 // виден и внешнему пакету server_test, но в сборку сервиса не попадает.
 var CallerTokens = map[Caller]string{
-	CallerTelegramBot:   "bot-token",
+	CallerHubBot:        "bot-token",
 	CallerAuctionBot:    "auction-bot-token",
 	CallerMeetups:       "meetups-token",
 	CallerNotifications: "notifications-token",
@@ -43,7 +43,7 @@ func NewTestCallers(t *testing.T, maintainerToken string) Callers {
 func PresentDeclaredCaller() grpc.DialOption {
 	return grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		if md, ok := metadata.FromOutgoingContext(ctx); !ok || len(md.Get("authorization")) == 0 {
-			caller := CallerTelegramBot
+			caller := CallerHubBot
 			if method == identityv1.IdentityService_CheckGlobalRole_FullMethodName {
 				caller = CallerMeetups
 			}

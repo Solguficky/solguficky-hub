@@ -10,7 +10,7 @@ object MethodAccess {
 
   val Service: String = "auction.v1.AuctionService"
 
-  private val bots: Set[Caller] = Set(Caller.TelegramBot, Caller.AuctionBot)
+  private val bots: Set[Caller] = Set(Caller.HubBot, Caller.AuctionBot)
 
   val byMethod: Map[String, Set[Caller]] = Map(
     "PlaceBid" -> bots,

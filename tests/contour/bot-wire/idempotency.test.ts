@@ -9,7 +9,7 @@ import {
   openDirectClients,
   readContourEnvironment,
   unusedMeetupId,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 import { fillsMeetupForm, organizerAtStart, titleFor } from "./steps.js";
 
 // Идемпотентность записи — угловые случаи 1–3 и кадр E-09. Итог читается из

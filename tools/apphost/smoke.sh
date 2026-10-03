@@ -8,7 +8,7 @@
 #   --attach  Check the AppHost already running from this worktree instead of
 #             starting one. Used after restarting a resource by hand. Domain
 #             calls then need SMOKE_BOT_SERVICE_TOKEN: the value of the
-#             telegram-bot-service-token parameter, shown by the dashboard.
+#             hub-bot-service-token parameter, shown by the dashboard.
 #   --keep    Leave the AppHost running afterwards for manual checks.
 #
 # Exit code 0 means every check passed. Needs aspire, grpcurl and python3.
@@ -160,7 +160,7 @@ if [ "$ATTACH" = no ]; then
   # The configuration key has a dash, which `export` rejects, hence env(1).
   # The token is not hidden from the host: grpcurl below carries it in its
   # arguments. It is minted for this run and dies with the AppHost it starts.
-  if env "Parameters__telegram-bot-service-token=$BOT_SERVICE_TOKEN" \
+  if env "Parameters__hub-bot-service-token=$BOT_SERVICE_TOKEN" \
       aspire start --isolated --non-interactive --apphost "$APPHOST" -- --profile "$PROFILE" "$@" > /dev/null 2>&1; then
     ok "aspire start"
   else

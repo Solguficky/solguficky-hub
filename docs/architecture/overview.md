@@ -19,7 +19,7 @@
 | **Open** | Варианты исследуются |
 | **Superseded** | Решение больше не определяет целевую архитектуру |
 
-Например, у Telegram Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), а четырнадцать пользовательских операций бот → Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схемы `auction/v1` описаны ([integration.md](integration.md)), реализации ещё нет.
+Например, у Hub Bot устройство и стек приняты в [ADR-030](../decisions/ADR-030-telegram-bot.md), имя уточнено [ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md#уточнение-2026-10-03-полное-переименование-бота-хаба), а четырнадцать пользовательских операций бот → Meetups идут синхронным gRPC ([integration.md](integration.md)). Scala/Pekko-аукцион относится к Future: стек и хранилище приняты в [ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), доменная модель торгов принята в [RFC-011](../rfcs/RFC-011-auction-trading-domain-model.md), а словарь и форма события зафиксированы [ADR](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md); схемы `auction/v1` описаны ([integration.md](integration.md)), реализации ещё нет.
 
 ## Источники правды
 
@@ -34,11 +34,11 @@ Linear является источником правды для порядка 
 
 ## Current
 
-Продуктовое ядро сходок реализовано у Meetups. У Notifications его нет: в репозитории лежит скелет сервиса — силос Orleans со своей базой и миграциями, без подписок, реплики и публикации. Meetups держит доменное ядро среза и отвечает на пятнадцать операций контракта своими срезами: одиннадцать команд записи, три продуктовых запроса чтения со смотрящим и служебное перечисление состояний. Identity разрешает Telegram-личность во внутренний идентификатор. Telegram Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
+Продуктовое ядро сходок реализовано у Meetups. У Notifications его нет: в репозитории лежит скелет сервиса — силос Orleans со своей базой и миграциями, без подписок, реплики и публикации. Meetups держит доменное ядро среза и отвечает на пятнадцать операций контракта своими срезами: одиннадцать команд записи, три продуктовых запроса чтения со смотрящим и служебное перечисление состояний. Identity разрешает Telegram-личность во внутренний идентификатор. Hub Bot обрабатывает `/start`, создаёт или повторно разрешает профиль через Identity и отвечает приветствием. Репозиторий содержит контракты, инфраструктурный задел и инструменты.
 
 | Компонент | Фактическое состояние | Отношение к MVP |
 |---|---|---|
-| Telegram Bot | Long polling, Identity на каждом продуктовом действии, форма создания и публикации, список видимых сходок и карточка с deep link `m_<uuid>`; карточка по умолчанию использует Rich Messages, плоский рендерер включается тоглом процесса; канал доставки уведомлений о новой сходке из шины с журналом попыток в JetStream KV | Единственный вход пользователя |
+| Hub Bot | Long polling, Identity на каждом продуктовом действии, форма создания и публикации, список видимых сходок и карточка с deep link `m_<uuid>`; карточка по умолчанию использует Rich Messages, плоский рендерер включается тоглом процесса; канал доставки уведомлений о новой сходке из шины с журналом попыток в JetStream KV | Единственный вход пользователя |
 | Meetups | gRPC-сервис на F#: доменное ядро обеих осей состояния и коллекции материалов, пятнадцать операций контракта своими срезами, запись состояния и события одной транзакцией с отклонением конфликта по версии, чтение со смотрящим через единый reader с фильтром видимости ADR-022, health, каркас лога границы и миграции состояния и журнала событий с отметкой публикации | Владелец данных о сходках |
 | Identity | gRPC-сервер: `ResolveIdentity` и обратное `ResolveTelegramUserId` поверх PostgreSQL, health, структурные логи и миграции профиля и глобальных ролей | Telegram identity, круги сообщества и системные роли |
 | Notifications | Скелет: силос Orleans, своя база, миграции при старте, грин на сходку | Подписки, реплика чужих фактов и публикация уведомлений в шину |
@@ -53,7 +53,7 @@ Linear является источником правды для порядка 
 
 | Область | Зрелость | Направление |
 |---|---|---|
-| Telegram Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md); журнал доставки Accepted: [ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса. Будущий общий слой аукциона и второй процесс определены ADR-044 |
+| Hub Bot | Устройство и стек Accepted: [ADR-030](../decisions/ADR-030-telegram-bot.md); форма сообщений Accepted: [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md); журнал доставки Accepted: [ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md) | TypeScript + grammY, long polling, состояние экрана в самом сообщении; карточка по умолчанию `sendRichMessage`, плоский текст за тоглом процесса. Будущий общий слой аукциона, второй процесс и уточнение имени `hub-bot` определены ADR-044 |
 | Meetups | Граница, техническая модель, стек, внутренние application slices, словарь домена и gRPC-контракт среза Accepted: ADR-024, ADR-025, ADR-031, ADR-033, [integration.md](integration.md) | Владелец продуктовых данных сходок |
 | Identity | Граница, модель доступа, retention допуска к хабу и стек Accepted: ADR-026, ADR-027, [ADR-038](../decisions/ADR-038-identity-hub-access-retention.md); круги сообщества выражаются ролями, статус допуска заменён, блокировка — поле профиля: [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md); первая выдача роли администратора в срезе — только служебный endpoint: [ADR-036](../decisions/ADR-036-first-admin-via-service-endpoint.md); authentication endpoint — общий секрет в metadata gRPC: [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md); контракт разрешения личности Accepted, служебные операции Open | Telegram identity, круги сообщества и системные роли |
 | Notifications | Устройство, границы и стек Accepted: ADR-028, ADR-029; технический дизайн скелета зафиксирован, схема подписок Open | Подписки, реплика чужих фактов и публикация уведомлений в шину |
@@ -67,7 +67,7 @@ Linear является источником правды для порядка 
 ## Future
 
 - Аукцион — Future-направление после MVP: новый сервис на Scala 3 + Apache Pekko Typed с полным Event Sourcing агрегатов лота и аукциона через Pekko Persistence JDBC в PostgreSQL ([ADR-045](../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md)); каталожные атрибуты лота хранятся строкой состояния вне журнала ([ADR-057](../decisions/ADR-057-auction-lot-catalog-as-state.md)), а строка журнала — JSON отдельной модели хранения, не Protobuf ([ADR-058](../decisions/ADR-058-auction-journal-row-json-storage-model.md)). Знание, извлечённое из удалённой реализации, собрано в [архиве](../archive/services/auction-domain-and-lessons.md). Реализованы ядро и entity лота — открытие торгов и приём ставки с журналом; агрегата аукциона и границы, через которую лот торгуется, ещё нет.
-- Аукцион доступен через два независимых TypeScript/grammY-процесса: `telegram-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). `hub` сохраняет только бот хаба; профиль для одновременного запуска обоих ресурсов появится вместе со вторым приложением.
+- Аукцион доступен через два независимых TypeScript/grammY-процесса: `hub-bot` и `auction-bot`. Общими являются только аукционные юзкейсы края, каноническое тело экрана и кнопки в `shared/typescript/auction-bot-ui`; политики входа, оболочки, тексты и токены раздельны ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). `hub` сохраняет только бот хаба; профиль для одновременного запуска обоих ресурсов появится вместе со вторым приложением.
 - Read-only Big Screen и страницы зрителей получают состояние через SSE внутри Auction Service ([ADR-040](../decisions/ADR-040-auction-screen-sse.md)); отдельный gateway не вводится. Решение принято, реализации ещё нет.
 - Achievements + Orleans — Future-гипотеза, а не спроектированный сервис.
 - Kotlin, Go и Ruby остаются technology pool и не назначаются вымышленным сервисам заранее.
@@ -80,7 +80,7 @@ Linear является источником правды для порядка 
 
 ```text
 Telegram user
-→ новый Telegram Bot на TypeScript
+→ новый Hub Bot на TypeScript
 → Identity
 → Meetups
 → наблюдаемый ответ пользователю

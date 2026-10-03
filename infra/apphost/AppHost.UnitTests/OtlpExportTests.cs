@@ -33,9 +33,9 @@ public class OtlpExportTests
     }
 
     [Fact]
-    public void TelegramBot_ExportsTelemetryOverOtlp()
+    public void HubBot_ExportsTelemetryOverOtlp()
     {
-        var bot = TelegramBotSetup.Configure(Context("telegram-bot"));
+        var bot = HubBotSetup.Configure(Context("hub-bot"));
 
         bot.Resource.Annotations.OfType<OtlpExporterAnnotation>().ShouldNotBeEmpty();
     }

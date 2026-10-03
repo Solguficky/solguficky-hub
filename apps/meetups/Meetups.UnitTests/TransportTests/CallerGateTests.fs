@@ -14,7 +14,7 @@ open Xunit
 
 let private read name =
     match name with
-    | "MEETUPS_CALLER_TOKEN_TELEGRAM_BOT" -> "bot-secret"
+    | "MEETUPS_CALLER_TOKEN_HUB_BOT" -> "bot-secret"
     | "MEETUPS_CALLER_TOKEN_NOTIFICATIONS" -> "notifications-secret"
     | "MEETUPS_SERVICE_TOKEN" -> "own-secret"
     | _ -> null
@@ -100,7 +100,7 @@ let ``Method access should cover the contract and admit only its declared caller
             match method with
             | "ListMeetupStates" -> Set.empty
             | "CheckMeetupAuthority" -> Set.singleton Caller.Notifications
-            | _ -> Set.singleton Caller.TelegramBot
+            | _ -> Set.singleton Caller.HubBot
 
         test <@ callers = expected @>
     )
@@ -139,17 +139,13 @@ let ``Caller gate should refuse known callers on methods that do not declare the
             CallerGate.decide table (path "CreateMeetupDraft") "Bearer notifications-secret" = GateDecision.NotDeclared
                 Caller.Notifications
             && CallerGate.decide table (path "CheckMeetupAuthority") "Bearer bot-secret" = GateDecision.NotDeclared
-                Caller.TelegramBot
+                Caller.HubBot
         @>
 
 [<Fact>]
 let ``Caller gate should close enumeration and future methods to every known caller`` () =
     for method in [ "ListMeetupStates"; "FutureMethod" ] do
-        for caller in
-            [
-                Caller.TelegramBot
-                Caller.Notifications
-            ] do
+        for caller in [ Caller.HubBot; Caller.Notifications ] do
             let decision =
                 CallerGate.decide table (path method) $"Bearer {read caller.TokenVariable}"
 
@@ -158,16 +154,13 @@ let ``Caller gate should close enumeration and future methods to every known cal
     test
         <@
             CallerGate.decide table "/other.v1.Service/CreateMeetupDraft" "Bearer bot-secret" = GateDecision.NotDeclared
-                Caller.TelegramBot
+                Caller.HubBot
         @>
 
 [<Fact>]
 let ``Caller table should reject every missing or blank declared token without disclosing values`` () =
     let errors =
-        [
-            Caller.TelegramBot
-            Caller.Notifications
-        ]
+        [ Caller.HubBot; Caller.Notifications ]
         |> List.collect (fun caller ->
             [ null; ""; "  " ]
             |> List.map (fun value ->
@@ -209,14 +202,14 @@ let ``Caller table should identify normalized distinct tokens`` () =
 
     test
         <@
-            normalized.Identify "bot-secret" = Some Caller.TelegramBot
+            normalized.Identify "bot-secret" = Some Caller.HubBot
             && normalized.Identify "notifications-secret" = Some Caller.Notifications
         @>
 
     test
         <@
             CallerGate.decide normalized (path "CreateMeetupDraft") "bEaReR  bot-secret  " = GateDecision.Admitted
-                Caller.TelegramBot
+                Caller.HubBot
         @>
 
 [<Fact>]
@@ -290,7 +283,7 @@ let ``Boundary log should name admitted callers even when a domain refusal follo
         <@
             denied = StatusCode.PermissionDenied
             && called
-            && entry.Fields.TryFind "caller" = Some "telegram-bot"
+            && entry.Fields.TryFind "caller" = Some "hub-bot"
             && not (entry.Fields.ContainsKey "caller_refusal")
         @>
 

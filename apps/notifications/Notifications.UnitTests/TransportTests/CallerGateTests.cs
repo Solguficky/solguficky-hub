@@ -21,18 +21,18 @@ public class CallerGateTests
         var configuration = values.ToDictionary(pair => pair.Name, pair => pair.Value);
         return CallerTable.FromConfiguration(
             name => configuration.GetValueOrDefault(name),
-            [Caller.TelegramBot, Meetups]);
+            [Caller.HubBot, Meetups]);
     }
 
     private static CallerTable BotOnly() =>
         CallerTable.FromConfiguration(
-            name => name == Caller.TelegramBot.TokenVariable ? BotToken : null,
+            name => name == Caller.HubBot.TokenVariable ? BotToken : null,
             MethodAccess.Declared);
 
     [Fact]
     public void TokenVariable_NodeWithHyphen_FollowsCatalogName()
     {
-        Caller.TelegramBot.TokenVariable.ShouldBe("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT");
+        Caller.HubBot.TokenVariable.ShouldBe("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT");
     }
 
     [Theory]
@@ -42,9 +42,9 @@ public class CallerGateTests
     public void FromConfiguration_CallerTokenMissing_RefusesNamingVariable(string? value)
     {
         var refused = Should.Throw<InvalidOperationException>(() =>
-            Table(("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT", value), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", "m")));
+            Table(("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", value), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", "m")));
 
-        refused.Message.ShouldBe("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT is not set");
+        refused.Message.ShouldBe("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT is not set");
     }
 
     /// <summary>Причина называет вызывающих, но не значение: токен — секрет.</summary>
@@ -52,18 +52,18 @@ public class CallerGateTests
     public void FromConfiguration_TwoCallersShareToken_RefusesWithoutValue()
     {
         var refused = Should.Throw<InvalidOperationException>(() =>
-            Table(("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT", "same"), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", " same\n")));
+            Table(("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "same"), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", " same\n")));
 
-        refused.Message.ShouldBe("caller tokens are equal for meetups and telegram-bot");
+        refused.Message.ShouldBe("caller tokens are equal for hub-bot and meetups");
         refused.Message.ShouldNotContain("same");
     }
 
     [Fact]
     public void Identify_EachCallersToken_NamesThatCaller()
     {
-        var table = Table(("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT", "b"), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", "m"));
+        var table = Table(("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "b"), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", "m"));
 
-        table.Identify("b").ShouldBe(Caller.TelegramBot);
+        table.Identify("b").ShouldBe(Caller.HubBot);
         table.Identify("m").ShouldBe(Meetups);
         table.Identify("x").ShouldBeNull();
     }
@@ -72,9 +72,9 @@ public class CallerGateTests
     [Fact]
     public void Identify_ConfiguredTokenWithNewline_MatchesTrimmedToken()
     {
-        var table = Table(("NOTIFICATIONS_CALLER_TOKEN_TELEGRAM_BOT", "b\n"), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", "m"));
+        var table = Table(("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "b\n"), ("NOTIFICATIONS_CALLER_TOKEN_MEETUPS", "m"));
 
-        table.Identify("b").ShouldBe(Caller.TelegramBot);
+        table.Identify("b").ShouldBe(Caller.HubBot);
     }
 
     [Theory]
@@ -106,7 +106,7 @@ public class CallerGateTests
     {
         var decision = CallerGate.Decide(BotOnly(), Community, authorization);
 
-        decision.ShouldBe(GateDecision.Admit(Caller.TelegramBot));
+        decision.ShouldBe(GateDecision.Admit(Caller.HubBot));
     }
 
     /// <summary>Метода без строки в таблице не принимает никто, и запись называет пришедшего.</summary>
@@ -117,7 +117,7 @@ public class CallerGateTests
     {
         var decision = CallerGate.Decide(BotOnly(), path, $"Bearer {BotToken}");
 
-        decision.ShouldBe(GateDecision.Refuse(CallerRefusal.NotDeclared, Caller.TelegramBot));
+        decision.ShouldBe(GateDecision.Refuse(CallerRefusal.NotDeclared, Caller.HubBot));
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public class CallerGateTests
     {
         foreach (var method in NotificationsService.Descriptor.Methods)
         {
-            MethodAccess.ByMethod[method.Name].ShouldBe(new[] { Caller.TelegramBot }, ignoreOrder: true);
+            MethodAccess.ByMethod[method.Name].ShouldBe(new[] { Caller.HubBot }, ignoreOrder: true);
         }
     }
 
@@ -179,7 +179,7 @@ public class CallerGateTests
         var refused = Should.Throw<InvalidOperationException>(() =>
             ServiceToken.FromConfiguration(_ => $" {BotToken}\n", BotOnly()));
 
-        refused.Message.ShouldBe("NOTIFICATIONS_SERVICE_TOKEN equals the caller token of telegram-bot");
+        refused.Message.ShouldBe("NOTIFICATIONS_SERVICE_TOKEN equals the caller token of hub-bot");
         refused.Message.ShouldNotContain(BotToken);
     }
 }

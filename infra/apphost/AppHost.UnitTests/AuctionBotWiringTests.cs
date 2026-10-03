@@ -136,8 +136,8 @@ public class AuctionBotWiringTests
             ["telegram-environment"] = telegramEnvironment,
             ["Parameters:auction-bot-token"] = "111:auction",
             ["Parameters:auction-bot-test-token"] = "444:auction-test",
-            ["Parameters:telegram-bot-token"] = "222:hub",
-            ["Parameters:telegram-bot-test-token"] = "333:hub-test",
+            ["Parameters:hub-bot-token"] = "222:hub",
+            ["Parameters:hub-bot-test-token"] = "333:hub-test",
             [AuctionBotSetup.AuctionIdKey] = auctionId,
         });
 

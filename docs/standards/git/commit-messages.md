@@ -16,7 +16,7 @@
 - Тела у коммита нет. Если объяснение не помещается в заголовок, коммит слишком большой — раздели его. Обоснование решения живёт в ADR, а не в истории git.
 - Трейлеры (`Co-Authored-By`, `Revert`) телом не считаются и допускаются после пустой строки.
 - Типы: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `revert`.
-- `scope` — сервис или раздел (`identity`, `meetups`, `telegram-bot`, `contracts`, `adr`), а не имя файла. Если затронуто несколько разделов, scope опускается.
+- `scope` — сервис или раздел (`identity`, `meetups`, `hub-bot`, `contracts`, `adr`), а не имя файла. Если затронуто несколько разделов, scope опускается.
 - Идентификатор Linear в заголовок не входит: он уже есть в имени ветки и в заголовке PR — их формат задаёт [branching.md](branching.md), по ним Linear и связывает работу.
 - Документация меняется тем же коммитом, что и код, который она описывает. Отдельный `docs:` — только для изменений, у которых кода нет.
 
@@ -24,7 +24,7 @@
 
 ```
 feat(identity): Add access status to the profile table
-fix(telegram-bot): Fail closed when Identity is unavailable
+fix(hub-bot): Fail closed when Identity is unavailable
 docs(adr): Record the premoderation decision as ADR-026
 refactor: Extract the deep link payload parser
 ```

@@ -76,7 +76,7 @@ topology.AddInfrastructure(R.Postgres, PostgresSetup.Configure, P.Connections(Po
 topology.AddInfrastructure(R.Loki, LokiSetup.Configure, P.NotPublished("local log stack"));
 
 topology.AddService(R.Identity, [R.Postgres], IdentitySetup.Configure, P.Workload(IdentitySetup.Publish));
-topology.AddService(R.TelegramBot, [R.Identity], TelegramBotSetup.Configure, P.Workload(TelegramBotSetup.Publish));
+topology.AddService(R.HubBot, [R.Identity], HubBotSetup.Configure, P.Workload(HubBotSetup.Publish));
 
 topology.Build();
 builder.Build().Run();
@@ -93,7 +93,7 @@ builder.Build().Run();
   "Profile": "hub",
   "Profiles": {
     "infra": { "Infrastructure": [ "postgres", "nats" ] },
-    "hub":   { "Services": [ "identity", "meetups", "notifications", "telegram-bot" ], "Infrastructure": [ "postgres", "nats" ] }
+    "hub":   { "Services": [ "identity", "meetups", "notifications", "hub-bot" ], "Infrastructure": [ "postgres", "nats" ] }
   }
 }
 ```
@@ -104,7 +104,7 @@ builder.Build().Run();
 
 ## Полиглот
 
-Граф полиглотный: Identity — Go через `AddExecutable`, Telegram Bot — Node через `AddJavaScriptApp`, Meetups (F#) и Notifications (C# с Orleans) — обычным `AddProject`, Auction (Scala) — голой JVM через `AddExecutable("java", …)` после узла, который пишет classpath. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
+Граф полиглотный: Identity — Go через `AddExecutable`, Hub Bot — Node через `AddJavaScriptApp`, Meetups (F#) и Notifications (C# с Orleans) — обычным `AddProject`, Auction (Scala) — голой JVM через `AddExecutable("java", …)` после узла, который пишет classpath. Поэтому узел графа типизирован по `IResourceBuilder<T>`, а не по `ProjectResource`, а `AddInfrastructure` и `AddService` обобщены по `T`. `IResourceBuilder<out T>` ковариантен, поэтому bind-хелперы работают через `IResourceWithEndpoints` и не знают конкретный тип зависимости.
 
 Модель это выдержала без правок: .NET-сервисы пришли в тот же граф тем же `AddService`, и обобщение по `T` оказалось не запасом на будущее, а тем, что позволило не переписывать реестр.
 

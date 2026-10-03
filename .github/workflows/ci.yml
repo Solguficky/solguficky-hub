@@ -23,7 +23,7 @@ jobs:
       identity: ${{ steps.filter.outputs.identity }}
       meetups: ${{ steps.filter.outputs.meetups }}
       notifications: ${{ steps.filter.outputs.notifications }}
-      telegram-bot: ${{ steps.filter.outputs.telegram-bot }}
+      hub-bot: ${{ steps.filter.outputs.hub-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
       auction-bot-ui: ${{ steps.filter.outputs.auction-bot-ui }}
@@ -40,8 +40,8 @@ jobs:
             contracts:
               - 'contracts/**'
               - 'apps/identity/go.mod'
-              - 'apps/telegram-bot/package.json'
-              - 'apps/telegram-bot/package-lock.json'
+              - 'apps/hub-bot/package.json'
+              - 'apps/hub-bot/package-lock.json'
               - 'justfile'
               - '.github/workflows/ci.yml'
             identity:
@@ -68,9 +68,9 @@ jobs:
               - 'justfile'
               - 'global.json'
               - '.github/workflows/ci.yml'
-            telegram-bot:
+            hub-bot:
               - 'contracts/proto/**'
-              - 'apps/telegram-bot/**'
+              - 'apps/hub-bot/**'
               # Сценарии провода бота и живого контура типизирует и линтует
               # конфиг бота; живой прогон (L3) CI не гоняет никогда.
               - 'tests/contour/bot-wire/**'
@@ -107,7 +107,7 @@ jobs:
               # Чарт собирает Identity и бота по этим файлам: перенос без
               # правки графа ловит тест публикации.
               - 'apps/identity/Containerfile'
-              - 'apps/telegram-bot/Containerfile'
+              - 'apps/hub-bot/Containerfile'
               # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
               - 'aspire.config.json'
               - 'tools/apphost/**'
@@ -125,14 +125,14 @@ jobs:
             # набор молчать ровно тогда, когда ломается то, что он проверяет.
             # Notifications здесь потому, что AppHost на него ссылается и его
             # поломка валит сборку, хотя профиль контура его не поднимает.
-            # Telegram Bot — участник провода: его клиенты и kit гоняет набор
+            # Hub Bot — участник провода: его клиенты и kit гоняет набор
             # tests/contour/bot-wire.
             contour:
               - 'tests/contour/**'
               - 'tools/contour/**'
               - 'infra/apphost/**'
               - 'apps/identity/**'
-              - 'apps/telegram-bot/**'
+              - 'apps/hub-bot/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -198,9 +198,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/telegram-bot/package-lock.json
+          cache-dependency-path: apps/hub-bot/package-lock.json
       - run: npm ci
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       - run: buf generate --template contracts/buf.gen.codegen.yaml
 
   # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
@@ -340,11 +340,11 @@ jobs:
       - run: just notifications-test
       - run: just notifications-test-integration
 
-  telegram-bot:
+  hub-bot:
     needs: changes
     if: >-
       ${{ !cancelled()
-      && (needs.changes.outputs.telegram-bot == 'true'
+      && (needs.changes.outputs.hub-bot == 'true'
       || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     permissions:
@@ -356,7 +356,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
-            apps/telegram-bot/package-lock.json
+            apps/hub-bot/package-lock.json
             tests/telegram-live/package-lock.json
       - id: tools
         run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
@@ -368,24 +368,24 @@ jobs:
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
       - run: npm ci
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       # mtcute живого контура: код драйвера проходит typecheck, lint и L0 бота.
       # Скрипты не нужны — сессия в памяти, нативный better-sqlite3 не строится.
       - run: npm ci --ignore-scripts
         working-directory: tests/telegram-live
-      - run: buf generate --template apps/telegram-bot/buf.gen.yaml
+      - run: buf generate --template apps/hub-bot/buf.gen.yaml
       - run: npm run typecheck
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       - run: npm run lint
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       - run: npm test
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       # Наборы с Testcontainers — отдельным шагом: `npm test` их исключает, чтобы
       # `just verify` не требовал Docker. На ubuntu-latest Docker есть.
       - run: npm run test:integration
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       - run: npm run build
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
 
   # Функция сайта не собирается: её бандлит Netlify CLI при деплое. Гейт держат
   # typecheck, линт и тесты доменной логики ревизий — того единственного места,
@@ -608,7 +608,7 @@ jobs:
         with:
           persist-credentials: false
       # Версии читаются из justfile, а не дублируются здесь: тем же способом
-      # джобы identity и telegram-bot берут BUF_VERSION.
+      # джобы identity и hub-bot берут BUF_VERSION.
       - id: tools
         run: |
           echo "python=$(grep '^PYTHON_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
@@ -707,9 +707,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/telegram-bot/package-lock.json
+          cache-dependency-path: apps/hub-bot/package-lock.json
       - run: npm ci
-        working-directory: apps/telegram-bot
+        working-directory: apps/hub-bot
       - uses: extractions/setup-just@v4
       - name: Contour contracts stay generated-only
         run: just contour-contracts-check

@@ -1,5 +1,5 @@
 import { MtTimeoutError, TransportError, tl } from "@mtcute/node";
-import { describe, expect, it } from "../../apps/telegram-bot/testkit/index.js";
+import { describe, expect, it } from "../../apps/hub-bot/testkit/index.js";
 import { classifyFailure, TelegramLiveFailure } from "./failure.js";
 import { SecretError } from "./session.js";
 

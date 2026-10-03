@@ -19,7 +19,7 @@ public class ServiceGraphTests
     private const string Postgres = "postgres";
     private const string Nats = "nats";
     private const string Identity = "identity";
-    private const string TelegramBot = "telegram-bot";
+    private const string HubBot = "hub-bot";
 
     private static IDistributedApplicationBuilder Builder(params (string Key, string Value)[] profiles)
     {
@@ -113,15 +113,15 @@ public class ServiceGraphTests
     public void Build_ProfileListsUnregisteredService_ThrowsNamingTheProfile()
     {
         var builder = Builder(
-            ("Topology:Profiles:hub:Services:0", TelegramBot),
+            ("Topology:Profiles:hub:Services:0", HubBot),
             ("Topology:Profiles:hub:Infrastructure:0", Postgres));
 
-        var graph = new ServiceGraph(builder, Profile("hub", [TelegramBot], [Postgres]));
+        var graph = new ServiceGraph(builder, Profile("hub", [HubBot], [Postgres]));
         graph.AddInfrastructure(Postgres, context => Node(context, Postgres), LocalOnly);
 
         var exception = Should.Throw<InvalidOperationException>(graph.Build);
 
-        exception.Message.ShouldContain(TelegramBot);
+        exception.Message.ShouldContain(HubBot);
         exception.Message.ShouldContain("not registered in the graph");
     }
 

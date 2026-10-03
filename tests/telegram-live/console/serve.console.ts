@@ -7,7 +7,7 @@ import {
   beforeAll,
   describe,
   it,
-} from "../../../apps/telegram-bot/testkit/index.js";
+} from "../../../apps/hub-bot/testkit/index.js";
 import { type LiveClient, openLiveClient } from "../driver.js";
 import { classifyFailure } from "../failure.js";
 import { pickLiveSecrets, readSecretStore } from "../session.js";

@@ -87,7 +87,7 @@ export function startTraces(): Tracing {
 
 // JS SDK сам не читает OTEL_SERVICE_NAME и OTEL_RESOURCE_ATTRIBUTES, которые
 // выдаёт AppHost: без детектора сигналы ушли бы от unknown_service и не легли
-// бы на ресурс telegram-bot в dashboard. Ресурс один на логи, метрики и трейсы,
+// бы на ресурс hub-bot в dashboard. Ресурс один на логи, метрики и трейсы,
 // иначе они снова разойдутся по разным ресурсам.
 export function telemetryResource(): Resource {
   return defaultResource().merge(detectResources({ detectors: [envDetector] }));

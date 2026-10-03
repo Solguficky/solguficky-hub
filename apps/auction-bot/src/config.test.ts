@@ -38,7 +38,7 @@ describe("readConfig", () => {
   it("never falls back to the hub bot token", () => {
     const result = readConfig({
       AUCTION_BOT_SERVICE_TOKEN: "service-token",
-      TELEGRAM_BOT_TOKEN: "456:hub",
+      HUB_BOT_TOKEN: "456:hub",
     });
     expect(result).toEqual({
       ok: false,

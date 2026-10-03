@@ -6,8 +6,8 @@ plugins:
   # с прямыми слэшами за ключи. Сам шим делает ровно этот же exec node.
   - local:
       - node
-      - apps/telegram-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es
-    out: apps/telegram-bot/gen
+      - apps/hub-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es
+    out: apps/hub-bot/gen
     opt:
       - target=ts
       - import_extension=.js

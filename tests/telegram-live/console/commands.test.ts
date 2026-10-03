@@ -1,8 +1,4 @@
-import {
-  describe,
-  expect,
-  it,
-} from "../../../apps/telegram-bot/testkit/index.js";
+import { describe, expect, it } from "../../../apps/hub-bot/testkit/index.js";
 import { CommandError, parseCommand, startPayloadIn } from "./commands.js";
 
 // L0: разбор языка живого пульта. Входит в `vitest.config.ts` бота вместе с

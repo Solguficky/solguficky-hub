@@ -12,7 +12,7 @@
 - логи, health и traces;
 - возможность не включать компонент в профиль и запустить его из IDE.
 
-Состав подтверждённого живым прогоном ведёт [руководство по локальной разработке](../development/local-development.md), там же повторяемый gate; здесь он не дублируется. Telegram Bot входит в профиль `hub`, и живой прогон профиля с ботом требует токен тестовой среды, поэтому ещё не выполнялся. Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
+Состав подтверждённого живым прогоном ведёт [руководство по локальной разработке](../development/local-development.md), там же повторяемый gate; здесь он не дублируется. Hub Bot входит в профиль `hub`, и живой прогон профиля с ботом требует токен тестовой среды, поэтому ещё не выполнялся. Публичный адрес и туннель локальному запуску не нужны: вход апдейтов — long polling ([ADR-030](../decisions/ADR-030-telegram-bot.md)).
 
 ## Production-like integration
 
@@ -32,9 +32,9 @@ Production deployment не обязан быть первым milestone; пор�
 
 ## Current-ограничения
 
-- AppHost поднимает PostgreSQL, NATS, Identity, Meetups, Notifications и Telegram Bot: в профиле `infra` компоненты платформы выключены, секрет `telegram-bot-token` не объявляется;
+- AppHost поднимает PostgreSQL, NATS, Identity, Meetups, Notifications и Hub Bot: в профиле `infra` компоненты платформы выключены, секрет `hub-bot-token` не объявляется;
 - Identity, Meetups и Notifications ждут свою базу, применяют миграции при старте и получают строку подключения и динамический gRPC-порт от AppHost;
-- Telegram Bot ждёт здоровые Identity и Meetups и получает их proxy endpoints через `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL`;
+- Hub Bot ждёт здоровые Identity и Meetups и получает их proxy endpoints через `IDENTITY_GRPC_URL` и `MEETUPS_GRPC_URL`;
 - рукописных compose-файлов больше нет, fallback-пути к ним не существует;
 - NATS поднимается в профилях `infra` и `hub` на томе своего рабочего дерева ([local-development.md](../development/local-development.md)), и AppHost на старте создаёт стримы и durable consumers ([каталог](integration.md#jetstream)), но потребителя среди компонентов у шины пока нет: зелёный узел означает работающий брокер со стримами, а не работающую интеграцию;
 - тестовая среда Telegram, установка чарта в k3s и production-топология не проверены; `aspire publish` чарт собирает; что подтверждено живым прогоном — в [руководстве](../development/local-development.md);

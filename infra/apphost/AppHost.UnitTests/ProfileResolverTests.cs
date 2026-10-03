@@ -23,7 +23,7 @@ public class ProfileResolverTests
             ["Topology:Profiles:identity:Services:0"] = "identity",
             ["Topology:Profiles:identity:Infrastructure:0"] = "postgres",
             ["Topology:Profiles:hub:Services:0"] = "identity",
-            ["Topology:Profiles:hub:Services:1"] = "telegram-bot",
+            ["Topology:Profiles:hub:Services:1"] = "hub-bot",
             ["Topology:Profiles:hub:Infrastructure:0"] = "postgres",
             ["Topology:Profiles:hub:Infrastructure:1"] = "nats",
         };
@@ -83,7 +83,7 @@ public class ProfileResolverTests
     [Fact]
     public void Resolve_SkipServicesGiven_RemovesOnlyNamedServices()
     {
-        var configuration = Configuration(("skip-services", "telegram-bot"));
+        var configuration = Configuration(("skip-services", "hub-bot"));
 
         var profile = ProfileResolver.Resolve(configuration);
 
@@ -111,7 +111,7 @@ public class ProfileResolverTests
         var declared = ProfileResolver.DeclaredNames(Configuration());
 
         declared.ShouldBe(
-            ["postgres", "nats", "identity", "telegram-bot"],
+            ["postgres", "nats", "identity", "hub-bot"],
             ignoreOrder: true);
     }
 

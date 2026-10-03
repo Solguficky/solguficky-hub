@@ -16,7 +16,7 @@ Identity отвечает за общие факты идентичности:
 
 Identity не решает, кто может изменить конкретную сходку. Он сообщает факты и общие роли, а Meetups применяет правила своего домена.
 
-Authentication в MVP выполняет Telegram, а доверенной границей продукта является Telegram Bot: при long polling доверенностью входа служит владение bot token, входящего HTTP у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity не принимает и не проверяет authentication material человека: бот передаёт установленный Telegram user id, Identity отвечает внутренним идентификатором и глобальными ролями. Вызывающий процесс — бот, Meetups, Notifications — доказывает себя своим токеном, и Identity допускает его только к методам из колонки Caller ([ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), [integration.md](../architecture/integration.md#service-authentication)).
+Authentication в MVP выполняет Telegram, а доверенной границей продукта является Hub Bot: при long polling доверенностью входа служит владение bot token, входящего HTTP у бота нет ([ADR-030](../decisions/ADR-030-telegram-bot.md)). Identity не принимает и не проверяет authentication material человека: бот передаёт установленный Telegram user id, Identity отвечает внутренним идентификатором и глобальными ролями. Вызывающий процесс — бот, Meetups, Notifications — доказывает себя своим токеном, и Identity допускает его только к методам из колонки Caller ([ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), [integration.md](../architecture/integration.md#service-authentication)).
 
 ## Регистрация и данные профиля
 

@@ -60,7 +60,7 @@ final class GrpcBoundarySpec
 
   private val table = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { telegram-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)
@@ -186,7 +186,7 @@ final class GrpcBoundarySpec
       val written = record
       written("operation") shouldBe "auction.v1.AuctionService/PlaceBid"
       written("grpc_code") shouldBe "OK"
-      written("caller") shouldBe "telegram-bot"
+      written("caller") shouldBe "hub-bot"
       written("request_id") shouldBe "req-7"
     }
 

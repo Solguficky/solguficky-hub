@@ -29,7 +29,7 @@ public static class AppHostNames
         public const string Identity = "identity";
         public const string Meetups = "meetups";
         public const string Notifications = "notifications";
-        public const string TelegramBot = "telegram-bot";
+        public const string HubBot = "hub-bot";
         public const string Auction = "auction";
 
         // Бот аукциона (ADR-044).

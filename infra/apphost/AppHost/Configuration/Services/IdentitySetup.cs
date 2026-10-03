@@ -84,7 +84,7 @@ internal static class IdentitySetup
             // Вызывающие по колонке Caller в integration.md (ADR-056).
             .AcceptCallers(
                 context,
-                AppHostNames.Resources.TelegramBot,
+                AppHostNames.Resources.HubBot,
                 AppHostNames.Resources.AuctionBot,
                 AppHostNames.Resources.Meetups,
                 AppHostNames.Resources.Notifications)

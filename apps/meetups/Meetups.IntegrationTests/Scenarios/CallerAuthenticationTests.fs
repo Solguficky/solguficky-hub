@@ -118,7 +118,7 @@ type CallerAuthenticationTests(host: MeetupsHostFixture) =
     member _.``When token configuration is incomplete or ambiguous expect host construction to fail``() =
         let overrides =
             [
-                "--MEETUPS_CALLER_TOKEN_TELEGRAM_BOT="
+                "--MEETUPS_CALLER_TOKEN_HUB_BOT="
                 "--MEETUPS_CALLER_TOKEN_NOTIFICATIONS="
                 $"--MEETUPS_CALLER_TOKEN_NOTIFICATIONS={AuthenticatedClient.BotToken}"
                 "--MEETUPS_SERVICE_TOKEN="

@@ -1,6 +1,6 @@
 # Модуль TypeScript-сервиса
 
-Первый исполняемый процесс на TypeScript в репозитории — скелет Telegram Bot. Файл объясняет, как язык собирает ESM-модуль под Node, откуда берутся типы и почему недоверенный ввод разбирается не компилятором, а схемой. Выбор стека компонента — [ADR-030](../../decisions/ADR-030-telegram-bot.md) и [бриф](../../services/telegram-bot.md); wire Identity — [unary-server.md](../grpc/unary-server.md) и [protobuf.md](../../standards/contracts/protobuf.md). Граница Telegram разобрана отдельно — [grammy/bot-adapter.md](../grammy/bot-adapter.md), инструмент тестов — [testing.md](testing.md).
+Первый исполняемый процесс на TypeScript в репозитории — скелет Hub Bot. Файл объясняет, как язык собирает ESM-модуль под Node, откуда берутся типы и почему недоверенный ввод разбирается не компилятором, а схемой. Выбор стека компонента — [ADR-030](../../decisions/ADR-030-telegram-bot.md) и [бриф](../../services/hub-bot.md); wire Identity — [unary-server.md](../grpc/unary-server.md) и [protobuf.md](../../standards/contracts/protobuf.md). Граница Telegram разобрана отдельно — [grammy/bot-adapter.md](../grammy/bot-adapter.md), инструмент тестов — [testing.md](testing.md).
 
 ## Механика
 
@@ -30,7 +30,7 @@ import { acknowledge } from "./acknowledge.js";
 
 `strict: true` включает привычный набор (`strictNullChecks` и соседи). В `tsconfig.json` рядом стоят флаги, которые `strict` не подразумевает, и каждый виден в диффе.
 
-`noPropertyAccessFromIndexSignature` запрещает `process.env.TELEGRAM_BOT_TOKEN`: `ProcessEnv` индексируется строкой, и обращение через точку — это чтение несуществующего известного поля. Нужен индекс: `process.env["TELEGRAM_BOT_TOKEN"]`. Biome при этом предлагает обратное — упростить до точки. Скелет обходит спор хелпером `readEnv(name)`, который принимает строку и индексирует ею `process.env`.
+`noPropertyAccessFromIndexSignature` запрещает `process.env.HUB_BOT_TOKEN`: `ProcessEnv` индексируется строкой, и обращение через точку — это чтение несуществующего известного поля. Нужен индекс: `process.env["HUB_BOT_TOKEN"]`. Biome при этом предлагает обратное — упростить до точки. Скелет обходит спор хелпером `readEnv(name)`, который принимает строку и индексирует ею `process.env`.
 
 `noUncheckedIndexedAccess` делает `calls[0]` типом `T | undefined`, даже если массив только что заполнили. Поэтому в тесте адаптера стоит `calls[0]?.method`, а не `calls[0].method`. В C# `list[0]` на пустом списке бросит исключение в рантайме; здесь компилятор требует учесть отсутствие элемента до запуска.
 
@@ -87,7 +87,7 @@ default: {
 
 ### Сгенерированный клиент Identity
 
-`buf generate --template apps/telegram-bot/buf.gen.yaml` вызывает локальный `protoc-gen-es` и пишет `apps/telegram-bot/gen/identity/v1/identity_service_pb.ts`. Каталог в Git не лежит. В отличие от Go, где из схемы выходят два файла (сообщения и gRPC-стабы), здесь один: сообщения, enum и дескриптор сервиса `IdentityService`. RPC-клиент не генерируется отдельным плагином — его собирает Connect:
+`buf generate --template apps/hub-bot/buf.gen.yaml` вызывает локальный `protoc-gen-es` и пишет `apps/hub-bot/gen/identity/v1/identity_service_pb.ts`. Каталог в Git не лежит. В отличие от Go, где из схемы выходят два файла (сообщения и gRPC-стабы), здесь один: сообщения, enum и дескриптор сервиса `IdentityService`. RPC-клиент не генерируется отдельным плагином — его собирает Connect:
 
 ```ts
 const client = createClient(IdentityService, transport);
@@ -102,7 +102,7 @@ await client.resolveIdentity(toRequest(input), { timeoutMs });
 
 `tsconfig.json` с `noEmit: true` — проверка типов. `tsconfig.build.json` наследует его, выключает `noEmit` и исключает `*.test.ts`: в `dist/` попадает только то, что запустит `node dist/src/main.js`. Тесты Vitest читают `.ts` сами и в emit не входят.
 
-`just telegram-bot-build` сначала генерирует `gen/`, потом вызывает `tsc`. Без `gen/` импорт `identity_service_pb.js` не резолвится. Это тот же приём, что у Identity: кодогенерация — предусловие сборки, а не шаг, который «как-нибудь сделают».
+`just hub-bot-build` сначала генерирует `gen/`, потом вызывает `tsc`. Без `gen/` импорт `identity_service_pb.js` не резолвится. Это тот же приём, что у Identity: кодогенерация — предусловие сборки, а не шаг, который «как-нибудь сделают».
 
 ## Урок
 
@@ -129,14 +129,14 @@ await client.resolveIdentity(toRequest(input), { timeoutMs });
 | Lint-rule «не импортировать grammY в application» | TypeScript не запретит протащить `Context`. Границу держит тест диспетчера без grammY; автоматическое правило откладывается |
 | Коммитить `gen/` | ломает [protobuf.md](../../standards/contracts/protobuf.md): generated — не источник правды |
 | `httpVersion: "2"` у `createGrpcTransport` | поля нет: этот транспорт всегда HTTP/2. Лишний ключ — TS2353 |
-| `local: apps/telegram-bot/node_modules/.bin/protoc-gen-es` в `buf.gen.yaml` | шим npm — это sh-скрипт без расширения. На Windows `buf` не может его исполнить, а `cmd.exe` читает путь с прямыми слэшами как набор ключей и падает на `"apps" не является внутренней или внешней командой`. Форма `local: [node, .../@bufbuild/protoc-gen-es/bin/protoc-gen-es]` делает ровно то же, что и сам шим внутри: `exec node <скрипт>` |
+| `local: apps/hub-bot/node_modules/.bin/protoc-gen-es` в `buf.gen.yaml` | шим npm — это sh-скрипт без расширения. На Windows `buf` не может его исполнить, а `cmd.exe` читает путь с прямыми слэшами как набор ключей и падает на `"apps" не является внутренней или внешней командой`. Форма `local: [node, .../@bufbuild/protoc-gen-es/bin/protoc-gen-es]` делает ровно то же, что и сам шим внутри: `exec node <скрипт>` |
 
 ## Схема
 
 ```mermaid
 flowchart LR
   proto["contracts/proto/identity"] --> buf["buf generate"]
-  buf --> gen["apps/telegram-bot/gen"]
+  buf --> gen["apps/hub-bot/gen"]
   src["src/*.ts"] --> tsc["tsc -p tsconfig.build.json"]
   gen --> tsc
   tsc --> dist["dist/src/main.js"]
@@ -148,7 +148,7 @@ flowchart LR
   disp --> reply["ctx.reply"]
 ```
 
-`just telegram-bot-typecheck`, `telegram-bot-test`, `telegram-bot-lint` и `telegram-bot-build` зависят от `telegram-bot-proto`. Без `gen/` клиент Identity не компилируется.
+`just hub-bot-typecheck`, `hub-bot-test`, `hub-bot-lint` и `hub-bot-build` зависят от `hub-bot-proto`. Без `gen/` клиент Identity не компилируется.
 
 ## Первоисточники
 

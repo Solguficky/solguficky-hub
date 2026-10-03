@@ -18,13 +18,13 @@
 |---|---|
 | `Contour.Environment` | подъём топологии, предусловия, ожидание готовности, адреса, сбор логов |
 | `Contour.E2ETests` | один дымовой сценарий через настоящие Identity и Meetups |
-| `Contour.Host` | отдаёт `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `IDENTITY_MAINTAINER_TOKEN` и `TELEGRAM_BOT_SERVICE_TOKEN` внешнему потребителю; унаследованные `OTEL_*` до него не доходят |
+| `Contour.Host` | отдаёт `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `IDENTITY_MAINTAINER_TOKEN` и `HUB_BOT_SERVICE_TOKEN` внешнему потребителю; унаследованные `OTEL_*` до него не доходят |
 | `Contour.Contracts` | generated-only точка C#-клиентов Identity и Meetups; клиенты генерирует `Meetups.Contracts`, сам Identity генерирует только Go |
-| `bot-wire` | провод Telegram Bot на TypeScript: `bot.handleUpdate` с настоящими клиентами Identity и Meetups |
+| `bot-wire` | провод Hub Bot на TypeScript: `bot.handleUpdate` с настоящими клиентами Identity и Meetups |
 
 ### Предусловия
 
-Docker, `go` и `buf` в PATH; провод бота нужен ещё Node и `just telegram-bot-tools`. Узел `identity` в графе — не проект, а цепочка:
+Docker, `go` и `buf` в PATH; провод бота нужен ещё Node и `just hub-bot-tools`. Узел `identity` в графе — не проект, а цепочка:
 `identity-proto` генерирует Go-код, `identity-build` собирает бинарник, и
 только потом стартует сервис. Отсутствие инструмента даёт отказ с его именем,
 а не пропуск теста.
@@ -72,11 +72,11 @@ just contour-contracts-check                  # контракты остают�
 настоящего RPC, пока сервис отвечает `UNAVAILABLE`: health-контракта в
 `contracts/proto/` нет, и ради теста он туда не тянется.
 
-Сценарии импортируют только `apps/telegram-bot/testkit/index.ts` относительным
+Сценарии импортируют только `apps/hub-bot/testkit/index.ts` относительным
 путём. Зависимости стоят у бота, голые импорты из `tests/` не резолвятся, и по
 той же причине сценарий не видит ни update, ни `callback_data`: разговор идёт
 шагами «написал», «нажал кнопку», «видит на экране». Типизирует и линтует
-каталог конфиг бота (`just telegram-bot-typecheck`, `just telegram-bot-lint`),
+каталог конфиг бота (`just hub-bot-typecheck`, `just hub-bot-lint`),
 запускает — `vitest.contour.config.ts`: файлы идут последовательно, пустой
 набор и забытый `.only` роняют прогон. Порога числа тестов у vitest нет
 ([PER-358](https://linear.app/anticnvm/issue/per-358)).

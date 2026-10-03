@@ -118,11 +118,22 @@ Deep link из хаба вместо встроенного экрана отв�
 
 Граница пересматривается, если хотя бы одно торговое действие получает разную семантику в двух ботах: тогда оно перестаёт быть общим юзкейсом, а не обрастает условием внутри него. Два процесса пересматриваются только вместе с long polling из ADR-030. Физический пакет пересматривается, если второй runtime перестаёт быть TypeScript/Node: тогда каноническая экранная модель становится контрактом либо каждый клиент реализует её независимо, но wire-контракт заранее не вводится.
 
+## Уточнение 2026-10-03: полное переименование бота хаба
+
+Владелец выбрал в [PER-433](https://linear.app/anticnvm/issue/per-433) полный вариант переименования: **Hub Bot**, идентификатор **`hub-bot`**. Оба компонента остаются Telegram-ботами, но имена теперь различают их назначение: `hub-bot` и `auction-bot`. Исходный текст выше сохраняет имена на момент принятия ADR; действующие имена ниже его уточняют.
+
+- Каталог бота хаба — `apps/hub-bot`; ресурс Aspire, вызывающий в таблицах допуска, имя пакета, сборки, production-образа и workload — `hub-bot`. Рецепты `just` — `hub-bot-*`; telemetry и структурное поле `service` используют `hub-bot`, счётчик доставок называется `hub_bot.notification.deliveries`. Поведение, Protobuf-контракты и граница общего аукционного UI-пакета не меняются.
+- Параметры AppHost — `hub-bot-token`, `hub-bot-test-token` и `hub-bot-service-token`. Процесс читает `HUB_BOT_TOKEN`, `HUB_BOT_ENVIRONMENT`, `HUB_BOT_SERVICE_TOKEN`, `HUB_BOT_PRESENTATION`, `HUB_BOT_LOG_LEVEL`, `HUB_BOT_NATS_URL` и `HUB_BOT_COMMUNITY_TIME_ZONE`. Вызываемые читают `IDENTITY_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_HUB_BOT`, `NOTIFICATIONS_CALLER_TOKEN_HUB_BOT` и `AUCTION_CALLER_TOKEN_HUB_BOT`; опознанный caller — `hub-bot`. Токены и настройки `auction-bot` остаются независимыми, а общая ось `--telegram-environment` сохраняет имя транспорта.
+- Durable доставки — `hub-bot-notifications-events`, JetStream KV bucket журнала — `hub-bot-deliveries`. Это новые идентичности хранения и позиции подтверждения, а не алиасы прежних имён. Политика доставки и настройки хранения ADR-052 не меняются.
+- Продакшн-развёртывания ещё нет: миграций, совместимых имён, fallback и алиасов не вводится. Прежние dev-данные журнала и позиция старого durable не переносятся; новый durable с `deliver_policy=all` может заново прочитать сохранённые события, не имея отметок прежнего журнала. Поэтому дерево, где `hub` уже запускался до переименования, перед первым запуском удаляет свой том NATS (`solguficky-<дерево>-<хэш>-nats-data`): иначе бот повторно отправит уведомления из окна стрима. Переименование не удаляет живые ресурсы. Собственной PostgreSQL-базы у бота нет, базы остальных сервисов не переименовываются.
+
+Имена файлов ADR сохранены ради устойчивых ссылок; бриф обоих ботов переименован в `docs/services/hub-bot.md`, и ссылки на него обновлены во всём репозитории. История ADR и датированных прогонов не переписывается; актуальные инструкции и каталог интеграции используют новые имена.
+
 ## Связанные документы
 
 - RFC: [RFC-006](../rfcs/RFC-006-telegram-bot-edge-design.md) — разбор вариантов устройства Telegram-края, на котором стоит ADR-030
 - Standards: нет
 - Задача: [PER-147](https://linear.app/anticnvm/issue/per-147)
 - Другие ADR: [ADR-030](ADR-030-telegram-bot.md) — дополняется раскладкой второго бота; [ADR-043](ADR-043-identity-roles-and-community-circles.md) — роли поверхностей и автовыдача; [ADR-040](ADR-040-auction-screen-sse.md) — отдельный read-only экран зала
-- Сервисы: [Telegram Bot и Auction Bot](../services/telegram-bot.md), [Identity](../services/identity.md), [Auction](../services/auction.md)
+- Сервисы: [Telegram Bot и Auction Bot](../services/hub-bot.md), [Identity](../services/identity.md), [Auction](../services/auction.md)
 - Архитектура: [overview.md](../architecture/overview.md), [integration.md](../architecture/integration.md), [decision-matrix.html](../architecture/decision-matrix.html)

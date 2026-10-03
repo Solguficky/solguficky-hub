@@ -44,7 +44,7 @@ export type AttachMaterialRequest = Message<"meetups.v1.AttachMaterialRequest"> 
 };
 ```
 
-`apps/telegram-bot/gen/meetups/v1/meetups_service_pb.ts:454-496`. Но методы Connect-клиента принимают не этот тип, а init-форму:
+`apps/hub-bot/gen/meetups/v1/meetups_service_pb.ts:454-496`. Но методы Connect-клиента принимают не этот тип, а init-форму:
 
 ```ts
 (request: MessageInitShape<I>, options?: CallOptions) => Promise<MessageShape<O>>
@@ -118,7 +118,7 @@ flowchart LR
 
 ## Проверь себя
 
-- **Что уйдёт на провод, если бот не передаст `expectedVersion`, и что прочитает Meetups?** Ответ: поля 6 на проводе нет, Meetups прочитает 0 и ответит `INVALID_ARGUMENT`. Проверка: в `apps/telegram-bot` собрать `dist` (`just telegram-bot-build`) и сериализовать `create(AttachMaterialRequestSchema, { id: "x" })` через `toBinary` — байты `120178` совпадут с вариантом `expectedVersion: 0n`.
-- **Почему `tsc` пропустил вызов без поля, хотя в `AttachMaterialRequest` оно обязательно?** Ответ: метод клиента принимает `MessageInitShape<I>`, где все поля необязательны. Проверка: `grep -n "MessageInitShape" apps/telegram-bot/node_modules/@connectrpc/connect/dist/esm/promise-client.d.ts`.
+- **Что уйдёт на провод, если бот не передаст `expectedVersion`, и что прочитает Meetups?** Ответ: поля 6 на проводе нет, Meetups прочитает 0 и ответит `INVALID_ARGUMENT`. Проверка: в `apps/hub-bot` собрать `dist` (`just hub-bot-build`) и сериализовать `create(AttachMaterialRequestSchema, { id: "x" })` через `toBinary` — байты `120178` совпадут с вариантом `expectedVersion: 0n`.
+- **Почему `tsc` пропустил вызов без поля, хотя в `AttachMaterialRequest` оно обязательно?** Ответ: метод клиента принимает `MessageInitShape<I>`, где все поля необязательны. Проверка: `grep -n "MessageInitShape" apps/hub-bot/node_modules/@connectrpc/connect/dist/esm/promise-client.d.ts`.
 - **Что изменит `optional` перед `int64 expected_version`?** Ответ: тип станет `bigint | undefined`, а явно заданный ноль запишется на провод (`0800` для поля 1) и `isFieldSet` вернёт `true`. Проверка: сгенерировать `protoc-gen-es` временную схему с двумя вариантами поля через `buf generate` и сравнить типы и `toBinary`.
 - **Почему для `expected_version` хватает проверки `value > 0`, а для счётчика с законным нулём — нет?** Ответ: ноль версии невозможен, поэтому он однозначно значит «не передано»; у счётчика ноль — законное значение, и без `optional` пропуск от него не отличить. Опора: `Contract.fs:134-138`.

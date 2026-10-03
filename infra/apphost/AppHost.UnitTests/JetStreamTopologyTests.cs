@@ -70,11 +70,11 @@ public class JetStreamTopologyTests
     /// ему не адресованы, и durable на них копил бы неподтверждаемое.
     /// </summary>
     [Fact]
-    public void Durables_TelegramBot_ReadsOnlyNotificationFacts() =>
+    public void Durables_HubBot_ReadsOnlyNotificationFacts() =>
         JetStreamTopology.Durables
-            .Where(durable => durable.Durable.StartsWith("telegram-bot-", StringComparison.Ordinal))
+            .Where(durable => durable.Durable.StartsWith("hub-bot-", StringComparison.Ordinal))
             .Select(durable => durable.Durable)
-            .ShouldBe(["telegram-bot-notifications-events"]);
+            .ShouldBe(["hub-bot-notifications-events"]);
 
     /// <summary>
     /// Запись журнала обязана пережить последнюю повторную выдачу своего
@@ -83,7 +83,7 @@ public class JetStreamTopologyTests
     [Fact]
     public void KeyValueBuckets_DeliveryJournal_OutlivesStreamRetention()
     {
-        var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "telegram-bot-deliveries");
+        var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "hub-bot-deliveries");
 
         journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
     }

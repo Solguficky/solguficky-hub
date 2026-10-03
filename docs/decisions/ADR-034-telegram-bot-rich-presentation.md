@@ -94,6 +94,6 @@ Offline-доставка шёпота и `BotCommand.is_ephemeral` сами по
 - RFC: [RFC-003](../rfcs/RFC-003-bot-presentation-rich-blocks.md)
 - Standards: не требуется
 - Другие ADR: [ADR-030](ADR-030-telegram-bot.md)
-- Сервис: [Telegram Bot](../services/telegram-bot.md)
+- Сервис: [Telegram Bot](../services/hub-bot.md)
 - Архитектура: [overview.md](../architecture/overview.md), [first-slice.md](../architecture/first-slice.md), [decision-matrix.html](../architecture/decision-matrix.html)
 - Макет: [storyboard.html](../design/bot/storyboard.html) — ревизия не входит в это решение

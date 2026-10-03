@@ -37,8 +37,8 @@ public class AuctionBotTokenTests
     {
         var configuration = Configuration(
             ("Parameters:auction-bot-token", Own),
-            ("Parameters:telegram-bot-token", Hub),
-            ("Parameters:telegram-bot-test-token", HubTest));
+            ("Parameters:hub-bot-token", Hub),
+            ("Parameters:hub-bot-test-token", HubTest));
 
         Should.NotThrow(() => AuctionBotSetup.RequireOwnToken(configuration, Environment("prod")));
     }
@@ -64,8 +64,8 @@ public class AuctionBotTokenTests
     /// им не владеет.
     /// </summary>
     [Theory]
-    [InlineData("telegram-bot-token")]
-    [InlineData("telegram-bot-test-token")]
+    [InlineData("hub-bot-token")]
+    [InlineData("hub-bot-test-token")]
     public void RequireOwnToken_RepeatsHubToken_ThrowsWithoutTheValue(string hubParameter)
     {
         var configuration = Configuration(
@@ -89,13 +89,13 @@ public class AuctionBotTokenTests
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Parameters:auction-bot-token"] = Hub,
-            ["Parameters:telegram-bot-token"] = Hub,
+            ["Parameters:hub-bot-token"] = Hub,
         });
         var context = new ServiceGraphContext(builder, new ProfileConfig { Name = "auction-bot" });
 
         var exception = Should.Throw<InvalidOperationException>(() => AuctionBotSetup.Configure(context));
 
-        exception.Message.ShouldContain("repeats 'telegram-bot-token'");
+        exception.Message.ShouldContain("repeats 'hub-bot-token'");
         builder.Resources.ShouldBeEmpty();
     }
 
@@ -105,11 +105,11 @@ public class AuctionBotTokenTests
         var configuration = Configuration(
             ("Parameters:auction-bot-token", Own),
             ("Parameters:auction-bot-test-token", Hub),
-            ("Parameters:telegram-bot-token", Hub));
+            ("Parameters:hub-bot-token", Hub));
 
         var exception = Should.Throw<InvalidOperationException>(
             () => AuctionBotSetup.RequireOwnToken(configuration, Environment("test")));
 
-        exception.Message.ShouldContain("'auction-bot-test-token' of 'auction-bot' repeats 'telegram-bot-token'");
+        exception.Message.ShouldContain("'auction-bot-test-token' of 'auction-bot' repeats 'hub-bot-token'");
     }
 }

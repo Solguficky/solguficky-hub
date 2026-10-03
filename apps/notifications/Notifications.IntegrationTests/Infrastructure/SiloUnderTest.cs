@@ -200,7 +200,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// <summary>Таблица и свой токен в форме переменных окружения.</summary>
     public static IReadOnlyDictionary<string, string> CallerEnvironment { get; } = new Dictionary<string, string>
     {
-        [Caller.TelegramBot.TokenVariable] = BotToken,
+        [Caller.HubBot.TokenVariable] = BotToken,
         [ServiceToken.Variable] = OwnToken,
     };
 

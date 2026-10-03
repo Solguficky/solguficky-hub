@@ -2,7 +2,7 @@ import {
   describe,
   expect,
   it,
-} from "../../../../apps/telegram-bot/testkit/index.js";
+} from "../../../../apps/hub-bot/testkit/index.js";
 import { CommandError, parseCommand } from "./commands.js";
 
 // L0: разбор языка пульта. Входит в `vitest.config.ts` бота, а не в контур:

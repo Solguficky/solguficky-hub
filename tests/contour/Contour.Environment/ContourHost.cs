@@ -80,7 +80,7 @@ public sealed class ContourHost : IAsyncDisposable
     public string MaintainerToken { get; }
 
     /// <summary>
-    /// Токен вызывающего Telegram Bot (ADR-056). Бота в контуре нет — им играет
+    /// Токен вызывающего Hub Bot (ADR-056). Бота в контуре нет — им играет
     /// потребитель, поэтому значение задаётся здесь, а не генерируется AppHost:
     /// иначе снаружи его не узнать. Чеканится так же, как maintainer, и с ним не
     /// совпадает: сервис с таким совпадением не стартует.
@@ -104,7 +104,7 @@ public sealed class ContourHost : IAsyncDisposable
             cancellationToken);
 
         builder.Configuration["Parameters:identity-maintainer-token"] = maintainerToken;
-        builder.Configuration["Parameters:telegram-bot-service-token"] = botServiceToken;
+        builder.Configuration["Parameters:hub-bot-service-token"] = botServiceToken;
 
         DetachDataVolume(builder);
 

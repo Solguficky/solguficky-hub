@@ -12,7 +12,7 @@
 *.go text eol=lf
 
 # Biome форматирует переводом строки LF и считает CRLF нарушением формата — та же
-# история, что с gofmt выше. Без eol=lf `just telegram-bot-lint` на Windows падает
+# история, что с gofmt выше. Без eol=lf `just hub-bot-lint` на Windows падает
 # на всех файлах пакета сразу, хотя в индексе и на Linux-раннере CI они в порядке.
 *.ts text eol=lf
 *.mts text eol=lf

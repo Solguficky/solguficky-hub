@@ -50,7 +50,7 @@ vi.mock("@opentelemetry/exporter-trace-otlp-grpc", () => ({
 
 beforeEach(() => {
   meterProviderOptions.length = 0;
-  vi.stubEnv("OTEL_SERVICE_NAME", "telegram-bot");
+  vi.stubEnv("OTEL_SERVICE_NAME", "hub-bot");
   vi.stubEnv(
     "OTEL_RESOURCE_ATTRIBUTES",
     "service.instance.id=bot-1,deployment.environment=local",
@@ -71,7 +71,7 @@ describe("telemetryResource", () => {
     await resource.waitForAsyncAttributes?.();
 
     expect(resource.attributes).toMatchObject({
-      "service.name": "telegram-bot",
+      "service.name": "hub-bot",
       "service.instance.id": "bot-1",
       "deployment.environment": "local",
     });
@@ -79,14 +79,14 @@ describe("telemetryResource", () => {
 });
 
 describe("startMetrics", () => {
-  it("creates the meter provider on the telegram-bot resource", async () => {
+  it("creates the meter provider on the hub-bot resource", async () => {
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
 
     const started = startMetrics();
 
     expect(meterProviderOptions).toHaveLength(1);
     expect(meterProviderOptions[0]?.resource?.attributes).toMatchObject({
-      "service.name": "telegram-bot",
+      "service.name": "hub-bot",
       "service.instance.id": "bot-1",
     });
     await started.shutdown();
@@ -100,7 +100,7 @@ describe("startMetrics", () => {
 });
 
 describe("startTraces", () => {
-  it("records spans on the telegram-bot resource with an OTLP endpoint", async () => {
+  it("records spans on the hub-bot resource with an OTLP endpoint", async () => {
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
 
     const tracing = startTraces();
@@ -111,7 +111,7 @@ describe("startTraces", () => {
     expect(
       (span as unknown as { resource: { attributes: object } }).resource
         .attributes,
-    ).toMatchObject({ "service.name": "telegram-bot" });
+    ).toMatchObject({ "service.name": "hub-bot" });
     span.end();
     await tracing.shutdown();
   });
