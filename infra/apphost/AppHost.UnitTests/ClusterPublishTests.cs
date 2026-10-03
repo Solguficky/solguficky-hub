@@ -30,7 +30,7 @@ public class ClusterPublishTests
     }
 
     [Fact]
-    public async Task Publish_Workloads_AreTheFourMvpServices()
+    public async Task Publish_Workloads_AreTheFourMvpServicesAndAuction()
     {
         var builder = await PublishModelAsync();
 
@@ -38,17 +38,19 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.HubBot, R.Identity, R.Meetups, R.Notifications]);
+            .ShouldBe([R.Auction, R.HubBot, R.Identity, R.Meetups, R.Notifications]);
     }
 
     /// <summary>
-    /// Identity и бот собираются по своим Containerfile из корня репозитория, а
-    /// не цепочкой buf/go build и не контейнером, который Aspire сгенерировал бы
-    /// из <c>AddJavaScriptApp</c>: их кодогенерации нужен <c>contracts/proto</c>.
+    /// Identity, бот и Auction собираются по своим Containerfile из корня
+    /// репозитория, а не цепочкой buf/go build, sbt и голой JVM и не контейнером,
+    /// который Aspire сгенерировал бы из <c>AddJavaScriptApp</c>: их кодогенерации
+    /// нужен <c>contracts/proto</c>.
     /// </summary>
     [Theory]
     [InlineData(R.Identity, "apps/identity/Containerfile")]
     [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
+    [InlineData(R.Auction, "apps/auction/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {
         var builder = await PublishModelAsync();
@@ -75,7 +77,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IResourceWithConnectionString>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
+            .ShouldBe([R.AuctionDb, R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
     }
 
     [Fact]
@@ -91,6 +93,9 @@ public class ClusterPublishTests
     /// Чарт собирается из <c>cluster</c>, а локальный стенд — из <c>hub</c>.
     /// Расхождение составов — решение, которое должно быть видно правкой этого
     /// теста, а не тихо приехать в прод вместе с изменением локального профиля.
+    /// Единственное расхождение — Auction: stage поднимает аукцион вместе с хабом
+    /// (дополнение к ADR-055), а локальный <c>hub</c> JVM не тянет, и аукцион
+    /// поднимают его профили <c>auction</c> и <c>auction-bot</c>.
     /// </summary>
     [Fact]
     public void PublishProfile_MatchesHubComposition()
@@ -107,7 +112,7 @@ public class ClusterPublishTests
             .Build());
 
         cluster.Name.ShouldBe("cluster");
-        cluster.Services.Order().ShouldBe(hub.Services.Order());
+        cluster.Services.Order().ShouldBe(hub.Services.Append(R.Auction).Order());
         cluster.Infrastructure.Order().ShouldBe(hub.Infrastructure.Order());
     }
 }

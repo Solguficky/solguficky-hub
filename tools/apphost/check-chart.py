@@ -7,12 +7,15 @@ defect shows only on the cluster. So the chart is rendered with a values
 fixture in which every image is pinned by a synthetic digest, and each rendered
 workload is checked against the rules of the production chart:
 
-- the workloads are exactly the four MVP services, nothing else;
+- the workloads are exactly the four MVP services and Auction, nothing else;
 - every service runs one replica with the Recreate strategy and no rollingUpdate
   block, which the Kubernetes API rejects next to Recreate;
 - every image comes from values as `@sha256:<64 hex>`, not a tag;
 - the pod runs as non-root and the container has resource limits;
-- the gRPC services have liveness and readiness probes. The bot has no health
+- every service has liveness and readiness probes of its form: gRPC ones for
+  the gRPC services; for Auction an HTTP readiness path and TCP startup and
+  liveness, because its readiness path answers 503 while the database is down
+  and a liveness on it would restart the pod in a loop. The bot has no health
   endpoint and is the one named exception;
 - every secret in the chart's own values.yaml is empty: secrets are parameters
   without values, and the ops repository supplies them per environment.
@@ -32,8 +35,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-WORKLOADS = {"identity", "meetups", "notifications", "hub-bot"}
+WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction"}
 WITHOUT_PROBES = {"hub-bot"}
+GRPC_PROBES = {"livenessProbe": "grpc", "readinessProbe": "grpc"}
+PROBES = {"auction": {"startupProbe": "tcpSocket", "livenessProbe": "tcpSocket", "readinessProbe": "httpGet"}}
+PROBE_ACTIONS = ("grpc", "httpGet", "tcpSocket", "exec")
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob", "Pod"}
 
 KIND = re.compile(r'^kind:\s*"?(\w+)"?\s*$', re.M)
@@ -77,10 +83,22 @@ def check_workload(name: str, text: str) -> list[str]:
         errors.append(f"{name}: container has no resource limits")
 
     if name not in WITHOUT_PROBES:
-        for probe in ("livenessProbe", "readinessProbe"):
-            if not re.search(rf"^\s*{probe}:\s*$", text, re.M):
+        for probe, expected in PROBES.get(name, GRPC_PROBES).items():
+            action = probe_action(text, probe)
+            if action is None:
                 errors.append(f"{name}: no {probe}")
+            elif action != expected:
+                errors.append(f"{name}: {probe} must be {expected}, got {action}")
     return errors
+
+
+def probe_action(text: str, probe: str) -> str | None:
+    """The handler of a probe: the first action key among the lines nested under it."""
+    block = re.search(rf"^([ -]*){probe}:\s*\n((?:\1\s+\S.*\n?)*)", text, re.M)
+    if not block:
+        return None
+    actions = re.findall(rf"^\s*({'|'.join(PROBE_ACTIONS)}):", block.group(2), re.M)
+    return actions[0] if actions else "none"
 
 
 def check_rendered(rendered: Path) -> list[str]:
@@ -102,9 +120,9 @@ def check_rendered(rendered: Path) -> list[str]:
             errors.extend(check_workload(name, text))
 
     for name in sorted(set(found) - WORKLOADS):
-        errors.append(f"{name}: workload is not one of the MVP services {sorted(WORKLOADS)}")
+        errors.append(f"{name}: workload is not one of the chart services {sorted(WORKLOADS)}")
     for name in sorted(WORKLOADS - set(found)):
-        errors.append(f"{name}: MVP service has no workload in the chart")
+        errors.append(f"{name}: chart service has no workload")
     return errors
 
 

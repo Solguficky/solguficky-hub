@@ -42,15 +42,15 @@ internal static class PostgresSetup
     /// <summary>
     /// В чарте сервера нет: PostgreSQL — CloudNativePG своей среды (ADR-055).
     /// Каждая база становится строкой подключения под тем же именем, что локально,
-    /// поэтому bind сервисов не меняется. База Auction не публикуется вместе с
-    /// самим Auction: в чарт он не входит.
+    /// поэтому bind сервисов не меняется.
     /// </summary>
     public static void Publish(ServiceGraphContext context)
     {
         foreach (var database in (string[])[
             AppHostNames.Resources.IdentityDb,
             AppHostNames.Resources.MeetupsDb,
-            AppHostNames.Resources.NotificationsDb])
+            AppHostNames.Resources.NotificationsDb,
+            AppHostNames.Resources.AuctionDb])
         {
             context.Publish(database, context.Builder.AddConnectionString(database));
         }
