@@ -29,8 +29,8 @@ SELECT EXISTS (
 	// Открытая заявка на пару «человек, круг» одна (пункт 6): повторный /start
 	// находит её и не переписывает ни источник, ни имя (пункт 19).
 	openApplicationSQL = `
-INSERT INTO identity_applications (id, identity_id, requested_role, source_code, first_name, created_at)
-VALUES ($1, $2, $3, $4, $5, date_trunc('milliseconds', now()))
+INSERT INTO identity_applications (id, identity_id, requested_role, source_channel, source_unknown, first_name, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, date_trunc('milliseconds', now()))
 ON CONFLICT (identity_id, requested_role) WHERE outcome IS NULL DO NOTHING`
 )
 
@@ -149,20 +149,13 @@ func openApplication(ctx context.Context, tx *sql.Tx, identityID, circle string,
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, openApplicationSQL, id.String(), identityID, circle,
-		sourceCodeValue(req), nullableText(req.GetFirstName()))
-	return err
-}
-
-// sourceCodeValue — источник для заявки (пункты 18–19). Реестра каналов ещё нет
-// (PER-438), поэтому любой код — «неизвестный источник»: он пишется пустой
-// строкой, источник был, но неизвестен, и в отказ код не превращается. Сам
-// недоверенный код не хранится — подписать его пока нечем.
-func sourceCodeValue(req *identityv1.RequestRoleRequest) any {
-	if req.SourceCode == nil {
-		return nil
+	source, err := resolveApplicationSource(ctx, tx, req.SourceCode)
+	if err != nil {
+		return err
 	}
-	return ""
+	_, err = tx.ExecContext(ctx, openApplicationSQL, id.String(), identityID, circle,
+		source.channel, source.unknown, nullableText(req.GetFirstName()))
+	return err
 }
 
 func nullableText(value string) any {

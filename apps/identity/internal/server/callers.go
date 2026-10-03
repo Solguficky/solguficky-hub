@@ -53,6 +53,9 @@ var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_DeclineApplication_FullMethodName:       {CallerHubBot},
 	identityv1.IdentityService_ListRefusedApplications_FullMethodName:  {CallerHubBot},
 	identityv1.IdentityService_ReconsiderApplication_FullMethodName:    {CallerHubBot},
+	identityv1.IdentityService_ListSourceChannels_FullMethodName:       {CallerHubBot},
+	identityv1.IdentityService_CreateSourceChannel_FullMethodName:      {CallerHubBot},
+	identityv1.IdentityService_RenameSourceChannel_FullMethodName:      {CallerHubBot},
 }
 
 // maintainerMethods защищает секрет ADR-037, а не таблица вызывающих: гейт их

@@ -37,7 +37,7 @@ func TestApplicationMigrationOpensMemberApplicationForWaitingProfiles(t *testing
 	}
 
 	rows, err := db.QueryContext(t.Context(), `SELECT id, identity_id, requested_role, created_at,
-		source_code IS NULL AND first_name IS NULL AND outcome IS NULL FROM identity_applications`)
+		source_channel IS NULL AND NOT source_unknown AND first_name IS NULL AND outcome IS NULL FROM identity_applications`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,8 +101,8 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 			decidedAt = time.Now()
 		}
 		_, err := db.ExecContext(t.Context(), `INSERT INTO identity_applications
-			(id, identity_id, requested_role, source_code, created_at, outcome, decided_by, decided_at)
-			VALUES ($1, $2, $3, $4, now(), $5, $6, $7)`,
+			(id, identity_id, requested_role, source_unknown, created_at, outcome, decided_by, decided_at)
+			VALUES ($1, $2, $3, coalesce($4::boolean, false), now(), $5, $6, $7)`,
 			uuid.NewString(), identityID, role, source, outcome, decidedBy, decidedAt)
 		return err
 	}
@@ -113,7 +113,7 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 	}{
 		{"open with decider", nil, deciderID, nil, circleMember},
 		{"admitted without decider", "admitted", nil, nil, circleMember},
-		{"decided keeps source", "admitted", deciderID, "tg_ads", circleMember},
+		{"decided keeps source", "admitted", deciderID, true, circleMember},
 		{"blocked member", "blocked", deciderID, nil, circleMember},
 		{"declined public", "declined", deciderID, nil, "public"},
 		{"unknown circle", nil, nil, nil, "admin"},
@@ -125,7 +125,7 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 	// Профиль ждал допуска до миграции, поэтому заявка на member у него уже
 	// открыта, и вторая открытая на ту же пару отвергается.
 	assertPgErrorCode(t, insert(nil, nil, nil, circleMember), "23505")
-	if err := insert(nil, nil, "tg_ads", "public"); err != nil {
+	if err := insert(nil, nil, true, "public"); err != nil {
 		t.Fatalf("open application: %v", err)
 	}
 	// Понижение из member (ADR-060, пункт 13) запишет сразу закрытую заявку:

@@ -251,10 +251,12 @@ func assertOutcome(t *testing.T, resp *identityv1.RequestRoleResponse, want iden
 }
 
 // assertApplications сверяет открытые заявки человека: круг, источник и имя.
+// Источник — код канала, пустая строка для «неизвестного источника» или <nil>.
 func assertApplications(t *testing.T, db *sql.DB, identityID string, want ...string) {
 	t.Helper()
 	rows, err := db.QueryContext(t.Context(), `
-SELECT requested_role, coalesce(source_code, '<nil>'), coalesce(first_name, '<nil>')
+SELECT requested_role, coalesce(source_channel, CASE WHEN source_unknown THEN '' ELSE '<nil>' END),
+       coalesce(first_name, '<nil>')
 FROM identity_applications
 WHERE identity_id = $1 AND outcome IS NULL
 ORDER BY requested_role`, identityID)
