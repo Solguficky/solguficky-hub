@@ -66,7 +66,7 @@ sequenceDiagram
 ## Что срез обязан доказать
 
 - три сервиса разделены реально, а не номинально: бот не содержит доменных правил;
-- решение об авторизации действий над сходкой и о её видимости принимает Meetups, а не бот; бот передаёт установленную личность и общие роли, но не готовое разрешение. Бот решает только допуск к самому хабу — по кругу `member` из ответа Identity, то есть по любой из ролей `admin`, `maintainer` и `member` ([ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md)), до вызова Meetups ([PER-194](https://linear.app/anticnvm/issue/per-194), [бриф бота](../services/telegram-bot.md));
+- решение об авторизации действий над сходкой и о её видимости принимает Meetups, а не бот; бот передаёт установленную личность и общие роли, но не готовое разрешение. Бот решает только допуск к самому хабу — по кругу `member` из ответа Identity, то есть по любой из ролей `admin`, `maintainer` и `member` ([ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md)), до вызова Meetups ([PER-194](https://linear.app/anticnvm/issue/per-194), [бриф бота](../services/hub-bot.md));
 - все чтения сходки идут через один путь, принимающий смотрящего, поэтому скрытую сходку нельзя достать новым способом чтения;
 - черновик переживает рестарт сервиса, потому что хранится в Meetups, а не в диалоговом состоянии бота;
 - недоступность сервиса и пустой результат — разные наблюдаемые состояния;
@@ -135,7 +135,7 @@ sequenceDiagram
 Набор кадров пережил сам срез и переиспользуется дальше: кадры подписки и
 настроек категорий отвечают на отказ Notifications теми же E-01, E-03, E-04,
 E-05 и E-09, а не заводят свои ([PER-214](https://linear.app/anticnvm/issue/PER-214)).
-Отображение статусов gRPC на кадры — в [брифе бота](../services/telegram-bot.md).
+Отображение статусов gRPC на кадры — в [брифе бота](../services/hub-bot.md).
 Состав самого первого среза это не меняет: подписки и уведомления в него
 по-прежнему не входили.
 
@@ -187,7 +187,7 @@ E-05 и E-09, а не заводят свои ([PER-214](https://linear.app/anti
 ## Связанные документы
 
 - [Архитектурный обзор](overview.md)
-- [Meetups](../services/meetups.md), [Identity](../services/identity.md), [Hub Bot](../services/telegram-bot.md)
+- [Meetups](../services/meetups.md), [Identity](../services/identity.md), [Hub Bot](../services/hub-bot.md)
 - [Продукт и границы MVP](../product/overview.md)
 - [ADR-022](../decisions/ADR-022-meetup-state-axes-and-visibility.md), [ADR-031](../decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md), [ADR-032](../decisions/ADR-032-drop-meetup-public-number.md), [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md)
 - [Макет Bot UI](../design/bot/README.md)

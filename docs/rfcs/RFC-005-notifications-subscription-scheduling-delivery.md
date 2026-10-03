@@ -305,6 +305,6 @@ Identity начинает публиковать события об измен�
 - **ADR:** два, по образцу пары ADR-024 и ADR-025. Первый — устройство Notifications и границы: две плоскости, реплика, триггеры, конец ответственности на публикации в шину, ручная рассылка, события Identity. Второй — стек: C# и Orleans, PostgreSQL как источник истины.
 - **Поправка:** [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) отредактирован, применимость осталась `Active`.
 - **Standard:** не нужен.
-- **Обновление документов:** [services/notifications.md](../services/notifications.md), [services/identity.md](../services/identity.md), [services/telegram-bot.md](../services/telegram-bot.md), [architecture/integration.md](../architecture/integration.md), строка Notifications в [матрице решений](../architecture/decision-matrix.html).
+- **Обновление документов:** [services/notifications.md](../services/notifications.md), [services/identity.md](../services/identity.md), [services/hub-bot.md](../services/hub-bot.md), [architecture/integration.md](../architecture/integration.md), строка Notifications в [матрице решений](../architecture/decision-matrix.html).
 - **`contracts/proto/`:** словарь типов уведомлений и gRPC API подписок проектируются отдельным contract change после утверждения словаря событий Meetups.
 - **Задачи Linear:** после принятия ADR.

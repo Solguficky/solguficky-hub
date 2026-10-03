@@ -5,11 +5,11 @@ description: "Писать и ревьюить grammY/Telegram Bot boundary: н�
 
 # Писать Telegram Bot на grammY
 
-Устройство компонента принято в [ADR-030](../../../docs/decisions/ADR-030-telegram-bot.md) и раскрыто в [брифе](../../../docs/services/telegram-bot.md). Грамматика `callback_data`, таблица правил при отказах Telegram и список обязательных угловых случаев живут там и здесь не повторяются. Языковые правила — `proj-write-typescript`, примеры тестов границы — [references/testing.md](references/testing.md).
+Устройство компонента принято в [ADR-030](../../../docs/decisions/ADR-030-telegram-bot.md) и раскрыто в [брифе](../../../docs/services/hub-bot.md). Грамматика `callback_data`, таблица правил при отказах Telegram и список обязательных угловых случаев живут там и здесь не повторяются. Языковые правила — `proj-write-typescript`, примеры тестов границы — [references/testing.md](references/testing.md).
 
 ## 1. Собери контекст среза
 
-Всегда читай ближайший `AGENTS.md` и конфигурацию компонента. Для границы, состояния или polling открой соответствующий раздел [ADR-030](../../../docs/decisions/ADR-030-telegram-bot.md#решение); для грамматики `callback_data`, отказов Telegram или тестовых сценариев — соответствующий раздел [брифа](../../../docs/services/telegram-bot.md#устройство-принятое-в-adr-030). Изменение, спорящее с ADR, требует отдельного решения владельца.
+Всегда читай ближайший `AGENTS.md` и конфигурацию компонента. Для границы, состояния или polling открой соответствующий раздел [ADR-030](../../../docs/decisions/ADR-030-telegram-bot.md#решение); для грамматики `callback_data`, отказов Telegram или тестовых сценариев — соответствующий раздел [брифа](../../../docs/services/hub-bot.md#устройство-принятое-в-adr-030). Изменение, спорящее с ADR, требует отдельного решения владельца.
 
 ## 2. Держи Telegram внутри представления
 

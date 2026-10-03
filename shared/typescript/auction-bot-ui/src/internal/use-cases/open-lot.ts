@@ -85,7 +85,7 @@ function participantOf(status: LotStatusView): string | undefined {
 
 // Имя — подпись к цене, а не сам исход: отказ `GetDisplayNames` оставляет
 // карточку без имени, но не прячет ни цену, ни исход. Так же карточка сходки
-// в хабе переживает отказ ника автора (docs/services/telegram-bot.md). Отказ
+// в хабе переживает отказ ника автора (docs/services/hub-bot.md). Отказ
 // пишет в лог порт приложения: пакет логгера не держит.
 async function nameOf(input: {
   auction: AuctionPort;

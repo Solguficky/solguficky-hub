@@ -14,7 +14,7 @@ import { botInfo, type RecordedCall } from "./harness.js";
 // Разговор человека с ботом словами сценария: «написал», «нажал кнопку»,
 // «видит на экране». Структуры Telegram — update, callback_data, ForceReply —
 // собираются здесь, поэтому сценарий уровня L2 их не знает вовсе
-// (telegram-bot.md, «Угловые случаи», пункт 10).
+// (hub-bot.md, «Угловые случаи», пункт 10).
 
 type Button = { text: string; data: string };
 

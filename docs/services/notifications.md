@@ -356,7 +356,7 @@ JetStream участвует в первой границе, но не заме�
 | Identity | вне MVP: метод перечисления состава, когда понадобится наполнение и пересборка реплики |
 | Identity | метод разрешения внутреннего идентификатора в Telegram id |
 | Identity | синхронная проверка глобальной роли для объявления сообществу — `IdentityService.CheckGlobalRole`, реализован в [PER-232](https://linear.app/anticnvm/issue/per-232) |
-| Hub Bot | роль потребителя уведомлений: собственный durable consumer `hub-bot-notifications-events`, резолвинг получателя, рендеринг текста, retry и журнал попыток в JetStream KV ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md); имена уточнены ADR-044 от 2026-10-03; устройство — [бриф бота](telegram-bot.md#доставка-уведомлений)) |
+| Hub Bot | роль потребителя уведомлений: собственный durable consumer `hub-bot-notifications-events`, резолвинг получателя, рендеринг текста, retry и журнал попыток в JetStream KV ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md); имена уточнены ADR-044 от 2026-10-03; устройство — [бриф бота](hub-bot.md#доставка-уведомлений)) |
 
 Метод разрешения внутреннего идентификатора в Telegram id нужен каналу, а не Notifications: в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь. Он принят отдельным вызовом `IdentityService.ResolveTelegramUserId` ([integration.md](../architecture/integration.md)), реализован в [PER-231](https://linear.app/anticnvm/issue/per-231).
 
@@ -387,5 +387,5 @@ Quiet hours и группировка уведомлений в первую в�
 
 - Разбор дефектов прежнего обработчика: [архив](../archive/services/auction-domain-and-lessons.md)
 - [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md), [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md), [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md)
-- Соседи: [Meetups](meetups.md), [Identity](identity.md), [Hub Bot](telegram-bot.md)
+- Соседи: [Meetups](meetups.md), [Identity](identity.md), [Hub Bot](hub-bot.md)
 - [integration.md](../architecture/integration.md), [product/overview.md](../product/overview.md)

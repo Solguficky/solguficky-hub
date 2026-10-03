@@ -1,6 +1,6 @@
 # Hub Bot
 
-TypeScript + grammY. Устройство — [ADR-030](../../docs/decisions/ADR-030-telegram-bot.md) и [бриф](../../docs/services/telegram-bot.md). Языковые правила — `proj-write-typescript`, граница Telegram — `proj-write-grammy-bot`.
+TypeScript + grammY. Устройство — [ADR-030](../../docs/decisions/ADR-030-telegram-bot.md) и [бриф](../../docs/services/hub-bot.md). Языковые правила — `proj-write-typescript`, граница Telegram — `proj-write-grammy-bot`.
 
 - `src/presentation/` знает grammY, Bot API и Zod-разбор update.
 - `src/application/` принимает установленную личность и намерение. Типы Telegram сюда не входят.

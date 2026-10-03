@@ -1,6 +1,6 @@
 # Модуль TypeScript-сервиса
 
-Первый исполняемый процесс на TypeScript в репозитории — скелет Hub Bot. Файл объясняет, как язык собирает ESM-модуль под Node, откуда берутся типы и почему недоверенный ввод разбирается не компилятором, а схемой. Выбор стека компонента — [ADR-030](../../decisions/ADR-030-telegram-bot.md) и [бриф](../../services/telegram-bot.md); wire Identity — [unary-server.md](../grpc/unary-server.md) и [protobuf.md](../../standards/contracts/protobuf.md). Граница Telegram разобрана отдельно — [grammy/bot-adapter.md](../grammy/bot-adapter.md), инструмент тестов — [testing.md](testing.md).
+Первый исполняемый процесс на TypeScript в репозитории — скелет Hub Bot. Файл объясняет, как язык собирает ESM-модуль под Node, откуда берутся типы и почему недоверенный ввод разбирается не компилятором, а схемой. Выбор стека компонента — [ADR-030](../../decisions/ADR-030-telegram-bot.md) и [бриф](../../services/hub-bot.md); wire Identity — [unary-server.md](../grpc/unary-server.md) и [protobuf.md](../../standards/contracts/protobuf.md). Граница Telegram разобрана отдельно — [grammy/bot-adapter.md](../grammy/bot-adapter.md), инструмент тестов — [testing.md](testing.md).
 
 ## Механика
 

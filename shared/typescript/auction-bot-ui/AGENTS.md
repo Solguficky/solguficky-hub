@@ -1,6 +1,6 @@
 # Auction bot UI
 
-Общий пакет аукционного интерфейса бота хаба и бота аукциона. Устройство — [ADR-044](../../../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md) и [бриф ботов](../../../docs/services/telegram-bot.md). Языковые правила — `proj-write-typescript`. Команды — `just auction-bot-ui-*`.
+Общий пакет аукционного интерфейса бота хаба и бота аукциона. Устройство — [ADR-044](../../../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md) и [бриф ботов](../../../docs/services/hub-bot.md). Языковые правила — `proj-write-typescript`. Команды — `just auction-bot-ui-*`.
 
 - `src/index.ts` — публичная граница: шлюз `handleAuctionUpdate`, типы поверхности, update и результата, порты, тело экрана, кодировщик и parser `callback_data`. Всё, чего нет в нём и в `src/contract/index.ts`, приложению недоступно.
 - `src/gateway.ts` — шлюз: политика поверхности, затем диспетчер. Личность приносит update — приложение разрешает её само, один раз на update, — и шлюз Identity не зовёт.

@@ -127,7 +127,7 @@ Deep link из хаба вместо встроенного экрана отв�
 - Durable доставки — `hub-bot-notifications-events`, JetStream KV bucket журнала — `hub-bot-deliveries`. Это новые идентичности хранения и позиции подтверждения, а не алиасы прежних имён. Политика доставки и настройки хранения ADR-052 не меняются.
 - Продакшн-развёртывания ещё нет: миграций, совместимых имён, fallback и алиасов не вводится. Прежние dev-данные журнала и позиция старого durable не переносятся; новый durable с `deliver_policy=all` может заново прочитать сохранённые события, не имея отметок прежнего журнала. Поэтому дерево, где `hub` уже запускался до переименования, перед первым запуском удаляет свой том NATS (`solguficky-<дерево>-<хэш>-nats-data`): иначе бот повторно отправит уведомления из окна стрима. Переименование не удаляет живые ресурсы. Собственной PostgreSQL-базы у бота нет, базы остальных сервисов не переименовываются.
 
-Имена файлов ADR и `docs/services/telegram-bot.md` сохранены ради устойчивых ссылок. История ADR и датированных прогонов не переписывается; актуальные инструкции и каталог интеграции используют новые имена.
+Имена файлов ADR сохранены ради устойчивых ссылок; бриф обоих ботов переименован в `docs/services/hub-bot.md`, и ссылки на него обновлены во всём репозитории. История ADR и датированных прогонов не переписывается; актуальные инструкции и каталог интеграции используют новые имена.
 
 ## Связанные документы
 
@@ -135,5 +135,5 @@ Deep link из хаба вместо встроенного экрана отв�
 - Standards: нет
 - Задача: [PER-147](https://linear.app/anticnvm/issue/per-147)
 - Другие ADR: [ADR-030](ADR-030-telegram-bot.md) — дополняется раскладкой второго бота; [ADR-043](ADR-043-identity-roles-and-community-circles.md) — роли поверхностей и автовыдача; [ADR-040](ADR-040-auction-screen-sse.md) — отдельный read-only экран зала
-- Сервисы: [Telegram Bot и Auction Bot](../services/telegram-bot.md), [Identity](../services/identity.md), [Auction](../services/auction.md)
+- Сервисы: [Telegram Bot и Auction Bot](../services/hub-bot.md), [Identity](../services/identity.md), [Auction](../services/auction.md)
 - Архитектура: [overview.md](../architecture/overview.md), [integration.md](../architecture/integration.md), [decision-matrix.html](../architecture/decision-matrix.html)

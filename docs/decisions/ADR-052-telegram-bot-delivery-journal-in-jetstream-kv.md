@@ -29,7 +29,7 @@
 
 Выбор канала по ADR-028 §4 — **риск дубля, а не потери**. Отметка «доставлено» пишется после ответа Telegram, ack уходит после отметки. Падение между отправкой и отметкой повторяет сообщение человеку, но не теряет его. Если журнал недоступен на чтении, бот сообщение не отправляет, а откладывает: отправка вслепую и есть тот дубль, от которого журнал защищает.
 
-Числа повторов, классы отказов Telegram и Identity и форма текста — технический дизайн. Они ведутся в [брифе бота](../services/telegram-bot.md) и меняются без нового ADR.
+Числа повторов, классы отказов Telegram и Identity и форма текста — технический дизайн. Они ведутся в [брифе бота](../services/hub-bot.md) и меняются без нового ADR.
 
 ## Обоснование
 
@@ -70,6 +70,6 @@
 ## Связанные документы
 
 - Задача: [PER-217](https://linear.app/anticnvm/issue/per-217)
-- Сервис: [Telegram Bot](../services/telegram-bot.md)
+- Сервис: [Telegram Bot](../services/hub-bot.md)
 - Интеграция: [integration.md](../architecture/integration.md), раздел «JetStream»
 - Другие ADR: [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) — выбор канала §4; [ADR-030](ADR-030-telegram-bot.md) — сработавший сигнал пересмотра; [ADR-050](ADR-050-jetstream-topology-owned-by-platform.md) — топология принадлежит платформе

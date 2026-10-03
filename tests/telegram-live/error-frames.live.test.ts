@@ -14,11 +14,11 @@ import {
   readSecretStore,
 } from "./session.js";
 
-// Кадры ошибок из telegram-bot.md на уровне L3 (ADR-046, PER-279). Логику
+// Кадры ошибок из hub-bot.md на уровне L3 (ADR-046, PER-279). Логику
 // кадров уже держит L2 (tests/contour/bot-wire); здесь проверяется только то,
 // чего L2 не видит, — края Telegram: payload `/start`, доставленный настоящим
 // клиентом, настоящий `callback_query` и настоящая правка сообщения. E-01,
-// E-09 и остальные угловые случаи остаются на L2 — причины в telegram-bot.md.
+// E-09 и остальные угловые случаи остаются на L2 — причины в hub-bot.md.
 
 const store = readSecretStore();
 let driver: LiveDriver | undefined;

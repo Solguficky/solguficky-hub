@@ -1,6 +1,6 @@
 # Auction Bot
 
-Публичный вход в аукцион: отдельный процесс grammY со своим токеном и long polling. Устройство — [ADR-044](../../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md), [ADR-030](../../docs/decisions/ADR-030-telegram-bot.md) и [бриф ботов](../../docs/services/telegram-bot.md). Языковые правила — `proj-write-typescript`, граница Telegram — `proj-write-grammy-bot`. Команды — `just auction-bot-*`.
+Публичный вход в аукцион: отдельный процесс grammY со своим токеном и long polling. Устройство — [ADR-044](../../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md), [ADR-030](../../docs/decisions/ADR-030-telegram-bot.md) и [бриф ботов](../../docs/services/hub-bot.md). Языковые правила — `proj-write-typescript`, граница Telegram — `proj-write-grammy-bot`. Команды — `just auction-bot-*`.
 
 - `src/main.ts` — composition root: конфигурация, клиенты Identity и Auction, поллер и его остановка. Конфигурация — `src/config.ts`: кроме токенов пояс сообщества и необязательный аукцион ленты. Бот хаба — другой процесс: ни исходников, ни переменных `HUB_BOT_*` этот компонент не берёт.
 - `src/bot.ts` — адаптер grammY, единственное место, где есть Telegram. Бот отвечает только в личном чате. Здесь же доставка экрана: текст или фото карточки, смена вида сообщения новым сообщением с удалением прежнего.
