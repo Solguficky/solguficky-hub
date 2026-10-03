@@ -5,7 +5,7 @@ import {
   describe,
   expect,
   it,
-} from "../../../../apps/telegram-bot/testkit/index.js";
+} from "../../../../apps/hub-bot/testkit/index.js";
 import { openDelayProxy } from "./latency.js";
 
 // L0: прокси задержки пульта против эхо-сервера на localhost. Контур ему не
