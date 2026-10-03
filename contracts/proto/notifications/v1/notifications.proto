@@ -3,6 +3,7 @@ syntax = "proto3";
 package notifications.v1;
 
 import "auction/v1/auction.proto";
+import "identity/v1/roles.proto";
 import "meetups/v1/meetups.proto";
 
 // The addressed notification fact: "this person is owed this notification".
@@ -74,6 +75,11 @@ message Notification {
 
     // The recipient bought a lot: it was sold to them.
     LotPurchased lot_purchased = 15;
+
+    // Someone without access asked for a circle and is waiting for a decision.
+    // Sent to every administrator with the global "access requests" category
+    // on, never to the applicant: a subscription is not required.
+    AccessRequested access_requested = 16;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -104,6 +110,10 @@ message Cause {
     // event_id of the consumed Auction lot event. Stable across republication,
     // therefore a transport repeat is recognized.
     string auction_lot_event_id = 4;
+
+    // event_id of the consumed Identity event. Stable across republication,
+    // therefore a transport repeat is recognized.
+    string identity_event_id = 5;
   }
 }
 
@@ -232,4 +242,13 @@ message LotPurchased {
 
   // The price the lot was sold at.
   auction.v1.Money price = 2;
+}
+
+// A new application for a circle was opened. The applicant is not carried: who
+// asked, by which name and from which channel is data for the moderator, and the
+// channel leads the recipient to the application queue, where it is read from
+// IdentityService under the moderator's own rights.
+message AccessRequested {
+  // The circle asked for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  identity.v1.GlobalRole circle = 1;
 }

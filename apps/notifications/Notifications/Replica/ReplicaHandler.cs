@@ -61,7 +61,7 @@ public sealed class ReplicaHandler(
         if (application.Facts is { } produced)
         {
             facts.Record(produced.Type, produced.Facts);
-            facts.RecordWithdrawn(NotificationFacts.WithdrawnOnCancellation, produced.Withdrawn ?? []);
+            facts.RecordWithdrawn(produced.WithdrawalReason, produced.Withdrawn ?? []);
         }
 
         // Повтор несущий: ключ уже записан, но ApplyReplica мог упасть до ACK.

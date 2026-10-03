@@ -71,6 +71,23 @@ export function disableMeetupCategoryCallback(
 export function renderNotification(
   content: RenderableContent,
 ): NotificationMessage {
+  if (content.kind === "access-requested") {
+    // Минимальный кадр PER-435: повод и переход в очередь, где заявку решают.
+    // Кнопки отключения пока нет — её и строку в общих настройках несёт
+    // PER-466.
+    return {
+      text:
+        content.circle === "member"
+          ? "Новая заявка на доступ в сообщество"
+          : "Новая заявка на участие в аукционе",
+      keyboard: new InlineKeyboard().text(
+        "Открыть очередь",
+        // Кнопка следа: очередь придёт новым сообщением, а уведомление
+        // останется в истории.
+        traceCallback("v1:cm:p"),
+      ),
+    };
+  }
   if (content.kind === "community-announcement") {
     return {
       text: withHeadline("Объявление сообщества", content.body),

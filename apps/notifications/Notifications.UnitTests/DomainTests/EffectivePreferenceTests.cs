@@ -53,8 +53,9 @@ public class EffectivePreferenceTests
     public void Global_NothingConfigured_CarriesEveryCategoryWithItsProductDefault()
     {
         // Критерий «новый человек получает значения по умолчанию без отдельной
-        // команды»: ни одной строки в базе нет, а снимок полон.
-        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing);
+        // команды»: ни одной строки в базе нет, а снимок полон. Администратор
+        // видит весь словарь.
+        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, ["admin", "member", "public"]);
 
         snapshot.Categories.Select(state => state.Category)
             .ShouldBe(NotificationCategories.All, ignoreOrder: true);
@@ -68,10 +69,41 @@ public class EffectivePreferenceTests
     {
         var snapshot = EffectivePreference.Global(
             Guid.NewGuid(),
-            new Dictionary<NotificationCategory, bool> { [NotificationCategory.MeetupPublished] = false });
+            new Dictionary<NotificationCategory, bool> { [NotificationCategory.MeetupPublished] = false },
+            ["member", "public"]);
 
         Enabled(snapshot.Categories, NotificationCategory.MeetupPublished).ShouldBeFalse();
         Enabled(snapshot.Categories, NotificationCategory.MeetupChanged).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("maintainer")]
+    [InlineData("member")]
+    [InlineData("public")]
+    [InlineData(null)]
+    public void Global_PersonWithoutAdminRole_LeavesAccessRequestsOut(string? role)
+    {
+        // Категория администратора в снимке не прячется выключенной, а
+        // отсутствует: иначе переключатель обещал бы повод, которого не бывает.
+        // null — заблокированный или неизвестный реплике, ролей у него нет.
+        string[] roles = role is null ? [] : [role];
+
+        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, roles);
+
+        snapshot.Categories.Select(state => state.Category).ShouldNotContain(NotificationCategory.AccessRequest);
+        snapshot.Categories.Select(state => state.Category)
+            .ShouldBe(NotificationCategories.All.Where(category => category != NotificationCategory.AccessRequest), ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Global_AdminWhoTurnedAccessRequestsOff_CarriesItOff()
+    {
+        var snapshot = EffectivePreference.Global(
+            Guid.NewGuid(),
+            new Dictionary<NotificationCategory, bool> { [NotificationCategory.AccessRequest] = false },
+            ["admin", "member", "public"]);
+
+        Enabled(snapshot.Categories, NotificationCategory.AccessRequest).ShouldBeFalse();
     }
 
     [Fact]

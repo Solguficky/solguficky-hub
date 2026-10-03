@@ -223,6 +223,57 @@ public class ReplicaMappingTests
     }
 
     [Theory]
+    [InlineData(GlobalRole.Member, "member")]
+    [InlineData(GlobalRole.Public, "public")]
+    public void Identity_ApplicationSubmitted_CarriesOccasionAndCircle(GlobalRole circle, string expected)
+    {
+        var message = EventFactory.Application(IdentityId, version: 2, circle);
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.ApplicationSubmitted);
+        fact.OccasionRole.ShouldBe(expected);
+        fact.GlobalRoles.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(GlobalRole.Admin)]
+    [InlineData(GlobalRole.Maintainer)]
+    [InlineData(GlobalRole.Unspecified)]
+    public void Identity_ApplicationForCircleNobodyRequests_BecomesPoison(GlobalRole circle)
+    {
+        // Заявку ставят только на круги поверхностей: другой круг — испорченное
+        // событие, и оповещать о нём администраторов было бы ложью.
+        var message = EventFactory.Application(IdentityId, version: 2, circle);
+
+        ReplicaMapping.Identity(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Identity_RoleGranted_CarriesGrantedRole()
+    {
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Identity(IdentityId, version: 2))));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.RoleGranted);
+        fact.OccasionRole.ShouldBe("member");
+    }
+
+    [Fact]
+    public void Identity_OccasionWithoutFacts_OnlyMovesReplica()
+    {
+        // Снятие блокировки фактов не порождает и ничего не снимает: повод
+        // сводится к «другому», а снимок применяется как раньше.
+        var message = EventFactory.Identity(IdentityId, version: 3);
+        message.ProfileUnblocked = new ProfileUnblocked();
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.Other);
+        fact.OccasionRole.ShouldBeNull();
+        fact.GlobalRoles.ShouldBe(["member"]);
+    }
+
+    [Theory]
     [MemberData(nameof(BrokenIdentities))]
     public void Identity_ContractViolation_BecomesPoison(string violation, Action<IdentityEvent> breakIt)
     {

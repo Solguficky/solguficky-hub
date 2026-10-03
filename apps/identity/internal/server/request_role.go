@@ -56,7 +56,7 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 	if err != nil {
 		return nil, internal("upsert profile", err)
 	}
-	outcome, err := requestRoleTx(ctx, tx, identityID, circle, req, !registered)
+	outcome, opened, err := requestRoleTx(ctx, tx, identityID, circle, req, !registered)
 	if err != nil {
 		return nil, internal("request role", err)
 	}
@@ -65,6 +65,15 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 	if registered {
 		if err := outbox.Append(ctx, tx, identityID, outbox.ProfileRegistered, ""); err != nil {
 			return nil, internal("announce registration", err)
+		}
+	}
+	// Новая заявка — повод для оповещения администраторов
+	// (ADR-062). Она пишется после регистрации:
+	// регистрация обязана быть первым событием профиля. Найденная открытая
+	// заявка повода не даёт, поэтому повторный /start никого не оповещает.
+	if opened {
+		if err := outbox.Append(ctx, tx, identityID, outbox.ApplicationSubmitted, circle); err != nil {
+			return nil, internal("announce application", err)
 		}
 	}
 	roles, err := listRoles(ctx, tx, identityID)
@@ -85,49 +94,51 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 // список гасится всегда, даже когда круг уже есть; круга нет и отказа в силе
 // нет — заявка. Строка профиля блокируется первой, поэтому два /start одного
 // человека идут друг за другом, а решение администратора не встаёт между
-// чтением ролей и заявкой.
+// чтением ролей и заявкой. Второе значение отвечает, открыта ли заявка этим
+// вызовом, а не найдена открытой.
 func requestRoleTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	identityID, circle string,
 	req *identityv1.RequestRoleRequest,
 	announce bool,
-) (identityv1.RoleRequestOutcome, error) {
+) (identityv1.RoleRequestOutcome, bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, err
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
 	if blocked {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_BLOCKED, nil
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_BLOCKED, false, nil
 	}
 	heldBefore, err := holdsCircle(ctx, tx, identityID, circle)
 	if err != nil {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, err
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
 	if err := admitAllowedUsername(ctx, tx, identityID, req.GetTelegramUsername(), announce); err != nil {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, err
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
 	if heldBefore {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_ALREADY_HELD, nil
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_ALREADY_HELD, false, nil
 	}
 	heldAfter, err := holdsCircle(ctx, tx, identityID, circle)
 	if err != nil {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, err
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
 	if heldAfter {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST, nil
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST, false, nil
 	}
 	var declined bool
 	if err := tx.QueryRowContext(ctx, standingDeclineSQL, identityID, circle).Scan(&declined); err != nil {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, err
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
 	if declined {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_DECLINED, nil
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_DECLINED, false, nil
 	}
-	if err := openApplication(ctx, tx, identityID, circle, req); err != nil {
-		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, err
+	opened, err := openApplication(ctx, tx, identityID, circle, req)
+	if err != nil {
+		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
-	return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING, nil
+	return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING, opened, nil
 }
 
 // holdsCircle отвечает, есть ли у человека круг — сама роль или более сильная:
@@ -144,18 +155,27 @@ func holdsCircle(ctx context.Context, tx *sql.Tx, identityID, circle string) (bo
 	return held, err
 }
 
-func openApplication(ctx context.Context, tx *sql.Tx, identityID, circle string, req *identityv1.RequestRoleRequest) error {
+// openApplication отвечает, открыла ли она заявку. Ложь без ошибки — открытая
+// заявка на этот круг уже была, и вставка ничего не сделала.
+func openApplication(ctx context.Context, tx *sql.Tx, identityID, circle string, req *identityv1.RequestRoleRequest) (bool, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return err
+		return false, err
 	}
 	source, err := resolveApplicationSource(ctx, tx, req.SourceCode)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.ExecContext(ctx, openApplicationSQL, id.String(), identityID, circle,
+	result, err := tx.ExecContext(ctx, openApplicationSQL, id.String(), identityID, circle,
 		source.channel, source.unknown, nullableText(req.GetFirstName()))
-	return err
+	if err != nil {
+		return false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return inserted == 1, nil
 }
 
 func nullableText(value string) any {

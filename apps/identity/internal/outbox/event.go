@@ -75,6 +75,14 @@ func (r Record) Message() (*identityv1.IdentityEvent, error) {
 		event.Occasion = &identityv1.IdentityEvent_ProfileBlocked{ProfileBlocked: &identityv1.ProfileBlocked{}}
 	case ProfileUnblocked:
 		event.Occasion = &identityv1.IdentityEvent_ProfileUnblocked{ProfileUnblocked: &identityv1.ProfileUnblocked{}}
+	case ApplicationSubmitted:
+		role, err := globalRole(r.Role)
+		if err != nil {
+			return nil, err
+		}
+		event.Occasion = &identityv1.IdentityEvent_ApplicationSubmitted{
+			ApplicationSubmitted: &identityv1.ApplicationSubmitted{Role: role},
+		}
 	default:
 		return nil, fmt.Errorf("outbox: unknown occasion %q", r.Occasion)
 	}

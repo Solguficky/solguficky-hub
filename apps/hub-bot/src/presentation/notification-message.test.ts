@@ -307,6 +307,19 @@ describe("organizer message", () => {
   });
 });
 
+describe("access request", () => {
+  it.each([
+    ["member", "Новая заявка на доступ в сообщество"],
+    ["public", "Новая заявка на участие в аукционе"],
+  ] as const)("names the %s circle and leads to the queue as a trace", (circle, text) => {
+    const content: RenderableContent = { kind: "access-requested", circle };
+    expect(renderNotification(content).text).toBe(text);
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({ text: "Открыть очередь", callback_data: "v1:t:cm:p" }),
+    ]);
+  });
+});
+
 describe("community announcement", () => {
   const announcement = (body: string): RenderableContent => ({
     kind: "community-announcement",

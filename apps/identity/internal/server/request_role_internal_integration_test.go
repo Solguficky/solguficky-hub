@@ -33,10 +33,13 @@ func TestRequestRoleHubAllowlistInAuctionBotGrantsMemberAndPublic(t *testing.T) 
 	assertAllowedUsernameRows(t, db, "insider", allowedUsernameCounts{total: 1, used: 1})
 	assertApplications(t, db, resp.GetIdentityId())
 	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() {member,public} blocked=false")
+	assertApplicationEvents(t, db, resp.GetIdentityId())
 }
 
 // Человек не из списков ждёт: повторный /start с другим кодом и именем находит
-// ту же заявку и не переписывает ни источник, ни имя (пункты 6 и 19).
+// ту же заявку и не переписывает ни источник, ни имя (пункты 6 и 19). Новая
+// заявка — событие после регистрации, найденная — не событие
+// (ADR-062).
 func TestRequestRoleOutsideListsOpensOneApplication(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
@@ -48,8 +51,9 @@ func TestRequestRoleOutsideListsOpensOneApplication(t *testing.T) {
 	assertOutcome(t, again, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertRoleSetInternal(t, again.GetGlobalRoles())
 	assertApplications(t, db, first.GetIdentityId(), "public source= name=Alice")
-	// Создание заявки роль не меняет и событием не является (пункт 10).
-	assertEvents(t, db, first.GetIdentityId(), "v1 profile_registered() {} blocked=false")
+	assertEvents(t, db, first.GetIdentityId(),
+		"v1 profile_registered() {} blocked=false",
+		"v2 application_submitted(public) {} blocked=false")
 }
 
 // Заявка без источника и без имени: payload без `s_` и пустой first_name.
@@ -61,6 +65,9 @@ func TestRequestRoleWithoutSourceOpensBareApplication(t *testing.T) {
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertApplications(t, db, resp.GetIdentityId(), "member source=<nil> name=<nil>")
+	assertEvents(t, db, resp.GetIdentityId(),
+		"v1 profile_registered() {} blocked=false",
+		"v2 application_submitted(member) {} blocked=false")
 }
 
 // Заблокированному — ни роли, ни заявки, и запись белого списка не сгорает:
@@ -78,6 +85,7 @@ func TestRequestRoleBlockedGetsNeitherRoleNorApplication(t *testing.T) {
 	assertRoleSetInternal(t, resp.GetGlobalRoles())
 	assertAllowedUsernameRows(t, db, "outcast", allowedUsernameCounts{total: 1})
 	assertApplications(t, db, identityID)
+	assertApplicationEvents(t, db, identityID)
 }
 
 // declined на member новой заявки на member не даёт, а на public — не мешает:
@@ -96,6 +104,7 @@ func TestRequestRoleDeclinedGetsNoNewApplicationOnThatCircle(t *testing.T) {
 	assertOutcome(t, hub, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_DECLINED)
 	assertOutcome(t, auction, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertApplications(t, db, applicantID, "public source=<nil> name=Carol")
+	assertApplicationEvents(t, db, applicantID, "public")
 }
 
 // Отказ, снятый выдачей круга, заявке больше не мешает: после понижения
@@ -114,6 +123,7 @@ func TestRequestRoleAfterLiftedDeclineOpensApplication(t *testing.T) {
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertApplications(t, db, applicantID, "member source=<nil> name=<nil>")
+	assertApplicationEvents(t, db, applicantID, "member")
 }
 
 // Круг уже есть — исход ALREADY_HELD, но запись белого списка всё равно
@@ -131,6 +141,7 @@ func TestRequestRoleAlreadyHeldStillConsumesAllowlist(t *testing.T) {
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_ALREADY_HELD)
 	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertAllowedUsernameRows(t, db, "bidder", allowedUsernameCounts{total: 1, used: 1})
+	assertApplicationEvents(t, db, identityID)
 }
 
 // public вложен в member: member просит аукцион и уже его имеет.
@@ -144,6 +155,7 @@ func TestRequestRoleNestedCircleIsAlreadyHeld(t *testing.T) {
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_ALREADY_HELD)
 	assertApplications(t, db, identityID)
+	assertApplicationEvents(t, db, identityID)
 }
 
 // Аукционная запись в боте хаба гасится и выдаёт public, а исход говорит о
@@ -158,6 +170,9 @@ func TestRequestRoleAuctionAllowlistInHubBotGrantsPublicAndOpensMemberApplicatio
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertApplications(t, db, resp.GetIdentityId(), "member source=<nil> name=Dan")
+	assertEvents(t, db, resp.GetIdentityId(),
+		"v1 profile_registered() {public} blocked=false",
+		"v2 application_submitted(member) {public} blocked=false")
 }
 
 // Белый список, сработавший позже заявки, закрывает её выдачей (пункт 8).
@@ -172,10 +187,11 @@ func TestRequestRoleAllowlistAfterApplicationClosesIt(t *testing.T) {
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
 	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertApplications(t, db, waiting.GetIdentityId())
+	assertApplicationEvents(t, db, waiting.GetIdentityId(), "public")
 }
 
 // Два /start одного человека идут друг за другом под блокировкой профиля:
-// заявка одна.
+// заявка одна, и событие о ней одно.
 func TestConcurrentRequestRoleOpensOneApplication(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
@@ -201,6 +217,7 @@ func TestConcurrentRequestRoleOpensOneApplication(t *testing.T) {
 		}
 	}
 	assertApplications(t, db, identityID, "public source=<nil> name=<nil>")
+	assertApplicationEvents(t, db, identityID, "public")
 }
 
 func TestRequestRoleRejectsInvalidArguments(t *testing.T) {
@@ -277,5 +294,20 @@ ORDER BY requested_role`, identityID)
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("open applications:\n got  %q\n want %q", got, want)
+	}
+}
+
+// assertApplicationEvents сверяет круги событий application_submitted человека в
+// порядке версий: сколько заявок открыто, столько и событий.
+func assertApplicationEvents(t *testing.T, db *sql.DB, identityID string, want ...string) {
+	t.Helper()
+	var got []string
+	for _, event := range outboxEvents(t, db, identityID) {
+		if event.occasion == "application_submitted" {
+			got = append(got, event.role)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("application_submitted events:\n got  %q\n want %q", got, want)
 	}
 }

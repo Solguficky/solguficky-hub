@@ -38,6 +38,7 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.identity.role_revoked': identity_events_pb2.IdentityEvent,
     'events.identity.profile_blocked': identity_events_pb2.IdentityEvent,
     'events.identity.profile_unblocked': identity_events_pb2.IdentityEvent,
+    'events.identity.application_submitted': identity_events_pb2.IdentityEvent,
     'events.meetups.meetup_created': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_changed': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_published': meetups_events_pb2.MeetupEvent,

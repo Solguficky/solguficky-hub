@@ -305,7 +305,7 @@ identity-test: identity-proto
 # `go test -tags=integration -list . ./...` без базы. Опечатка в теге молча
 # выключает файл, на который не ссылаются соседние файлы пакета, и недобор до
 # порога — единственный её след; файл со ссылками роняет компиляцию пакета.
-IDENTITY_TEST_THRESHOLD := "211"
+IDENTITY_TEST_THRESHOLD := "212"
 
 # Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
 # прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не
@@ -605,8 +605,8 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "316"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "115"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "338"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "128"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

@@ -90,11 +90,21 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         SELECT EXISTS (SELECT 1 FROM meetup_replica WHERE meetup_id = @MeetupId AND visibility = 'hidden');
         """;
 
+    // Заявитель всё ещё ждёт по последнему слову реплики, уже обновлённой
+    // этой транзакцией. Запоздавшая заявка — вернувшаяся после Nak, когда
+    // допуск или блокировка уже применились, — не оповещает о том, что решено.
+    private const string StillWaitingSql = """
+        SELECT EXISTS (
+            SELECT 1 FROM identity_replica
+            WHERE identity_id = @IdentityId AND NOT blocked AND NOT (global_roles && @Holding));
+        """;
+
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
-            not_after)
-        SELECT id, recipient, @Type, @CauseKind, @CauseId, @MeetupId, payload, @RequestId, @Now, @NotAfter
+            not_after, applicant_id, access_circle)
+        SELECT id, recipient, @Type, @CauseKind, @CauseId, @MeetupId, payload, @RequestId, @Now, @NotAfter,
+            @ApplicantId, @AccessCircle
         FROM unnest(@Ids, @Recipients, @Payloads) AS fact (id, recipient, payload)
         ON CONFLICT DO NOTHING;
         """;
@@ -106,6 +116,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         {
             Type = type, CauseKind = causeKind, CauseId = causeId,
             MeetupId = (Guid?)null, RequestId = (string?)null,
+            ApplicantId = (Guid?)null, AccessCircle = (string?)null,
             Now = now.UtcDateTime, NotAfter = notAfter.UtcDateTime,
             Ids = new[] { Guid.Parse(fact.NotificationId) },
             Recipients = new[] { Guid.Parse(fact.RecipientId) },
@@ -130,6 +141,19 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND dispatched_at IS NULL
             AND withdrawn_at IS NULL
             AND type = ANY(@Types)
+        RETURNING type;
+        """;
+
+    // Снятие при закрытой заявке: допуск или блокировка уже решили то, о чём
+    // факт зовёт администратора. Круги закрытых заявок приходят параметром.
+    // Без SKIP LOCKED по той же причине, что снятие при отмене.
+    private const string WithdrawOnApplicationClosedSql = """
+        UPDATE notification
+        SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        WHERE applicant_id = @ApplicantId
+            AND dispatched_at IS NULL
+            AND withdrawn_at IS NULL
+            AND access_circle = ANY(@Circles)
         RETURNING type;
         """;
 
@@ -259,6 +283,134 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         };
 
         return produced is null ? null : produced with { Withdrawn = withdrawn };
+    }
+
+    /// <summary>
+    /// Разворачивает повод события Identity и пишет факты в транзакции
+    /// <paramref name="work" /> — той же, где ключ события и снимок реплики.
+    /// Новая заявка оповещает администраторов, допуск и блокировка снимают
+    /// неотправленное о закрытых заявках. Возвращает <c>null</c>, если событие
+    /// поводом не является или снимать было нечего.
+    /// </summary>
+    /// <remarks>
+    /// Как и у сходки, повод не зависит от того, сдвинул ли он реплику:
+    /// запоздавшее событие версию не двигает, но заявка от этого не перестаёт
+    /// быть поданной, а допуск — выданным.
+    /// </remarks>
+    internal static async Task<ProducedFacts?> AddForIdentityEvent(
+        UnitOfWork work,
+        IdentityFact fact,
+        DateTimeOffset now,
+        TimeSpan staleAfter,
+        CancellationToken cancellationToken)
+    {
+        switch (fact.Occasion)
+        {
+            case IdentityOccasion.ApplicationSubmitted:
+                return new ProducedFacts(
+                    NotificationFacts.AccessRequestedType,
+                    await AddAccessRequested(work, fact, now, now + staleAfter, cancellationToken));
+
+            case IdentityOccasion.RoleGranted:
+            case IdentityOccasion.ProfileBlocked:
+                var withdrawn = await WithdrawOnApplicationClosed(work, fact, now, cancellationToken);
+
+                // Выдача и блокировка случаются часто, а заявка у человека —
+                // редко: пустое снятие в лог не идёт, иначе каждая выдача
+                // выглядела бы поводом.
+                return withdrawn.Count == 0
+                    ? null
+                    : new ProducedFacts(NotificationFacts.AccessRequestedType, FactCount.None)
+                    {
+                        Withdrawn = withdrawn,
+                        WithdrawalReason = NotificationFacts.WithdrawnOnApplicationClosed,
+                    };
+
+            default:
+                return null;
+        }
+    }
+
+    // Роли, которые держат круг: круги вложенные, а реплика плоская (ADR-043).
+    private static string[] Holding(string circle) => circle switch
+    {
+        "member" => ["admin", "maintainer", "member"],
+        "public" => ["admin", "maintainer", "member", "public"],
+        _ => throw new ArgumentOutOfRangeException(nameof(circle), circle, "circle is not requestable"),
+    };
+
+    private static async Task<FactCount> AddAccessRequested(
+        UnitOfWork work,
+        IdentityFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var circle = fact.OccasionRole!;
+
+        if (!await work.Scalar(StillWaitingSql, new { fact.IdentityId, Holding = Holding(circle) }, cancellationToken))
+        {
+            return FactCount.None;
+        }
+
+        // Заявитель исключается как исполнитель: администратор заявки не
+        // подаёт — круг у него уже есть, — но правило «о себе не сообщают»
+        // держится и тут.
+        var audience = await work.Query<AudienceRow>(
+            AudienceSql,
+            new
+            {
+                Default = NotificationCategories.DefaultEnabled(NotificationFacts.AccessRequestCategory),
+                Category = NotificationCategories.Storage(NotificationFacts.AccessRequestCategory),
+                Circle = NotificationCategories.Administrators.ToArray(),
+                Performer = (Guid?)fact.IdentityId,
+            },
+            cancellationToken);
+
+        return await Insert(
+            work,
+            new FactCause(
+                NotificationFacts.AccessRequestedType,
+                NotificationFacts.IdentityEventCause,
+                fact.EventId.ToString(),
+                MeetupId: null,
+                RequestId: null)
+            {
+                ApplicantId = fact.IdentityId,
+                AccessCircle = circle,
+            },
+            audience,
+            (id, recipient) => NotificationFacts.AccessRequested(id, recipient, fact, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<WithdrawnFacts>> WithdrawOnApplicationClosed(
+        UnitOfWork work,
+        IdentityFact fact,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Блокировка закрывает все заявки человека. Выдача — заявки на этот и
+        // более слабые круги (ADR-060, пункт 8): public закрывает только заявку
+        // в аукцион, любая роль сильнее — обе.
+        string[] circles = fact.Occasion == IdentityOccasion.RoleGranted && fact.OccasionRole == "public"
+            ? ["public"]
+            : ["member", "public"];
+
+        var types = await work.Query<string>(
+            WithdrawOnApplicationClosedSql,
+            new
+            {
+                ApplicantId = fact.IdentityId,
+                Now = now.UtcDateTime,
+                Reason = NotificationFacts.WithdrawnOnApplicationClosed,
+                Circles = circles,
+            },
+            cancellationToken);
+
+        return WithdrawnFacts.ByType(types);
     }
 
     /// <summary>
@@ -507,6 +659,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 cause.CauseId,
                 cause.MeetupId,
                 cause.RequestId,
+                cause.ApplicantId,
+                cause.AccessCircle,
                 Now = now.UtcDateTime,
                 NotAfter = notAfter.UtcDateTime,
                 Ids = ids,
@@ -596,9 +750,14 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     // Повод строки: тип факта, ссылка на то, что его породило, сходка и цепочка.
     // Отдельно от MeetupFact, потому что у сработавшего напоминания и у ручной
-    // рассылки события нет. Сходки нет у объявления сообществу.
+    // рассылки события нет. Сходки нет у объявления сообществу. Заявитель и
+    // круг есть только у факта о заявке.
     private sealed record FactCause(string Type, string CauseKind, string CauseId, Guid? MeetupId, string? RequestId)
     {
+        public Guid? ApplicantId { get; init; }
+
+        public string? AccessCircle { get; init; }
+
         public static FactCause Of(MeetupFact fact, string type) =>
             new(type, NotificationFacts.MeetupEventCause, fact.EventId.ToString(), fact.MeetupId, fact.RequestId);
 

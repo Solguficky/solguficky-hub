@@ -110,6 +110,13 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
     private const string LastIdentitySql = "SELECT MAX(occurred_at) FROM identity_replica;";
 
+    // Заблокированный ролей не имеет: Identity отзывает их той же транзакцией,
+    // а условие здесь держит то же правило против рассогласованной строки.
+    private const string ActiveRolesSql = """
+        SELECT unnest(global_roles) FROM identity_replica
+        WHERE identity_id = @IdentityId AND NOT blocked;
+        """;
+
 
     /// <summary>
     /// Применяет факт: записывает ключ, снимок, если версия новее, и адресные
@@ -166,6 +173,15 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         else if (fact is IdentityFact identity)
         {
             written = await work.Execute(IdentitySql, IdentityRow(identity, now), cancellationToken);
+
+            // Как у сходки: повод не зависит от сдвига реплики, а адресатов и
+            // то, ждёт ли заявитель, решает уже обновлённая реплика.
+            facts = await NotificationStore.AddForIdentityEvent(
+                work,
+                identity,
+                now,
+                factOptions.Value.StaleAfter,
+                cancellationToken);
         }
         else
         {
@@ -202,6 +218,13 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         return rows.Count == 1 ? rows[0].State() : null;
     }
+
+    /// <summary>
+    /// Активные роли человека по реплике внутри чужой транзакции. Пусто, если
+    /// реплика о нём не знает или он заблокирован.
+    /// </summary>
+    internal static Task<IReadOnlyList<string>> ActiveRoles(UnitOfWork work, Guid identityId, CancellationToken cancellationToken) =>
+        work.Query<string>(ActiveRolesSql, new { IdentityId = identityId }, cancellationToken);
 
     /// <summary>
     /// Момент коммита самого позднего применённого события источника. Нужен

@@ -244,6 +244,34 @@ public class NotificationFactsTests
         notification.HasRequestId.ShouldBeFalse();
     }
 
+    [Fact]
+    public void AccessRequested_Application_CarriesCircleAndIdentityEventButNotTheApplicant()
+    {
+        var applicant = EventFactory.NewId();
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Application(applicant, version: 2, Identity.V1.GlobalRole.Public)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        var notification = NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter);
+
+        notification.RecipientId.ShouldBe(RecipientId.ToString());
+        notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
+        notification.AccessRequested.Circle.ShouldBe(Identity.V1.GlobalRole.Public);
+        notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
+        notification.HasRequestId.ShouldBeFalse();
+        // Кто просит — данные модератора: заявителя нет нигде в сообщении.
+        notification.ToString().ShouldNotContain(applicant);
+    }
+
+    [Fact]
+    public void AccessRequested_OtherOccasion_Throws()
+    {
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Identity(EventFactory.NewId(), version: 2)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        Should.Throw<ArgumentException>(() => NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter));
+    }
+
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>
         ReplicaMapping.Meetup(EventFactory.Bytes(message))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<MeetupFact>();

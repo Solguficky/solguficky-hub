@@ -1,10 +1,12 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   MeetupLifecycle,
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
 import {
+  AccessRequestedSchema,
   CommunityAnnouncementSchema,
   MeetupAspect,
   type MeetupCard,
@@ -363,6 +365,35 @@ describe("decodeNotification", () => {
   it("rejects bytes that are not a notification", () => {
     expect(decodeNotification(new Uint8Array([0xff, 0xff, 0xff])).kind).toBe(
       "malformed",
+    );
+  });
+
+  describe("access requests", () => {
+    const requested = (circle: GlobalRole): Uint8Array =>
+      published((message) => {
+        message.type = {
+          case: "accessRequested",
+          value: create(AccessRequestedSchema, { circle }),
+        };
+      });
+
+    it.each([
+      [GlobalRole.MEMBER, "member"],
+      [GlobalRole.PUBLIC, "public"],
+    ] as const)("decodes a request for circle %s", (circle, expected) => {
+      expect(decodeNotification(requested(circle))).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "access-requested", circle: expected } },
+      });
+    });
+
+    // Заявку ставят только на круги поверхностей: другой круг — дефект
+    // издателя, а не повод звать администратора.
+    it.each([GlobalRole.ADMIN, GlobalRole.MAINTAINER, GlobalRole.UNSPECIFIED])(
+      "rejects a request for circle %s",
+      (circle) => {
+        expect(decodeNotification(requested(circle)).kind).toBe("malformed");
+      },
     );
   });
 });

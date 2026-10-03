@@ -13,8 +13,8 @@ import "identity/v1/roles.proto";
 // these facts are not repeated here: they live in docs/architecture/integration.md,
 // section "Identity NATS".
 
-// A recorded fact about one person: why their access changed and what is true
-// about it now.
+// A recorded fact about one person: what happened to their access and what is
+// true about it now.
 message IdentityEvent {
   // Canonical lowercase UUIDv7 with hyphens. Identifies the outbox row and is
   // the same value again when that row is published more than once.
@@ -28,9 +28,12 @@ message IdentityEvent {
   // Profile version after the event was applied. Monotonic within one profile
   // and starting at 1, so 0 is not a valid value.
   //
-  // It counts every change of the snapshot below, roles included, and not only
-  // the changes of the profile itself: a consumer compares it against the
-  // version it already holds for this person.
+  // It counts every event of the profile, and every change of the snapshot
+  // below, roles included, is one. The converse does not hold: an occasion that
+  // changes no access, such as application_submitted, still takes a version and
+  // carries the snapshot it left as it was. A consumer compares the version
+  // against the one it already holds for this person to order snapshots, and
+  // must not read a newer version alone as changed access.
   int64 version = 3;
 
   // RFC 3339 instant in UTC: the one moment the change was decided from and
@@ -42,14 +45,15 @@ message IdentityEvent {
   // body of every event is a whole snapshot, never a delta.
   IdentityState state = 5;
 
-  // Why the state changed - the occasion. Exactly one is set, and an empty oneof
-  // is not a value.
+  // What happened - the occasion. Exactly one is set, and an empty oneof is not
+  // a value.
   oneof occasion {
     ProfileRegistered profile_registered = 6;
     RoleGranted role_granted = 7;
     RoleRevoked role_revoked = 8;
     ProfileBlocked profile_blocked = 9;
     ProfileUnblocked profile_unblocked = 10;
+    ApplicationSubmitted application_submitted = 11;
   }
 }
 
@@ -121,3 +125,21 @@ message ProfileBlocked {}
 // The block was lifted. Lifting it restores no role, so whatever set the person
 // had while blocked is the set they have after: this occasion never adds one.
 message ProfileUnblocked {}
+
+// The person asked for a circle they do not hold, and a new application for it
+// was opened. It changes no access: the snapshot is the one the person already
+// had, never blocked and never holding the requested circle.
+//
+// It is reported once per application. A repeated request finds the open
+// application and reports nothing, and a request that ends in admission from the
+// allowed-username list opens no application at all. Closing an application is
+// not an occasion of its own: an admission arrives as role_granted, a refusal in
+// the public circle as profile_blocked, and a refusal in the member circle is
+// not published.
+//
+// The applicant's name, username and arrival channel are deliberately absent:
+// they are data for the moderator and stay in IdentityService.
+message ApplicationSubmitted {
+  // The circle asked for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  GlobalRole role = 1;
+}
