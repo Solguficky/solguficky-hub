@@ -90,7 +90,9 @@
                 color: var(--muted); background: var(--fill); box-shadow: inset 3px 0 0 var(--line); }
 
   /* ----------------------------------------------------- содержание слева */
-  .layout { display: grid; gap: 44px; align-items: start; }
+  /* minmax(0, 1fr): без него единственная колонка растягивается по самой
+     широкой таблице, и на телефоне вся страница уезжает за правый край. */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 44px; align-items: start; }
   .sidebar { position: sticky; top: 22px; align-self: start; padding-top: 4px; }
   .toc h2 { font-weight: 700; color: var(--ink); margin: 0 0 10px;
             padding-bottom: 9px; box-shadow: inset 0 -2px 0 var(--ink); }
@@ -152,7 +154,7 @@
      заливки: то же правило, которым страница отличает контент от кнопок.
      Кнопки кадра ничего не делают, поэтому это span, а не button. */
   .frames { display: grid; gap: 22px 26px; margin: 20px 0; align-items: start; }
-  .frame { margin: 0; }
+  .frame { margin: 0; min-width: 0; }
   .frame .who { display: block; margin-bottom: 6px; }
   .chat { background: var(--fill); padding: 12px; display: grid; gap: 6px; }
   .bubble { background: var(--paper); padding: 10px 12px; font-size: 14px; line-height: 1.45;
@@ -214,6 +216,10 @@
   }
   @media (max-width: 560px) {
     .shell { width: calc(100% - 32px); }
+    /* Колонка состояния — главное в таблице: на телефоне метка переносится,
+       а не уезжает за край прокручиваемой обёртки. */
+    th, td { padding: 8px; }
+    td .badge { white-space: normal; }
   }
 
   @media print {
