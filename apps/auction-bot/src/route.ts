@@ -1,9 +1,13 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  type AuctionBotPorts,
+  type AuctionResult,
+  encodeAuctionCallback,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
   type TelegramUser,
+  type Viewer,
 } from "@solguficky/auction-bot-ui";
 import type { EntryPorts } from "./entry-ports.js";
 import type { AuctionEntryScreen } from "./entry-screen.js";
@@ -20,8 +24,24 @@ export type RouteFailure = {
 export type RouteOutcome = {
   screen: AuctionEntryScreen;
   identityId?: string;
+  // Смотрящий торгового экрана: от его имени край берёт байты изображения.
+  viewer?: Viewer;
   failure?: RouteFailure;
 };
+
+// Торговое нажатие через шлюз пакета поверхности `auction` с уже
+// разрешённой личностью (ADR-044, «Доступ как обязательный шлюз»). Над этой
+// функцией идёт contract suite пакета.
+export function tradeCallback(input: {
+  ports: AuctionBotPorts;
+  identity: ResolvedIdentity;
+  data: string;
+}): Promise<AuctionResult> {
+  return handleAuctionUpdate(
+    { kind: "auction", ports: input.ports },
+    { identity: input.identity, input: { kind: "callback", data: input.data } },
+  );
+}
 
 // Нажатие кнопки без Telegram: вход — примитивы update, выход — оболочка.
 //
@@ -36,6 +56,7 @@ export async function routeAuctionCallback(input: {
   ports: EntryPorts;
   user: TelegramUser;
   data: string;
+  auctionId?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({
     ...input,
@@ -46,6 +67,7 @@ export async function routeAuctionCallback(input: {
 export function routeAuctionStart(input: {
   ports: EntryPorts;
   user: TelegramUser;
+  auctionId?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({ ...input, action: { kind: "start" } });
 }
@@ -54,6 +76,9 @@ async function routeEntry(input: {
   ports: EntryPorts;
   user: TelegramUser;
   action: { kind: "start" } | { kind: "callback"; data: string };
+  // Аукцион ленты из конфигурации. Нет — «Аукционы» отвечают, что каталог
+  // ещё не открыт: чтения текущего аукциона в контракте нет.
+  auctionId?: string;
 }): Promise<RouteOutcome> {
   const local =
     input.action.kind === "callback"
@@ -100,15 +125,25 @@ async function routeEntry(input: {
     }
     if (input.action.kind === "start")
       return { screen: { kind: "menu" }, identityId };
-    if (local === "auctions")
+    if (local === "auctions" && input.auctionId === undefined)
       return { screen: { kind: "auctions" }, identityId };
-    const result = await handleAuctionUpdate(
-      { kind: "auction", ports: input.ports },
-      { identity, input: { kind: "callback", data: input.action.data } },
-    );
+    // «Аукционы» при названном аукционе — первая страница его ленты.
+    const data =
+      local === "auctions" && input.auctionId !== undefined
+        ? encodeAuctionCallback({
+            kind: "feed",
+            auctionId: input.auctionId,
+            page: 0,
+          })
+        : input.action.data;
+    const result = await tradeCallback({ ports: input.ports, identity, data });
     switch (result.kind) {
       case "screen":
-        return { screen: { kind: "auction", body: result.body }, identityId };
+        return {
+          screen: { kind: "auction", body: result.body },
+          identityId,
+          viewer,
+        };
       case "denied":
         return {
           screen: { kind: "denied", reason: result.reason },

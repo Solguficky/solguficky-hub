@@ -38,16 +38,90 @@ export type Viewer = {
   globalRoles: readonly GlobalRole[];
 };
 
+// Сумма в минимальных единицах валюты — копейках для RUB. `number`, а не
+// `bigint`: суммы аукциона далеко внутри безопасного целого, а снимок ходит
+// через `JSON.stringify` в contract suite. Адаптер проверяет `int64` провода.
+export type Money = {
+  minorUnits: number;
+  currency: string;
+};
+
+// Каталожная карточка лота (ADR-057). Изображение — только его версия: байты
+// грузит приложение через `LotImagePort`, когда показывает карточку.
+export type LotCardView = {
+  title: string;
+  // Пустая строка — описания нет.
+  description: string;
+  image?: { version: string };
+};
+
+// Где лот, — ветка `status` снимка. Причины снятия и непродажи экраны не
+// показывают, поэтому их здесь нет.
+export type LotStatusView =
+  | { kind: "draft" }
+  | { kind: "scheduled"; startingPrice: Money }
+  | {
+      kind: "trading";
+      currentPrice: Money;
+      leaderId?: string;
+      // Момент RFC 3339 в UTC. Нет — лот ведёт человек, а не время.
+      deadline?: string;
+    }
+  | { kind: "held"; currentPrice: Money; leaderId?: string }
+  | { kind: "sold"; winnerId: string; price: Money }
+  | { kind: "unsold" }
+  | { kind: "withdrawn" };
+
 // Срез `auction.v1.LotSnapshot`, который нужен экранам. Поля добавляют листья,
 // которые их показывают.
 export type LotView = {
   lotId: string;
   auctionId: string;
   version: number;
+  // Нет — у лота нет строки каталога; это не то же, что пустое описание.
+  card?: LotCardView;
+  // Порог ставки сейчас; есть только у лота в торгах.
+  nextPrice?: Money;
+  // Шаг, когда он один на все цены. Сетку шагов край не вычисляет: правило
+  // шага принадлежит Auction, а `nextPrice` уже несёт его результат.
+  fixedStep?: Money;
+  status: LotStatusView;
+};
+
+// Одна страница `ListAuctionLots`. Пустой `nextPageToken` — лента кончилась.
+export type LotPage = {
+  lots: readonly LotView[];
+  nextPageToken: string;
 };
 
 export interface AuctionPort {
   getLot(request: { viewer: Viewer; lotId: string }): Promise<LotView>;
+  listAuctionLots(request: {
+    viewer: Viewer;
+    auctionId: string;
+    pageToken: string;
+  }): Promise<LotPage>;
+  // Готовые к показу имена по идентификаторам участников (ADR-059): метки
+  // ставит Auction, край их не добавляет.
+  getDisplayNames(request: {
+    viewer: Viewer;
+    auctionId: string;
+    participantIds: readonly string[];
+  }): Promise<Readonly<Record<string, string>>>;
+}
+
+export type LotImage = {
+  content: Uint8Array;
+  mediaType: string;
+  // Версия этих байтов; может быть новее версии из прочитанной карточки.
+  version: string;
+};
+
+// Байты изображения лота. Пакет этот порт не зовёт: загрузка файла и кэш
+// `file_id` — дело Telegram-края приложения (ADR-057, дополнение), а тип здесь,
+// чтобы оба бота реализовали одну сигнатуру.
+export interface LotImagePort {
+  getLotImage(request: { viewer: Viewer; lotId: string }): Promise<LotImage>;
 }
 
 export type AuctionBotPorts = {

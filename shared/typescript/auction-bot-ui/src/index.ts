@@ -9,6 +9,7 @@ export {
   type AuctionCallbackErrorReason,
   type AuctionIntent,
   encodeAuctionCallback,
+  MAX_FEED_PAGE,
   type ParsedAuctionCallback,
   parseAuctionCallback,
 } from "./callback-data.js";
@@ -24,7 +25,13 @@ export type {
   AuctionPort,
   GlobalRole,
   IdentityPort,
+  LotCardView,
+  LotImage,
+  LotImagePort,
+  LotPage,
+  LotStatusView,
   LotView,
+  Money,
   ResolvedIdentity,
   TelegramUser,
   Viewer,
@@ -33,4 +40,5 @@ export type {
   AuctionBlock,
   AuctionButton,
   AuctionScreenBody,
+  FeedItem,
 } from "./screen.js";

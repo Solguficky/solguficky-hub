@@ -11,7 +11,10 @@ import {
 describe("FAQ content", () => {
   it("keeps explicit placeholders until the organizer supplies text", () => {
     expect(readFaqContent({})).toEqual({ ok: true, content: defaultFaq });
-    const screen = renderEntryScreen({ kind: "faq" });
+    const screen = renderEntryScreen(
+      { kind: "faq" },
+      { timeZone: "Europe/Moscow" },
+    );
     expect(screen.text).toContain("Отменить сделанную ставку нельзя");
     for (const text of Object.values(defaultFaq))
       expect(screen.text).toContain(text);
@@ -31,7 +34,10 @@ describe("FAQ content", () => {
       AUCTION_FAQ_QUESTION_URL: "https://t.me/organizer",
     });
     if (!result.ok) throw new Error(result.error);
-    const screen = renderEntryScreen({ kind: "faq" }, result.content);
+    const screen = renderEntryScreen(
+      { kind: "faq" },
+      { faq: result.content, timeZone: "Europe/Moscow" },
+    );
     expect(screen.text).toContain("Порядок организатора");
     expect(screen.text).toContain("После сбоя: <текст>");
     expect(screen.text).toContain("Условия доставки");
@@ -66,7 +72,10 @@ describe("FAQ content", () => {
     const result = readFaqContent(env);
     if (!result.ok) throw new Error(result.error);
     expect(
-      renderEntryScreen({ kind: "faq" }, result.content).text.length,
+      renderEntryScreen(
+        { kind: "faq" },
+        { faq: result.content, timeZone: "Europe/Moscow" },
+      ).text.length,
     ).toBeLessThan(4096);
     expect(readFaqContent({ AUCTION_FAQ_ITEMS: "x".repeat(501) }).ok).toBe(
       false,

@@ -7,8 +7,13 @@ const LOT: LotView = {
   lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c",
   auctionId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1",
   version: 1,
+  status: { kind: "withdrawn" },
 };
-const LOT_BUTTON = encodeAuctionCallback({ kind: "lot", lotId: LOT.lotId });
+const LOT_BUTTON = encodeAuctionCallback({
+  kind: "lot",
+  lotId: LOT.lotId,
+  page: 0,
+});
 
 function surfaceFor(
   kind: AuctionSurface["kind"],
@@ -32,6 +37,14 @@ function surfaceFor(
         async getLot() {
           calls.auction += 1;
           return LOT;
+        },
+        async listAuctionLots() {
+          calls.auction += 1;
+          return { lots: [LOT], nextPageToken: "" };
+        },
+        async getDisplayNames() {
+          calls.auction += 1;
+          return {};
         },
       },
     },

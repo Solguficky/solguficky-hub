@@ -80,6 +80,7 @@ final class GrpcBoundarySpec
     def getDisplayNames(in: wire.GetDisplayNamesRequest) = unused
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest) = unused
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest) = unused
+    def getLotImage(in: wire.GetLotImageRequest) = unused
   }
 
   private lazy val binding =

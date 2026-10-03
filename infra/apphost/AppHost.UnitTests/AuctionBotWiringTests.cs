@@ -59,6 +59,7 @@ public class AuctionBotWiringTests
             .ToArray()
             .ShouldBe(
             [
+                "AUCTION_BOT_COMMUNITY_TIME_ZONE",
                 "AUCTION_BOT_ENVIRONMENT",
                 "AUCTION_BOT_SERVICE_TOKEN",
                 "AUCTION_BOT_TOKEN",
@@ -67,6 +68,7 @@ public class AuctionBotWiringTests
             ]);
         ((ParameterResource)environment["AUCTION_BOT_TOKEN"]).Name.ShouldBe("auction-bot-token");
         environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("prod");
+        environment["AUCTION_BOT_COMMUNITY_TIME_ZONE"].ShouldBe("Europe/Moscow");
         ((EndpointReference)environment["IDENTITY_GRPC_URL"]).Resource.Name.ShouldBe(Identity);
         ((EndpointReference)environment["AUCTION_GRPC_URL"]).Resource.Name.ShouldBe(Auction);
     }
@@ -95,6 +97,19 @@ public class AuctionBotWiringTests
         environment["AUCTION_BOT_SERVICE_TOKEN"].ShouldBeSameAs(context.ServiceToken(AuctionBot).Resource);
     }
 
+    /// <summary>
+    /// Аукцион ленты — необязательная настройка: заданная доезжает до бота,
+    /// незаданная не появляется вовсе (тест выше).
+    /// </summary>
+    [Fact]
+    public async Task AuctionBot_GetsTheConfiguredAuction()
+    {
+        var (bot, _) = Materialize("prod", auctionId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1");
+        var environment = await EnvironmentAsync(bot);
+
+        environment["AUCTION_BOT_AUCTION_ID"].ShouldBe("01929b7e-5c1d-7a3f-8e4b-0000000000a1");
+    }
+
     [Fact]
     public async Task AuctionBot_TestEnvironment_TakesTheTestToken()
     {
@@ -105,7 +120,8 @@ public class AuctionBotWiringTests
         environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("test");
     }
 
-    private static (IResource Bot, ServiceGraphContext Context) Materialize(string telegramEnvironment)
+    private static (IResource Bot, ServiceGraphContext Context) Materialize(
+        string telegramEnvironment, string? auctionId = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -122,6 +138,7 @@ public class AuctionBotWiringTests
             ["Parameters:auction-bot-test-token"] = "444:auction-test",
             ["Parameters:telegram-bot-token"] = "222:hub",
             ["Parameters:telegram-bot-test-token"] = "333:hub-test",
+            [AuctionBotSetup.AuctionIdKey] = auctionId,
         });
 
         var profile = new ProfileConfig { Name = "auction-bot", Services = [Identity, Auction, AuctionBot], Infrastructure = [] };

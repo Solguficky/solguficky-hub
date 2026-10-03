@@ -134,6 +134,9 @@ final class AuctionGrpcService(
       case Right(acting) => run(acting.participant)
     }
 
+  // Изображение лота: колонку в строке каталога и его запись приносит форма лота PER-319 (ADR-057, дополнение).
+  def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = unimplemented
+
   /**
    * Ответа entity не дождались. Команда могла быть принята, поэтому это `DEADLINE_EXCEEDED`, а не `UNAVAILABLE`: повтор
    * с тем же `op_id` вернёт исходный ответ, а не запишет команду второй раз.

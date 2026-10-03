@@ -5,8 +5,8 @@ package auction.v1;
 import "auction/v1/auction.proto";
 import "identity/v1/roles.proto";
 
-// Commands of a participant, commands of the lot catalog, reads of a lot and the
-// display names of participants.
+// Commands of a participant, commands of the lot catalog, reads of a lot, of its
+// image and of the display names of participants.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -28,6 +28,7 @@ service AuctionService {
   rpc GetDisplayNames(GetDisplayNamesRequest) returns (GetDisplayNamesResponse);
   rpc GetFaqAcknowledgement(GetFaqAcknowledgementRequest) returns (FaqAcknowledgement);
   rpc AcknowledgeFaq(AcknowledgeFaqRequest) returns (FaqAcknowledgement);
+  rpc GetLotImage(GetLotImageRequest) returns (LotImage);
 }
 
 message Viewer {
@@ -188,6 +189,16 @@ message LotCard {
 
   // Empty means that the lot has no description.
   string description = 2;
+
+  // Unset when the lot has no image. The bytes are not here: they are read with
+  // GetLotImage, so a caller that already shows this version does not load them.
+  LotImageRef image = 3;
+}
+
+// Names one image of a lot without carrying it.
+message LotImageRef {
+  // Opaque, compared only for equality: it changes whenever the image changes.
+  string version = 1;
 }
 
 message CreateLotCardRequest {
@@ -416,4 +427,24 @@ message FaqAcknowledgement {
   // True after the viewer explicitly chose to leave the introductory FAQ.
   // False means the acknowledgement has not been recorded, not lack of access.
   bool acknowledged = 1;
+}
+
+message GetLotImageRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+}
+
+// The image of a lot as it is stored now.
+message LotImage {
+  // The encoded image file as Telegram returned it on upload.
+  bytes content = 1;
+
+  // IANA media type of content, such as image/jpeg.
+  string media_type = 2;
+
+  // The version of these bytes. It may be newer than the version a preceding read
+  // returned, when the image changed in between.
+  string version = 3;
 }

@@ -4,6 +4,7 @@ import { readConfig } from "./config.js";
 const base = {
   AUCTION_BOT_TOKEN: "123:auction",
   AUCTION_BOT_SERVICE_TOKEN: "service-token",
+  AUCTION_BOT_COMMUNITY_TIME_ZONE: "Europe/Moscow",
 };
 
 describe("readConfig", () => {
@@ -100,5 +101,45 @@ describe("readConfig", () => {
   it("keeps token values out of every refusal", () => {
     const result = readConfig({ ...base, AUCTION_BOT_SERVICE_TOKEN: " t " });
     expect(JSON.stringify(result)).not.toContain("123:auction");
+  });
+
+  it("reads the community time zone and an optional auction", () => {
+    const auctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+    const withAuction = readConfig({
+      ...base,
+      AUCTION_BOT_AUCTION_ID: auctionId,
+    });
+    expect(withAuction).toEqual({
+      ok: true,
+      config: expect.objectContaining({
+        communityTimeZone: "Europe/Moscow",
+        auctionId,
+      }),
+    });
+    const without = readConfig(base);
+    expect(without.ok && "auctionId" in without.config).toBe(false);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unknown", "Mars/Olympus"],
+  ])("refuses a %s community time zone", (_name, zone) => {
+    expect(
+      readConfig({ ...base, AUCTION_BOT_COMMUNITY_TIME_ZONE: zone }),
+    ).toEqual({
+      ok: false,
+      error: "AUCTION_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
+    });
+  });
+
+  it.each([
+    "01929B7E-5C1D-7A3F-8E4B-0000000000A1",
+    "01929b7e5c1d7a3f8e4b0000000000a1",
+    "lot-1",
+  ])("refuses a non-canonical auction id %s", (auctionId) => {
+    expect(readConfig({ ...base, AUCTION_BOT_AUCTION_ID: auctionId })).toEqual({
+      ok: false,
+      error: "AUCTION_BOT_AUCTION_ID must be a canonical lowercase UUID",
+    });
   });
 });

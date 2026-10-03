@@ -3,11 +3,23 @@ import { type AuctionSurface, handleAuctionUpdate } from "../gateway.js";
 import {
   AUCTION_CONTRACT_CASES,
   type AuctionContractApp,
+  type AuctionContractCase,
   CONTRACT_IDENTITY,
   CONTRACT_LOT,
   checkAuctionContract,
+  checkAuctionContractCase,
   describeAuctionContract,
 } from "./index.js";
+
+// Намерение карточки лота в торгах: на нём самопроверки ниже ловят дрейф
+// одного вызова, а не восьми сразу.
+const LOT_CASE = caseOf("lot: trading");
+
+function caseOf(intent: string): AuctionContractCase {
+  const found = AUCTION_CONTRACT_CASES.find((c) => c.intent === intent);
+  if (found === undefined) throw new Error(`no contract case ${intent}`);
+  return found;
+}
 
 // Фабрики-заглушки двух поверхностей: вход доведён ровно до шлюза, как его
 // доведут приложения, — личность разрешается один раз и уходит в update.
@@ -35,17 +47,34 @@ describe("auction contract self-check", () => {
     const wrongIntent: AuctionContractApp = (ports) => async (update) => {
       await ports.auction.getLot({
         viewer: { identityId: "someone-else", globalRoles: ["public"] },
-        lotId: "01929b7e-5c1d-7a3f-8e4b-ffffffffffff",
+        lotId: CONTRACT_LOT.lotId,
       });
       return stubApp("auction")({
         ...ports,
-        auction: { getLot: async () => CONTRACT_LOT },
+        auction: { ...ports.auction, getLot: async () => CONTRACT_LOT },
       })(update);
     };
-    const violations = await checkAuctionContract(wrongIntent);
+    const violations = await checkAuctionContractCase(wrongIntent, LOT_CASE);
     expect(violations.map((v) => [v.intent, v.kind])).toEqual([
-      ["lot", "wrong-port-call"],
+      ["lot: trading", "wrong-port-call"],
     ]);
+  });
+
+  // Приложение спросило лот, которого в снимке нет: шпион падает, и это
+  // нарушение намерения, а не сломанный прогон.
+  it("reports an app that throws on the spy answer", async () => {
+    const lost: AuctionContractApp = (ports) => async () => {
+      await ports.identity.resolveIdentity({ telegramUserId: 424242 });
+      await ports.auction.getLot({
+        viewer: { identityId: CONTRACT_IDENTITY.identityId, globalRoles: [] },
+        lotId: "01929b7e-5c1d-7a3f-8e4b-ffffffffffff",
+      });
+      throw new Error("unreachable");
+    };
+    const kinds = (await checkAuctionContractCase(lost, LOT_CASE)).map(
+      (v) => v.kind,
+    );
+    expect(kinds).toEqual(["wrong-port-call", "app-threw"]);
   });
 
   it("fails when the canonical body or its buttons drift", async () => {
@@ -62,7 +91,9 @@ describe("auction contract self-check", () => {
         },
       };
     };
-    const kinds = (await checkAuctionContract(drifted)).map((v) => v.kind);
+    const kinds = (await checkAuctionContractCase(drifted, LOT_CASE)).map(
+      (v) => v.kind,
+    );
     expect(kinds).toEqual(["wrong-callback-data", "wrong-body"]);
   });
 
@@ -72,14 +103,18 @@ describe("auction contract self-check", () => {
       await ports.identity.resolveIdentity(pressed.from);
       return stubApp("hub")(ports)(pressed);
     };
-    const kinds = (await checkAuctionContract(twice)).map((v) => v.kind);
+    const kinds = (await checkAuctionContractCase(twice, LOT_CASE)).map(
+      (v) => v.kind,
+    );
     expect(kinds).toEqual(["identity-not-resolved-once"]);
   });
 
   it("fails when the app resolves someone other than the presser", async () => {
     const wrongUser: AuctionContractApp = (ports) => async (pressed) =>
       stubApp("hub")(ports)({ ...pressed, from: { telegramUserId: 1 } });
-    const kinds = (await checkAuctionContract(wrongUser)).map((v) => v.kind);
+    const kinds = (await checkAuctionContractCase(wrongUser, LOT_CASE)).map(
+      (v) => v.kind,
+    );
     expect(kinds).toEqual(["identity-not-resolved-once"]);
   });
 
@@ -91,7 +126,9 @@ describe("auction contract self-check", () => {
           { kind: "hub", ports },
           { identity: CONTRACT_IDENTITY, input },
         );
-    const kinds = (await checkAuctionContract(skipping)).map((v) => v.kind);
+    const kinds = (await checkAuctionContractCase(skipping, LOT_CASE)).map(
+      (v) => v.kind,
+    );
     expect(kinds).toEqual(["identity-not-resolved-once"]);
   });
 
@@ -100,7 +137,9 @@ describe("auction contract self-check", () => {
       kind: "denied",
       reason: "not-admitted",
     });
-    const kinds = (await checkAuctionContract(denying)).map((v) => v.kind);
+    const kinds = (await checkAuctionContractCase(denying, LOT_CASE)).map(
+      (v) => v.kind,
+    );
     expect(kinds).toEqual([
       "identity-not-resolved-once",
       "wrong-port-call",
@@ -115,6 +154,15 @@ describe("auction contract self-check", () => {
   });
 
   it("checks every intent of the table", () => {
-    expect(AUCTION_CONTRACT_CASES.map((c) => c.intent)).toEqual(["lot"]);
+    expect(AUCTION_CONTRACT_CASES.map((c) => c.intent)).toEqual([
+      "feed",
+      "feed: stale page",
+      "feed: empty",
+      "lot: trading",
+      "lot: sold",
+      "lot: unsold",
+      "lot: withdrawn",
+      "lot: names unavailable",
+    ]);
   });
 });

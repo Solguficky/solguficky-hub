@@ -20,13 +20,22 @@ async function main(): Promise<number> {
     return 1;
   }
   const { config } = loaded;
-  const clients = createClients(config);
+  const clients = createClients({
+    ...config,
+    onNamesRefused: (cause, requestId) =>
+      logger.warn("display names unavailable", {
+        request_id: requestId,
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
   const bot = createBot({
     token: config.token,
     environment: config.environment,
     ports: clients.ports,
     faq: config.faq,
     logger,
+    timeZone: config.communityTimeZone,
+    ...(config.auctionId === undefined ? {} : { auctionId: config.auctionId }),
   });
   const shutdown = createShutdown({
     bot,

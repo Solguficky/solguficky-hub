@@ -1,4 +1,8 @@
-import { encodeAuctionCallback } from "@solguficky/auction-bot-ui";
+import {
+  encodeAuctionCallback,
+  type LotImagePort,
+  type LotView,
+} from "@solguficky/auction-bot-ui";
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
@@ -6,6 +10,7 @@ import { createBot } from "./bot.js";
 import type { PortsFactory } from "./clients.js";
 import { entryCallback } from "./faq.js";
 import { createLogger, type Logger } from "./logging.js";
+import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
 
 const botInfo: UserFromGetMe = {
   id: 1,
@@ -31,13 +36,25 @@ const silent: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 
 function makeBot(
   ports: PortsFactory,
-  options: { logger?: Logger; refuse?: Record<string, string> } = {},
+  options: {
+    logger?: Logger;
+    refuse?: Record<string, string>;
+    // Отказ только на первом вызове метода: повтор проходит.
+    refuseOnce?: Record<string, string>;
+    auctionId?: string;
+    photos?: PhotoCache;
+  } = {},
 ) {
   const bot = createBot({
     token: "111:test-token",
     environment: "prod",
     ports,
     logger: options.logger ?? silent,
+    timeZone: "Europe/Moscow",
+    ...(options.auctionId === undefined
+      ? {}
+      : { auctionId: options.auctionId }),
+    ...(options.photos === undefined ? {} : { photos: options.photos }),
     botInfo,
   });
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -45,9 +62,31 @@ function makeBot(
   // ослабление типа в тесте. Отказ Bot API задаётся описанием по методу.
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push({ method, payload });
+    const once = options.refuseOnce?.[method];
+    if (once !== undefined && options.refuseOnce !== undefined) {
+      delete options.refuseOnce[method];
+      return Promise.resolve({ ok: false, error_code: 400, description: once });
+    }
     const description = options.refuse?.[method];
     if (description !== undefined) {
       return Promise.resolve({ ok: false, error_code: 400, description });
+    }
+    // Отправка фото отвечает сообщением с размерами: из него бот берёт
+    // `file_id` наибольшего размера. Тип результата зависит от метода, и
+    // фикстура его не знает — то же ослабление, что у ответа `true` ниже.
+    if (method === "sendPhoto" || method === "editMessageMedia") {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          message_id: 8,
+          date: 0,
+          chat: privateChat,
+          photo: [
+            { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
+            { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
+          ],
+        } as never,
+      });
     }
     return Promise.resolve({ ok: true, result: true as never });
   };
@@ -55,22 +94,54 @@ function makeBot(
   return { bot, calls };
 }
 
-const publicPorts: PortsFactory = () => ({
-  identity: {
-    resolveIdentity: async () => ({
-      identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-      globalRoles: ["public"],
-      blocked: false,
-    }),
-  },
-  auction: {
-    getLot: async () => ({ lotId, auctionId: lotId, version: 1 }),
-  },
-  faq: {
-    acknowledged: async () => true,
-    acknowledge: async () => {},
-  },
-});
+const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
+
+function portsWith(
+  overrides: {
+    lot?: Partial<LotView>;
+    image?: LotImagePort["getLotImage"];
+  } = {},
+): PortsFactory {
+  return () => ({
+    identity: {
+      resolveIdentity: async () => ({
+        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+        globalRoles: ["public"],
+        blocked: false,
+      }),
+    },
+    auction: {
+      getLot: async () => ({
+        lotId,
+        auctionId,
+        version: 1,
+        card: { title: "Кружка", description: "" },
+        status: { kind: "unsold" },
+        ...overrides.lot,
+      }),
+      listAuctionLots: async () => ({ lots: [], nextPageToken: "" }),
+      getDisplayNames: async () => ({}),
+    },
+    faq: {
+      acknowledged: async () => true,
+      acknowledge: async () => {},
+    },
+    image: {
+      getLotImage:
+        overrides.image ??
+        (async () => ({
+          content: new Uint8Array([1, 2, 3]),
+          mediaType: "image/jpeg",
+          version: "img-1",
+        })),
+    },
+  });
+}
+
+const publicPorts = portsWith();
+const withImage = {
+  card: { title: "Кружка", description: "", image: { version: "img-1" } },
+};
 
 function startUpdate(message: NonNullable<Update["message"]>): Update {
   return { update_id: 1, message };
@@ -181,6 +252,7 @@ describe("auction bot", () => {
         },
         auction: base.auction,
         faq: base.faq,
+        image: base.image,
       };
     });
     const { bot, calls } = makeBot(ports);
@@ -195,7 +267,7 @@ describe("auction bot", () => {
         id: "cb",
         from,
         chat_instance: "ci",
-        data: encodeAuctionCallback({ kind: "lot", lotId }),
+        data: encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
         message: {
           message_id: 7,
           date: 0,
@@ -209,10 +281,11 @@ describe("auction bot", () => {
     );
     const edit = calls.find((call) => call.method === "editMessageText");
     expect(edit?.payload).toMatchObject({
-      text: expect.stringContaining(lotId),
+      text: expect.stringContaining("Кружка"),
       reply_markup: {
         inline_keyboard: [
           [{ text: "Обновить", callback_data: expect.any(String) }],
+          [{ text: "К лотам", callback_data: expect.any(String) }],
           [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
           [{ text: "В меню", callback_data: expect.any(String) }],
         ],
@@ -229,8 +302,156 @@ describe("auction bot", () => {
     const sent = calls.find((call) => call.method === "sendMessage");
     expect(sent?.payload).toMatchObject({
       chat_id: 42,
-      text: expect.stringContaining(lotId),
+      text: expect.stringContaining("Кружка"),
     });
+  });
+
+  // Пункт меню «Аукционы» при названном аукционе открывает его ленту.
+  it("opens the feed from the menu when the auction is configured", async () => {
+    const listAuctionLots = vi.fn(async () => ({
+      lots: [],
+      nextPageToken: "",
+    }));
+    const ports: PortsFactory = (requestId) => {
+      const base = portsWith()(requestId);
+      return { ...base, auction: { ...base.auction, listAuctionLots } };
+    };
+    const { bot, calls } = makeBot(ports, { auctionId });
+    await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+    expect(listAuctionLots).toHaveBeenCalledWith(
+      expect.objectContaining({ auctionId, pageToken: "" }),
+    );
+    const edit = calls.find((call) => call.method === "editMessageText");
+    expect(edit?.payload).toMatchObject({
+      text: expect.stringContaining("Лотов пока нет."),
+    });
+  });
+
+  it("keeps the catalog closed in the menu without a configured auction", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+    const edit = calls.find((call) => call.method === "editMessageText");
+    expect(edit?.payload).toMatchObject({
+      text: expect.stringContaining("Каталог пока не открыт"),
+    });
+  });
+
+  // Текст не превращается в фото: карточка с изображением уходит новым
+  // сообщением, а лента, с которой её открыли, удаляется.
+  it("replaces a text message with the photo card and caches its file", async () => {
+    const photos = createPhotoCache();
+    const getLotImage = vi.fn(async () => ({
+      content: new Uint8Array([1]),
+      mediaType: "image/jpeg",
+      version: "img-1",
+    }));
+    const { bot, calls } = makeBot(
+      portsWith({ lot: withImage, image: getLotImage }),
+      { photos },
+    );
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "sendPhoto",
+      "deleteMessage",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({
+      caption: expect.stringContaining("Кружка"),
+    });
+    expect(photos.get({ lotId, version: "img-1" })).toBe("large");
+    expect(getLotImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits a photo card in place from the cache without loading bytes", async () => {
+    const photos = createPhotoCache();
+    photos.set({ lotId, version: "img-1" }, "cached-file");
+    const getLotImage = vi.fn();
+    const { bot, calls } = makeBot(
+      portsWith({ lot: withImage, image: getLotImage }),
+      { photos },
+    );
+    await bot.handleUpdate(lotPress({ photo: true }));
+    const edit = calls.find((call) => call.method === "editMessageMedia");
+    expect(edit?.payload).toMatchObject({
+      media: { type: "photo", media: "cached-file" },
+    });
+    expect(getLotImage).not.toHaveBeenCalled();
+    expect(calls.map((call) => call.method)).not.toContain("deleteMessage");
+  });
+
+  it("uploads again once when Telegram forgets a cached file", async () => {
+    const photos = createPhotoCache();
+    photos.set({ lotId, version: "img-1" }, "forgotten");
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
+      photos,
+      refuseOnce: { editMessageMedia: "Bad Request: wrong file identifier" },
+    });
+    await bot.handleUpdate(lotPress({ photo: true }));
+    const edits = calls.filter((call) => call.method === "editMessageMedia");
+    expect(edits).toHaveLength(2);
+    // Второй раз уходят байты, и в кэш ложится свежий `file_id`.
+    expect(edits[1]?.payload).not.toMatchObject({
+      media: { media: "forgotten" },
+    });
+    expect(photos.get({ lotId, version: "img-1" })).toBe("large");
+  });
+
+  // Telegram отверг сами байты: карточка уходит текстом, а не пропадает.
+  it("falls back to the text card when Telegram rejects the uploaded photo", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", (line) => lines.push(line));
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
+      logger,
+      refuse: { sendPhoto: "Bad Request: IMAGE_PROCESS_FAILED" },
+    });
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "sendPhoto",
+      "editMessageText",
+    ]);
+    expect(
+      lines.some((line) => line.includes("lot image rejected by Telegram")),
+    ).toBe(true);
+  });
+
+  // Сейчас Auction отвечает на GetLotImage `UNIMPLEMENTED`: карточка остаётся
+  // текстом, а не превращается в «недоступно».
+  it("shows the card as text when the image cannot be loaded", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", (line) => lines.push(line));
+    const { bot, calls } = makeBot(
+      portsWith({
+        lot: withImage,
+        image: async () => {
+          throw new Error("UNIMPLEMENTED");
+        },
+      }),
+      { logger },
+    );
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(lines.some((line) => line.includes("lot image unavailable"))).toBe(
+      true,
+    );
+  });
+
+  it("replaces a photo card with the text feed and drops the photo", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(
+      lotPress({
+        photo: true,
+        data: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
+      }),
+    );
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "sendMessage",
+      "deleteMessage",
+    ]);
   });
 
   it("logs the frame of the update without Telegram identifiers", async () => {
@@ -253,15 +474,24 @@ describe("auction bot", () => {
   });
 });
 
-function lotPress(): Update {
+// Нажатие кнопки в сообщении бота: текстовом или с фото.
+function lotPress(options: { photo?: boolean; data?: string } = {}): Update {
+  const base = { message_id: 7, date: 0, chat: privateChat };
   return {
     update_id: 3,
     callback_query: {
       id: "cb",
       from,
       chat_instance: "ci",
-      data: encodeAuctionCallback({ kind: "lot", lotId }),
-      message: { message_id: 7, date: 0, chat: privateChat, text: "old" },
+      data:
+        options.data ?? encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
+      message: options.photo
+        ? {
+            ...base,
+            photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }],
+            caption: "old",
+          }
+        : { ...base, text: "old" },
     },
   } as Update;
 }

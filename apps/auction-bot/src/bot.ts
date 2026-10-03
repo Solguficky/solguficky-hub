@@ -1,11 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { Bot, type Context, GrammyError } from "grammy";
-import type { UserFromGetMe } from "grammy/types";
+import type { LotImagePort, Viewer } from "@solguficky/auction-bot-ui";
+import { Bot, type Context, GrammyError, InputFile } from "grammy";
+import type { Message, UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
 import type { TelegramEnvironment } from "./config.js";
-import { type AuctionEntryScreen, renderEntryScreen } from "./entry-screen.js";
+import {
+  type AuctionEntryScreen,
+  type RenderedScreen,
+  renderEntryScreen,
+} from "./entry-screen.js";
 import type { FaqContent } from "./faq.js";
 import type { LogFields, Logger } from "./logging.js";
+import {
+  createPhotoCache,
+  type ImageKey,
+  type PhotoCache,
+} from "./photo-cache.js";
 import {
   type RouteOutcome,
   routeAuctionCallback,
@@ -18,6 +28,11 @@ export type BotOptions = {
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
+  // Пояс, в котором человек читает дедлайн лота.
+  timeZone: string;
+  // Аукцион ленты: есть — пункт меню «Аукционы» открывает его лоты.
+  auctionId?: string;
+  photos?: PhotoCache;
   // Тесты передают его, чтобы не звать getMe.
   botInfo?: UserFromGetMe;
 };
@@ -32,6 +47,14 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     ...(options.botInfo === undefined ? {} : { botInfo: options.botInfo }),
   });
   const { logger } = options;
+  const render = (screen: AuctionEntryScreen) =>
+    renderEntryScreen(screen, {
+      timeZone: options.timeZone,
+      ...(options.faq === undefined ? {} : { faq: options.faq }),
+    });
+  const photos = options.photos ?? createPhotoCache();
+  const auction =
+    options.auctionId === undefined ? {} : { auctionId: options.auctionId };
 
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();
@@ -44,6 +67,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
 
   direct.command("start", async (ctx) => {
     const outcome = await routeAuctionStart({
+      ...auction,
       ports: options.ports(ctx.requestId),
       user: {
         telegramUserId: ctx.from.id,
@@ -52,10 +76,8 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
           : { telegramUsername: ctx.from.username }),
       },
     });
-    const screen = renderEntryScreen(outcome.screen, options.faq);
-    await ctx.reply(screen.text, {
-      reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
-    });
+    const screen = render(outcome.screen);
+    await ctx.reply(screen.text, markupOf(screen));
     log({ logger, ctx, outcome, operation: "start" });
   });
 
@@ -68,8 +90,10 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         error: messageOf(cause),
       });
     });
+    const ports = options.ports(ctx.requestId);
     const outcome = await routeAuctionCallback({
-      ports: options.ports(ctx.requestId),
+      ...auction,
+      ports,
       user: {
         telegramUserId: ctx.from.id,
         ...(ctx.from.username === undefined
@@ -78,24 +102,15 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       },
       data: ctx.callbackQuery.data,
     });
-    const screen = renderEntryScreen(outcome.screen, options.faq);
-    const markup = {
-      reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
-    };
+    const screen = render(outcome.screen);
     try {
-      await ctx.editMessageText(screen.text, markup);
-    } catch (cause) {
-      if (!(cause instanceof GrammyError)) throw cause;
-      // Тот же экран после повторного нажатия — не отказ.
-      if (cause.description.includes("message is not modified")) {
-        // ничего не показываем
-      } else if (notEditable(cause.description)) {
-        // Сообщение не редактируется — ответ уходит новым сообщением
-        // (бриф ботов, «Правила края при отказах Telegram»).
-        await ctx.reply(screen.text, markup);
-      } else {
-        throw cause;
-      }
+      await deliver(ctx, {
+        screen,
+        photos,
+        image: ports.image,
+        viewer: outcome.viewer,
+        logger,
+      });
     } finally {
       log({ logger, ctx, outcome, operation: "callback" });
     }
@@ -171,6 +186,169 @@ function refusalCategory(
     default:
       return undefined;
   }
+}
+
+function markupOf(screen: RenderedScreen) {
+  return {
+    reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
+  };
+}
+
+// Фото для экрана: из кэша `file_id` или байтами из Auction. Не удалось —
+// карточка уходит текстом: изображение украшает экран, а не держит его.
+type Photo =
+  | { kind: "cached"; key: ImageKey; fileId: string }
+  | { kind: "upload"; key: ImageKey; file: InputFile };
+
+function mediaOf(photo: Photo): string | InputFile {
+  return photo.kind === "cached" ? photo.fileId : photo.file;
+}
+
+async function photoFor(input: {
+  screen: RenderedScreen;
+  photos: PhotoCache;
+  image: LotImagePort;
+  viewer: Viewer | undefined;
+  logger: Logger;
+  requestId: string;
+}): Promise<Photo | undefined> {
+  const key = input.screen.photo;
+  if (key === undefined || input.viewer === undefined) return undefined;
+  const fileId = input.photos.get(key);
+  if (fileId !== undefined) return { kind: "cached", key, fileId };
+  try {
+    const image = await input.image.getLotImage({
+      viewer: input.viewer,
+      lotId: key.lotId,
+    });
+    return {
+      kind: "upload",
+      // Ключ — версия самих байтов: если изображение сменили между чтением
+      // карточки и загрузкой, старое фото не ляжет под новым ключом.
+      key: { lotId: key.lotId, version: image.version },
+      file: new InputFile(image.content, "lot"),
+    };
+  } catch (cause) {
+    input.logger.warn("lot image unavailable", {
+      request_id: input.requestId,
+      error: messageOf(cause),
+    });
+    return undefined;
+  }
+}
+
+// Доставка экрана правилами края (бриф ботов, «Правила края при отказах
+// Telegram»). Текстовое сообщение не превращается в фото и обратно, поэтому
+// смена вида — новое сообщение и удаление старого; отказ удаления (сообщение
+// старше 48 часов) не мешает: новое уже ушло.
+async function deliver(
+  ctx: UpdateContext,
+  input: {
+    screen: RenderedScreen;
+    photos: PhotoCache;
+    image: LotImagePort;
+    viewer: Viewer | undefined;
+    logger: Logger;
+  },
+): Promise<void> {
+  let photo = await photoFor({ ...input, requestId: ctx.requestId });
+  const { screen } = input;
+  const markup = markupOf(screen);
+  const current = ctx.callbackQuery?.message;
+  const currentIsPhoto = current !== undefined && "photo" in current;
+  for (;;) {
+    try {
+      if (photo === undefined) {
+        if (current !== undefined && !currentIsPhoto) {
+          await ctx.editMessageText(screen.text, markup);
+        } else {
+          await ctx.reply(screen.text, markup);
+          await dropPrevious(ctx, current);
+        }
+        return;
+      }
+      const sent = currentIsPhoto
+        ? await ctx.editMessageMedia(
+            { type: "photo", media: mediaOf(photo), caption: screen.text },
+            markup,
+          )
+        : await ctx.replyWithPhoto(mediaOf(photo), {
+            caption: screen.text,
+            ...markup,
+          });
+      if (!currentIsPhoto) await dropPrevious(ctx, current);
+      remember({ photos: input.photos, photo, sent });
+      return;
+    } catch (cause) {
+      if (!(cause instanceof GrammyError)) throw cause;
+      // Тот же экран после повторного нажатия — не отказ.
+      if (cause.description.includes("message is not modified")) return;
+      if (notEditable(cause.description)) {
+        // Сообщение не редактируется — ответ уходит новым сообщением.
+        if (photo === undefined) {
+          await ctx.reply(screen.text, markup);
+        } else {
+          remember({
+            photos: input.photos,
+            photo,
+            sent: await ctx.replyWithPhoto(mediaOf(photo), {
+              caption: screen.text,
+              ...markup,
+            }),
+          });
+        }
+        return;
+      }
+      if (photo?.kind === "cached" && rejectedFile(cause.description)) {
+        // Telegram больше не знает этот `file_id`: запись вытесняется, и
+        // повтор идёт загрузкой байтов один раз.
+        input.photos.delete(photo.key);
+        photo = await photoFor({ ...input, requestId: ctx.requestId });
+        continue;
+      }
+      if (photo !== undefined) {
+        // Telegram не принял само изображение — файл велик, не картинка или
+        // не обработался. Карточка уходит текстом, а не пропадает.
+        input.logger.warn("lot image rejected by Telegram", {
+          request_id: ctx.requestId,
+          error: cause.description,
+        });
+        photo = undefined;
+        continue;
+      }
+      throw cause;
+    }
+  }
+}
+
+async function dropPrevious(
+  ctx: UpdateContext,
+  current: Message | undefined,
+): Promise<void> {
+  if (current === undefined) return;
+  await ctx.deleteMessage().catch(() => undefined);
+}
+
+// `file_id` наибольшего размера из ответа Telegram ложится в кэш под версией
+// загруженных байтов.
+function remember(input: {
+  photos: PhotoCache;
+  photo: Photo;
+  sent: Message | true;
+}): void {
+  const { photos, photo, sent } = input;
+  if (photo.kind !== "upload" || sent === true) return;
+  const fileId = sent.photo?.at(-1)?.file_id;
+  if (fileId !== undefined) photos.set(photo.key, fileId);
+}
+
+// Описания отказов Bot API не закреплены контрактом: сравнение без учёта
+// регистра и по обоим известным написаниям.
+const REJECTED_FILE =
+  /wrong (remote )?file identifier|file[_ ]reference|wrong file_id/i;
+
+function rejectedFile(description: string): boolean {
+  return REJECTED_FILE.test(description);
 }
 
 function notEditable(description: string): boolean {
