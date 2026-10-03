@@ -190,7 +190,7 @@ just aspire hub -- --skip-services telegram-bot
 
 Срез не подтягивает соседний сервис из зависимостей: узел вне среза остаётся владельцу. Баннер называет такие зависимости поимённо.
 
-Имена узлов и их связи объявлены в `infra/apphost/AppHost/Program.cs`, форма кода — в skill `proj-write-aspire-apphost`.
+Имена узлов и их связи объявлены в `infra/apphost/AppHost/Configuration/AppHostTopology.cs`. `Program.cs` вызывает это описание, строит приложение и запускает его; форма кода — в skill `proj-write-aspire-apphost`.
 
 ## Публикация чарта прода
 
@@ -210,6 +210,8 @@ just apphost-chart
 - образы в `values.yaml` — заглушки `<сервис>:latest`, секреты — пустые значения: digest образов и секреты кладёт ops-репозиторий в values среды.
 
 Граф, который чарт получить не может, отвергается не только сборкой чарта. Профиль публикации, владеющий узлом без отображения, роняет и `aspire run`, и тесты графа, а compute-ресурс, который не создан отображением `Workload`, роняет сборку чарта с именем ресурса. Опечатка в профиле публикации тоже роняет локальный прогон. Неизменность локального графа держит снимок `hub` в `infra/apphost/AppHost.UnitTests/TestUtilities/Snapshots/hub.run.txt`, записанный до ветки публикации, а снимок `cluster.publish.txt` рядом держит переменные окружения каждого workload'а чарта: bind молчит, если узла нет, и строка подключения, выпавшая из публикации, иначе прошла бы и `helm lint`, и правила чарта.
+
+Снимки вызывают общее описание `AppHostTopology` и строят приложение без исполнения `Program.cs`: фаза модели фиксирована после `Build`, до `BeforeStartEvent`. У `telegram-bot-installer` в ней всегда команда `node` без аргумента `install`. При настоящем запуске JavaScript-интеграция меняет её на `npm install` в `BeforeStartEvent`; чтение модели через TestingBuilder после `BuildAsync` гонялось с продолжением `Program.cs` и давало оба значения. Сериализация тестов эту гонку внутри одного теста не устраняла ([PER-431](https://linear.app/anticnvm/issue/per-431)).
 
 Подтверждено 2026-09-29 на Aspire 13.5.3 и `Aspire.Hosting.Kubernetes` 13.5.3-preview: `aspire publish` собирает чарт без Docker, в нём четыре Deployment с сервисами и ни одного workload'а сборки, PostgreSQL, NATS и дашборда. Генератор при этом оставлял `rollingUpdate` рядом с `Recreate`, а такой Deployment API Kubernetes отвергает; setup его убирает, а проверка чарта это правило держит. Установка чарта в k3s, работа сервисов в подах, топология JetStream в кластере ([PER-375](https://linear.app/anticnvm/issue/per-375)) и силос Orleans в поде ([PER-387](https://linear.app/anticnvm/issue/per-387)) не проверены.
 

@@ -3,12 +3,12 @@ using Xunit;
 namespace AppHost.UnitTests.TestUtilities;
 
 /// <summary>
-/// Наборы, которые строят модель настоящего AppHost, идут по очереди. Две такие
-/// модели, собранные в одном процессе параллельно, делят состояние пакета
-/// JavaScript: узел <c>telegram-bot-installer</c> в снимке <c>hub</c> тогда
-/// получает то <c>node</c>, то <c>npm install</c>, и снимок краснеет без
-/// изменения графа. Воспроизводилось на снимке, публикации и токенах вызывающих
-/// вместе и пропадало при последовательном запуске.
+/// Наборы, которые исполняют entry point настоящего AppHost через Aspire Testing,
+/// идут по очереди. Это не фикс гонки снимка: BuildAsync освобождает entry point,
+/// и Program.cs продолжает Run параллельно чтению модели. BeforeStartEvent
+/// JavaScript-пакета меняет команду installer с node на npm install; общего
+/// static-состояния JavaScript для этого не требуется. Снимки используют общий
+/// AppHostTopology и Build без Run, поэтому от этой коллекции больше не зависят.
 /// </summary>
 [CollectionDefinition(Name)]
 public sealed class RealAppHostCollection

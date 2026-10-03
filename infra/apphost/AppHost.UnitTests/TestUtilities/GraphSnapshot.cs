@@ -1,27 +1,56 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AppHost.Configuration;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
-using Aspire.Hosting.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AppHost.UnitTests.TestUtilities;
 
 /// <summary>
-/// Текстовый снимок модели настоящего AppHost: тот же Program.cs, что исполняет
-/// <c>aspire run</c>, доведённый до сборки модели без старта ресурсов. Снимок
+/// Текстовый снимок модели настоящего AppHost: то же описание графа, что исполняет
+/// <c>aspire run</c>, доведённое до сборки модели без старта ресурсов. Снимок
 /// держит то, чем узел становится для запуска, — тип, образ, команду, endpoints,
 /// переменные окружения с их выражениями, ожидания и связи, — поэтому изменение
 /// графа видно строкой диффа, а не только живым прогоном.
 /// </summary>
 internal static partial class GraphSnapshot
 {
-    public static async Task<string> RenderAsync(string[] args, CancellationToken cancellationToken)
+    public static async Task<string> RenderAsync(
+        string[] args,
+        CancellationToken cancellationToken,
+        Action<IDistributedApplicationBuilder>? configure = null)
     {
-        var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(args, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        // Assembly и content root принадлежат AppHost, а не test runner. Так
+        // читаются его appsettings и user-secrets и разрешаются пути компонентов.
+        var builder = DistributedApplication.CreateBuilder(new DistributedApplicationOptions
+        {
+            AssemblyName = typeof(AppHostTopology).Assembly.GetName().Name,
+            Args = args,
+            DisableDashboard = true,
+        });
+        var appHostDirectory = builder.AppHostDirectory;
+        builder.Environment.ApplicationName = typeof(AppHostTopology).Assembly.GetName().Name!;
+        builder.Environment.ContentRootPath = appHostDirectory;
+        builder.Environment.EnvironmentName = "Development";
+        // CreateBuilder вызывается из test runner, не из каталога AppHost.
+        // Загружаем его обычные источники в том же порядке приоритетов, сохраняя
+        // добавленные Aspire настройки и не меняя cwd/переменные всего процесса.
+        builder.Configuration
+            .AddJsonFile(Path.Combine(appHostDirectory, "appsettings.json"))
+            .AddJsonFile(Path.Combine(appHostDirectory, "appsettings.Development.json"), optional: true)
+            .AddUserSecrets(typeof(AppHostTopology).Assembly, optional: true)
+            .AddEnvironmentVariables()
+            .AddCommandLine(args);
+        AppHostTopology.Configure(builder);
+        configure?.Invoke(builder);
         var root = Normalize(Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "../../..")), root: null);
 
-        await using var application = await builder.BuildAsync(cancellationToken);
+        // Build без entry point: Program.cs не продолжит Run параллельно рендеру.
+        // BeforeStartEvent не исполняется ни здесь, ни при DisposeAsync.
+        await using var application = builder.Build();
         var executionContext = application.Services.GetRequiredService<DistributedApplicationExecutionContext>();
         var model = application.Services.GetRequiredService<DistributedApplicationModel>();
 
