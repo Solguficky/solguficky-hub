@@ -21,14 +21,14 @@ import (
 type Caller string
 
 const (
-	CallerTelegramBot   Caller = "telegram-bot"
+	CallerHubBot        Caller = "hub-bot"
 	CallerAuctionBot    Caller = "auction-bot"
 	CallerMeetups       Caller = "meetups"
 	CallerNotifications Caller = "notifications"
 )
 
 // TokenVariable — переменная, из которой Identity читает токен вызывающего:
-// `telegram-bot` становится IDENTITY_CALLER_TOKEN_TELEGRAM_BOT.
+// `hub-bot` становится IDENTITY_CALLER_TOKEN_HUB_BOT.
 func (c Caller) TokenVariable() string {
 	return "IDENTITY_CALLER_TOKEN_" + strings.ToUpper(strings.ReplaceAll(string(c), "-", "_"))
 }
@@ -37,22 +37,22 @@ func (c Caller) TokenVariable() string {
 // обработчике. Метод без строки не принимает никого, поэтому новый RPC закрыт,
 // пока его вызывающий не объявлен здесь.
 var methodAccess = map[string][]Caller{
-	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerTelegramBot, CallerAuctionBot},
-	identityv1.IdentityService_RequestRole_FullMethodName:              {CallerTelegramBot, CallerAuctionBot},
-	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerTelegramBot},
+	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerHubBot, CallerAuctionBot},
+	identityv1.IdentityService_RequestRole_FullMethodName:              {CallerHubBot, CallerAuctionBot},
+	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerHubBot},
 	identityv1.IdentityService_CheckGlobalRole_FullMethodName:          {CallerMeetups, CallerNotifications},
-	identityv1.IdentityService_ResolveOrganizerUsername_FullMethodName: {CallerTelegramBot},
-	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerTelegramBot},
-	identityv1.IdentityService_AdmitCommunityMember_FullMethodName:     {CallerTelegramBot},
-	identityv1.IdentityService_BlockCommunityMember_FullMethodName:     {CallerTelegramBot},
-	identityv1.IdentityService_ListAllowedUsernames_FullMethodName:     {CallerTelegramBot},
-	identityv1.IdentityService_AddAllowedUsername_FullMethodName:       {CallerTelegramBot},
-	identityv1.IdentityService_RemoveAllowedUsername_FullMethodName:    {CallerTelegramBot},
-	identityv1.IdentityService_ReadApplicationQueue_FullMethodName:     {CallerTelegramBot},
-	identityv1.IdentityService_AdmitApplication_FullMethodName:         {CallerTelegramBot},
-	identityv1.IdentityService_DeclineApplication_FullMethodName:       {CallerTelegramBot},
-	identityv1.IdentityService_ListRefusedApplications_FullMethodName:  {CallerTelegramBot},
-	identityv1.IdentityService_ReconsiderApplication_FullMethodName:    {CallerTelegramBot},
+	identityv1.IdentityService_ResolveOrganizerUsername_FullMethodName: {CallerHubBot},
+	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_AdmitCommunityMember_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_BlockCommunityMember_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_ListAllowedUsernames_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_AddAllowedUsername_FullMethodName:       {CallerHubBot},
+	identityv1.IdentityService_RemoveAllowedUsername_FullMethodName:    {CallerHubBot},
+	identityv1.IdentityService_ReadApplicationQueue_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_AdmitApplication_FullMethodName:         {CallerHubBot},
+	identityv1.IdentityService_DeclineApplication_FullMethodName:       {CallerHubBot},
+	identityv1.IdentityService_ListRefusedApplications_FullMethodName:  {CallerHubBot},
+	identityv1.IdentityService_ReconsiderApplication_FullMethodName:    {CallerHubBot},
 }
 
 // maintainerMethods защищает секрет ADR-037, а не таблица вызывающих: гейт их
