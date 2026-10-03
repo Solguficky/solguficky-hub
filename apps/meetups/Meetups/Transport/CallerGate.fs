@@ -9,7 +9,7 @@ open Meetups.V1
 /// Колонка Caller integration.md. Новый метод без строки остаётся закрытым.
 module MethodAccess =
     let private prefix = $"/{MeetupsService.Descriptor.FullName}/"
-    let private bot = Set.singleton Caller.TelegramBot
+    let private bot = Set.singleton Caller.HubBot
 
     let byMethod =
         [

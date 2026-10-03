@@ -7,12 +7,12 @@ open System.Text
 /// Вызывающий — процесс, а не человек из тела запроса (ADR-056).
 [<RequireQualifiedAccess>]
 type Caller =
-    | TelegramBot
+    | HubBot
     | Notifications
 
     member this.Node =
         match this with
-        | Caller.TelegramBot -> "telegram-bot"
+        | Caller.HubBot -> "hub-bot"
         | Caller.Notifications -> "notifications"
 
     member this.TokenVariable =

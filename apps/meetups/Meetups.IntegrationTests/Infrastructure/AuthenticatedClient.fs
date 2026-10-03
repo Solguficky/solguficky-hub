@@ -16,7 +16,7 @@ let OwnToken = "meetups-test-own-token"
 
 let configuration =
     [|
-        $"--MEETUPS_CALLER_TOKEN_TELEGRAM_BOT={BotToken}"
+        $"--MEETUPS_CALLER_TOKEN_HUB_BOT={BotToken}"
         $"--MEETUPS_CALLER_TOKEN_NOTIFICATIONS={NotificationsToken}"
         $"--MEETUPS_SERVICE_TOKEN={OwnToken}"
     |]
