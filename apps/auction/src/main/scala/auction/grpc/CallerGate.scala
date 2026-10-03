@@ -23,7 +23,8 @@ object MethodAccess {
     "ChooseDisplayName" -> bots,
     "GetDisplayNames" -> bots,
     "GetFaqAcknowledgement" -> Set(Caller.AuctionBot),
-    "AcknowledgeFaq" -> Set(Caller.AuctionBot)
+    "AcknowledgeFaq" -> Set(Caller.AuctionBot),
+    "GetLotImage" -> bots
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */

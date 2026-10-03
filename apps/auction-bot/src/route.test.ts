@@ -30,7 +30,14 @@ function ports(resolved: ResolvedIdentity | Error): EntryPorts {
       }),
     },
     auction: {
-      getLot: vi.fn(async () => ({ lotId, auctionId, version: 3 })),
+      getLot: vi.fn(async () => ({
+        lotId,
+        auctionId,
+        version: 3,
+        status: { kind: "unsold" as const },
+      })),
+      listAuctionLots: vi.fn(async () => ({ lots: [], nextPageToken: "" })),
+      getDisplayNames: vi.fn(async () => ({})),
     },
     faq: {
       acknowledged: vi.fn(async () => true),
@@ -39,7 +46,12 @@ function ports(resolved: ResolvedIdentity | Error): EntryPorts {
   };
 }
 
-const lotButton = encodeAuctionCallback({ kind: "lot", lotId });
+const lotButton = encodeAuctionCallback({ kind: "lot", lotId, page: 0 });
+const feedButton = encodeAuctionCallback({
+  kind: "feed",
+  auctionId,
+  page: 0,
+});
 
 describe("FAQ entry", () => {
   it("shows no FAQ before admission and opens it on the first admitted start", async () => {
@@ -229,6 +241,10 @@ describe("routeAuctionCallback", () => {
       body: { blocks: [{ kind: "lot", lotId }] },
     });
     expect(outcome.identityId).toBe("01926f3c-8b7a-7cde-8f00-00000000000a");
+    expect(outcome.viewer).toEqual({
+      identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+      globalRoles: ["public"],
+    });
   });
 
   it("denies a person without the public role before calling Auction", async () => {
@@ -255,6 +271,8 @@ describe("routeAuctionCallback", () => {
     ["a foreign button", "v1:meetup:x"],
     ["an outdated version", "v9:auc:lot:x"],
     ["a malformed button", "v1:auc:lot:"],
+    // Страница с ведущим нулём — не та строка, что пишет кодировщик.
+    ["a page button in a foreign spelling", `${feedButton.slice(0, -1)}01`],
   ])(
     "answers %s with the outdated screen without calling neighbours",
     async (_name, data) => {
@@ -296,6 +314,23 @@ describe("routeAuctionCallback", () => {
       category: "dependency_unavailable",
       grpcCode: "Unimplemented",
     });
+  });
+
+  // Критерий PER-306: недоступный Auction — именованный экран, а не пустая
+  // лента.
+  it("answers unavailable, not an empty feed, when Auction refuses the list", async () => {
+    const p = ports(identity({ globalRoles: ["public"] }));
+    vi.mocked(p.auction.listAuctionLots).mockRejectedValueOnce(
+      new ConnectError("not implemented", Code.Unimplemented),
+    );
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: feedButton,
+    });
+    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    expect(outcome.identityId).toBe("01926f3c-8b7a-7cde-8f00-00000000000a");
+    expect(outcome.failure).toMatchObject({ grpcCode: "Unimplemented" });
   });
 
   it("classifies an expired deadline as a timeout", async () => {

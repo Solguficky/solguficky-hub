@@ -160,5 +160,6 @@ object GrpcBoundary {
     def getDisplayNames(in: wire.GetDisplayNamesRequest): Future[wire.GetDisplayNamesResponse] = refuse
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] = refuse
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest): Future[wire.FaqAcknowledgement] = refuse
+    def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = refuse
   }
 }

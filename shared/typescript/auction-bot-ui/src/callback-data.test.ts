@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   AuctionCallbackError,
   encodeAuctionCallback,
+  MAX_FEED_PAGE,
   parseAuctionCallback,
 } from "./callback-data.js";
 
 const LOT_ID = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
 const LOT_TOKEN = "AZKbflwdej-OSy1snwobPA";
+const AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+const AUCTION_TOKEN = "AZKbflwdej-OSwAAAAAAoQ";
 
 function reasonOf(raw: unknown): string {
   const parsed = parseAuctionCallback(raw);
@@ -17,13 +20,45 @@ function reasonOf(raw: unknown): string {
 }
 
 describe("auction callback_data", () => {
-  it("encodes a lot in the hub format and parses it back", () => {
-    const raw = encodeAuctionCallback({ kind: "lot", lotId: LOT_ID });
-    expect(raw).toBe(`v1:auc:lot:${LOT_TOKEN}`);
+  it("encodes a lot with its feed page and parses it back", () => {
+    const raw = encodeAuctionCallback({ kind: "lot", lotId: LOT_ID, page: 3 });
+    expect(raw).toBe(`v1:auc:lot:${LOT_TOKEN}:3`);
     expect(parseAuctionCallback(raw)).toEqual({
       ok: true,
-      intent: { kind: "lot", lotId: LOT_ID },
+      intent: { kind: "lot", lotId: LOT_ID, page: 3 },
     });
+  });
+
+  it("encodes a feed page and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "feed",
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    expect(raw).toBe(`v1:auc:feed:${AUCTION_TOKEN}:0`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: { kind: "feed", auctionId: AUCTION_ID, page: 0 },
+    });
+  });
+
+  // Кнопка PER-305 без страницы ведёт на ту же карточку, а не в «устарело».
+  it("reads a lot button without a page as the first page", () => {
+    expect(parseAuctionCallback(`v1:auc:lot:${LOT_TOKEN}`)).toEqual({
+      ok: true,
+      intent: { kind: "lot", lotId: LOT_ID, page: 0 },
+    });
+  });
+
+  // Самая длинная кнопка пакета обязана пройти лимит Telegram.
+  it("keeps the longest button within 64 bytes", () => {
+    const raw = encodeAuctionCallback({
+      kind: "feed",
+      auctionId: AUCTION_ID,
+      page: MAX_FEED_PAGE,
+    });
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64);
+    expect(parseAuctionCallback(raw).ok).toBe(true);
   });
 
   // Настоящие кнопки бота хаба: их домен не аукционный, и разбор отдаёт их
@@ -67,7 +102,13 @@ describe("auction callback_data", () => {
     ["unknown action", `v1:auc:bid:${LOT_TOKEN}`],
     ["missing argument", "v1:auc:lot"],
     ["empty argument", "v1:auc:lot:"],
-    ["extra argument", `v1:auc:lot:${LOT_TOKEN}:1`],
+    ["extra argument", `v1:auc:lot:${LOT_TOKEN}:1:1`],
+    ["feed without page", `v1:auc:feed:${AUCTION_TOKEN}`],
+    ["empty page", `v1:auc:feed:${AUCTION_TOKEN}:`],
+    ["page with a leading zero", `v1:auc:feed:${AUCTION_TOKEN}:01`],
+    ["negative page", `v1:auc:feed:${AUCTION_TOKEN}:-1`],
+    ["page over the limit", `v1:auc:feed:${AUCTION_TOKEN}:1000`],
+    ["page that is not a number", `v1:auc:lot:${LOT_TOKEN}:x`],
     ["short token", "v1:auc:lot:AZKbflwdej-OSy1snwobP"],
     ["foreign alphabet", "v1:auc:lot:AZKbflwdej+OSy1snwobPA"],
     // Те же 16 байт, но последний символ несёт ненулевые лишние биты.
@@ -82,7 +123,16 @@ describe("auction callback_data", () => {
 
   it("refuses to encode an id that is not a canonical UUID", () => {
     expect(() =>
-      encodeAuctionCallback({ kind: "lot", lotId: "LOT-1" }),
+      encodeAuctionCallback({ kind: "lot", lotId: "LOT-1", page: 0 }),
     ).toThrow();
   });
+
+  it.each([-1, 1.5, MAX_FEED_PAGE + 1])(
+    "refuses to encode feed page %s",
+    (page) => {
+      expect(() =>
+        encodeAuctionCallback({ kind: "feed", auctionId: AUCTION_ID, page }),
+      ).toThrow(RangeError);
+    },
+  );
 });

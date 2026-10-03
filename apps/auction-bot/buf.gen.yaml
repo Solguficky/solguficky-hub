@@ -14,8 +14,9 @@ plugins:
 inputs:
   - directory: contracts/proto
     paths:
-      # Боту аукциона нужны только два вызова: ResolveIdentity и GetLot.
-      # Meetups и Notifications он не зовёт.
+      # Боту аукциона нужны ResolveIdentity Identity и чтения Auction:
+      # лот, лента, имена участников и изображение. Meetups и Notifications
+      # он не зовёт.
       - contracts/proto/auction/v1/auction.proto
       - contracts/proto/auction/v1/auction_service.proto
       - contracts/proto/identity

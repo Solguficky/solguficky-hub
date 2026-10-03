@@ -302,10 +302,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       last.nextPageToken shouldBe ""
     }
 
-    "answers UNIMPLEMENTED on display names that belong to a later slice" in {
+    "answers UNIMPLEMENTED on display names and images that belong to later slices" in {
       val auction = service(Unreachable)
       statusOf(auction.chooseDisplayName(wire.ChooseDisplayNameRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.getDisplayNames(wire.GetDisplayNamesRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.getLotImage(wire.GetLotImageRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
   }
 }

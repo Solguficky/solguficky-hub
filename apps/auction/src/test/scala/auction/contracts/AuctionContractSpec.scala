@@ -1,7 +1,7 @@
 package auction.contracts
 
 import auction.v1.auction_events.{AuctionState, BidPlaced, LotEvent, LotState, ManualBid, ProxyBid}
-import auction.v1.auction_service.{AuctionService, ChooseDisplayNameRequest, LotSnapshot}
+import auction.v1.auction_service.{AuctionService, ChooseDisplayNameRequest, LotCard, LotImageRef, LotSnapshot}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -82,6 +82,16 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       card.getMessageType.getFullName shouldBe "auction.v1.LotCard"
       card.hasPresence shouldBe true
       card.getContainingOneof shouldBe null
+    }
+
+    // Лот без изображения читается отсутствием ссылки, а не пустой версией. Байтов
+    // в карточке нет: лента пришла бы с каждым файлом, а тёплый кэш `file_id`
+    // бота сравнивает только версию (ADR-057, дополнение).
+    "names the image of a card by a version with presence and without the bytes" in {
+      val image = LotCard.javaDescriptor.findFieldByName("image")
+      image.getMessageType.getFullName shouldBe "auction.v1.LotImageRef"
+      image.hasPresence shouldBe true
+      LotImageRef.javaDescriptor.getFields.asScala.map(_.getName) shouldBe Seq("version")
     }
 
     // «Ника нет» бот выражает пустым ником, а не пустым запросом: отказ

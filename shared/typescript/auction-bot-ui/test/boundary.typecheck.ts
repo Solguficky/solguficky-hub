@@ -14,7 +14,14 @@ import { dispatchAuctionIntent } from "@solguficky/auction-bot-ui/dist/src/dispa
 // @ts-expect-error и по пути собранного файла тоже
 import { openLot as builtOpenLot } from "@solguficky/auction-bot-ui/dist/src/internal/use-cases/open-lot.js";
 // @ts-expect-error сырой юзкейс не входит в exports
+import { openFeed } from "@solguficky/auction-bot-ui/internal/use-cases/open-feed";
+// @ts-expect-error сырой юзкейс не входит в exports
 import { openLot } from "@solguficky/auction-bot-ui/internal/use-cases/open-lot";
 
 export const reachable = [handleAuctionUpdate, describeAuctionContract];
-export const unreachable = [openLot, builtOpenLot, dispatchAuctionIntent];
+export const unreachable = [
+  openFeed,
+  openLot,
+  builtOpenLot,
+  dispatchAuctionIntent,
+];
