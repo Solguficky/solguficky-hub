@@ -63,6 +63,11 @@ public class GraphSnapshotTests
         guard.StartCalls.ShouldBe(0);
     }
 
+    /// <summary>
+    /// Проверяет только то, что разрешает сам builder и чтение конфигурации.
+    /// Имя приложения, content root и окружение RenderAsync выставляет руками до
+    /// configure, поэтому их проверка здесь не упала бы ни на какой поломке.
+    /// </summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -71,9 +76,6 @@ public class GraphSnapshotTests
         await GraphSnapshot.RenderAsync(SnapshotArgs(publish), TestContext.Current.CancellationToken, builder =>
         {
             builder.AppHostAssembly.ShouldBe(typeof(AppHostTopology).Assembly);
-            builder.Environment.ApplicationName.ShouldBe("AppHost");
-            builder.Environment.ContentRootPath.ShouldBe(builder.AppHostDirectory);
-            builder.Environment.IsDevelopment().ShouldBeTrue();
             File.Exists(Path.Combine(builder.AppHostDirectory, "AppHost.csproj")).ShouldBeTrue();
             builder.ExecutionContext.IsPublishMode.ShouldBe(publish);
             builder.Configuration["Topology:PublishProfile"].ShouldBe("cluster");
