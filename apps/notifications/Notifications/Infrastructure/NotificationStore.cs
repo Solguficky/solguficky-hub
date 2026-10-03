@@ -102,9 +102,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
-            not_after, applicant_id, access_circle)
+            not_after, applicant_id, access_circle, application_version)
         SELECT id, recipient, @Type, @CauseKind, @CauseId, @MeetupId, payload, @RequestId, @Now, @NotAfter,
-            @ApplicantId, @AccessCircle
+            @ApplicantId, @AccessCircle, @ApplicationVersion
         FROM unnest(@Ids, @Recipients, @Payloads) AS fact (id, recipient, payload)
         ON CONFLICT DO NOTHING;
         """;
@@ -116,7 +116,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         {
             Type = type, CauseKind = causeKind, CauseId = causeId,
             MeetupId = (Guid?)null, RequestId = (string?)null,
-            ApplicantId = (Guid?)null, AccessCircle = (string?)null,
+            ApplicantId = (Guid?)null, AccessCircle = (string?)null, ApplicationVersion = (long?)null,
             Now = now.UtcDateTime, NotAfter = notAfter.UtcDateTime,
             Ids = new[] { Guid.Parse(fact.NotificationId) },
             Recipients = new[] { Guid.Parse(fact.RecipientId) },
@@ -146,7 +146,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     // Снятие при закрытой заявке: допуск или блокировка уже решили то, о чём
     // факт зовёт администратора. Круги закрытых заявок приходят параметром.
-    // Без SKIP LOCKED по той же причине, что снятие при отмене.
+    // Снимаются только заявки старше закрывающего события: запоздавшая выдача
+    // не закрывает заявку, поданную после неё. Без SKIP LOCKED по той же
+    // причине, что снятие при отмене.
     private const string WithdrawOnApplicationClosedSql = """
         UPDATE notification
         SET withdrawn_at = @Now, withdrawal_reason = @Reason
@@ -154,6 +156,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND dispatched_at IS NULL
             AND withdrawn_at IS NULL
             AND access_circle = ANY(@Circles)
+            AND application_version < @Version
         RETURNING type;
         """;
 
@@ -378,6 +381,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             {
                 ApplicantId = fact.IdentityId,
                 AccessCircle = circle,
+                ApplicationVersion = fact.Version,
             },
             audience,
             (id, recipient) => NotificationFacts.AccessRequested(id, recipient, fact, now, notAfter),
@@ -407,6 +411,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 Now = now.UtcDateTime,
                 Reason = NotificationFacts.WithdrawnOnApplicationClosed,
                 Circles = circles,
+                fact.Version,
             },
             cancellationToken);
 
@@ -661,6 +666,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 cause.RequestId,
                 cause.ApplicantId,
                 cause.AccessCircle,
+                cause.ApplicationVersion,
                 Now = now.UtcDateTime,
                 NotAfter = notAfter.UtcDateTime,
                 Ids = ids,
@@ -757,6 +763,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         public Guid? ApplicantId { get; init; }
 
         public string? AccessCircle { get; init; }
+
+        public long? ApplicationVersion { get; init; }
 
         public static FactCause Of(MeetupFact fact, string type) =>
             new(type, NotificationFacts.MeetupEventCause, fact.EventId.ToString(), fact.MeetupId, fact.RequestId);

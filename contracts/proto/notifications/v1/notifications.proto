@@ -77,8 +77,6 @@ message Notification {
     LotPurchased lot_purchased = 15;
 
     // Someone without access asked for a circle and is waiting for a decision.
-    // Sent to every administrator with the global "access requests" category
-    // on, never to the applicant: a subscription is not required.
     AccessRequested access_requested = 16;
   }
 

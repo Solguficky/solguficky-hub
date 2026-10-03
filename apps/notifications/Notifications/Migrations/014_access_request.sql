@@ -23,13 +23,18 @@ ALTER TABLE notification ADD CONSTRAINT notification_cause_kind_known CHECK (
 -- разбирать ради этого payload оно не должно. Заявителя в payload нет вовсе
 -- (контракт AccessRequested), поэтому колонка — единственное место, где
 -- Notifications его помнит. Только у фактов о заявке, и у них обязательно.
+-- Версия события заявки держит порядок: закрывающее событие снимает только
+-- факты о заявках старше себя, иначе запоздавшая выдача сняла бы оповещение о
+-- новой заявке, поданной после потери роли.
 ALTER TABLE notification ADD COLUMN IF NOT EXISTS applicant_id uuid NULL;
 ALTER TABLE notification ADD COLUMN IF NOT EXISTS access_circle text NULL;
+ALTER TABLE notification ADD COLUMN IF NOT EXISTS application_version bigint NULL;
 
 ALTER TABLE notification DROP CONSTRAINT IF EXISTS notification_applicant_by_type;
 ALTER TABLE notification ADD CONSTRAINT notification_applicant_by_type CHECK (
     (type = 'access_requested') = (applicant_id IS NOT NULL)
     AND (type = 'access_requested') = (access_circle IS NOT NULL)
+    AND (type = 'access_requested') = (application_version IS NOT NULL)
     AND (access_circle IS NULL OR access_circle IN ('member', 'public'))
 );
 

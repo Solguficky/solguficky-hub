@@ -49,9 +49,7 @@ message SetGlobalCategoryPreferenceRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Any category of the dictionary below that the person can see. A category
-  // reserved to a role, such as access requests, is refused with
-  // PERMISSION_DENIED for a person who does not hold that role.
+  // Any category of the dictionary below that the person can see.
   NotificationCategory category = 2;
 
   // Target state of this one category, never a toggle of the current value.

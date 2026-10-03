@@ -126,16 +126,8 @@ message ProfileBlocked {}
 // had while blocked is the set they have after: this occasion never adds one.
 message ProfileUnblocked {}
 
-// The person asked for a circle they do not hold, and a new application for it
-// was opened. It changes no access: the snapshot is the one the person already
-// had, never blocked and never holding the requested circle.
-//
-// It is reported once per application. A repeated request finds the open
-// application and reports nothing, and a request that ends in admission from the
-// allowed-username list opens no application at all. Closing an application is
-// not an occasion of its own: an admission arrives as role_granted, a refusal in
-// the public circle as profile_blocked, and a refusal in the member circle is
-// not published.
+// A new application for a circle the person does not hold was opened. It changes
+// no access: the snapshot is the one the person already had.
 //
 // The applicant's name, username and arrival channel are deliberately absent:
 // they are data for the moderator and stay in IdentityService.

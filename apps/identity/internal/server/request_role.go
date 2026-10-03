@@ -162,7 +162,14 @@ func openApplication(ctx context.Context, tx *sql.Tx, identityID, circle string,
 	if err != nil {
 		return false, err
 	}
-	source, err := resolveApplicationSource(ctx, tx, req.SourceCode)
+	// Присутствие кода значимо: пустой код — «неизвестный источник», а не его
+	// отсутствие, поэтому указатель собирается из геттера, а не теряется.
+	var code *string
+	if req.SourceCode != nil {
+		value := req.GetSourceCode()
+		code = &value
+	}
+	source, err := resolveApplicationSource(ctx, tx, code)
 	if err != nil {
 		return false, err
 	}

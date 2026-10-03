@@ -319,14 +319,9 @@ public static class ReplicaMapping
             case IdentityEvent.OccasionOneofCase.ApplicationSubmitted:
                 // Заявку ставят только на круги поверхностей: другой круг —
                 // испорченное событие, а не повод оповестить администраторов.
-                occasionRole = message.ApplicationSubmitted.Role switch
-                {
-                    GlobalRole.Member => "member",
-                    GlobalRole.Public => "public",
-                    _ => null,
-                };
+                occasionRole = RoleName(message.ApplicationSubmitted.Role);
 
-                if (occasionRole is null)
+                if (occasionRole is not ("member" or "public"))
                 {
                     return new Decoded.Poison($"application_submitted.role {message.ApplicationSubmitted.Role} is not a requestable circle");
                 }

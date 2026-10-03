@@ -202,6 +202,28 @@ public class AccessRequestFactTests
         rows.Single(row => row.AccessCircle == "member").WithdrawnAt.ShouldBeNull();
     }
 
+    /// <summary>
+    /// Выдача, которая старше заявки, её не закрывает: запоздавшее событие
+    /// снимает только факты о заявках, поданных до него.
+    /// </summary>
+    [Fact]
+    public async Task When_OlderGrantArrivesAfterApplication_Expect_FactKept()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, "admin", "member", "public");
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var applicant = EventFactory.NewId();
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
+        await nats.Publish(RoleGrantedSubject, EventFactory.Identity(applicant, version: 2));
+        await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.IdentitySource, "stale")), count => count == 1);
+
+        (await Rows(db)).Single().WithdrawnAt.ShouldBeNull();
+    }
+
     [Fact]
     public async Task When_AdminReadsGlobalPreferences_Expect_AccessRequestsOnByDefault()
     {
