@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { FormField } from "../application/types.js";
+import type { CommunityDay } from "../community-time.js";
 import type {
   MeetupCategory,
   NotificationCategory,
@@ -124,6 +125,21 @@ type PlainAction =
       value: string;
     }
   | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
+  // Заготовки вопроса о дате: без дня — выбор дня, с днём — выбор времени.
+  | {
+      kind: "manage-pick-day";
+      token: string;
+      editing: boolean;
+      picked?: { digits: string; day: CommunityDay };
+    }
+  // Кнопка времени — полный ответ на вопрос о дате, в том виде, в котором
+  // дату вводят текстом.
+  | {
+      kind: "manage-pick-schedule";
+      token: string;
+      editing: boolean;
+      value: string;
+    }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
   // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
@@ -403,6 +419,33 @@ export function parseCallback(raw: unknown): CallbackAction {
         }
       : { kind: "malformed" };
   }
+  if ((parts.length === 5 || parts.length === 6) && parts[2] === "when") {
+    const mode = FormModeSchema.safeParse(parts[4]);
+    if (!mode.success) return { kind: "malformed" };
+    const editing = mode.data === "e";
+    const digits = parts[5];
+    if (digits === undefined) {
+      return { kind: "manage-pick-day", token: token.data, editing };
+    }
+    const day = dayFromDigits(digits.slice(0, 8));
+    if (day === undefined) return { kind: "malformed" };
+    if (digits.length === 8) {
+      return {
+        kind: "manage-pick-day",
+        token: token.data,
+        editing,
+        picked: { digits, day },
+      };
+    }
+    return PastScheduleSchema.safeParse(digits).success
+      ? {
+          kind: "manage-pick-schedule",
+          token: token.data,
+          editing,
+          value: pastScheduleValue(digits),
+        }
+      : { kind: "malformed" };
+  }
   if (parts.length === 5 && parts[2] === "past-retry") {
     const mode = FormModeSchema.safeParse(parts[4]);
     return mode.success
@@ -492,6 +535,23 @@ function parseListPage(parts: readonly string[]): CallbackAction | undefined {
   if (kind === undefined) return undefined;
   const page = z.coerce.number().int().nonnegative().safeParse(parts[3]);
   return page.success ? { kind, page: page.data } : { kind: "malformed" };
+}
+
+/// День из цифр кнопки `ДДММГГГГ`; день, которого нет в календаре, —
+/// `undefined`: такую кнопку бот не рисовал.
+function dayFromDigits(digits: string): CommunityDay | undefined {
+  if (!/^\d{8}$/.test(digits)) return undefined;
+  const day = {
+    year: Number(digits.slice(4, 8)),
+    month: Number(digits.slice(2, 4)),
+    day: Number(digits.slice(0, 2)),
+  };
+  const date = new Date(Date.UTC(day.year, day.month - 1, day.day));
+  return date.getUTCFullYear() === day.year &&
+    date.getUTCMonth() + 1 === day.month &&
+    date.getUTCDate() === day.day
+    ? day
+    : undefined;
 }
 
 /// Цифры кнопки обратно в тот вид, в котором дату вводят: форма разбирает и

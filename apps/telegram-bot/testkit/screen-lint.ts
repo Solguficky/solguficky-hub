@@ -175,14 +175,18 @@ function checkRules(
       }
       break;
     }
-    case "question":
-      if (!asks || labels(last).join("|") !== "Отмена") {
+    case "question": {
+      // Режим ответа ставит отправка. Правка вопроса на месте — смена
+      // заготовок дня на время — его не несёт и не снимает.
+      const mode = asks || !method.startsWith("send");
+      if (!mode || labels(last).join("|") !== "Отмена") {
         found.push([
           "nav",
-          `вопрос несёт режим ответа и [Отмена], а пришло ${describeRows(rows)}${asks ? "" : " без force_reply"}`,
+          `вопрос несёт режим ответа и [Отмена], а пришло ${describeRows(rows)}${mode ? "" : " без force_reply"}`,
         ]);
       }
       break;
+    }
     case "exit":
       if (
         !labels(last).some(

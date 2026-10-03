@@ -551,7 +551,11 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
         entities: payload.entities ?? [],
         buttons: readButtons(payload),
         keyboard: payload.reply_markup?.inline_keyboard ?? [],
-        asksForReply: payload.reply_markup?.force_reply === true,
+        // Вопрос, который бот правит на месте, остаётся вопросом, пока под
+        // ним стоит «Отмена» с шагом: так заготовки дня сменяются временем.
+        asksForReply:
+          payload.reply_markup?.force_reply === true ||
+          (previous?.asksForReply === true && carriesQuestionStep(payload)),
         asked:
           payload.reply_markup?.force_reply === true ||
           previous?.asked === true,
@@ -583,6 +587,12 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
     current.set(messageId, next);
   });
   return [...current.values()];
+}
+
+function carriesQuestionStep(payload: ScreenPayload): boolean {
+  const last = payload.reply_markup?.inline_keyboard?.at(-1);
+  const data = last?.length === 1 ? last[0]?.callback_data : undefined;
+  return typeof data === "string" && data.startsWith("v1:q:");
 }
 
 function readMedia(payload: ScreenPayload): ScreenMedia | undefined {

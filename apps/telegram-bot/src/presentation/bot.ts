@@ -125,6 +125,13 @@ import {
   toggleToast,
 } from "./screens/notifications.js";
 import {
+  dayPresetKeyboard,
+  type ScheduleQuestion,
+  schedulePrompt,
+  timePresetKeyboard,
+  timePresetText,
+} from "./screens/schedule-presets.js";
+import {
   clearCallbackKeyboard,
   type ShownScreen,
   screenMark,
@@ -193,7 +200,7 @@ function invalidMeetupText(result: { precondition?: true }): string {
 }
 const formPrompts: Record<FormField, string> = {
   title: "Как называется сходка?",
-  schedule: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
+  schedule: schedulePrompt,
   venue: "Где встречаемся?",
   description: "Добавь короткое описание сходки.",
 };
@@ -1028,7 +1035,9 @@ async function handleCallback(
     // тот же, что у ответа текстом, который его породил.
     if (
       (action.kind === "manage-confirm-past-schedule" ||
-        action.kind === "manage-retry-past-schedule") &&
+        action.kind === "manage-retry-past-schedule" ||
+        action.kind === "manage-pick-day" ||
+        action.kind === "manage-pick-schedule") &&
       !action.editing
     ) {
       useCase = "create_meetup";
@@ -1855,10 +1864,46 @@ async function handleCallback(
       });
       return;
     }
-    if (action.kind === "manage-confirm-past-schedule") {
+    if (action.kind === "manage-pick-day") {
+      // Заготовки правят сам вопрос: день сменяется временем на месте, и шаг
+      // формы остаётся в кнопке «Отмена». Сервис здесь не нужен.
+      const question = scheduleQuestion(action.token, action.editing);
+      const today = communityToday(ctx);
+      await showScreen(
+        ctx,
+        action.picked === undefined
+          ? {
+              id: "question",
+              text: schedulePrompt,
+              keyboard: dayPresetKeyboard(question, today),
+            }
+          : {
+              id: "question",
+              text: timePresetText(action.picked.day, today),
+              keyboard: timePresetKeyboard(question, action.picked.digits),
+            },
+      );
+      outcome = {
+        level: "info",
+        message: "schedule presets shown",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: tokenToUuid(action.token),
+      };
+      return;
+    }
+    if (
+      action.kind === "manage-confirm-past-schedule" ||
+      action.kind === "manage-pick-schedule"
+    ) {
       // Кнопки снимаются до команды: второе нажатие того же кадра или нажатие
       // после «Ввести другую» не должно переписать дату ещё раз.
       await clearCallbackKeyboard(ctx);
+      // Кнопка времени — ответ на вопрос: вопрос под ней больше не ждёт.
+      const pressed = ctx.callbackQuery?.message?.message_id;
+      if (action.kind === "manage-pick-schedule" && pressed !== undefined) {
+        questions.delete(questionKey(ctx.chat?.id, pressed));
+      }
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
@@ -1866,7 +1911,9 @@ async function handleCallback(
         field: "schedule",
         value: action.value,
         meetupId,
-        confirmedPast: true,
+        ...(action.kind === "manage-confirm-past-schedule"
+          ? { confirmedPast: true as const }
+          : {}),
         ...rpcCall(ctx, useCase),
       });
       await renderFormResult(
@@ -1876,9 +1923,22 @@ async function handleCallback(
         runtime.presentation ?? "rich",
       );
       outcome = screenBoundary(result, {
-        ok: ["ask", "edit-ask", "meetup-updated", "edit-unavailable"],
-        okMessage: "past meetup date confirmed",
-        rejectedMessage: "past meetup date rejected",
+        ok: [
+          "ask",
+          "edit-ask",
+          "draft",
+          "meetup-updated",
+          "edit-unavailable",
+          "confirm-past-schedule",
+        ],
+        okMessage:
+          action.kind === "manage-pick-schedule"
+            ? "meetup date picked"
+            : "past meetup date confirmed",
+        rejectedMessage:
+          action.kind === "manage-pick-schedule"
+            ? "meetup date pick rejected"
+            : "past meetup date rejected",
         useCase,
         meetupId,
       });
@@ -3817,13 +3877,22 @@ async function askQuestion(
   if (ctx.callbackQuery !== undefined) {
     await clearCallbackKeyboard(ctx);
   }
+  // Вопрос о дате несёт заготовки дня над «Отменой»; остальные — её одну.
+  const keyboard =
+    pending.kind === "meetup" && pending.field === "schedule"
+      ? dayPresetKeyboard(
+          scheduleQuestion(
+            uuidToToken(pending.meetupId),
+            pending.mode === "edit",
+          ),
+          communityToday(ctx),
+        )
+      : new InlineKeyboard().text(cancelLabel, questionData(stepOf(pending)));
   const prompt = await ctx.reply(text, {
     ...screenMark("question"),
     reply_markup: {
       force_reply: true,
-      inline_keyboard: [
-        [{ text: cancelLabel, callback_data: questionData(stepOf(pending)) }],
-      ],
+      inline_keyboard: keyboard.inline_keyboard,
     },
   });
   if (replaces !== undefined) {
@@ -3837,6 +3906,19 @@ async function askQuestion(
     expiresAt: Date.now() + questionTtlMs,
   } as PendingInput);
   evictOldestQuestions(questions);
+}
+
+function scheduleQuestion(token: string, editing: boolean): ScheduleQuestion {
+  return {
+    token,
+    mode: editing ? "e" : "c",
+    cancelData: questionData({
+      kind: "field",
+      mode: editing ? "edit" : "create",
+      token,
+      field: "schedule",
+    }),
+  };
 }
 
 // Вопрос, на который ответ принят, больше не ждёт: «Отмена» под ним снимается.
@@ -3934,6 +4016,8 @@ function callbackUseCase(
     | "manage-unschedule"
     | "manage-confirm-unschedule"
     | "manage-confirm-past-schedule"
+    | "manage-pick-day"
+    | "manage-pick-schedule"
     | "manage-retry-past-schedule"
     | "manage-materials"
     | "begin-attach-material"
@@ -3973,6 +4057,8 @@ function callbackUseCase(
     case "manage-confirm-unschedule":
     case "manage-confirm-past-schedule":
     case "manage-retry-past-schedule":
+    case "manage-pick-day":
+    case "manage-pick-schedule":
     case "manage-materials":
     case "begin-attach-material":
     case "decline-attach-material":

@@ -557,6 +557,45 @@ describe("notification callbacks", () => {
     }
   });
 
+  it("parses the date presets: the day list, a chosen day and a chosen moment", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:manage:when:${token}:c`)).toEqual({
+      kind: "manage-pick-day",
+      token,
+      editing: false,
+    });
+    expect(parseCallback(`v1:manage:when:${token}:e:03102026`)).toEqual({
+      kind: "manage-pick-day",
+      token,
+      editing: true,
+      picked: { digits: "03102026", day: { year: 2026, month: 10, day: 3 } },
+    });
+    const moment = `v1:manage:when:${token}:e:031020261930`;
+    expect(Buffer.byteLength(moment)).toBeLessThanOrEqual(64);
+    expect(parseCallback(moment)).toEqual({
+      kind: "manage-pick-schedule",
+      token,
+      editing: true,
+      value: "03.10.2026 19:30",
+    });
+  });
+
+  it("rejects a date preset with a broken mode, day or length", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    for (const data of [
+      `v1:manage:when:${token}`,
+      `v1:manage:when:${token}:x`,
+      `v1:manage:when:${token}:c:31022026`,
+      `v1:manage:when:${token}:c:0310202`,
+      `v1:manage:when:${token}:c:0310202619`,
+      `v1:manage:when:${token}:c:3102202619300`,
+      `v1:manage:when:${token}:c:03102026:1930`,
+      "v1:manage:when:short:c:03102026",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+
   it("parses the draft screen and its field buttons", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     expect(parseCallback(`v1:manage:draft:${token}`)).toEqual({

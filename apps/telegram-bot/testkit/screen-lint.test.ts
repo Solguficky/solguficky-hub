@@ -250,6 +250,16 @@ describe("inspectCall", () => {
     ).toEqual([]);
     expect(question({ force_reply: true })).toEqual(["nav"]);
     expect(question({ inline_keyboard: [[key("Отмена")]] })).toEqual(["nav"]);
+    // Правка вопроса на месте режима ответа не несёт: его поставила отправка.
+    expect(
+      rulesOf("editMessageText", {
+        text: "Во сколько?",
+        reply_markup: {
+          inline_keyboard: [[key("19:00"), key("19:30")], [key("Отмена")]],
+        },
+        [screenTag]: "question",
+      }),
+    ).toEqual([]);
   });
 
   it("keeps the cancel and refresh words where they belong", () => {

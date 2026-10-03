@@ -234,6 +234,58 @@ describe("conversation questions", () => {
     expect(updates[0]?.message).not.toHaveProperty("reply_to_message");
   });
 
+  it("keeps a question pending while its edit still carries the cancel button", async () => {
+    const { bot, updates } = capturingBot();
+    const person = startConversation(
+      bot,
+      [
+        question("Когда встречаемся?"),
+        call("editMessageText", {
+          message_id: 101,
+          text: "3 октября, сб — во сколько?",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "19:00", callback_data: "v1:manage:when:t:c:1" }],
+              ...cancel,
+            ],
+          },
+        }),
+      ],
+      BigInt(chatId),
+    );
+
+    await person.says("03.10.2026 19:30");
+
+    expect(updates[0]?.message?.reply_to_message).toMatchObject({
+      message_id: 101,
+      text: "3 октября, сб — во сколько?",
+    });
+  });
+
+  it("stops treating a question as pending once it is edited into a screen", async () => {
+    const { bot, updates } = capturingBot();
+    const person = startConversation(
+      bot,
+      [
+        question("Когда встречаемся?"),
+        call("editMessageText", {
+          message_id: 101,
+          text: "Настолки",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "Опубликовать", callback_data: "v1:manage:publish:t" }],
+            ],
+          },
+        }),
+      ],
+      BigInt(chatId),
+    );
+
+    await person.says("просто текст");
+
+    expect(updates[0]?.message).not.toHaveProperty("reply_to_message");
+  });
+
   it("numbers questions in the order they were asked, closed ones included", async () => {
     const { bot, updates } = capturingBot();
     const person = startConversation(

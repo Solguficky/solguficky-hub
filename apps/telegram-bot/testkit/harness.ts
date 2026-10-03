@@ -82,6 +82,8 @@ export function createHarness(
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),
   presentation?: "rich" | "plain",
+  /** Закреплённый день сообщества: от него зависят заготовки дат. */
+  today?: () => { year: number; month: number; day: number },
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
@@ -91,6 +93,7 @@ export function createHarness(
     logger,
     tracing,
     ...(presentation === undefined ? {} : { presentation }),
+    ...(today === undefined ? {} : { today }),
   });
   bot.botInfo = botInfo;
   const recorder: Transformer = (_prev, method, payload) => {

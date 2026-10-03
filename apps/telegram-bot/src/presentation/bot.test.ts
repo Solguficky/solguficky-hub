@@ -4946,6 +4946,143 @@ describe("deferred publication frames", () => {
     }
   });
 
+  describe("date presets", () => {
+    const draft = draftMeetup();
+    const draftToken = uuidToToken(draft.id);
+    const labels = (call: RecordedCall | undefined) => {
+      const payload = call?.payload as
+        | { reply_markup?: { inline_keyboard?: { text: string }[][] } }
+        | undefined;
+      return payload?.reply_markup?.inline_keyboard?.map((row) =>
+        row.map((button) => button.text),
+      );
+    };
+
+    it("puts the day presets above the cancel button of the date question", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-card", meetup: draft });
+      const { bot, calls } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+        [],
+        undefined,
+        undefined,
+        () => ({ year: 2026, month: 10, day: 1 }),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:draft:${draftToken}:schedule`),
+      );
+
+      const question = calls.findLast((call) => call.method === "sendMessage");
+      expect(question?.payload).toMatchObject({
+        text: "Когда встречаемся? Выбери день или напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
+        reply_markup: { force_reply: true },
+      });
+      expect(labels(question)).toEqual([
+        ["чт 1", "пт 2", "сб 3", "вс 4"],
+        ["сб 10", "вс 11"],
+        ["Отмена"],
+      ]);
+    });
+
+    it("turns the day presets into time presets in the same message", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const { bot, calls } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+        [],
+        undefined,
+        undefined,
+        () => ({ year: 2026, month: 10, day: 1 }),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:03102026`),
+      );
+
+      // Сервис не нужен: день сменяется временем на месте.
+      expect(execute).not.toHaveBeenCalled();
+      const edited = calls.at(-1);
+      expect(edited).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          message_id: 9,
+          text: expect.stringContaining("3 октября, сб — во сколько?"),
+        },
+      });
+      expect(labels(edited)).toEqual([
+        ["12:00", "15:00", "17:00", "18:00"],
+        ["19:00", "19:30", "20:00", "21:00"],
+        ["Другой день"],
+        ["Отмена"],
+      ]);
+      expect(JSON.stringify(edited?.payload)).toContain(
+        `v1:q:fc:${draftToken}:schedule`,
+      );
+    });
+
+    it("takes a time preset as the answer and turns the question into the draft", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "draft", meetup: draft });
+      const { bot, calls, records } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+      );
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:031020261930`),
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-meetup-field",
+          field: "schedule",
+          value: "03.10.2026 19:30",
+          meetupId: draft.id,
+        }),
+      );
+      expect(execute.mock.calls[0]?.[0]).not.toHaveProperty("confirmedPast");
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: { message_id: 9 },
+      });
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        `v1:manage:publish:${draftToken}`,
+      );
+      expectBoundary(records[0], {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "create_meetup",
+      });
+    });
+
+    it("sends a time preset of the edit form to the edit command", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-updated", meetup: draft });
+      const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:e:031020261930`),
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "update-meetup-field",
+          value: "03.10.2026 19:30",
+        }),
+      );
+    });
+  });
+
   it("opens a published meetup as the card under a stale draft button", async () => {
     const meetup: MeetupSnapshot = { ...draftMeetup(), visibility: "visible" };
     const execute = vi
