@@ -4,7 +4,7 @@ TypeScript + grammY. Устройство — [ADR-030](../../docs/decisions/ADR
 
 - `src/presentation/` знает grammY, Bot API и Zod-разбор update.
 - `src/application/` принимает установленную личность и намерение. Типы Telegram сюда не входят.
-- `src/presentation/screens/` — каталог экранов (`catalog.ts`) и единый отправитель (`show.ts`). Вызов Bot API с клавиатурой называет свою запись каталога меткой `screenMark`; правила [дизайн-кода](../../docs/design/bot/design-code.md) по ней проверяет линтер `testkit/screen-lint.ts`. Его зовёт записывающий трансформер харнесса, а найденное снимает `testkit/lint-setup.ts` — он стоит в `setupFiles` у `vitest.config.ts` и `vitest.contour.config.ts`, поэтому нарушение роняет тест, который отправил экран. Запись с `legacy` правилами не проверяется, пока экран не переведён.
+- `src/presentation/screens/` — каталог экранов (`catalog.ts`) и единый отправитель (`show.ts`). Вызов Bot API с клавиатурой называет свою запись каталога меткой `screenMark`; правила [дизайн-кода](../../docs/design/bot/design-code.md) по ней проверяет линтер `testkit/screen-lint.ts`. Его зовёт записывающий трансформер харнесса, а найденное снимает `testkit/lint-setup.ts` — он стоит в `setupFiles` у `vitest.config.ts` и `vitest.contour.config.ts`, поэтому нарушение роняет тест, который отправил экран. Записей с `legacy` в каталоге нет: пометка остаётся механизмом для экрана, который вводится раньше своих правил, и такой экран правилами не проверяется.
 - Недоверенный ввод разбирается Zod на границе представления; `z.infer` даёт тип.
 - Клиент Identity живёт в `src/identity/` и вызывается из представления до диспетчера.
 - Конфигурация стека — `package.json`, `tsconfig.json`, `biome.json`, `vitest.config.ts`. Команды — `just telegram-bot-*`.
