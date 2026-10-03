@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot, GrammyError, InlineKeyboard } from "grammy";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
@@ -333,6 +333,9 @@ type UpdateContext = TracedContext & {
   pressedGone?: boolean;
   // Сегодняшний день сообщества для этого update.
   today?: CommunityToday;
+  // Telegram отверг карточку с постерами, и она ушла без них: причина едет в
+  // запись границы, иначе деградация оператору не видна.
+  postersRejected?: string;
 };
 
 type BoundaryOutcome =
@@ -411,8 +414,10 @@ async function handleMessage(
     const replyId = command
       ? undefined
       : ctx.message?.reply_to_message?.message_id;
-    removeExpiredQuestions(questions, Date.now());
+    // Сначала удаление: вычищенный по сроку вопрос карта уже не назовёт, и
+    // его сообщение осталось бы держать режим ответа.
     if (command) await dropOpenQuestions(ctx, questions);
+    removeExpiredQuestions(questions, Date.now());
     // Ответ принят либо отвергнут окончательно: вопрос больше не ждёт, и его
     // «Отмена» снимается. После сбоя сервиса вопрос остаётся открытым — тот же
     // ответ можно прислать ещё раз.
@@ -1966,8 +1971,10 @@ async function handleCallback(
     if (action.kind === "manage-type-schedule") {
       // «Другая дата»: экран выбора уступает место вопросу. Он удаляется, а не
       // остаётся без кнопок — иначе над вопросом висел бы тот же вопрос.
+      // Удаление идёт после отправки вопроса: упавшая отправка не должна
+      // оставить человека без обоих.
       const meetupId = tokenToUuid(action.token);
-      ctx.pressedGone = await deletePressed(ctx);
+      ctx.pressedGone = true;
       const origin = publishOriginOf(action.mode);
       await askQuestion(
         ctx,
@@ -1988,6 +1995,7 @@ async function handleCallback(
             },
         origin === undefined ? formPrompts.schedule : publishMomentPrompt,
       );
+      if (!(await deletePressed(ctx))) await clearCallbackKeyboard(ctx);
       outcome = {
         level: "info",
         message: "schedule question asked",
@@ -3349,8 +3357,17 @@ async function renderMeetupCard(
       await showScreen(ctx, { ...card, delivery });
     } catch (cause) {
       // Telegram отверг карточку с постерами — файл мог стать недоступным.
-      // Сама карточка от постера не зависит и приходит без них.
-      if (card.media === undefined) throw cause;
+      // Сама карточка от постера не зависит и приходит без них. Повтор идёт
+      // только на отказ запроса (400): сеть, лимит и остальное — не про фото,
+      // и второе сообщение там дало бы дубль.
+      if (
+        card.media === undefined ||
+        !(cause instanceof GrammyError) ||
+        cause.error_code !== 400
+      ) {
+        throw cause;
+      }
+      ctx.postersRejected = cause.description;
       await showScreen(ctx, {
         ...cardScreen({ ...view, posters: false }),
         delivery: "new",
@@ -4544,6 +4561,9 @@ function writeBoundary(
   }
   if (outcome.meetup_id !== undefined) {
     fields.meetup_id = outcome.meetup_id;
+  }
+  if (ctx.postersRejected !== undefined) {
+    fields.posters_error = ctx.postersRejected;
   }
   if (outcome.result === "error") {
     countFailure(outcome.error_category);

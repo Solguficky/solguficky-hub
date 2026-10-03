@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Api, BotError, Context, type Transformer } from "grammy";
+import { Api, BotError, Context, GrammyError, type Transformer } from "grammy";
 import type { Update } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -399,12 +399,23 @@ describe("presentation adapter", () => {
     });
 
     it("falls back to the card without posters when Telegram rejects the photos", async () => {
-      const { bot, calls } = createHarness(resolvedIdentity(), {
+      const { bot, calls, records } = createHarness(resolvedIdentity(), {
         execute: cardWith([poster(1), poster(2)]),
       });
       bot.api.config.use((prev, method, payload, signal) =>
         JSON.stringify(payload).includes("tg://photo")
-          ? Promise.reject(new Error("Bad Request: wrong file identifier"))
+          ? Promise.reject(
+              new GrammyError(
+                "rejected",
+                {
+                  ok: false,
+                  error_code: 400,
+                  description: "Bad Request: wrong file identifier",
+                },
+                method,
+                payload,
+              ),
+            )
           : prev(method, payload, signal),
       );
       await bot.init();
@@ -415,6 +426,32 @@ describe("presentation adapter", () => {
       expect(last?.method).toBe("sendRichMessage");
       expect(JSON.stringify(last?.payload)).not.toContain("tg://photo");
       expect(JSON.stringify(last?.payload)).toContain("1. Афиша 1 (файл)");
+      // Деградация видна оператору: причина едет в запись границы.
+      expect(JSON.stringify(records)).toContain(
+        "Bad Request: wrong file identifier",
+      );
+    });
+
+    it("does not resend the card when the failure is not about the photos", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity(), {
+        execute: cardWith([poster(1), poster(2)]),
+      });
+      bot.api.config.use((prev, method, payload, signal) =>
+        JSON.stringify(payload).includes("tg://photo")
+          ? Promise.reject(new Error("socket hang up"))
+          : prev(method, payload, signal),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(view));
+
+      expect(
+        calls.filter(
+          (call) =>
+            call.method === "sendRichMessage" &&
+            !JSON.stringify(call.payload).includes("tg://photo"),
+        ),
+      ).toEqual([]);
     });
 
     it("opens a stored photo as a photo", async () => {
@@ -4099,11 +4136,11 @@ describe("questions", () => {
       expect.objectContaining({ intent: "view-meetup" }),
     );
     expect(calls.map((call) => call.method)).toEqual([
-      "answerCallbackQuery",
       "deleteMessage",
+      "answerCallbackQuery",
       "sendRichMessage",
     ]);
-    expect(calls[1]?.payload).toMatchObject({ message_id: 9 });
+    expect(calls[0]?.payload).toMatchObject({ message_id: 9 });
   });
 
   it("edits the cancelled question in place when Telegram refuses to delete it", async () => {
@@ -5328,7 +5365,7 @@ describe("deferred publication frames", () => {
       expect(
         calls.find((call) => call.method === "deleteMessage")?.payload,
       ).toMatchObject({ message_id: 9 });
-      expect(calls.at(-1)).toMatchObject({
+      expect(sentMessages(calls).at(-1)).toMatchObject({
         method: "sendMessage",
         payload: {
           text: "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
@@ -5615,11 +5652,13 @@ describe("deferred publication frames", () => {
     expect(payloadText(calls.at(-1))).not.toContain("force_reply");
 
     await bot.handleUpdate(callbackUpdate(`v1:manage:when:${token}:p:t`));
-    expect(calls.at(-1)?.method).toBe("sendMessage");
-    expect(sendMessageText(calls.at(-1))).toContain(
+    expect(sentMessages(calls).at(-1)?.method).toBe("sendMessage");
+    expect(sendMessageText(sentMessages(calls).at(-1))).toContain(
       "Когда опубликовать сходку?",
     );
-    expect(payloadText(calls.at(-1))).toContain(`v1:q:pm:${token}`);
+    expect(payloadText(sentMessages(calls).at(-1))).toContain(
+      `v1:q:pm:${token}`,
+    );
 
     await bot.handleUpdate(
       replyUpdate({
@@ -5663,7 +5702,7 @@ describe("deferred publication frames", () => {
     const first = createHarness(resolvedIdentity(["admin"]), { execute });
     await first.bot.init();
     await first.bot.handleUpdate(callbackUpdate(`v1:manage:when:${token}:p:t`));
-    const question = first.calls.at(-1);
+    const question = sentMessages(first.calls).at(-1);
     const questionText = sendMessageText(question);
     expect(questionText).not.toContain("Шаг:");
     expect(questionText).not.toContain("v1:manage");
