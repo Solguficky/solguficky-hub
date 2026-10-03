@@ -156,8 +156,48 @@ type PlainAction =
       category: MeetupCategory;
       enabled: boolean;
     }
+  // «Отмена» под вопросом: кнопка несёт шаг вопроса. По нажатию вопрос
+  // правится в экран, с которого задан, а по ответу бот читает шаг из
+  // клавиатуры вопроса в `reply_to_message` — память процесса ему не нужна.
+  | { kind: "question"; step: QuestionStep }
   | { kind: "outdated" }
   | { kind: "malformed" };
+
+/** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
+export type QuestionStep =
+  | { kind: "field"; mode: "create" | "edit"; token: string; field: FormField }
+  | { kind: "publish-moment"; token: string }
+  // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
+  // подтверждения и уходит в `expected_version` (PER-393).
+  | { kind: "material-source"; token: string; version: number }
+  // Источник файла в 64 байта не помещается, поэтому ответ на этот вопрос
+  // принимается только по карте вопросов в памяти процесса; кнопка возвращает
+  // к материалам.
+  | { kind: "material-title"; token: string }
+  | { kind: "broadcast"; token?: string }
+  | { kind: "username" };
+
+/** Данные кнопки «Отмена» для вопроса с этим шагом. */
+export function questionData(step: QuestionStep): string {
+  switch (step.kind) {
+    case "field":
+      return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
+    case "publish-moment":
+      return `v1:q:pm:${step.token}`;
+    case "material-source":
+      return `v1:q:ms:${step.token}:${step.version}`;
+    case "material-title":
+      return `v1:q:mt:${step.token}`;
+    case "broadcast":
+      return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
+    case "username":
+      return "v1:q:nick";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
 
 // Кнопка под следом — уведомлением или сообщением «Доступ открыт» — несёт то же
 // действие, что и кнопка экрана, с пометкой `t`: экран по ней приходит новым
@@ -191,6 +231,12 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };
+  if (parts[1] === "q") {
+    const step = parseQuestionStep(parts);
+    return step === undefined
+      ? { kind: "malformed" }
+      : { kind: "question", step };
+  }
   const listed = parseListPage(parts);
   if (listed !== undefined) return listed;
   if (parts.length === 3 && parts[1] === "view") {
@@ -346,6 +392,44 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "confirm-unschedule")
     return { kind: "manage-confirm-unschedule", token: token.data };
   return { kind: "malformed" };
+}
+
+function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
+  if (parts.length === 3 && parts[2] === "bc") return { kind: "broadcast" };
+  if (parts.length === 3 && parts[2] === "nick") return { kind: "username" };
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return undefined;
+  if (parts.length === 4) {
+    switch (parts[2]) {
+      case "pm":
+        return { kind: "publish-moment", token: token.data };
+      case "mt":
+        return { kind: "material-title", token: token.data };
+      case "bm":
+        return { kind: "broadcast", token: token.data };
+      default:
+        return undefined;
+    }
+  }
+  if (parts.length !== 5) return undefined;
+  if (parts[2] === "ms") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? { kind: "material-source", token: token.data, version: version.data }
+      : undefined;
+  }
+  if (parts[2] === "fe" || parts[2] === "fc") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? {
+          kind: "field",
+          mode: parts[2] === "fe" ? "edit" : "create",
+          token: token.data,
+          field: field.data,
+        }
+      : undefined;
+  }
+  return undefined;
 }
 
 // Кнопка листания: `v1:nav:hub:<страница>`, `v1:nav:archive:<страница>`,

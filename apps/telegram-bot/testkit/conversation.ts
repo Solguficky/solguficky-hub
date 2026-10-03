@@ -42,6 +42,9 @@ type Screen = {
   // нажатой кнопки, и бот читает из неё источник материала.
   keyboard: readonly (readonly KeyboardButton[])[];
   asksForReply: boolean;
+  // Сообщение было вопросом, даже если бот его уже снял: по этому счёту
+  // вопросы нумеруются в том порядке, в каком задавались.
+  asked: boolean;
   format: ScreenFormat;
   // Сообщение с файлом: его текст — подпись, и правится оно своим методом.
   media?: ScreenMedia;
@@ -171,6 +174,10 @@ export function startConversation(
               // Telegram возвращает сущности вопроса в ответе: по ним бот
               // после рестарта восстанавливает шаг точечной правки.
               entities: [...replyTo.entities],
+              // И клавиатуру вопроса: шаг лежит в его кнопке «Отмена».
+              ...(replyTo.keyboard.length === 0
+                ? {}
+                : { reply_markup: { inline_keyboard: replyTo.keyboard } }),
               // ReplyMessage в grammY пересекает Message с обязательным
               // `undefined`-полем, и под exactOptionalPropertyTypes такой тип
               // не населён.
@@ -306,10 +313,11 @@ export function startConversation(
       );
     },
     async answers(number, text) {
-      // Вопрос с ForceReply бот не правит, поэтому его номер сообщения растёт
-      // в порядке, в котором вопросы задавались.
+      // Номер сообщения вопроса растёт в порядке, в котором вопросы задавались.
+      // Снятый вопрос из счёта не выпадает: ответить на него в клиенте всё ещё
+      // можно, и бот обязан сказать, что вопрос устарел.
       const questions = screens()
-        .filter((screen) => screen.asksForReply)
+        .filter((screen) => screen.asked)
         .sort((left, right) => left.messageId - right.messageId);
       const question = questions[number - 1];
       if (question === undefined) {
@@ -544,6 +552,9 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
         buttons: readButtons(payload),
         keyboard: payload.reply_markup?.inline_keyboard ?? [],
         asksForReply: payload.reply_markup?.force_reply === true,
+        asked:
+          payload.reply_markup?.force_reply === true ||
+          previous?.asked === true,
         format,
         ...(media === undefined ? {} : { media }),
         ...(replyTo === undefined ? {} : { replyTo }),
@@ -552,11 +563,20 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
       call.method === "editMessageReplyMarkup" &&
       previous !== undefined
     ) {
+      const keyboard = payload.reply_markup?.inline_keyboard ?? [];
       next = {
         ...previous,
         buttons: readButtons(payload),
-        keyboard: payload.reply_markup?.inline_keyboard ?? [],
+        keyboard,
+        // Вопрос, у которого бот снял клавиатуру, ответа больше не ждёт.
+        asksForReply: previous.asksForReply && keyboard.flat().length > 0,
       };
+      // Снятие клавиатуры сообщение не трогает: внизу чата остаётся то, что
+      // пришло последним, а не экран, у которого убрали кнопки.
+      if (keyboard.flat().length === 0) {
+        current.set(messageId, next);
+        return;
+      }
     }
     if (next === undefined) return;
     current.delete(messageId);

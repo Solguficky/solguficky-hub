@@ -57,7 +57,7 @@ describe("висящие вопросы формы", () => {
     expect((await direct.readAsAdmin(adminId, second)).title).toBe("");
   });
 
-  it("случай 8: ответ на вопрос формы создания после рестарта получает понятный текст", async () => {
+  it("случай 8: ответ на вопрос формы создания после рестарта восстанавливает шаг из сообщения", async () => {
     const { adminId, person } = await organizer();
     await person.presses("Управление");
     await person.presses("Создать сходку");
@@ -65,12 +65,14 @@ describe("висящие вопросы формы", () => {
     wire.restart();
     await person.says("Название после рестарта");
 
-    expect(person.sees()).toBe(
-      "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
-    );
+    // Шаг формы едет в кнопке «Отмена» под вопросом, а черновик уже лежит в
+    // Meetups: рестарт не теряет ни того, ни другого, и форма идёт дальше.
+    expect(person.sees()).not.toContain("устарел");
     const [draftId] = (await direct.journalOf(adminId)).meetupIds;
     if (draftId === undefined) throw new Error("черновик не заведён");
-    expect((await direct.readAsAdmin(adminId, draftId)).title).toBe("");
+    expect((await direct.readAsAdmin(adminId, draftId)).title).toBe(
+      "Название после рестарта",
+    );
   });
 
   it("случай 8: ответ на вопрос точечной правки после рестарта восстанавливает шаг из сообщения", async () => {

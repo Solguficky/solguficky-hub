@@ -189,6 +189,78 @@ describe("conversation press", () => {
   });
 });
 
+describe("conversation questions", () => {
+  const cancel = [[{ text: "Отмена", callback_data: "v1:q:nick" }]];
+  const question = (text: string) =>
+    call("sendMessage", {
+      text,
+      reply_markup: { force_reply: true, inline_keyboard: cancel },
+    });
+
+  it("returns the keyboard of the question with the answer", async () => {
+    const { bot, updates } = capturingBot();
+    const person = startConversation(
+      bot,
+      [question("Какой ник?")],
+      BigInt(chatId),
+    );
+
+    await person.answers(1, "@someone");
+
+    expect(updates[0]?.message?.reply_to_message).toMatchObject({
+      message_id: 101,
+      reply_markup: { inline_keyboard: cancel },
+    });
+  });
+
+  it("stops treating a question as pending once its keyboard is removed", async () => {
+    const { bot, updates } = capturingBot();
+    const calls = [
+      question("Какой ник?"),
+      call("sendMessage", { text: "Состав сообщества" }),
+      call("editMessageReplyMarkup", {
+        message_id: 101,
+        reply_markup: { inline_keyboard: [[]] },
+      }),
+    ];
+    const person = startConversation(bot, calls, BigInt(chatId));
+
+    // Снятая клавиатура не поднимает вопрос вниз чата и не оставляет его
+    // ждать: следующий текст — обычное сообщение, а не ответ.
+    expect(readScreenViews(calls, chatId).at(-1)?.text).toBe(
+      "Состав сообщества",
+    );
+    await person.sendsDocument("programma.pdf");
+    expect(updates[0]?.message).not.toHaveProperty("reply_to_message");
+  });
+
+  it("numbers questions in the order they were asked, closed ones included", async () => {
+    const { bot, updates } = capturingBot();
+    const person = startConversation(
+      bot,
+      [
+        question("Первый?"),
+        call("editMessageReplyMarkup", {
+          message_id: 101,
+          reply_markup: { inline_keyboard: [[]] },
+        }),
+        question("Второй?"),
+      ],
+      BigInt(chatId),
+    );
+
+    await person.answers(1, "поздний ответ");
+    await person.answers(2, "ответ");
+
+    expect(updates[0]?.message?.reply_to_message).toMatchObject({
+      message_id: 101,
+    });
+    expect(updates[1]?.message?.reply_to_message).toMatchObject({
+      message_id: 103,
+    });
+  });
+});
+
 describe("conversation file", () => {
   it("answers the pending question with the document", async () => {
     const { bot, updates } = capturingBot();

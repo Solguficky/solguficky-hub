@@ -148,7 +148,7 @@ export const screenCatalog = {
   "material-remove-confirm": { class: "screen", nav: "confirm" },
   "broadcast-confirm": { class: "screen", nav: "confirm" },
   "broadcast-result": { class: "screen", nav: "exit" },
-  question: { class: "question", nav: "question", legacy: true },
+  question: { class: "question", nav: "question" },
   refusal: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
   notification: { class: "trace", nav: "free" },

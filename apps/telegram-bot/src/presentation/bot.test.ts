@@ -31,7 +31,7 @@ import {
   parseTelegramEnvironment,
   type TelegramEnvironment,
 } from "./bot.js";
-import { publishMomentQuestion } from "./edit-question.js";
+import { editQuestion, publishMomentQuestion } from "./edit-question.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
 import { refusalText } from "./screens/kit.js";
 
@@ -132,6 +132,9 @@ function replyUpdate(options: {
   replyFromId: number;
   replyText?: string | undefined;
   replyEntities?: unknown;
+  // Клавиатура вопроса: Telegram возвращает её в ответе, и по кнопке «Отмена»
+  // бот читает шаг вопроса.
+  replyMarkup?: unknown;
 }): Update {
   return {
     update_id: 4,
@@ -152,6 +155,9 @@ function replyUpdate(options: {
         },
         text: options.replyText,
         entities: options.replyEntities,
+        ...(options.replyMarkup === undefined
+          ? {}
+          : { reply_markup: options.replyMarkup }),
       } as never,
     },
   };
@@ -208,9 +214,24 @@ function visible(text: string): string {
     .replaceAll("&amp;", "&");
 }
 
-function sendMessageEntities(call: RecordedCall | undefined): unknown {
+// Номер последнего сообщения бота: фикстура отвечает на sendMessage
+// идентификатором `100 + номер вызова`. Вопрос — всегда новое сообщение, и
+// ответ на него адресуется этим номером.
+function lastQuestionId(calls: readonly RecordedCall[]): number {
+  const index = calls.findLastIndex((call) => call.method === "sendMessage");
+  return 100 + index + 1;
+}
+
+function _sendMessageEntities(call: RecordedCall | undefined): unknown {
   if (call === undefined || call.method !== "sendMessage") return undefined;
   return "entities" in call.payload ? call.payload.entities : undefined;
+}
+
+// Сообщения, которые бот отправил, по порядку. Последним вызовом после ответа
+// на вопрос идёт снятие его клавиатуры, поэтому «последнее сообщение» ищется
+// среди отправок, а не среди всех вызовов.
+function sentMessages(calls: readonly RecordedCall[]): RecordedCall[] {
+  return calls.filter((call) => call.method === "sendMessage");
 }
 
 function sendMessageText(call: RecordedCall | undefined): string | undefined {
@@ -404,12 +425,12 @@ describe("presentation adapter", () => {
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
-    await bot.handleUpdate(forwardedReplyUpdate(102));
+    await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
     await bot.handleUpdate(
       replyUpdate({
         text: "Опрос: кто идёт",
         fromId: 42,
-        replyMessageId: 103,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -477,19 +498,21 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "document link",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    const rejection = calls.at(-1);
+    const rejection = sentMessages(calls).at(-1);
     expect(rejection?.method).toBe("sendMessage");
+    // Прежний вопрос снимается после того, как ушёл новый.
+    expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
     expect(JSON.stringify(rejection?.payload)).toContain("нельзя дать ссылку");
     expect(JSON.stringify(rejection?.payload)).toContain('"force_reply":true');
 
-    await bot.handleUpdate(forwardedReplyUpdate(103));
+    await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
 
-    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
       "Как назвать материал",
     );
   });
@@ -833,7 +856,7 @@ describe("presentation adapter", () => {
         materials: [],
       },
     });
-    const { bot } = createHarness(resolvedIdentity(), { execute });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
@@ -842,7 +865,7 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Чужое название",
         fromId: 43,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -1789,7 +1812,7 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Настолки",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -1821,8 +1844,19 @@ describe("presentation adapter", () => {
     expect(questionText).toContain("Сейчас: Циферблат");
     expect(questionText).not.toContain("Шаг:");
     expect(questionText).not.toContain("v1:manage");
+    // Шаг лежит в кнопке «Отмена», а не в тексте вопроса.
     expect(question?.payload).toMatchObject({
-      link_preview_options: { is_disabled: true },
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [
+          [
+            {
+              text: "Отмена",
+              callback_data: "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:venue",
+            },
+          ],
+        ],
+      },
     });
 
     const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
@@ -1831,10 +1865,12 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Новый зал",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(first.calls),
         replyFromId: 1,
         replyText: questionText,
-        replyEntities: sendMessageEntities(question),
+        replyMarkup: (
+          question?.payload as { reply_markup?: unknown } | undefined
+        )?.reply_markup,
       }),
     );
 
@@ -2056,24 +2092,23 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Моя правка",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    expect(calls.at(-1)).toMatchObject({
+    const conflict = sentMessages(calls).at(-1);
+    expect(conflict).toMatchObject({
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
           "Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.",
         ),
-        reply_markup: { force_reply: true, selective: true },
+        reply_markup: { force_reply: true },
       },
     });
-    expect(sendMessageText(calls.at(-1))).toContain("Сейчас: Чужая правка");
-    expect(sendMessageText(calls.at(-1))).toContain(
-      "Ваше значение: Моя правка",
-    );
+    expect(sendMessageText(conflict)).toContain("Сейчас: Чужая правка");
+    expect(sendMessageText(conflict)).toContain("Ваше значение: Моя правка");
     expectBoundary(records.at(-1), {
       level: "warn",
       result: "error",
@@ -2816,8 +2851,14 @@ describe("presentation adapter", () => {
     );
     const question = calls.find((call) => call.method === "sendMessage");
     expect(question).toBeDefined();
+    const questionId = lastQuestionId(calls);
     const replyTo = (text: string) =>
-      replyUpdate({ text, fromId: 42, replyMessageId: 102, replyFromId: 1 });
+      replyUpdate({
+        text,
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      });
 
     await bot.handleUpdate(replyTo("/meetups"));
     expect(execute).toHaveBeenLastCalledWith(
@@ -3164,7 +3205,9 @@ describe("presentation adapter", () => {
         materials: [],
       },
     });
-    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
     await bot.init();
     await bot.handleUpdate(
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
@@ -3174,7 +3217,7 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Чужое название",
         fromId: 43,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -3539,19 +3582,19 @@ describe("confirmations", () => {
     });
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:bc:m:${token}`));
-    const question = calls.findLastIndex(
+    const _question = calls.findLastIndex(
       (call) => call.method === "sendMessage",
     );
     await bot.handleUpdate(
       replyUpdate({
         text: "Встречаемся у входа",
         fromId: 42,
-        replyMessageId: 100 + question + 1,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    const confirm = calls.at(-1);
+    const confirm = sentMessages(calls).at(-1);
     expect(sendMessageText(confirm)).toContain("<b>Отправить подписчикам?</b>");
     expect(keyboardOf(confirm)).toEqual([
       [
@@ -3574,6 +3617,250 @@ describe("confirmations", () => {
         { text: "Меню", callback_data: "v1:nav:start" },
       ],
     ]);
+  });
+});
+
+describe("questions", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const cancel = (data: string) => ({
+    force_reply: true,
+    inline_keyboard: [[{ text: "Отмена", callback_data: data }]],
+  });
+  const buttonsOf = (call: RecordedCall | undefined) =>
+    (
+      call?.payload as
+        | { reply_markup?: { inline_keyboard?: unknown[][] } }
+        | undefined
+    )?.reply_markup?.inline_keyboard?.flat();
+  const viewing = () =>
+    vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "meetup-updated", meetup: publishedMeetup() },
+    );
+
+  it("leaves one place to act: the asking screen loses its keyboard", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute: viewing(),
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+
+    // Снятие клавиатуры человеку не видно, поэтому ответ на нажатие уходит
+    // вместе с вопросом, а не перед ним.
+    expect(calls.map((call) => call.method)).toEqual([
+      "editMessageReplyMarkup",
+      "answerCallbackQuery",
+      "sendMessage",
+    ]);
+    expect(calls[0]?.payload).toMatchObject({ message_id: 9 });
+    expect(buttonsOf(calls[0])).toEqual([]);
+    expect(calls[2]?.payload).toMatchObject({
+      reply_markup: cancel(`v1:q:fe:${token}:venue`),
+    });
+  });
+
+  it("closes the question once its answer is accepted", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute: viewing(),
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+    const questionId = lastQuestionId(calls);
+    const before = calls.length;
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      }),
+    );
+
+    const closing = calls
+      .slice(before)
+      .find((call) => call.method === "editMessageReplyMarkup");
+    expect(closing?.payload).toMatchObject({ message_id: questionId });
+    expect(buttonsOf(closing)).toEqual([]);
+  });
+
+  it("keeps the question open when the service did not answer", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "dependency-rejected", reason: "timeout" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+    const before = calls.length;
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    expect(calls.slice(before).map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+  });
+
+  it("returns a cancelled question to the screen it was asked from", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:q:fe:${token}:venue`, {
+        text: "Где встречаемся?",
+        reply_markup: cancel(`v1:q:fe:${token}:venue`),
+      }),
+    );
+
+    // Вопрос правится в карточку: значение никуда не ушло.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({ message_id: 9 });
+  });
+
+  it("forgets a cancelled question: a late answer to it is stale", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+    const questionId = lastQuestionId(calls);
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:q:fe:${token}:venue`, {
+        message_id: questionId,
+        text: "Где встречаемся?",
+        reply_markup: cancel(`v1:q:fe:${token}:venue`),
+      }),
+    );
+
+    // Экран, в который превратился вопрос, кнопки «Отмена» уже не несёт.
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "update-meetup-field" }),
+    );
+    expect(sendMessageText(sentMessages(calls).at(-1))).toContain(
+      "Этот вопрос уже устарел.",
+    );
+  });
+
+  it("reads the step of a question asked by the previous release from its marker", async () => {
+    const execute = viewing();
+    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    await bot.init();
+    const asked = editQuestion({
+      prompt: "Где встречаемся?",
+      botUsername: "stub_bot",
+      token,
+      field: "venue",
+    });
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: 77,
+        replyFromId: 1,
+        replyText: asked.text,
+        replyEntities: asked.entities,
+      }),
+    );
+
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "update-meetup-field",
+        field: "venue",
+        value: "Новый зал",
+        meetupId: tokenToUuid(token),
+      }),
+    );
+  });
+
+  it("sends a restarted material title question back to the materials", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Афиша",
+        fromId: 42,
+        replyMessageId: 77,
+        replyFromId: 1,
+        replyText: "Как назвать материал в карточке?",
+        replyMarkup: cancel(`v1:q:mt:${token}`),
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: refusalText("Этот вопрос уже устарел. Прикрепи материал заново."),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "‹ Материалы", callback_data: `v1:mm:list:${token}` },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
+      },
+    });
+  });
+
+  it.each([
+    `v1:q:pm:${token}`,
+    `v1:q:ms:${token}:3`,
+    `v1:q:mt:${token}`,
+    `v1:q:bm:${token}`,
+  ])("cancels %s without a command to the service", async (data) => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(data, {
+        text: "Вопрос",
+        reply_markup: cancel(data),
+      }),
+    );
+
+    for (const [request] of execute.mock.calls) {
+      expect(request.intent).toBe("view-meetup");
+    }
+    expect(calls.at(-1)?.method).toBe("editMessageText");
+    expect(calls.at(-1)?.payload).toMatchObject({ message_id: 9 });
   });
 });
 
@@ -4371,12 +4658,6 @@ describe("deferred publication frames", () => {
     return JSON.stringify(call?.payload ?? {});
   }
 
-  function lastQuestionId(calls: readonly RecordedCall[]): number {
-    // Фикстура отвечает на sendMessage идентификатором `100 + номер вызова`.
-    const index = calls.findLastIndex((call) => call.method === "sendMessage");
-    return 100 + index + 1;
-  }
-
   it("shows the scheduled moment on the draft card and drops it once cancelled", async () => {
     let meetup = scheduledDraft();
     const execute = vi.fn<Dispatcher["execute"]>(async () => ({
@@ -4525,10 +4806,12 @@ describe("deferred publication frames", () => {
       replyUpdate({
         text: "01.10.2026 19:30",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(first.calls),
         replyFromId: 1,
         replyText: questionText,
-        replyEntities: sendMessageEntities(question),
+        replyMarkup: (
+          question?.payload as { reply_markup?: unknown } | undefined
+        )?.reply_markup,
       }),
     );
 
@@ -4713,7 +4996,7 @@ describe("past meetup date", () => {
       replyUpdate({
         text: "21.09.2026 19:30",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -5033,7 +5316,7 @@ describe("broadcast frames", () => {
       replyUpdate({
         text: `  ${body}  `,
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -5046,8 +5329,8 @@ describe("broadcast frames", () => {
     // Сходку читают при вопросе и не перечитывают на ответе: сбой Meetups в
     // этот момент не должен стоить человеку набранного текста.
     expect(execute).toHaveBeenCalledTimes(1);
-    const preview = calls.at(-2);
-    const confirmation = calls.at(-1);
+    const preview = sentMessages(calls).at(-2);
+    const confirmation = sentMessages(calls).at(-1);
     // Предпросмотр — ровно текст рассылки, без заголовка и числа получателей.
     expect(sendMessageText(preview)).toBe(body);
     const text = sendMessageText(confirmation) ?? "";
@@ -5072,12 +5355,12 @@ describe("broadcast frames", () => {
       replyUpdate({
         text: "я".repeat(4097),
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    const retry = calls.at(-1);
+    const retry = sentMessages(calls).at(-1);
     expect(sendMessageText(retry)).toContain("длиннее 4096 символов");
     expect(retry?.payload).toMatchObject({
       reply_markup: { force_reply: true },

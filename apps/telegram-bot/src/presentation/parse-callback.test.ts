@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseCallback, traceCallback } from "./parse-callback.js";
+import {
+  parseCallback,
+  type QuestionStep,
+  questionData,
+  traceCallback,
+} from "./parse-callback.js";
 
 describe("callback parser", () => {
   it("parses a meetup card action", () => {
@@ -448,6 +453,51 @@ describe("notification callbacks", () => {
     for (const [data, expected] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
       expect(parseCallback(data)).toEqual(expected);
+    }
+  });
+
+  it("carries the step of a question in its cancel button and reads it back", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const steps: readonly (readonly [string, QuestionStep])[] = [
+      [
+        `v1:q:fe:${token}:description`,
+        { kind: "field", mode: "edit", token, field: "description" },
+      ],
+      [
+        `v1:q:fc:${token}:title`,
+        { kind: "field", mode: "create", token, field: "title" },
+      ],
+      [`v1:q:pm:${token}`, { kind: "publish-moment", token }],
+      [
+        `v1:q:ms:${token}:999999999`,
+        { kind: "material-source", token, version: 999999999 },
+      ],
+      [`v1:q:mt:${token}`, { kind: "material-title", token }],
+      [`v1:q:bm:${token}`, { kind: "broadcast", token }],
+      ["v1:q:bc", { kind: "broadcast" }],
+      ["v1:q:nick", { kind: "username" }],
+    ];
+    for (const [data, step] of steps) {
+      expect(questionData(step)).toBe(data);
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual({ kind: "question", step });
+    }
+  });
+
+  it("rejects a question step with a broken token, field or shape", () => {
+    for (const data of [
+      "v1:q",
+      "v1:q:fe",
+      "v1:q:fe:short:venue",
+      "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:unknown",
+      "v1:q:fx:AZLzpLXGfY6fChssPU5fYA:venue",
+      "v1:q:ms:AZLzpLXGfY6fChssPU5fYA",
+      "v1:q:ms:AZLzpLXGfY6fChssPU5fYA:x",
+      "v1:q:pm:AZLzpLXGfY6fChssPU5fYA:extra",
+      "v1:q:bc:AZLzpLXGfY6fChssPU5fYA",
+      "v1:q:nick:extra",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }
   });
 

@@ -55,12 +55,8 @@ import type { Tracing } from "../tracing.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
 import {
-  editQuestion,
   parseEditQuestion,
   parsePublishMomentQuestion,
-  plainQuestion,
-  publishMomentQuestion,
-  type QuestionMessage,
 } from "./edit-question.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
@@ -82,12 +78,15 @@ import {
   type CallbackAction,
   type NotifiedMeetupCategory,
   parseCallback,
+  type QuestionStep,
+  questionData,
   removableUsernamePattern,
   traceCallback,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
+  cancelLabel,
   confirmKeyboard,
   escapeHtml,
   heading,
@@ -387,6 +386,19 @@ async function handleMessage(
       ? undefined
       : ctx.message?.reply_to_message?.message_id;
     removeExpiredQuestions(questions, Date.now());
+    // Ответ принят либо отвергнут окончательно: вопрос больше не ждёт, и его
+    // «Отмена» снимается. После сбоя сервиса вопрос остаётся открытым — тот же
+    // ответ можно прислать ещё раз.
+    const answered = async (result?: ExecuteResult): Promise<void> => {
+      if (
+        replyId === undefined ||
+        (result !== undefined && retryable(result))
+      ) {
+        return;
+      }
+      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await closeQuestion(ctx, replyId);
+    };
     const storedPending =
       replyId === undefined
         ? undefined
@@ -404,8 +416,18 @@ async function handleMessage(
       storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
         ? parsePublishMomentQuestion(repliedEntities)
         : undefined;
+    // Шаг вопроса лежит в его кнопке «Отмена» и возвращается с ответом: так
+    // вопрос переживает рестарт. Маркер шага в тексте — вопросы прошлого
+    // релиза, они читаются ещё один релиз.
+    const askedStep =
+      storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
+        ? questionStepOf(repliedMessage)
+        : undefined;
     const pending: PendingInput | undefined =
       storedPending ??
+      (askedStep === undefined
+        ? undefined
+        : pendingOf(askedStep, ctx.from?.id ?? 0)) ??
       (recoveredEdit !== undefined
         ? {
             kind: "meetup" as const,
@@ -455,7 +477,7 @@ async function handleMessage(
         meetupId: pending.meetupId,
         ...rpcCall(ctx, useCase),
       });
-      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await answered(result);
       await renderFormResult(
         ctx,
         result,
@@ -501,7 +523,7 @@ async function handleMessage(
         return;
       }
       if (!identity.person.globalRoles.includes("admin")) {
-        questions.delete(questionKey(ctx.chat?.id, replyId));
+        await answered();
         await showRefusal(ctx, materialForbiddenText, menuOnly());
         outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
         return;
@@ -509,12 +531,12 @@ async function handleMessage(
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
         if (source === undefined) {
-          await askAgain(
+          await askQuestion(
             ctx,
             questions,
-            replyId,
             pending,
             "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли ответом на это сообщение пересланное сообщение с доступным источником, фотографию или документ.",
+            replyId,
           );
           outcome = {
             level: "info",
@@ -526,23 +548,19 @@ async function handleMessage(
           };
           return;
         }
-        questions.delete(questionKey(ctx.chat?.id, replyId));
-        const prompt = await ctx.reply(
-          "Как назвать материал в карточке? Напиши короткое название.",
+        await askQuestion(
+          ctx,
+          questions,
           {
-            ...screenMark("question"),
-            reply_markup: { force_reply: true, selective: true },
+            kind: "material-title",
+            meetupId: pending.meetupId,
+            version: pending.version,
+            source,
+            telegramUserId: pending.telegramUserId,
           },
+          "Как назвать материал в карточке? Напиши короткое название.",
+          replyId,
         );
-        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
-          kind: "material-title",
-          meetupId: pending.meetupId,
-          version: pending.version,
-          source,
-          telegramUserId: pending.telegramUserId,
-          expiresAt: Date.now() + questionTtlMs,
-        });
-        evictOldestQuestions(questions);
         outcome = {
           level: "info",
           message: "material title requested",
@@ -555,12 +573,12 @@ async function handleMessage(
       }
       const title = ctx.message?.text?.trim();
       if (title === undefined || title === "" || title.length > 200) {
-        await askAgain(
+        await askQuestion(
           ctx,
           questions,
-          replyId,
           pending,
           "Название должно быть текстом от 1 до 200 символов. Напиши короткое название.",
+          replyId,
         );
         outcome = {
           level: "info",
@@ -572,7 +590,7 @@ async function handleMessage(
         };
         return;
       }
-      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await answered();
       await sendMaterialConfirmation(
         ctx,
         pending.meetupId,
@@ -615,7 +633,7 @@ async function handleMessage(
         return;
       }
       if (!identity.person.globalRoles.includes("admin")) {
-        questions.delete(questionKey(ctx.chat?.id, replyId));
+        await answered();
         await showRefusal(
           ctx,
           broadcastForbiddenText[audience.kind],
@@ -628,16 +646,13 @@ async function handleMessage(
       // только текст автора, а вопрос остаётся ждать настоящего ответа.
       const checked = checkBroadcastBody(ctx.message?.text ?? "");
       if (checked.kind !== "ok") {
-        questions.delete(questionKey(ctx.chat?.id, replyId));
-        const prompt = await ctx.reply(broadcastBodyRetryText[checked.kind], {
-          ...screenMark("question"),
-          reply_markup: { force_reply: true, selective: true },
-        });
-        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
-          ...pending,
-          expiresAt: Date.now() + questionTtlMs,
-        });
-        evictOldestQuestions(questions);
+        await askQuestion(
+          ctx,
+          questions,
+          pending,
+          broadcastBodyRetryText[checked.kind],
+          replyId,
+        );
         outcome = {
           level: "info",
           message: "broadcast body rejected",
@@ -659,7 +674,7 @@ async function handleMessage(
         checked.body,
         pending.meetupTitle,
       );
-      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await answered();
       outcome = {
         level: "info",
         message: "broadcast confirmation sent",
@@ -709,7 +724,20 @@ async function handleMessage(
                 ctx.message.text,
                 rpcCall(ctx, useCase),
               );
-        questions.delete(questionKey(ctx.chat?.id, replyId));
+        if (result.kind === "invalid") {
+          // Отказ задаёт вопрос заново: обычное сообщение после него ушло бы
+          // мимо формы, и следующий текст остался бы без ответа.
+          await askQuestion(
+            ctx,
+            questions,
+            pending,
+            "Это не похоже на ник Telegram. Пришли его ещё раз, с @ или без.",
+            replyId,
+          );
+          outcome = adminOutcome(result, identity.person.identityId);
+          return;
+        }
+        if (result.kind === "ok") await answered();
         await renderCommunity(
           ctx,
           runtime,
@@ -719,9 +747,7 @@ async function handleMessage(
             ? result.value
               ? "Ник добавлен."
               : "Этот ник уже есть в списке."
-            : result.kind === "invalid"
-              ? "Это не похоже на ник Telegram. Пришли его ещё раз."
-              : undefined,
+            : undefined,
         );
         outcome = adminOutcome(result, identity.person.identityId);
         return;
@@ -745,7 +771,7 @@ async function handleMessage(
         meetupId: pending.meetupId,
         ...rpcCall(ctx, useCase),
       });
-      questions.delete(questionKey(ctx.chat?.id, replyId));
+      await answered(result);
       await renderFormResult(
         ctx,
         result,
@@ -774,10 +800,16 @@ async function handleMessage(
       ctx.message?.reply_to_message?.from?.id === ctx.me.id
     ) {
       useCase = "create_meetup";
+      // Название материала по кнопке вопроса не восстановить — источник файла
+      // жил в памяти процесса. Выход ведёт к материалам той же сходки.
       await showRefusal(
         ctx,
-        "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
-        menuOnly(),
+        askedStep?.kind === "material-title"
+          ? "Этот вопрос уже устарел. Прикрепи материал заново."
+          : "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
+        askedStep?.kind === "material-title"
+          ? withNav(new InlineKeyboard(), toMaterials(askedStep.token))
+          : menuOnly(),
       );
       outcome = {
         level: "info",
@@ -956,7 +988,17 @@ async function handleCallback(
   const waiting = startWaiting(ctx);
   ctx.waiting = waiting;
   try {
-    const action = parseCallback(ctx.callbackQuery?.data);
+    const pressed = parseCallback(ctx.callbackQuery?.data);
+    // «Отмена» под вопросом: вопрос правится в экран, с которого задан. Дальше
+    // нажатие идёт как обычная кнопка этого экрана.
+    const action: ScreenAction =
+      pressed.kind === "question" ? cancelTarget(pressed.step) : pressed;
+    if (pressed.kind === "question") {
+      const asked = ctx.callbackQuery?.message?.message_id;
+      if (asked !== undefined) {
+        questions.delete(questionKey(ctx.chat?.id, asked));
+      }
+    }
     if (action.kind === "malformed") {
       outcome = {
         level: "warn",
@@ -1310,21 +1352,17 @@ async function handleCallback(
           "Не прикреплено.",
         );
       } else if (action.kind === "begin-attach-material") {
-        const prompt = await ctx.reply(
-          `Перешли сообщение или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
+        await askQuestion(
+          ctx,
+          questions,
           {
-            ...screenMark("question"),
-            reply_markup: { force_reply: true, selective: true },
+            kind: "material-source",
+            meetupId,
+            version: current.meetup.version,
+            telegramUserId: ctx.from?.id ?? 0,
           },
+          `Перешли сообщение или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
         );
-        questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
-          kind: "material-source",
-          meetupId,
-          version: current.meetup.version,
-          telegramUserId: ctx.from?.id ?? 0,
-          expiresAt: Date.now() + questionTtlMs,
-        });
-        evictOldestQuestions(questions);
       } else {
         const materialId = tokenToUuid(action.materialToken);
         const material = current.meetup.materials.find(
@@ -1364,19 +1402,12 @@ async function handleCallback(
       return;
     }
     if (action.kind === "ask-allowed-username") {
-      const message = await ctx.reply(
+      await askQuestion(
+        ctx,
+        questions,
+        { kind: "allowed-username", telegramUserId: ctx.from?.id ?? 0 },
         "Какой ник разрешить? Отправь его с @ или без.",
-        {
-          ...screenMark("question"),
-          reply_markup: { force_reply: true, selective: true },
-        },
       );
-      questions.set(questionKey(ctx.chat?.id, message.message_id), {
-        kind: "allowed-username",
-        telegramUserId: ctx.from?.id ?? 0,
-        expiresAt: Date.now() + questionTtlMs,
-      });
-      evictOldestQuestions(questions);
       outcome = {
         level: "info",
         message: "allowed username requested",
@@ -1829,18 +1860,17 @@ async function handleCallback(
         meetupTitle = current.meetup.title;
         question = meetupBroadcastPrompt(meetupTitle);
       }
-      const prompt = await ctx.reply(question, {
-        ...screenMark("question"),
-        reply_markup: { force_reply: true, selective: true },
-      });
-      questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
-        kind: "broadcast-body",
-        audience,
-        ...(meetupTitle === undefined ? {} : { meetupTitle }),
-        telegramUserId: ctx.from?.id ?? 0,
-        expiresAt: Date.now() + questionTtlMs,
-      });
-      evictOldestQuestions(questions);
+      await askQuestion(
+        ctx,
+        questions,
+        {
+          kind: "broadcast-body",
+          audience,
+          ...(meetupTitle === undefined ? {} : { meetupTitle }),
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        question,
+      );
       outcome = {
         level: "info",
         message: "broadcast body requested",
@@ -3341,17 +3371,6 @@ async function resolvePerson(
   };
 }
 
-// Вопрос формы и правки: ForceReply и шаг в сущностях. Превью ссылок
-// выключено, иначе скрытая ссылка на профиль бота развернулась бы карточкой.
-function replyQuestion(ctx: UpdateContext, question: QuestionMessage) {
-  return ctx.reply(question.text, {
-    entities: question.entities,
-    link_preview_options: { is_disabled: true },
-    ...screenMark("question"),
-    reply_markup: { force_reply: true, selective: true },
-  });
-}
-
 /// Прошедшая дата цифрами `ДДММГГГГЧЧММ` для данных кнопки подтверждения;
 /// обратно её собирает разбор кнопки.
 function pastScheduleDigits(value: MeetupSchedule): string {
@@ -3380,25 +3399,18 @@ async function renderFormResult(
         : (result.error ?? formPrompts[result.field]);
     const prompt =
       result.kind === "edit-ask" ? `Сейчас: ${currentValue}\n${ask}` : ask;
-    const question: QuestionMessage =
-      result.kind === "edit-ask"
-        ? editQuestion({
-            prompt,
-            botUsername: ctx.me.username,
-            token: uuidToToken(result.meetup.id),
-            field: result.field,
-          })
-        : plainQuestion(prompt);
-    const message = await replyQuestion(ctx, question);
-    questions.set(questionKey(ctx.chat?.id, message.message_id), {
-      kind: "meetup",
-      mode: result.kind === "edit-ask" ? "edit" : "create",
-      field: result.field,
-      meetupId: result.meetup.id,
-      telegramUserId: ctx.from?.id ?? 0,
-      expiresAt: Date.now() + questionTtlMs,
-    });
-    evictOldestQuestions(questions);
+    await askQuestion(
+      ctx,
+      questions,
+      {
+        kind: "meetup",
+        mode: result.kind === "edit-ask" ? "edit" : "create",
+        field: result.field,
+        meetupId: result.meetup.id,
+        telegramUserId: ctx.from?.id ?? 0,
+      },
+      prompt,
+    );
     return;
   }
   if (result.kind === "conflict") {
@@ -3433,25 +3445,18 @@ async function renderFormResult(
     // Правка поля: сохранённый ввод показан, но повторно не отправляется — его
     // вводят заново, уже по актуальным данным. Режим вопроса сохраняет ту же
     // форму (создание или редактирование), в которой конфликт случился.
-    const question: QuestionMessage =
-      result.editing === true
-        ? editQuestion({
-            prompt: `Сейчас: ${lines.join("\n")}\n\n${formPrompts[result.field]}`,
-            botUsername: ctx.me.username,
-            token: uuidToToken(stored.id),
-            field: result.field,
-          })
-        : plainQuestion(`${lines.join("\n")}\n\n${formPrompts[result.field]}`);
-    const message = await replyQuestion(ctx, question);
-    questions.set(questionKey(ctx.chat?.id, message.message_id), {
-      kind: "meetup",
-      mode: result.editing === true ? "edit" : "create",
-      field: result.field,
-      meetupId: stored.id,
-      telegramUserId: ctx.from?.id ?? 0,
-      expiresAt: Date.now() + questionTtlMs,
-    });
-    evictOldestQuestions(questions);
+    await askQuestion(
+      ctx,
+      questions,
+      {
+        kind: "meetup",
+        mode: result.editing === true ? "edit" : "create",
+        field: result.field,
+        meetupId: stored.id,
+        telegramUserId: ctx.from?.id ?? 0,
+      },
+      `${result.editing === true ? "Сейчас: " : ""}${lines.join("\n")}\n\n${formPrompts[result.field]}`,
+    );
     return;
   }
   if (result.kind === "confirm-past-schedule") {
@@ -3515,7 +3520,6 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "ask-publish-moment") {
-    const token = uuidToToken(result.meetup.id);
     const current =
       result.meetup.publishAt === undefined
         ? ""
@@ -3524,21 +3528,16 @@ async function renderFormResult(
       result.retry === undefined
         ? publishMomentPrompt
         : publishMomentRetryText[result.retry];
-    const message = await replyQuestion(
+    await askQuestion(
       ctx,
-      publishMomentQuestion({
-        prompt: `${current}${prompt}`,
-        botUsername: ctx.me.username,
-        token,
-      }),
+      questions,
+      {
+        kind: "publish-moment",
+        meetupId: result.meetup.id,
+        telegramUserId: ctx.from?.id ?? 0,
+      },
+      `${current}${prompt}`,
     );
-    questions.set(questionKey(ctx.chat?.id, message.message_id), {
-      kind: "publish-moment",
-      meetupId: result.meetup.id,
-      telegramUserId: ctx.from?.id ?? 0,
-      expiresAt: Date.now() + questionTtlMs,
-    });
-    evictOldestQuestions(questions);
     return;
   }
   if (result.kind === "publication-scheduled") {
@@ -3617,28 +3616,200 @@ function removeExpiredQuestions(
   }
 }
 
-// Отказ в ответе на вопрос формы задаёт вопрос заново: ответ принимается только
-// на конкретный вопрос, и обычное сообщение после отказа уходило мимо формы —
-// человек не понимал, почему фотография не прикрепилась (прогон PER-395).
-// Прежний вопрос снимается только после того, как новый ушёл: упавшая отправка
-// оставляет ждать прежний, а не теряет шаг формы.
-async function askAgain(
+// Тело ожидаемого ответа без срока жизни: срок ставит `askQuestion`.
+type PendingBody = PendingInput extends infer Each
+  ? Each extends PendingInput
+    ? Omit<Each, "expiresAt">
+    : never
+  : never;
+
+function stepOf(pending: PendingBody): QuestionStep {
+  switch (pending.kind) {
+    case "meetup":
+      return {
+        kind: "field",
+        mode: pending.mode,
+        token: uuidToToken(pending.meetupId),
+        field: pending.field,
+      };
+    case "publish-moment":
+      return { kind: "publish-moment", token: uuidToToken(pending.meetupId) };
+    case "material-source":
+      return {
+        kind: "material-source",
+        token: uuidToToken(pending.meetupId),
+        version: pending.version,
+      };
+    case "material-title":
+      return { kind: "material-title", token: uuidToToken(pending.meetupId) };
+    case "broadcast-body":
+      return pending.audience.kind === "meetup"
+        ? { kind: "broadcast", token: uuidToToken(pending.audience.meetupId) }
+        : { kind: "broadcast" };
+    case "allowed-username":
+      return { kind: "username" };
+    default: {
+      const _exhaustive: never = pending;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ожидаемый ответ по шагу из кнопки вопроса — то, что раньше жило только в
+// памяти процесса. Название материала по шагу не восстановить: источник файла
+// в кнопку не помещается.
+function pendingOf(
+  step: QuestionStep,
+  telegramUserId: number,
+): PendingInput | undefined {
+  const expiresAt = Date.now() + questionTtlMs;
+  switch (step.kind) {
+    case "field":
+      return {
+        kind: "meetup",
+        mode: step.mode,
+        field: step.field,
+        meetupId: tokenToUuid(step.token),
+        telegramUserId,
+        expiresAt,
+      };
+    case "publish-moment":
+      return {
+        kind: "publish-moment",
+        meetupId: tokenToUuid(step.token),
+        telegramUserId,
+        expiresAt,
+      };
+    case "material-source":
+      return {
+        kind: "material-source",
+        meetupId: tokenToUuid(step.token),
+        version: step.version,
+        telegramUserId,
+        expiresAt,
+      };
+    case "material-title":
+      return undefined;
+    case "broadcast":
+      return {
+        kind: "broadcast-body",
+        audience:
+          step.token === undefined
+            ? { kind: "community" }
+            : { kind: "meetup", meetupId: tokenToUuid(step.token) },
+        telegramUserId,
+        expiresAt,
+      };
+    case "username":
+      return { kind: "allowed-username", telegramUserId, expiresAt };
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+// Действие экрана: всё, что несёт кнопка, кроме самой «Отмены» под вопросом, —
+// она сводится к действию экрана, с которого вопрос задан.
+type ScreenAction = Exclude<CallbackAction, { kind: "question" }>;
+
+// Куда возвращает «Отмена»: экран, с которого вопрос задан.
+function cancelTarget(step: QuestionStep): ScreenAction {
+  switch (step.kind) {
+    case "field":
+      return { kind: "view-meetup", token: step.token };
+    case "publish-moment":
+      return { kind: "manage-status", token: step.token };
+    case "material-source":
+    case "material-title":
+      return { kind: "manage-materials", token: step.token };
+    case "broadcast":
+      return step.token === undefined
+        ? { kind: "manage-menu" }
+        : { kind: "view-meetup", token: step.token };
+    case "username":
+      return { kind: "community" };
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+function questionStepOf(replied: unknown): QuestionStep | undefined {
+  const keyboard = (
+    replied as { reply_markup?: { inline_keyboard?: unknown } } | undefined
+  )?.reply_markup?.inline_keyboard;
+  if (!Array.isArray(keyboard)) return undefined;
+  for (const button of keyboard.flat()) {
+    const action = parseCallback(
+      (button as { callback_data?: unknown } | undefined)?.callback_data,
+    );
+    if (action.kind === "question") return action.step;
+  }
+  return undefined;
+}
+
+// Сбой сервиса, после которого тот же ответ стоит прислать ещё раз.
+function retryable(result: ExecuteResult): boolean {
+  return (
+    result.kind === "dependency-rejected" &&
+    (result.reason === "timeout" || result.reason === "unavailable")
+  );
+}
+
+/**
+ * Задаёт вопрос (дизайн-код, «Вопросы»): клиент сам открывает режим ответа, а
+ * под вопросом стоит «Отмена» с его шагом. Экран, с которого вопрос задан,
+ * теряет клавиатуру: в чате остаётся одно место, где можно действовать.
+ * `replaces` — вопрос, на который человек ответил неудачно: он снимается только
+ * после того, как ушёл новый, чтобы упавшая отправка не теряла шаг формы.
+ */
+async function askQuestion(
   ctx: UpdateContext,
   questions: Map<string, PendingInput>,
-  replyId: number,
-  pending: PendingInput,
+  pending: PendingBody,
   text: string,
+  replaces?: number,
 ): Promise<void> {
+  if (ctx.callbackQuery !== undefined) {
+    await clearCallbackKeyboard(ctx);
+  }
   const prompt = await ctx.reply(text, {
     ...screenMark("question"),
-    reply_markup: { force_reply: true, selective: true },
+    reply_markup: {
+      force_reply: true,
+      inline_keyboard: [
+        [{ text: cancelLabel, callback_data: questionData(stepOf(pending)) }],
+      ],
+    },
   });
-  questions.delete(questionKey(ctx.chat?.id, replyId));
+  if (replaces !== undefined) {
+    questions.delete(questionKey(ctx.chat?.id, replaces));
+    await closeQuestion(ctx, replaces);
+  }
+  // Запись в карте нужна названию материала и подписи рассылки: остальное
+  // читается из кнопки вопроса и рестарт переживает.
   questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
     ...pending,
     expiresAt: Date.now() + questionTtlMs,
-  });
+  } as PendingInput);
   evictOldestQuestions(questions);
+}
+
+// Вопрос, на который ответ принят, больше не ждёт: «Отмена» под ним снимается.
+async function closeQuestion(
+  ctx: UpdateContext,
+  messageId: number,
+): Promise<void> {
+  if (ctx.chat === undefined) return;
+  try {
+    await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId, {
+      reply_markup: new InlineKeyboard(),
+    });
+  } catch {
+    // Вопрос прошлого релиза кнопки не несёт, и править у него нечего.
+  }
 }
 
 function evictOldestQuestions(questions: Map<string, PendingInput>): void {
