@@ -107,6 +107,7 @@ async function main(): Promise<number> {
   const today = () => communityDay(new Date(), communityTimeZone);
   const dispatcher = createDispatcher(meetups, notifications, today);
   const identity = createIdentityClient(identityUrl, {
+    communityTimeZone,
     tracing,
     serviceToken,
   });
