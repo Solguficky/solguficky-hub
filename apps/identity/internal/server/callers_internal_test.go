@@ -53,8 +53,11 @@ func bearer(caller Caller) string { return "Bearer " + CallerTokens[caller] }
 // call вызывает метод по полному имени: тест таблицы перебирает методы
 // данными, а не по сгенерированному методу клиента на каждый случай.
 func call(ctx context.Context, conn *grpc.ClientConn, method string) error {
-	if method == identityv1.IdentityService_ResolveIdentity_FullMethodName {
+	switch method {
+	case identityv1.IdentityService_ResolveIdentity_FullMethodName:
 		return conn.Invoke(ctx, method, &identityv1.ResolveIdentityRequest{}, &identityv1.ResolveIdentityResponse{})
+	case identityv1.IdentityService_RequestRole_FullMethodName:
+		return conn.Invoke(ctx, method, &identityv1.RequestRoleRequest{}, &identityv1.RequestRoleResponse{})
 	}
 	return conn.Invoke(ctx, method, &identityv1.CheckGlobalRoleRequest{}, &identityv1.CheckGlobalRoleResponse{})
 }
@@ -86,6 +89,7 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 
 	resolve := identityv1.IdentityService_ResolveIdentity_FullMethodName
 	checkRole := identityv1.IdentityService_CheckGlobalRole_FullMethodName
+	requestRole := identityv1.IdentityService_RequestRole_FullMethodName
 	tests := []struct {
 		name          string
 		method        string
@@ -101,6 +105,8 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 		{name: "maintainer secret", method: resolve, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "meetups on resolve", method: resolve, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
 		{name: "bot on check role", method: checkRole, authorization: []string{bearer(CallerHubBot)}, refusal: refusalNotDeclared, caller: CallerHubBot},
+		{name: "maintainer secret on request role", method: requestRole, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
+		{name: "meetups on request role", method: requestRole, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,6 +157,8 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 	}{
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerHubBot},
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerAuctionBot},
+		{identityv1.IdentityService_RequestRole_FullMethodName, CallerHubBot},
+		{identityv1.IdentityService_RequestRole_FullMethodName, CallerAuctionBot},
 		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerMeetups},
 		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerNotifications},
 	}
