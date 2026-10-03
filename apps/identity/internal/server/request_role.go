@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"regexp"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
@@ -19,7 +18,8 @@ SELECT EXISTS (
     WHERE identity_id = $1 AND revoked_at IS NULL AND role = ANY($2))`
 
 	// Отказ в силе с исходом declined (ADR-060, пункт 13). Отказ в public — это
-	// блокировка, и его ловит отметка профиля раньше этой проверки.
+	// блокировка: пока она стоит, его ловит отметка профиля раньше этой проверки,
+	// а снятая блокировка новую заявку на public уже не держит.
 	standingDeclineSQL = `
 SELECT EXISTS (
     SELECT 1 FROM identity_applications a
@@ -33,13 +33,6 @@ INSERT INTO identity_applications (id, identity_id, requested_role, source_code,
 VALUES ($1, $2, $3, $4, $5, date_trunc('milliseconds', now()))
 ON CONFLICT (identity_id, requested_role) WHERE outcome IS NULL DO NOTHING`
 )
-
-// sourceCodeMaxLength — самый длинный код, который помещается в payload
-// deep link: Telegram принимает до 64 символов, и два из них занимает `s_`.
-const sourceCodeMaxLength = 62
-
-// sourceCodePattern — алфавит payload deep link Telegram.
-var sourceCodePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // RequestRole — вход на /start в любом боте (ADR-060, пункты 1–7, 17–19). Одной
 // транзакцией устанавливает личность, как ResolveIdentity, гасит белый список и
@@ -162,19 +155,14 @@ func openApplication(ctx context.Context, tx *sql.Tx, identityID, circle string,
 }
 
 // sourceCodeValue — источник для заявки (пункты 18–19). Реестра каналов ещё нет
-// (PER-438), поэтому любой код — «неизвестный источник», и в отказ код не
-// превращается. Код в алфавите и длине payload сохраняется, чтобы реестр мог
-// его подписать; код чужого формата — в том числе пустой после `s_` и
-// длиннее лимита — хранится пустой строкой: источник был, но неизвестен.
+// (PER-438), поэтому любой код — «неизвестный источник»: он пишется пустой
+// строкой, источник был, но неизвестен, и в отказ код не превращается. Сам
+// недоверенный код не хранится — подписать его пока нечем.
 func sourceCodeValue(req *identityv1.RequestRoleRequest) any {
 	if req.SourceCode == nil {
 		return nil
 	}
-	code := req.GetSourceCode()
-	if len(code) > sourceCodeMaxLength || !sourceCodePattern.MatchString(code) {
-		return ""
-	}
-	return code
+	return ""
 }
 
 func nullableText(value string) any {

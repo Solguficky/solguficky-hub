@@ -12,7 +12,7 @@ import (
 // Записи до миграции заводил администратор хаба, поэтому они получают круг
 // member. Новая запись называет круг явно: умолчания нет, и круг вне двух
 // поверхностей схема отвергает.
-func TestAllowedUsernamesCircleMigrationKeepsExistingEntriesInHub(t *testing.T) {
+func TestAllowedUsernamesCircleMigrationKeepsHubEntriesAndRequiresCircle(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	applyThrough(t, db, 9)

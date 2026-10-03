@@ -47,7 +47,7 @@ func TestRequestRoleOutsideListsOpensOneApplication(t *testing.T) {
 	assertOutcome(t, first, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertOutcome(t, again, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertRoleSetInternal(t, again.GetGlobalRoles())
-	assertApplications(t, db, first.GetIdentityId(), "public source=first name=Alice")
+	assertApplications(t, db, first.GetIdentityId(), "public source= name=Alice")
 	// Создание заявки роль не меняет и событием не является (пункт 10).
 	assertEvents(t, db, first.GetIdentityId(), "v1 profile_registered() {} blocked=false")
 }
