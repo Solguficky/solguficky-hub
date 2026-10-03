@@ -363,7 +363,7 @@ func TestAllowedUsernameClosesApplicationWithoutDecider(t *testing.T) {
 	adminID := seedProfile(t, db, 9751)
 	applicantID := resolveInternal(t, svc, 9752, "applicant")
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
-	if _, err := svc.addAllowedUsername(t.Context(), "applicant", uuid.NullUUID{}); err != nil {
+	if _, err := svc.addAllowedUsername(t.Context(), "applicant", roleMember, uuid.NullUUID{}); err != nil {
 		t.Fatalf("add allowed username: %v", err)
 	}
 	resolveDirect(t, svc, 9752, "applicant")
@@ -534,7 +534,8 @@ func adminActor(identityID string) *identityv1.IdentityActor {
 	return &identityv1.IdentityActor{IdentityId: identityID, GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN}}
 }
 
-// seedApplication открывает заявку прямым SQL: создание заявки на /start — PER-266.
+// seedApplication открывает заявку прямым SQL с заданным моментом: курсор
+// очереди проверяется на моментах, которых RequestRole не выбирает.
 func seedApplication(t *testing.T, db *sql.DB, identityID, circle string, createdAt time.Time) string {
 	t.Helper()
 	id, err := uuid.NewV7()

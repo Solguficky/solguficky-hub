@@ -57,7 +57,7 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	identityID, registered, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req))
+	identityID, registered, err := upsertProfile(ctx, tx, req.GetTelegramUserId(), usernameArg(req.GetTelegramUsername()))
 	if err != nil {
 		return nil, internal("upsert profile", err)
 	}
@@ -109,6 +109,11 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 // profile_registered, а не выходят отдельными role_granted. Для существующего
 // профиля каждая выдача — своё событие. public выдаётся раньше member: круги
 // вложенные, и промежуточный снимок {member} без public нарушил бы ADR-043.
+//
+// Запись гасится всегда, когда она есть, даже если её роли уже активны: иначе
+// она осталась бы ключом для следующего владельца ника (ADR-060, пункт 1).
+// Выдаёт она роли своего круга, а не круга вызывающей поверхности: запись хаба
+// даёт member и в боте аукциона (пункт 2).
 func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string, announce bool) error {
 	if username == "" {
 		return nil
@@ -120,11 +125,11 @@ func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username 
 	if blocked {
 		return nil
 	}
-	consumed, err := consumeAllowedUsername(ctx, tx, identityID, username)
-	if err != nil || !consumed {
+	circle, err := consumeAllowedUsername(ctx, tx, identityID, username)
+	if err != nil || circle == "" {
 		return err
 	}
-	for _, role := range hubAdmissionRoles {
+	for _, role := range allowedUsernameRoles(circle) {
 		if _, err := grantRoleTxWithReason(ctx, tx, identityID, role, uuid.NullUUID{}, reasonAllowedUsername, announce); err != nil {
 			return err
 		}
@@ -132,11 +137,11 @@ func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username 
 	return nil
 }
 
-func usernameArg(req *identityv1.ResolveIdentityRequest) any {
-	if req.GetTelegramUsername() == "" {
+func usernameArg(username string) any {
+	if username == "" {
 		return nil
 	}
-	return req.GetTelegramUsername()
+	return username
 }
 
 // upsertProfile находит профиль по Telegram id или создаёт его. registered

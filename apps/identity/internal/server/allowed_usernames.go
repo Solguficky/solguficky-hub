@@ -12,9 +12,17 @@ import (
 
 const (
 	addAllowedUsernameSQL = `
-INSERT INTO allowed_usernames (id, normalized_username, created_by)
-VALUES ($1, $2, $3)
+INSERT INTO allowed_usernames (id, normalized_username, grants_role, created_by)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (normalized_username) WHERE used_at IS NULL AND removed_at IS NULL DO NOTHING`
+
+	// Снимает непогашенную запись более слабого круга, чтобы на её месте завести
+	// запись хаба: строка не переписывается, и видно, кто завёл ник в какой круг.
+	removeWeakerAllowedUsernameSQL = `
+UPDATE allowed_usernames
+SET removed_at = now(), removed_by = $2
+WHERE normalized_username = $1 AND grants_role = ANY($3)
+  AND used_at IS NULL AND removed_at IS NULL`
 
 	removeAllowedUsernameSQL = `
 UPDATE allowed_usernames
@@ -30,7 +38,7 @@ WHERE id = (
     WHERE normalized_username = $1 AND used_at IS NULL AND removed_at IS NULL
     FOR UPDATE
 )
-RETURNING id`
+RETURNING grants_role`
 )
 
 var (
@@ -71,10 +79,15 @@ func normalizeUsername(username string) (string, error) {
 	return normalized, nil
 }
 
-// addAllowedUsername добавляет непогашенную запись идемпотентно. Погашенная и
-// снятая история не мешают добавить тот же ник снова: уникальность действует
-// только среди записей, которые ещё могут сработать.
-func (s identityService) addAllowedUsername(ctx context.Context, username string, performedBy uuid.NullUUID) (bool, error) {
+// addAllowedUsername добавляет непогашенную запись круга идемпотентно.
+// Погашенная и снятая история не мешают добавить тот же ник снова:
+// уникальность действует только среди записей, которые ещё могут сработать.
+//
+// Один ник — одна непогашенная запись любого круга (ADR-060, пункт 5). Запись
+// того же или более сильного круга делает добавление холостым: ник из списка
+// хаба в аукционный список не добавляется. Запись более слабого круга
+// повышается — снимается и заменяется новой одной транзакцией.
+func (s identityService) addAllowedUsername(ctx context.Context, username, circle string, performedBy uuid.NullUUID) (bool, error) {
 	normalized, err := normalizeUsername(username)
 	if err != nil {
 		return false, err
@@ -83,11 +96,51 @@ func (s identityService) addAllowedUsername(ctx context.Context, username string
 	if err != nil {
 		return false, err
 	}
-	result, err := s.db.ExecContext(ctx, addAllowedUsernameSQL, id.String(), normalized, performedByValue(performedBy))
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return false, internal("begin transaction", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if weaker := circlesBelow(circle); len(weaker) > 0 {
+		if _, err := tx.ExecContext(ctx, removeWeakerAllowedUsernameSQL, normalized, performedByValue(performedBy), weaker); err != nil {
+			return false, internal("remove weaker allowed username", err)
+		}
+	}
+	result, err := tx.ExecContext(ctx, addAllowedUsernameSQL, id.String(), normalized, circle, performedByValue(performedBy))
 	if err != nil {
 		return false, internal("add allowed username", err)
 	}
-	return changed(result)
+	added, err := changed(result)
+	if err != nil {
+		return false, internal("add allowed username", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, internal("commit", err)
+	}
+	return added, nil
+}
+
+// circlesBelow — круги белого списка слабее данного: их запись повышается
+// записью этого круга.
+func circlesBelow(circle string) []string {
+	var circles []string
+	for _, candidate := range applicationCircles {
+		if circleRank[candidate] < circleRank[circle] {
+			circles = append(circles, candidate)
+		}
+	}
+	return circles
+}
+
+// allowedUsernameRoles — роли, которые выдаёт погашенная запись круга, в
+// порядке выдачи: запись хаба выдаёт member вместе с public, потому что круги
+// вложенные, запись аукциона — только public.
+func allowedUsernameRoles(circle string) []string {
+	if circle == roleMember {
+		return hubAdmissionRoles
+	}
+	return []string{circle}
 }
 
 // removeAllowedUsername снимает только ещё не использованную запись и делает
@@ -105,25 +158,26 @@ func (s identityService) removeAllowedUsername(ctx context.Context, username str
 	return changed(result)
 }
 
-// consumeAllowedUsername гасит непогашенную запись под блокировкой строки.
-// Ник, который не является ником Telegram, со списком просто не совпадает:
-// отказом это не становится, потому что значение пришло из Telegram update, а
-// не от администратора, и разрешение личности из-за него не падает.
-func consumeAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string) (bool, error) {
+// consumeAllowedUsername гасит непогашенную запись под блокировкой строки и
+// возвращает её круг; пустая строка — записи нет. Ник, который не является
+// ником Telegram, со списком просто не совпадает: отказом это не становится,
+// потому что значение пришло из Telegram update, а не от администратора, и
+// разрешение личности из-за него не падает.
+func consumeAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string) (string, error) {
 	normalized, err := normalizeUsername(username)
 	if errors.Is(err, errEmptyUsername) || errors.Is(err, errInvalidUsername) {
-		return false, nil
+		return "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	var allowedUsernameID string
-	err = tx.QueryRowContext(ctx, consumeAllowedUsernameSQL, normalized, identityID).Scan(&allowedUsernameID)
+	var circle string
+	err = tx.QueryRowContext(ctx, consumeAllowedUsernameSQL, normalized, identityID).Scan(&circle)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return circle, nil
 }

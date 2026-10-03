@@ -121,7 +121,7 @@ func TestBlockOfBlockedProfileRevokesLeftoverRolesOneByOne(t *testing.T) {
 func TestRegistrationCarriesAllowedUsernameAdmissionInOneEvent(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "newcomer", uuid.NullUUID{}))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "newcomer", roleMember, uuid.NullUUID{}))
 
 	registered := resolveInternal(t, svc, 6005, "newcomer")
 	assertEvents(t, db, registered, "v1 profile_registered() {member,public} blocked=false")
@@ -136,7 +136,7 @@ func TestAdmissionOfExistingProfileGrantsOuterCircleFirst(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	existing := resolveInternal(t, svc, 6006, "latecomer")
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "latecomer", uuid.NullUUID{}))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "latecomer", roleMember, uuid.NullUUID{}))
 
 	resolveInternal(t, svc, 6006, "latecomer")
 
