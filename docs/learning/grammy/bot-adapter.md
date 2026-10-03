@@ -155,7 +155,7 @@ const currentIsPhoto = current !== undefined && "photo" in current;
 
 ### Режим ответа живёт в клиенте, а не в сообщении
 
-Вопрос бота хаба — обычное сообщение с `reply_markup`, в котором стоят сразу два поля: `force_reply: true` и `inline_keyboard` с кнопкой «Отмена» (`apps/telegram-bot/src/presentation/bot.ts`, функция `askQuestion`). `force_reply` — просьба к клиенту Telegram открыть поле ввода в режиме «ответ на это сообщение». Аналог в .NET — `Focus()` на поле формы: сервер просит, а исполняет и помнит это клиент.
+Вопрос бота хаба — обычное сообщение с `reply_markup`, в котором стоят сразу два поля: `force_reply: true` и `inline_keyboard` с кнопкой «Отмена» (`apps/hub-bot/src/presentation/bot.ts`, функция `askQuestion`). `force_reply` — просьба к клиенту Telegram открыть поле ввода в режиме «ответ на это сообщение». Аналог в .NET — `Focus()` на поле формы: сервер просит, а исполняет и помнит это клиент.
 
 Отсюда поведение, которого в типах grammY не видно и которое показал только живой мобильный клиент (зонд PER-443, таблица «Что проверено и чем» в [дизайн-коде](../../design/bot/design-code.md)):
 
@@ -176,7 +176,7 @@ if (pressed.kind === "question") {
 
 `deletePressed` — обёртка над `ctx.deleteMessage()`, которая возвращает `false` вместо исключения. Флаг `pressedGone` читает отправитель экрана: сообщения под нажатием больше нет, править нечего, экран уходит новым сообщением.
 
-Удаление — вызов Bot API, и он проходит через тот же transformer, что и остальные. В `apps/telegram-bot/src/presentation/waiting.ts` transformer ожидания считает первый «видимый» вызов результатом нажатия и перед ним отвечает на `callback_query`. Удаление ничего не показывает, поэтому оно стоит в списке тихих методов:
+Удаление — вызов Bot API, и он проходит через тот же transformer, что и остальные. В `apps/hub-bot/src/presentation/waiting.ts` transformer ожидания считает первый «видимый» вызов результатом нажатия и перед ним отвечает на `callback_query`. Удаление ничего не показывает, поэтому оно стоит в списке тихих методов:
 
 ```ts
 const quietMethods: ReadonlySet<string> = new Set([
@@ -200,11 +200,11 @@ if (photo !== undefined) {
 }
 ```
 
-Это `apps/telegram-bot/src/presentation/material-input.ts`. Вид едет дальше вместе с идентификатором — в порт `MeetupMaterialSource` и в поле `file_kind` контракта `meetups.v1`. Аналогия из .NET — `Content-Type`, сохранённый рядом с ключом blob: по одному ключу его не восстановить.
+Это `apps/hub-bot/src/presentation/material-input.ts`. Вид едет дальше вместе с идентификатором — в порт `MeetupMaterialSource` и в поле `file_kind` контракта `meetups.v1`. Аналогия из .NET — `Content-Type`, сохранённый рядом с ключом blob: по одному ключу его не восстановить.
 
 ### Rich-сообщение с фото остаётся rich-сообщением
 
-Bot API 10 добавил богатые сообщения: `sendRichMessage` и `editMessageText` с полем `rich_message`. Текст — HTML с блоками, а файлы подключаются отдельным списком `media` и ссылкой `tg://photo?id=<id>` из разметки (`apps/telegram-bot/src/presentation/screens/show.ts`):
+Bot API 10 добавил богатые сообщения: `sendRichMessage` и `editMessageText` с полем `rich_message`. Текст — HTML с блоками, а файлы подключаются отдельным списком `media` и ссылкой `tg://photo?id=<id>` из разметки (`apps/hub-bot/src/presentation/screens/show.ts`):
 
 ```ts
 const rich = {

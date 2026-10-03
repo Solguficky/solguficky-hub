@@ -195,7 +195,7 @@ async function main(): Promise<number> {
     if (shutdown.requested) {
       return 0;
     }
-    logger.info("hub-bot starting", {
+    logger.info(`${serviceName} starting`, {
       service: serviceName,
       telegram_environment: environment,
     });

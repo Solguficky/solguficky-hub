@@ -17,7 +17,7 @@ import { decodeNotification } from "./notification.js";
 // отсутствует, а не заполняется заглушкой (logging.md).
 export const notificationSubject = "events.notifications.notification_created";
 export const notificationStream = "NOTIFICATIONS_EVENTS";
-export const notificationDurable = `${serviceName}-notifications-events`;
+export const notificationDurable = "hub-bot-notifications-events";
 
 // Бот держит у себя одно сообщение. Таймер ack_wait durable (30 с) идёт с
 // выдачи, а обработка последовательная: сообщение, ждущее в буфере за зависшими
