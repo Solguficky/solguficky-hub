@@ -81,6 +81,11 @@ final class GrpcBoundarySpec
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest) = unused
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest) = unused
     def getLotImage(in: wire.GetLotImageRequest) = unused
+    def draftAuction(in: wire.DraftAuctionRequest) = unused
+    def addLot(in: wire.AddLotRequest) = unused
+    def removeLot(in: wire.RemoveLotRequest) = unused
+    def getMeetupAuction(in: wire.GetMeetupAuctionRequest) = unused
+    def listAuctions(in: wire.ListAuctionsRequest) = unused
   }
 
   private lazy val binding =

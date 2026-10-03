@@ -137,6 +137,18 @@ final class AuctionGrpcService(
   // Изображение лота: колонку в строке каталога и его запись приносит форма лота PER-319 (ADR-057, дополнение).
   def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = unimplemented
 
+  // Аукцион у сходки: entity аукциона, проверку права у Meetups и read model аукционов приносит PER-448 (ADR-047,
+  // дополнение 2026-10-03).
+  def draftAuction(in: wire.DraftAuctionRequest): Future[wire.DraftAuctionResponse] = unimplemented
+
+  def addLot(in: wire.AddLotRequest): Future[wire.AddLotResponse] = unimplemented
+
+  def removeLot(in: wire.RemoveLotRequest): Future[wire.RemoveLotResponse] = unimplemented
+
+  def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = unimplemented
+
+  def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = unimplemented
+
   /**
    * Ответа entity не дождались. Команда могла быть принята, поэтому это `DEADLINE_EXCEEDED`, а не `UNAVAILABLE`: повтор
    * с тем же `op_id` вернёт исходный ответ, а не запишет команду второй раз.
