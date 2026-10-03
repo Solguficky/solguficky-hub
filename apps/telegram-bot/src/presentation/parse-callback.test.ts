@@ -232,17 +232,90 @@ describe("callback parser", () => {
       kind: "admit-member",
       token,
     });
+    // Кнопка прошлого релиза закрывала доступ сразу; теперь она спрашивает.
     expect(parseCallback(`v1:community:block:${token}`)).toEqual({
-      kind: "block-member",
+      kind: "ask-block-member",
       token,
+      origin: { kind: "admitted", page: 0 },
     });
     expect(parseCallback("v1:community:remove:alice_1")).toEqual({
       kind: "remove-allowed-username",
       username: "alice_1",
+      page: 0,
     });
-    expect(
-      Buffer.byteLength(`v1:community:block:${token}`),
-    ).toBeLessThanOrEqual(64);
+  });
+
+  it("parses the community lists, the queue cursor and both people of a decision", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const next = "AZKbflwdej-OSy1snwobPA";
+    const cases: readonly (readonly [string, unknown])[] = [
+      ["v1:cm:p", { kind: "community-pending" }],
+      [`v1:cm:p:${next}`, { kind: "community-pending", cursor: next }],
+      ["v1:cm:a", { kind: "community-admitted", page: 0 }],
+      ["v1:cm:a:12", { kind: "community-admitted", page: 12 }],
+      ["v1:cm:u", { kind: "community-usernames", page: 0 }],
+      ["v1:cm:u:3", { kind: "community-usernames", page: 3 }],
+      [`v1:cm:ad:${token}`, { kind: "admit-member", token }],
+      [`v1:cm:ad:${token}:${next}`, { kind: "admit-member", token, next }],
+      [
+        `v1:cm:bq:${token}:p`,
+        { kind: "ask-block-member", token, origin: { kind: "pending" } },
+      ],
+      [
+        `v1:cm:bq:${token}:p${next}`,
+        { kind: "ask-block-member", token, origin: { kind: "pending", next } },
+      ],
+      [
+        `v1:cm:by:${token}:p${next}`,
+        { kind: "block-member", token, origin: { kind: "pending", next } },
+      ],
+      [
+        `v1:cm:by:${token}:a9999`,
+        {
+          kind: "block-member",
+          token,
+          origin: { kind: "admitted", page: 9999 },
+        },
+      ],
+      [
+        `v1:cm:rm:9999:${"a".repeat(32)}`,
+        {
+          kind: "remove-allowed-username",
+          username: "a".repeat(32),
+          page: 9999,
+        },
+      ],
+    ];
+    for (const [data, action] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+  });
+
+  it("rejects community callbacks with a broken token, page or shape", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    for (const data of [
+      "v1:cm",
+      "v1:cm:x",
+      "v1:cm:p:short",
+      `v1:cm:p:${token}:extra`,
+      "v1:cm:a:",
+      "v1:cm:a:1e2",
+      "v1:cm:a:-1",
+      "v1:cm:u:12345",
+      "v1:cm:ad",
+      `v1:cm:ad:${token}:short`,
+      `v1:cm:bq:${token}`,
+      `v1:cm:bq:${token}:x`,
+      `v1:cm:bq:${token}:pshort`,
+      `v1:cm:by:${token}:a`,
+      "v1:cm:rm:0",
+      "v1:cm:rm:x:alice",
+      "v1:cm:rm:0:al-ice",
+      `v1:cm:ad:${token}:${token}:extra`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
   });
 });
 

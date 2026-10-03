@@ -1041,10 +1041,203 @@ describe("presentation adapter", () => {
     );
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: expect.stringContaining("@waiting") },
+      payload: {
+        text: "<b>Состав сообщества</b>\n\nОжидают допуска: 1\nДопущены: 0\nРазрешённые ники: 1",
+      },
     });
-    expect(JSON.stringify(calls[1]?.payload)).toContain("v1:community:admit:");
-    expect(JSON.stringify(calls[1]?.payload)).toContain("@invited");
+    expect(JSON.stringify(calls[1]?.payload)).toContain("v1:cm:p");
+  });
+
+  describe("closing access", () => {
+    const memberId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const memberToken = uuidToToken(memberId);
+
+    function closing(members: readonly { admitted: boolean }[]) {
+      const community = vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: members.map(({ admitted }) => ({
+              identityId: memberId,
+              telegramUsername: "leaving",
+              admitted,
+            })),
+            allowedUsernames: [],
+          },
+        });
+      const block = vi
+        .fn<CommunityAdministrator["block"]>()
+        .mockResolvedValue({ kind: "ok", value: true });
+      return { ...resolvedIdentity(["admin"]), community, block };
+    }
+
+    it("asks before closing and does not call Identity to block", async () => {
+      const identity = closing([{ admitted: true }]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:bq:${memberToken}:a0`));
+
+      expect(identity.block).not.toHaveBeenCalled();
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: expect.stringContaining("<b>Закрыть доступ?</b>\n\n@leaving"),
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Да, закрыть доступ",
+                  callback_data: `v1:cm:by:${memberToken}:a0`,
+                  style: "danger",
+                },
+              ],
+              [{ text: "Нет", callback_data: "v1:cm:a:0" }],
+            ],
+          },
+        },
+      });
+    });
+
+    // Экран прошлого релиза закрывал доступ одним нажатием: его кнопка, всё
+    // ещё стоящая в чате, теперь тоже спрашивает.
+    it("asks under a button of the previous release too", async () => {
+      const identity = closing([{ admitted: true }]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:community:block:${memberToken}`),
+      );
+
+      expect(identity.block).not.toHaveBeenCalled();
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "Да, закрыть доступ",
+      );
+    });
+
+    it("closes access on the confirmation and says so in the answer", async () => {
+      const identity = closing([]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:by:${memberToken}:p`));
+
+      expect(identity.block).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        memberId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Доступ закрыт." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Ожидают допуска</b>\n\nОчередь пуста.",
+      });
+    });
+
+    it("returns to the list when the person is already gone", async () => {
+      const identity = closing([]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:bq:${memberToken}:a0`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Этого человека уже нет в списке.",
+      });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Допущенные</b>\n\nПока никого.",
+      });
+    });
+  });
+
+  // Полные подэкраны проходят через линтер экранов: потолок рядов, словарь и
+  // ряд возврата проверяются на странице из восьми строк, а не на пустой.
+  it.each([
+    ["v1:cm:p", "Ожидают допуска"],
+    ["v1:cm:a:1", "Допущенные · 2 из 3"],
+    ["v1:cm:u:1", "Разрешённые ники · 2 из 3"],
+  ])("opens the full community list %s", async (data, title) => {
+    const people = (admitted: boolean, from: number) =>
+      Array.from({ length: 20 }, (_, index) => ({
+        identityId: `0192f3a4-b5c6-7d8e-9f0a-${(from + index).toString(16).padStart(12, "0")}`,
+        telegramUsername: `user${from + index}`,
+        admitted,
+      }));
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [...people(false, 0), ...people(true, 100)],
+            allowedUsernames: Array.from(
+              { length: 20 },
+              (_, index) => `nick${index}`,
+            ),
+          },
+        }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(data));
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining(`<b>${title}</b>`) },
+    });
+  });
+
+  it("shows the next person in the queue after an admission", async () => {
+    const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [
+              {
+                identityId: secondId,
+                telegramUsername: "second",
+                admitted: false,
+              },
+            ],
+            allowedUsernames: [],
+          },
+        }),
+      admit: vi
+        .fn<CommunityAdministrator["admit"]>()
+        .mockResolvedValue({ kind: "ok", value: false }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        `v1:cm:ad:${uuidToToken(firstId)}:${uuidToToken(secondId)}`,
+      ),
+    );
+
+    expect(identity.admit).toHaveBeenCalledWith(
+      expect.anything(),
+      firstId,
+      expect.anything(),
+    );
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Состояние уже было актуальным.",
+    });
+    expect(calls[1]?.payload).toMatchObject({
+      text: "<b>Ожидают допуска</b>\n\n@second\n\nВ очереди: 1",
+    });
   });
 
   // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не узнаёт
@@ -1111,8 +1304,8 @@ describe("presentation adapter", () => {
       await bot.init();
       await bot.handleUpdate(callbackUpdate(admitButton));
 
-      const screenAt = calls.findIndex((call) =>
-        JSON.stringify(call.payload).includes("Изменение сохранено."),
+      const screenAt = calls.findIndex(
+        (call) => call.method === "editMessageText",
       );
       const noticeAt = calls.findIndex((call) =>
         JSON.stringify(call.payload).includes("Доступ открыт"),
@@ -1150,7 +1343,10 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate(admitButton));
 
       expect(identity.admit).toHaveBeenCalled();
-      expect(JSON.stringify(calls)).toContain("Изменение сохранено.");
+      expect(JSON.stringify(calls)).toContain("Человек допущен.");
+      expect(calls.some((call) => call.method === "editMessageText")).toBe(
+        true,
+      );
       expectBoundary(records[0], {
         level: "warn",
         result: "error",
@@ -1159,49 +1355,6 @@ describe("presentation adapter", () => {
         error_category: "dependency_unavailable",
       });
     });
-  });
-
-  it("tells apart people without a username created in the same minute", async () => {
-    const community = vi
-      .fn<CommunityAdministrator["community"]>()
-      .mockResolvedValue({
-        kind: "ok",
-        value: {
-          members: [
-            {
-              identityId: "01a0e306-a646-7d3a-9b21-4f8e12ab34cd",
-              telegramUserId: 5001n,
-              admitted: false,
-            },
-            {
-              identityId: "01a0e306-918c-7e01-8c55-0d2f6a7b9e10",
-              admitted: true,
-            },
-          ],
-          allowedUsernames: [],
-        },
-      });
-    const identity = { ...resolvedIdentity(["admin"]), community };
-    const { bot, calls } = createHarness(identity);
-    await bot.init();
-    await bot.handleUpdate(callbackUpdate("v1:community:list"));
-
-    const payload = calls[1]?.payload as {
-      text: string;
-      parse_mode?: string;
-      reply_markup: { inline_keyboard: { text: string }[][] };
-    };
-    const buttons = payload.reply_markup.inline_keyboard
-      .flat()
-      .map((button) => button.text);
-    expect(payload.parse_mode).toBe("HTML");
-    expect(payload.text).toContain(
-      '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
-    );
-    expect(payload.text).toContain("• без ника · 6a7b9e10");
-    expect(payload.text).not.toContain("01a0e306");
-    expect(buttons).toContain("Допустить без ника · 12ab34cd");
-    expect(buttons).toContain("Закрыть без ника · 6a7b9e10");
   });
 
   it("lets Identity refuse community management for a non-admin", async () => {

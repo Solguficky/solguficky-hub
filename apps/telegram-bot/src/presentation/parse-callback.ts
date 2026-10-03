@@ -52,6 +52,12 @@ const PastScheduleSchema = z.string().regex(/^\d{12}$/);
 // кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
 // места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
 // что остаётся до 64 (PER-393).
+// Страница списка в кнопке: только цифры, без пустой строки и экспоненты,
+// которые `z.coerce.number()` принял бы за число.
+const PageSchema = z
+  .string()
+  .regex(/^\d{1,4}$/)
+  .transform(Number);
 const VersionSchema = z
   .string()
   .regex(/^[1-9]\d{0,8}$/)
@@ -63,6 +69,19 @@ const VersionSchema = z
 // кнопка, которую разбор потом назовёт сломанной, рисоваться не должна.
 export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
+// Откуда начато закрытие доступа: туда возвращают «Нет» и экран после него.
+// Из очереди — со следующим человеком, из списка допущенных — со страницей.
+export type BlockOrigin =
+  | { kind: "pending"; next?: string }
+  | { kind: "admitted"; page: number };
+
+/** Сегмент `callback_data`: `p`, `p<токен>` или `a<страница>`. */
+export function blockOriginData(origin: BlockOrigin): string {
+  return origin.kind === "admitted"
+    ? `a${origin.page}`
+    : `p${origin.next ?? ""}`;
+}
+
 type PlainAction =
   | { kind: "home" }
   // Списки листаются: страница едет в кнопке листания, без неё — первая.
@@ -71,10 +90,16 @@ type PlainAction =
   | { kind: "manage-menu" }
   | { kind: "manage-hidden"; page?: number }
   | { kind: "community" }
+  // Курсор очереди — токен человека, а не номер: очередь меняется.
+  | { kind: "community-pending"; cursor?: string }
+  | { kind: "community-admitted"; page: number }
+  | { kind: "community-usernames"; page: number }
   | { kind: "ask-allowed-username" }
-  | { kind: "admit-member"; token: string }
-  | { kind: "block-member"; token: string }
-  | { kind: "remove-allowed-username"; username: string }
+  // `next` — кого показать после допуска.
+  | { kind: "admit-member"; token: string; next?: string }
+  | { kind: "ask-block-member"; token: string; origin: BlockOrigin }
+  | { kind: "block-member"; token: string; origin: BlockOrigin }
+  | { kind: "remove-allowed-username"; username: string; page: number }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
@@ -311,17 +336,26 @@ export function parseCallback(raw: unknown): CallbackAction {
         return { kind: "malformed" };
     }
   }
+  if (parts[1] === "cm") {
+    return parseCommunity(parts);
+  }
+  // Кнопки состава одним списком из прошлого релиза. «Закрыть» там исполнялось
+  // сразу; теперь та же кнопка ведёт в подтверждение, как и новая.
   if (parts.length === 4 && parts[1] === "community") {
     const username = parts[3] ?? "";
     if (parts[2] === "remove" && removableUsernamePattern.test(username)) {
-      return { kind: "remove-allowed-username", username };
+      return { kind: "remove-allowed-username", username, page: 0 };
     }
     const identityToken = TokenSchema.safeParse(parts[3]);
     if (!identityToken.success) return { kind: "malformed" };
     if (parts[2] === "admit")
       return { kind: "admit-member", token: identityToken.data };
     if (parts[2] === "block")
-      return { kind: "block-member", token: identityToken.data };
+      return {
+        kind: "ask-block-member",
+        token: identityToken.data,
+        origin: { kind: "admitted", page: 0 },
+      };
   }
   // Домен `notify` разбирается до общей проверки ниже: она требует токен в
   // `parts[3]` и домен `manage`, а глобальный кадр токена не несёт вовсе.
@@ -454,6 +488,88 @@ function parseListPage(parts: readonly string[]): CallbackAction | undefined {
 /// проверяет её тем же путём, что и ответ текстом.
 function pastScheduleValue(digits: string): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
+}
+
+function parseBlockOrigin(raw: string | undefined): BlockOrigin | undefined {
+  if (raw === "p") return { kind: "pending" };
+  if (raw?.startsWith("p")) {
+    const next = TokenSchema.safeParse(raw.slice(1));
+    return next.success ? { kind: "pending", next: next.data } : undefined;
+  }
+  if (raw?.startsWith("a")) {
+    const page = PageSchema.safeParse(raw.slice(1));
+    return page.success ? { kind: "admitted", page: page.data } : undefined;
+  }
+  return undefined;
+}
+
+// Подэкраны состава: `p` — очередь, `a` — допущенные, `u` — ники, `ad` —
+// допустить, `bq` и `by` — вопрос о закрытии доступа и его «Да», `rm` — убрать
+// ник. Имена сжаты: `ad` и `by` несут двух людей и с длинным доменом вышли бы
+// ровно в 64 байта.
+function parseCommunity(parts: readonly string[]): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  if (parts.length > 5) return malformed;
+  const [, , verb, first, second] = parts;
+  switch (verb) {
+    case "p": {
+      if (second !== undefined) return malformed;
+      if (first === undefined) return { kind: "community-pending" };
+      const cursor = TokenSchema.safeParse(first);
+      return cursor.success
+        ? { kind: "community-pending", cursor: cursor.data }
+        : malformed;
+    }
+    case "a":
+    case "u": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      if (!page.success) return malformed;
+      return {
+        kind: verb === "a" ? "community-admitted" : "community-usernames",
+        page: page.data,
+      };
+    }
+    case "ad": {
+      const token = TokenSchema.safeParse(first);
+      if (!token.success) return malformed;
+      if (second === undefined) {
+        return { kind: "admit-member", token: token.data };
+      }
+      const next = TokenSchema.safeParse(second);
+      return next.success
+        ? { kind: "admit-member", token: token.data, next: next.data }
+        : malformed;
+    }
+    case "bq":
+    case "by": {
+      const token = TokenSchema.safeParse(first);
+      const origin = parseBlockOrigin(second);
+      if (!token.success || origin === undefined) return malformed;
+      return {
+        kind: verb === "bq" ? "ask-block-member" : "block-member",
+        token: token.data,
+        origin,
+      };
+    }
+    case "rm": {
+      const page = PageSchema.safeParse(first);
+      if (
+        !page.success ||
+        second === undefined ||
+        !removableUsernamePattern.test(second)
+      ) {
+        return malformed;
+      }
+      return {
+        kind: "remove-allowed-username",
+        username: second,
+        page: page.data,
+      };
+    }
+    default:
+      return malformed;
+  }
 }
 
 function parseBroadcast(parts: readonly string[]): CallbackAction {

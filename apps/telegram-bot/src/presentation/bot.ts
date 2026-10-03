@@ -7,7 +7,6 @@ import {
 } from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import {
-  applicationCode,
   decideHubAccess,
   type HubAccess,
   hubAccessErrors,
@@ -32,7 +31,7 @@ import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type CommunityAdministrator,
-  type CommunityMember,
+  type CommunitySnapshot,
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
@@ -80,11 +79,16 @@ import {
   parseCallback,
   type QuestionStep,
   questionData,
-  removableUsernamePattern,
   traceCallback,
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import type { ScreenId } from "./screens/catalog.js";
+import {
+  type CommunityView,
+  closeAccessConfirmScreen,
+  communityScreen,
+  viewOfOrigin,
+} from "./screens/community.js";
 import {
   cancelLabel,
   confirmKeyboard,
@@ -94,6 +98,7 @@ import {
   refusalText,
   retryLabel,
   toCard,
+  toCommunity,
   toManage,
   toMaterials,
   toUpcoming,
@@ -738,11 +743,13 @@ async function handleMessage(
           return;
         }
         if (result.kind === "ok") await answered();
+        // Ответ на вопрос — сообщение, всплывающего текста у него нет: чем
+        // кончилось, говорит строка над списком.
         await renderCommunity(
           ctx,
           runtime,
           identity.person,
-          false,
+          { kind: "usernames", page: 0 },
           result.kind === "ok"
             ? result.value
               ? "Ник добавлен."
@@ -1396,8 +1403,48 @@ async function handleCallback(
       };
       return;
     }
-    if (action.kind === "community") {
-      const result = await renderCommunity(ctx, runtime, person, true);
+    if (
+      action.kind === "community" ||
+      action.kind === "community-pending" ||
+      action.kind === "community-admitted" ||
+      action.kind === "community-usernames"
+    ) {
+      const result = await renderCommunity(
+        ctx,
+        runtime,
+        person,
+        action.kind === "community"
+          ? { kind: "root" }
+          : action.kind === "community-pending"
+            ? pendingView(action.cursor)
+            : action.kind === "community-admitted"
+              ? { kind: "admitted", page: action.page }
+              : { kind: "usernames", page: action.page },
+      );
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "ask-block-member") {
+      const result = await readCommunity(ctx, runtime, person);
+      const origin = viewOfOrigin(action.origin);
+      if (result.kind !== "ok") {
+        await showCommunityRefusal(ctx, result, origin);
+      } else {
+        const identityId = tokenToUuid(action.token);
+        const member = result.value.members.find(
+          (candidate) => candidate.identityId === identityId,
+        );
+        if (member === undefined) {
+          // Человека закрыли с другого экрана, пока этот был открыт.
+          await waiting.answer("Этого человека уже нет в списке.");
+          await showScreen(ctx, communityScreen(result.value, origin));
+        } else {
+          await showScreen(
+            ctx,
+            closeAccessConfirmScreen(member, action.origin),
+          );
+        }
+      }
       outcome = adminOutcome(result, person.identityId);
       return;
     }
@@ -1459,15 +1506,31 @@ async function handleCallback(
                   action.username,
                   rpcCall(ctx, "manage_community"),
                 );
-      const confirmation =
+      // Чем кончилось нажатие, говорит ответ на него: экран после действия
+      // показывает уже следующего человека или ту же страницу.
+      const toast =
         result.kind === "ok"
           ? result.value
-            ? "Изменение сохранено."
+            ? action.kind === "admit-member"
+              ? "Человек допущен."
+              : action.kind === "block-member"
+                ? "Доступ закрыт."
+                : "Ник убран."
             : "Состояние уже было актуальным."
           : result.kind === "invalid"
             ? "Изменение не сохранилось. Состав перечитан заново."
             : undefined;
-      await renderCommunity(ctx, runtime, person, true, confirmation);
+      if (toast !== undefined) await waiting.answer(toast);
+      await renderCommunity(
+        ctx,
+        runtime,
+        person,
+        action.kind === "admit-member"
+          ? pendingView(action.next)
+          : action.kind === "block-member"
+            ? viewOfOrigin(action.origin)
+            : { kind: "usernames", page: action.page },
+      );
       outcome = adminOutcome(result, person.identityId);
       // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не
       // узнает. Пишем ему только о настоящей смене состояния: повторное
@@ -2640,101 +2703,55 @@ async function renderBroadcastResult(
   );
 }
 
+function pendingView(cursor: string | undefined): CommunityView {
+  return cursor === undefined
+    ? { kind: "pending" }
+    : { kind: "pending", cursor: tokenToUuid(cursor) };
+}
+
+function readCommunity(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+): Promise<IdentityAdminResult<CommunitySnapshot>> {
+  return runtime.identity.community === undefined
+    ? Promise.resolve({
+        kind: "unavailable" as const,
+        cause: new Error("community administration is not configured"),
+      })
+    : runtime.identity.community(actor, rpcCall(ctx, "manage_community"));
+}
+
+// Отказ возвращает на уровень выше экрана, который не открылся: с корня — в
+// управление, с подэкрана — в состав.
+function showCommunityRefusal(
+  ctx: UpdateContext,
+  result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
+  view: CommunityView,
+): Promise<void> {
+  return showRefusal(
+    ctx,
+    result.kind === "forbidden" ? communityForbiddenText : unavailableText,
+    withNav(
+      new InlineKeyboard(),
+      view.kind === "root" ? toManage : toCommunity,
+    ),
+  );
+}
+
 async function renderCommunity(
   ctx: UpdateContext,
   runtime: BotRuntime,
   actor: Person,
-  edit: boolean,
-  confirmation?: string,
-): Promise<IdentityAdminResult<unknown>> {
-  const result =
-    runtime.identity.community === undefined
-      ? {
-          kind: "unavailable" as const,
-          cause: new Error("community administration is not configured"),
-        }
-      : await runtime.identity.community(
-          actor,
-          rpcCall(ctx, "manage_community"),
-        );
+  view: CommunityView,
+  notice?: string,
+): Promise<IdentityAdminResult<CommunitySnapshot>> {
+  const result = await readCommunity(ctx, runtime, actor);
   if (result.kind !== "ok") {
-    const text =
-      result.kind === "forbidden" ? communityForbiddenText : unavailableText;
-    await showRefusal(
-      ctx,
-      text,
-      withNav(new InlineKeyboard(), toManage),
-      edit ? undefined : "new",
-    );
+    await showCommunityRefusal(ctx, result, view);
     return result;
   }
-  const pending = result.value.members.filter((member) => !member.admitted);
-  const admitted = result.value.members.filter((member) => member.admitted);
-  // Человек без ника называется кодом заявки: тот же код он видит в кадре
-  // ожидания и называет администратору, а кнопка несёт то же представление.
-  const label = (member: CommunityMember) =>
-    member.telegramUsername === undefined
-      ? `без ника · ${applicationCode(member.identityId)}`
-      : `@${member.telegramUsername}`;
-  // В строке списка без ника — ещё и упоминание по Telegram id: по нему
-  // администратор открывает профиль и узнаёт человека, а не только код.
-  const line = (member: CommunityMember) =>
-    member.telegramUsername === undefined && member.telegramUserId !== undefined
-      ? `• <a href="tg://user?id=${member.telegramUserId}">без ника</a> · ${escapeHtml(applicationCode(member.identityId))}`
-      : `• ${escapeHtml(label(member))}`;
-  const lines = [
-    ...(confirmation === undefined ? [] : [escapeHtml(confirmation), ""]),
-    "Состав сообщества",
-    "",
-    `Ожидают допуска: ${pending.length}`,
-    ...(pending.length === 0 ? ["—"] : pending.map(line)),
-    "",
-    `Допущены: ${admitted.length}`,
-    ...(admitted.length === 0 ? ["—"] : admitted.map(line)),
-    "",
-    "Разрешённые ники:",
-    ...(result.value.allowedUsernames.length === 0
-      ? ["—"]
-      : result.value.allowedUsernames.map(
-          (username) => `• ${escapeHtml(`@${username}`)}`,
-        )),
-  ];
-  const keyboard = new InlineKeyboard();
-  for (const member of pending)
-    keyboard
-      .text(
-        `Допустить ${label(member)}`,
-        `v1:community:admit:${uuidToToken(member.identityId)}`,
-      )
-      .row();
-  for (const member of admitted)
-    keyboard
-      .text(
-        `Закрыть ${label(member)}`,
-        `v1:community:block:${uuidToToken(member.identityId)}`,
-      )
-      .row();
-  keyboard.text("Добавить ник", "v1:community:allow").row();
-  // Кнопка рисуется только для ника, который доедет обратно в `callback_data`:
-  // более длинный вышиб бы весь экран отказом Telegram на 64 байта, а разбор
-  // всё равно назвал бы его сломанным.
-  for (const username of result.value.allowedUsernames) {
-    if (!removableUsernamePattern.test(username)) continue;
-    keyboard
-      .text(`Убрать @${username}`, `v1:community:remove:${username}`)
-      .row();
-  }
-  keyboard
-    .text("Обновить", "v1:community:list")
-    .text("Назад", "v1:manage:menu");
-  if (edit)
-    await editScreen(ctx, "community", lines.join("\n"), keyboard, "HTML");
-  else
-    await ctx.reply(lines.join("\n"), {
-      ...screenMark("community"),
-      reply_markup: keyboard,
-      parse_mode: "HTML",
-    });
+  await showScreen(ctx, communityScreen(result.value, view, notice));
   return result;
 }
 
@@ -3728,7 +3745,7 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         ? { kind: "manage-menu" }
         : { kind: "view-meetup", token: step.token };
     case "username":
-      return { kind: "community" };
+      return { kind: "community-usernames", page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -3860,8 +3877,12 @@ function callbackUseCase(
     | "manage-menu"
     | "manage-hidden"
     | "community"
+    | "community-pending"
+    | "community-admitted"
+    | "community-usernames"
     | "ask-allowed-username"
     | "admit-member"
+    | "ask-block-member"
     | "block-member"
     | "remove-allowed-username"
     | "create-meetup"
@@ -3941,8 +3962,12 @@ function callbackUseCase(
     case "cancel-broadcast":
       return "send_broadcast";
     case "community":
+    case "community-pending":
+    case "community-admitted":
+    case "community-usernames":
     case "ask-allowed-username":
     case "admit-member":
+    case "ask-block-member":
     case "block-member":
     case "remove-allowed-username":
       return "manage_community";
