@@ -1135,7 +1135,7 @@ async function handleCallback(
       }
       const delivery = await sendStoredMaterialFile(
         ctx,
-        material.source.fileId,
+        material.source,
         material.title,
       );
       if (delivery.kind === "failed") {
@@ -2582,23 +2582,31 @@ function removeConfirmScreen(confirm: {
   };
 }
 
+// Файл уходит тем видом, каким записан. Второй вид остаётся запасным: у файла,
+// прикреплённого до PER-443, вид не записан, и фото среди них читается
+// документом.
 async function sendStoredMaterialFile(
   ctx: UpdateContext,
-  fileId: string,
+  source: Extract<MeetupMaterialSource, { kind: "file" }>,
   title: string,
 ): Promise<{ kind: "sent" } | { kind: "failed"; cause: unknown }> {
+  const other = { caption: title };
+  const asDocument = () => ctx.replyWithDocument(source.fileId, other);
+  const asPhoto = () => ctx.replyWithPhoto(source.fileId, other);
+  const [first, second] =
+    source.fileKind === "photo" ? [asPhoto, asDocument] : [asDocument, asPhoto];
   try {
-    await ctx.replyWithDocument(fileId, { caption: title });
+    await first();
     return { kind: "sent" };
-  } catch (documentCause) {
+  } catch (firstCause) {
     try {
-      await ctx.replyWithPhoto(fileId, { caption: title });
+      await second();
       return { kind: "sent" };
-    } catch (photoCause) {
+    } catch (secondCause) {
       return {
         kind: "failed",
         cause: new AggregateError(
-          [documentCause, photoCause],
+          [firstCause, secondCause],
           "Telegram could not send the stored material file",
         ),
       };
@@ -3219,18 +3227,28 @@ async function renderMeetupCard(
     return;
   }
   if (result.kind === "meetup-card") {
-    await showScreen(ctx, {
-      ...cardScreen({
-        meetup: result.meetup,
-        author: result.author,
-        subscribed: result.subscribed,
-        manageable,
-        note,
-        presentation,
-        today: communityToday(ctx),
-      }),
-      delivery: edit ? "auto" : "new",
-    });
+    const view = {
+      meetup: result.meetup,
+      author: result.author,
+      subscribed: result.subscribed,
+      manageable,
+      note,
+      presentation,
+      today: communityToday(ctx),
+    };
+    const card = cardScreen(view);
+    const delivery = edit ? "auto" : "new";
+    try {
+      await showScreen(ctx, { ...card, delivery });
+    } catch (cause) {
+      // Telegram отверг карточку с постерами — файл мог стать недоступным.
+      // Сама карточка от постера не зависит и приходит без них.
+      if (card.media === undefined) throw cause;
+      await showScreen(ctx, {
+        ...cardScreen({ ...view, posters: false }),
+        delivery: "new",
+      });
+    }
     return;
   }
   await showRefusal(

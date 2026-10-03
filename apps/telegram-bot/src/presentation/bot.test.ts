@@ -311,7 +311,11 @@ describe("presentation adapter", () => {
         {
           id: "0199c0de-0000-7000-8000-000000000002",
           title: "Афиша",
-          source: { kind: "file" as const, fileId: "bot-file-id" },
+          source: {
+            kind: "file" as const,
+            fileId: "bot-file-id",
+            fileKind: "document" as const,
+          },
         },
       ],
     };
@@ -336,6 +340,102 @@ describe("presentation adapter", () => {
     // Кнопок файлов на карточке нет: файл открывается из «Материалов».
     expect(serialized).not.toContain("v1:mm:file:");
     expect(serialized).toContain("v1:mm:list:AZLzpLXGfY6fChssPU5fYA");
+  });
+
+  describe("card posters", () => {
+    const poster = (index: number) => ({
+      id: `0199c0de-0000-7000-8000-00000000000${index}`,
+      title: `Афиша ${index}`,
+      source: {
+        kind: "file" as const,
+        fileId: `photo-${index}`,
+        fileKind: "photo" as const,
+      },
+    });
+    const cardWith = (materials: ReturnType<typeof poster>[]) =>
+      vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup: { ...publishedMeetup(), materials },
+      });
+    const view = "v1:view:AZLzpLXGfY6fChssPU5fYA";
+
+    it("edits the pressed message into a rich card with the photos as media", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity(), {
+        execute: cardWith([poster(1), poster(2)]),
+      });
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(view));
+
+      const edit = calls.find((call) => call.method === "editMessageText");
+      expect(edit?.payload).toMatchObject({
+        rich_message: {
+          media: [
+            { id: "p1", media: { type: "photo", media: "photo-1" } },
+            { id: "p2", media: { type: "photo", media: "photo-2" } },
+          ],
+        },
+      });
+      expect(JSON.stringify(edit?.payload)).toContain("tg-slideshow");
+      expect(calls.map((call) => call.method)).not.toContain("sendPhoto");
+    });
+
+    it("sends the plain card without media", async () => {
+      const { bot, calls } = createHarness(
+        resolvedIdentity(),
+        { execute: cardWith([poster(1), poster(2)]) },
+        [],
+        undefined,
+        "plain",
+      );
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(view));
+
+      const shown = JSON.stringify(calls.at(-1)?.payload);
+      expect(shown).not.toContain("tg://photo");
+      expect(shown).not.toContain("rich_message");
+      expect(shown).toContain("1. Афиша 1 (файл)");
+    });
+
+    it("falls back to the card without posters when Telegram rejects the photos", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity(), {
+        execute: cardWith([poster(1), poster(2)]),
+      });
+      bot.api.config.use((prev, method, payload, signal) =>
+        JSON.stringify(payload).includes("tg://photo")
+          ? Promise.reject(new Error("Bad Request: wrong file identifier"))
+          : prev(method, payload, signal),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(view));
+
+      const last = calls.at(-1);
+      expect(last?.method).toBe("sendRichMessage");
+      expect(JSON.stringify(last?.payload)).not.toContain("tg://photo");
+      expect(JSON.stringify(last?.payload)).toContain("1. Афиша 1 (файл)");
+    });
+
+    it("opens a stored photo as a photo", async () => {
+      const meetup = { ...publishedMeetup(), materials: [poster(1)] };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(
+          `v1:mm:file:AZLzpLXGfY6fChssPU5fYA:${uuidToToken(meetup.materials[0]?.id ?? "")}`,
+        ),
+      );
+
+      const methods = calls.map((call) => call.method);
+      expect(methods).toContain("sendPhoto");
+      expect(methods).not.toContain("sendDocument");
+    });
   });
 
   it("paginates a long material collection for every meetup viewer", async () => {
@@ -548,7 +648,7 @@ describe("presentation adapter", () => {
         expectedVersion: 4,
         material: expect.objectContaining({
           title: "Афиша",
-          source: { kind: "file", fileId: "bot-file-id" },
+          source: { kind: "file", fileId: "bot-file-id", fileKind: "document" },
         }),
       }),
     );
@@ -3709,7 +3809,11 @@ describe("confirmations", () => {
         {
           id: tokenToUuid(materialToken),
           title: "Афиша",
-          source: { kind: "file" as const, fileId: "bot-file-id" },
+          source: {
+            kind: "file" as const,
+            fileId: "bot-file-id",
+            fileKind: "document" as const,
+          },
         },
       ],
     };

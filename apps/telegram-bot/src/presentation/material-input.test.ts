@@ -70,6 +70,18 @@ describe("material input", () => {
     });
   });
 
+  it("keeps the photo kind when the confirmation screen carries a photo", () => {
+    expect(
+      parseMaterialConfirmation({
+        caption: materialConfirmationText("Афиша"),
+        photo: [{ file_id: "small" }, { file_id: "large" }],
+      }),
+    ).toEqual({
+      title: "Афиша",
+      source: { kind: "file", fileId: "large", fileKind: "photo" },
+    });
+  });
+
   it("recovers a file material from the confirmation screen", () => {
     expect(
       parseMaterialConfirmation({
@@ -78,7 +90,7 @@ describe("material input", () => {
       }),
     ).toEqual({
       title: "Афиша",
-      source: { kind: "file", fileId: "bot-file-id" },
+      source: { kind: "file", fileId: "bot-file-id", fileKind: "document" },
     });
   });
 });

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   MeetupLifecycle,
+  MeetupMaterialFileKind,
   MeetupMaterialSchema,
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
@@ -415,11 +416,79 @@ describe("Meetups client", () => {
           {
             id: "file-id",
             title: "Афиша",
-            source: { kind: "file", fileId: "bot-file-id" },
+            source: {
+              kind: "file",
+              fileId: "bot-file-id",
+              fileKind: "document",
+            },
           },
         ],
       },
     });
+  });
+
+  it("carries the photo kind of a file both ways and reads a file without it as a document", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.getMeetup.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.VISIBLE,
+        materials: [
+          create(MeetupMaterialSchema, {
+            id: "poster-id",
+            title: "Афиша",
+            source: {
+              source: { case: "fileId", value: "photo-file-id" },
+              fileKind: MeetupMaterialFileKind.PHOTO,
+            },
+          }),
+          create(MeetupMaterialSchema, {
+            id: "old-id",
+            title: "Старый файл",
+            source: { source: { case: "fileId", value: "old-file-id" } },
+          }),
+        ],
+      }),
+    );
+    rpc.attachMaterial.mockResolvedValue(
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.VISIBLE,
+      }),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(meetups.get(person, "meetup-id")).resolves.toMatchObject({
+      meetup: {
+        materials: [
+          { source: { fileId: "photo-file-id", fileKind: "photo" } },
+          { source: { fileId: "old-file-id", fileKind: "document" } },
+        ],
+      },
+    });
+
+    await meetups.attachMaterial({
+      person,
+      meetupId: "meetup-id",
+      material: {
+        id: "material-id",
+        title: "Афиша",
+        source: { kind: "file", fileId: "photo-file-id", fileKind: "photo" },
+      },
+      expectedVersion: 4,
+    });
+
+    expect(rpc.attachMaterial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: {
+          source: { case: "fileId", value: "photo-file-id" },
+          fileKind: MeetupMaterialFileKind.PHOTO,
+        },
+      }),
+      { timeoutMs: 3_000 },
+    );
   });
 
   it("sends attach and remove material requests with caller ids and the shown version", async () => {
@@ -439,7 +508,7 @@ describe("Meetups client", () => {
       material: {
         id: "material-id",
         title: "Афиша",
-        source: { kind: "file", fileId: "bot-file-id" },
+        source: { kind: "file", fileId: "bot-file-id", fileKind: "document" },
       },
       expectedVersion: 4,
     });
@@ -456,7 +525,10 @@ describe("Meetups client", () => {
         id: "meetup-id",
         materialId: "material-id",
         title: "Афиша",
-        source: { source: { case: "fileId", value: "bot-file-id" } },
+        source: {
+          source: { case: "fileId", value: "bot-file-id" },
+          fileKind: MeetupMaterialFileKind.UNSPECIFIED,
+        },
         expectedVersion: 4n,
       },
       { timeoutMs: 3_000 },

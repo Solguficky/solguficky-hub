@@ -33,9 +33,7 @@ const ConfirmationSchema = z.object({
 const confirmationQuestion = "Прикрепить материал?";
 const confirmationPrefix = `${confirmationQuestion}\n\nНазвание: `;
 
-export type PendingMaterialSource =
-  | { kind: "message-link"; url: string }
-  | { kind: "file"; fileId: string; fileKind: "document" | "photo" };
+export type PendingMaterialSource = MeetupMaterialSource;
 
 export type MaterialConfirmation = {
   title: string;
@@ -103,11 +101,17 @@ export function parseMaterialConfirmation(
   if (title === "") return undefined;
   const document = parsed.data.document;
   if (document !== undefined) {
-    return { title, source: { kind: "file", fileId: document.file_id } };
+    return {
+      title,
+      source: { kind: "file", fileId: document.file_id, fileKind: "document" },
+    };
   }
   const photo = parsed.data.photo?.at(-1);
   if (photo !== undefined) {
-    return { title, source: { kind: "file", fileId: photo.file_id } };
+    return {
+      title,
+      source: { kind: "file", fileId: photo.file_id, fileKind: "photo" },
+    };
   }
   const url = parsed.data.reply_markup?.inline_keyboard
     .flat()

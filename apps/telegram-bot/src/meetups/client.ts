@@ -7,6 +7,7 @@ import {
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   MeetupLifecycle,
+  MeetupMaterialFileKind,
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../../gen/meetups/v1/meetups_service_pb.js";
@@ -401,7 +402,13 @@ export function createMeetupsAdapter(
 function fromMaterialSource(source: MeetupMaterialSource) {
   return source.kind === "message-link"
     ? { source: { case: "messageLink" as const, value: source.url } }
-    : { source: { case: "fileId" as const, value: source.fileId } };
+    : {
+        source: { case: "fileId" as const, value: source.fileId },
+        fileKind:
+          source.fileKind === "photo"
+            ? MeetupMaterialFileKind.PHOTO
+            : MeetupMaterialFileKind.UNSPECIFIED,
+      };
 }
 
 function toSummary(
@@ -544,7 +551,15 @@ function toMaterial(
     return {
       id: value.id,
       title: value.title,
-      source: { kind: "file", fileId: source.value },
+      source: {
+        kind: "file",
+        fileId: source.value,
+        // Вид без значения — файл не фото или прикреплён до PER-443.
+        fileKind:
+          value.source?.fileKind === MeetupMaterialFileKind.PHOTO
+            ? "photo"
+            : "document",
+      },
     };
   }
   throw new Error(`Meetups returned material ${value.id} without a source`);

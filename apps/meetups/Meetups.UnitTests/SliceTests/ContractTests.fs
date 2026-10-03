@@ -338,7 +338,7 @@ let ``A file source should be rendered as a file id`` () =
     let contract =
         Contract.Outbound.material
             { Sample.material with
-                Source = FileId "AgACAgIAAxkBAAI"
+                Source = FileId("AgACAgIAAxkBAAI", OtherFile)
             }
 
     test
@@ -346,6 +346,20 @@ let ``A file source should be rendered as a file id`` () =
             contract.Source.SourceCase = Meetups.V1.MeetupMaterialSource.SourceOneofCase.FileId
             && contract.Source.FileId = "AgACAgIAAxkBAAI"
         @>
+
+/// Вид файла выходит наружу только у фото: файл без записанного вида и документ
+/// неотличимы и оба несут UNSPECIFIED (PER-443).
+[<Fact>]
+let ``A photo should be rendered with its file kind and any other file without one`` () =
+    let rendered (kind: FileKind) =
+        (Contract.Outbound.material
+            { Sample.material with
+                Source = FileId("AgACAgIAAxkBAAI", kind)
+            })
+            .Source.FileKind
+
+    test <@ rendered Photo = Meetups.V1.MeetupMaterialFileKind.Photo @>
+    test <@ rendered OtherFile = Meetups.V1.MeetupMaterialFileKind.Unspecified @>
 
 /// Порядок коллекции несёт порядок repeated-поля: отдельного position в контракте
 /// нет, и отрисовка обязана сохранить порядок снимка.
@@ -356,7 +370,7 @@ let ``The snapshot should render the materials in the collection order`` () =
             Id = Sample.otherMaterialId
             Position = 2
             Title = "Вторая афиша"
-            Source = FileId "file-2"
+            Source = FileId("file-2", OtherFile)
             BoundBy = Sample.authorId
         }
 

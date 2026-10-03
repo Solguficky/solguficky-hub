@@ -121,9 +121,15 @@ let private sourceNode (source: MaterialSource) : JsonNode =
     | MessageLink link ->
         node["kind"] <- JsonValue.Create "message_link"
         node["value"] <- JsonValue.Create link
-    | FileId fileId ->
+    | FileId(fileId, kind) ->
         node["kind"] <- JsonValue.Create "file_id"
         node["value"] <- JsonValue.Create fileId
+
+        // Ключ пишется только у фото: строка без него уже значит «не фото», и
+        // второй записи того же смысла у формы нет.
+        match kind with
+        | Photo -> node["file_kind"] <- JsonValue.Create "photo"
+        | OtherFile -> ()
 
     node
 
@@ -184,7 +190,15 @@ let private sourceOfNode (meetupId: Guid) (node: JsonNode) : MaterialSource =
 
         match kind with
         | "message_link" -> MessageLink value
-        | "file_id" -> FileId value
+        | "file_id" ->
+            // Отсутствие ключа — возраст строки, а не порча: вид появился позже
+            // материалов (PER-443), и миграции прежних строк нет.
+            match entry["file_kind"] with
+            | null -> FileId(value, OtherFile)
+            | kindNode ->
+                match jsonText meetupId "material file kind" kindNode with
+                | "photo" -> FileId(value, Photo)
+                | other -> malformed meetupId $"unknown material file kind {other}"
         | other -> malformed meetupId $"unknown material source kind {other}"
     | _ -> malformed meetupId "material source is not an object"
 

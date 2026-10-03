@@ -108,7 +108,11 @@ describe("meetup materials", () => {
               material: {
                 id: "material-id",
                 title: "Опрос",
-                source: { kind: "file", fileId: "file-id" },
+                source: {
+                  kind: "file",
+                  fileId: "file-id",
+                  fileKind: "document",
+                },
               },
               expectedVersion: 1,
             }
