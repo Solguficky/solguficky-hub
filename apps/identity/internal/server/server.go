@@ -35,8 +35,8 @@ func WithTracerProvider(tp trace.TracerProvider) Option {
 	return func(c *config) { c.tracerProvider = tp }
 }
 
-// New собирает сервер. callers — таблица вызывающих из LoadCallers: сервер без
-// неё не собирается, поэтому включённую проверку нельзя забыть на старте.
+// New собирает сервер. callers — таблица вызывающих из LoadCallers; нулевое
+// значение Callers не узнаёт ни одного токена и закрывает каждый доменный метод.
 func New(log *slog.Logger, db *sql.DB, maintainerToken string, callers Callers, opts ...Option) *Server {
 	cfg := config{tracerProvider: tracenoop.NewTracerProvider()}
 	for _, opt := range opts {

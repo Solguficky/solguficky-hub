@@ -102,7 +102,18 @@ type Callers struct {
 // у двух вызывающих одно значение или значение совпадает с maintainer-секретом.
 // Текст ошибки называет переменные, но не значения.
 func LoadCallers(getenv func(string) string, maintainerToken string) (Callers, error) {
-	callers := declaredCallers()
+	return loadCallers(declaredCallers(), getenv, maintainerToken)
+}
+
+func loadCallers(callers []Caller, getenv func(string) string, maintainerToken string) (Callers, error) {
+	// Пустой набор вызывающих закрыл бы каждый доменный метод при зелёном
+	// health — тот самый исход, от которого старт и защищает.
+	if len(callers) == 0 {
+		return Callers{}, errors.New("no callers declared for any method")
+	}
+	// Секрет сравнивается в той же форме, что и токены вызывающих: иначе пробел
+	// в конце одного из значений прятал бы совпадение двух ролей.
+	maintainerToken = strings.TrimSpace(maintainerToken)
 	tokens := make(map[Caller]string, len(callers))
 	var errs []error
 	for _, caller := range callers {

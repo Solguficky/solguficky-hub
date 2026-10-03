@@ -133,7 +133,10 @@ export function openDirectClients(environment: ContourEnvironment) {
         "Identity",
         environment.identityUrl,
         deadline,
-        () => identity.checkGlobalRole({}),
+        // Метод бота с токеном бота: проба проходит гейт вызывающих (ADR-056)
+        // и получает отказ обработчика, а не запись authorization на каждом
+        // подъёме контура.
+        () => identity.resolveTelegramUserId({}, asBot),
       );
       await retryWhileUnreachable(
         "Meetups",

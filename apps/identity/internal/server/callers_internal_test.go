@@ -244,6 +244,11 @@ func TestMethodAccessCoversServiceDescriptor(t *testing.T) {
 	for _, m := range identityv1.IdentityService_ServiceDesc.Methods {
 		methods = append(methods, "/"+identityv1.IdentityService_ServiceDesc.ServiceName+"/"+m.MethodName)
 	}
+	// Потоковый RPC тоже обязан строку: иначе он закрыт молча, а его отказ
+	// пишется без caller_refusal.
+	for _, s := range identityv1.IdentityService_ServiceDesc.Streams {
+		methods = append(methods, "/"+identityv1.IdentityService_ServiceDesc.ServiceName+"/"+s.StreamName)
+	}
 	for _, method := range methods {
 		_, declared := methodAccess[method]
 		if declared == slices.Contains(maintainerMethods, method) {
@@ -295,6 +300,11 @@ func TestLoadCallersRefusesAmbiguousOrIncompleteTable(t *testing.T) {
 			change: func(env map[string]string) { env["IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"] = gateMaintainer },
 			want:   "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT equals IDENTITY_MAINTAINER_TOKEN",
 		},
+		{
+			name:   "value equals maintainer secret up to whitespace",
+			change: func(env map[string]string) { env["IDENTITY_CALLER_TOKEN_TELEGRAM_BOT"] = gateMaintainer + "\n" },
+			want:   "IDENTITY_CALLER_TOKEN_TELEGRAM_BOT equals IDENTITY_MAINTAINER_TOKEN",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -320,5 +330,15 @@ func TestLoadCallersRefusesAmbiguousOrIncompleteTable(t *testing.T) {
 	env := valid()
 	if _, err := LoadCallers(func(name string) string { return env[name] }, gateMaintainer); err != nil {
 		t.Fatalf("complete table refused: %v", err)
+	}
+}
+
+// Таблица без единого объявленного вызывающего не стартует: иначе health был бы
+// зелёным при закрытых методах.
+func TestLoadCallersRefusesEmptyDeclaration(t *testing.T) {
+	t.Parallel()
+
+	if _, err := loadCallers(nil, func(string) string { return "" }, gateMaintainer); err == nil {
+		t.Fatal("empty declaration accepted")
 	}
 }

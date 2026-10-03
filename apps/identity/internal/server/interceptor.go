@@ -220,7 +220,7 @@ func mustFailureCounter() metric.Int64Counter {
 	return counter
 }
 
-func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req, resp any, caller gateDecision, err error) {
+func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Time, req, resp any, decision gateDecision, err error) {
 	result := resultOK
 	if err != nil {
 		result = resultError
@@ -248,11 +248,11 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 	}
 	// Вызывающий назван только проверенным именем и фиксированной причиной
 	// отказа: значение authorization в запись не идёт ни в каком виде (ADR-056).
-	if caller.caller != "" {
-		attrs = append(attrs, slog.String("caller", string(caller.caller)))
+	if decision.caller != "" {
+		attrs = append(attrs, slog.String("caller", string(decision.caller)))
 	}
-	if caller.refusal != "" {
-		attrs = append(attrs, slog.String("caller_refusal", caller.refusal))
+	if decision.refusal != "" {
+		attrs = append(attrs, slog.String("caller_refusal", decision.refusal))
 	}
 	if err == nil {
 		// Успех границы пишется на info, как у Meetups и бота: один фильтр по
