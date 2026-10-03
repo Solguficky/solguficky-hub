@@ -4,8 +4,13 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
+import {
+  ApplicationOutcome,
+  IdentityService,
+  type RefusedApplication as WireRefusedApplication,
+} from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
+import { communityLocalTime } from "../community-time.js";
 import {
   callHeaders,
   callTimeoutMs,
@@ -14,10 +19,13 @@ import {
 } from "../rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../tracing.js";
 import type {
+  ApplicationAdministrator,
   CommunityAdministrator,
   IdentityResolver,
   OrganizerResolver,
   OrganizerUsernameResult,
+  ReconsiderResult,
+  RefusedApplication,
   ResolveIdentityInput,
   ResolveIdentityResult,
   TelegramRecipientResolver,
@@ -52,17 +60,27 @@ type IdentityAdminRpc = Pick<
   | "addAllowedUsername"
   | "removeAllowedUsername"
 >;
+type ApplicationAdminRpc = Pick<
+  Client<typeof IdentityService>,
+  "listRefusedApplications" | "reconsiderApplication"
+>;
 
 export type IdentityClient = IdentityResolver &
   TelegramRecipientResolver &
   OrganizerResolver &
-  CommunityAdministrator & {
+  CommunityAdministrator &
+  ApplicationAdministrator & {
     close(): void;
   };
 
 export function createIdentityClient(
   baseUrl: string,
-  { tracing, serviceToken, timeoutMs = identityRpcTimeoutMs }: RpcClientOptions,
+  {
+    communityTimeZone,
+    tracing,
+    serviceToken,
+    timeoutMs = identityRpcTimeoutMs,
+  }: RpcClientOptions & { communityTimeZone: string },
 ): IdentityClient {
   const sessionManager = new Http2SessionManager(baseUrl);
   const transport = createGrpcTransport({
@@ -74,6 +92,10 @@ export function createIdentityClient(
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
   const administrator = createCommunityAdministrator(client, timeoutMs);
+  const applications = createApplicationAdministrator(client, {
+    timeoutMs,
+    communityTimeZone,
+  });
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
@@ -83,6 +105,7 @@ export function createIdentityClient(
     resolveOrganizerUsername: (viewer, identityId, meta) =>
       organizers.resolveOrganizerUsername(viewer, identityId, meta),
     ...administrator,
+    ...applications,
     close() {
       sessionManager.abort();
     },
@@ -169,6 +192,123 @@ export function createCommunityAdministrator(
         ),
       ),
   };
+}
+
+// Список отказанных и пересмотр (ADR-060, пункт 14). Момент отказа переводится
+// в пояс сообщества здесь, как момент публикации у Meetups: экран показывает
+// местное время, а не UTC.
+export function createApplicationAdministrator(
+  rpc: ApplicationAdminRpc,
+  {
+    timeoutMs = identityRpcTimeoutMs,
+    communityTimeZone,
+  }: { timeoutMs?: number; communityTimeZone: string },
+): ApplicationAdministrator {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  const actorMessage = (actor: {
+    identityId: string;
+    globalRoles: readonly string[];
+  }) => ({
+    identityId: actor.identityId,
+    globalRoles: actor.globalRoles.map(roleValue),
+  });
+  return {
+    async refusedApplications(actor, meta) {
+      let response: Awaited<
+        ReturnType<ApplicationAdminRpc["listRefusedApplications"]>
+      >;
+      try {
+        response = await rpc.listRefusedApplications(
+          { actor: actorMessage(actor) },
+          options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const applications: RefusedApplication[] = [];
+      for (const application of response.applications) {
+        const refused = refusedOf(application, communityTimeZone);
+        // Строка вне контракта — рассинхрон схемы: пропустить её значило бы
+        // молча спрятать отказ от администратора.
+        if (refused === undefined) return { kind: "invalid" };
+        applications.push(refused);
+      }
+      return { kind: "ok", value: applications };
+    },
+    async reconsiderApplication(actor, applicationId, meta) {
+      try {
+        const response = await rpc.reconsiderApplication(
+          { actor: actorMessage(actor), applicationId },
+          options(meta),
+        );
+        return { kind: "ok", value: response.changed };
+      } catch (cause) {
+        return classifyReconsiderFailure(cause);
+      }
+    },
+  };
+}
+
+function refusedOf(
+  value: WireRefusedApplication,
+  communityTimeZone: string,
+): RefusedApplication | undefined {
+  const circle =
+    value.requestedRole === GlobalRole.MEMBER
+      ? "member"
+      : value.requestedRole === GlobalRole.PUBLIC
+        ? "public"
+        : undefined;
+  const outcome =
+    value.decision?.outcome === ApplicationOutcome.BLOCKED
+      ? "blocked"
+      : value.decision?.outcome === ApplicationOutcome.DECLINED
+        ? "declined"
+        : undefined;
+  if (circle === undefined || outcome === undefined) return undefined;
+  let decidedAt: RefusedApplication["decidedAt"];
+  try {
+    decidedAt = communityLocalTime(
+      value.decision?.decidedAt ?? "",
+      communityTimeZone,
+    );
+  } catch {
+    return undefined;
+  }
+  const decider = value.decision?.decidedBy;
+  return {
+    applicationId: value.applicationId,
+    identityId: value.identityId,
+    telegramUserId: value.telegramUserId,
+    ...(value.telegramUsername === undefined
+      ? {}
+      : { telegramUsername: value.telegramUsername }),
+    circle,
+    outcome,
+    ...(decider === undefined
+      ? {}
+      : {
+          decidedBy: {
+            telegramUserId: decider.telegramUserId,
+            ...(decider.telegramUsername === undefined
+              ? {}
+              : { telegramUsername: decider.telegramUsername }),
+          },
+        }),
+    decidedAt,
+  };
+}
+
+// FAILED_PRECONDITION контракт отдал ожидаемому исходу: отказ не пересмотреть
+// (integration.md, ReconsiderApplication). Остальное — как у команд состава.
+function classifyReconsiderFailure(cause: unknown): ReconsiderResult {
+  if (cause instanceof ConnectError && cause.code === Code.FailedPrecondition) {
+    return { kind: "not-refused" };
+  }
+  return classifyAdminFailure(cause);
 }
 
 function classifyAdminFailure(cause: unknown) {

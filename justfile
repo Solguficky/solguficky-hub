@@ -305,7 +305,7 @@ identity-test: identity-proto
 # `go test -tags=integration -list . ./...` без базы. Опечатка в теге молча
 # выключает файл, на который не ссылаются соседние файлы пакета, и недобор до
 # порога — единственный её след; файл со ссылками роняет компиляцию пакета.
-IDENTITY_TEST_THRESHOLD := "188"
+IDENTITY_TEST_THRESHOLD := "211"
 
 # Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
 # прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не
@@ -605,7 +605,7 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "314"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "316"
 NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "115"
 
 # Unit-тесты (L0): Docker не нужен.
@@ -706,6 +706,22 @@ auction-run:
 # Компиляция и runtime classpath в apps/auction/target/aspire-classpath
 auction-classpath:
     cd apps/auction && sbt -batch 'set TaskKey[Unit]("aspireClasspath") := IO.write(target.value / "aspire-classpath", (Runtime / fullClasspath).value.files.mkString(java.io.File.pathSeparator))' aspireClasspath
+
+# Production-образ в локальное хранилище движка как auction:local и те же
+# проверки до публикации, что в CI: база по digest и общий поиск токена Bot API.
+# Сборка идёт внутри образа: JDK и sbt на машине не нужны, нужен движок —
+# IMAGE_ENGINE, podman по умолчанию; docker находит список контекста
+# Containerfile.dockerignore сам. Публикацию в GHCR делает только CI
+# (.github/workflows/image-auction.yml)
+auction-image:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${IMAGE_ENGINE:-podman}
+    ignore=
+    case "$engine" in *podman*) ignore="--ignorefile apps/auction/Containerfile.dockerignore" ;; esac
+    sh tools/image/check-containerfile.sh apps/auction/Containerfile
+    "$engine" build -f apps/auction/Containerfile $ignore -t auction:local .
+    sh tools/image/check-no-token.sh auction:local
 
 # В `verify` входит именно этот рецепт, а не три отдельных: каждый вызов sbt
 # поднимает свою JVM, и три холодных старта добавили бы к гейту около двух

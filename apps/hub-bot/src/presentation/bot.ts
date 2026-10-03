@@ -30,11 +30,14 @@ import type {
 import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
+  type ApplicationAdministrator,
   type CommunityAdministrator,
   type CommunitySnapshot,
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
+  type ReconsiderResult,
+  type RefusedApplication,
   type TelegramRecipientResolver,
   toResolveIdentityInput,
 } from "../identity/port.js";
@@ -127,6 +130,7 @@ import {
   meetupNotificationsScreen,
   toggleToast,
 } from "./screens/notifications.js";
+import { reconsiderConfirmScreen, refusedScreen } from "./screens/refused.js";
 import {
   datePresetsScreen,
   scheduleTypePrompt,
@@ -154,6 +158,7 @@ export type BotRuntime = {
   dispatcher: Dispatcher;
   identity: IdentityResolver &
     Partial<CommunityAdministrator> &
+    Partial<ApplicationAdministrator> &
     Partial<OrganizerResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
@@ -217,6 +222,10 @@ const forbiddenText = "Это действие тебе недоступно.";
 const managementForbiddenText = "Управление сходками доступно администратору.";
 const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
+const refusedForbiddenText =
+  "Пересматривать отказы может только администратор.";
+// Ответ второму администратору, чей пересмотр опередили (ADR-060, пункт 14).
+const reconsideredText = "Уже пересмотрено.";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -1526,6 +1535,71 @@ async function handleCallback(
           );
         }
       }
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (
+      action.kind === "refused-applications" ||
+      action.kind === "ask-reconsider"
+    ) {
+      const result = await readRefused(ctx, runtime, person);
+      if (result.kind !== "ok") {
+        await showRefusedRefusal(ctx, result);
+      } else if (action.kind === "refused-applications") {
+        await showScreen(
+          ctx,
+          refusedScreen(result.value, action.page, communityToday(ctx)),
+        );
+      } else {
+        const applicationId = tokenToUuid(action.token);
+        const application = result.value.find(
+          (candidate) => candidate.applicationId === applicationId,
+        );
+        if (application === undefined) {
+          // Отказ пересмотрел другой администратор, пока этот экран был открыт.
+          await waiting.answer(reconsideredText);
+          await showScreen(
+            ctx,
+            refusedScreen(result.value, action.page, communityToday(ctx)),
+          );
+        } else {
+          await showScreen(
+            ctx,
+            reconsiderConfirmScreen(application, action.page),
+          );
+        }
+      }
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "reconsider") {
+      const result: ReconsiderResult =
+        runtime.identity.reconsiderApplication === undefined
+          ? {
+              kind: "unavailable",
+              cause: new Error("application administration is not configured"),
+            }
+          : await runtime.identity.reconsiderApplication(
+              person,
+              tokenToUuid(action.token),
+              rpcCall(ctx, "manage_community"),
+            );
+      // `changed = false` — круг уже выдан после отказа: пересмотр опередил
+      // другой администратор или выдача иным путём.
+      const toast =
+        result.kind === "ok"
+          ? result.value
+            ? "Отказ пересмотрен."
+            : reconsideredText
+          : result.kind === "not-refused"
+            ? "Пересмотреть нельзя: профиль заблокирован."
+            : result.kind === "invalid"
+              ? "Изменение не сохранилось. Список перечитан заново."
+              : result.kind === "forbidden"
+                ? "Это может только администратор."
+                : "Не получилось сохранить. Попробуй ещё раз.";
+      await waiting.answer(toast);
+      await renderRefused(ctx, runtime, person, action.page);
       outcome = adminOutcome(result, person.identityId);
       return;
     }
@@ -2988,6 +3062,48 @@ async function renderCommunity(
   return result;
 }
 
+function readRefused(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+): Promise<IdentityAdminResult<readonly RefusedApplication[]>> {
+  return runtime.identity.refusedApplications === undefined
+    ? Promise.resolve({
+        kind: "unavailable" as const,
+        cause: new Error("application administration is not configured"),
+      })
+    : runtime.identity.refusedApplications(
+        actor,
+        rpcCall(ctx, "manage_community"),
+      );
+}
+
+// Список открывается из управления, туда и возвращает отказ.
+function showRefusedRefusal(
+  ctx: UpdateContext,
+  result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
+): Promise<void> {
+  return showRefusal(
+    ctx,
+    result.kind === "forbidden" ? refusedForbiddenText : unavailableText,
+    withNav(new InlineKeyboard(), toManage),
+  );
+}
+
+async function renderRefused(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  page: number,
+): Promise<void> {
+  const result = await readRefused(ctx, runtime, actor);
+  if (result.kind !== "ok") {
+    await showRefusedRefusal(ctx, result);
+    return;
+  }
+  await showScreen(ctx, refusedScreen(result.value, page, communityToday(ctx)));
+}
+
 // Сообщение о допуске — побочный результат действия администратора, а не его
 // часть: допуск уже сохранён, поэтому отказ Identity или Telegram его не
 // отменяет и возвращается причиной для записи границы. Получатель, которого
@@ -3047,9 +3163,19 @@ async function notifyAdmitted(
 }
 
 function adminOutcome(
-  result: IdentityAdminResult<unknown>,
+  result: IdentityAdminResult<unknown> | { kind: "not-refused" },
   identityId: string,
 ): BoundaryOutcome {
+  // Отказ, который сейчас не пересмотреть, — штатный ответ контракта, а не
+  // сбой: метрика отказов на нём не растёт.
+  if (result.kind === "not-refused")
+    return {
+      level: "info",
+      message: "refusal not reconsidered",
+      result: "ok",
+      use_case: "manage_community",
+      identity_id: identityId,
+    };
   if (result.kind === "ok")
     return {
       level: "info",
@@ -4252,6 +4378,9 @@ function callbackUseCase(
     | "ask-block-member"
     | "block-member"
     | "remove-allowed-username"
+    | "refused-applications"
+    | "ask-reconsider"
+    | "reconsider"
     | "create-meetup"
     | "publish-meetup"
     | "manage-edit"
@@ -4336,6 +4465,9 @@ function callbackUseCase(
     case "confirm-community-broadcast":
     case "cancel-broadcast":
       return "send_broadcast";
+    case "refused-applications":
+    case "ask-reconsider":
+    case "reconsider":
     case "community":
     case "community-pending":
     case "community-admitted":

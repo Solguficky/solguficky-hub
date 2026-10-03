@@ -14,7 +14,7 @@ internal static class HubBotSetup
         MemoryRequest: "128Mi",
         CpuLimit: "500m",
         MemoryLimit: "256Mi",
-        Grpc: null);
+        Probe: null);
 
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context) =>
         Wire(

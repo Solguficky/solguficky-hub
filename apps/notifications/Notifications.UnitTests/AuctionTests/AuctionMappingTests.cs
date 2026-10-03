@@ -39,6 +39,14 @@ public class AuctionMappingTests
     }
 
     [Fact]
+    public void When_AuctionBornAtMeetup_Expect_UuidV5AuctionAccepted()
+    {
+        var message = EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId());
+        message.State.AuctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+        Decode(message).LotId.ShouldBe(Guid.Parse(message.LotId));
+    }
+
+    [Fact]
     public void When_LeaderProxyRaisesPrice_Expect_NoRecipient()
     {
         var leader = EventFactory.NewId();
@@ -67,6 +75,7 @@ public class AuctionMappingTests
     [InlineData("state")]
     [InlineData("state_id")]
     [InlineData("auction_id")]
+    [InlineData("auction_id_version")]
     [InlineData("status")]
     [InlineData("leader")]
     [InlineData("bid_id")]
@@ -94,6 +103,7 @@ public class AuctionMappingTests
             case "state": message.State = null; break;
             case "state_id": message.State.Id = EventFactory.NewId(); break;
             case "auction_id": message.State.AuctionId = ""; break;
+            case "auction_id_version": message.State.AuctionId = Guid.NewGuid().ToString(); break;
             case "status": message.State.Draft = new LotDraft(); break;
             case "leader": message.State.Trading.ClearLeaderId(); break;
             case "bid_id": message.State.Trading.LeadingBidId = ""; break;

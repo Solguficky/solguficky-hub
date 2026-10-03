@@ -17,7 +17,7 @@ internal static class NotificationsSetup
         MemoryRequest: "256Mi",
         CpuLimit: "1",
         MemoryLimit: "512Mi",
-        Grpc: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Notifications));
+        Probe: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Notifications));
 
     public static IResourceBuilder<ProjectResource> Configure(ServiceGraphContext context)
     {

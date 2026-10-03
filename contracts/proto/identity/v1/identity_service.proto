@@ -37,6 +37,9 @@ service IdentityService {
   rpc DeclineApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
   rpc ListRefusedApplications(ListRefusedApplicationsRequest) returns (ListRefusedApplicationsResponse);
   rpc ReconsiderApplication(ReconsiderApplicationRequest) returns (ReconsiderApplicationResponse);
+  rpc ListSourceChannels(ListSourceChannelsRequest) returns (ListSourceChannelsResponse);
+  rpc CreateSourceChannel(ChangeSourceChannelRequest) returns (ChangeSourceChannelResponse);
+  rpc RenameSourceChannel(ChangeSourceChannelRequest) returns (ChangeSourceChannelResponse);
 }
 
 // The caller passes the identity established from the same Telegram update.
@@ -74,6 +77,25 @@ message ChangeAllowedUsernameRequest {
 }
 message ChangeAllowedUsernameResponse { bool changed = 1; }
 
+// A channel of the source registry: the code of the "s_<code>" deep link
+// payload and the label a moderator sees on the application card.
+message SourceChannel {
+  // Case-sensitive, as Telegram passes the payload.
+  string code = 1;
+  string label = 2;
+}
+
+message ListSourceChannelsRequest { IdentityActor actor = 1; }
+message ListSourceChannelsResponse { repeated SourceChannel channels = 1; }
+
+message ChangeSourceChannelRequest {
+  IdentityActor actor = 1;
+  // Code without the "s_" prefix.
+  string code = 2;
+  string label = 3;
+}
+message ChangeSourceChannelResponse { bool changed = 1; }
+
 // How an application was closed. An open application has no outcome.
 enum ApplicationOutcome {
   // No value: the field is unset or the outcome is unknown to the consumer.
@@ -106,9 +128,10 @@ message ApplicationCursor {
 }
 
 message ApplicationSource {
-  // Label of the channel in the registry. Absent when the code the person came
-  // with was unknown, malformed or too long: the source is then "unknown",
-  // which is not the same as no source at all.
+  // Current label of the channel in the registry. Absent when the code the
+  // person came with was unknown to the registry when the application was
+  // created, malformed or too long: the source is then "unknown", which is not
+  // the same as no source at all. A channel created later does not label it.
   optional string channel_label = 1;
 }
 

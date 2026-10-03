@@ -72,7 +72,10 @@ const presented = {
 
 describe("identity client", () => {
   it("presents the bot token next to the request id", async () => {
-    const identity = createIdentityClient(baseUrl, options());
+    const identity = createIdentityClient(baseUrl, {
+      ...options(),
+      communityTimeZone: "UTC",
+    });
     try {
       await identity.resolve({ telegramUserId: 1n }, meta);
     } finally {

@@ -271,6 +271,10 @@ describe("callback parser", () => {
       ["v1:cm:u:3", { kind: "community-usernames", page: 3 }],
       [`v1:cm:ad:${token}`, { kind: "admit-member", token }],
       [`v1:cm:ad:${token}:${next}`, { kind: "admit-member", token, next }],
+      ["v1:cm:r", { kind: "refused-applications", page: 0 }],
+      ["v1:cm:r:2", { kind: "refused-applications", page: 2 }],
+      [`v1:cm:rq:${token}:2`, { kind: "ask-reconsider", token, page: 2 }],
+      [`v1:cm:ry:${token}:9999`, { kind: "reconsider", token, page: 9999 }],
       [
         `v1:cm:bq:${token}:p`,
         { kind: "ask-block-member", token, origin: { kind: "pending" } },
@@ -327,6 +331,11 @@ describe("callback parser", () => {
       "v1:cm:rm:x:alice",
       "v1:cm:rm:0:al-ice",
       `v1:cm:ad:${token}:${token}:extra`,
+      `v1:cm:r:${token}`,
+      `v1:cm:rq:${token}`,
+      `v1:cm:rq:short:0`,
+      `v1:cm:ry:${token}:x`,
+      `v1:cm:ry:${token}:0:extra`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }

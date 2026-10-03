@@ -16,7 +16,7 @@ internal static class IdentitySetup
         MemoryRequest: "64Mi",
         CpuLimit: "500m",
         MemoryLimit: "128Mi",
-        Grpc: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Identity));
+        Probe: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Identity));
 
     public static IResourceBuilder<ExecutableResource> Configure(ServiceGraphContext context)
     {

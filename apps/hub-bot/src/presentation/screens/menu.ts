@@ -47,7 +47,9 @@ export function manageScreen(
     .row()
     .text("Скрытые сходки", "v1:manage:hidden")
     .row()
-    .text("Состав сообщества", "v1:community:list");
+    .text("Состав сообщества", "v1:community:list")
+    .row()
+    .text("Отказанные", "v1:cm:r");
   // Объявление видит только администратор: сервис откажет остальным и так,
   // но вход, который ведёт в отказ после набора текста, хуже его отсутствия.
   if (isAdministrator(person)) {
