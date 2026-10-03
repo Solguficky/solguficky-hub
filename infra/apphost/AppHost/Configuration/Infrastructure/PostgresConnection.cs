@@ -21,4 +21,15 @@ internal static class PostgresConnection
         database.Resource is PostgresDatabaseResource local
             ? ReferenceExpression.Create($"{local.ConnectionStringExpression};SSL Mode=Disable")
             : ReferenceExpression.Create($"{database.Resource.ConnectionStringExpression}");
+
+    /// <summary>
+    /// JDBC URL без учётных данных для Pekko Persistence JDBC (Auction): пользователь
+    /// и пароль идут сервису отдельными ключами, поэтому в строке среды их нет.
+    /// Локальный URL без sslmode: pgjdbc по умолчанию TLS только предлагает и к
+    /// контейнеру Aspire без него подключается.
+    /// </summary>
+    public static ReferenceExpression Jdbc(IResourceBuilder<IResourceWithConnectionString> database) =>
+        database.Resource is PostgresDatabaseResource local
+            ? ReferenceExpression.Create($"{local.JdbcConnectionString}")
+            : ReferenceExpression.Create($"{database.Resource.ConnectionStringExpression}");
 }

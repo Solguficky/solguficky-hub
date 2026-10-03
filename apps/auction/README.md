@@ -53,6 +53,21 @@ just aspire auction
 
 Переопределение живёт в `src/main/resources/application.conf`: код читает готовое значение и о способе переопределения не знает. На старте сервис применяет схему журнала миграциями Flyway; без переменных базы, без токена любого из вызывающих, с одинаковыми токенами у двух вызывающих или при отказе миграции он завершается с ненулевым кодом и называет причину, но не значение токена.
 
+## Production-образ
+
+```bash
+just auction-image
+IMAGE_ENGINE=docker just auction-image
+```
+
+Образ собирается по `Containerfile` из контекста корня репозитория: кодогенерации ScalaPB нужен `contracts/proto`. Что попадает в контекст, решает `Containerfile.dockerignore` — список разрешённого, поэтому `target/` и тесты рабочего дерева в сборку не доезжают. JDK и sbt на машине не нужны: стадия `build` на `eclipse-temurin` JDK ставит sbt из релиза GitHub по записанной в `Containerfile` контрольной сумме, генерирует код, компилирует и складывает jar'ы runtime classpath в `/app/lib`. Порядок classpath держит argfile JVM `/app/classpath`, а не `-cp /app/lib/*`, у которого порядок — порядок каталога.
+
+- Каждая внешняя база закреплена по digest; `tools/image/check-containerfile.sh` роняет сборку на теге кодом `SOLG-IMG-TAG`. Мажор JDK в базе сборки обязан совпадать с `.java-version`, версия sbt — с `project/build.properties`: сверки в стадии `build` роняют сборку на расхождении. Новая версия sbt меняет и контрольную сумму в `Containerfile`.
+- Финальная база — `eclipse-temurin` JRE, а не distroless: `podman run --rm <образ> id` исполняет `id` из образа, а канарейки `tools/image/check-test.sh` собираются на ней же и исполняют `RUN`. Процесс идёт от uid 1000, команда стоит в CMD в exec-форме, и SIGTERM доходит до JVM. Образ задаёт `AUCTION_HTTP_HOST` и `AUCTION_GRPC_HOST` равными `0.0.0.0`: умолчание `127.0.0.1` из контейнера недостижимо. Куча — 60% лимита памяти контейнера: остальное занимают metaspace, code cache и стеки потоков.
+- Пустая база проверена запуском с `--read-only --memory 512m` против PostgreSQL 16: Flyway применяет шесть миграций, узел выходит в `Up`, `/health` отвечает `200` примерно через шесть секунд, процесс держит около 240 МиБ. Остановленная база даёт `503` с причиной `journal`. На `SIGTERM` запускается coordinated shutdown, и узел выходит из кластера за две секунды.
+
+Публикацию делает только CI: `.github/workflows/image-auction.yml` вызывает переиспользуемый `image-publish.yml` веткой `containerfile`, как образы Identity и Hub Bot. Pull request собирает и проверяет образ, ничего не записывая в реестр; push в `develop` публикует `ghcr.io/solguficky/auction` с SBOM и attestation на registry digest. В чарте прода Auction — workload с HTTP-пробами: readiness спрашивает `/health`, startup и liveness — TCP-подключение к HTTP-порту, потому что `/health` при недоступной базе отвечает `503` и перезапускал бы под по кругу ([ADR-055](../../docs/decisions/ADR-055-k3s-runtime-from-aspire-chart.md)).
+
 ## Проверка
 
 ```bash

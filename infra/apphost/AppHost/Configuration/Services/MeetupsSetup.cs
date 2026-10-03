@@ -17,7 +17,7 @@ internal static class MeetupsSetup
         MemoryRequest: "192Mi",
         CpuLimit: "1",
         MemoryLimit: "384Mi",
-        Grpc: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Meetups));
+        Probe: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Meetups));
 
     public static IResourceBuilder<ProjectResource> Configure(ServiceGraphContext context)
     {

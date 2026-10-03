@@ -1,4 +1,34 @@
+auction: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/auction/Containerfile context=<repo>
+  endpoint: grpc http port= target=8081 proxied=True external=False
+  endpoint: http http port= target=8080 proxied=True external=False
+  env: AUCTION_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
+  env: AUCTION_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: AUCTION_DATABASE_JDBC_URL={auction-db.connectionString}
+  env: AUCTION_DATABASE_PASSWORD={auction-db-password.value}
+  env: AUCTION_DATABASE_USER={auction-db-user.value}
+  env: AUCTION_GRPC_PORT={auction.bindings.grpc.targetPort}
+  env: AUCTION_HTTP_PORT={auction.bindings.http.targetPort}
+  env: AUCTION_NATS_URL={nats.connectionString}
+  waits: auction-db WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
+  relationship: Reference auction-db
+  relationship: Reference auction-db-password
+  relationship: Reference auction-db-user
+  relationship: Reference hub-bot-service-token
+  relationship: Reference nats
+  relationship: WaitFor auction-db
+  relationship: WaitFor nats
+  health: auction_http_/health_200_check
 auction-bot-service-token: ParameterResource
+  secret: True
+auction-db: ConnectionStringParameterResource
+  secret: True
+auction-db-password: ParameterResource
+  secret: True
+auction-db-user: ParameterResource
   secret: True
 hub-bot: ContainerResource
   image: /placeholder:latest
