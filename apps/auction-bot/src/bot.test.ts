@@ -72,7 +72,8 @@ function makeBot(
       return Promise.resolve({ ok: false, error_code: 400, description });
     }
     // Отправка фото отвечает сообщением с размерами: из него бот берёт
-    // `file_id` наибольшего размера.
+    // `file_id` наибольшего размера. Тип результата зависит от метода, и
+    // фикстура его не знает — то же ослабление, что у ответа `true` ниже.
     if (method === "sendPhoto" || method === "editMessageMedia") {
       return Promise.resolve({
         ok: true,
@@ -357,13 +358,13 @@ describe("auction bot", () => {
     expect(calls[1]?.payload).toMatchObject({
       caption: expect.stringContaining("Кружка"),
     });
-    expect(photos.get(lotId, "img-1")).toBe("large");
+    expect(photos.get({ lotId, version: "img-1" })).toBe("large");
     expect(getLotImage).toHaveBeenCalledTimes(1);
   });
 
   it("edits a photo card in place from the cache without loading bytes", async () => {
     const photos = createPhotoCache();
-    photos.set(lotId, "img-1", "cached-file");
+    photos.set({ lotId, version: "img-1" }, "cached-file");
     const getLotImage = vi.fn();
     const { bot, calls } = makeBot(
       portsWith({ lot: withImage, image: getLotImage }),
@@ -380,7 +381,7 @@ describe("auction bot", () => {
 
   it("uploads again once when Telegram forgets a cached file", async () => {
     const photos = createPhotoCache();
-    photos.set(lotId, "img-1", "forgotten");
+    photos.set({ lotId, version: "img-1" }, "forgotten");
     const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
       photos,
       refuseOnce: { editMessageMedia: "Bad Request: wrong file identifier" },
@@ -392,7 +393,26 @@ describe("auction bot", () => {
     expect(edits[1]?.payload).not.toMatchObject({
       media: { media: "forgotten" },
     });
-    expect(photos.get(lotId, "img-1")).toBe("large");
+    expect(photos.get({ lotId, version: "img-1" })).toBe("large");
+  });
+
+  // Telegram отверг сами байты: карточка уходит текстом, а не пропадает.
+  it("falls back to the text card when Telegram rejects the uploaded photo", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", (line) => lines.push(line));
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
+      logger,
+      refuse: { sendPhoto: "Bad Request: IMAGE_PROCESS_FAILED" },
+    });
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "sendPhoto",
+      "editMessageText",
+    ]);
+    expect(
+      lines.some((line) => line.includes("lot image rejected by Telegram")),
+    ).toBe(true);
   });
 
   // Сейчас Auction отвечает на GetLotImage `UNIMPLEMENTED`: карточка остаётся

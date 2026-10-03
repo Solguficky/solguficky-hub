@@ -3,13 +3,15 @@
 // следующий показ грузит файл из Auction заново, поэтому ADR-030 он не
 // нарушает. В авторизации он не участвует: доступ к лоту решает чтение
 // Auction, а не наличие записи здесь.
-//
-// Ключ — лот и версия изображения: правка изображения меняет версию, и старое
+
+// Изображение лота в одной версии. Правка изображения меняет версию, и старое
 // фото по новому ключу не находится.
+export type ImageKey = { lotId: string; version: string };
+
 export type PhotoCache = {
-  get(lotId: string, version: string): string | undefined;
-  set(lotId: string, version: string, fileId: string): void;
-  delete(lotId: string, version: string): void;
+  get(key: ImageKey): string | undefined;
+  set(key: ImageKey, fileId: string): void;
+  delete(key: ImageKey): void;
 };
 
 // Лотов у сходки десятки; предел держит память процесса ограниченной, даже
@@ -18,10 +20,10 @@ export const PHOTO_CACHE_LIMIT = 200;
 
 export function createPhotoCache(limit = PHOTO_CACHE_LIMIT): PhotoCache {
   const entries = new Map<string, string>();
-  const key = (lotId: string, version: string) => `${lotId}:${version}`;
+  const keyOf = (key: ImageKey) => `${key.lotId}:${key.version}`;
   return {
-    get(lotId, version) {
-      const k = key(lotId, version);
+    get(key) {
+      const k = keyOf(key);
       const fileId = entries.get(k);
       if (fileId !== undefined) {
         // Map хранит порядок вставки: перевставка делает запись свежей.
@@ -30,8 +32,8 @@ export function createPhotoCache(limit = PHOTO_CACHE_LIMIT): PhotoCache {
       }
       return fileId;
     },
-    set(lotId, version, fileId) {
-      const k = key(lotId, version);
+    set(key, fileId) {
+      const k = keyOf(key);
       entries.delete(k);
       entries.set(k, fileId);
       while (entries.size > limit) {
@@ -40,8 +42,8 @@ export function createPhotoCache(limit = PHOTO_CACHE_LIMIT): PhotoCache {
         entries.delete(oldest);
       }
     },
-    delete(lotId, version) {
-      entries.delete(key(lotId, version));
+    delete(key) {
+      entries.delete(keyOf(key));
     },
   };
 }

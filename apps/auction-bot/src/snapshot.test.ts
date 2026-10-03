@@ -8,23 +8,13 @@ import {
   UnsoldReason,
   WithdrawnReason,
 } from "../gen/auction/v1/auction_pb.js";
-import {
-  type LotSnapshot,
-  LotSnapshotSchema,
-} from "../gen/auction/v1/auction_service_pb.js";
+import { LotSnapshotSchema } from "../gen/auction/v1/auction_service_pb.js";
 import { lotViewOf } from "./snapshot.js";
 
 const rub = (rubles: bigint): Money =>
   create(MoneySchema, { minorUnits: rubles * 100n, currency: "RUB" });
 
-function snapshot(status: LotSnapshot["status"]): LotSnapshot {
-  return create(LotSnapshotSchema, {
-    id: "lot-1",
-    auctionId: "auc-1",
-    version: 4n,
-    status,
-  });
-}
+const base = { id: "lot-1", auctionId: "auc-1", version: 4n };
 
 describe("lotViewOf", () => {
   it.each([
@@ -92,7 +82,10 @@ describe("lotViewOf", () => {
   });
 
   it("keeps an absent card absent and carries the image version", () => {
-    const bare = snapshot({ case: "draft", value: {} as never });
+    const bare = create(LotSnapshotSchema, {
+      ...base,
+      status: { case: "draft", value: {} },
+    });
     expect(lotViewOf(bare)).not.toHaveProperty("card");
     const withCard = create(LotSnapshotSchema, {
       id: "lot-1",
@@ -128,7 +121,7 @@ describe("lotViewOf", () => {
   });
 
   it("refuses a snapshot without status", () => {
-    expect(() => lotViewOf(snapshot({ case: undefined }))).toThrow(
+    expect(() => lotViewOf(create(LotSnapshotSchema, base))).toThrow(
       "without status",
     );
   });
@@ -141,10 +134,10 @@ describe("lotViewOf", () => {
     });
     expect(() =>
       lotViewOf(
-        snapshot({
-          case: "sold",
-          value: { winnerId: "p", price: huge },
-        } as never),
+        create(LotSnapshotSchema, {
+          ...base,
+          status: { case: "sold", value: { winnerId: "p", price: huge } },
+        }),
       ),
     ).toThrow("safe integer");
   });

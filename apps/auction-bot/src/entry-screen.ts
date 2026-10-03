@@ -53,6 +53,10 @@ export const TEXT_LIMIT = 4096;
 // Подпись кнопки лота — название и цена в одну строку экрана телефона.
 const BUTTON_TITLE_LIMIT = 40;
 
+// Длину названия Auction не ограничивает. Предел держит строки статуса — цену,
+// лидера и дедлайн — внутри подписи к фото при любом названии.
+const TITLE_LIMIT = 256;
+
 const context = "Аукцион сообщества.";
 const untitled = "Лот без названия";
 
@@ -210,7 +214,7 @@ function renderBlock(block: AuctionBlock, options: RenderOptions): Rendered {
     case "lot": {
       const description = block.card?.description;
       return {
-        head: block.card?.title ?? untitled,
+        head: truncate(block.card?.title ?? untitled, TITLE_LIMIT),
         ...(description === undefined || description === ""
           ? {}
           : { description }),
@@ -306,11 +310,28 @@ function fitWithin(
   const full = join((r) => r.description);
   if (full.length <= limit) return full;
   const overflow = full.length - limit + 1;
-  return join((r) =>
-    r.description === undefined
-      ? undefined
-      : `${r.description.slice(0, Math.max(0, r.description.length - overflow))}…`,
-  ).slice(0, limit);
+  // Страховка на случай, когда резать нечего: лимит Bot API не нарушается.
+  return truncate(
+    join((r) =>
+      r.description === undefined
+        ? undefined
+        : truncate(r.description, Math.max(1, r.description.length - overflow)),
+    ),
+    limit,
+  );
+}
+
+// Обрезка по кодовым точкам: срез по UTF-16 разрезал бы суррогатную пару, и
+// Telegram получил бы битую строку. Кодовая точка длиннее единицы UTF-16 не
+// бывает короче, поэтому результат укладывается в `limit` единиц.
+function truncate(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  let kept = "";
+  for (const point of text) {
+    if (kept.length + point.length > limit - 1) break;
+    kept += point;
+  }
+  return `${kept}…`;
 }
 
 function renderButton(
@@ -368,9 +389,7 @@ function priceLabel(status: LotStatusView): string {
 }
 
 function shorten(title: string): string {
-  return title.length <= BUTTON_TITLE_LIMIT
-    ? title
-    : `${title.slice(0, BUTTON_TITLE_LIMIT - 1)}…`;
+  return truncate(title, BUTTON_TITLE_LIMIT);
 }
 
 // Валюта у платформы одна — рубль, и у неё две цифры после запятой. Копейки

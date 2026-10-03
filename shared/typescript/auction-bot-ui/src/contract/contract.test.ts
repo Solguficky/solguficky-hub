@@ -13,9 +13,13 @@ import {
 
 // Намерение карточки лота в торгах: на нём самопроверки ниже ловят дрейф
 // одного вызова, а не восьми сразу.
-const LOT_CASE = AUCTION_CONTRACT_CASES.find(
-  (c) => c.intent === "lot: trading",
-) as AuctionContractCase;
+const LOT_CASE = caseOf("lot: trading");
+
+function caseOf(intent: string): AuctionContractCase {
+  const found = AUCTION_CONTRACT_CASES.find((c) => c.intent === intent);
+  if (found === undefined) throw new Error(`no contract case ${intent}`);
+  return found;
+}
 
 // Фабрики-заглушки двух поверхностей: вход доведён ровно до шлюза, как его
 // доведут приложения, — личность разрешается один раз и уходит в update.

@@ -191,6 +191,29 @@ describe("renderEntryScreen", () => {
     expect(screen.text.length).toBeLessThanOrEqual(TEXT_LIMIT);
   });
 
+  // Длину названия Auction не ограничивает: цена и исход остаются в подписи.
+  it("keeps the price of a photo card with a very long title", () => {
+    const screen = lotScreen({
+      card: {
+        title: "К".repeat(5_000),
+        description: "",
+        image: { version: "v" },
+      },
+      status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+    });
+    expect(screen.text.length).toBeLessThanOrEqual(CAPTION_LIMIT);
+    expect(plain(screen.text)).toContain("Продан за 3 000 ₽.");
+  });
+
+  // Срез по UTF-16 разрезал бы эмодзи пополам, и Telegram отверг бы строку.
+  it("never cuts a surrogate pair in half", () => {
+    const screen = lotScreen({
+      card: { title: "Кружка", description: "🦉".repeat(3_000) },
+    });
+    expect(screen.text.length).toBeLessThanOrEqual(TEXT_LIMIT);
+    expect(screen.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
   it("formats kopecks only when there are some", () => {
     expect(plain(money({ minorUnits: 120_050, currency: "RUB" }))).toBe(
       "1 200,50 ₽",

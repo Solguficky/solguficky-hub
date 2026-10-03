@@ -11,7 +11,11 @@ import {
 } from "./entry-screen.js";
 import type { FaqContent } from "./faq.js";
 import type { LogFields, Logger } from "./logging.js";
-import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
+import {
+  createPhotoCache,
+  type ImageKey,
+  type PhotoCache,
+} from "./photo-cache.js";
 import {
   type RouteOutcome,
   routeAuctionCallback,
@@ -193,8 +197,12 @@ function markupOf(screen: RenderedScreen) {
 // Фото для экрана: из кэша `file_id` или байтами из Auction. Не удалось —
 // карточка уходит текстом: изображение украшает экран, а не держит его.
 type Photo =
-  | { kind: "cached"; lotId: string; version: string; fileId: string }
-  | { kind: "upload"; lotId: string; version: string; file: InputFile };
+  | { kind: "cached"; key: ImageKey; fileId: string }
+  | { kind: "upload"; key: ImageKey; file: InputFile };
+
+function mediaOf(photo: Photo): string | InputFile {
+  return photo.kind === "cached" ? photo.fileId : photo.file;
+}
 
 async function photoFor(input: {
   screen: RenderedScreen;
@@ -204,21 +212,20 @@ async function photoFor(input: {
   logger: Logger;
   requestId: string;
 }): Promise<Photo | undefined> {
-  const { photo } = input.screen;
-  if (photo === undefined || input.viewer === undefined) return undefined;
-  const fileId = input.photos.get(photo.lotId, photo.version);
-  if (fileId !== undefined) return { kind: "cached", ...photo, fileId };
+  const key = input.screen.photo;
+  if (key === undefined || input.viewer === undefined) return undefined;
+  const fileId = input.photos.get(key);
+  if (fileId !== undefined) return { kind: "cached", key, fileId };
   try {
     const image = await input.image.getLotImage({
       viewer: input.viewer,
-      lotId: photo.lotId,
+      lotId: key.lotId,
     });
     return {
       kind: "upload",
-      lotId: photo.lotId,
       // Ключ — версия самих байтов: если изображение сменили между чтением
       // карточки и загрузкой, старое фото не ляжет под новым ключом.
-      version: image.version,
+      key: { lotId: key.lotId, version: image.version },
       file: new InputFile(image.content, "lot"),
     };
   } catch (cause) {
@@ -260,47 +267,54 @@ async function deliver(
         }
         return;
       }
-      const media = photo.kind === "cached" ? photo.fileId : photo.file;
       const sent = currentIsPhoto
         ? await ctx.editMessageMedia(
-            { type: "photo", media, caption: screen.text },
+            { type: "photo", media: mediaOf(photo), caption: screen.text },
             markup,
           )
-        : await ctx.replyWithPhoto(media, { caption: screen.text, ...markup });
+        : await ctx.replyWithPhoto(mediaOf(photo), {
+            caption: screen.text,
+            ...markup,
+          });
       if (!currentIsPhoto) await dropPrevious(ctx, current);
-      remember(input.photos, photo, sent);
+      remember({ photos: input.photos, photo, sent });
       return;
     } catch (cause) {
       if (!(cause instanceof GrammyError)) throw cause;
       // Тот же экран после повторного нажатия — не отказ.
       if (cause.description.includes("message is not modified")) return;
-      if (photo?.kind === "cached" && rejectedFile(cause.description)) {
-        // Telegram больше не знает этот `file_id`: запись вытесняется, и
-        // повтор идёт загрузкой байтов один раз.
-        input.photos.delete(photo.lotId, photo.version);
-        photo = await photoFor({
-          ...input,
-          photos: input.photos,
-          requestId: ctx.requestId,
-        });
-        continue;
-      }
       if (notEditable(cause.description)) {
         // Сообщение не редактируется — ответ уходит новым сообщением.
         if (photo === undefined) {
           await ctx.reply(screen.text, markup);
         } else {
-          const media = photo.kind === "cached" ? photo.fileId : photo.file;
-          remember(
-            input.photos,
+          remember({
+            photos: input.photos,
             photo,
-            await ctx.replyWithPhoto(media, {
+            sent: await ctx.replyWithPhoto(mediaOf(photo), {
               caption: screen.text,
               ...markup,
             }),
-          );
+          });
         }
         return;
+      }
+      if (photo?.kind === "cached" && rejectedFile(cause.description)) {
+        // Telegram больше не знает этот `file_id`: запись вытесняется, и
+        // повтор идёт загрузкой байтов один раз.
+        input.photos.delete(photo.key);
+        photo = await photoFor({ ...input, requestId: ctx.requestId });
+        continue;
+      }
+      if (photo !== undefined) {
+        // Telegram не принял само изображение — файл велик, не картинка или
+        // не обработался. Карточка уходит текстом, а не пропадает.
+        input.logger.warn("lot image rejected by Telegram", {
+          request_id: ctx.requestId,
+          error: cause.description,
+        });
+        photo = undefined;
+        continue;
       }
       throw cause;
     }
@@ -317,21 +331,24 @@ async function dropPrevious(
 
 // `file_id` наибольшего размера из ответа Telegram ложится в кэш под версией
 // загруженных байтов.
-function remember(
-  photos: PhotoCache,
-  photo: Photo,
-  sent: Message | true,
-): void {
+function remember(input: {
+  photos: PhotoCache;
+  photo: Photo;
+  sent: Message | true;
+}): void {
+  const { photos, photo, sent } = input;
   if (photo.kind !== "upload" || sent === true) return;
   const fileId = sent.photo?.at(-1)?.file_id;
-  if (fileId !== undefined) photos.set(photo.lotId, photo.version, fileId);
+  if (fileId !== undefined) photos.set(photo.key, fileId);
 }
 
+// Описания отказов Bot API не закреплены контрактом: сравнение без учёта
+// регистра и по обоим известным написаниям.
+const REJECTED_FILE =
+  /wrong (remote )?file identifier|file[_ ]reference|wrong file_id/i;
+
 function rejectedFile(description: string): boolean {
-  return (
-    description.includes("wrong file identifier") ||
-    description.includes("file reference")
-  );
+  return REJECTED_FILE.test(description);
 }
 
 function notEditable(description: string): boolean {

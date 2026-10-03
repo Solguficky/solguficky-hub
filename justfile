@@ -528,7 +528,7 @@ auction-bot-lint:
     cd apps/auction-bot && npm run lint
 
 # Обычный путь — профиль `auction-bot` AppHost: он раздаёт переменные сам.
-# Запуск вне AppHost: нужны AUCTION_BOT_TOKEN, AUCTION_BOT_SERVICE_TOKEN, IDENTITY_GRPC_URL и AUCTION_GRPC_URL
+# Запуск вне AppHost: нужны AUCTION_BOT_TOKEN, AUCTION_BOT_SERVICE_TOKEN, AUCTION_BOT_COMMUNITY_TIME_ZONE, IDENTITY_GRPC_URL и AUCTION_GRPC_URL
 auction-bot-run: auction-bot-build
     cd apps/auction-bot && npm start
 
