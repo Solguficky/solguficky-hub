@@ -10,7 +10,10 @@ import type {
 import type { NotificationSender, SendResult } from "../delivery/port.js";
 import type { TelegramEnvironment } from "./bot.js";
 import { uuidToToken } from "./meetup-deep-link.js";
-import type { NotifiedMeetupCategory } from "./parse-callback.js";
+import {
+  type NotifiedMeetupCategory,
+  traceCallback,
+} from "./parse-callback.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -81,7 +84,9 @@ export function renderNotification(
   const open = () =>
     new InlineKeyboard().text(
       "Открыть сходку",
-      `v1:view:${uuidToToken(meetup.id)}`,
+      // Кнопка следа: карточка придёт новым сообщением, а уведомление — и
+      // слова организатора в нём — останется в истории.
+      traceCallback(`v1:view:${uuidToToken(meetup.id)}`),
     );
   switch (content.kind) {
     case "meetup-published":

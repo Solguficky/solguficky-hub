@@ -35,15 +35,18 @@ describe("провод бота", () => {
     const year = new Date().getUTCFullYear() + 1;
 
     await organizer.says("/start");
-    await organizer.presses("Управление сходками");
+    await organizer.presses("Управление");
     await organizer.presses("Создать сходку");
     await organizer.says("Настолки в контуре");
+    await organizer.presses("Дата и время");
     await organizer.says(`12.06.${year} 19:00`);
+    await organizer.presses("Место");
     await organizer.says("Циферблат");
+    await organizer.presses("Описание");
     await organizer.says("Берём свои игры");
     await organizer.presses("Опубликовать");
 
-    expect(organizer.sees()).toContain("Сходка создана");
+    expect(organizer.sees()).toContain("Сходка опубликована");
     const stored = await direct.readAsAdmin(
       identityId,
       meetupIdFromStartLink(organizer.sees()),

@@ -37,12 +37,14 @@ export type ExecuteRequest =
       intent: "list-visible-meetups";
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
       intent: "list-archived-meetups";
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -50,6 +52,7 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -57,6 +60,7 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -69,6 +73,7 @@ export type ExecuteRequest =
       confirmedPast?: true;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -79,6 +84,7 @@ export type ExecuteRequest =
       confirmedPast?: true;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -86,6 +92,7 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       // Момент приходит строкой, как его написал человек: разбор принадлежит
@@ -96,6 +103,7 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -104,6 +112,7 @@ export type ExecuteRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -115,6 +124,7 @@ export type ExecuteRequest =
       expectedVersion: number;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -124,6 +134,7 @@ export type ExecuteRequest =
       expectedVersion: number;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | NotificationRequest
   | BroadcastRequest;
@@ -145,6 +156,7 @@ export type BroadcastRequest = {
   body: string;
   requestId?: string;
   useCase?: string;
+  deadlineAt?: number;
 };
 
 // Подписка и категории — две независимые плоскости, и намерения их не смешивают:
@@ -155,6 +167,7 @@ export type NotificationRequest =
       intent: "view-global-notifications";
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -163,6 +176,7 @@ export type NotificationRequest =
       enabled: boolean;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -170,6 +184,7 @@ export type NotificationRequest =
       meetupId: string;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -178,6 +193,7 @@ export type NotificationRequest =
       subscribed: boolean;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     }
   | {
       identity: Person;
@@ -187,6 +203,7 @@ export type NotificationRequest =
       enabled: boolean;
       requestId?: string;
       useCase?: string;
+      deadlineAt?: number;
     };
 
 // Значение расходится с общей настройкой. Про существование переопределения это
@@ -251,7 +268,9 @@ export type ExecuteResult =
       error?: string;
       rejected?: unknown;
     }
-  | { kind: "preview"; meetup: MeetupSnapshot }
+  // Черновик после принятого ответа формы создания: дальше человек сам
+  // выбирает, какое поле заполнить, и публикует с того же экрана.
+  | { kind: "draft"; meetup: MeetupSnapshot }
   // Введённая дата раньше сегодняшнего дня сообщества: сходка с ней сразу
   // уйдёт в архив. Команда в Meetups не отправлена и ждёт подтверждения.
   | {

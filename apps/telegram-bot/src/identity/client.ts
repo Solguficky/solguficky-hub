@@ -8,6 +8,7 @@ import { IdentityService } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   callHeaders,
+  callTimeoutMs,
   presentServiceToken,
   type RpcMetadata,
 } from "../rpc-metadata.js";
@@ -92,7 +93,10 @@ export function createCommunityAdministrator(
   rpc: IdentityAdminRpc,
   timeoutMs = identityRpcTimeoutMs,
 ): CommunityAdministrator {
-  const options = (meta?: RpcMetadata) => ({ timeoutMs, ...callHeaders(meta) });
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
   const actorMessage = (actor: {
     identityId: string;
     globalRoles: readonly string[];
@@ -205,7 +209,7 @@ export function createIdentityResolver(
         // ConnectError с кодом. Рукописная гонка таймеров рядом отдавала голую
         // ошибку без кода и поток не отменяла.
         const response = await rpc.resolveIdentity(input, {
-          timeoutMs,
+          timeoutMs: callTimeoutMs(meta, timeoutMs),
           ...callHeaders(meta),
         });
         return {
@@ -232,7 +236,7 @@ export function createTelegramRecipientResolver(
       try {
         const response = await rpc.resolveTelegramUserId(
           { identityId },
-          { timeoutMs, ...callHeaders(meta) },
+          { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
         );
         return { kind: "resolved", telegramUserId: response.telegramUserId };
       } catch (cause) {
@@ -257,7 +261,7 @@ export function createOrganizerResolver(
             },
             identityId,
           },
-          { timeoutMs, ...callHeaders(meta) },
+          { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
         );
         return response.telegramUsername === undefined
           ? { kind: "resolved" }

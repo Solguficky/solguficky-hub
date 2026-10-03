@@ -39,7 +39,7 @@ async function organizerConfirmingMaterial(scenario: string) {
     person: organizer,
   } = await organizerAtStart(wire, direct);
   const title = titleFor(scenario, telegramUserId);
-  await organizer.presses("Управление сходками");
+  await organizer.presses("Управление");
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
   await organizer.presses("Опубликовать");
@@ -59,7 +59,7 @@ describe("материалы сходки", () => {
     const { adminId, meetupId, organizer } =
       await organizerConfirmingMaterial("материал");
 
-    await organizer.presses("Прикрепить");
+    await organizer.presses("Да, прикрепить");
 
     expect(organizer.sees()).toContain("1. Программа вечера");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([
@@ -67,7 +67,7 @@ describe("материалы сходки", () => {
     ]);
 
     await organizer.presses("Убрать");
-    await organizer.presses("Да, убрать");
+    await organizer.presses("Да, убрать материал");
 
     expect(organizer.sees()).toContain("Пока ничего не прикреплено.");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([]);
@@ -79,12 +79,12 @@ describe("материалы сходки", () => {
     );
     await direct.renameAsAdmin(adminId, meetupId, "Переименована мимо бота");
 
-    await organizer.presses("Прикрепить");
+    await organizer.presses("Да, прикрепить");
 
     expect(organizer.sees()).toContain("Сходка уже изменилась.");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([]);
 
-    await organizer.presses("Прикрепить");
+    await organizer.presses("Да, прикрепить");
 
     expect(organizer.sees()).toContain("1. Программа вечера");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([

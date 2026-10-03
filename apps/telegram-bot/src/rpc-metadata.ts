@@ -1,4 +1,4 @@
-import type { Interceptor } from "@connectrpc/connect";
+import { Code, ConnectError, type Interceptor } from "@connectrpc/connect";
 
 export const requestIdHeader = "x-request-id";
 export const useCaseHeader = "x-use-case";
@@ -18,12 +18,14 @@ export function presentServiceToken(token: string): Interceptor {
 export type RpcMetadata = {
   requestId?: string;
   useCase?: string;
+  /**
+   * Момент, после которого действие к сервисам больше не ходит: общий бюджет
+   * ожидания одного update, а не дедлайн отдельного вызова.
+   */
+  deadlineAt?: number;
 };
 
-export function rpcMeta(fields: {
-  requestId?: string;
-  useCase?: string;
-}): RpcMetadata | undefined {
+export function rpcMeta(fields: RpcMetadata): RpcMetadata | undefined {
   const meta: RpcMetadata = {};
   if (fields.requestId !== undefined) {
     meta.requestId = fields.requestId;
@@ -31,10 +33,31 @@ export function rpcMeta(fields: {
   if (fields.useCase !== undefined) {
     meta.useCase = fields.useCase;
   }
-  if (meta.requestId === undefined && meta.useCase === undefined) {
-    return undefined;
+  if (fields.deadlineAt !== undefined) {
+    meta.deadlineAt = fields.deadlineAt;
   }
-  return meta;
+  return Object.keys(meta).length === 0 ? undefined : meta;
+}
+
+/**
+ * Дедлайн одного вызова: меньшее из его собственного и остатка бюджета
+ * действия. Бюджет исчерпан — вызов не делается вовсе, а отказ тот же, что даёт
+ * истёкший дедлайн транспорта: адаптеры разбирают его уже существующей ветвью.
+ */
+export function callTimeoutMs(
+  meta: RpcMetadata | undefined,
+  ownMs: number,
+  now: number = Date.now(),
+): number {
+  if (meta?.deadlineAt === undefined) return ownMs;
+  const left = meta.deadlineAt - now;
+  if (left <= 0) {
+    throw new ConnectError(
+      "the action budget is exhausted",
+      Code.DeadlineExceeded,
+    );
+  }
+  return Math.min(ownMs, left);
 }
 
 export function callHeaders(meta?: RpcMetadata): {

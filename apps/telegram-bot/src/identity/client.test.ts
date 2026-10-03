@@ -34,6 +34,16 @@ describe("identity client", () => {
     ).resolves.toMatchObject({ kind: "unavailable" });
   });
 
+  it("does not call identity once the action budget is spent", async () => {
+    const resolveIdentity = vi.fn();
+    const identity = createIdentityResolver({ resolveIdentity });
+
+    await expect(
+      identity.resolve({ telegramUserId: 1n }, { deadlineAt: Date.now() - 1 }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(resolveIdentity).not.toHaveBeenCalled();
+  });
+
   it("returns unavailable when identity is down", async () => {
     const identity = failingResolver(
       new ConnectError("connect", Code.Unavailable),

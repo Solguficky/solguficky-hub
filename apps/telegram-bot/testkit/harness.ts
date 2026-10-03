@@ -9,6 +9,7 @@ import type {
 import type { LogFields, Logger } from "../src/logging.js";
 import { createBot } from "../src/presentation/bot.js";
 import { noopTracing, type Tracing } from "../src/tracing.js";
+import { inspectCall, reportViolations } from "./screen-lint.js";
 
 // Харнесс бота без Telegram: `botInfo` подставляется, поэтому `bot.init()` не
 // ходит в Bot API, а исходящие вызовы записывает трансформер grammY. Общий для
@@ -81,6 +82,8 @@ export function createHarness(
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),
   presentation?: "rich" | "plain",
+  /** Закреплённый день сообщества: от него зависят заготовки дат. */
+  today?: () => { year: number; month: number; day: number },
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createBot({
@@ -90,10 +93,14 @@ export function createHarness(
     logger,
     tracing,
     ...(presentation === undefined ? {} : { presentation }),
+    ...(today === undefined ? {} : { today }),
   });
   bot.botInfo = botInfo;
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push(recordCall(method, payload));
+    // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
+    // найденное снимает хук набора (`lint-setup.ts`) либо пульт.
+    reportViolations(inspectCall(method, payload));
     if (method === "sendMessage") {
       return Promise.resolve({
         ok: true,

@@ -14,6 +14,7 @@ import type { Person } from "../application/types.js";
 import { communityLocalTime } from "../community-time.js";
 import {
   callHeaders,
+  callTimeoutMs,
   presentServiceToken,
   type RpcMetadata,
 } from "../rpc-metadata.js";
@@ -122,7 +123,7 @@ export function createMeetupsAdapter(
     }
   };
   const options = (meta?: RpcMetadata) => ({
-    timeoutMs,
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
   return {

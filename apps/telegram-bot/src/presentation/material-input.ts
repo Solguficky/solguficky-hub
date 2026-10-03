@@ -30,7 +30,8 @@ const ConfirmationSchema = z.object({
     .optional(),
 });
 
-const confirmationPrefix = "Прикрепить материал?\n\nНазвание: ";
+const confirmationQuestion = "Прикрепить материал?";
+const confirmationPrefix = `${confirmationQuestion}\n\nНазвание: `;
 
 export type PendingMaterialSource =
   | { kind: "message-link"; url: string }
@@ -71,6 +72,18 @@ export function parseMaterialInput(
     return { kind: "file", fileId: photo.file_id, fileKind: "photo" };
   }
   return undefined;
+}
+
+/**
+ * То же подтверждение в HTML: вопрос — жирным заголовком. Видимый текст
+ * совпадает с `materialConfirmationText`, и разбор читает его тем же путём:
+ * Telegram возвращает текст без разметки.
+ */
+export function materialConfirmationHtml(
+  title: string,
+  escapeHtml: (value: string) => string,
+): string {
+  return `<b>${confirmationQuestion}</b>\n\nНазвание: ${escapeHtml(title)}`;
 }
 
 export function materialConfirmationText(title: string): string {

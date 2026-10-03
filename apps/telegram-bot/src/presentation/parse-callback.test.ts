@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseCallback } from "./parse-callback.js";
+import {
+  parseCallback,
+  type QuestionStep,
+  questionData,
+  traceCallback,
+} from "./parse-callback.js";
 
 describe("callback parser", () => {
   it("parses a meetup card action", () => {
@@ -8,6 +13,49 @@ describe("callback parser", () => {
       token: "AZjypHwefTqbIU-OEqs0zg",
     });
   });
+  it("reads a trace button as the same action marked as a trace", () => {
+    expect(parseCallback("v1:t:view:AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "view-meetup",
+      token: "AZLzpLXGfY6fChssPU5fYA",
+      trace: true,
+    });
+    expect(parseCallback("v1:t:nav:hub")).toEqual({ kind: "hub", trace: true });
+    expect(traceCallback("v1:notify:global")).toBe("v1:t:notify:global");
+    expect(parseCallback("v1:t:view:short")).toEqual({ kind: "malformed" });
+    expect(
+      Buffer.byteLength(
+        traceCallback("v1:notify:settings:AZLzpLXGfY6fChssPU5fYA"),
+      ),
+    ).toBeLessThanOrEqual(64);
+  });
+
+  it("parses the page of a list within the byte budget", () => {
+    expect(parseCallback("v1:nav:hub:2")).toEqual({ kind: "hub", page: 2 });
+    expect(parseCallback("v1:nav:archive:0")).toEqual({
+      kind: "archive",
+      page: 0,
+    });
+    expect(parseCallback("v1:manage:hidden:11")).toEqual({
+      kind: "manage-hidden",
+      page: 11,
+    });
+    expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
+    expect(parseCallback("v1:nav:hub:-1")).toEqual({ kind: "malformed" });
+    expect(parseCallback("v1:nav:hub:вторая")).toEqual({ kind: "malformed" });
+  });
+
+  it("parses a declined confirmation of a material and of a broadcast", () => {
+    expect(parseCallback("v1:mm:no:AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "decline-attach-material",
+      token: "AZLzpLXGfY6fChssPU5fYA",
+    });
+    expect(parseCallback("v1:bc:no:AZLzpLXGfY6fChssPU5fYA")).toEqual({
+      kind: "cancel-broadcast",
+      token: "AZLzpLXGfY6fChssPU5fYA",
+    });
+    expect(parseCallback("v1:bc:no")).toEqual({ kind: "cancel-broadcast" });
+  });
+
   it("distinguishes outdated and malformed callbacks", () => {
     expect(parseCallback("v2:manage:menu")).toEqual({ kind: "outdated" });
     expect(parseCallback("v1:manage:new:not-a-token")).toEqual({
@@ -184,17 +232,90 @@ describe("callback parser", () => {
       kind: "admit-member",
       token,
     });
+    // Кнопка прошлого релиза закрывала доступ сразу; теперь она спрашивает.
     expect(parseCallback(`v1:community:block:${token}`)).toEqual({
-      kind: "block-member",
+      kind: "ask-block-member",
       token,
+      origin: { kind: "admitted", page: 0 },
     });
     expect(parseCallback("v1:community:remove:alice_1")).toEqual({
       kind: "remove-allowed-username",
       username: "alice_1",
+      page: 0,
     });
-    expect(
-      Buffer.byteLength(`v1:community:block:${token}`),
-    ).toBeLessThanOrEqual(64);
+  });
+
+  it("parses the community lists, the queue cursor and both people of a decision", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const next = "AZKbflwdej-OSy1snwobPA";
+    const cases: readonly (readonly [string, unknown])[] = [
+      ["v1:cm:p", { kind: "community-pending" }],
+      [`v1:cm:p:${next}`, { kind: "community-pending", cursor: next }],
+      ["v1:cm:a", { kind: "community-admitted", page: 0 }],
+      ["v1:cm:a:12", { kind: "community-admitted", page: 12 }],
+      ["v1:cm:u", { kind: "community-usernames", page: 0 }],
+      ["v1:cm:u:3", { kind: "community-usernames", page: 3 }],
+      [`v1:cm:ad:${token}`, { kind: "admit-member", token }],
+      [`v1:cm:ad:${token}:${next}`, { kind: "admit-member", token, next }],
+      [
+        `v1:cm:bq:${token}:p`,
+        { kind: "ask-block-member", token, origin: { kind: "pending" } },
+      ],
+      [
+        `v1:cm:bq:${token}:p${next}`,
+        { kind: "ask-block-member", token, origin: { kind: "pending", next } },
+      ],
+      [
+        `v1:cm:by:${token}:p${next}`,
+        { kind: "block-member", token, origin: { kind: "pending", next } },
+      ],
+      [
+        `v1:cm:by:${token}:a9999`,
+        {
+          kind: "block-member",
+          token,
+          origin: { kind: "admitted", page: 9999 },
+        },
+      ],
+      [
+        `v1:cm:rm:9999:${"a".repeat(32)}`,
+        {
+          kind: "remove-allowed-username",
+          username: "a".repeat(32),
+          page: 9999,
+        },
+      ],
+    ];
+    for (const [data, action] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+  });
+
+  it("rejects community callbacks with a broken token, page or shape", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    for (const data of [
+      "v1:cm",
+      "v1:cm:x",
+      "v1:cm:p:short",
+      `v1:cm:p:${token}:extra`,
+      "v1:cm:a:",
+      "v1:cm:a:1e2",
+      "v1:cm:a:-1",
+      "v1:cm:u:12345",
+      "v1:cm:ad",
+      `v1:cm:ad:${token}:short`,
+      `v1:cm:bq:${token}`,
+      `v1:cm:bq:${token}:x`,
+      `v1:cm:bq:${token}:pshort`,
+      `v1:cm:by:${token}:a`,
+      "v1:cm:rm:0",
+      "v1:cm:rm:x:alice",
+      "v1:cm:rm:0:al-ice",
+      `v1:cm:ad:${token}:${token}:extra`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
   });
 });
 
@@ -405,6 +526,112 @@ describe("notification callbacks", () => {
     for (const [data, expected] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
       expect(parseCallback(data)).toEqual(expected);
+    }
+  });
+
+  it("carries the step of a question in its cancel button and reads it back", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const steps: readonly (readonly [string, QuestionStep])[] = [
+      [
+        `v1:q:fe:${token}:description`,
+        { kind: "field", mode: "edit", token, field: "description" },
+      ],
+      [
+        `v1:q:fc:${token}:title`,
+        { kind: "field", mode: "create", token, field: "title" },
+      ],
+      [`v1:q:pm:${token}`, { kind: "publish-moment", token }],
+      [
+        `v1:q:ms:${token}:999999999`,
+        { kind: "material-source", token, version: 999999999 },
+      ],
+      [`v1:q:mt:${token}`, { kind: "material-title", token }],
+      [`v1:q:bm:${token}`, { kind: "broadcast", token }],
+      ["v1:q:bc", { kind: "broadcast" }],
+      ["v1:q:nick", { kind: "username" }],
+    ];
+    for (const [data, step] of steps) {
+      expect(questionData(step)).toBe(data);
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual({ kind: "question", step });
+    }
+  });
+
+  it("parses the date presets: the day list, a chosen day and a chosen moment", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:manage:when:${token}:c`)).toEqual({
+      kind: "manage-pick-day",
+      token,
+      editing: false,
+    });
+    expect(parseCallback(`v1:manage:when:${token}:e:03102026`)).toEqual({
+      kind: "manage-pick-day",
+      token,
+      editing: true,
+      picked: { digits: "03102026", day: { year: 2026, month: 10, day: 3 } },
+    });
+    const moment = `v1:manage:when:${token}:e:031020261930`;
+    expect(Buffer.byteLength(moment)).toBeLessThanOrEqual(64);
+    expect(parseCallback(moment)).toEqual({
+      kind: "manage-pick-schedule",
+      token,
+      editing: true,
+      value: "03.10.2026 19:30",
+    });
+  });
+
+  it("rejects a date preset with a broken mode, day or length", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    for (const data of [
+      `v1:manage:when:${token}`,
+      `v1:manage:when:${token}:x`,
+      `v1:manage:when:${token}:c:31022026`,
+      `v1:manage:when:${token}:c:0310202`,
+      `v1:manage:when:${token}:c:0310202619`,
+      `v1:manage:when:${token}:c:3102202619300`,
+      `v1:manage:when:${token}:c:03102026:1930`,
+      "v1:manage:when:short:c:03102026",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+
+  it("parses the draft screen and its field buttons", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:manage:draft:${token}`)).toEqual({
+      kind: "manage-draft",
+      token,
+    });
+    expect(parseCallback(`v1:manage:draft:${token}:description`)).toEqual({
+      kind: "manage-draft",
+      token,
+      field: "description",
+    });
+    expect(
+      Buffer.byteLength(`v1:manage:draft:${token}:description`),
+    ).toBeLessThanOrEqual(64);
+    expect(parseCallback(`v1:manage:draft:${token}:unknown`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback("v1:manage:draft:short")).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  it("rejects a question step with a broken token, field or shape", () => {
+    for (const data of [
+      "v1:q",
+      "v1:q:fe",
+      "v1:q:fe:short:venue",
+      "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:unknown",
+      "v1:q:fx:AZLzpLXGfY6fChssPU5fYA:venue",
+      "v1:q:ms:AZLzpLXGfY6fChssPU5fYA",
+      "v1:q:ms:AZLzpLXGfY6fChssPU5fYA:x",
+      "v1:q:pm:AZLzpLXGfY6fChssPU5fYA:extra",
+      "v1:q:bc:AZLzpLXGfY6fChssPU5fYA",
+      "v1:q:nick:extra",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }
   });
 

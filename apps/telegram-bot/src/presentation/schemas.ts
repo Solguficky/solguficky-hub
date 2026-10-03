@@ -30,3 +30,14 @@ export const IncomingUpdateSchema = z.object({
     })
     .optional(),
 });
+
+// Клавиатура сообщения, на которое ответили: в ней ищется кнопка «Отмена» с
+// шагом вопроса. Сообщение приходит из апдейта, поэтому форма проверяется, а
+// сами данные кнопки разбирает `parseCallback`.
+export const RepliedKeyboardSchema = z.object({
+  reply_markup: z.object({
+    inline_keyboard: z.array(
+      z.array(z.object({ callback_data: z.unknown().optional() })),
+    ),
+  }),
+});

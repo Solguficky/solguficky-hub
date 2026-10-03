@@ -92,7 +92,7 @@ describe("renderNotification", () => {
     expect(rows[0]?.[0]).toMatchObject({ text: "Открыть сходку" });
     expect(rows[0]?.[0]).toHaveProperty(
       "callback_data",
-      "v1:view:AZjypHwefTqbIU-OEqs0zw",
+      "v1:t:view:AZjypHwefTqbIU-OEqs0zw",
     );
     expect(rows[1]?.[0]).toMatchObject({
       text: "Не присылать новые сходки",
@@ -150,7 +150,7 @@ describe("reminder notification", () => {
     const rows = message.keyboard?.inline_keyboard ?? [];
     expect(rows[0]?.[0]).toMatchObject({
       text: "Открыть сходку",
-      callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+      callback_data: "v1:t:view:AZjypHwefTqbIU-OEqs0zw",
     });
     expect(rows[1]?.[0]).toMatchObject({
       text: "Не присылать напоминания",
@@ -217,7 +217,7 @@ describe("change notification", () => {
     expect(buttons(changed(["title"]))).toEqual([
       expect.objectContaining({
         text: "Открыть сходку",
-        callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+        callback_data: "v1:t:view:AZjypHwefTqbIU-OEqs0zw",
       }),
       expect.objectContaining({
         callback_data: "v1:notify:moff:AZjypHwefTqbIU-OEqs0zw:changes",

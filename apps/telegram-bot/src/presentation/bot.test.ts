@@ -31,8 +31,9 @@ import {
   parseTelegramEnvironment,
   type TelegramEnvironment,
 } from "./bot.js";
-import { publishMomentQuestion } from "./edit-question.js";
+import { editQuestion, publishMomentQuestion } from "./edit-question.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
+import { refusalText } from "./screens/kit.js";
 
 function messageUpdate(text = "/start"): Update {
   return {
@@ -131,6 +132,9 @@ function replyUpdate(options: {
   replyFromId: number;
   replyText?: string | undefined;
   replyEntities?: unknown;
+  // Клавиатура вопроса: Telegram возвращает её в ответе, и по кнопке «Отмена»
+  // бот читает шаг вопроса.
+  replyMarkup?: unknown;
 }): Update {
   return {
     update_id: 4,
@@ -151,6 +155,9 @@ function replyUpdate(options: {
         },
         text: options.replyText,
         entities: options.replyEntities,
+        ...(options.replyMarkup === undefined
+          ? {}
+          : { reply_markup: options.replyMarkup }),
       } as never,
     },
   };
@@ -196,9 +203,35 @@ function resolvedIdentity(
   };
 }
 
-function sendMessageEntities(call: RecordedCall | undefined): unknown {
+// Telegram возвращает в нажатии видимый текст сообщения, а не его разметку:
+// так тест отдаёт боту то, что тот получил бы на самом деле.
+function visible(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&amp;", "&");
+}
+
+// Номер последнего сообщения бота: фикстура отвечает на sendMessage
+// идентификатором `100 + номер вызова`. Вопрос — всегда новое сообщение, и
+// ответ на него адресуется этим номером.
+function lastQuestionId(calls: readonly RecordedCall[]): number {
+  const index = calls.findLastIndex((call) => call.method === "sendMessage");
+  return 100 + index + 1;
+}
+
+function _sendMessageEntities(call: RecordedCall | undefined): unknown {
   if (call === undefined || call.method !== "sendMessage") return undefined;
   return "entities" in call.payload ? call.payload.entities : undefined;
+}
+
+// Сообщения, которые бот отправил, по порядку. Последним вызовом после ответа
+// на вопрос идёт снятие его клавиатуры, поэтому «последнее сообщение» ищется
+// среди отправок, а не среди всех вызовов.
+function sentMessages(calls: readonly RecordedCall[]): RecordedCall[] {
+  return calls.filter((call) => call.method === "sendMessage");
 }
 
 function sendMessageText(call: RecordedCall | undefined): string | undefined {
@@ -300,7 +333,9 @@ describe("presentation adapter", () => {
     expect(serialized.indexOf("Опрос: кто идёт")).toBeLessThan(
       serialized.indexOf("Афиша"),
     );
-    expect(serialized).toContain("v1:mm:file:");
+    // Кнопок файлов на карточке нет: файл открывается из «Материалов».
+    expect(serialized).not.toContain("v1:mm:file:");
+    expect(serialized).toContain("v1:mm:list:AZLzpLXGfY6fChssPU5fYA");
   });
 
   it("paginates a long material collection for every meetup viewer", async () => {
@@ -335,7 +370,7 @@ describe("presentation adapter", () => {
       .filter((call) => call.method === "editMessageText")
       .at(-1);
     expect(page).toMatchObject({
-      payload: { text: expect.stringContaining("Страница 1 из 4") },
+      payload: { text: expect.stringContaining("<b>Материалы · 1 из 4</b>") },
     });
     expect(JSON.stringify(page?.payload)).toContain(
       "v1:mm:list:AZLzpLXGfY6fChssPU5fYA:1",
@@ -357,7 +392,9 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Это действие доступно организатору сходки." },
+      payload: {
+        text: refusalText("Это действие доступно организатору сходки."),
+      },
     });
     expectBoundary(records[0], {
       level: "warn",
@@ -388,12 +425,12 @@ describe("presentation adapter", () => {
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
-    await bot.handleUpdate(forwardedReplyUpdate(102));
+    await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
     await bot.handleUpdate(
       replyUpdate({
         text: "Опрос: кто идёт",
         fromId: 42,
-        replyMessageId: 103,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -422,7 +459,7 @@ describe("presentation adapter", () => {
     expect(callbackData.endsWith(`:${meetup.version}`)).toBe(true);
     await bot.handleUpdate(
       callbackMessageUpdate(callbackData, {
-        text: confirmation.payload.text,
+        text: visible(String(confirmation.payload.text)),
         reply_markup: keyboard,
       }),
     );
@@ -461,19 +498,21 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "document link",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    const rejection = calls.at(-1);
+    const rejection = sentMessages(calls).at(-1);
     expect(rejection?.method).toBe("sendMessage");
+    // Прежний вопрос снимается после того, как ушёл новый.
+    expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
     expect(JSON.stringify(rejection?.payload)).toContain("нельзя дать ссылку");
     expect(JSON.stringify(rejection?.payload)).toContain('"force_reply":true');
 
-    await bot.handleUpdate(forwardedReplyUpdate(103));
+    await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
 
-    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
       "Как назвать материал",
     );
   });
@@ -513,9 +552,16 @@ describe("presentation adapter", () => {
         }),
       }),
     );
-    expect(calls.some((call) => call.method === "editMessageCaption")).toBe(
-      true,
-    );
+    // Экран в сообщении с файлом не живёт: оно остаётся следом без кнопок,
+    // а материалы приходят новым сообщением.
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageCaption",
+      "sendMessage",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({ caption: "Прикреплено: Афиша" });
+    expect(JSON.stringify(calls[1]?.payload)).not.toContain("callback_data");
+    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
   });
 
   it("removes a material only after confirming that the original stays", async () => {
@@ -810,7 +856,7 @@ describe("presentation adapter", () => {
         materials: [],
       },
     });
-    const { bot } = createHarness(resolvedIdentity(), { execute });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
@@ -819,7 +865,7 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Чужое название",
         fromId: 43,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -845,12 +891,7 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [
-            {
-              text: "Настройки уведомлений",
-              callback_data: "v1:notify:global",
-            },
-          ],
+          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
         ],
       },
     });
@@ -868,13 +909,8 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [
-            {
-              text: "Настройки уведомлений",
-              callback_data: "v1:notify:global",
-            },
-          ],
-          [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+          [{ text: "Управление", callback_data: "v1:manage:menu" }],
         ],
       },
     });
@@ -888,9 +924,10 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
-    expect(calls[0]?.payload).not.toHaveProperty("reply_markup");
+    // За кадром ожидания экранов нет, и кнопок у него нет.
+    expect(JSON.stringify(calls[0]?.payload)).not.toContain("callback_data");
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
       level: "warn",
@@ -912,7 +949,7 @@ describe("presentation adapter", () => {
     );
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toBe(blockedHubAccessText);
+    expect(sendMessageText(calls[0])).toBe(refusalText(blockedHubAccessText));
     expect(execute).not.toHaveBeenCalled();
     expectBoundary(records[0], {
       level: "warn",
@@ -937,11 +974,13 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText(resolvedId, undefined) },
+      payload: {
+        text: refusalText(pendingHubAccessText(resolvedId, undefined)),
+      },
     });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("v1:nav:hub");
     expect(sendMessageText(calls[2])).toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
     expect(records.map((record) => record.fields.error)).toEqual([
       "hub_access_pending",
@@ -959,7 +998,9 @@ describe("presentation adapter", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: pendingHubAccessText(resolvedId, undefined) },
+      payload: {
+        text: refusalText(pendingHubAccessText(resolvedId, undefined)),
+      },
     });
   });
 
@@ -969,7 +1010,7 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
     expect(sendMessageText(calls[0])).not.toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
   });
 
@@ -1000,10 +1041,250 @@ describe("presentation adapter", () => {
     );
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: { text: expect.stringContaining("@waiting") },
+      payload: {
+        text: "<b>Состав сообщества</b>\n\nОжидают допуска: 1\nДопущены: 0\nРазрешённые ники: 1",
+      },
     });
-    expect(JSON.stringify(calls[1]?.payload)).toContain("v1:community:admit:");
-    expect(JSON.stringify(calls[1]?.payload)).toContain("@invited");
+    expect(JSON.stringify(calls[1]?.payload)).toContain("v1:cm:p");
+  });
+
+  describe("closing access", () => {
+    const memberId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const memberToken = uuidToToken(memberId);
+
+    function closing(members: readonly { admitted: boolean }[]) {
+      const community = vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: members.map(({ admitted }) => ({
+              identityId: memberId,
+              telegramUsername: "leaving",
+              admitted,
+            })),
+            allowedUsernames: [],
+          },
+        });
+      const block = vi
+        .fn<CommunityAdministrator["block"]>()
+        .mockResolvedValue({ kind: "ok", value: true });
+      return { ...resolvedIdentity(["admin"]), community, block };
+    }
+
+    it("asks before closing and does not call Identity to block", async () => {
+      const identity = closing([{ admitted: true }]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:bq:${memberToken}:a0`));
+
+      expect(identity.block).not.toHaveBeenCalled();
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: expect.stringContaining("<b>Закрыть доступ?</b>\n\n@leaving"),
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Да, закрыть доступ",
+                  callback_data: `v1:cm:by:${memberToken}:a0`,
+                  style: "danger",
+                },
+              ],
+              [{ text: "Нет", callback_data: "v1:cm:a:0" }],
+            ],
+          },
+        },
+      });
+    });
+
+    // Экран прошлого релиза закрывал доступ одним нажатием: его кнопка, всё
+    // ещё стоящая в чате, теперь тоже спрашивает.
+    it("asks under a button of the previous release too", async () => {
+      const identity = closing([{ admitted: true }]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:community:block:${memberToken}`),
+      );
+
+      expect(identity.block).not.toHaveBeenCalled();
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "Да, закрыть доступ",
+      );
+    });
+
+    it("closes access on the confirmation and says so in the answer", async () => {
+      const identity = closing([]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:by:${memberToken}:p`));
+
+      expect(identity.block).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        memberId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Доступ закрыт." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Ожидают допуска</b>\n\nОчередь пуста.",
+      });
+    });
+
+    it("returns to the list when the person is already gone", async () => {
+      const identity = closing([]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:bq:${memberToken}:a0`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Этого человека уже нет в списке.",
+      });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Допущенные</b>\n\nПока никого.",
+      });
+    });
+  });
+
+  // Полные подэкраны проходят через линтер экранов: потолок рядов, словарь и
+  // ряд возврата проверяются на странице из восьми строк, а не на пустой.
+  it.each([
+    ["v1:cm:p", "Ожидают допуска"],
+    ["v1:cm:a:1", "Допущенные · 2 из 3"],
+    ["v1:cm:u:1", "Разрешённые ники · 2 из 3"],
+  ])("opens the full community list %s", async (data, title) => {
+    const people = (admitted: boolean, from: number) =>
+      Array.from({ length: 20 }, (_, index) => ({
+        identityId: `0192f3a4-b5c6-7d8e-9f0a-${(from + index).toString(16).padStart(12, "0")}`,
+        telegramUsername: `user${from + index}`,
+        admitted,
+      }));
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [...people(false, 0), ...people(true, 100)],
+            allowedUsernames: Array.from(
+              { length: 20 },
+              (_, index) => `nick${index}`,
+            ),
+          },
+        }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(data));
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining(`<b>${title}</b>`) },
+    });
+  });
+
+  it("keeps the same person on screen and says so when the admission is not saved", async () => {
+    const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [
+              {
+                identityId: firstId,
+                telegramUsername: "first",
+                admitted: false,
+              },
+              {
+                identityId: secondId,
+                telegramUsername: "second",
+                admitted: false,
+              },
+            ],
+            allowedUsernames: [],
+          },
+        }),
+      admit: vi.fn<CommunityAdministrator["admit"]>().mockResolvedValue({
+        kind: "unavailable",
+        cause: new Error("deadline exceeded"),
+      }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        `v1:cm:ad:${uuidToToken(firstId)}:${uuidToToken(secondId)}`,
+      ),
+    );
+
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Не получилось сохранить. Попробуй ещё раз.",
+    });
+    expect(calls[1]?.payload).toMatchObject({
+      text: expect.stringContaining("@first"),
+    });
+  });
+
+  it("shows the next person in the queue after an admission", async () => {
+    const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [
+              {
+                identityId: secondId,
+                telegramUsername: "second",
+                admitted: false,
+              },
+            ],
+            allowedUsernames: [],
+          },
+        }),
+      admit: vi
+        .fn<CommunityAdministrator["admit"]>()
+        .mockResolvedValue({ kind: "ok", value: false }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(
+        `v1:cm:ad:${uuidToToken(firstId)}:${uuidToToken(secondId)}`,
+      ),
+    );
+
+    expect(identity.admit).toHaveBeenCalledWith(
+      expect.anything(),
+      firstId,
+      expect.anything(),
+    );
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Состояние уже было актуальным.",
+    });
+    expect(calls[1]?.payload).toMatchObject({
+      text: "<b>Ожидают допуска</b>\n\n@second\n\nВ очереди: 1",
+    });
   });
 
   // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не узнаёт
@@ -1049,7 +1330,9 @@ describe("presentation adapter", () => {
           JSON.stringify(call.payload).includes("Доступ открыт"),
       );
       expect(notice?.payload).toMatchObject({ chat_id: 5001 });
-      expect(JSON.stringify(notice?.payload)).toContain("v1:nav:hub");
+      // Кнопка следа: список придёт новым сообщением, а «Доступ открыт»
+      // останется в истории.
+      expect(JSON.stringify(notice?.payload)).toContain("v1:t:nav:hub");
     });
 
     it("stays silent when the person was already admitted", async () => {
@@ -1068,8 +1351,8 @@ describe("presentation adapter", () => {
       await bot.init();
       await bot.handleUpdate(callbackUpdate(admitButton));
 
-      const screenAt = calls.findIndex((call) =>
-        JSON.stringify(call.payload).includes("Изменение сохранено."),
+      const screenAt = calls.findIndex(
+        (call) => call.method === "editMessageText",
       );
       const noticeAt = calls.findIndex((call) =>
         JSON.stringify(call.payload).includes("Доступ открыт"),
@@ -1107,7 +1390,10 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate(admitButton));
 
       expect(identity.admit).toHaveBeenCalled();
-      expect(JSON.stringify(calls)).toContain("Изменение сохранено.");
+      expect(JSON.stringify(calls)).toContain("Человек допущен.");
+      expect(calls.some((call) => call.method === "editMessageText")).toBe(
+        true,
+      );
       expectBoundary(records[0], {
         level: "warn",
         result: "error",
@@ -1116,49 +1402,6 @@ describe("presentation adapter", () => {
         error_category: "dependency_unavailable",
       });
     });
-  });
-
-  it("tells apart people without a username created in the same minute", async () => {
-    const community = vi
-      .fn<CommunityAdministrator["community"]>()
-      .mockResolvedValue({
-        kind: "ok",
-        value: {
-          members: [
-            {
-              identityId: "01a0e306-a646-7d3a-9b21-4f8e12ab34cd",
-              telegramUserId: 5001n,
-              admitted: false,
-            },
-            {
-              identityId: "01a0e306-918c-7e01-8c55-0d2f6a7b9e10",
-              admitted: true,
-            },
-          ],
-          allowedUsernames: [],
-        },
-      });
-    const identity = { ...resolvedIdentity(["admin"]), community };
-    const { bot, calls } = createHarness(identity);
-    await bot.init();
-    await bot.handleUpdate(callbackUpdate("v1:community:list"));
-
-    const payload = calls[1]?.payload as {
-      text: string;
-      parse_mode?: string;
-      reply_markup: { inline_keyboard: { text: string }[][] };
-    };
-    const buttons = payload.reply_markup.inline_keyboard
-      .flat()
-      .map((button) => button.text);
-    expect(payload.parse_mode).toBe("HTML");
-    expect(payload.text).toContain(
-      '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
-    );
-    expect(payload.text).toContain("• без ника · 6a7b9e10");
-    expect(payload.text).not.toContain("01a0e306");
-    expect(buttons).toContain("Допустить без ника · 12ab34cd");
-    expect(buttons).toContain("Закрыть без ника · 6a7b9e10");
   });
 
   it("lets Identity refuse community management for a non-admin", async () => {
@@ -1176,7 +1419,9 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Управлять составом сообщества может только администратор.",
+        text: refusalText(
+          "Управлять составом сообщества может только администратор.",
+        ),
       },
     });
     expectBoundary(records[0], {
@@ -1197,9 +1442,11 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Это на моей стороне");
     expect(sendMessageText(calls[0])).not.toBe(
-      pendingHubAccessText(resolvedId, undefined),
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
-    expect(sendMessageText(calls[0])).not.toBe(blockedHubAccessText);
+    expect(sendMessageText(calls[0])).not.toBe(
+      refusalText(blockedHubAccessText),
+    );
     expectBoundary(records[0], {
       level: "error",
       result: "error",
@@ -1217,7 +1464,7 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(sendMessageText(calls[0])).toBe(
-      "Сходка не найдена или больше недоступна.",
+      refusalText("Сходка не найдена или больше недоступна."),
     );
     expectBoundary(records[0], {
       level: "warn",
@@ -1242,20 +1489,11 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("ни одной запланированной сходки"),
+        text: "<b>Ближайшие сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.",
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: "Обновить", callback_data: "v1:nav:hub" },
-              { text: "Архив", callback_data: "v1:nav:archive" },
-            ],
-            [
-              {
-                text: "Настройки уведомлений",
-                callback_data: "v1:notify:global",
-              },
-            ],
-            [{ text: "Назад", callback_data: "v1:nav:start" }],
+            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1283,20 +1521,15 @@ describe("presentation adapter", () => {
       method: "editMessageText",
       payload: {
         message_id: 9,
-        text: "Привет. Главный экран.",
+        text: "<b>Меню</b>\n\nПривет. Главный экран.",
         reply_markup: {
           inline_keyboard: [
             [
               { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
               { text: "Архив", callback_data: "v1:nav:archive" },
             ],
-            [
-              {
-                text: "Настройки уведомлений",
-                callback_data: "v1:notify:global",
-              },
-            ],
-            [{ text: "Управление сходками", callback_data: "v1:manage:menu" }],
+            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            [{ text: "Управление", callback_data: "v1:manage:menu" }],
           ],
         },
       },
@@ -1326,40 +1559,29 @@ describe("presentation adapter", () => {
         },
       ],
     });
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-08-01T12:00Z") });
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringMatching(
-          /^Ближайшие сходки\n\nС датой\n• 15 авг, сб — Настолки\n\nБез даты\n• Без даты$/,
-        ),
+        text: "<b>Ближайшие сходки</b>\n\nС датой\n• 15 августа, сб — Настолки\n\nБез даты\n• Без даты",
         reply_markup: {
           inline_keyboard: [
+            [
+              {
+                text: "15 августа · Настолки",
+                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
+              },
+            ],
             [
               {
                 text: "Без даты",
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [
-              {
-                text: "Настолки",
-                callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zw",
-              },
-            ],
-            [
-              { text: "Обновить", callback_data: "v1:nav:hub" },
-              { text: "Архив", callback_data: "v1:nav:archive" },
-            ],
-            [
-              {
-                text: "Настройки уведомлений",
-                callback_data: "v1:notify:global",
-              },
-            ],
-            [{ text: "Назад", callback_data: "v1:nav:start" }],
+            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1390,7 +1612,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Ближайшие сходки\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
+        text: "<b>Ближайшие сходки</b>\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
       },
     });
   });
@@ -1414,7 +1636,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Ближайшие сходки\n\nБез даты\n• Без названия",
+        text: "<b>Ближайшие сходки</b>\n\nБез даты\n• Без названия",
         reply_markup: {
           inline_keyboard: expect.arrayContaining([
             [
@@ -1488,7 +1710,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Скрытые сходки\n\n• Без названия (скрыта)",
+        text: "<b>Скрытые сходки</b>\n\n• Без названия",
         reply_markup: {
           inline_keyboard: [
             [
@@ -1497,8 +1719,10 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [{ text: "Обновить", callback_data: "v1:manage:hidden" }],
-            [{ text: "Назад", callback_data: "v1:manage:menu" }],
+            [
+              { text: "‹ Управление", callback_data: "v1:manage:menu" },
+              { text: "Меню", callback_data: "v1:nav:start" },
+            ],
           ],
         },
       },
@@ -1531,8 +1755,10 @@ describe("presentation adapter", () => {
         text: expect.stringContaining("Скрытых сходок нет."),
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Обновить", callback_data: "v1:manage:hidden" }],
-            [{ text: "Назад", callback_data: "v1:manage:menu" }],
+            [
+              { text: "‹ Управление", callback_data: "v1:manage:menu" },
+              { text: "Меню", callback_data: "v1:nav:start" },
+            ],
           ],
         },
       },
@@ -1610,19 +1836,20 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("Точно отметить сходку состоявшейся"),
+        text: "<b>Отметить сходку состоявшейся?</b>\n\n«Настолки»",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, продолжить",
+                text: "Да, отметить состоявшейся",
                 callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
+                style: "danger",
               },
             ],
             [
               {
                 text: "Нет",
-                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -1643,6 +1870,7 @@ describe("presentation adapter", () => {
       meetupId: meetup.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
   });
 
@@ -1689,6 +1917,7 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1730,6 +1959,7 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -1782,7 +2012,7 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Настолки",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -1814,8 +2044,19 @@ describe("presentation adapter", () => {
     expect(questionText).toContain("Сейчас: Циферблат");
     expect(questionText).not.toContain("Шаг:");
     expect(questionText).not.toContain("v1:manage");
+    // Шаг лежит в кнопке «Отмена», а не в тексте вопроса.
     expect(question?.payload).toMatchObject({
-      link_preview_options: { is_disabled: true },
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [
+          [
+            {
+              text: "Отмена",
+              callback_data: "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:venue",
+            },
+          ],
+        ],
+      },
     });
 
     const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
@@ -1824,10 +2065,12 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Новый зал",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(first.calls),
         replyFromId: 1,
         replyText: questionText,
-        replyEntities: sendMessageEntities(question),
+        replyMarkup: (
+          question?.payload as { reply_markup?: unknown } | undefined
+        )?.reply_markup,
       }),
     );
 
@@ -1842,12 +2085,14 @@ describe("presentation adapter", () => {
       meetupId: meetup.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
-    expect(
-      restarted.calls.some(
-        (call) => sendMessageText(call) === "Изменение сохранено.",
-      ),
-    ).toBe(true);
+    // Ответ на вопрос — одно сообщение: карточка с заметкой над заголовком.
+    const answered = restarted.calls.slice(-1);
+    expect(answered.map((call) => call.method)).toEqual(["sendRichMessage"]);
+    expect(JSON.stringify(answered[0]?.payload)).toContain(
+      "<p>Изменение сохранено.</p><h1>",
+    );
   });
 
   it("asks before unpublishing and refusal performs no state command", async () => {
@@ -1871,12 +2116,13 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("Точно скрыть сходку"),
+        text: "<b>Скрыть сходку из общего списка?</b>\n\n«Настолки»",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, продолжить",
+                // Скрытие обратимо, поэтому кнопка не красится.
+                text: "Да, скрыть из списка",
                 callback_data:
                   "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA",
               },
@@ -1933,6 +2179,7 @@ describe("presentation adapter", () => {
       meetupId: meetup.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
   });
 
@@ -2011,6 +2258,7 @@ describe("presentation adapter", () => {
       meetupId: visible.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
   });
@@ -2044,24 +2292,23 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Моя правка",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    expect(calls.at(-1)).toMatchObject({
+    const conflict = sentMessages(calls).at(-1);
+    expect(conflict).toMatchObject({
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
           "Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.",
         ),
-        reply_markup: { force_reply: true, selective: true },
+        reply_markup: { force_reply: true },
       },
     });
-    expect(sendMessageText(calls.at(-1))).toContain("Сейчас: Чужая правка");
-    expect(sendMessageText(calls.at(-1))).toContain(
-      "Ваше значение: Моя правка",
-    );
+    expect(sendMessageText(conflict)).toContain("Сейчас: Чужая правка");
+    expect(sendMessageText(conflict)).toContain("Твоё значение: Моя правка");
     expectBoundary(records.at(-1), {
       level: "warn",
       result: "error",
@@ -2095,8 +2342,14 @@ describe("presentation adapter", () => {
           inline_keyboard: [
             [
               {
-                text: "Опубликовать",
+                text: "Да, опубликовать",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -2141,9 +2394,16 @@ describe("presentation adapter", () => {
           inline_keyboard: [
             [
               {
-                text: "Отменить сходку",
+                text: "Да, отменить сходку",
                 callback_data:
                   "v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA",
+                style: "danger",
+              },
+            ],
+            [
+              {
+                text: "Нет",
+                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -2177,6 +2437,7 @@ describe("presentation adapter", () => {
       intent: "list-visible-meetups",
       requestId: expect.any(String),
       useCase: "find_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
@@ -2184,7 +2445,7 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("edits the preview into the publication result with a start link", async () => {
+  it("edits the pressed screen into the card with the publication note and a start link", async () => {
     const meetup = publishedMeetup();
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "published",
@@ -2197,22 +2458,19 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(
       callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
     );
-    expect(calls.some((call) => call.method === "sendMessage")).toBe(false);
+    expect(calls.some((call) => call.method.startsWith("send"))).toBe(false);
     const edited = calls.find((call) => call.method === "editMessageText");
     expect(edited?.payload).toMatchObject({
-      text: "Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\nhttps://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "Открыть сходку",
-              callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
-            },
-            { text: "К управлению", callback_data: "v1:manage:menu" },
-          ],
-        ],
+      rich_message: {
+        html: expect.stringContaining(
+          "<p>Сходка опубликована. Теперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA</p><h1>Настолки</h1>",
+        ),
       },
     });
+    // Отдельного кадра «создана» нет: результат — сама карточка с её рядами.
+    expect(JSON.stringify(edited?.payload)).toContain(
+      "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+    );
     const published = records.find(
       (record) => record.message === "meetup published",
     );
@@ -2252,7 +2510,7 @@ describe("presentation adapter", () => {
       0,
     );
     const announced = calls.filter((call) =>
-      JSON.stringify(call.payload).includes("Сходка создана"),
+      JSON.stringify(call.payload).includes("Сходка опубликована"),
     );
     expect(announced).toHaveLength(1);
     expect(calls.at(-1)).toMatchObject({
@@ -2282,7 +2540,7 @@ describe("presentation adapter", () => {
     expect(calls.filter((call) => call.method.startsWith("send"))).toHaveLength(
       0,
     );
-    expect(JSON.stringify(calls)).not.toContain("Сходка создана");
+    expect(JSON.stringify(calls)).not.toContain("Сходка опубликована");
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -2463,7 +2721,7 @@ describe("presentation adapter", () => {
       await bot.init();
       await bot.handleUpdate(update());
 
-      const sent = JSON.stringify(calls.map((call) => call.payload));
+      const sent = visible(JSON.stringify(calls.map((call) => call.payload)));
       expect(sent).toContain(shown);
       if (also !== undefined) expect(sent).toContain(also);
       expect(sent).not.toContain("SENTINEL-397");
@@ -2487,10 +2745,10 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(
       callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
     );
-    const text = screen(
-      calls.find((call) => call.method === "editMessageText"),
-    ).text;
-    const payload = text?.match(/\?start=(m_[A-Za-z0-9_-]{22})/)?.[1];
+    const text = JSON.stringify(
+      calls.find((call) => call.method === "editMessageText")?.payload,
+    );
+    const payload = text.match(/\?start=(m_[A-Za-z0-9_-]{22})/)?.[1];
     expect(payload).toBe("m_AZLzpLXGfY6fChssPU5fYA");
     await bot.handleUpdate(messageUpdate(`/start ${payload}`));
     expect(execute).toHaveBeenLastCalledWith({
@@ -2502,6 +2760,7 @@ describe("presentation adapter", () => {
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
       requestId: expect.any(String),
       useCase: "view_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls.at(-1)).toMatchObject({
       method: "sendRichMessage",
@@ -2521,11 +2780,16 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(messageUpdate("/start m_AZLzpLXGfY6fChssPU5fYA"));
     expect(sendMessageText(calls[0])).toBe(
-      "Сходка не найдена или больше недоступна.",
+      refusalText("Сходка не найдена или больше недоступна."),
     );
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
-        inline_keyboard: [[{ text: "К списку", callback_data: "v1:nav:hub" }]],
+        inline_keyboard: [
+          [
+            { text: "‹ Ближайшие", callback_data: "v1:nav:hub" },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
       },
     });
   });
@@ -2557,6 +2821,7 @@ describe("presentation adapter", () => {
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
       requestId: expect.any(String),
       useCase: "view_meetup",
+      deadlineAt: expect.any(Number),
     });
     expect(calls[0]).toMatchObject({
       method: "sendRichMessage",
@@ -2668,12 +2933,7 @@ describe("presentation adapter", () => {
             { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
             { text: "Архив", callback_data: "v1:nav:archive" },
           ],
-          [
-            {
-              text: "Настройки уведомлений",
-              callback_data: "v1:notify:global",
-            },
-          ],
+          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
         ],
       },
     });
@@ -2725,7 +2985,7 @@ describe("presentation adapter", () => {
       expect.objectContaining({ intent: "view-global-notifications" }),
     );
     expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
-    expect(sendMessageText(calls[0])).toContain("Уведомления: общие настройки");
+    expect(sendMessageText(calls[0])).toContain("<b>Уведомления</b>");
     expectBoundary(records[0], {
       level: "info",
       result: "ok",
@@ -2748,6 +3008,7 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
+            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -2762,7 +3023,7 @@ describe("presentation adapter", () => {
     );
     await bot.init();
     await bot.handleUpdate(messageUpdate("/meetups"));
-    expect(sendMessageText(calls[0])).toBe(blockedHubAccessText);
+    expect(sendMessageText(calls[0])).toBe(refusalText(blockedHubAccessText));
     expect(execute).not.toHaveBeenCalled();
     expect(records[0]?.fields.error).toBe("hub_access_blocked");
   });
@@ -2787,8 +3048,14 @@ describe("presentation adapter", () => {
     );
     const question = calls.find((call) => call.method === "sendMessage");
     expect(question).toBeDefined();
+    const questionId = lastQuestionId(calls);
     const replyTo = (text: string) =>
-      replyUpdate({ text, fromId: 42, replyMessageId: 102, replyFromId: 1 });
+      replyUpdate({
+        text,
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      });
 
     await bot.handleUpdate(replyTo("/meetups"));
     expect(execute).toHaveBeenLastCalledWith(
@@ -3031,31 +3298,40 @@ describe("presentation adapter", () => {
     expect(typeof records[0]?.fields.stack).toBe("string");
   });
 
-  it("keeps use_case when acknowledging a callback fails", async () => {
+  it("finishes the action when answering the press fails", async () => {
     const { logger, records } = createCapturingLogger();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
     const bot = createBot({
       token: "111:test-token",
-      dispatcher: createDispatcher(),
+      dispatcher: { execute },
       identity: resolvedIdentity(),
       logger,
       tracing: noopTracing(),
     });
     bot.botInfo = botInfo;
-    const failing: Transformer = (_prev, method) =>
-      method === "answerCallbackQuery"
+    const sent: string[] = [];
+    const failing: Transformer = (_prev, method) => {
+      sent.push(method);
+      return method === "answerCallbackQuery"
         ? Promise.reject(new Error("query is too old"))
         : Promise.resolve({ ok: true, result: true as never });
+    };
     bot.api.config.use(failing);
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    // Отказ ответа на нажатие действие не отменяет: карточка всё равно
+    // приходит, а отказ остаётся в записи границы.
+    expect(sent).toEqual(["answerCallbackQuery", "editMessageText"]);
     expectBoundary(records[0], {
-      level: "error",
-      result: "error",
-      error_category: "unexpected",
+      level: "info",
+      result: "ok",
       operation: "callback_query",
       use_case: "view_meetup",
     });
-    expect(records[0]?.fields.error).toBe("query is too old");
+    expect(records[0]?.fields.reply_error).toBe("query is too old");
   });
 
   it("logs malformed callback data without its payload", async () => {
@@ -3126,7 +3402,9 @@ describe("presentation adapter", () => {
         materials: [],
       },
     });
-    const { bot, records } = createHarness(resolvedIdentity(), { execute });
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
     await bot.init();
     await bot.handleUpdate(
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
@@ -3136,7 +3414,7 @@ describe("presentation adapter", () => {
       replyUpdate({
         text: "Чужое название",
         fromId: 43,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -3342,6 +3620,447 @@ async function requestedUrl(
   return urls[0];
 }
 
+describe("trace buttons", () => {
+  const token = "AZjypHwefTqbIU-OEqs0zw";
+  const notification = {
+    text: "Сообщение организатора: Настолки\n\nВстречаемся у входа",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "Открыть сходку", callback_data: `v1:t:view:${token}` }],
+      ],
+    },
+  };
+
+  it("opens the meetup from a notification as a new message", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:t:view:${token}`, notification),
+    );
+
+    // Уведомление — след: слова организатора в нём карточка не затирает.
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "sendRichMessage",
+    ]);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "view-meetup",
+        meetupId: tokenToUuid(token),
+      }),
+    );
+  });
+
+  it("still edits the notification for a button of the previous release", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:view:${token}`, notification),
+    );
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+  });
+
+  it("sends a refusal from a trace button as a new message too", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-not-found",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:t:view:${token}`, notification),
+    );
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "sendMessage",
+    ]);
+  });
+});
+
+describe("confirmations", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const materialToken = "AZnA3gAAAAAAAABfP4Lqmw";
+  const keyboardOf = (call: RecordedCall | undefined) =>
+    (
+      call?.payload as
+        | { reply_markup?: { inline_keyboard?: unknown } }
+        | undefined
+    )?.reply_markup?.inline_keyboard;
+
+  it("asks before removing a material with a red verb answer", async () => {
+    const meetup = {
+      ...publishedMeetup(),
+      materials: [
+        {
+          id: tokenToUuid(materialToken),
+          title: "Афиша",
+          source: { kind: "file" as const, fileId: "bot-file-id" },
+        },
+      ],
+    };
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:mm:rm:${token}:${materialToken}`),
+    );
+
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: "<b>Убрать материал?</b>\n\n«Афиша» исчезнет из сходки. Оригинал в Telegram останется на месте.",
+    });
+    expect(keyboardOf(calls.at(-1))).toEqual([
+      [
+        {
+          text: "Да, убрать материал",
+          callback_data: `v1:mm:cr:${token}:${materialToken}:1`,
+          style: "danger",
+        },
+      ],
+      [{ text: "Нет", callback_data: `v1:mm:list:${token}` }],
+    ]);
+  });
+
+  it("leaves a declined file as a trace and returns to the materials", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:mm:no:${token}`, {
+        caption: "Прикрепить материал?\n\nНазвание: Афиша",
+        document: { file_id: "bot-file-id", file_unique_id: "unique" },
+      }),
+    );
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageCaption",
+      "sendMessage",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({ caption: "Не прикреплено." });
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "attach-material" }),
+    );
+    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
+  });
+
+  it("asks before a broadcast with a red answer and returns a refusal to the meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${token}`));
+    const _question = calls.findLastIndex(
+      (call) => call.method === "sendMessage",
+    );
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Встречаемся у входа",
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    const confirm = sentMessages(calls).at(-1);
+    expect(sendMessageText(confirm)).toContain("<b>Отправить подписчикам?</b>");
+    expect(keyboardOf(confirm)).toEqual([
+      [
+        {
+          text: "Да, отправить",
+          callback_data: expect.stringMatching(/^v1:bc:ms:/),
+          style: "danger",
+        },
+      ],
+      [{ text: "Нет", callback_data: `v1:bc:no:${token}` }],
+    ]);
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:no:${token}`));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: "<b>Не отправлено.</b> Текст никуда не ушёл.",
+    });
+    expect(keyboardOf(calls.at(-1))).toEqual([
+      [
+        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+        { text: "Меню", callback_data: "v1:nav:start" },
+      ],
+    ]);
+  });
+});
+
+describe("questions", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const cancel = (data: string) => ({
+    force_reply: true,
+    inline_keyboard: [[{ text: "Отмена", callback_data: data }]],
+  });
+  const buttonsOf = (call: RecordedCall | undefined) =>
+    (
+      call?.payload as
+        | { reply_markup?: { inline_keyboard?: unknown[][] } }
+        | undefined
+    )?.reply_markup?.inline_keyboard?.flat();
+  const viewing = () =>
+    vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "meetup-updated", meetup: publishedMeetup() },
+    );
+
+  it("leaves one place to act: the asking screen loses its keyboard", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute: viewing(),
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+
+    // Снятие клавиатуры человеку не видно, поэтому ответ на нажатие уходит
+    // вместе с вопросом, а не перед ним.
+    expect(calls.map((call) => call.method)).toEqual([
+      "editMessageReplyMarkup",
+      "answerCallbackQuery",
+      "sendMessage",
+    ]);
+    expect(calls[0]?.payload).toMatchObject({ message_id: 9 });
+    expect(buttonsOf(calls[0])).toEqual([]);
+    expect(calls[2]?.payload).toMatchObject({
+      reply_markup: cancel(`v1:q:fe:${token}:venue`),
+    });
+  });
+
+  it("closes the question once its answer is accepted", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute: viewing(),
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+    const questionId = lastQuestionId(calls);
+    const before = calls.length;
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      }),
+    );
+
+    const closing = calls
+      .slice(before)
+      .find((call) => call.method === "editMessageReplyMarkup");
+    expect(closing?.payload).toMatchObject({ message_id: questionId });
+    expect(buttonsOf(closing)).toEqual([]);
+  });
+
+  it("keeps the question open when the service did not answer", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "dependency-rejected", reason: "timeout" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+    const before = calls.length;
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    expect(calls.slice(before).map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+  });
+
+  it("returns a cancelled question to the screen it was asked from", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:q:fe:${token}:venue`, {
+        text: "Где встречаемся?",
+        reply_markup: cancel(`v1:q:fe:${token}:venue`),
+      }),
+    );
+
+    // Вопрос правится в карточку: значение никуда не ушло.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({ message_id: 9 });
+  });
+
+  it("forgets a cancelled question: a late answer to it is stale", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:field:${token}:venue`));
+    const questionId = lastQuestionId(calls);
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:q:fe:${token}:venue`, {
+        message_id: questionId,
+        text: "Где встречаемся?",
+        reply_markup: cancel(`v1:q:fe:${token}:venue`),
+      }),
+    );
+
+    // Экран, в который превратился вопрос, кнопки «Отмена» уже не несёт.
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "update-meetup-field" }),
+    );
+    expect(sendMessageText(sentMessages(calls).at(-1))).toContain(
+      "Этот вопрос уже устарел.",
+    );
+  });
+
+  it("reads the step of a question asked by the previous release from its marker", async () => {
+    const execute = viewing();
+    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    await bot.init();
+    const asked = editQuestion({
+      prompt: "Где встречаемся?",
+      botUsername: "stub_bot",
+      token,
+      field: "venue",
+    });
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Новый зал",
+        fromId: 42,
+        replyMessageId: 77,
+        replyFromId: 1,
+        replyText: asked.text,
+        replyEntities: asked.entities,
+      }),
+    );
+
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "update-meetup-field",
+        field: "venue",
+        value: "Новый зал",
+        meetupId: tokenToUuid(token),
+      }),
+    );
+  });
+
+  it("sends a restarted material title question back to the materials", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Афиша",
+        fromId: 42,
+        replyMessageId: 77,
+        replyFromId: 1,
+        replyText: "Как назвать материал в карточке?",
+        replyMarkup: cancel(`v1:q:mt:${token}`),
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: refusalText("Этот вопрос уже устарел. Прикрепи материал заново."),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "‹ Материалы", callback_data: `v1:mm:list:${token}` },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
+      },
+    });
+  });
+
+  it.each([
+    `v1:q:pm:${token}`,
+    `v1:q:ms:${token}:3`,
+    `v1:q:mt:${token}`,
+    `v1:q:bm:${token}`,
+  ])("cancels %s without a command to the service", async (data) => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(data, {
+        text: "Вопрос",
+        reply_markup: cancel(data),
+      }),
+    );
+
+    for (const [request] of execute.mock.calls) {
+      expect(request.intent).toBe("view-meetup");
+    }
+    expect(calls.at(-1)?.method).toBe("editMessageText");
+    expect(calls.at(-1)?.payload).toMatchObject({ message_id: 9 });
+  });
+});
+
 describe("telegram environment", () => {
   it("reads an absent or empty variable as production", () => {
     expect(parseTelegramEnvironment(undefined)).toBe("prod");
@@ -3440,15 +4159,15 @@ describe("notification frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
     const keyboard = screen(calls[1]).reply_markup;
     expect(keyboard?.inline_keyboard[0]?.[0]).toEqual({
-      text: "Отписаться от сходки",
+      text: "Отписаться",
       callback_data: `v1:notify:sub:${token}:0`,
     });
-    expect(keyboard?.inline_keyboard[1]).toEqual([
-      {
-        text: "Уведомления по сходке",
-        callback_data: `v1:notify:settings:${token}`,
-      },
-    ]);
+    // Отписка и настройки подписки стоят одним рядом: под карточкой не больше
+    // пяти рядов.
+    expect(keyboard?.inline_keyboard[0]?.[1]).toEqual({
+      text: "Уведомления сходки",
+      callback_data: `v1:notify:settings:${token}`,
+    });
   });
 
   // Notifications не ответил: состояние подписки не показывается вовсе, а не
@@ -3491,7 +4210,7 @@ describe("notification frames", () => {
       .flat()
       .map((button) => button.callback_data);
     expect(data).toContain(`v1:notify:sub:${token}:0`);
-    expect(data).toContain(`v1:view:${token}`);
+    expect(data).toContain(`v1:notify:settings:${token}`);
   });
 
   // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
@@ -3535,7 +4254,7 @@ describe("notification frames", () => {
         "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
       );
       expect(html).toContain(
-        "Напоминание перед началом выключено, включить его можно в «Уведомлениях по сходке».",
+        "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",
       );
     });
 
@@ -3652,7 +4371,7 @@ describe("notification frames", () => {
   // Отказ по природе, а не один «сбой на моей стороне»: «Повторить» на отказе
   // по праву и на устаревшем экране не лечит ничего.
   it.each([
-    ["forbidden", "Это действие тебе недоступно.", "v1:nav:hub"],
+    ["forbidden", "Это действие тебе недоступно.", "v1:nav:start"],
     ["invalid", "Этот экран устарел.", "v1:notify:global"],
     ["conflict", "Это уже сделано.", "v1:notify:global"],
   ])(
@@ -3682,7 +4401,7 @@ describe("notification frames", () => {
     },
   );
 
-  it("renders the meetup frame with checkboxes, the divergence mark and the pinning warning", async () => {
+  it("renders the meetup frame with toggles, the divergence line and the pinning warning", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-notification-settings",
       meetup,
@@ -3696,18 +4415,26 @@ describe("notification frames", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:notify:settings:${token}`));
     const payload = screen(calls[1]);
-    expect(payload.text).toContain("Уведомления: Настолки у Лёши");
     expect(payload.text).toContain(
-      "Переключение здесь закрепляет значение за этой сходкой",
+      "<b>Уведомления сходки</b>\n\n«Настолки у Лёши»",
+    );
+    expect(payload.text).toContain("закрепляется за ней");
+    // Расхождение с общей настройкой называет текст, а не подпись кнопки.
+    expect(payload.text).toContain(
+      "Отличаются от общих: напоминание перед началом.",
     );
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
-      text: "[x] Изменения данных и статуса",
+      text: "Вкл · Изменения данных и статуса",
       callback_data: `v1:notify:set:${token}:changes:0`,
     });
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "[x] Напоминание перед началом · отличается",
+      text: "Вкл · Напоминание перед началом",
       callback_data: `v1:notify:set:${token}:reminder:0`,
     });
+    expect(payload.reply_markup?.inline_keyboard.at(-1)).toEqual([
+      { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+      { text: "Меню", callback_data: "v1:nav:start" },
+    ]);
   });
 
   it("renders the global frame over the whole dictionary", async () => {
@@ -3728,15 +4455,15 @@ describe("notification frames", () => {
     expect(payload.text).toContain("Приходят всем, без подписки");
     expect(payload.text).toContain("По сходкам, на которые ты подписан");
     expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
-      text: "[x] Изменения данных и статуса",
+      text: "Вкл · Изменения данных и статуса",
       callback_data: "v1:notify:gset:changes:0",
     });
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
-      text: "[x] Новые сходки",
+      text: "Вкл · Новые сходки",
       callback_data: "v1:notify:gset:published:0",
     });
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "[ ] Объявления сообщества",
+      text: "Выкл · Объявления сообщества",
       callback_data: "v1:notify:gset:announcement:1",
     });
   });
@@ -3781,7 +4508,12 @@ describe("notification frames", () => {
       expect(payload.text).toContain("Больше не присылаю: новые сходки");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
-        [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+        [
+          {
+            text: "Настроить уведомления",
+            callback_data: "v1:t:notify:global",
+          },
+        ],
       ]);
     });
 
@@ -3801,9 +4533,11 @@ describe("notification frames", () => {
       ]);
       const payload = screen(calls[1]);
       expect(payload.text).toContain("Это на моей стороне");
-      // Повтор — та же кнопка в уведомлении: своя кнопка у отказа дописала бы
-      // успех под текстом отказа.
-      expect(payload.reply_markup).toBeUndefined();
+      // Повтор — та же кнопка в уведомлении: своя кнопка повтора у отказа
+      // дописала бы успех под текстом отказа. Выход у кадра один — меню.
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Меню", callback_data: "v1:nav:start" }],
+      ]);
     });
 
     // Настройка у сходки сильнее общей, поэтому подтверждение не обещает
@@ -3846,7 +4580,12 @@ describe("notification frames", () => {
       );
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
-        [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+        [
+          {
+            text: "Настроить уведомления",
+            callback_data: "v1:t:notify:global",
+          },
+        ],
       ]);
     });
   });
@@ -3896,7 +4635,7 @@ describe("notification frames", () => {
         [
           {
             text: "Уведомления сходки",
-            callback_data: `v1:notify:settings:${token}`,
+            callback_data: `v1:t:notify:settings:${token}`,
           },
         ],
       ]);
@@ -3998,7 +4737,12 @@ describe("notification frames", () => {
     expect(payload.text).toContain(notification.text);
     expect(payload.text).toContain("Больше не присылаю: объявления сообщества");
     expect(payload.reply_markup?.inline_keyboard).toEqual([
-      [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+      [
+        {
+          text: "Настроить уведомления",
+          callback_data: "v1:t:notify:global",
+        },
+      ],
     ]);
   });
 
@@ -4033,7 +4777,12 @@ describe("notification frames", () => {
       ]);
       expect(screen(calls[1]).text).toBe(long);
       expect(screen(calls[1]).reply_markup?.inline_keyboard).toEqual([
-        [{ text: "Настроить уведомления", callback_data: "v1:notify:global" }],
+        [
+          {
+            text: "Настроить уведомления",
+            callback_data: "v1:t:notify:global",
+          },
+        ],
       ]);
       expect(screen(calls[2]).text).toContain(
         "Больше не присылаю: объявления сообщества",
@@ -4106,12 +4855,6 @@ describe("deferred publication frames", () => {
     return JSON.stringify(call?.payload ?? {});
   }
 
-  function lastQuestionId(calls: readonly RecordedCall[]): number {
-    // Фикстура отвечает на sendMessage идентификатором `100 + номер вызова`.
-    const index = calls.findLastIndex((call) => call.method === "sendMessage");
-    return 100 + index + 1;
-  }
-
   it("shows the scheduled moment on the draft card and drops it once cancelled", async () => {
     let meetup = scheduledDraft();
     const execute = vi.fn<Dispatcher["execute"]>(async () => ({
@@ -4124,8 +4867,9 @@ describe("deferred publication frames", () => {
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
-    expect(payloadText(calls.at(-1))).toContain(
-      "Публикация назначена на 01.10.2026 19:30",
+    // На карточке момент читается, а не вводится: дата словами.
+    expect(payloadText(calls.at(-1))).toMatch(
+      /Публикация назначена на 1 октября( 2026)?, чт, 19:30/,
     );
 
     meetup = unscheduledDraft();
@@ -4133,12 +4877,12 @@ describe("deferred publication frames", () => {
     expect(payloadText(calls.at(-1))).not.toContain("Публикация назначена");
   });
 
-  it("offers publishing later next to publishing now in the check frame", async () => {
+  it("shows the draft with its fields and both ways to publish after the title", async () => {
     const draft = draftMeetup();
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "create-meetup"
-        ? { kind: "ask", field: "description", meetup: draft }
-        : { kind: "preview", meetup: draft },
+        ? { kind: "ask", field: "title", meetup: draft }
+        : { kind: "draft", meetup: draft },
     );
     const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
       execute,
@@ -4148,7 +4892,7 @@ describe("deferred publication frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:manage:new:${token}`));
     await bot.handleUpdate(
       replyUpdate({
-        text: "Берём свои игры",
+        text: "Настолки",
         fromId: 42,
         replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
@@ -4156,27 +4900,292 @@ describe("deferred publication frames", () => {
     );
 
     const draftToken = uuidToToken(draft.id);
+    const shown = calls.findLast((call) => call.method === "sendRichMessage");
+    expect(shown?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Дата и время",
+              callback_data: `v1:manage:draft:${draftToken}:schedule`,
+            },
+          ],
+          [
+            {
+              text: "Место",
+              callback_data: `v1:manage:draft:${draftToken}:venue`,
+            },
+          ],
+          [
+            {
+              text: "Описание",
+              callback_data: `v1:manage:draft:${draftToken}:description`,
+            },
+          ],
+          [
+            {
+              text: "Опубликовать",
+              callback_data: `v1:manage:publish:${draftToken}`,
+            },
+          ],
+          [
+            {
+              text: "Опубликовать позже",
+              callback_data: `v1:manage:publish-later:${draftToken}`,
+            },
+          ],
+          [
+            { text: "‹ Скрытые", callback_data: "v1:manage:hidden" },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
+      },
+    });
+  });
+
+  it("asks about a field from the draft and returns to the draft on cancel", async () => {
+    const draft = draftMeetup();
+    const draftToken = uuidToToken(draft.id);
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup: draft });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:manage:draft:${draftToken}:venue`),
+    );
+
+    const question = calls.findLast((call) => call.method === "sendMessage");
+    expect(question?.payload).toMatchObject({
+      text: "Где встречаемся?",
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [
+          [{ text: "Отмена", callback_data: `v1:q:fc:${draftToken}:venue` }],
+        ],
+      },
+    });
+
+    await bot.handleUpdate(callbackUpdate(`v1:q:fc:${draftToken}:venue`));
+
     expect(calls.at(-1)).toMatchObject({
-      method: "sendMessage",
+      method: "editMessageText",
       payload: {
         reply_markup: {
-          inline_keyboard: [
+          inline_keyboard: expect.arrayContaining([
             [
               {
                 text: "Опубликовать",
                 callback_data: `v1:manage:publish:${draftToken}`,
               },
             ],
-            [
-              {
-                text: "Опубликовать позже",
-                callback_data: `v1:manage:publish-later:${draftToken}`,
-              },
-            ],
-          ],
+          ]),
         },
       },
     });
+    for (const [request] of execute.mock.calls) {
+      expect(request.intent).toBe("view-meetup");
+    }
+  });
+
+  describe("date presets", () => {
+    const draft = draftMeetup();
+    const draftToken = uuidToToken(draft.id);
+    const labels = (call: RecordedCall | undefined) => {
+      const payload = call?.payload as
+        | { reply_markup?: { inline_keyboard?: { text: string }[][] } }
+        | undefined;
+      return payload?.reply_markup?.inline_keyboard?.map((row) =>
+        row.map((button) => button.text),
+      );
+    };
+
+    it("puts the day presets above the cancel button of the date question", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-card", meetup: draft });
+      const { bot, calls } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+        [],
+        undefined,
+        undefined,
+        () => ({ year: 2026, month: 10, day: 1 }),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:draft:${draftToken}:schedule`),
+      );
+
+      const question = calls.findLast((call) => call.method === "sendMessage");
+      expect(question?.payload).toMatchObject({
+        text: "Когда встречаемся? Выбери день или напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ",
+        reply_markup: { force_reply: true },
+      });
+      expect(labels(question)).toEqual([
+        ["чт 1", "пт 2", "сб 3", "вс 4"],
+        ["сб 10", "вс 11"],
+        ["Отмена"],
+      ]);
+    });
+
+    it("turns the day presets into time presets in the same message", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const { bot, calls } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+        [],
+        undefined,
+        undefined,
+        () => ({ year: 2026, month: 10, day: 1 }),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:03102026`),
+      );
+
+      // Сервис не нужен: день сменяется временем на месте.
+      expect(execute).not.toHaveBeenCalled();
+      const edited = calls.at(-1);
+      expect(edited).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          message_id: 9,
+          text: expect.stringContaining("3 октября, сб — во сколько?"),
+        },
+      });
+      expect(labels(edited)).toEqual([
+        ["12:00", "15:00", "17:00", "18:00"],
+        ["19:00", "19:30", "20:00", "21:00"],
+        ["Другой день"],
+        ["Отмена"],
+      ]);
+      expect(JSON.stringify(edited?.payload)).toContain(
+        `v1:q:fc:${draftToken}:schedule`,
+      );
+    });
+
+    it("takes a time preset as the answer and turns the question into the draft", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "draft", meetup: draft });
+      const { bot, calls, records } = createHarness(
+        resolvedIdentity(["admin"]),
+        { execute },
+      );
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:031020261930`),
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-meetup-field",
+          field: "schedule",
+          value: "03.10.2026 19:30",
+          meetupId: draft.id,
+        }),
+      );
+      expect(execute.mock.calls[0]?.[0]).not.toHaveProperty("confirmedPast");
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: { message_id: 9 },
+      });
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        `v1:manage:publish:${draftToken}`,
+      );
+      expectBoundary(records[0], {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "create_meetup",
+      });
+    });
+
+    it("keeps the question waiting when the service fails under a time preset", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "timeout",
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:031020261930`),
+      );
+
+      // Клавиатура вопроса на месте: и заготовки, и ответ текстом ещё работают.
+      expect(calls.map((call) => call.method)).not.toContain(
+        "editMessageReplyMarkup",
+      );
+      expect(calls.at(-1)?.method).toBe("sendMessage");
+    });
+
+    it("shows the card when the answer lands on an already published meetup", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "draft",
+        meetup: { ...draft, visibility: "visible" },
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:031020261930`),
+      );
+
+      const shown = JSON.stringify(calls.at(-1)?.payload);
+      expect(shown).toContain("Изменение сохранено.");
+      expect(shown).toContain("v1:manage:status:");
+      expect(shown).not.toContain("v1:manage:draft:");
+    });
+
+    it("sends a time preset of the edit form to the edit command", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-updated", meetup: draft });
+      const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:e:031020261930`),
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "update-meetup-field",
+          value: "03.10.2026 19:30",
+        }),
+      );
+    });
+  });
+
+  it("opens a published meetup as the card under a stale draft button", async () => {
+    const meetup: MeetupSnapshot = { ...draftMeetup(), visibility: "visible" };
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:manage:draft:${uuidToToken(meetup.id)}`),
+    );
+
+    const shown = JSON.stringify(calls.at(-1)?.payload);
+    expect(shown).toContain("v1:manage:status:");
+    expect(shown).not.toContain("v1:manage:draft:");
   });
 
   it("asks for the moment from the status menu and schedules the answer", async () => {
@@ -4221,14 +5230,11 @@ describe("deferred publication frames", () => {
       meetupId: draft.id,
       requestId: expect.any(String),
       useCase: "update_meetup",
+      deadlineAt: expect.any(Number),
     });
-    expect(
-      calls.some((call) =>
-        sendMessageText(call)?.startsWith(
-          "Публикация назначена на 01.10.2026 19:30.",
-        ),
-      ),
-    ).toBe(true);
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "<p>Публикация назначена на 01.10.2026 19:30.",
+    );
     expectBoundary(records.at(-1), {
       level: "info",
       result: "ok",
@@ -4262,10 +5268,12 @@ describe("deferred publication frames", () => {
       replyUpdate({
         text: "01.10.2026 19:30",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(first.calls),
         replyFromId: 1,
         replyText: questionText,
-        replyEntities: sendMessageEntities(question),
+        replyMarkup: (
+          question?.payload as { reply_markup?: unknown } | undefined
+        )?.reply_markup,
       }),
     );
 
@@ -4318,11 +5326,13 @@ describe("deferred publication frames", () => {
     const afterPast = calls.length;
 
     await answer();
-    const texts = calls.slice(afterPast).map(sendMessageText);
-    expect(texts).toContain(
+    const answered = JSON.stringify(
+      calls.slice(afterPast).map((call) => call.payload),
+    );
+    expect(answered).toContain(
       "Сходка уже опубликована. Назначать публикацию больше не нужно.",
     );
-    expect(texts.join("\n")).not.toContain("Это время уже прошло");
+    expect(answered).not.toContain("Это время уже прошло");
   });
 
   it("answers a stale publish-later button on a published meetup by current state", async () => {
@@ -4341,7 +5351,9 @@ describe("deferred publication frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+        text: refusalText(
+          "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+        ),
       },
     });
   });
@@ -4373,12 +5385,12 @@ describe("deferred publication frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Точно отменить отложенную публикацию сходки «Настолки»?",
+        text: "<b>Отменить отложенную публикацию?</b>\n\n«Настолки»",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, продолжить",
+                text: "Да, отменить публикацию",
                 callback_data: `v1:manage:confirm-unschedule:${token}`,
               },
             ],
@@ -4415,7 +5427,7 @@ describe("deferred publication frames", () => {
 
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Отложенной публикации у сходки уже нет." },
+      payload: { text: refusalText("Отложенной публикации у сходки уже нет.") },
     });
   });
 });
@@ -4446,7 +5458,7 @@ describe("past meetup date", () => {
       replyUpdate({
         text: "21.09.2026 19:30",
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -4459,13 +5471,14 @@ describe("past meetup date", () => {
           inline_keyboard: [
             [
               {
-                text: "Сохранить дату",
+                text: "Да, сохранить дату",
                 callback_data: `v1:manage:past:${token}:c:210920261930`,
               },
             ],
             [
               {
-                text: "Ввести другую",
+                // «Нет» задаёт вопрос о дате заново.
+                text: "Нет",
                 callback_data: `v1:manage:past-retry:${token}:c`,
               },
             ],
@@ -4511,6 +5524,7 @@ describe("past meetup date", () => {
       confirmedPast: true,
       requestId: expect.any(String),
       useCase: "create_meetup",
+      deadlineAt: expect.any(Number),
     });
     expectBoundary(records.at(-1), {
       level: "info",
@@ -4558,13 +5572,11 @@ describe("past meetup date", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:manage:publish:${token}`));
 
-    const edited = calls.find((call) => call.method === "editMessageText");
-    expect(edited?.payload).toMatchObject({
-      text: expect.stringContaining("сразу в архиве"),
-    });
-    expect(edited?.payload).not.toMatchObject({
-      text: expect.stringContaining("видна в списке"),
-    });
+    const edited = JSON.stringify(
+      calls.find((call) => call.method === "editMessageText")?.payload,
+    );
+    expect(edited).toContain("сразу в архиве");
+    expect(edited).not.toContain("видна в списке");
   });
 
   it("says an edited past date moved the meetup to the archive", async () => {
@@ -4582,13 +5594,9 @@ describe("past meetup date", () => {
       callbackUpdate(`v1:manage:past:${token}:e:210920261930`),
     );
 
-    expect(
-      calls.some((call) =>
-        sendMessageText(call)?.startsWith(
-          "Изменение сохранено. Дата сходки уже прошла",
-        ),
-      ),
-    ).toBe(true);
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "<p>Изменение сохранено. Дата сходки уже прошла",
+    );
   });
 });
 
@@ -4652,17 +5660,15 @@ describe("broadcast frames", () => {
 
     expect(execute).not.toHaveBeenCalled();
     expect(calls.at(-1)).toMatchObject({
-      method: "sendMessage",
+      method: "editMessageText",
       payload: {
-        text: "Управление сходками доступно администратору.",
+        text: refusalText("Управление сходками доступно администратору."),
         reply_markup: {
-          inline_keyboard: [[{ text: "Назад", callback_data: "v1:nav:start" }]],
+          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
         },
       },
     });
     expect(JSON.stringify(calls)).not.toContain("v1:manage:new:");
-    // Отказ не затирает экран, на котором лежала кнопка.
-    expect(calls.map((call) => call.method)).not.toContain("editMessageText");
     expectBoundary(records[0], {
       level: "warn",
       result: "error",
@@ -4671,6 +5677,22 @@ describe("broadcast frames", () => {
       use_case: "create_meetup",
     });
     expect(records[0]?.fields.error).toBe("management_forbidden");
+  });
+
+  it("opens the management menu in place of the pressed screen", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]?.payload).toMatchObject({
+      message_id: 9,
+      text: "<b>Управление</b>",
+    });
   });
 
   it("offers the whole management menu to an admin", async () => {
@@ -4694,9 +5716,11 @@ describe("broadcast frames", () => {
 
     expect(JSON.stringify(calls)).not.toContain("force_reply");
     expect(calls.at(-1)).toMatchObject({
-      method: "sendMessage",
+      method: "editMessageText",
       payload: {
-        text: "Управлять составом сообщества может только администратор.",
+        text: refusalText(
+          "Управлять составом сообщества может только администратор.",
+        ),
       },
     });
     expectBoundary(records[0], {
@@ -4721,7 +5745,11 @@ describe("broadcast frames", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Писать подписчикам может только организатор сходки." },
+      payload: {
+        text: refusalText(
+          "Писать подписчикам может только организатор сходки.",
+        ),
+      },
     });
     expectBoundary(records[0], {
       level: "warn",
@@ -4748,7 +5776,7 @@ describe("broadcast frames", () => {
       replyUpdate({
         text: `  ${body}  `,
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
@@ -4761,8 +5789,8 @@ describe("broadcast frames", () => {
     // Сходку читают при вопросе и не перечитывают на ответе: сбой Meetups в
     // этот момент не должен стоить человеку набранного текста.
     expect(execute).toHaveBeenCalledTimes(1);
-    const preview = calls.at(-2);
-    const confirmation = calls.at(-1);
+    const preview = sentMessages(calls).at(-2);
+    const confirmation = sentMessages(calls).at(-1);
     // Предпросмотр — ровно текст рассылки, без заголовка и числа получателей.
     expect(sendMessageText(preview)).toBe(body);
     const text = sendMessageText(confirmation) ?? "";
@@ -4787,12 +5815,12 @@ describe("broadcast frames", () => {
       replyUpdate({
         text: "я".repeat(4097),
         fromId: 42,
-        replyMessageId: 102,
+        replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
 
-    const retry = calls.at(-1);
+    const retry = sentMessages(calls).at(-1);
     expect(sendMessageText(retry)).toContain("длиннее 4096 символов");
     expect(retry?.payload).toMatchObject({
       reply_markup: { force_reply: true },
@@ -4826,7 +5854,11 @@ describe("broadcast frames", () => {
     );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: "Объявление принято к отправке участникам сообщества." },
+      payload: {
+        text: refusalText(
+          "Объявление принято к отправке участникам сообщества.",
+        ),
+      },
     });
     expectBoundary(records[0], {
       level: "info",
@@ -4862,7 +5894,9 @@ describe("broadcast frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Писать подписчикам может только организатор сходки. Ничего не отправлено.",
+        text: refusalText(
+          "Писать подписчикам может только организатор сходки. Ничего не отправлено.",
+        ),
       },
     });
     expectBoundary(records[0], {
@@ -4895,7 +5929,9 @@ describe("broadcast frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт.",
+        text: refusalText(
+          "Это сообщение уже принято к отправке раньше. Второй раз оно не уйдёт.",
+        ),
       },
     });
   });
@@ -4991,7 +6027,7 @@ describe("meetup author", () => {
       meetup: publishedMeetup(),
       author: { kind: "self" },
     });
-    expect(payload).toContain("Вы автор этой сходки");
+    expect(payload).toContain("Ты автор этой сходки");
     expect(payload).not.toContain("Автор:");
   });
 
@@ -5019,7 +6055,7 @@ describe("meetup author", () => {
       meetup: publishedMeetup(),
     });
     expect(payload).not.toContain("Автор:");
-    expect(payload).not.toContain("Вы автор");
+    expect(payload).not.toContain("Ты автор");
   });
 
   it("keeps the author line on the card redrawn after a state change", async () => {

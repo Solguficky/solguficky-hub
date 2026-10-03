@@ -108,9 +108,8 @@ async function main(): Promise<number> {
   });
   // День сообщества считается тем же поясом, что и у Meetups: иначе граница
   // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
-  const dispatcher = createDispatcher(meetups, notifications, () =>
-    communityDay(new Date(), communityTimeZone),
-  );
+  const today = () => communityDay(new Date(), communityTimeZone);
+  const dispatcher = createDispatcher(meetups, notifications, today);
   const identity = createIdentityClient(identityUrl, {
     tracing,
     serviceToken,
@@ -123,6 +122,7 @@ async function main(): Promise<number> {
     tracing,
     presentation: presentationRaw,
     environment,
+    today,
   });
   // Второй вход компонента: адресные факты Notifications из шины. Он стартует
   // до поллера, чтобы отказ шины остановил процесс сразу, а не после того, как

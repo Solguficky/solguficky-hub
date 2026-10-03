@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { FormField } from "../application/types.js";
+import type { CommunityDay } from "../community-time.js";
 import type {
   MeetupCategory,
   NotificationCategory,
@@ -48,6 +49,12 @@ const FormModeSchema = z.enum(["c", "e"]);
 // ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
 // правки, восстановимые по сущностям сообщения.
 const PastScheduleSchema = z.string().regex(/^\d{12}$/);
+// Страница списка в кнопке: только цифры, без пустой строки и экспоненты,
+// которые `z.coerce.number()` принял бы за число.
+const PageSchema = z
+  .string()
+  .regex(/^\d{1,4}$/)
+  .transform(Number);
 // Версия карточки, с которой человек начал действие с материалом. Её несёт
 // кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
 // места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
@@ -63,21 +70,43 @@ const VersionSchema = z
 // кнопка, которую разбор потом назовёт сломанной, рисоваться не должна.
 export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
-export type CallbackAction =
+// Откуда начато закрытие доступа: туда возвращают «Нет» и экран после него.
+// Из очереди — со следующим человеком, из списка допущенных — со страницей.
+export type BlockOrigin =
+  | { kind: "pending"; next?: string }
+  | { kind: "admitted"; page: number };
+
+/** Сегмент `callback_data`: `p`, `p<токен>` или `a<страница>`. */
+export function blockOriginData(origin: BlockOrigin): string {
+  return origin.kind === "admitted"
+    ? `a${origin.page}`
+    : `p${origin.next ?? ""}`;
+}
+
+type PlainAction =
   | { kind: "home" }
-  | { kind: "hub" }
-  | { kind: "archive" }
+  // Списки листаются: страница едет в кнопке листания, без неё — первая.
+  | { kind: "hub"; page?: number }
+  | { kind: "archive"; page?: number }
   | { kind: "manage-menu" }
-  | { kind: "manage-hidden" }
+  | { kind: "manage-hidden"; page?: number }
   | { kind: "community" }
+  // Курсор очереди — токен человека, а не номер: очередь меняется.
+  | { kind: "community-pending"; cursor?: string }
+  | { kind: "community-admitted"; page: number }
+  | { kind: "community-usernames"; page: number }
   | { kind: "ask-allowed-username" }
-  | { kind: "admit-member"; token: string }
-  | { kind: "block-member"; token: string }
-  | { kind: "remove-allowed-username"; username: string }
+  // `next` — кого показать после допуска.
+  | { kind: "admit-member"; token: string; next?: string }
+  | { kind: "ask-block-member"; token: string; origin: BlockOrigin }
+  | { kind: "block-member"; token: string; origin: BlockOrigin }
+  | { kind: "remove-allowed-username"; username: string; page: number }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
+  // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
+  | { kind: "manage-draft"; token: string; field?: FormField }
   | { kind: "manage-status"; token: string }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
@@ -96,8 +125,26 @@ export type CallbackAction =
       value: string;
     }
   | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
+  // Заготовки вопроса о дате: без дня — выбор дня, с днём — выбор времени.
+  | {
+      kind: "manage-pick-day";
+      token: string;
+      editing: boolean;
+      picked?: { digits: string; day: CommunityDay };
+    }
+  // Кнопка времени — полный ответ на вопрос о дате, в том виде, в котором
+  // дату вводят текстом.
+  | {
+      kind: "manage-pick-schedule";
+      token: string;
+      editing: boolean;
+      value: string;
+    }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "begin-attach-material"; token: string }
+  // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
+  // файлом остаётся следом с подписью, что прикрепления не было.
+  | { kind: "decline-attach-material"; token: string }
   // `version` отсутствует только у кнопки прошлого релиза, которая версии не
   // несла: команду по ней не отправить, и экран отвечает кадром конфликта.
   | {
@@ -123,7 +170,9 @@ export type CallbackAction =
   | { kind: "begin-community-broadcast" }
   | { kind: "confirm-meetup-broadcast"; token: string; broadcastToken: string }
   | { kind: "confirm-community-broadcast"; broadcastToken: string }
-  | { kind: "cancel-broadcast" }
+  // Токен — сходка, с карточки которой рассылку начали: по нему «Нет»
+  // возвращает к ней; у объявления сообществу токена нет.
+  | { kind: "cancel-broadcast"; token?: string }
   | { kind: "notify-global" }
   | {
       kind: "notify-set-global";
@@ -150,14 +199,72 @@ export type CallbackAction =
       category: MeetupCategory;
       enabled: boolean;
     }
+  // «Отмена» под вопросом: кнопка несёт шаг вопроса. По нажатию вопрос
+  // правится в экран, с которого задан, а по ответу бот читает шаг из
+  // клавиатуры вопроса в `reply_to_message` — память процесса ему не нужна.
+  | { kind: "question"; step: QuestionStep }
   | { kind: "outdated" }
   | { kind: "malformed" };
+
+/** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
+export type QuestionStep =
+  | { kind: "field"; mode: "create" | "edit"; token: string; field: FormField }
+  | { kind: "publish-moment"; token: string }
+  // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
+  // подтверждения и уходит в `expected_version` (PER-393).
+  | { kind: "material-source"; token: string; version: number }
+  // Источник файла в 64 байта не помещается, поэтому ответ на этот вопрос
+  // принимается только по карте вопросов в памяти процесса; кнопка возвращает
+  // к материалам.
+  | { kind: "material-title"; token: string }
+  | { kind: "broadcast"; token?: string }
+  | { kind: "username" };
+
+/** Данные кнопки «Отмена» для вопроса с этим шагом. */
+export function questionData(step: QuestionStep): string {
+  switch (step.kind) {
+    case "field":
+      return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
+    case "publish-moment":
+      return `v1:q:pm:${step.token}`;
+    case "material-source":
+      return `v1:q:ms:${step.token}:${step.version}`;
+    case "material-title":
+      return `v1:q:mt:${step.token}`;
+    case "broadcast":
+      return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
+    case "username":
+      return "v1:q:nick";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+// Кнопка под следом — уведомлением или сообщением «Доступ открыт» — несёт то же
+// действие, что и кнопка экрана, с пометкой `t`: экран по ней приходит новым
+// сообщением, а след остаётся в истории как был (дизайн-код, «Доставка»).
+export type CallbackAction = PlainAction & { trace?: true };
+
+const tracePrefix = "v1:t:";
+
+/** Данные кнопки следа для действия, которое на экране несёт `data`. */
+export function traceCallback(data: `v1:${string}`): string {
+  return `${tracePrefix}${data.slice("v1:".length)}`;
+}
 
 export function parseCallback(raw: unknown): CallbackAction {
   const parsed = CallbackSchema.safeParse(raw);
   if (!parsed.success) return { kind: "malformed" };
   const parts = parsed.data.split(":");
   if (parts[0] !== "v1") return { kind: "outdated" };
+  if (parsed.data.startsWith(tracePrefix)) {
+    const inner = parseCallback(`v1:${parsed.data.slice(tracePrefix.length)}`);
+    return inner.kind === "malformed" || inner.kind === "outdated"
+      ? inner
+      : { ...inner, trace: true };
+  }
   if (parsed.data === "v1:manage:menu") return { kind: "manage-menu" };
   if (parsed.data === "v1:manage:hidden") return { kind: "manage-hidden" };
   if (parsed.data === "v1:community:list") return { kind: "community" };
@@ -167,6 +274,14 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };
+  if (parts[1] === "q") {
+    const step = parseQuestionStep(parts);
+    return step === undefined
+      ? { kind: "malformed" }
+      : { kind: "question", step };
+  }
+  const listed = parseListPage(parts);
+  if (listed !== undefined) return listed;
   if (parts.length === 3 && parts[1] === "view") {
     const viewToken = TokenSchema.safeParse(parts[2]);
     return viewToken.success
@@ -180,13 +295,16 @@ export function parseCallback(raw: unknown): CallbackAction {
       if (parts[4] === undefined) {
         return { kind: "manage-materials", token: meetupToken.data };
       }
-      const page = z.coerce.number().int().nonnegative().safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[4]);
       return page.success
         ? { kind: "manage-materials", token: meetupToken.data, page: page.data }
         : { kind: "malformed" };
     }
     if (parts.length === 4 && parts[2] === "add") {
       return { kind: "begin-attach-material", token: meetupToken.data };
+    }
+    if (parts.length === 4 && parts[2] === "no") {
+      return { kind: "decline-attach-material", token: meetupToken.data };
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };
@@ -236,17 +354,26 @@ export function parseCallback(raw: unknown): CallbackAction {
         return { kind: "malformed" };
     }
   }
+  if (parts[1] === "cm") {
+    return parseCommunity(parts);
+  }
+  // Кнопки состава одним списком из прошлого релиза. «Закрыть» там исполнялось
+  // сразу; теперь та же кнопка ведёт в подтверждение, как и новая.
   if (parts.length === 4 && parts[1] === "community") {
     const username = parts[3] ?? "";
     if (parts[2] === "remove" && removableUsernamePattern.test(username)) {
-      return { kind: "remove-allowed-username", username };
+      return { kind: "remove-allowed-username", username, page: 0 };
     }
     const identityToken = TokenSchema.safeParse(parts[3]);
     if (!identityToken.success) return { kind: "malformed" };
     if (parts[2] === "admit")
       return { kind: "admit-member", token: identityToken.data };
     if (parts[2] === "block")
-      return { kind: "block-member", token: identityToken.data };
+      return {
+        kind: "ask-block-member",
+        token: identityToken.data,
+        origin: { kind: "admitted", page: 0 },
+      };
   }
   // Домен `notify` разбирается до общей проверки ниже: она требует токен в
   // `parts[3]` и домен `manage`, а глобальный кадр токена не несёт вовсе.
@@ -272,6 +399,14 @@ export function parseCallback(raw: unknown): CallbackAction {
       ? { kind: "manage-field", token: token.data, field: field.data }
       : { kind: "malformed" };
   }
+  if (parts.length === 4 && parts[2] === "draft")
+    return { kind: "manage-draft", token: token.data };
+  if (parts.length === 5 && parts[2] === "draft") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? { kind: "manage-draft", token: token.data, field: field.data }
+      : { kind: "malformed" };
+  }
   if (parts.length === 6 && parts[2] === "past") {
     const mode = FormModeSchema.safeParse(parts[4]);
     const digits = PastScheduleSchema.safeParse(parts[5]);
@@ -281,6 +416,33 @@ export function parseCallback(raw: unknown): CallbackAction {
           token: token.data,
           editing: mode.data === "e",
           value: pastScheduleValue(digits.data),
+        }
+      : { kind: "malformed" };
+  }
+  if ((parts.length === 5 || parts.length === 6) && parts[2] === "when") {
+    const mode = FormModeSchema.safeParse(parts[4]);
+    if (!mode.success) return { kind: "malformed" };
+    const editing = mode.data === "e";
+    const digits = parts[5];
+    if (digits === undefined) {
+      return { kind: "manage-pick-day", token: token.data, editing };
+    }
+    const day = dayFromDigits(digits.slice(0, 8));
+    if (day === undefined) return { kind: "malformed" };
+    if (digits.length === 8) {
+      return {
+        kind: "manage-pick-day",
+        token: token.data,
+        editing,
+        picked: { digits, day },
+      };
+    }
+    return PastScheduleSchema.safeParse(digits).success
+      ? {
+          kind: "manage-pick-schedule",
+          token: token.data,
+          editing,
+          value: pastScheduleValue(digits),
         }
       : { kind: "malformed" };
   }
@@ -319,10 +481,165 @@ export function parseCallback(raw: unknown): CallbackAction {
   return { kind: "malformed" };
 }
 
+function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
+  if (parts.length === 3 && parts[2] === "bc") return { kind: "broadcast" };
+  if (parts.length === 3 && parts[2] === "nick") return { kind: "username" };
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return undefined;
+  if (parts.length === 4) {
+    switch (parts[2]) {
+      case "pm":
+        return { kind: "publish-moment", token: token.data };
+      case "mt":
+        return { kind: "material-title", token: token.data };
+      case "bm":
+        return { kind: "broadcast", token: token.data };
+      default:
+        return undefined;
+    }
+  }
+  if (parts.length !== 5) return undefined;
+  if (parts[2] === "ms") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? { kind: "material-source", token: token.data, version: version.data }
+      : undefined;
+  }
+  if (parts[2] === "fe" || parts[2] === "fc") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? {
+          kind: "field",
+          mode: parts[2] === "fe" ? "edit" : "create",
+          token: token.data,
+          field: field.data,
+        }
+      : undefined;
+  }
+  return undefined;
+}
+
+// Кнопка листания: `v1:nav:hub:<страница>`, `v1:nav:archive:<страница>`,
+// `v1:manage:hidden:<страница>`. Страница за пределами списка — не ошибка
+// разбора: экран откроет последнюю.
+function parseListPage(parts: readonly string[]): CallbackAction | undefined {
+  if (parts.length !== 4) return undefined;
+  const kind =
+    parts[1] === "nav" && parts[2] === "hub"
+      ? "hub"
+      : parts[1] === "nav" && parts[2] === "archive"
+        ? "archive"
+        : parts[1] === "manage" && parts[2] === "hidden"
+          ? "manage-hidden"
+          : undefined;
+  if (kind === undefined) return undefined;
+  const page = PageSchema.safeParse(parts[3]);
+  return page.success ? { kind, page: page.data } : { kind: "malformed" };
+}
+
+/// День из цифр кнопки `ДДММГГГГ`; день, которого нет в календаре, —
+/// `undefined`: такую кнопку бот не рисовал.
+function dayFromDigits(digits: string): CommunityDay | undefined {
+  if (!/^\d{8}$/.test(digits)) return undefined;
+  const day = {
+    year: Number(digits.slice(4, 8)),
+    month: Number(digits.slice(2, 4)),
+    day: Number(digits.slice(0, 2)),
+  };
+  const date = new Date(Date.UTC(day.year, day.month - 1, day.day));
+  return date.getUTCFullYear() === day.year &&
+    date.getUTCMonth() + 1 === day.month &&
+    date.getUTCDate() === day.day
+    ? day
+    : undefined;
+}
+
 /// Цифры кнопки обратно в тот вид, в котором дату вводят: форма разбирает и
 /// проверяет её тем же путём, что и ответ текстом.
 function pastScheduleValue(digits: string): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
+}
+
+function parseBlockOrigin(raw: string | undefined): BlockOrigin | undefined {
+  if (raw === "p") return { kind: "pending" };
+  if (raw?.startsWith("p")) {
+    const next = TokenSchema.safeParse(raw.slice(1));
+    return next.success ? { kind: "pending", next: next.data } : undefined;
+  }
+  if (raw?.startsWith("a")) {
+    const page = PageSchema.safeParse(raw.slice(1));
+    return page.success ? { kind: "admitted", page: page.data } : undefined;
+  }
+  return undefined;
+}
+
+// Подэкраны состава: `p` — очередь, `a` — допущенные, `u` — ники, `ad` —
+// допустить, `bq` и `by` — вопрос о закрытии доступа и его «Да», `rm` — убрать
+// ник. Имена сжаты: `ad` и `by` несут двух людей и с длинным доменом вышли бы
+// ровно в 64 байта.
+function parseCommunity(parts: readonly string[]): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  if (parts.length > 5) return malformed;
+  const [, , verb, first, second] = parts;
+  switch (verb) {
+    case "p": {
+      if (second !== undefined) return malformed;
+      if (first === undefined) return { kind: "community-pending" };
+      const cursor = TokenSchema.safeParse(first);
+      return cursor.success
+        ? { kind: "community-pending", cursor: cursor.data }
+        : malformed;
+    }
+    case "a":
+    case "u": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      if (!page.success) return malformed;
+      return {
+        kind: verb === "a" ? "community-admitted" : "community-usernames",
+        page: page.data,
+      };
+    }
+    case "ad": {
+      const token = TokenSchema.safeParse(first);
+      if (!token.success) return malformed;
+      if (second === undefined) {
+        return { kind: "admit-member", token: token.data };
+      }
+      const next = TokenSchema.safeParse(second);
+      return next.success
+        ? { kind: "admit-member", token: token.data, next: next.data }
+        : malformed;
+    }
+    case "bq":
+    case "by": {
+      const token = TokenSchema.safeParse(first);
+      const origin = parseBlockOrigin(second);
+      if (!token.success || origin === undefined) return malformed;
+      return {
+        kind: verb === "bq" ? "ask-block-member" : "block-member",
+        token: token.data,
+        origin,
+      };
+    }
+    case "rm": {
+      const page = PageSchema.safeParse(first);
+      if (
+        !page.success ||
+        second === undefined ||
+        !removableUsernamePattern.test(second)
+      ) {
+        return malformed;
+      }
+      return {
+        kind: "remove-allowed-username",
+        username: second,
+        page: page.data,
+      };
+    }
+    default:
+      return malformed;
+  }
 }
 
 function parseBroadcast(parts: readonly string[]): CallbackAction {
@@ -336,6 +653,9 @@ function parseBroadcast(parts: readonly string[]): CallbackAction {
   if (!first.success) return { kind: "malformed" };
   if (parts.length === 4 && parts[2] === "m") {
     return { kind: "begin-meetup-broadcast", token: first.data };
+  }
+  if (parts.length === 4 && parts[2] === "no") {
+    return { kind: "cancel-broadcast", token: first.data };
   }
   if (parts.length === 4 && parts[2] === "cs") {
     return { kind: "confirm-community-broadcast", broadcastToken: first.data };

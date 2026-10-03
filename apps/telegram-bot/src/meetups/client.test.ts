@@ -178,6 +178,18 @@ describe("Meetups client", () => {
     );
   });
 
+  it("does not call Meetups once the action budget is spent", async () => {
+    const listVisibleMeetups = vi.fn();
+    const meetups = createMeetupsAdapter(rpcWithList(listVisibleMeetups));
+
+    const result = await meetups.listVisible(person, {
+      deadlineAt: Date.now() - 1,
+    });
+
+    expect(result.kind).not.toBe("ok");
+    expect(listVisibleMeetups).not.toHaveBeenCalled();
+  });
+
   it("keeps an unavailable response distinct from an empty list", async () => {
     const meetups = createMeetupsAdapter(
       rpcWithList(() =>

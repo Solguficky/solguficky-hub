@@ -26,3 +26,6 @@ export {
   startConversation,
 } from "./conversation.js";
 export type { LogRecord } from "./harness.js";
+// Линтер экрана: набор на контуре снимает найденное сам, пульт показывает его
+// в ответе на действие.
+export { type ScreenViolation, takeViolations } from "./screen-lint.js";
