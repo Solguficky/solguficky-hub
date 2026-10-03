@@ -116,6 +116,14 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       LotView.fold(None, lotId, Vector(events(0), events(2))) shouldBe Left(LotViewDefect.Gap(lotId, 1, 3))
     }
 
+    "replays the row after every applied event, not only after the last one" in {
+      val events = numbered(journal(List(500, 500)))
+      val (row, _) = deliver(events.take(1))
+      val applied = LotView.replay(row, lotId, events).fold(defect => fail(defect.toString), done => done)
+      applied.map(_.sequence) shouldBe List(2L, 3L, 4L, 5L)
+      applied.map(step => Some(step.row)) shouldBe (2 to 5).map(n => deliver(events.take(n))._1).toList
+    }
+
     "skips an event at or below the version of the row" in {
       val events = journal(Nil)
       val (row, _) = deliver(numbered(events))

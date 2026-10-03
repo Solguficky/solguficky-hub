@@ -96,8 +96,8 @@ final class LotProjectionIntegrationSpec
       val reader = InMemoryMetricReader.create()
       val metrics = ProjectionMetrics(SdkMeterProvider.builder().registerMetricReader(reader).build().get("t"), clock)
       val probe = Probe(() => LotViewHandler(kit.system))
-      LotProjection.init(kit.system, metrics, () => probe.handler())
-      metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(kit.system, 5.seconds))
+      LotProjection.init(kit.system, LotProjection.Name, metrics, () => probe.handler())
+      metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(kit.system, LotProjection.Name, 5.seconds))
       use(Node(kit, sharding, probe, reader))
     } finally kit.shutdownTestKit()
   }

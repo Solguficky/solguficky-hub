@@ -30,6 +30,9 @@ final case class BidRecord(
     occurredAt: Instant
 )
 
+/** Событие, которое свёртка применила, и строка лота сразу после него. */
+final case class AppliedEvent(sequence: Long, stored: StoredLotEvent, row: LotViewRow)
+
 /** Что проекция делает с одним событием журнала. */
 enum LotViewStep {
 
@@ -94,18 +97,29 @@ object LotView {
       lotId: UUID,
       events: Seq[(Long, StoredLotEvent)]
   ): Either[LotViewDefect, (Option[LotViewRow], List[BidRecord])] =
+    replay(current, lotId, events).map { applied =>
+      (applied.lastOption.map(_.row), applied.flatMap(step => bid(lotId, step.sequence, step.stored)))
+    }
+
+  /**
+   * Та же свёртка, но с состоянием после каждого применённого события, а не только после последнего: публикации нужен
+   * снимок на каждый факт. Повторно доставленные события в итог не попадают.
+   */
+  def replay(
+      current: Option[LotViewRow],
+      lotId: UUID,
+      events: Seq[(Long, StoredLotEvent)]
+  ): Either[LotViewDefect, List[AppliedEvent]] =
     events
-      .foldLeft[Either[LotViewDefect, (Option[LotViewRow], Option[LotViewRow], List[BidRecord])]](
-        Right((current, None, Nil))
-      ) {
-        case (Right((row, written, bids)), (sequence, stored)) =>
+      .foldLeft[Either[LotViewDefect, (Option[LotViewRow], List[AppliedEvent])]](Right((current, Nil))) {
+        case (Right((row, applied)), (sequence, stored)) =>
           project(row, lotId, sequence, stored).map {
-            case LotViewStep.Skip => (row, written, bids)
-            case LotViewStep.Write(next, bid) => (Some(next), Some(next), bids ++ bid)
+            case LotViewStep.Skip => (row, applied)
+            case LotViewStep.Write(next, _) => (Some(next), AppliedEvent(sequence, stored, next) :: applied)
           }
         case (failed, _) => failed
       }
-      .map((_, written, bids) => (written, bids))
+      .map((_, applied) => applied.reverse)
 
   private def bid(lotId: UUID, sequence: Long, stored: StoredLotEvent): Option[BidRecord] =
     stored.event.bidPlaced.map { placed =>
