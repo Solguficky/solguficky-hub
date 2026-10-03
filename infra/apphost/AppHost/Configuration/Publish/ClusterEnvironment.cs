@@ -21,7 +21,7 @@ internal static class ClusterEnvironment
             .WithHelm(helm => helm
                 .WithChartName(ChartName)
                 .WithChartVersion(ChartVersion)
-                .WithChartDescription("Solguficky Hub: Identity, Meetups, Notifications and Telegram Bot"))
+                .WithChartDescription("Solguficky Hub: Identity, Meetups, Notifications and Hub Bot"))
             // Дашборд Aspire стал бы пятым workload'ом с доступом к телеметрии всех
             // сервисов; телеметрия прода идёт через Collector (ADR-053).
             .WithProperties(environment => environment.DashboardEnabled = false);

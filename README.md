@@ -11,17 +11,17 @@
 - Protobuf-контракты и контур Go-кодогенерации Identity;
 - Identity: gRPC-сервер разрешения личности поверх PostgreSQL;
 - Meetups: скелет gRPC-сервиса на F#, отвечающий на операции контракта заглушкой;
-- скелет Telegram Bot на TypeScript;
+- Hub Bot — бот хаба на TypeScript;
 - AppHost на .NET Aspire, поднимающий эти компоненты, NATS и PostgreSQL;
 - конфигурация локального стека логов и инструменты разработки;
-- проектные решения по Meetups, Identity, Telegram Bot и Notifications — в ADR и service briefs.
+- проектные решения по Meetups, Identity, Hub Bot и Notifications — в ADR и service briefs.
 
 Актуальные статусы Current / MVP / Future собраны в [архитектурном обзоре](docs/architecture/overview.md) и [service briefs](docs/services/README.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
 
 ## Структура
 
 ```text
-apps/                         компоненты платформы: Identity, Meetups, Telegram Bot
+apps/                         компоненты платформы: Identity, Meetups, Hub Bot
 contracts/proto/              Protobuf-контракты NATS и gRPC
 docs/                         продукт, архитектура, решения и руководства
 infra/apphost/                локальная оркестрация .NET Aspire: AppHost и его тесты
