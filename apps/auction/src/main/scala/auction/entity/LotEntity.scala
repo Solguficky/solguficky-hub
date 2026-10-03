@@ -1,7 +1,6 @@
 package auction.entity
 
 import auction.lot.*
-import auction.projection.LotTags
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.actor.typed.scaladsl.Behaviors

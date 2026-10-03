@@ -46,7 +46,10 @@ enum LotViewStep {
  */
 enum LotViewDefect {
 
-  /** Между версией read model и номером события пропуск: read model перестала бы совпадать с журналом. */
+  /**
+   * Между версией read model и номером события пропуск. Обработчик сначала дочитывает пропущенные события из журнала
+   * лота ([[LotView.fold]]); дефектом пропуск остаётся, только если журнал их не держит.
+   */
   case Gap(lotId: UUID, version: Long, sequence: Long)
 
   /** Событие не рождает лот и не применяется к рождённому: журнал лота начат не с `LotDrafted`. */
@@ -81,6 +84,28 @@ object LotView {
       }
     }
   }
+
+  /**
+   * Свёртка нескольких событий лота подряд — догонка пропуска вместе с доставленным событием. Итог — строка после
+   * последнего применённого события, если хоть одно применилось, и ставки всех применённых.
+   */
+  def fold(
+      current: Option[LotViewRow],
+      lotId: UUID,
+      events: Seq[(Long, StoredLotEvent)]
+  ): Either[LotViewDefect, (Option[LotViewRow], List[BidRecord])] =
+    events
+      .foldLeft[Either[LotViewDefect, (Option[LotViewRow], Option[LotViewRow], List[BidRecord])]](
+        Right((current, None, Nil))
+      ) {
+        case (Right((row, written, bids)), (sequence, stored)) =>
+          project(row, lotId, sequence, stored).map {
+            case LotViewStep.Skip => (row, written, bids)
+            case LotViewStep.Write(next, bid) => (Some(next), Some(next), bids ++ bid)
+          }
+        case (failed, _) => failed
+      }
+      .map((_, written, bids) => (written, bids))
 
   private def bid(lotId: UUID, sequence: Long, stored: StoredLotEvent): Option[BidRecord] =
     stored.event.bidPlaced.map { placed =>

@@ -1,5 +1,6 @@
 package auction.projection
 
+import auction.entity.LotTags
 import auction.entity.StoredLotEvent
 import auction.telemetry.ProjectionBacklog
 import auction.telemetry.ProjectionMetrics
@@ -71,19 +72,21 @@ object LotProjection {
   }
 
   /**
-   * Отставание каждого тега проекции для `events_behind`: голова тега в `event_tag` и offset в хранилище проекции.
-   * Offset событий по тегу у Pekko Persistence JDBC — `ordering` строки журнала, и в хранилище он лежит его числом.
+   * Отставание каждого тега проекции для `events_behind`: число строк `event_tag` этого тега после его offset. Offset
+   * событий по тегу у Pekko Persistence JDBC — `ordering` строки журнала, общий для всех тегов, поэтому считается число
+   * строк, а не разность номеров: она включала бы события чужих тегов.
    */
   def backlog(system: ActorSystem[?], timeout: FiniteDuration): () => Map[String, Long] = {
     val database = journal(system)
+    val tags = LotTags.all
     () => {
-      val heads = sql"SELECT tag, MAX(event_id) FROM event_tag WHERE tag LIKE 'lot-%' GROUP BY tag".as[(String, Long)]
-      val offsets =
-        sql"SELECT projection_key, current_offset FROM pekko_projection_offset_store WHERE projection_name = $Name"
-          .as[(String, String)]
-      val read = database.run(heads.zip(offsets))
-      val (head, offset) = Await.result(read, timeout)
-      ProjectionBacklog.behind(LotTags.all, head.toMap, offset.map((tag, value) => tag -> value.toLong).toMap)
+      val behind =
+        sql"""SELECT t.tag, COUNT(*) FROM event_tag t
+              LEFT JOIN pekko_projection_offset_store o ON o.projection_name = $Name AND o.projection_key = t.tag
+              WHERE t.tag = ANY(${tags.mkString("{", ",", "}")}::varchar[])
+                AND t.event_id > COALESCE(o.current_offset::bigint, 0)
+              GROUP BY t.tag""".as[(String, Long)]
+      ProjectionBacklog.behind(tags, Await.result(database.run(behind), timeout).toMap)
     }
   }
 

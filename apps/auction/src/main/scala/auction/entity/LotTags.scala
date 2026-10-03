@@ -1,4 +1,4 @@
-package auction.projection
+package auction.entity
 
 /**
  * Схема тегов журнала лота (ADR-061).
@@ -12,12 +12,15 @@ package auction.projection
  */
 object LotTags {
 
-  /** Число срезов. Уменьшить его нельзя без переписывания `event_tag`; это значение входит в формат журнала. */
+  /**
+   * Число срезов — часть формата журнала: и уменьшение, и увеличение переносит лоты в другие теги и переписывает
+   * `event_tag`.
+   */
   val Count: Int = 4
 
   /** Тег лота по номеру среза Pekko. */
   def of(slice: Int): String = s"lot-${Math.floorMod(slice, Count)}"
 
   /** Все теги лота по порядку: по экземпляру проекции на тег. */
-  val all: Vector[String] = Vector.tabulate(Count)(index => s"lot-$index")
+  val all: Vector[String] = Vector.tabulate(Count)(of)
 }

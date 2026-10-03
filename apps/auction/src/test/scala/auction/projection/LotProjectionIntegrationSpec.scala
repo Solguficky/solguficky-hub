@@ -4,6 +4,7 @@ import auction.AuctionNode
 import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.LotJournal
+import auction.entity.LotTags
 import auction.entity.UuidV7
 import auction.lot.*
 import auction.lot.LotFixtures.*
@@ -56,14 +57,14 @@ final class LotProjectionIntegrationSpec
   private given Timeout = Timeout(20.seconds)
 
   /** Обработчик-обёртка: считает вызовы и может отказать после того, как рабочий обработчик уже записал строки. */
-  private final class Probe(json: () => LotViewJson) {
+  private final class Probe(working: () => LotViewHandler) {
     val calls = new AtomicInteger(0)
     val failNext = new AtomicInteger(0)
     val failing = new AtomicBoolean(false)
     val failed = new AtomicBoolean(false)
 
     def handler(): JdbcHandler[LotProjection.Envelope, JdbcSession] = {
-      val inner = new LotViewHandler(json())
+      val inner = working()
       JdbcHandler { (session: JdbcSession, envelope: LotProjection.Envelope) =>
         if (failing.get()) throw new IllegalStateException("handler is down")
         calls.incrementAndGet()
@@ -94,7 +95,7 @@ final class LotProjectionIntegrationSpec
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
       val reader = InMemoryMetricReader.create()
       val metrics = ProjectionMetrics(SdkMeterProvider.builder().registerMetricReader(reader).build().get("t"), clock)
-      val probe = Probe(() => LotViewJson(kit.system))
+      val probe = Probe(() => LotViewHandler(kit.system))
       LotProjection.init(kit.system, metrics, () => probe.handler())
       metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(kit.system, 5.seconds))
       use(Node(kit, sharding, probe, reader))
@@ -289,6 +290,28 @@ final class LotProjectionIntegrationSpec
           val viewed = LotJournal.restoreLot(LotViewJson(node.kit.system).read(stored))
           viewed shouldBe lot(node, id).ask[Lot](LotEntity.Get(_)).futureValue
         }
+      }
+    }
+
+    "reads the events its tag stream does not carry from the journal of the lot" in {
+      val database = migrated()
+      withNode(database) { node =>
+        node.probe.failing.set(true)
+        val id = tradingLot(node)
+        // Поток тега без первых двух событий лота — так выглядят события, записанные до тегов, и транзакция,
+        // закоммиченная позже окна read journal. Проекция видит первым третье событие лота.
+        withConnection(database)(
+          _.prepareStatement(
+            s"DELETE FROM event_tag WHERE event_id IN (SELECT ordering FROM event_journal WHERE persistence_id = 'lot|$id' AND sequence_number <= 2)"
+          ).executeUpdate()
+        )
+        node.probe.failing.set(false)
+        bidOn(node, id, who = 1, amount = 110).futureValue.isRight shouldBe true
+        eventually(version(database, id) shouldBe Some(4L))
+        val stored = query(database, "SELECT state::text FROM lot_view WHERE lot_id = ?", id)(_.getString(1)).head
+        LotJournal.restoreLot(LotViewJson(node.kit.system).read(stored)) shouldBe
+          lot(node, id).ask[Lot](LotEntity.Get(_)).futureValue
+        node.probe.calls.get() shouldBe 2
       }
     }
 

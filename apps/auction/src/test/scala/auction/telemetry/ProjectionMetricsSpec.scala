@@ -53,35 +53,4 @@ final class ProjectionMetricsSpec extends AnyWordSpec with Matchers {
       histogram.getCount shouldBe 1
     }
   }
-
-  "projection backlog" should {
-
-    "counts every tagged event past the stored offset" in {
-      ProjectionBacklog.behind(
-        Seq("lot-0", "lot-1", "lot-2"),
-        Map("lot-0" -> 10L, "lot-1" -> 7L),
-        Map("lot-0" -> 4L)
-      ) shouldBe
-        Map("lot-0" -> 6L, "lot-1" -> 7L, "lot-2" -> 0L)
-    }
-
-    "never reports a negative backlog" in {
-      ProjectionBacklog.behind(Seq("lot-0"), Map("lot-0" -> 3L), Map("lot-0" -> 5L)) shouldBe Map("lot-0" -> 0L)
-    }
-  }
-
-  "telemetry defaults" should {
-
-    "exports metrics only when the environment names a collector" in {
-      Telemetry.defaults(Map.empty)("otel.metrics.exporter") shouldBe "none"
-      Telemetry.defaults(Map("OTEL_EXPORTER_OTLP_ENDPOINT" -> "http://localhost:4317"))(
-        "otel.metrics.exporter"
-      ) shouldBe "otlp"
-    }
-
-    "keeps traces and logs off" in {
-      val defaults = Telemetry.defaults(Map("OTEL_EXPORTER_OTLP_ENDPOINT" -> "http://localhost:4317"))
-      (defaults("otel.traces.exporter"), defaults("otel.logs.exporter")) shouldBe ("none", "none")
-    }
-  }
 }

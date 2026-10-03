@@ -1,4 +1,4 @@
-package auction.projection
+package auction.entity
 
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec

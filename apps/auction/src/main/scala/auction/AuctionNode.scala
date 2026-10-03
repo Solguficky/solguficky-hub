@@ -10,7 +10,6 @@ import auction.persistence.JournalDatabase
 import auction.persistence.SlickLotViews
 import auction.projection.LotProjection
 import auction.projection.LotViewHandler
-import auction.projection.LotViewJson
 import auction.telemetry.ProjectionMetrics
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
@@ -62,8 +61,7 @@ object AuctionNode {
    * ограничивает запрос к базе на сборе метрики.
    */
   def startProjection(system: ActorSystem[?], metrics: ProjectionMetrics, backlogTimeout: FiniteDuration): Unit = {
-    val json = LotViewJson(system)
-    LotProjection.init(system, metrics, () => LotViewHandler(json))
+    LotProjection.init(system, metrics, () => LotViewHandler(system))
     metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(system, backlogTimeout))
   }
 

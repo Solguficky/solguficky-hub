@@ -87,12 +87,9 @@ final class ProjectionMetrics(meter: Meter, clock: Clock) {
 object ProjectionBacklog {
 
   /**
-   * Отставание по каждому тегу: последний `ordering` тега в журнале минус сохранённый offset. Тег без событий отстаёт
-   * на ноль, тег без offset — на весь свой журнал.
+   * Отставание по каждому тегу проекции: тег, которого нет в подсчёте, не отстаёт. Без этого тег без новых событий
+   * пропадал бы из метрики, и его ноль был бы неотличим от отсутствия наблюдения.
    */
-  def behind(tags: Seq[String], heads: Map[String, Long], offsets: Map[String, Long]): Map[String, Long] =
-    tags.map { tag =>
-      val head = heads.getOrElse(tag, 0L)
-      tag -> math.max(0L, head - offsets.getOrElse(tag, 0L))
-    }.toMap
+  def behind(tags: Seq[String], counted: Map[String, Long]): Map[String, Long] =
+    tags.map(tag => tag -> counted.getOrElse(tag, 0L)).toMap
 }

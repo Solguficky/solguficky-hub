@@ -97,6 +97,25 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       LotView.project(None, lotId, 1, stored(1, lotScheduled)) shouldBe Left(LotViewDefect.Unborn(lotId, 1))
     }
 
+    "catches up over a gap when the missing events are folded in before the delivered one" in {
+      val events = numbered(journal(List(500, 500)))
+      val (row, _) = deliver(events.take(2))
+      val (folded, bids) = LotView.fold(row, lotId, events.drop(2)).fold(defect => fail(defect.toString), done => done)
+      folded shouldBe deliver(events)._1
+      bids.map(_.sequence) shouldBe List(4L, 5L)
+    }
+
+    "folds a redelivered prefix without writing a row" in {
+      val events = numbered(journal(Nil))
+      val (row, _) = deliver(events)
+      LotView.fold(row, lotId, events) shouldBe Right((None, Nil))
+    }
+
+    "keeps a gap a defect when the catch-up still misses an event" in {
+      val events = numbered(journal(List(500, 500)))
+      LotView.fold(None, lotId, Vector(events(0), events(2))) shouldBe Left(LotViewDefect.Gap(lotId, 1, 3))
+    }
+
     "skips an event at or below the version of the row" in {
       val events = journal(Nil)
       val (row, _) = deliver(numbered(events))
