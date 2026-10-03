@@ -119,6 +119,12 @@ export const screenCatalog = {
     parent: "community",
     refresh: true,
   },
+  refused: {
+    class: "screen",
+    nav: "tree",
+    title: "Отказанные",
+    parent: "manage",
+  },
   card: {
     class: "screen",
     nav: "tree",
@@ -163,6 +169,7 @@ export const screenCatalog = {
   "material-remove-confirm": { class: "screen", nav: "confirm" },
   "broadcast-confirm": { class: "screen", nav: "confirm" },
   "community-close-confirm": { class: "screen", nav: "confirm" },
+  "reconsider-confirm": { class: "screen", nav: "confirm" },
   "broadcast-result": { class: "screen", nav: "exit" },
   question: { class: "question", nav: "question" },
   // Выбор даты кнопками: экран, а не вопрос. Режима ответа у него нет, поэтому

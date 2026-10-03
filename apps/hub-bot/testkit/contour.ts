@@ -353,6 +353,7 @@ export function openBotWire(endpoints: {
   // что и процесс: сервисы, которые начнут его проверять, примут провод как бота.
   const serviceToken = endpoints.botServiceToken;
   const identity = createIdentityClient(endpoints.identityUrl, {
+    communityTimeZone: contourTimeZone,
     tracing,
     serviceToken,
   });

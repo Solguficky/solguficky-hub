@@ -2,10 +2,16 @@ import { create, fromBinary } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ResolveIdentityResponseSchema } from "../../gen/identity/v1/identity_service_pb.js";
+import {
+  ApplicationOutcome,
+  ListRefusedApplicationsResponseSchema,
+  RefusedApplicationSchema,
+  ResolveIdentityResponseSchema,
+} from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { noopTracing } from "../tracing.js";
 import {
+  createApplicationAdministrator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
@@ -248,6 +254,7 @@ describe("identity client", () => {
   it("closes the http2 session on shutdown", () => {
     const abort = vi.spyOn(Http2SessionManager.prototype, "abort");
     const identity = createIdentityClient("http://127.0.0.1:1", {
+      communityTimeZone: "UTC",
       tracing: noopTracing(),
       serviceToken: "bot-token",
     });
@@ -367,5 +374,140 @@ describe("organizer resolver", () => {
         new ConnectError("outside the hub", Code.PermissionDenied),
       ).resolveOrganizerUsername(viewer, organizerId),
     ).resolves.toMatchObject({ kind: "rejected", code: "PermissionDenied" });
+  });
+});
+
+describe("application administrator", () => {
+  const actor = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    globalRoles: ["admin"],
+  };
+  const applicationId = "0192f0a0-0000-7000-8000-00000000a001";
+
+  function refusedRow(
+    overrides: Partial<{
+      requestedRole: GlobalRole;
+      outcome: ApplicationOutcome;
+      decidedAt: string;
+    }> = {},
+  ) {
+    return create(RefusedApplicationSchema, {
+      applicationId,
+      identityId: "0192f0a0-0000-7000-8000-00000000b001",
+      telegramUserId: 42n,
+      telegramUsername: "refused",
+      requestedRole: overrides.requestedRole ?? GlobalRole.PUBLIC,
+      decision: {
+        outcome: overrides.outcome ?? ApplicationOutcome.BLOCKED,
+        decidedBy: { identityId: actor.identityId, telegramUserId: 7n },
+        decidedAt: overrides.decidedAt ?? "2026-10-02T11:05:00.000Z",
+      },
+    });
+  }
+
+  function listing(...rows: ReturnType<typeof refusedRow>[]) {
+    return createApplicationAdministrator(
+      {
+        listRefusedApplications: vi.fn().mockResolvedValue(
+          create(ListRefusedApplicationsResponseSchema, {
+            applications: rows,
+          }),
+        ),
+        reconsiderApplication: vi.fn(),
+      },
+      { communityTimeZone: "Europe/Moscow" },
+    );
+  }
+
+  it("maps a refusal and moves its moment into the community zone", async () => {
+    const result = await listing(refusedRow()).refusedApplications(actor);
+
+    expect(result).toEqual({
+      kind: "ok",
+      value: [
+        {
+          applicationId,
+          identityId: "0192f0a0-0000-7000-8000-00000000b001",
+          telegramUserId: 42n,
+          telegramUsername: "refused",
+          circle: "public",
+          outcome: "blocked",
+          decidedBy: { telegramUserId: 7n },
+          decidedAt: { year: 2026, month: 10, day: 2, hours: 14, minutes: 5 },
+        },
+      ],
+    });
+  });
+
+  it("reads a declined refusal of the hub circle", async () => {
+    const result = await listing(
+      refusedRow({
+        requestedRole: GlobalRole.MEMBER,
+        outcome: ApplicationOutcome.DECLINED,
+      }),
+    ).refusedApplications(actor);
+
+    expect(result).toMatchObject({
+      kind: "ok",
+      value: [{ circle: "member", outcome: "declined" }],
+    });
+  });
+
+  it.each([
+    [
+      "an outcome that is not a refusal",
+      { outcome: ApplicationOutcome.ADMITTED },
+    ],
+    ["a circle the surfaces never ask", { requestedRole: GlobalRole.ADMIN }],
+    ["a moment that is not RFC 3339", { decidedAt: "yesterday" }],
+  ])("calls the whole list a contract violation on %s", async (_, row) => {
+    await expect(
+      listing(refusedRow(), refusedRow(row)).refusedApplications(actor),
+    ).resolves.toEqual({ kind: "invalid" });
+  });
+
+  it("sends the actor and the application on reconsider", async () => {
+    const reconsiderApplication = vi.fn().mockResolvedValue({ changed: false });
+    const administrator = createApplicationAdministrator(
+      {
+        listRefusedApplications: vi.fn(),
+        reconsiderApplication,
+      },
+      { communityTimeZone: "UTC" },
+    );
+
+    await expect(
+      administrator.reconsiderApplication(actor, applicationId),
+    ).resolves.toEqual({ kind: "ok", value: false });
+    expect(reconsiderApplication).toHaveBeenCalledWith(
+      {
+        actor: {
+          identityId: actor.identityId,
+          globalRoles: [GlobalRole.ADMIN],
+        },
+        applicationId,
+      },
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    [Code.FailedPrecondition, "not-refused"],
+    [Code.PermissionDenied, "forbidden"],
+    [Code.NotFound, "invalid"],
+    [Code.Unavailable, "unavailable"],
+  ])("maps reconsider failure %s to %s", async (code, kind) => {
+    const administrator = createApplicationAdministrator(
+      {
+        listRefusedApplications: vi.fn(),
+        reconsiderApplication: () =>
+          Promise.reject(new ConnectError("refused", code)),
+      },
+      { communityTimeZone: "UTC" },
+    );
+
+    await expect(
+      administrator.reconsiderApplication(actor, applicationId),
+    ).resolves.toMatchObject({ kind });
   });
 });
