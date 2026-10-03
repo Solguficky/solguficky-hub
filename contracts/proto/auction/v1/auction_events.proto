@@ -82,8 +82,10 @@ message LotState {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens: the auction the lot belongs
-  // to. Always set: the link belongs to the fact, not to a guess of the reader.
+  // Canonical lowercase UUID with hyphens: the auction the lot belongs to.
+  // Version 5 names an auction born at a meetup, as AuctionState.id; version 7
+  // names an auction that has no journal of its own and belongs to no meetup.
+  // Always set: the link belongs to the fact, not to a guess of the reader.
   string auction_id = 2;
 
   // The trading conditions. Set by lot_scheduled and replaced by every repeated
@@ -182,8 +184,9 @@ message AuctionEvent {
   // is the same value again when that row is published more than once.
   string event_id = 1;
 
-  // Canonical lowercase UUIDv7 with hyphens. The auction this fact belongs to. It
-  // repeats state.id so that the envelope alone identifies the subject of the fact.
+  // Canonical lowercase UUIDv5 with hyphens, as state.id. The auction this fact
+  // belongs to. It repeats state.id so that the envelope alone
+  // identifies the subject of the fact.
   string auction_id = 2;
 
   // Position of the event in the journal of the auction, starting at 1, so 0 is
@@ -205,6 +208,7 @@ message AuctionEvent {
   // Why the state changed - the occasion. Exactly one is set, and an empty oneof is
   // not a value.
   oneof occasion {
+    AuctionDrafted auction_drafted = 17;
     AuctionScheduled auction_scheduled = 6;
     LotAdded lot_added = 7;
     LotRemoved lot_removed = 8;
@@ -219,12 +223,14 @@ message AuctionEvent {
   }
 }
 
-// The public state of an auction after an event. The service reads no auction yet,
-// so no second definition exists to line up with; the statuses start at 10 so that
-// a read snapshot, when it comes, has room below them for its own values, the way
-// LotSnapshot spends 4 to 6.
+// The public state of an auction after an event.
+//
+// It is defined here and does not reuse the read snapshot of the service
+// contract, for the reason LotState gives. Field numbers match
+// auction.v1.AuctionSnapshot so that the two stay readable side by side.
 message AuctionState {
-  // Canonical lowercase UUIDv7 with hyphens.
+  // Canonical lowercase UUIDv5 with hyphens: the server derives it from
+  // meetup_id, so it carries no time and does not order auctions.
   string id = 1;
 
   // Set by auction_scheduled and replaced by every repeated auction_scheduled
@@ -237,6 +243,10 @@ message AuctionState {
   // unchanged after. A lot withdrawn later stays in it: withdrawal is a fact of the
   // lot, not of the registry. The order carries no meaning.
   repeated string lot_ids = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup the auction was born at.
+  // Set by auction_drafted and never changed after. Always set.
+  string meetup_id = 4;
 
   // Where the auction is. Exactly one is set.
   //
@@ -258,7 +268,8 @@ message AuctionState {
     Finished finished = 17;
   }
 
-  // The initial state: no configuration yet; lots may be added and removed.
+  // The auction was born at its meetup: no configuration yet; lots may be added
+  // and removed.
   message Draft {}
 
   // The configuration is checked and in place; lots may still be added and removed.
@@ -295,6 +306,11 @@ message AuctionState {
   // Terminal.
   message Finished {}
 }
+
+// The auction came into existence at a meetup: the meetup is state.meetup_id and
+// the status is draft. Who enabled it is not carried. It is the first fact of the
+// journal of the auction.
+message AuctionDrafted {}
 
 // The configuration was set or replaced; it is state.config. The fact repeats on
 // every change until prebidding starts, and each body is a whole snapshot.

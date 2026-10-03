@@ -16,7 +16,9 @@ inputs:
     paths:
       # Боту аукциона нужны ResolveIdentity Identity и чтения Auction:
       # лот, лента, имена участников и изображение. Meetups и Notifications
-      # он не зовёт.
+      # он не зовёт. Схему фактов шины он не читает, но генерирует: снимок
+      # аукциона в ответе чтения берёт её типы статусов.
       - contracts/proto/auction/v1/auction.proto
+      - contracts/proto/auction/v1/auction_events.proto
       - contracts/proto/auction/v1/auction_service.proto
       - contracts/proto/identity
