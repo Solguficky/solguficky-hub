@@ -32,11 +32,7 @@ service IdentityService {
   rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
   rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
   rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
-  // Reads the one queue of open applications of both surfaces, one card at a
-  // time, oldest first.
   rpc ReadApplicationQueue(ReadApplicationQueueRequest) returns (ReadApplicationQueueResponse);
-  // Decides an open application. Only the first decision on an application
-  // takes effect; a later one is answered with the decision already made.
   rpc AdmitApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
   rpc DeclineApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
   rpc ListRefusedApplications(ListRefusedApplicationsRequest) returns (ListRefusedApplicationsResponse);
@@ -83,7 +79,7 @@ enum ApplicationOutcome {
   // No value: the field is unset or the outcome is unknown to the consumer.
   APPLICATION_OUTCOME_UNSPECIFIED = 0;
 
-  // An administrator admitted it, directly or by reconsidering a refusal.
+  // An administrator admitted it.
   APPLICATION_OUTCOME_ADMITTED = 1;
 
   // Refused without a block: the person keeps every role they hold.
@@ -92,12 +88,10 @@ enum ApplicationOutcome {
   // Refused with a block of the profile.
   APPLICATION_OUTCOME_BLOCKED = 3;
 
-  // Closed because the requested circle was granted another way: an allowed
-  // username, a stronger circle or another application.
+  // Closed by a grant of the circle that was not a decision on it.
   APPLICATION_OUTCOME_CLOSED_BY_GRANT = 4;
 
-  // Closed because the profile was blocked by an act that was not a refusal of
-  // this application.
+  // Closed by a block of the profile that was not a refusal of it.
   APPLICATION_OUTCOME_CLOSED_BY_BLOCK = 5;
 }
 
@@ -141,29 +135,27 @@ message ApplicationCard {
   // Absent when the person came without a source code.
   ApplicationSource source = 7;
 
-  // RFC 3339 instant in UTC with millisecond precision: the moment the
-  // application was created. The age shown on the card is computed from it.
+  // RFC 3339 instant in UTC with exactly millisecond precision: the moment
+  // the application was created.
   string created_at = 8;
 }
 
 message ReadApplicationQueueRequest {
   IdentityActor actor = 1;
 
-  // Absent reads the oldest open application. Present reads the oldest one
-  // strictly after this position.
+  // Absent reads from the start of the queue.
   ApplicationCursor after = 2;
 }
 
 message ReadApplicationQueueResponse {
-  // Absent when no open application lies after the cursor: the queue does not
-  // wrap around to its start.
+  // Absent when no open application lies after the cursor.
   ApplicationCard application = 1;
 
   // 1-based position of the card among open applications. Zero when there is
   // no card.
   int32 position = 2;
 
-  // Number of open applications at the moment of reading.
+  // Number of open applications, counted in the same read as position.
   int32 total = 3;
 }
 
@@ -184,7 +176,7 @@ message ApplicationDecision {
   ApplicationOutcome outcome = 1;
 
   // Absent when no administrator closed the application: an allowed username
-  // or a data migration did.
+  // redeemed on /start did.
   ApplicationDecider decided_by = 2;
 
   // RFC 3339 instant in UTC: the moment the application was closed.
@@ -201,8 +193,7 @@ message DecideApplicationRequest {
 message DecideApplicationResponse {
   // Exactly one is set.
   oneof result {
-    // This call closed the application. For a refusal the outcome names what
-    // it did: APPLICATION_OUTCOME_BLOCKED or APPLICATION_OUTCOME_DECLINED.
+    // This call closed the application.
     ApplicationDecision decided = 1;
 
     // The application had been closed before this call, which changed
@@ -218,6 +209,7 @@ message RefusedApplication {
   // Canonical lowercase UUIDv7 string with hyphens of the applicant.
   string identity_id = 2;
 
+  // Telegram user id of the applicant.
   int64 telegram_user_id = 3;
 
   // Username without the leading '@'. Absent when the account has none. There
@@ -242,7 +234,7 @@ message ReconsiderApplicationRequest {
 }
 
 message ReconsiderApplicationResponse {
-  // False when the person already holds the circle of the application.
+  // False when the target state had already been reached.
   bool changed = 1;
 }
 
