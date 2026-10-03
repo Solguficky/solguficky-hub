@@ -32,6 +32,11 @@ service IdentityService {
   rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
   rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
   rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
+  rpc ReadApplicationQueue(ReadApplicationQueueRequest) returns (ReadApplicationQueueResponse);
+  rpc AdmitApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
+  rpc DeclineApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
+  rpc ListRefusedApplications(ListRefusedApplicationsRequest) returns (ListRefusedApplicationsResponse);
+  rpc ReconsiderApplication(ReconsiderApplicationRequest) returns (ReconsiderApplicationResponse);
 }
 
 // The caller passes the identity established from the same Telegram update.
@@ -68,6 +73,170 @@ message ChangeAllowedUsernameRequest {
   string username = 2;
 }
 message ChangeAllowedUsernameResponse { bool changed = 1; }
+
+// How an application was closed. An open application has no outcome.
+enum ApplicationOutcome {
+  // No value: the field is unset or the outcome is unknown to the consumer.
+  APPLICATION_OUTCOME_UNSPECIFIED = 0;
+
+  // An administrator admitted it.
+  APPLICATION_OUTCOME_ADMITTED = 1;
+
+  // Refused without a block: the person keeps every role they hold.
+  APPLICATION_OUTCOME_DECLINED = 2;
+
+  // Refused with a block of the profile.
+  APPLICATION_OUTCOME_BLOCKED = 3;
+
+  // Closed by a grant of the circle that was not a decision on it.
+  APPLICATION_OUTCOME_CLOSED_BY_GRANT = 4;
+
+  // Closed by a block of the profile that was not a refusal of it.
+  APPLICATION_OUTCOME_CLOSED_BY_BLOCK = 5;
+}
+
+// Position in the queue. Both fields are set together and are copied from a
+// card exactly as received.
+message ApplicationCursor {
+  // created_at of the card, as received.
+  string created_at = 1;
+
+  // application_id of the card, as received.
+  string application_id = 2;
+}
+
+message ApplicationSource {
+  // Label of the channel in the registry. Absent when the code the person came
+  // with was unknown, malformed or too long: the source is then "unknown",
+  // which is not the same as no source at all.
+  optional string channel_label = 1;
+}
+
+message ApplicationCard {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string application_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens of the applicant.
+  string identity_id = 2;
+
+  // Telegram user id of the applicant, for the tg://user?id= profile link.
+  int64 telegram_user_id = 3;
+
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 4;
+
+  // Telegram first_name given at the /start that created the application.
+  // Absent for applications created by data migration.
+  optional string first_name = 5;
+
+  // The circle applied for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  GlobalRole requested_role = 6;
+
+  // Absent when the person came without a source code.
+  ApplicationSource source = 7;
+
+  // RFC 3339 instant in UTC with exactly millisecond precision: the moment
+  // the application was created.
+  string created_at = 8;
+}
+
+message ReadApplicationQueueRequest {
+  IdentityActor actor = 1;
+
+  // Absent reads from the start of the queue.
+  ApplicationCursor after = 2;
+}
+
+message ReadApplicationQueueResponse {
+  // Absent when no open application lies after the cursor.
+  ApplicationCard application = 1;
+
+  // 1-based position of the card among open applications. Zero when there is
+  // no card.
+  int32 position = 2;
+
+  // Number of open applications, counted in the same read as position.
+  int32 total = 3;
+}
+
+// The administrator whose act closed an application.
+message ApplicationDecider {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+
+  // Telegram user id, for naming a decider without a username.
+  int64 telegram_user_id = 3;
+}
+
+message ApplicationDecision {
+  // Never APPLICATION_OUTCOME_UNSPECIFIED.
+  ApplicationOutcome outcome = 1;
+
+  // Absent when no administrator closed the application: an allowed username
+  // redeemed on /start did.
+  ApplicationDecider decided_by = 2;
+
+  // RFC 3339 instant in UTC: the moment the application was closed.
+  string decided_at = 3;
+}
+
+message DecideApplicationRequest {
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string application_id = 2;
+}
+
+message DecideApplicationResponse {
+  // Exactly one is set.
+  oneof result {
+    // This call closed the application.
+    ApplicationDecision decided = 1;
+
+    // The application had been closed before this call, which changed
+    // nothing.
+    ApplicationDecision already_decided = 2;
+  }
+}
+
+message RefusedApplication {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string application_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens of the applicant.
+  string identity_id = 2;
+
+  // Telegram user id of the applicant.
+  int64 telegram_user_id = 3;
+
+  // Username without the leading '@'. Absent when the account has none. There
+  // is no first_name: it is erased when the application is decided.
+  optional string telegram_username = 4;
+
+  // The circle applied for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  GlobalRole requested_role = 5;
+
+  // Outcome is APPLICATION_OUTCOME_BLOCKED or APPLICATION_OUTCOME_DECLINED.
+  ApplicationDecision decision = 6;
+}
+
+message ListRefusedApplicationsRequest { IdentityActor actor = 1; }
+message ListRefusedApplicationsResponse { repeated RefusedApplication applications = 1; }
+
+message ReconsiderApplicationRequest {
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens of a refused application.
+  string application_id = 2;
+}
+
+message ReconsiderApplicationResponse {
+  // False when the target state had already been reached.
+  bool changed = 1;
+}
 
 message ResolveIdentityRequest {
   // Telegram user id taken from a Telegram update. The caller establishes it
