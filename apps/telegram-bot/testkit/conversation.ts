@@ -46,6 +46,8 @@ type Screen = {
   // вопросы нумеруются в том порядке, в каком задавались.
   asked: boolean;
   format: ScreenFormat;
+  // Сколько фото несёт богатое сообщение: постеры карточки (PER-443).
+  posters: number;
   // Сообщение с файлом: его текст — подпись, и правится оно своим методом.
   media?: ScreenMedia;
   // Сообщение, на которое экран отвечает: Telegram возвращает его в нажатии, и
@@ -87,6 +89,8 @@ export type Person = {
    * с последнего. Только подписи: `callback_data` сценарий не видит.
    */
   pressable(): string[];
+  /** Сколько фото-постеров несёт последний экран. */
+  posters(): number;
   /** Сколько сообщений бота в чате: правка экрана их не прибавляет. */
   messages(): number;
   /**
@@ -351,6 +355,9 @@ export function startConversation(
     sees() {
       return lastScreen().text;
     },
+    posters() {
+      return lastScreen().posters;
+    },
     buttons() {
       return lastScreen().buttons.map((button) => button.text);
     },
@@ -433,7 +440,7 @@ type ScreenPayload = {
   document?: unknown;
   photo?: unknown;
   parse_mode?: unknown;
-  rich_message?: { html?: unknown };
+  rich_message?: { html?: unknown; media?: unknown };
   entities?: MessageEntity[];
   message_id?: unknown;
   reply_parameters?: { message_id?: unknown };
@@ -538,6 +545,11 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
       typeof payload.reply_parameters?.message_id === "number"
         ? payload.reply_parameters.message_id
         : previous?.replyTo;
+    // Удалённое сообщение из чата исчезает: так бот закрывает вопрос.
+    if (call.method === "deleteMessage") {
+      current.delete(messageId);
+      return;
+    }
     let next: Screen | undefined;
     if (
       (sent ||
@@ -560,6 +572,9 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
           payload.reply_markup?.force_reply === true ||
           previous?.asked === true,
         format,
+        posters: Array.isArray(payload.rich_message?.media)
+          ? payload.rich_message.media.length
+          : 0,
         ...(media === undefined ? {} : { media }),
         ...(replyTo === undefined ? {} : { replyTo }),
       };

@@ -73,6 +73,29 @@ describe("материалы сходки", () => {
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([]);
   });
 
+  it("фото доезжает до Meetups с видом и возвращается постером в карточке", async () => {
+    const { telegramUserId, person: organizer } = await organizerAtStart(
+      wire,
+      direct,
+    );
+    await organizer.presses("Управление");
+    await organizer.presses("Создать сходку");
+    await fillsMeetupForm(organizer, titleFor("постер", telegramUserId));
+    await organizer.presses("Опубликовать");
+    await organizer.opensLink(meetupIdFromStartLink(organizer.sees()));
+    await organizer.presses("Материалы (0)");
+    await organizer.presses("Прикрепить материал");
+    await organizer.sendsPhoto();
+    await organizer.says("Афиша");
+    await organizer.presses("Да, прикрепить");
+    expect(organizer.sees()).toContain("1. Афиша");
+
+    await organizer.presses("‹ Сходка");
+
+    // Вид файла пережил круг через Meetups: без него карточка пришла бы без фото.
+    expect(organizer.posters()).toBe(1);
+  });
+
   it("прикрепление по устаревшей карточке даёт кадр конфликта и повторяется по свежей", async () => {
     const { adminId, meetupId, organizer } = await organizerConfirmingMaterial(
       "материал поверх правки",

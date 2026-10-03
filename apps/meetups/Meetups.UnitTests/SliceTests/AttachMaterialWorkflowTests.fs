@@ -30,7 +30,7 @@ let private run (viewer: Viewer) (materialId: MaterialId) (deps: Deps) =
             Id = Sample.meetupId
             MaterialId = materialId
             Title = "Афиша"
-            Source = FileId "file-1"
+            Source = FileId("file-1", OtherFile)
             Viewer = viewer
             ExpectedVersion = Sample.expectedVersion
         }
@@ -71,7 +71,7 @@ let ``A material is attached and written as one event`` () =
             Id = Sample.otherMaterialId
             Position = 1
             Title = "Афиша"
-            Source = FileId "file-1"
+            Source = FileId("file-1", OtherFile)
             BoundBy = Sample.authorId
         }
 

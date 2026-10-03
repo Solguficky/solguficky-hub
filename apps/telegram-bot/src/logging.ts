@@ -22,6 +22,8 @@ export type LogFields = {
   stack?: string;
   grpc_code?: string;
   reply_error?: string;
+  // Telegram отверг карточку с постерами, и она ушла без них (PER-443).
+  posters_error?: string;
   meetup_id?: string;
   signal?: string;
   timeout?: number;

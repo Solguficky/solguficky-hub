@@ -211,7 +211,9 @@ module Outbound =
     let materialSource (value: MaterialSource) : Meetups.V1.MeetupMaterialSource =
         match value with
         | MessageLink link -> Meetups.V1.MeetupMaterialSource(MessageLink = link)
-        | FileId fileId -> Meetups.V1.MeetupMaterialSource(FileId = fileId)
+        | FileId(fileId, Photo) ->
+            Meetups.V1.MeetupMaterialSource(FileId = fileId, FileKind = Meetups.V1.MeetupMaterialFileKind.Photo)
+        | FileId(fileId, OtherFile) -> Meetups.V1.MeetupMaterialSource(FileId = fileId)
 
     /// Материал на проводе несёт только то, что видит потребитель: порядок
     /// передаётся порядком repeated-поля, а авторство привязки остаётся внутренним —

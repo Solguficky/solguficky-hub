@@ -195,6 +195,16 @@ function checkRules(
       }
       break;
     }
+    case "choice":
+      // Выбор кнопками режима ответа не несёт: иначе после нажатия он остался
+      // бы висеть в клиенте (зонд PER-443).
+      if (asks || labels(last).join("|") !== "Отмена") {
+        found.push([
+          "nav",
+          `выбор кнопками кончается рядом [Отмена] и не несёт force_reply, а пришло ${describeRows(rows)}${asks ? " с force_reply" : ""}`,
+        ]);
+      }
+      break;
     case "exit":
       if (
         !labels(last).some(
@@ -265,8 +275,15 @@ function checkRules(
     if (button.text === "Обновить" && entry.refresh !== true) {
       found.push(["vocabulary", "«Обновить» есть только у состава сообщества"]);
     }
-    if (button.text === "Отмена" && entry.nav !== "question") {
-      found.push(["vocabulary", "«Отмена» — выход из вопроса, а не с экрана"]);
+    if (
+      button.text === "Отмена" &&
+      entry.nav !== "question" &&
+      entry.nav !== "choice"
+    ) {
+      found.push([
+        "vocabulary",
+        "«Отмена» — выход из вопроса или выбора даты, а не с экрана",
+      ]);
     }
     if (button.text === "Открыть сходку" && entry.class !== "trace") {
       found.push([

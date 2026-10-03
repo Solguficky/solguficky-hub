@@ -214,7 +214,7 @@ let ``Every material source survives the round trip through the row column`` () 
                 Id = Sample.otherMaterialId
                 Position = 2
                 Title = "Афиша"
-                Source = FileId "AgACAgIAAxkBAAI"
+                Source = FileId("AgACAgIAAxkBAAI", OtherFile)
                 BoundBy = Sample.otherAuthorId
             }
         ]
@@ -230,6 +230,58 @@ let ``Every material source survives the round trip through the row column`` () 
         |> MeetupRow.toSnapshot
 
     test <@ restored.Materials = materials @>
+
+/// Вид файла переживает круг через колонку: фото остаётся фото (PER-443).
+[<Fact>]
+let ``A photo keeps its file kind through the row column`` () =
+    let photo =
+        { Sample.material with
+            Source = FileId("AgACAgIAAxkBAAI", Photo)
+        }
+
+    let snapshot =
+        { Meetup.toSnapshot Sample.titled with
+            Materials = [ photo ]
+        }
+
+    let row = MeetupRow.ofSnapshot snapshot
+
+    test <@ row.Materials.Contains "\"file_kind\":\"photo\"" @>
+    test <@ (MeetupRow.toSnapshot row).Materials = [ photo ] @>
+
+/// Строка, записанная до PER-443, вида не несёт: файл читается как «не фото», а
+/// не роняет чтение. Форма без ключа — она же форма файла, который фото не был.
+[<Fact>]
+let ``A file stored without a file kind reads as not a photo`` () =
+    let row =
+        { MeetupRow.ofSnapshot (Meetup.toSnapshot Sample.withMaterial) with
+            Materials =
+                """[{"id":"0199c0de-0000-7000-8000-0000000000a1","position":1,"title":"x","source":{"kind":"file_id","value":"y"},"bound_by":"0199c0de-0000-7000-8000-000000000001"}]"""
+        }
+
+    let stored =
+        (MeetupRow.toSnapshot row).Materials
+        |> List.exactlyOne
+
+    test <@ stored.Source = FileId("y", OtherFile) @>
+
+    let written =
+        MeetupRow.ofSnapshot
+            { Meetup.toSnapshot Sample.titled with
+                Materials = [ stored ]
+            }
+
+    test <@ not (written.Materials.Contains "file_kind") @>
+
+[<Fact>]
+let ``An unknown material file kind is rejected instead of defaulting`` () =
+    let row =
+        { MeetupRow.ofSnapshot (Meetup.toSnapshot Sample.withMaterial) with
+            Materials =
+                """[{"id":"0199c0de-0000-7000-8000-0000000000a1","position":1,"title":"x","source":{"kind":"file_id","value":"y","file_kind":"hologram"},"bound_by":"0199c0de-0000-7000-8000-000000000001"}]"""
+        }
+
+    raises<exn> <@ MeetupRow.toSnapshot row @>
 
 /// Строку с чужим видом источника адаптер обязан ронять, а не подставлять значение
 /// по умолчанию: порча не должна становиться правдоподобным материалом.

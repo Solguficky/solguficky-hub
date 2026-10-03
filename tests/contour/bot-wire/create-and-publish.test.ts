@@ -38,7 +38,11 @@ describe("провод бота", () => {
     await organizer.presses("Управление");
     await organizer.presses("Создать сходку");
     await organizer.says("Настолки в контуре");
+    // Дата открывается экраном заготовок без режима ответа; дату, которой
+    // среди них нет, пишут текстом через «Другая дата».
     await organizer.presses("Дата и время");
+    expect(organizer.buttons()).toContain("Другая дата");
+    await organizer.presses("Другая дата");
     await organizer.says(`12.06.${year} 19:00`);
     await organizer.presses("Место");
     await organizer.says("Циферблат");

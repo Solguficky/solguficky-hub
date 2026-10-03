@@ -75,6 +75,20 @@ message MeetupMaterialSource {
     // Bot API file_id of the attached file, carried as the identifier itself.
     string file_id = 2;
   }
+
+  // What Telegram delivered the file as. It describes file_id only and stays
+  // UNSPECIFIED next to message_link. A file stored before the field existed
+  // reads as UNSPECIFIED, which means "not a photo". No other file metadata
+  // is carried: no MIME type, size or name.
+  MeetupMaterialFileKind file_kind = 3;
+}
+
+// A Bot API file_id is bound to the kind it was received as: a photo cannot be
+// sent as a document and a document cannot be shown as a photo.
+enum MeetupMaterialFileKind {
+  // Not a photo, or the kind was not recorded.
+  MEETUP_MATERIAL_FILE_KIND_UNSPECIFIED = 0;
+  MEETUP_MATERIAL_FILE_KIND_PHOTO = 1;
 }
 
 enum MeetupLifecycle {
