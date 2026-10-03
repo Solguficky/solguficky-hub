@@ -107,6 +107,7 @@ import {
 import {
   archiveScreen,
   cardScreen,
+  draftScreen,
   editFieldsScreen,
   hiddenScreen,
   materialsScreen,
@@ -789,7 +790,7 @@ async function handleMessage(
         ok: [
           "ask",
           "edit-ask",
-          "preview",
+          "draft",
           "published",
           "meetup-updated",
           "edit-unavailable",
@@ -931,7 +932,7 @@ async function handleMessage(
         return;
       case "ask":
       case "edit-ask":
-      case "preview":
+      case "draft":
       case "confirm-past-schedule":
       case "published":
       case "ask-publish-moment":
@@ -1633,6 +1634,7 @@ async function handleCallback(
     if (
       action.kind === "manage-edit" ||
       action.kind === "manage-field" ||
+      action.kind === "manage-draft" ||
       action.kind === "manage-status" ||
       action.kind === "manage-unpublish" ||
       action.kind === "manage-cancel" ||
@@ -1696,6 +1698,34 @@ async function handleCallback(
           questions,
           runtime.presentation ?? "rich",
         );
+      } else if (action.kind === "manage-draft" && action.field !== undefined) {
+        await renderFormResult(
+          ctx,
+          { kind: "ask", field: action.field, meetup },
+          questions,
+          runtime.presentation ?? "rich",
+        );
+      } else if (action.kind === "manage-draft") {
+        // Опубликованная сходка уже не черновик: устаревшая кнопка и «Отмена»
+        // под вопросом открывают её обычной карточкой.
+        if (meetup.visibility === "visible") {
+          await renderMeetupCard(
+            ctx,
+            current,
+            true,
+            runtime.presentation ?? "rich",
+            true,
+          );
+        } else {
+          await showScreen(
+            ctx,
+            draftScreen({
+              meetup,
+              presentation: runtime.presentation ?? "rich",
+              today: communityToday(ctx),
+            }),
+          );
+        }
       } else if (action.kind === "manage-retry-past-schedule") {
         // Кадр подтверждения одноразовый: после любого ответа его кнопки
         // снимаются, иначе старое «Сохранить дату» откатило бы дату позже.
@@ -2040,7 +2070,7 @@ async function handleCallback(
         runtime.presentation ?? "rich",
       );
       outcome = screenBoundary(result, {
-        ok: ["ask", "preview", "published"],
+        ok: ["ask", "draft", "published"],
         okMessage: "meetup form step sent",
         rejectedMessage: "meetup form step rejected",
         useCase,
@@ -3519,20 +3549,14 @@ async function renderFormResult(
     );
     return;
   }
-  if (result.kind === "preview") {
-    const meetup = result.meetup;
-    await ctx.reply(
-      `Проверь сходку\n\n${meetup.title}\n${formatSchedule(meetup)}\n${meetup.venue}\n\n${meetup.description}`,
-      {
-        ...screenMark("form-preview"),
-        reply_markup: new InlineKeyboard()
-          .text("Опубликовать", `v1:manage:publish:${uuidToToken(meetup.id)}`)
-          .row()
-          .text(
-            "Опубликовать позже",
-            `v1:manage:publish-later:${uuidToToken(meetup.id)}`,
-          ),
-      },
+  if (result.kind === "draft") {
+    await showScreen(
+      ctx,
+      draftScreen({
+        meetup: result.meetup,
+        presentation,
+        today: communityToday(ctx),
+      }),
     );
     return;
   }
@@ -3589,22 +3613,20 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "published") {
-    // Результат нажатия — правкой предпросмотра: одновременный двойной клик
-    // пишет тот же текст в то же сообщение, и Telegram отвечает «not modified».
-    // С прошедшей датой сходка сразу в архиве: ответ не обещает её в списке
-    // «Ближайших», где её нет (PER-342).
-    const meetupId = result.meetup.id;
-    const created =
+    // Результат нажатия — карточка правкой того же сообщения: одновременный
+    // двойной клик пишет в него же. С прошедшей датой сходка сразу в архиве:
+    // ответ не обещает её в списке «Ближайших», где её нет (PER-342).
+    const published =
       result.archived === true
-        ? "Сходка создана. Её дата уже прошла, поэтому она сразу в архиве, а не в «Ближайших сходках»."
-        : "Сходка создана. Теперь она видна в списке.";
-    await editScreen(
+        ? "Сходка опубликована. Её дата уже прошла, поэтому она сразу в архиве, а не в «Ближайших сходках»."
+        : "Сходка опубликована. Теперь она видна в списке.";
+    await renderMeetupCard(
       ctx,
-      "form-published",
-      `${created}\n\nСсылка для чата:\n${meetupStartLink(ctx.me.username, meetupId)}`,
-      new InlineKeyboard()
-        .text("Открыть сходку", `v1:view:${uuidToToken(meetupId)}`)
-        .text("К управлению", "v1:manage:menu"),
+      cardFrom(result),
+      true,
+      presentation,
+      true,
+      `${published} Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`,
     );
     return;
   }
@@ -3734,7 +3756,10 @@ type ScreenAction = Exclude<CallbackAction, { kind: "question" }>;
 function cancelTarget(step: QuestionStep): ScreenAction {
   switch (step.kind) {
     case "field":
-      return { kind: "view-meetup", token: step.token };
+      // Вопрос формы создания задан с черновика, точечной правки — с карточки.
+      return step.mode === "create"
+        ? { kind: "manage-draft", token: step.token }
+        : { kind: "view-meetup", token: step.token };
     case "publish-moment":
       return { kind: "manage-status", token: step.token };
     case "material-source":
@@ -3889,6 +3914,7 @@ function callbackUseCase(
     | "publish-meetup"
     | "manage-edit"
     | "manage-field"
+    | "manage-draft"
     | "manage-status"
     | "manage-publish"
     | "manage-unpublish"
@@ -3928,6 +3954,7 @@ function callbackUseCase(
     case "manage-hidden":
       return "find_meetup";
     case "create-meetup":
+    case "manage-draft":
     case "publish-meetup":
     case "manage-menu":
       return "create_meetup";

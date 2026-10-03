@@ -149,17 +149,11 @@ export const screenCatalog = {
     title: "Уведомления сходки",
     parent: "card",
   },
-  "form-preview": {
+  draft: {
     class: "screen",
     nav: "tree",
-    parent: "manage",
-    legacy: true,
-  },
-  "form-published": {
-    class: "screen",
-    nav: "tree",
-    parent: "manage",
-    legacy: true,
+    parent: "hidden",
+    maxRows: 5,
   },
   "state-confirm": { class: "screen", nav: "confirm" },
   "past-date-confirm": { class: "screen", nav: "confirm" },

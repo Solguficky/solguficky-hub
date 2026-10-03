@@ -557,6 +557,28 @@ describe("notification callbacks", () => {
     }
   });
 
+  it("parses the draft screen and its field buttons", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:manage:draft:${token}`)).toEqual({
+      kind: "manage-draft",
+      token,
+    });
+    expect(parseCallback(`v1:manage:draft:${token}:description`)).toEqual({
+      kind: "manage-draft",
+      token,
+      field: "description",
+    });
+    expect(
+      Buffer.byteLength(`v1:manage:draft:${token}:description`),
+    ).toBeLessThanOrEqual(64);
+    expect(parseCallback(`v1:manage:draft:${token}:unknown`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback("v1:manage:draft:short")).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("rejects a question step with a broken token, field or shape", () => {
     for (const data of [
       "v1:q",

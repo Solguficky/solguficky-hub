@@ -95,8 +95,10 @@ describe("meetup creation form", () => {
       value: "Осенняя сходка",
       meetupId: created.meetup.id,
     });
-    expect(titled).toMatchObject({ kind: "ask", field: "schedule" });
-    if (titled.kind !== "ask") return;
+    // После названия форма больше не ведёт по полям: черновик показывается
+    // целиком, и следующее поле человек выбирает сам.
+    expect(titled).toMatchObject({ kind: "draft" });
+    if (titled.kind !== "draft") return;
     const scheduled = await dispatcher.execute({
       identity,
       intent: "set-meetup-field",
@@ -104,7 +106,7 @@ describe("meetup creation form", () => {
       value: "21.09.2026 19:30",
       meetupId: titled.meetup.id,
     });
-    expect(scheduled).toMatchObject({ kind: "ask", field: "venue" });
+    expect(scheduled).toMatchObject({ kind: "draft" });
     expect(meetups.createDraft).toHaveBeenCalledOnce();
     expect(meetups.changeAttributes).toHaveBeenCalledOnce();
     expect(meetups.setSchedule).toHaveBeenCalledOnce();
@@ -631,11 +633,11 @@ describe("past meetup date", () => {
       value: "01.09.2026 00:01",
       meetupId: empty.id,
     });
-    expect(result).toMatchObject({ kind: "ask", field: "venue" });
+    expect(result).toMatchObject({ kind: "draft" });
     expect(meetups.setSchedule).toHaveBeenCalledOnce();
   });
 
-  it("saves a confirmed past date and continues the form", async () => {
+  it("saves a confirmed past date and returns to the draft", async () => {
     const { dispatcher, meetups } = harness();
     const result = await dispatcher.execute({
       identity,
@@ -645,7 +647,7 @@ describe("past meetup date", () => {
       meetupId: empty.id,
       confirmedPast: true,
     });
-    expect(result).toMatchObject({ kind: "ask", field: "venue" });
+    expect(result).toMatchObject({ kind: "draft" });
     expect(meetups.setSchedule).toHaveBeenCalledWith(
       identity,
       empty,

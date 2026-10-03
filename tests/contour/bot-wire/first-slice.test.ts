@@ -53,7 +53,8 @@ describe("сценарий первого среза", () => {
     await organizer.presses("Управление");
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, title);
-    expect(organizer.sees()).toContain("Проверь сходку");
+    // Отдельного предпросмотра нет: заполненное видно на самом черновике.
+    expect(organizer.sees()).toContain("Берём свои игры");
     const [draftId] = (await direct.journalOf(adminId)).meetupIds;
     if (draftId === undefined) throw new Error("черновик не заведён");
 
@@ -72,7 +73,7 @@ describe("сценарий первого среза", () => {
     expect(hiddenAnswer).not.toContain(title);
 
     await organizer.presses("Опубликовать");
-    expect(organizer.sees()).toContain("Сходка создана");
+    expect(organizer.sees()).toContain("Сходка опубликована");
 
     // P-03 и P-04: тот же человек видит сходку в списке и её карточку.
     await member.says("/start");

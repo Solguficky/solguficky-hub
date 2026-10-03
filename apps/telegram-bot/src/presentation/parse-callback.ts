@@ -104,6 +104,8 @@ type PlainAction =
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
+  // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
+  | { kind: "manage-draft"; token: string; field?: FormField }
   | { kind: "manage-status"; token: string }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
@@ -379,6 +381,14 @@ export function parseCallback(raw: unknown): CallbackAction {
     const field = FormFieldSchema.safeParse(parts[4]);
     return field.success
       ? { kind: "manage-field", token: token.data, field: field.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "draft")
+    return { kind: "manage-draft", token: token.data };
+  if (parts.length === 5 && parts[2] === "draft") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? { kind: "manage-draft", token: token.data, field: field.data }
       : { kind: "malformed" };
   }
   if (parts.length === 6 && parts[2] === "past") {

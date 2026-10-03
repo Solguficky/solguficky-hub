@@ -128,15 +128,9 @@ export function createMeetupForm(
                 }
               : { kind: "meetup-updated", meetup: scheduled.meetup };
           }
-          return map(scheduled, "venue");
+          return map(scheduled, "draft");
         }
         const changed = { ...current.meetup, [request.field]: request.value };
-        const next =
-          request.field === "title"
-            ? "schedule"
-            : request.field === "venue"
-              ? "description"
-              : "preview";
         const updated = await meetups.changeAttributes(
           request.identity,
           changed,
@@ -164,7 +158,7 @@ export function createMeetupForm(
             ? { kind: "meetup-updated", meetup: updated.meetup }
             : failure(updated);
         }
-        return map(updated, next);
+        return map(updated, "draft");
       }
       case "publish-meetup": {
         const current = await currentSnapshot(meetups, request);
@@ -420,10 +414,12 @@ function parseSchedule(value: string): MeetupSchedule | undefined {
 
 function map(
   result: Awaited<ReturnType<Meetups["createDraft"]>>,
-  next: "title" | "schedule" | "venue" | "description" | "preview",
+  next: "title" | "draft",
 ): ExecuteResult {
   if (result.kind !== "ok") return failure(result);
-  if (next === "preview") return { kind: "preview", meetup: result.meetup };
+  // Форма спрашивает только название: остальные поля человек заполняет с
+  // черновика в своём порядке.
+  if (next === "draft") return { kind: "draft", meetup: result.meetup };
   return { kind: "ask", field: next, meetup: result.meetup };
 }
 

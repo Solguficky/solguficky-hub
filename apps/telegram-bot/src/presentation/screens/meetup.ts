@@ -360,6 +360,24 @@ export function cardScreen(view: CardView): ShownScreen {
     note === undefined && view.subscribed === false
       ? unsubscribedHint
       : undefined;
+  return {
+    id: "card",
+    text: cardText({ title, body, note, hint, presentation }),
+    keyboard: withNav(keyboard, meetupParent(meetup, today)),
+    format: presentation === "rich" ? "rich" : "HTML",
+  };
+}
+
+// Текст карточки и черновика: заметка, заголовок с телом, подсказка. Заголовок
+// и тело уже экранированы, заметка и подсказка — нет.
+function cardText(parts: {
+  title: string;
+  body: readonly string[];
+  note?: string | undefined;
+  hint?: string | undefined;
+  presentation: "rich" | "plain";
+}): string {
+  const { title, body, presentation } = parts;
   const paragraph = (text: string | undefined) =>
     text === undefined
       ? undefined
@@ -370,12 +388,46 @@ export function cardScreen(view: CardView): ShownScreen {
     presentation === "rich"
       ? `<h1>${title}</h1><p>${body.join("<br>")}</p>`
       : `<b>${title}</b>\n${body.join("\n")}`;
+  return [paragraph(parts.note), card, paragraph(parts.hint)]
+    .filter((part) => part !== undefined)
+    .join(presentation === "rich" ? "" : "\n\n");
+}
+
+/**
+ * Черновик формы создания: та же карточка, а под ней — поля и публикация.
+ * Заполненное видно всё время, порядок полей человек выбирает сам; выйти можно
+ * в любой момент — черновик остаётся в «Скрытых».
+ */
+export function draftScreen(view: {
+  meetup: MeetupSnapshot;
+  presentation: "rich" | "plain";
+  today: CommunityDay;
+}): ShownScreen {
+  const { meetup, presentation, today } = view;
+  const token = uuidToToken(meetup.id);
+  const keyboard = new InlineKeyboard()
+    .text("Дата и время", `v1:manage:draft:${token}:schedule`)
+    .text("Место", `v1:manage:draft:${token}:venue`)
+    .row()
+    .text("Описание", `v1:manage:draft:${token}:description`)
+    .text("Название", `v1:manage:draft:${token}:title`)
+    .row()
+    .text("Опубликовать", `v1:manage:publish:${token}`)
+    .row()
+    .text(
+      meetup.publishAt === undefined
+        ? "Опубликовать позже"
+        : "Перенести публикацию",
+      `v1:manage:publish-later:${token}`,
+    );
   return {
-    id: "card",
-    text: [paragraph(note), card, paragraph(hint)]
-      .filter((part) => part !== undefined)
-      .join(presentation === "rich" ? "" : "\n\n"),
-    keyboard: withNav(keyboard, meetupParent(meetup, today)),
+    id: "draft",
+    text: cardText({
+      title: escapeHtml(meetupTitleLabel(meetup.title)),
+      body: cardLines(meetup, undefined, today),
+      presentation,
+    }),
+    keyboard: withNav(keyboard, toHidden),
     format: presentation === "rich" ? "rich" : "HTML",
   };
 }

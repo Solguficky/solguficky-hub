@@ -2398,7 +2398,7 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("edits the preview into the publication result with a start link", async () => {
+  it("edits the pressed screen into the card with the publication note and a start link", async () => {
     const meetup = publishedMeetup();
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "published",
@@ -2411,22 +2411,19 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(
       callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
     );
-    expect(calls.some((call) => call.method === "sendMessage")).toBe(false);
+    expect(calls.some((call) => call.method.startsWith("send"))).toBe(false);
     const edited = calls.find((call) => call.method === "editMessageText");
     expect(edited?.payload).toMatchObject({
-      text: "Сходка создана. Теперь она видна в списке.\n\nСсылка для чата:\nhttps://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "Открыть сходку",
-              callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
-            },
-            { text: "К управлению", callback_data: "v1:manage:menu" },
-          ],
-        ],
+      rich_message: {
+        html: expect.stringContaining(
+          "<p>Сходка опубликована. Теперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA</p><h1>Настолки</h1>",
+        ),
       },
     });
+    // Отдельного кадра «создана» нет: результат — сама карточка с её рядами.
+    expect(JSON.stringify(edited?.payload)).toContain(
+      "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+    );
     const published = records.find(
       (record) => record.message === "meetup published",
     );
@@ -2466,7 +2463,7 @@ describe("presentation adapter", () => {
       0,
     );
     const announced = calls.filter((call) =>
-      JSON.stringify(call.payload).includes("Сходка создана"),
+      JSON.stringify(call.payload).includes("Сходка опубликована"),
     );
     expect(announced).toHaveLength(1);
     expect(calls.at(-1)).toMatchObject({
@@ -2496,7 +2493,7 @@ describe("presentation adapter", () => {
     expect(calls.filter((call) => call.method.startsWith("send"))).toHaveLength(
       0,
     );
-    expect(JSON.stringify(calls)).not.toContain("Сходка создана");
+    expect(JSON.stringify(calls)).not.toContain("Сходка опубликована");
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -2701,10 +2698,10 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(
       callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA"),
     );
-    const text = screen(
-      calls.find((call) => call.method === "editMessageText"),
-    ).text;
-    const payload = text?.match(/\?start=(m_[A-Za-z0-9_-]{22})/)?.[1];
+    const text = JSON.stringify(
+      calls.find((call) => call.method === "editMessageText")?.payload,
+    );
+    const payload = text.match(/\?start=(m_[A-Za-z0-9_-]{22})/)?.[1];
     expect(payload).toBe("m_AZLzpLXGfY6fChssPU5fYA");
     await bot.handleUpdate(messageUpdate(`/start ${payload}`));
     expect(execute).toHaveBeenLastCalledWith({
@@ -4833,12 +4830,12 @@ describe("deferred publication frames", () => {
     expect(payloadText(calls.at(-1))).not.toContain("Публикация назначена");
   });
 
-  it("offers publishing later next to publishing now in the check frame", async () => {
+  it("shows the draft with its fields and both ways to publish after the title", async () => {
     const draft = draftMeetup();
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "create-meetup"
-        ? { kind: "ask", field: "description", meetup: draft }
-        : { kind: "preview", meetup: draft },
+        ? { kind: "ask", field: "title", meetup: draft }
+        : { kind: "draft", meetup: draft },
     );
     const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
       execute,
@@ -4848,7 +4845,7 @@ describe("deferred publication frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:manage:new:${token}`));
     await bot.handleUpdate(
       replyUpdate({
-        text: "Берём свои игры",
+        text: "Настолки",
         fromId: 42,
         replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
@@ -4856,27 +4853,116 @@ describe("deferred publication frames", () => {
     );
 
     const draftToken = uuidToToken(draft.id);
+    const shown = calls.findLast((call) => call.method === "sendRichMessage");
+    expect(shown?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Дата и время",
+              callback_data: `v1:manage:draft:${draftToken}:schedule`,
+            },
+            {
+              text: "Место",
+              callback_data: `v1:manage:draft:${draftToken}:venue`,
+            },
+          ],
+          [
+            {
+              text: "Описание",
+              callback_data: `v1:manage:draft:${draftToken}:description`,
+            },
+            {
+              text: "Название",
+              callback_data: `v1:manage:draft:${draftToken}:title`,
+            },
+          ],
+          [
+            {
+              text: "Опубликовать",
+              callback_data: `v1:manage:publish:${draftToken}`,
+            },
+          ],
+          [
+            {
+              text: "Опубликовать позже",
+              callback_data: `v1:manage:publish-later:${draftToken}`,
+            },
+          ],
+          [
+            { text: "‹ Скрытые", callback_data: "v1:manage:hidden" },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
+      },
+    });
+  });
+
+  it("asks about a field from the draft and returns to the draft on cancel", async () => {
+    const draft = draftMeetup();
+    const draftToken = uuidToToken(draft.id);
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup: draft });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:manage:draft:${draftToken}:venue`),
+    );
+
+    const question = calls.findLast((call) => call.method === "sendMessage");
+    expect(question?.payload).toMatchObject({
+      text: "Где встречаемся?",
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [
+          [{ text: "Отмена", callback_data: `v1:q:fc:${draftToken}:venue` }],
+        ],
+      },
+    });
+
+    await bot.handleUpdate(callbackUpdate(`v1:q:fc:${draftToken}:venue`));
+
     expect(calls.at(-1)).toMatchObject({
-      method: "sendMessage",
+      method: "editMessageText",
       payload: {
         reply_markup: {
-          inline_keyboard: [
+          inline_keyboard: expect.arrayContaining([
             [
               {
                 text: "Опубликовать",
                 callback_data: `v1:manage:publish:${draftToken}`,
               },
             ],
-            [
-              {
-                text: "Опубликовать позже",
-                callback_data: `v1:manage:publish-later:${draftToken}`,
-              },
-            ],
-          ],
+          ]),
         },
       },
     });
+    for (const [request] of execute.mock.calls) {
+      expect(request.intent).toBe("view-meetup");
+    }
+  });
+
+  it("opens a published meetup as the card under a stale draft button", async () => {
+    const meetup: MeetupSnapshot = { ...draftMeetup(), visibility: "visible" };
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:manage:draft:${uuidToToken(meetup.id)}`),
+    );
+
+    const shown = JSON.stringify(calls.at(-1)?.payload);
+    expect(shown).toContain("v1:manage:status:");
+    expect(shown).not.toContain("v1:manage:draft:");
   });
 
   it("asks for the moment from the status menu and schedules the answer", async () => {
@@ -5263,13 +5349,11 @@ describe("past meetup date", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:manage:publish:${token}`));
 
-    const edited = calls.find((call) => call.method === "editMessageText");
-    expect(edited?.payload).toMatchObject({
-      text: expect.stringContaining("сразу в архиве"),
-    });
-    expect(edited?.payload).not.toMatchObject({
-      text: expect.stringContaining("видна в списке"),
-    });
+    const edited = JSON.stringify(
+      calls.find((call) => call.method === "editMessageText")?.payload,
+    );
+    expect(edited).toContain("сразу в архиве");
+    expect(edited).not.toContain("видна в списке");
   });
 
   it("says an edited past date moved the meetup to the archive", async () => {

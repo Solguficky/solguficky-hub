@@ -41,7 +41,8 @@ export async function memberAllowedBy(
 }
 
 /**
- * Администратор отвечает на вопросы формы создания и доходит до предпросмотра.
+ * Администратор называет сходку и заполняет поля с черновика: кнопка поля,
+ * затем ответ на её вопрос. В конце на экране черновик с «Опубликовать».
  * Дата — через год: сегодняшняя граница «прошедшей» даты сценарий не касается.
  */
 export async function fillsMeetupForm(
@@ -50,8 +51,11 @@ export async function fillsMeetupForm(
 ): Promise<void> {
   const year = new Date().getUTCFullYear() + 1;
   await organizer.says(title);
+  await organizer.presses("Дата и время");
   await organizer.says(`12.06.${year} 19:00`);
+  await organizer.presses("Место");
   await organizer.says("Циферблат");
+  await organizer.presses("Описание");
   await organizer.says("Берём свои игры");
 }
 
