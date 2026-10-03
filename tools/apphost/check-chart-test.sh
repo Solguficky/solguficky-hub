@@ -2,7 +2,7 @@
 # Fixture cases for tools/apphost/check-chart.py.
 #
 # The chart CI renders is one happy path and cannot show that the check fails
-# where it must. So each case gets its own rendered tree: four Deployments in
+# where it must. So each case gets its own rendered tree: five Deployments in
 # the shape the generator emits, with one defect, and the failure must name the
 # workload and the rule it breaks. Runs without helm: it feeds rendered trees.
 
@@ -17,6 +17,37 @@ trap 'rm -rf "$scratch"' EXIT
 
 digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 
+# probes NAME - probes of the service's form: gRPC, or HTTP readiness with TCP
+# startup and liveness for Auction
+probes() {
+    if [ "$1" = auction ]; then
+        cat <<EOF
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+          name: "$1"
+          readinessProbe:
+            httpGet:
+              path: "/health"
+              port: 8080
+          startupProbe:
+            tcpSocket:
+              port: 8080
+EOF
+    else
+        cat <<EOF
+          livenessProbe:
+            grpc:
+              port: 8080
+          name: "$1"
+          readinessProbe:
+            grpc:
+              service: "$1.v1.Service"
+              port: 8080
+EOF
+    fi
+}
+
 # deployment NAME - a Deployment that satisfies every rule; cases edit it with sed
 deployment() {
     cat <<EOF
@@ -30,14 +61,9 @@ spec:
     spec:
       containers:
         - image: "ghcr.io/solguficky/$1@$digest"
-          livenessProbe:
-            grpc:
-              port: 8080
-          name: "$1"
-          readinessProbe:
-            grpc:
-              service: "$1.v1.Service"
-              port: 8080
+EOF
+    probes "$1"
+    cat <<EOF
           resources:
             limits:
               cpu: "1"
@@ -50,10 +76,10 @@ spec:
 EOF
 }
 
-# tree CASE - a rendered tree with the four MVP workloads
+# tree CASE - a rendered tree with the five chart workloads
 tree() {
     work="$scratch/$1"
-    for name in identity meetups notifications hub-bot; do
+    for name in identity meetups notifications hub-bot auction; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
@@ -84,7 +110,7 @@ assert_fails() {
 }
 
 work=$(tree good)
-assert_passes "four workloads by the rules pass" "$work"
+assert_passes "five workloads by the rules pass" "$work"
 
 work=$(tree bot-without-probes)
 sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
@@ -118,10 +144,26 @@ work=$(tree no-readiness)
 sed -i '/readinessProbe:/,/port:/d' "$work/solguficky-hub/templates/notifications/deployment.yaml"
 assert_fails "a gRPC service without readiness" "notifications: no readinessProbe" "$work"
 
+work=$(tree auction-without-liveness)
+sed -i '/livenessProbe:/,/port:/d' "$work/solguficky-hub/templates/auction/deployment.yaml"
+assert_fails "Auction without liveness" "auction: no livenessProbe" "$work"
+
+work=$(tree auction-missing)
+rm -r "$work/solguficky-hub/templates/auction"
+assert_fails "Auction missing from the chart" "auction: chart service has no workload" "$work"
+
+work=$(tree auction-liveness-on-readiness)
+sed -i '/livenessProbe:/{n;s/tcpSocket:/httpGet:/}' "$work/solguficky-hub/templates/auction/deployment.yaml"
+assert_fails "Auction liveness on the readiness path" "auction: livenessProbe must be tcpSocket, got httpGet" "$work"
+
+work=$(tree grpc-probe-swapped)
+sed -i '/readinessProbe:/{n;s/grpc:/httpGet:/}' "$work/solguficky-hub/templates/meetups/deployment.yaml"
+assert_fails "a gRPC service with an HTTP readiness" "meetups: readinessProbe must be grpc, got httpGet" "$work"
+
 work=$(tree leaked-build-step)
 mkdir -p "$work/solguficky-hub/templates/identity-build"
 deployment identity-build > "$work/solguficky-hub/templates/identity-build/deployment.yaml"
-assert_fails "a leaked build step" "identity-build: workload is not one of the MVP services" "$work"
+assert_fails "a leaked build step" "identity-build: workload is not one of the chart services" "$work"
 
 work=$(tree stateful-infrastructure)
 mkdir -p "$work/solguficky-hub/templates/postgres"
@@ -130,7 +172,7 @@ assert_fails "PostgreSQL inside the chart" "postgres: workload kind StatefulSet"
 
 work=$(tree missing-service)
 rm -r "$work/solguficky-hub/templates/notifications"
-assert_fails "a service missing from the chart" "notifications: MVP service has no workload" "$work"
+assert_fails "a service missing from the chart" "notifications: chart service has no workload" "$work"
 
 values() {
     printf 'parameters:\n  identity:\n    identity_image: "identity:latest"\n'

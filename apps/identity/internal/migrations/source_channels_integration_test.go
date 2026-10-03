@@ -16,7 +16,7 @@ import (
 func TestSourceChannelMigrationKeepsRecordedCodeAsUnknown(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	applyThrough(t, db, 9)
+	applyThrough(t, db, 10)
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3821"
 	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 8121)`)
 	withCode, withoutCode := uuid.NewString(), uuid.NewString()

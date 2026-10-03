@@ -3,23 +3,34 @@ using Aspire.Hosting.Kubernetes.Resources;
 namespace AppHost.Configuration.Publish;
 
 /// <summary>
-/// Форма workload'а в чарте. Одна реплика и <c>Recreate</c> у всех четырёх
-/// сервисов (ADR-055): Identity, Meetups и Notifications применяют миграции при
-/// старте, а бот держит единственный poller на токен — два экземпляра
-/// одновременно недопустимы даже на время выкатки.
+/// Форма workload'а в чарте. Одна реплика и <c>Recreate</c> у всех сервисов
+/// (ADR-055): Identity, Meetups, Notifications и Auction применяют миграции при
+/// старте, Auction ещё и держит одноузловой кластер, а бот — единственный poller
+/// на токен; два экземпляра одновременно недопустимы даже на время выкатки.
 /// </summary>
 /// <param name="RunAsUser">UID пользователя образа: 1000 у Containerfile, 1654 у SDK-контейнера (Container.targets).</param>
-/// <param name="Grpc">Порт и имя readiness-сервиса для gRPC-проб; <c>null</c> — у сервиса нет health-эндпоинта.</param>
+/// <param name="Probe">Пробы сервиса; <c>null</c> — у сервиса нет health-эндпоинта.</param>
 internal sealed record ClusterWorkload(
     long RunAsUser,
     string CpuRequest,
     string MemoryRequest,
     string CpuLimit,
     string MemoryLimit,
-    GrpcProbe? Grpc);
+    WorkloadProbe? Probe);
+
+internal abstract record WorkloadProbe;
 
 /// <summary>Пустое имя — liveness, имя сервиса — readiness с базой (ADR-054).</summary>
-internal sealed record GrpcProbe(int Port, string ReadinessService);
+internal sealed record GrpcProbe(int Port, string ReadinessService) : WorkloadProbe;
+
+/// <summary>
+/// Readiness — HTTP-путь, который отвечает готовностью с базой (Auction, <c>/health</c>).
+/// Startup и liveness — TCP-подключение к тому же порту: путь готовности отвечает
+/// 503 при недоступной базе, и проба на нём перезапускала бы под по кругу, пока
+/// база лежит. Аналог пустого имени сервиса у gRPC-пробы. Порт Auction слушает
+/// только после миграции и join кластера, поэтому TCP-startup их и ждёт.
+/// </summary>
+internal sealed record HttpProbe(int Port, string ReadinessPath) : WorkloadProbe;
 
 internal static class ClusterWorkloadExtensions
 {
@@ -59,27 +70,35 @@ internal static class ClusterWorkloadExtensions
                     Limits = { ["cpu"] = shape.CpuLimit, ["memory"] = shape.MemoryLimit },
                 };
 
-                if (shape.Grpc is { } grpc)
+                // Сервисы применяют миграции при старте, Notifications — ещё и до
+                // подъёма силоса, Auction — до старта кластера. Пока startup-проба
+                // не прошла, liveness не спрашивается: иначе долгая миграция
+                // упёрлась бы в 30 секунд liveness и под перезапускался бы посреди
+                // неё по кругу.
+                switch (shape.Probe)
                 {
-                    // Сервисы применяют миграции при старте, Notifications — ещё и до
-                    // подъёма силоса. Пока startup-проба не прошла, liveness не
-                    // спрашивается: иначе долгая миграция упёрлась бы в 30 секунд
-                    // liveness и под перезапускался бы посреди неё по кругу.
-                    container.StartupProbe = GrpcProbe(grpc.Port, string.Empty, periodSeconds: 5, failureThreshold: 60);
-                    container.LivenessProbe = GrpcProbe(grpc.Port, string.Empty);
-                    container.ReadinessProbe = GrpcProbe(grpc.Port, grpc.ReadinessService);
+                    case GrpcProbe grpc:
+                        container.StartupProbe = Timed(new() { Grpc = new() { Port = grpc.Port, Service = string.Empty } }, periodSeconds: 5, failureThreshold: 60);
+                        container.LivenessProbe = Timed(new() { Grpc = new() { Port = grpc.Port, Service = string.Empty } });
+                        container.ReadinessProbe = Timed(new() { Grpc = new() { Port = grpc.Port, Service = grpc.ReadinessService } });
+                        break;
+                    case HttpProbe http:
+                        container.StartupProbe = Timed(new() { TcpSocket = new() { Port = http.Port } }, periodSeconds: 5, failureThreshold: 60);
+                        container.LivenessProbe = Timed(new() { TcpSocket = new() { Port = http.Port } });
+                        container.ReadinessProbe = Timed(new() { HttpGet = new() { Port = http.Port, Path = http.ReadinessPath } });
+                        break;
                 }
             }
         });
 
     // Сервис считает готовность не дольше 2 секунд (ADR-054), поэтому таймаут
     // пробы в 3 секунды оставляет запас на сам вызов — как deadline локальной
-    // пробы AppHost.
-    private static ProbeV1 GrpcProbe(int port, string service, int periodSeconds = 10, int failureThreshold = 3) => new()
+    // пробы AppHost. Auction укладывается в тот же предел (readiness-timeout).
+    private static ProbeV1 Timed(ProbeV1 probe, int periodSeconds = 10, int failureThreshold = 3)
     {
-        Grpc = new GrpcActionV1 { Port = port, Service = service },
-        PeriodSeconds = periodSeconds,
-        TimeoutSeconds = 3,
-        FailureThreshold = failureThreshold,
-    };
+        probe.PeriodSeconds = periodSeconds;
+        probe.TimeoutSeconds = 3;
+        probe.FailureThreshold = failureThreshold;
+        return probe;
+    }
 }

@@ -108,6 +108,10 @@ type PlainAction =
   | { kind: "ask-block-member"; token: string; origin: BlockOrigin }
   | { kind: "block-member"; token: string; origin: BlockOrigin }
   | { kind: "remove-allowed-username"; username: string; page: number }
+  // Отказанные: токен — заявки, а не человека; страница — куда вернуть список.
+  | { kind: "refused-applications"; page: number }
+  | { kind: "ask-reconsider"; token: string; page: number }
+  | { kind: "reconsider"; token: string; page: number }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
@@ -606,7 +610,8 @@ function parseBlockOrigin(raw: string | undefined): BlockOrigin | undefined {
 
 // Подэкраны состава: `p` — очередь, `a` — допущенные, `u` — ники, `ad` —
 // допустить, `bq` и `by` — вопрос о закрытии доступа и его «Да», `rm` — убрать
-// ник. Имена сжаты: `ad` и `by` несут двух людей и с длинным доменом вышли бы
+// ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о пересмотре и его «Да»;
+// токен у них — заявки, а не человека. Имена сжаты: `ad` и `by` несут двух людей и с длинным доменом вышли бы
 // ровно в 64 байта.
 function parseCommunity(parts: readonly string[]): CallbackAction {
   const malformed = { kind: "malformed" } as const;
@@ -622,12 +627,29 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
         : malformed;
     }
     case "a":
-    case "u": {
+    case "u":
+    case "r": {
       if (second !== undefined) return malformed;
       const page = PageSchema.safeParse(first ?? "0");
       if (!page.success) return malformed;
       return {
-        kind: verb === "a" ? "community-admitted" : "community-usernames",
+        kind:
+          verb === "a"
+            ? "community-admitted"
+            : verb === "u"
+              ? "community-usernames"
+              : "refused-applications",
+        page: page.data,
+      };
+    }
+    case "rq":
+    case "ry": {
+      const token = TokenSchema.safeParse(first);
+      const page = PageSchema.safeParse(second);
+      if (!token.success || !page.success) return malformed;
+      return {
+        kind: verb === "rq" ? "ask-reconsider" : "reconsider",
+        token: token.data,
         page: page.data,
       };
     }

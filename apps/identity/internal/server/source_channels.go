@@ -92,8 +92,8 @@ type rowQuerier interface {
 // (ADR-060, пункт 18). Код — недоверенные данные из Telegram update: чужой
 // формат, лишняя длина и промах мимо реестра дают «неизвестный источник», а не
 // отказ во входе. Код чужого формата до реестра не доходит, поэтому запрос
-// нужен только коду, который мог бы быть каналом. Вызывает его запись заявки на
-// /start (PER-266) той же транзакцией, что и вставку.
+// нужен только коду, который мог бы быть каналом. Вызывает его RequestRole той
+// же транзакцией, что и вставку заявки.
 func resolveApplicationSource(ctx context.Context, q rowQuerier, code *string) (applicationSource, error) {
 	if code == nil {
 		return applicationSource{}, nil

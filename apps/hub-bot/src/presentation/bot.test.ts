@@ -19,8 +19,10 @@ import { rejectedValueText } from "../application/meetup-form.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
+  ApplicationAdministrator,
   CommunityAdministrator,
   IdentityResolver,
+  RefusedApplication,
   TelegramRecipientResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
@@ -1292,6 +1294,202 @@ describe("presentation adapter", () => {
     });
   });
 
+  describe("refused applications", () => {
+    const applicationId = "0192f3a4-b5c6-7d8e-9f0a-00000000a001";
+    const applicationToken = uuidToToken(applicationId);
+    const blocked: RefusedApplication = {
+      applicationId,
+      identityId: "0192f3a4-b5c6-7d8e-9f0a-00000000b001",
+      telegramUserId: 77n,
+      telegramUsername: "refused",
+      circle: "public",
+      outcome: "blocked",
+      decidedBy: { telegramUserId: 7n, telegramUsername: "admin" },
+      decidedAt: { year: 2026, month: 10, day: 2, hours: 14, minutes: 5 },
+    };
+
+    // Identity отдаёт список по состоянию: после пересмотра человека в нём нет.
+    function refusing(
+      lists: readonly (readonly RefusedApplication[])[],
+      changed = true,
+    ) {
+      const refusedApplications =
+        vi.fn<ApplicationAdministrator["refusedApplications"]>();
+      for (const list of lists) {
+        refusedApplications.mockResolvedValueOnce({ kind: "ok", value: list });
+      }
+      const reconsiderApplication = vi
+        .fn<ApplicationAdministrator["reconsiderApplication"]>()
+        .mockResolvedValue({ kind: "ok", value: changed });
+      return {
+        ...resolvedIdentity(["admin"]),
+        refusedApplications,
+        reconsiderApplication,
+      };
+    }
+
+    it("lists the refused with the outcome caption", async () => {
+      const identity = refusing([
+        [blocked, { ...blocked, circle: "member", outcome: "declined" }],
+      ]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:r"));
+
+      expect(identity.refusedApplications).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      const text = JSON.stringify(calls.at(-1)?.payload);
+      expect(text).toContain("@refused — заявка в аукцион, заблокирован");
+      expect(text).toContain("@refused — заявка в хаб, отклонена");
+    });
+
+    it("does not open the list for a non-administrator", async () => {
+      const identity = {
+        ...resolvedIdentity(["member"]),
+        refusedApplications: vi
+          .fn<ApplicationAdministrator["refusedApplications"]>()
+          .mockResolvedValue({ kind: "forbidden" }),
+      };
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:r"));
+
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: "<b>Пересматривать отказы может только администратор.</b>",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "‹ Управление", callback_data: "v1:manage:menu" },
+                { text: "Меню", callback_data: "v1:nav:start" },
+              ],
+            ],
+          },
+        },
+      });
+    });
+
+    it("asks before reconsidering and names the consequence", async () => {
+      const identity = refusing([[blocked]]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:rq:${applicationToken}:0`));
+
+      expect(identity.reconsiderApplication).not.toHaveBeenCalled();
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: "<b>Пересмотреть отказ?</b>\n\nБлокировка @refused снимется, и сразу откроется доступ к аукциону.",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Да, пересмотреть",
+                  callback_data: `v1:cm:ry:${applicationToken}:0`,
+                },
+              ],
+              [{ text: "Нет", callback_data: "v1:cm:r:0" }],
+            ],
+          },
+        },
+      });
+    });
+
+    it("reconsiders with one press and drops the person from the list", async () => {
+      const identity = refusing([[]]);
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
+
+      expect(identity.reconsiderApplication).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        applicationId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Отказ пересмотрен." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Отказанные</b>\n\nПока никого.",
+      });
+      expectBoundary(records.at(-1), {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "manage_community",
+      });
+    });
+
+    it("answers already reconsidered when another administrator was first", async () => {
+      const identity = refusing([[]], false);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
+
+      expect(calls[0]?.payload).toMatchObject({ text: "Уже пересмотрено." });
+    });
+
+    it("answers already reconsidered when the refusal left the list before the question", async () => {
+      const identity = refusing([[]]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:rq:${applicationToken}:0`));
+
+      expect(calls[0]?.payload).toMatchObject({ text: "Уже пересмотрено." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Отказанные</b>\n\nПока никого.",
+      });
+    });
+
+    it("says why a declined refusal of a blocked profile stays", async () => {
+      const identity = refusing([[blocked]]);
+      identity.reconsiderApplication.mockResolvedValue({ kind: "not-refused" });
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Пересмотреть нельзя: профиль заблокирован.",
+      });
+      expectBoundary(records.at(-1), {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "manage_community",
+      });
+    });
+
+    it("opens a full page through the screen linter", async () => {
+      const identity = refusing([
+        Array.from({ length: 20 }, (_, index) => ({
+          ...blocked,
+          applicationId: `0192f3a4-b5c6-7d8e-9f0a-${index.toString(16).padStart(12, "0")}`,
+          telegramUsername: `user${index}`,
+        })),
+      ]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:r:1"));
+
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "<b>Отказанные · 2 из 3</b>",
+      );
+    });
+  });
+
   // Полные подэкраны проходят через линтер экранов: потолок рядов, словарь и
   // ряд возврата проверяются на странице из восьми строк, а не на пустой.
   it.each([
@@ -1816,6 +2014,9 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
     expect(JSON.stringify(calls[1]?.payload)).toContain(
       '{"text":"Скрытые сходки","callback_data":"v1:manage:hidden"}',
+    );
+    expect(JSON.stringify(calls[1]?.payload)).toContain(
+      '{"text":"Отказанные","callback_data":"v1:cm:r"}',
     );
   });
 

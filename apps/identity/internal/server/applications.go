@@ -29,8 +29,9 @@ var applicationCircles = []string{rolePublic, roleMember}
 var circleRank = map[string]int{rolePublic: 1, roleMember: 2, roleAdmin: 3, roleMaintainer: 4}
 
 // standingRefusalSQL — условие «отказ в силе»: заявка закрыта отказом, а круг её
-// после отказа не выдан. Его читает список отказанных, а вход на /start (PER-266)
-// дополняет исходом declined, чтобы не ставить новую заявку на тот же круг.
+// после отказа не выдан. Его читает список отказанных, а вход на /start
+// (standingDeclineSQL) дополняет исходом declined, чтобы не ставить новую заявку
+// на тот же круг.
 const standingRefusalSQL = `a.outcome IN ('declined', 'blocked') AND a.refusal_lifted_at IS NULL`
 
 const (
