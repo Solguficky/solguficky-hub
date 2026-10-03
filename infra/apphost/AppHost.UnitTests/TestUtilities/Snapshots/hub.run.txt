@@ -34,9 +34,8 @@ hub-bot: JavaScriptAppResource
   relationship: WaitFor nats
   relationship: WaitFor notifications
 hub-bot-installer: JavaScriptInstallerResource
-  command: npm
+  command: node
   workdir: <repo>/apps/hub-bot
-  arg: install
   relationship: Parent hub-bot
 hub-bot-service-token: ParameterResource
   secret: True
