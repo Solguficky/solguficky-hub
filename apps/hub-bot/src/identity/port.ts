@@ -160,3 +160,22 @@ export type ApplicationAdministrator = {
     meta?: RpcMetadata,
   ): Promise<ReconsiderResult>;
 };
+
+// Канал прихода (ADR-060, пункт 18): код из payload `s_<код>` без префикса и
+// подпись, которую модератор видит на карточке заявки.
+export type SourceChannel = { code: string; label: string };
+
+// `invalid` у заведения — Identity отверг код или подпись: их вводит
+// администратор, и неверный ввод здесь отказ, а не «неизвестный источник».
+// `ok` с `false` — канал с этим кодом уже заведён, подпись не переписана.
+export type SourceChannelAdministrator = {
+  sourceChannels(
+    actor: IdentityActor,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<readonly SourceChannel[]>>;
+  createSourceChannel(
+    actor: IdentityActor,
+    channel: SourceChannel,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+};

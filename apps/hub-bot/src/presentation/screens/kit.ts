@@ -56,6 +56,7 @@ export const toUpcoming: Parent = { name: "Ближайшие", data: "v1:nav:hu
 export const toArchive: Parent = { name: "Архив", data: "v1:nav:archive" };
 export const toManage: Parent = { name: "Управление", data: "v1:manage:menu" };
 export const toHidden: Parent = { name: "Скрытые", data: "v1:manage:hidden" };
+export const toSourceChannels: Parent = { name: "Каналы", data: "v1:sc:l" };
 export const toCommunity: Parent = {
   name: "Состав",
   data: "v1:community:list",

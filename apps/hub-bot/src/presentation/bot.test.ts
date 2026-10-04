@@ -23,6 +23,8 @@ import type {
   CommunityAdministrator,
   IdentityResolver,
   RefusedApplication,
+  SourceChannel,
+  SourceChannelAdministrator,
   TelegramRecipientResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
@@ -6730,5 +6732,178 @@ describe("meetup author", () => {
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
       "Автор: @organizer_nick",
     );
+  });
+});
+
+describe("source channels", () => {
+  function channels(
+    lists: readonly (readonly SourceChannel[])[],
+    changed = true,
+  ) {
+    const sourceChannels =
+      vi.fn<SourceChannelAdministrator["sourceChannels"]>();
+    for (const list of lists) {
+      sourceChannels.mockResolvedValueOnce({ kind: "ok", value: list });
+    }
+    const createSourceChannel = vi
+      .fn<SourceChannelAdministrator["createSourceChannel"]>()
+      .mockResolvedValue({ kind: "ok", value: changed });
+    return {
+      ...resolvedIdentity(["admin"]),
+      sourceChannels,
+      createSourceChannel,
+    };
+  }
+
+  function answer(text: string, calls: readonly RecordedCall[]): Update {
+    return replyUpdate({
+      text,
+      fromId: 42,
+      replyMessageId: lastQuestionId(calls),
+      replyFromId: 1,
+    });
+  }
+
+  function lastSent(calls: readonly RecordedCall[]): string {
+    return JSON.stringify(
+      calls.findLast((call) => call.method === "sendMessage")?.payload,
+    );
+  }
+
+  it("opens from management with a link ready to forward", async () => {
+    const identity = channels([[{ code: "tg_ads", label: "Реклама" }]]);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:l"));
+
+    expect(identity.sourceChannels).toHaveBeenCalledWith(
+      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ useCase: "manage_community" }),
+    );
+    const text = JSON.stringify(calls.at(-1)?.payload);
+    expect(text).toContain("Реклама · tg_ads");
+    expect(text).toContain("https://t.me/stub_bot?start=s_tg_ads");
+  });
+
+  it("does not open the screen or ask a question for a non-administrator", async () => {
+    const identity = {
+      ...channels([[]]),
+      ...resolvedIdentity(["member"]),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:l"));
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+    expect(JSON.stringify(calls)).not.toContain("force_reply");
+    expect(JSON.stringify(calls)).toContain(
+      "Вести каналы прихода может только администратор.",
+    );
+  });
+
+  it("creates a channel by code, then label, and shows it with its link", async () => {
+    const identity = channels([[{ code: "tg_ads", label: "Реклама" }]]);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"force_reply":true',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("v1:q:cc");
+
+    // Код вне алфавита переспрашивается до вопроса о подписи.
+    await bot.handleUpdate(answer("tg ads", calls));
+    expect(lastSent(calls)).toContain("Такой код в ссылку не встанет.");
+
+    await bot.handleUpdate(answer(" tg_ads ", calls));
+    expect(lastSent(calls)).toContain("Как подписать канал?");
+    expect(identity.createSourceChannel).not.toHaveBeenCalled();
+
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(identity.createSourceChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ globalRoles: ["admin"] }),
+      { code: "tg_ads", label: "Реклама" },
+      expect.objectContaining({ useCase: "manage_community" }),
+    );
+    const screen = JSON.stringify(calls.at(-1)?.payload);
+    expect(screen).toContain("Канал заведён.");
+    expect(screen).toContain("https://t.me/stub_bot?start=s_tg_ads");
+  });
+
+  it("asks the label again when Identity rejects it", async () => {
+    const identity = {
+      ...channels([]),
+      createSourceChannel: vi
+        .fn<SourceChannelAdministrator["createSourceChannel"]>()
+        .mockResolvedValue({ kind: "invalid" }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("x".repeat(65), calls));
+
+    expect(lastSent(calls)).toContain("Подпись — одна строка до 64 символов.");
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+  });
+
+  it("asks the label again when Identity is unavailable", async () => {
+    const identity = {
+      ...channels([]),
+      createSourceChannel: vi
+        .fn<SourceChannelAdministrator["createSourceChannel"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(lastSent(calls)).toContain("Канал не сохранился.");
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+  });
+
+  it("says the channel is saved when only the list fails afterwards", async () => {
+    const identity = {
+      ...channels([]),
+      sourceChannels: vi
+        .fn<SourceChannelAdministrator["sourceChannels"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(identity.createSourceChannel).toHaveBeenCalled();
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Канал заведён, но список не загрузился.",
+    );
+  });
+
+  it("answers /start with a source payload like a plain /start", async () => {
+    const plain = createHarness(resolvedIdentity());
+    await plain.bot.init();
+    await plain.bot.handleUpdate(messageUpdate("/start"));
+
+    const sourced = createHarness(resolvedIdentity());
+    await sourced.bot.init();
+    await sourced.bot.handleUpdate(messageUpdate("/start s_tg_ads"));
+    await sourced.bot.handleUpdate(messageUpdate("/start s_"));
+
+    expect(sourced.calls.map((call) => call.payload)).toEqual([
+      ...plain.calls.map((call) => call.payload),
+      ...plain.calls.map((call) => call.payload),
+    ]);
   });
 });

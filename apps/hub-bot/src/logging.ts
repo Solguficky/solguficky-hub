@@ -28,6 +28,8 @@ export type LogFields = {
   signal?: string;
   timeout?: number;
   telegram_environment?: string;
+  // Задано ли имя бота аукциона для ссылок каналов прихода (PER-441).
+  auction_bot_links?: boolean;
   notification_id?: string;
   notification_type?: string;
   attempt?: number;

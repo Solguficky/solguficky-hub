@@ -28,6 +28,7 @@ import type {
   RefusedApplication,
   ResolveIdentityInput,
   ResolveIdentityResult,
+  SourceChannelAdministrator,
   TelegramRecipientResolver,
   TelegramRecipientResult,
 } from "./port.js";
@@ -64,12 +65,17 @@ type ApplicationAdminRpc = Pick<
   Client<typeof IdentityService>,
   "listRefusedApplications" | "reconsiderApplication"
 >;
+type SourceChannelAdminRpc = Pick<
+  Client<typeof IdentityService>,
+  "listSourceChannels" | "createSourceChannel"
+>;
 
 export type IdentityClient = IdentityResolver &
   TelegramRecipientResolver &
   OrganizerResolver &
   CommunityAdministrator &
-  ApplicationAdministrator & {
+  ApplicationAdministrator &
+  SourceChannelAdministrator & {
     close(): void;
   };
 
@@ -96,6 +102,7 @@ export function createIdentityClient(
     timeoutMs,
     communityTimeZone,
   });
+  const sourceChannels = createSourceChannelAdministrator(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
@@ -106,6 +113,7 @@ export function createIdentityClient(
       organizers.resolveOrganizerUsername(viewer, identityId, meta),
     ...administrator,
     ...applications,
+    ...sourceChannels,
     close() {
       sessionManager.abort();
     },
@@ -247,6 +255,52 @@ export function createApplicationAdministrator(
         return { kind: "ok", value: response.changed };
       } catch (cause) {
         return classifyReconsiderFailure(cause);
+      }
+    },
+  };
+}
+
+// Реестр каналов прихода (ADR-060, пункт 18). Переименования на экране нет:
+// задача PER-441 его не заказывала, и RenameSourceChannel бот не зовёт.
+export function createSourceChannelAdministrator(
+  rpc: SourceChannelAdminRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): SourceChannelAdministrator {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  const actorMessage = (actor: {
+    identityId: string;
+    globalRoles: readonly string[];
+  }) => ({
+    identityId: actor.identityId,
+    globalRoles: actor.globalRoles.map(roleValue),
+  });
+  return {
+    async sourceChannels(actor, meta) {
+      try {
+        const response = await rpc.listSourceChannels(
+          { actor: actorMessage(actor) },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          value: response.channels.map(({ code, label }) => ({ code, label })),
+        };
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+    },
+    async createSourceChannel(actor, channel, meta) {
+      try {
+        const response = await rpc.createSourceChannel(
+          { actor: actorMessage(actor), ...channel },
+          options(meta),
+        );
+        return { kind: "ok", value: response.changed };
+      } catch (cause) {
+        return classifyAdminFailure(cause);
       }
     },
   };

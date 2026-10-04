@@ -84,6 +84,13 @@ export const screenCatalog = {
     title: "Отказанные",
     parent: "manage",
   },
+  "source-channels": {
+    class: "screen",
+    nav: "tree",
+    title: "Каналы прихода",
+    parent: "manage",
+    backName: "Каналы",
+  },
   card: {
     class: "screen",
     nav: "tree",

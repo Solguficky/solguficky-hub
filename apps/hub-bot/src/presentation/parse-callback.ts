@@ -112,6 +112,9 @@ type PlainAction =
   | { kind: "refused-applications"; page: number }
   | { kind: "ask-reconsider"; token: string; page: number }
   | { kind: "reconsider"; token: string; page: number }
+  // Каналы прихода (ADR-060, пункт 18): список со ссылками и вопрос о новом.
+  | { kind: "source-channels"; page: number }
+  | { kind: "ask-source-channel" }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
@@ -231,7 +234,11 @@ export type QuestionStep =
   // к материалам.
   | { kind: "material-title"; token: string }
   | { kind: "broadcast"; token?: string }
-  | { kind: "username" };
+  | { kind: "username" }
+  // Код канала в 64 байта рядом с префиксом не помещается, поэтому подпись,
+  // как название материала, принимается только по карте вопросов в памяти.
+  | { kind: "channel-code" }
+  | { kind: "channel-label" };
 
 /** Данные кнопки «Отмена» для вопроса с этим шагом. */
 export function questionData(step: QuestionStep): string {
@@ -249,6 +256,10 @@ export function questionData(step: QuestionStep): string {
       return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
     case "username":
       return "v1:q:nick";
+    case "channel-code":
+      return "v1:q:cc";
+    case "channel-label":
+      return "v1:q:cl";
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -288,6 +299,13 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };
+  if (parsed.data === "v1:sc:a") return { kind: "ask-source-channel" };
+  if (parts[1] === "sc" && parts[2] === "l" && parts.length <= 4) {
+    const page = PageSchema.safeParse(parts[3] ?? "0");
+    return page.success
+      ? { kind: "source-channels", page: page.data }
+      : { kind: "malformed" };
+  }
   if (parts[1] === "q") {
     const step = parseQuestionStep(parts);
     return step === undefined
@@ -517,6 +535,8 @@ export function parseCallback(raw: unknown): CallbackAction {
 function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 3 && parts[2] === "bc") return { kind: "broadcast" };
   if (parts.length === 3 && parts[2] === "nick") return { kind: "username" };
+  if (parts.length === 3 && parts[2] === "cc") return { kind: "channel-code" };
+  if (parts.length === 3 && parts[2] === "cl") return { kind: "channel-label" };
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return undefined;
   if (parts.length === 4) {
