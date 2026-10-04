@@ -4,6 +4,7 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import { classifyRecipientFailure as classifyDeliveryRecipientFailure } from "@solguficky/telegram-delivery";
 import {
   ApplicationOutcome,
   type DecideApplicationResponse,
@@ -642,15 +643,9 @@ function classifyOrganizerFailure(cause: unknown): OrganizerUsernameResult {
 // NOT_FOUND и FAILED_PRECONDITION контракт отдал двум окончательным исходам
 // (contracts/proto/identity/v1/identity_service.proto); остальные постоянные
 // коды — рассинхрон схемы, а не свойство получателя.
+// Классы отказа получателя общие у двух каналов доставки и живут в пакете.
 function classifyRecipientFailure(cause: unknown): TelegramRecipientResult {
-  if (cause instanceof ConnectError) {
-    if (cause.code === Code.NotFound) return { kind: "not-found" };
-    if (cause.code === Code.FailedPrecondition) return { kind: "blocked" };
-    if (permanentCodes.has(cause.code)) {
-      return { kind: "rejected", code: Code[cause.code], cause };
-    }
-  }
-  return { kind: "unavailable", cause };
+  return classifyDeliveryRecipientFailure(cause);
 }
 
 // Отказ, который не пройдёт и со второй попытки: нарушение контракта, рассинхрон

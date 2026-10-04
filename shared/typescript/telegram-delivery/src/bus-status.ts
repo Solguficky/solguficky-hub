@@ -1,5 +1,4 @@
-import { countFailure } from "../failures.js";
-import type { Logger } from "../logging.js";
+import type { CountFailure, DeliveryLogger } from "./observe.js";
 
 // Имя операции обеих записей. Соединение — не subject и не обработчик, поэтому
 // имя своё, но одно и то же у всех потребителей шины: запрос по нему собирает
@@ -17,17 +16,17 @@ export type BusStatus = { type: string };
 // шины: сообщений нет в обоих случаях.
 export async function watchBusStatus(
   statuses: AsyncIterable<BusStatus>,
-  logger: Logger,
+  observe: { logger: DeliveryLogger; countFailure: CountFailure },
   now: () => number = Date.now,
 ): Promise<void> {
   let lostAt: number | undefined;
   for await (const status of statuses) {
     if (status.type === "disconnect" && lostAt === undefined) {
       lostAt = now();
-      countFailure("dependency_unavailable");
+      observe.countFailure("dependency_unavailable");
       // Переход мгновенный, поэтому длительность нулевая; каркас требует
       // поле всегда, а длину простоя несёт запись о восстановлении.
-      logger.warn("bus connection lost", {
+      observe.logger.warn("bus connection lost", {
         operation: busConnectionOperation,
         result: "error",
         duration_us: 0,
@@ -35,7 +34,7 @@ export async function watchBusStatus(
         error: "connection to NATS lost; reconnecting",
       });
     } else if (status.type === "reconnect" && lostAt !== undefined) {
-      logger.info("bus connection restored", {
+      observe.logger.info("bus connection restored", {
         operation: busConnectionOperation,
         result: "ok",
         duration_us: Math.round((now() - lostAt) * 1000),

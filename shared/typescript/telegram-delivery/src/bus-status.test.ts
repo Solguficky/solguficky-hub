@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { LogFields, Logger } from "../logging.js";
 import { type BusStatus, watchBusStatus } from "./bus-status.js";
+import type {
+  DeliveryLogFields,
+  DeliveryLogger,
+  FailureCategory,
+} from "./observe.js";
 
-type Entry = { level: string; message: string; fields: LogFields | undefined };
+type Entry = {
+  level: string;
+  message: string;
+  fields: DeliveryLogFields | undefined;
+};
 
-function recordingLogger(): Logger & { entries: Entry[] } {
+function recordingLogger(): DeliveryLogger & { entries: Entry[] } {
   const entries: Entry[] = [];
   const at =
     (level: string) =>
-    (message: string, fields?: LogFields): void => {
+    (message: string, fields?: DeliveryLogFields): void => {
       entries.push({ level, message, fields });
     };
   return {
@@ -17,6 +25,17 @@ function recordingLogger(): Logger & { entries: Entry[] } {
     info: at("info"),
     warn: at("warn"),
     error: at("error"),
+  };
+}
+
+const failures: FailureCategory[] = [];
+
+function observing(logger: DeliveryLogger) {
+  return {
+    logger,
+    countFailure: (category: FailureCategory) => {
+      failures.push(category);
+    },
   };
 }
 
@@ -37,7 +56,7 @@ describe("watchBusStatus", () => {
         "disconnect",
         "reconnecting",
       ),
-      logger,
+      observing(logger),
     );
     expect(logger.entries).toEqual([
       {
@@ -52,6 +71,7 @@ describe("watchBusStatus", () => {
         },
       },
     ]);
+    expect(failures.at(-1)).toBe("dependency_unavailable");
   });
 
   it("reports the restored bus with the outage length as its duration", async () => {
@@ -59,7 +79,7 @@ describe("watchBusStatus", () => {
     const moments = [1_000, 61_500];
     await watchBusStatus(
       statuses("disconnect", "reconnecting", "reconnect"),
-      logger,
+      observing(logger),
       () => moments.shift() ?? 0,
     );
     expect(logger.entries.map((entry) => entry.level)).toEqual([
@@ -81,7 +101,7 @@ describe("watchBusStatus", () => {
     const logger = recordingLogger();
     await watchBusStatus(
       statuses("disconnect", "reconnect", "disconnect", "reconnect"),
-      logger,
+      observing(logger),
     );
     expect(logger.entries.map((entry) => entry.message)).toEqual([
       "bus connection lost",
@@ -93,7 +113,10 @@ describe("watchBusStatus", () => {
 
   it("stays silent on status events unrelated to losing the bus", async () => {
     const logger = recordingLogger();
-    await watchBusStatus(statuses("reconnect", "ping", "update"), logger);
+    await watchBusStatus(
+      statuses("reconnect", "ping", "update"),
+      observing(logger),
+    );
     expect(logger.entries).toEqual([]);
   });
 });

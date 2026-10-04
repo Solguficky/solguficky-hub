@@ -382,7 +382,7 @@ describe("notification sender", () => {
     await expect(
       sender.send({
         telegramUserId: 42n,
-        content: content({ kind: "no-date" }),
+        message: content({ kind: "no-date" }),
       }),
     ).resolves.toEqual({ kind: "sent" });
     expect(sendMessage).toHaveBeenCalledWith(
@@ -397,7 +397,7 @@ describe("notification sender", () => {
     const sender = createNotificationSender({ sendMessage } as never);
     await sender.send({
       telegramUserId: 42n,
-      content: { kind: "meetup-unpublished", meetup },
+      message: { kind: "meetup-unpublished", meetup },
     });
     expect(sendMessage.mock.calls[0]?.[2]).not.toHaveProperty("reply_markup");
   });

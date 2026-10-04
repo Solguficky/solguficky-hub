@@ -1,10 +1,14 @@
-import type { TelegramRecipientResolver } from "../identity/port.js";
-import { rpcMeta } from "../rpc-metadata.js";
-import type { DeliveryNotification } from "./notification.js";
+import {
+  type ChannelContent,
+  type DeliveryNotification,
+  isOtherBranch,
+} from "./notification.js";
 import type {
   DeliveryJournal,
   DeliveryRecord,
   NotificationSender,
+  RenderMessage,
+  TelegramRecipientResolver,
 } from "./port.js";
 
 export type DropReason =
@@ -13,6 +17,7 @@ export type DropReason =
   | "recipient_not_found"
   | "recipient_blocked"
   | "recipient_rejected"
+  | "recipient_ineligible"
   | "bot_blocked"
   | "telegram_rejected"
   | "attempts_exhausted";
@@ -20,6 +25,7 @@ export type DropReason =
 export type RetryReason =
   | "journal_unavailable"
   | "identity_unavailable"
+  | "render_unavailable"
   | "telegram_unavailable"
   | "telegram_rate_limited";
 
@@ -29,7 +35,12 @@ export type RetryReason =
 export type DeliveryDecision =
   | {
       kind: "ack";
-      outcome: "delivered" | "already_delivered" | "already_dropped";
+      // `foreign` — ветка другого канала: она не его, и журнал о ней молчит.
+      outcome:
+        | "delivered"
+        | "already_delivered"
+        | "already_dropped"
+        | "foreign";
       // Доставлено, но отметка не легла: повтор этого сообщения шиной
       // отправил бы его второй раз. Это видимый дефект журнала, а не отказ.
       journalMissed?: boolean;
@@ -44,8 +55,8 @@ export type DeliveryPolicy = {
 };
 
 // Двадцать попыток с удвоением от 5 с до потолка в 10 мин покрывают около двух
-// с половиной часов недоступности Telegram или Identity. Дольше факт о новой
-// сходке теряет смысл, а бесконечный повтор держал бы место в очереди durable.
+// с половиной часов недоступности Telegram или Identity. Дольше уведомление
+// теряет смысл, а бесконечный повтор держал бы место в очереди durable.
 export const defaultDeliveryPolicy: DeliveryPolicy = {
   maxAttempts: 20,
   baseDelayMs: 5_000,
@@ -57,21 +68,22 @@ export function retryDelayMs(attempt: number, policy: DeliveryPolicy): number {
   return Math.min(policy.baseDelayMs * 2 ** exponent, policy.maxDelayMs);
 }
 
-export type DeliverNotification = (
-  notification: DeliveryNotification,
+export type DeliverNotification<C extends ChannelContent> = (
+  notification: DeliveryNotification<C>,
   attempt: number,
 ) => Promise<DeliveryDecision>;
 
 // Выбор «риск дубля против риска потери» сделан в пользу дубля (ADR-052):
 // отметка «доставлено» пишется после ответа Telegram, поэтому падение между
 // отправкой и отметкой повторит сообщение, а не потеряет его.
-export function createDeliverNotification(deps: {
+export function createDeliverNotification<C extends ChannelContent, M>(deps: {
   journal: DeliveryJournal;
   recipients: TelegramRecipientResolver;
-  sender: NotificationSender;
+  render: RenderMessage<C, M>;
+  sender: NotificationSender<M>;
   policy?: DeliveryPolicy;
   now?: () => Date;
-}): DeliverNotification {
+}): DeliverNotification<C> {
   const policy = deps.policy ?? defaultDeliveryPolicy;
   const now = deps.now ?? (() => new Date());
   const record = (
@@ -86,7 +98,7 @@ export function createDeliverNotification(deps: {
   });
 
   const drop = async (
-    notification: DeliveryNotification,
+    notification: DeliveryNotification<C>,
     attempt: number,
     reason: DropReason,
     cause?: unknown,
@@ -103,7 +115,7 @@ export function createDeliverNotification(deps: {
   };
 
   const retry = async (
-    notification: DeliveryNotification,
+    notification: DeliveryNotification<C>,
     attempt: number,
     reason: RetryReason,
     delayMs: number,
@@ -120,6 +132,12 @@ export function createDeliverNotification(deps: {
   };
 
   return async (notification, attempt) => {
+    const content = notification.content;
+    // Чужая ветка общего потока — не отказ и не повод писать в журнал: этот
+    // канал её не доставляет ни сейчас, ни при повторной выдаче.
+    if (content.kind === "foreign") {
+      return { kind: "ack", outcome: "foreign" };
+    }
     const seen = await deps.journal.read(notification.notificationId);
     if (seen.kind === "unavailable") {
       // Без журнала нельзя отличить новое сообщение от уже доставленного, а
@@ -144,15 +162,13 @@ export function createDeliverNotification(deps: {
     ) {
       return drop(notification, attempt, "expired");
     }
-    const content = notification.content;
-    if (content.kind === "unrendered") {
+    // Чужая ветка снята выше, сюда доходит только незнакомая.
+    if (isOtherBranch(content)) {
       return drop(notification, attempt, "unrendered_type");
     }
     const recipient = await deps.recipients.resolveTelegramUserId(
       notification.recipientId,
-      notification.requestId === undefined
-        ? undefined
-        : rpcMeta({ requestId: notification.requestId }),
+      notification.requestId,
     );
     switch (recipient.kind) {
       case "resolved":
@@ -181,9 +197,33 @@ export function createDeliverNotification(deps: {
         return _exhaustive;
       }
     }
+    const rendered = await deps.render(content, {
+      recipientId: notification.recipientId,
+      ...(notification.requestId === undefined
+        ? {}
+        : { requestId: notification.requestId }),
+    });
+    switch (rendered.kind) {
+      case "ready":
+        break;
+      case "ineligible":
+        return drop(notification, attempt, "recipient_ineligible");
+      case "unavailable":
+        return retry(
+          notification,
+          attempt,
+          "render_unavailable",
+          retryDelayMs(attempt, policy),
+          rendered.cause,
+        );
+      default: {
+        const _exhaustive: never = rendered;
+        return _exhaustive;
+      }
+    }
     const sent = await deps.sender.send({
       telegramUserId: recipient.telegramUserId,
-      content,
+      message: rendered.message,
     });
     switch (sent.kind) {
       case "sent": {

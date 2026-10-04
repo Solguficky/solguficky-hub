@@ -1,8 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-  TelegramRecipientResolver,
-  TelegramRecipientResult,
-} from "../identity/port.js";
 import {
   createDeliverNotification,
   type DeliveryPolicy,
@@ -13,8 +9,15 @@ import type {
   DeliveryJournal,
   DeliveryRecord,
   NotificationSender,
+  RenderMessage,
+  RenderResult,
   SendResult,
+  TelegramRecipientResolver,
+  TelegramRecipientResult,
 } from "./port.js";
+
+// Содержимое канала в тесте механики: пакету всё равно, что в нём лежит.
+type Note = { kind: "note"; text: string };
 
 const now = new Date("2026-09-26T10:00:00Z");
 const policy: DeliveryPolicy = {
@@ -24,21 +27,12 @@ const policy: DeliveryPolicy = {
 };
 
 function notification(
-  overrides: Partial<DeliveryNotification> = {},
-): DeliveryNotification {
+  overrides: Partial<DeliveryNotification<Note>> = {},
+): DeliveryNotification<Note> {
   return {
     notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
     recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-    content: {
-      kind: "meetup-published",
-      meetup: {
-        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
-        title: "Настолки у Лёши",
-        venue: "Циферблат",
-        kind: "",
-        when: { kind: "no-date" },
-      },
-    },
+    content: { kind: "note", text: "Настолки у Лёши" },
     ...overrides,
   };
 }
@@ -70,15 +64,26 @@ function recipients(
 
 function sender(
   result: SendResult = { kind: "sent" },
-): NotificationSender & { send: ReturnType<typeof vi.fn> } {
+): NotificationSender<string> & { send: ReturnType<typeof vi.fn> } {
   return { send: vi.fn().mockResolvedValue(result) };
+}
+
+// Сообщение — текст записки; рендер можно подменить отказом.
+const renderText: RenderMessage<Note, string> = async (content) => ({
+  kind: "ready",
+  message: content.text,
+});
+
+function rendering(result: RenderResult<string>): RenderMessage<Note, string> {
+  return vi.fn().mockResolvedValue(result);
 }
 
 function setup(
   options: {
     journal?: DeliveryJournal;
     recipients?: TelegramRecipientResolver;
-    sender?: NotificationSender;
+    render?: RenderMessage<Note, string>;
+    sender?: NotificationSender<string>;
   } = {},
 ) {
   const journal = options.journal ?? memoryJournal();
@@ -86,6 +91,7 @@ function setup(
   const deliver = createDeliverNotification({
     journal,
     recipients: options.recipients ?? recipients(),
+    render: options.render ?? renderText,
     sender: send,
     policy,
     now: () => now,
@@ -123,37 +129,85 @@ describe("deliver notification", () => {
     expect(restarted.send.send).not.toHaveBeenCalled();
   });
 
-  // Ручные рассылки идут тем же путём, что и факты о сходке: одна отправка на
-  // факт, повтор шиной после отметки второй раз не отправляет.
-  it.each([
-    {
-      kind: "organizer-message",
-      meetup: {
-        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
-        title: "Настолки у Лёши",
-        venue: "",
-        kind: "",
-        when: { kind: "no-date" },
-      },
-      body: "Берите настолки",
-    },
-    { kind: "community-announcement", body: "Сбор в пятницу" },
-  ] as const)("sends a $kind once", async (content) => {
+  // Сообщение собирает рендер канала, а отправляется готовое: пакет текста не
+  // знает. Повтор шиной после отметки второй раз не отправляет.
+  it("sends the rendered message once", async () => {
     const journal = memoryJournal();
     const { deliver, send } = setup({ journal });
-    const broadcast = notification({ content });
-    await expect(deliver(broadcast, 1)).resolves.toEqual({
-      kind: "ack",
-      outcome: "delivered",
-    });
-    await expect(deliver(broadcast, 2)).resolves.toEqual({
-      kind: "ack",
-      outcome: "already_delivered",
-    });
+    await deliver(notification(), 1);
+    await deliver(notification(), 2);
     expect(send.send).toHaveBeenCalledOnce();
-    expect(send.send).toHaveBeenCalledWith(
-      expect.objectContaining({ content }),
+    expect(send.send).toHaveBeenCalledWith({
+      telegramUserId: 42n,
+      message: "Настолки у Лёши",
+    });
+  });
+
+  it("passes the recipient and the request id to the renderer", async () => {
+    const render = rendering({ kind: "ready", message: "text" });
+    const { deliver } = setup({ render });
+    await deliver(notification({ requestId: "req-1" }), 1);
+    expect(render).toHaveBeenCalledWith(
+      { kind: "note", text: "Настолки у Лёши" },
+      { recipientId: notification().recipientId, requestId: "req-1" },
     );
+  });
+
+  it("passes the request id to Identity", async () => {
+    const resolver = recipients();
+    const { deliver } = setup({ recipients: resolver });
+    await deliver(notification({ requestId: "req-1" }), 1);
+    expect(resolver.resolveTelegramUserId).toHaveBeenCalledWith(
+      notification().recipientId,
+      "req-1",
+    );
+  });
+
+  // Получатель без права на предмет сообщения не получит его и позже: отказ
+  // окончательный, Telegram не зовётся.
+  it("drops a recipient the renderer finds ineligible", async () => {
+    const journal = memoryJournal();
+    const { deliver, send } = setup({
+      journal,
+      render: rendering({ kind: "ineligible" }),
+    });
+    await expect(deliver(notification(), 1)).resolves.toMatchObject({
+      kind: "drop",
+      reason: "recipient_ineligible",
+    });
+    expect(send.send).not.toHaveBeenCalled();
+    expect(journal.records.get(notification().notificationId)?.state).toBe(
+      "dropped",
+    );
+  });
+
+  it("retries when the renderer cannot reach a neighbour", async () => {
+    const { deliver, send } = setup({
+      render: rendering({ kind: "unavailable", cause: new Error("down") }),
+    });
+    await expect(deliver(notification(), 1)).resolves.toMatchObject({
+      kind: "retry",
+      reason: "render_unavailable",
+      delayMs: 1_000,
+    });
+    expect(send.send).not.toHaveBeenCalled();
+  });
+
+  // Ветка другого канала общего потока — не отказ: журнал о ней молчит, и ни
+  // Identity, ни Telegram не зовутся.
+  it("acknowledges a branch of another channel without touching the journal", async () => {
+    const journal = memoryJournal();
+    const resolver = recipients();
+    const { deliver, send } = setup({ journal, recipients: resolver });
+    await expect(
+      deliver(
+        notification({ content: { kind: "foreign", type: "lotOutbid" } }),
+        1,
+      ),
+    ).resolves.toEqual({ kind: "ack", outcome: "foreign" });
+    expect(journal.records.size).toBe(0);
+    expect(resolver.resolveTelegramUserId).not.toHaveBeenCalled();
+    expect(send.send).not.toHaveBeenCalled();
   });
 
   it("acknowledges an already dropped notification without sending", async () => {

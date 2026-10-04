@@ -1,7 +1,4 @@
 import type { Consumer } from "@nats-io/jetstream";
-import { metrics } from "@opentelemetry/api";
-import { countFailure, type FailureCategory } from "../failures.js";
-import { type LogFields, type Logger, serviceName } from "../logging.js";
 import {
   type DeliverNotification,
   type DeliveryDecision,
@@ -10,27 +7,37 @@ import {
   defaultDeliveryPolicy,
   retryDelayMs,
 } from "./deliver.js";
-import { decodeNotification } from "./notification.js";
+import {
+  type ChannelContent,
+  type DecodeNotification,
+  isOtherBranch,
+} from "./notification.js";
+import type {
+  CountFailure,
+  DeliveryLogFields,
+  DeliveryLogger,
+  FailureCategory,
+  RecordOutcome,
+} from "./observe.js";
 
 // Subject адресного факта (docs/architecture/integration.md). Он же `operation`
 // записи: у сообщения шины нет продуктового сценария, и `use_case` у него
 // отсутствует, а не заполняется заглушкой (logging.md).
 export const notificationSubject = "events.notifications.notification_created";
 export const notificationStream = "NOTIFICATIONS_EVENTS";
-export const notificationDurable = "hub-bot-notifications-events";
+
+// Durable у каждого канала свой (JetStreamTopology в AppHost): общий на все
+// каналы сделал бы их конкурентами за одно сообщение. Имя — `<канал>-` и имя
+// стрима, как его выводит таблица топологии.
+export function notificationDurable(channel: string): string {
+  return `${channel}-notifications-events`;
+}
 
 // Бот держит у себя одно сообщение. Таймер ack_wait durable (30 с) идёт с
 // выдачи, а обработка последовательная: сообщение, ждущее в буфере за зависшими
 // отправками, истекло бы до начала своей попытки, шина выдала бы его снова, и
 // счётчик доставок, по которому считаются попытки, рос бы без единой попытки.
 const batchSize = 1;
-
-const deliveries = metrics
-  .getMeter("solguficky.notifications")
-  .createCounter("hub_bot.notification.deliveries", {
-    description:
-      "Notifications handled by the Telegram channel, grouped by outcome",
-  });
 
 // Сообщение шины в той мере, в какой его знает обработчик: JsMsg сюда подходит
 // как есть, а тест обходится без сервера.
@@ -42,18 +49,24 @@ export type DeliveryMessage = {
   term(reason?: string): void;
 };
 
-export async function handleDeliveryMessage(
+export type DeliveryHandlerDeps<C extends ChannelContent> = {
+  decode: DecodeNotification<C>;
+  deliver: DeliverNotification<C>;
+  logger: DeliveryLogger;
+  countFailure: CountFailure;
+  recordOutcome: RecordOutcome;
+  policy?: DeliveryPolicy;
+};
+
+export async function handleDeliveryMessage<C extends ChannelContent>(
   message: DeliveryMessage,
-  deps: {
-    deliver: DeliverNotification;
-    logger: Logger;
-    policy?: DeliveryPolicy;
-  },
+  deps: DeliveryHandlerDeps<C>,
 ): Promise<void> {
   const started = performance.now();
   const attempt = message.info.deliveryCount;
-  const base: LogFields = { operation: notificationSubject, attempt };
-  const decoded = decodeNotification(message.data);
+  const base: DeliveryLogFields = { operation: notificationSubject, attempt };
+  const { countFailure, recordOutcome: record } = deps;
+  const decoded = deps.decode(message.data);
   if (decoded.kind === "malformed") {
     message.term("malformed notification");
     record("malformed");
@@ -68,13 +81,11 @@ export async function handleDeliveryMessage(
     return;
   }
   const notification = decoded.notification;
-  const fields: LogFields = {
+  const content = notification.content;
+  const fields: DeliveryLogFields = {
     ...base,
     notification_id: notification.notificationId,
-    notification_type:
-      notification.content.kind === "unrendered"
-        ? notification.content.type
-        : notification.content.kind,
+    notification_type: isOtherBranch(content) ? content.type : content.kind,
     identity_id: notification.recipientId,
     ...(notification.requestId === undefined
       ? {}
@@ -105,7 +116,7 @@ export async function handleDeliveryMessage(
   }
   apply(message, decision);
   record(decision.kind === "ack" ? decision.outcome : decision.reason);
-  write(deps.logger, decision, {
+  write(deps.logger, countFailure, decision, {
     ...fields,
     duration_us: elapsedUs(started),
   });
@@ -132,11 +143,19 @@ function unreachable(value: never): never {
 }
 
 function write(
-  logger: Logger,
+  logger: DeliveryLogger,
+  countFailure: CountFailure,
   decision: DeliveryDecision,
-  fields: LogFields,
+  fields: DeliveryLogFields,
 ): void {
   if (decision.kind === "ack") {
+    if (decision.outcome === "foreign") {
+      logger.debug("notification for another channel", {
+        ...fields,
+        result: "ok",
+      });
+      return;
+    }
     if (decision.outcome !== "delivered") {
       logger.debug("notification already settled", {
         ...fields,
@@ -169,7 +188,7 @@ function write(
   }
   const category = dropCategory[decision.reason];
   countFailure(category);
-  const entry: LogFields = {
+  const entry: DeliveryLogFields = {
     ...fields,
     result: "error",
     error_category: category,
@@ -193,6 +212,7 @@ const dropCategory: Record<DropReason, FailureCategory> = {
   recipient_not_found: "visibility",
   recipient_blocked: "authorization",
   recipient_rejected: "invariant",
+  recipient_ineligible: "authorization",
   bot_blocked: "authorization",
   telegram_rejected: "invariant",
   attempts_exhausted: "dependency_unavailable",
@@ -202,19 +222,16 @@ const expectedDrops: ReadonlySet<DropReason> = new Set([
   "expired",
   "recipient_not_found",
   "recipient_blocked",
+  "recipient_ineligible",
   "bot_blocked",
 ]);
 
-function causeField(cause: unknown): LogFields {
+function causeField(cause: unknown): DeliveryLogFields {
   return cause === undefined ? {} : { reply_error: errorText(cause) };
 }
 
 function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
-}
-
-function record(outcome: string): void {
-  deliveries.add(1, { service: serviceName, outcome });
 }
 
 function elapsedUs(started: number): number {
@@ -229,11 +246,9 @@ export type NotificationDelivery = {
   stop(): Promise<void>;
 };
 
-export async function startNotificationDelivery(options: {
-  consumer: Pick<Consumer, "consume">;
-  deliver: DeliverNotification;
-  logger: Logger;
-}): Promise<NotificationDelivery> {
+export async function startNotificationDelivery<C extends ChannelContent>(
+  options: DeliveryHandlerDeps<C> & { consumer: Pick<Consumer, "consume"> },
+): Promise<NotificationDelivery> {
   // Без abort_on_missing_resource клиент молча ждал бы возврата удалённого
   // durable, и бот жил бы без канала уведомлений, ничего о том не сказав.
   const messages = await options.consumer.consume({
