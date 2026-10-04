@@ -1,8 +1,9 @@
 /// Срез «отменить запланированную публикацию». Команда сформулирована как целевое
-/// состояние «запланированной публикации нет», поэтому повтор и сходка без момента —
-/// успех без события (ADR-031, I5). Момент, который уже прошёл, а воркер ещё не
-/// забрал, отменяется так же, как будущий: человек передумал до публикации, а гонку
-/// с воркером разрешает версия строки, а не проверка часов здесь.
+/// состояние «запланированной публикации нет» у скрытой сходки, поэтому повтор и
+/// скрытая сходка без момента — успех без события (ADR-031, I5). Момент, который уже
+/// прошёл, а воркер ещё не забрал, отменяется так же, как будущий: человек передумал
+/// до публикации, а гонку с воркером разрешает версия строки, а не проверка часов
+/// здесь. Видимая сходка — отказ: публикация уже случилась (PER-457).
 module Meetups.Slices.CancelMeetupPublication
 
 open System
@@ -121,13 +122,15 @@ module Api =
         | CancelMeetupPublicationError.Domain MeetupNotFound
         | CancelMeetupPublicationError.Domain DraftBelongsToAnotherAuthor ->
             Status(StatusCode.NotFound, "meetup not found")
+        // Сходка уже видима: отменять поздно, публикация случилась (PER-457). Код
+        // тот же, что у назначения видимой сходке.
+        | CancelMeetupPublicationError.Domain TransitionNotAllowed ->
+            Status(StatusCode.FailedPrecondition, "the meetup is already published")
         // Прочие инварианты решают соседние срезы: отмена запланированной
-        // публикации не публикует и не двигает переходы, поэтому каждая такая пара —
+        // публикации не публикует и не выбирает момент, поэтому каждая такая пара —
         // нарушение внутреннего контракта, а не код отказа.
         | CancelMeetupPublicationError.Domain TitleRequiredForPublication ->
             invalidOp "cancelling a scheduled publication does not decide publication"
-        | CancelMeetupPublicationError.Domain TransitionNotAllowed ->
-            invalidOp "cancelling a scheduled publication does not move a transition"
         | CancelMeetupPublicationError.Domain PublicationMomentInThePast ->
             invalidOp "cancelling a scheduled publication does not decide a moment"
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место

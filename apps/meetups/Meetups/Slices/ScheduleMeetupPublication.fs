@@ -164,12 +164,14 @@ module Api =
         // команду так же, как закрывает редактирование (PER-197).
         | ScheduleMeetupPublicationError.Domain TransitionNotAllowed ->
             Status(StatusCode.FailedPrecondition, "a published or cancelled meetup cannot have a scheduled publication")
+        // Тот же отказ, что у ручной публикации: момент без заголовка назначался бы,
+        // а воркер такую сходку не публиковал бы (PER-457). Чинится сходка, а не
+        // выбранное время, поэтому FAILED_PRECONDITION.
+        | ScheduleMeetupPublicationError.Domain TitleRequiredForPublication ->
+            Status(StatusCode.FailedPrecondition, "a title is required before publication")
         // Прошедший момент — недопустимое значение запроса, а не запрет состояния:
         // отличие INVALID_ARGUMENT от FAILED_PRECONDITION в том, что чинится не
-        // сходка, а выбранное время (integration.md). Другой инвариант этого среза
-        // решает публикация, поэтому пара здесь невозможна.
-        | ScheduleMeetupPublicationError.Domain TitleRequiredForPublication ->
-            invalidOp "scheduling a publication does not decide publication"
+        // сходка, а выбранное время (integration.md).
         | ScheduleMeetupPublicationError.Domain PublicationMomentInThePast ->
             Status(StatusCode.InvalidArgument, "the publication moment must be in the future")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место

@@ -218,6 +218,10 @@ const unavailableText = `Не получилось загрузить данны
 // ни то, ни другое, а ведёт к карточке, где видно текущее состояние (E-04).
 const staleMeetupText =
   "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
+// Отложенная публикация черновика без названия (PER-457): Meetups отказывает,
+// потому что опубликовать сходку без названия нельзя и по расписанию.
+const untitledPublicationText =
+  "У сходки нет названия, а без него публикацию не назначить. Добавь название через «Изменить» на карточке.";
 
 // Отказ Meetups по самой команде человеку показывается кадром, а не текстом
 // сервиса: код gRPC и текст уходят в запись границы (PER-397). FAILED_PRECONDITION —
@@ -2217,6 +2221,14 @@ async function handleCallback(
           "Сходка уже опубликована. Назначать публикацию больше не нужно.",
           exitToCard(token),
         );
+      } else if (
+        action.kind === "manage-publish-later" &&
+        meetup.title.trim() === ""
+      ) {
+        // Черновик без названия Meetups опубликовать не даст ни сразу, ни по
+        // расписанию (PER-457): вопрос о моменте закончился бы отказом домена.
+        // Название добавляется на карточке через «Изменить».
+        await showRefusal(ctx, untitledPublicationText, exitToCard(token));
       } else if (action.kind === "manage-publish-later") {
         await renderFormResult(
           ctx,
@@ -4443,10 +4455,17 @@ async function renderFormResult(
   }
   if (result.kind === "publication-unavailable") {
     // E-04: ответ по текущему состоянию, а не по экрану, с которого пришёл ввод.
+    // FAILED_PRECONDITION назначения означает три причины, и различает их
+    // перечитанный снимок, а не текст статуса: скрытая неотменённая сходка
+    // получила отказ за пустое название (PER-457).
     const text =
       result.meetup.lifecycle === "cancelled"
         ? "Сходка отменена. Назначить ей публикацию нельзя."
-        : "Сходка уже опубликована. Назначать публикацию больше не нужно.";
+        : result.meetup.visibility === "visible"
+          ? "Сходка уже опубликована. Назначать публикацию больше не нужно."
+          : result.meetup.title.trim() === ""
+            ? untitledPublicationText
+            : staleMeetupText;
     await renderMeetupCard(
       ctx,
       cardFrom(result),

@@ -304,7 +304,8 @@ export type ExecuteResult =
       author?: MeetupAuthor;
     }
   // Назначить публикацию нельзя в текущем состоянии сходки: она уже
-  // опубликована или отменена (FAILED_PRECONDITION). Снимок — перечитанный.
+  // опубликована, отменена или у неё нет названия (FAILED_PRECONDITION).
+  // Снимок — перечитанный, по нему кадр и выбирает причину.
   | {
       kind: "publication-unavailable";
       meetup: MeetupSnapshot;

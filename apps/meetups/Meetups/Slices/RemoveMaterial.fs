@@ -117,10 +117,12 @@ module Api =
             Status(StatusCode.PermissionDenied, "an administrator role is required")
         | RemoveMaterialError.Domain MeetupNotFound
         | RemoveMaterialError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
-        // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение
-        // внутреннего контракта, а не код отказа.
+        // Инварианты публикации и её момента решают другие срезы: пары невозможны,
+        // поэтому нарушение внутреннего контракта, а не код отказа.
         | RemoveMaterialError.Domain TitleRequiredForPublication ->
             invalidOp "removing a material does not decide publication"
+        | RemoveMaterialError.Domain PublicationMomentInThePast ->
+            invalidOp "removing a material does not decide a publication moment"
         | RemoveMaterialError.Domain TransitionNotAllowed ->
             Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot be edited")
         // ABORTED — реализационный выбор, а не контрактное обещание: код и его место

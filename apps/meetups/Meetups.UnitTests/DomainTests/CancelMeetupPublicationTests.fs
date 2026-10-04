@@ -18,12 +18,30 @@ let ``When no moment is scheduled expect no event`` () =
     test <@ decision = Ok None @>
 
 [<Fact>]
-let ``When the meetup is visible expect no event`` () =
-    // У видимой сходки момента не бывает, поэтому её отмена — повтор целевого
-    // состояния: успех без события, а не отказ.
+let ``When the worker has already published the meetup expect a refusal`` () =
+    // Гонка с воркером: человек видел момент, а сходка уже видима. Успех без
+    // события сказал бы «отменено» про опубликованную сходку (PER-457).
+    let decision =
+        Meetup.decideCancelScheduledPublication (Existing Sample.publishedByWorker)
+
+    test <@ decision = Error TransitionNotAllowed @>
+
+[<Fact>]
+let ``When the meetup was published by hand expect the same refusal`` () =
+    // Домен не различает, кто опубликовал: отменять поздно в обоих случаях.
     let decision = Meetup.decideCancelScheduledPublication (Existing Sample.published)
 
-    test <@ decision = Ok None @>
+    test <@ decision = Error TransitionNotAllowed @>
+
+[<Fact>]
+let ``When the published meetup is reached after a conflict expect it is not a safe retry`` () =
+    // Тот же ответ на пути PER-78: конфликт версии с воркером не превращается в
+    // «цель достигнута», хотя момента у видимой сходки нет.
+    test <@ not (Meetup.targetReached MeetupPublicationCancelled (Existing Sample.publishedByWorker)) @>
+
+[<Fact>]
+let ``When the hidden meetup without a moment is reached after a conflict expect a safe retry`` () =
+    test <@ Meetup.targetReached MeetupPublicationCancelled (Existing Sample.titled) @>
 
 [<Fact>]
 let ``When the moment has already passed expect it is still cancelled`` () =
