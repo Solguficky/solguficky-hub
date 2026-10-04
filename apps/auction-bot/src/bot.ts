@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { LotImagePort, Viewer } from "@solguficky/auction-bot-ui";
-import { Bot, type Context, GrammyError, InputFile } from "grammy";
-import type { Message, UserFromGetMe } from "grammy/types";
+import { Bot, type Context, GrammyError, HttpError, InputFile } from "grammy";
+import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
-import type { TelegramEnvironment } from "./config.js";
+import type { Presentation, TelegramEnvironment } from "./config.js";
 import { isTraceCallback, parseTraceCallback } from "./delivery/message.js";
 import {
   type AuctionEntryScreen,
@@ -29,6 +29,8 @@ import { startWaiting } from "./waiting.js";
 export type BotOptions = {
   token: string;
   environment: TelegramEnvironment;
+  // Форма карточки лота; по умолчанию `rich` (ADR-034, дополнение).
+  presentation?: Presentation;
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
@@ -54,6 +56,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const render = (screen: AuctionEntryScreen) =>
     renderEntryScreen(screen, {
       timeZone: options.timeZone,
+      ...(options.presentation === undefined
+        ? {}
+        : { presentation: options.presentation }),
       ...(options.faq === undefined ? {} : { faq: options.faq }),
     });
   const photos = options.photos ?? createPhotoCache();
@@ -220,18 +225,38 @@ function refusalCategory(
 export function markupOf(screen: RenderedScreen) {
   return {
     ...screenMark(screen.id),
+    ...(screen.format === "html" ? { parse_mode: "HTML" as const } : {}),
     reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
   };
 }
 
-// Фото для экрана: из кэша `file_id` или байтами из Auction. Не удалось —
-// карточка уходит текстом: изображение украшает экран, а не держит его.
+// Фото rich-карточки: из кэша `file_id` или байтами из Auction. Не удалось —
+// карточка уходит без фото: изображение украшает экран, а не держит его.
 type Photo =
   | { kind: "cached"; key: ImageKey; fileId: string }
   | { kind: "upload"; key: ImageKey; file: InputFile };
 
-function mediaOf(photo: Photo): string | InputFile {
-  return photo.kind === "cached" ? photo.fileId : photo.file;
+// Идентификатор фото внутри rich-сообщения: им `<img>` ссылается на `media`.
+const photoId = "lot";
+
+// Содержимое rich-сообщения: фото — последним блоком под текстом карточки.
+export function richMessageOf(
+  screen: RenderedScreen,
+  photo: Photo | undefined,
+): InputRichMessage {
+  if (photo === undefined) return { html: screen.text };
+  return {
+    html: `${screen.text}<img src="tg://photo?id=${photoId}"/>`,
+    media: [
+      {
+        id: photoId,
+        media: {
+          type: "photo",
+          media: photo.kind === "cached" ? photo.fileId : photo.file,
+        },
+      },
+    ],
+  };
 }
 
 async function photoFor(input: {
@@ -244,8 +269,11 @@ async function photoFor(input: {
 }): Promise<Photo | undefined> {
   const key = input.screen.photo;
   if (key === undefined || input.viewer === undefined) return undefined;
-  const fileId = input.photos.get(key);
-  if (fileId !== undefined) return { kind: "cached", key, fileId };
+  const cached = input.photos.get(key);
+  // Эту версию Telegram уже не принял: до рестарта она не загружается.
+  if (cached?.kind === "none") return undefined;
+  if (cached !== undefined)
+    return { kind: "cached", key, fileId: cached.fileId };
   try {
     const image = await input.image.getLotImage({
       viewer: input.viewer,
@@ -267,10 +295,11 @@ async function photoFor(input: {
   }
 }
 
-// Доставка экрана правилами края (бриф ботов, «Правила края при отказах
-// Telegram»). Текстовое сообщение не превращается в фото и обратно, поэтому
-// смена вида — новое сообщение и удаление старого; отказ удаления (сообщение
-// старше 48 часов) не мешает: новое уже ушло.
+// Доставка экрана правилами края (дизайн-код, «Доставка» и «Показ фото лота»).
+// Нажатие правит своё сообщение: текст ленты и rich-карточка лота делят одно
+// сообщение и правятся друг в друга, удаления при смене вида нет. Новым
+// сообщением экран приходит, только когда править нечего: под нажатием
+// сообщение-фото от прежней версии бота, или Telegram правку не принял.
 async function deliver(
   ctx: UpdateContext,
   input: {
@@ -284,69 +313,97 @@ async function deliver(
     keepCurrent?: boolean;
   },
 ): Promise<void> {
-  let photo = await photoFor({ ...input, requestId: ctx.requestId });
   const { screen } = input;
   const markup = markupOf(screen);
+  // След под уведомлением остаётся целым: его не правят и клавиатуру не
+  // снимают.
   const current =
     input.keepCurrent === true ? undefined : ctx.callbackQuery?.message;
-  const currentIsPhoto = current !== undefined && "photo" in current;
-  for (;;) {
+  // Текст у сообщения с файлом Telegram править не даёт: под ним экран
+  // приходит новым сообщением, а само оно остаётся в чате без клавиатуры —
+  // действовать можно только на новом экране.
+  const legacy =
+    current !== undefined && ("photo" in current || "document" in current);
+  let editable = current !== undefined && !legacy;
+  const leave = async () => {
+    if (legacy) await clearKeyboard(ctx);
+  };
+  if (screen.format !== "rich") {
     try {
-      if (photo === undefined) {
-        if (current !== undefined && !currentIsPhoto) {
-          await ctx.editMessageText(screen.text, markup);
-        } else {
-          await ctx.reply(screen.text, markup);
-          await dropPrevious(ctx, current);
-        }
+      if (editable) {
+        await ctx.editMessageText(screen.text, markup);
         return;
       }
-      const sent = currentIsPhoto
-        ? await ctx.editMessageMedia(
-            { type: "photo", media: mediaOf(photo), caption: screen.text },
-            markup,
-          )
-        : await ctx.replyWithPhoto(mediaOf(photo), {
-            caption: screen.text,
-            ...markup,
-          });
-      if (!currentIsPhoto) await dropPrevious(ctx, current);
-      remember({ photos: input.photos, photo, sent });
-      return;
     } catch (cause) {
       if (!(cause instanceof GrammyError)) throw cause;
-      // Тот же экран после повторного нажатия — не отказ.
-      if (cause.description.includes("message is not modified")) return;
-      if (notEditable(cause.description)) {
-        // Сообщение не редактируется — ответ уходит новым сообщением.
-        if (photo === undefined) {
-          await ctx.reply(screen.text, markup);
-        } else {
-          remember({
-            photos: input.photos,
-            photo,
-            sent: await ctx.replyWithPhoto(mediaOf(photo), {
-              caption: screen.text,
-              ...markup,
-            }),
-          });
-        }
-        return;
+      if (notModified(cause.description)) return;
+      if (!notEditable(cause.description)) throw cause;
+    }
+    await ctx.reply(screen.text, markup);
+    await leave();
+    return;
+  }
+  let photo = await photoFor({ ...input, requestId: ctx.requestId });
+  // Новое сообщение после отказа правки загрузку не повторяет.
+  let mayUpload = true;
+  // Загруженная версия, на которой Telegram отказал.
+  let rejected: ImageKey | undefined;
+  for (;;) {
+    try {
+      const rich = richMessageOf(screen, photo);
+      const sent = editable
+        ? await ctx.editMessageText(rich, markup)
+        : await ctx.replyWithRichMessage(rich, markup);
+      remember({ ...input, requestId: ctx.requestId, photo, sent });
+      // Без фото карточка дошла — значит, отказ был в самом изображении, а не
+      // в лимите, правах или разметке: только тогда версия помечается.
+      if (rejected !== undefined) input.photos.refuse(rejected);
+      await leave();
+      return;
+    } catch (cause) {
+      if (photo?.kind === "upload" && cause instanceof HttpError) {
+        // Обрыв соединения: Telegram мог вызов и не получить. Отметки нет,
+        // следующее открытие лота загрузит изображение снова.
+        input.logger.warn("lot image upload interrupted", {
+          request_id: ctx.requestId,
+          error: messageOf(cause),
+        });
+        // Новое сообщение не повторяется: если Telegram его принял, повтор
+        // прислал бы второе. Правка того же сообщения дубля не даёт.
+        if (!editable) throw cause;
+        photo = undefined;
+        continue;
+      }
+      if (!(cause instanceof GrammyError)) throw cause;
+      if (notModified(cause.description)) return;
+      if (editable && notEditable(cause.description)) {
+        // Сообщение не редактируется — экран уходит новым сообщением по
+        // `file_id` из кэша либо без фото.
+        editable = false;
+        mayUpload = false;
+        if (photo?.kind === "upload") photo = undefined;
+        continue;
       }
       if (photo?.kind === "cached" && rejectedFile(cause.description)) {
         // Telegram больше не знает этот `file_id`: запись вытесняется, и
         // повтор идёт загрузкой байтов один раз.
         input.photos.delete(photo.key);
-        photo = await photoFor({ ...input, requestId: ctx.requestId });
+        photo = mayUpload
+          ? await photoFor({ ...input, requestId: ctx.requestId })
+          : undefined;
+        mayUpload = false;
         continue;
       }
       if (photo !== undefined) {
-        // Telegram не принял само изображение — файл велик, не картинка или
-        // не обработался. Карточка уходит текстом, а не пропадает.
+        // Telegram отказал вызову с фото — файл велик, не картинка или не
+        // обработался. Сообщение после отказа прежнее, и карточка уходит той
+        // же правкой без фото; загруженная версия помечается, если правка без
+        // фото пройдёт.
         input.logger.warn("lot image rejected by Telegram", {
           request_id: ctx.requestId,
           error: cause.description,
         });
+        if (photo.kind === "upload") rejected = photo.key;
         photo = undefined;
         continue;
       }
@@ -355,25 +412,37 @@ async function deliver(
   }
 }
 
-async function dropPrevious(
-  ctx: UpdateContext,
-  current: Message | undefined,
-): Promise<void> {
-  if (current === undefined) return;
-  await ctx.deleteMessage().catch(() => undefined);
+async function clearKeyboard(ctx: UpdateContext): Promise<void> {
+  await ctx
+    .editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } })
+    .catch(() => undefined);
 }
 
 // `file_id` наибольшего размера из ответа Telegram ложится в кэш под версией
-// загруженных байтов.
+// загруженных байтов. Ответ правки — тоже сообщение, поэтому кэш греется с
+// любого показа.
 function remember(input: {
   photos: PhotoCache;
-  photo: Photo;
+  photo: Photo | undefined;
   sent: Message | true;
+  logger: Logger;
+  requestId: string;
 }): void {
   const { photos, photo, sent } = input;
-  if (photo.kind !== "upload" || sent === true) return;
-  const fileId = sent.photo?.at(-1)?.file_id;
-  if (fileId !== undefined) photos.set(photo.key, fileId);
+  if (photo?.kind !== "upload" || sent === true) return;
+  const fileId = sent.rich_message?.blocks
+    .flatMap((block) => (block.type === "photo" ? [block.photo] : []))
+    .at(-1)
+    ?.at(-1)?.file_id;
+  if (fileId !== undefined) {
+    photos.set(photo.key, fileId);
+    return;
+  }
+  // Загрузка прошла, а фото в ответе нет: без записи каждый показ грузил бы
+  // байты заново, и это должно быть видно.
+  input.logger.warn("lot image file_id missing in response", {
+    request_id: input.requestId,
+  });
 }
 
 // Описания отказов Bot API не закреплены контрактом: сравнение без учёта
@@ -383,6 +452,11 @@ const REJECTED_FILE =
 
 function rejectedFile(description: string): boolean {
   return REJECTED_FILE.test(description);
+}
+
+// Тот же экран после повторного нажатия — не отказ.
+function notModified(description: string): boolean {
+  return description.includes("message is not modified");
 }
 
 function notEditable(description: string): boolean {

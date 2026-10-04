@@ -7,6 +7,7 @@ import type {
   LotStatusView,
   Money,
 } from "@solguficky/auction-bot-ui";
+import type { Presentation } from "./config.js";
 import { defaultFaq, entryCallback, type FaqContent } from "./faq.js";
 import type { ScreenId } from "./screen-catalog.js";
 
@@ -38,8 +39,14 @@ export type RenderedScreen = {
   id: ScreenId;
   text: string;
   keyboard: readonly (readonly TelegramButton[])[];
-  // Изображение карточки лота: текст тогда уходит подписью к фото. Байты и
-  // `file_id` достаёт адаптер Telegram, экрану достаточно ключа.
+  /**
+   * Разметка текста: `html` — обычное сообщение с `parse_mode: HTML`, `rich` —
+   * rich-сообщение, текст которого — его `html` (ADR-034). Без неё текст
+   * уходит как есть.
+   */
+  format?: "html" | "rich";
+  // Изображение rich-карточки лота: адаптер ставит его последним блоком. Байты
+  // и `file_id` достаёт адаптер Telegram, экрану достаточно ключа.
   photo?: { lotId: string; version: string };
 };
 
@@ -47,17 +54,24 @@ export type RenderOptions = {
   faq?: FaqContent;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
+  // Форма карточки лота; по умолчанию `rich`.
+  presentation?: Presentation;
 };
 
-// Лимиты Bot API в символах UTF-16: подпись к фото короче сообщения.
-export const CAPTION_LIMIT = 1024;
+// Лимит обычного сообщения Bot API — 4096 символов UTF-16 после разбора
+// разметки. У rich-сообщения предел 32 768 «символов UTF-8», и единица не
+// уточнена: описание режется с запасом, чтобы уложиться и в байты.
 export const TEXT_LIMIT = 4096;
+export const RICH_TEXT_LIMIT = 10_000;
+
+// Абзацев описания в rich-карточке, дальше они сливаются в один.
+const PARAGRAPH_LIMIT = 50;
 
 // Подпись кнопки лота — название и цена в одну строку экрана телефона.
 const BUTTON_TITLE_LIMIT = 40;
 
-// Длину названия Auction не ограничивает. Предел держит строки статуса — цену,
-// лидера и дедлайн — внутри подписи к фото при любом названии.
+// Длину названия Auction не ограничивает. Предел держит название заголовком,
+// а не полотном над ценой и исходом.
 const TITLE_LIMIT = 256;
 
 const context = "Аукцион сообщества.";
@@ -185,19 +199,24 @@ function renderBody(
       for (const item of block.lots) items.set(item.lotId, item);
     }
   }
-  const photo = photoOf(body.blocks);
-  const limit = photo === undefined ? TEXT_LIMIT : CAPTION_LIMIT;
-  const text = fitWithin(
-    [context, ...body.blocks.map((block) => renderBlock(block, options))],
-    limit,
+  const keyboard = body.keyboard.map((row) =>
+    row.map((button) => renderButton(button, items)),
   );
+  const id = screenOf(body.blocks);
+  const lot = body.blocks.find(
+    (block): block is LotBlock => block.kind === "lot",
+  );
+  if (id === "lot" && lot !== undefined) {
+    return { id, keyboard, ...renderCard(lot, options) };
+  }
+  // Лента — текст без разметки до перевёрстки оболочки (PER-463).
   return {
-    id: screenOf(body.blocks),
-    text,
-    keyboard: body.keyboard.map((row) =>
-      row.map((button) => renderButton(button, items)),
+    id,
+    keyboard,
+    text: truncate(
+      [context, ...body.blocks.map((block) => renderBlock(block))].join("\n\n"),
+      TEXT_LIMIT,
     ),
-    ...(photo === undefined ? {} : { photo }),
   };
 }
 
@@ -221,39 +240,17 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
   return screen;
 }
 
-function photoOf(
-  blocks: readonly AuctionBlock[],
-): RenderedScreen["photo"] | undefined {
-  for (const block of blocks) {
-    if (block.kind === "lot" && block.card?.image !== undefined) {
-      return { lotId: block.lotId, version: block.card.image.version };
-    }
-  }
-  return undefined;
-}
+type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
 
-type Rendered = { head: string; description?: string; tail: string };
-
-function renderBlock(block: AuctionBlock, options: RenderOptions): Rendered {
+// Строка ленты. Карточку лота собирает `renderCard`: у неё своя разметка.
+function renderBlock(block: AuctionBlock): string {
   switch (block.kind) {
     case "feed":
-      return {
-        head:
-          block.lots.length === 0
-            ? "Лотов пока нет."
-            : `Лоты по возрастанию цены, страница ${block.page + 1} из ${block.pageCount}.`,
-        tail: "",
-      };
-    case "lot": {
-      const description = block.card?.description;
-      return {
-        head: truncate(block.card?.title ?? untitled, TITLE_LIMIT),
-        ...(description === undefined || description === ""
-          ? {}
-          : { description }),
-        tail: statusLines(block, options).join("\n"),
-      };
-    }
+      return block.lots.length === 0
+        ? "Лотов пока нет."
+        : `Лоты по возрастанию цены, страница ${block.page + 1} из ${block.pageCount}.`;
+    case "lot":
+      return "";
     default: {
       const _exhaustive: never = block;
       return _exhaustive;
@@ -261,10 +258,58 @@ function renderBlock(block: AuctionBlock, options: RenderOptions): Rendered {
   }
 }
 
-function statusLines(
-  block: Extract<AuctionBlock, { kind: "lot" }>,
+// Карточка лота начинается с названия (дизайн-код, «Формат»). Rich-карточка
+// размечается блоками: перенос строки в её `html` не рисуется, поэтому абзац
+// описания — свой `<p>`, строки внутри абзаца и строки статуса разделяет
+// `<br>`, а фото адаптер ставит последним блоком. Предела подписи у неё нет.
+// В `plain` та же карточка уходит обычным сообщением с HTML и без фото.
+function renderCard(
+  block: LotBlock,
   options: RenderOptions,
-): string[] {
+): Pick<RenderedScreen, "text" | "format" | "photo"> {
+  const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
+  const status = statusLines(block, options);
+  const rich = (options.presentation ?? "rich") === "rich";
+  const description = fitDescription(
+    title,
+    block.card?.description ?? "",
+    status,
+    rich ? RICH_TEXT_LIMIT : TEXT_LIMIT,
+  );
+  if (!rich) {
+    return {
+      format: "html",
+      text: [
+        `<b>${escapeHtml(title)}</b>`,
+        escapeHtml(description),
+        escapeHtml(status.join("\n")),
+      ]
+        .filter((part) => part !== "")
+        .join("\n\n"),
+    };
+  }
+  const paragraphs = description
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.split("\n").filter((l) => l.trim() !== ""))
+    .filter((lines) => lines.length > 0);
+  // Число блоков у rich-сообщения ограничено: абзацы сверх предела сливаются
+  // в последний, текст при этом не теряется.
+  const kept = paragraphs.slice(0, PARAGRAPH_LIMIT - 1);
+  const rest = paragraphs.slice(PARAGRAPH_LIMIT - 1).flat();
+  const blocks = [...kept, ...(rest.length === 0 ? [] : [rest]), status];
+  const image = block.card?.image;
+  return {
+    format: "rich",
+    text: `<h1>${escapeHtml(title)}</h1>${blocks
+      .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
+      .join("")}`,
+    ...(image === undefined
+      ? {}
+      : { photo: { lotId: block.lotId, version: image.version } }),
+  };
+}
+
+function statusLines(block: LotBlock, options: RenderOptions): string[] {
   const { status, participantName } = block;
   switch (status.kind) {
     case "draft":
@@ -324,34 +369,29 @@ function leaderLine(
     : `Лидер: ${participantName}.`;
 }
 
-// Описание — единственная часть экрана произвольной длины, поэтому под лимит
-// Telegram режется оно. Остальное короче лимита при любом лоте.
-function fitWithin(
-  parts: readonly (string | Rendered)[],
+// Описание — единственная часть карточки произвольной длины, поэтому под лимит
+// Telegram режется оно. Длина считается по видимому тексту до экранирования:
+// лимит Bot API действует после разбора разметки. Название и строки статуса
+// короче лимита при любом лоте.
+function fitDescription(
+  title: string,
+  description: string,
+  status: readonly string[],
   limit: number,
 ): string {
-  const join = (description: (r: Rendered) => string | undefined) =>
-    parts
-      .map((part) =>
-        typeof part === "string"
-          ? part
-          : [part.head, description(part), part.tail]
-              .filter((line) => line !== undefined && line !== "")
-              .join("\n\n"),
-      )
-      .join("\n\n");
-  const full = join((r) => r.description);
-  if (full.length <= limit) return full;
-  const overflow = full.length - limit + 1;
-  // Страховка на случай, когда резать нечего: лимит Bot API не нарушается.
+  const visible = [title, description, ...status].join("\n\n").length;
+  if (visible <= limit) return description;
   return truncate(
-    join((r) =>
-      r.description === undefined
-        ? undefined
-        : truncate(r.description, Math.max(1, r.description.length - overflow)),
-    ),
-    limit,
+    description,
+    Math.max(1, description.length - (visible - limit)),
   );
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 // Обрезка по кодовым точкам: срез по UTF-16 разрезал бы суррогатную пару, и

@@ -41,6 +41,7 @@ async function main(): Promise<number> {
   const bot = createBot({
     token: config.token,
     environment: config.environment,
+    presentation: config.presentation,
     ports: clients.ports,
     faq: config.faq,
     logger,
