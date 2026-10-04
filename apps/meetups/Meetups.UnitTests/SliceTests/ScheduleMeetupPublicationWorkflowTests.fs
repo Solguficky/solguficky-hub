@@ -160,6 +160,16 @@ let ``Repeating the scheduled moment returns the snapshot without writing`` () =
     test <@ result = Ok stored @>
 
 [<Fact>]
+let ``Scheduling an untitled draft is rejected without writing`` () =
+    // Commit из заглушки упал бы: строка журнала не пишется (PER-457).
+    let result =
+        stub
+        |> loading (Some(Meetup.toSnapshot Sample.draft))
+        |> run (localDateTime (DateOnly(2026, 10, 5)) 19 0)
+
+    test <@ result = Error(ScheduleMeetupPublicationError.Domain TitleRequiredForPublication) @>
+
+[<Fact>]
 let ``Scheduling an absent meetup is rejected without writing`` () =
     let result =
         stub

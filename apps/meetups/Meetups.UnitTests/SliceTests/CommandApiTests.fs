@@ -190,9 +190,9 @@ let ``A stale version with the target already in place is a safe retry`` () =
 /// не позволяет». Различие с отказом по праву несёт код, различие с заголовком —
 /// деталь статуса.
 ///
-/// Тест идёт через настоящий Api.handle, а не через decidePublish: неполный match в
-/// отображении остаётся предупреждением FS0025, сборка и гейт проходят зелёными, и
-/// увидеть пропущенную ветку можно только здесь.
+/// Тест идёт через настоящий Api.handle, а не через decidePublish: проверяется код,
+/// который увидит клиент. Полноту отображения держит сборка — FS0025 в Meetups
+/// ошибка (PER-457), — а не этот тест.
 [<Fact>]
 let ``A refused transition is told apart from a refused permission`` () =
     let cancelled =
@@ -555,8 +555,8 @@ let ``Unpublishing a missing meetup answers NOT_FOUND`` () =
 
 /// Отмена закрывает снятие: отменённую видимую сходку прятать нельзя, иначе
 /// извещение об отмене исчезало бы навсегда. Тест идёт через настоящий Api.handle,
-/// а не через decideUnpublish: неполный match в отображении остаётся предупреждением
-/// FS0025, и увидеть пропущенную ветку можно только здесь.
+/// а не через decideUnpublish: проверяется код, который увидит клиент, а полноту
+/// отображения держит сборка (FS0025 — ошибка, PER-457).
 [<Fact>]
 let ``Unpublishing a cancelled visible meetup is refused as FAILED_PRECONDITION`` () =
     let cancelled =
@@ -1256,3 +1256,33 @@ let ``A version conflict while cancelling a publication is refused as ABORTED`` 
         codeOf (fun () -> CancelMeetupPublication.Api.handle conflicting (CancelPublication.request (administrator ())))
 
     test <@ actual = Some StatusCode.Aborted @>
+
+/// Черновик без заголовка отвечает тем же кодом, что и его ручная публикация, —
+/// отказ не прячется за «время прошло» и не падает как невозможная пара (PER-457).
+[<Fact>]
+let ``Scheduling a publication on an untitled draft is refused as FAILED_PRECONDITION`` () =
+    let untitled =
+        SchedulePublication.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.draft)))
+            (fun _ _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () ->
+            ScheduleMeetupPublication.Api.handle untitled (SchedulePublication.request (administrator ()))
+        )
+
+    test <@ actual = Some StatusCode.FailedPrecondition @>
+
+/// Воркер опубликовал сходку раньше, чем человек нажал «отменить»: отказ, а не
+/// успех без события (PER-457).
+[<Fact>]
+let ``Cancelling the publication of an already published meetup is refused as FAILED_PRECONDITION`` () =
+    let publishedByWorker = Meetup.toSnapshot Sample.publishedByWorker
+
+    let published =
+        CancelPublication.deps (fun _ -> Task.FromResult(Some publishedByWorker)) (fun _ _ _ _ -> unreachable "Commit")
+
+    let actual =
+        codeOf (fun () -> CancelMeetupPublication.Api.handle published (CancelPublication.request (administrator ())))
+
+    test <@ actual = Some StatusCode.FailedPrecondition @>

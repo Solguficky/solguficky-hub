@@ -348,6 +348,15 @@ module Meetup =
     /// скрытой сходки — замена с событием, а не второй назначенный момент.
     /// I5 проверяется раньше «момент прошёл»: иначе повтор уже истёкшего, но ещё
     /// не забранного воркером момента отвечал бы отказом вместо повторного успеха.
+    ///
+    /// I4 — тот же `TitleRequiredForPublication`, что у публикации, и стоит между
+    /// состоянием и значением: заголовок — данные сходки, а не выбор человека. Без
+    /// него момент назначался бы, а воркер такую сходку не публиковал и держал бы в
+    /// голове очереди (PER-457). Правило закрывает назначение, а не саму очередь:
+    /// заголовок, стёртый правкой после назначения, по-прежнему оставляет сходку в
+    /// наборе воркера (`PublishDueMeetups.Attempt.Blocked`). Раньше I5 он стоит намеренно: повтор момента на
+    /// черновике без заголовка, назначенного до этого правила, отвечал бы успехом
+    /// и подтверждал бы публикацию, которой не будет.
     let decideSchedulePublication
         (now: DateTimeOffset)
         (at: DateTimeOffset)
@@ -363,23 +372,29 @@ module Meetup =
                 | Cancelled -> Error TransitionNotAllowed
                 | Planned
                 | Held ->
-                    if meetup.ScheduledPublishAt = Some at then Ok None
+                    if String.IsNullOrWhiteSpace meetup.Title then Error TitleRequiredForPublication
+                    elif meetup.ScheduledPublishAt = Some at then Ok None
                     elif at <= now then Error PublicationMomentInThePast
                     else Ok(Some(MeetupPublicationScheduled at))
 
     /// Отмена сформулирована как целевое состояние «запланированной публикации
-    /// нет», поэтому отказ у неё ровно один — несуществующая сходка. Момент,
-    /// который уже прошёл, а воркер ещё не забрал, отменяется так же, как будущий:
-    /// человек передумал до того, как публикация случилась, а гонку с воркером
-    /// разрешает версия строки, а не проверка часов здесь. У видимой сходки
-    /// момента не бывает, поэтому её отмена — успех без события.
+    /// нет» у скрытой сходки. Момент, который уже прошёл, а воркер ещё не забрал,
+    /// отменяется так же, как будущий: человек передумал до того, как публикация
+    /// случилась, а гонку с воркером разрешает версия строки, а не проверка часов
+    /// здесь.
+    ///
+    /// Видимую сходку отменять поздно: публикация уже случилась — воркером или
+    /// вручную, домен их не различает, — и успех без события сказал бы человеку
+    /// «отменено» про сходку, которую сообщество уже видит (PER-457). Отказ тот
+    /// же, что у назначения видимой сходке.
     let decideCancelScheduledPublication (state: MeetupState) : Result<MeetupEvent option, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
         | Existing meetup ->
-            match meetup.ScheduledPublishAt with
-            | None -> Ok None
-            | Some _ -> Ok(Some MeetupPublicationCancelled)
+            match meetup.Visibility, meetup.ScheduledPublishAt with
+            | Visible, _ -> Error TransitionNotAllowed
+            | Hidden, None -> Ok None
+            | Hidden, Some _ -> Ok(Some MeetupPublicationCancelled)
 
     /// Порядок проверок наблюдаем снаружи, поэтому он зафиксирован здесь, а не
     /// выведен из удобства записи.
@@ -562,11 +577,17 @@ module Meetup =
         | Existing meetup, MeetupUnpublished -> meetup.Visibility = Hidden
         | Existing meetup, MeetupCancelled -> meetup.Lifecycle = Cancelled
         | Existing meetup, MeetupHeld -> meetup.Lifecycle = Held
+        // Обе цели отложенной публикации повторяют условия своих решений: иначе
+        // конфликт версии с воркером или правкой заголовка возвращал бы успехом то,
+        // что `decide*` на свежем состоянии отклонил бы (PER-457).
         | Existing meetup, MeetupPublicationScheduled at ->
             meetup.Visibility = Hidden
             && meetup.Lifecycle <> Cancelled
+            && not (String.IsNullOrWhiteSpace meetup.Title)
             && meetup.ScheduledPublishAt = Some at
-        | Existing meetup, MeetupPublicationCancelled -> meetup.ScheduledPublishAt = None
+        | Existing meetup, MeetupPublicationCancelled ->
+            meetup.Visibility = Hidden
+            && meetup.ScheduledPublishAt = None
         // Материал уже целевого состояния — успех независимо от жизненного цикла
         // (decideAttachMaterial/decideRemoveMaterial проверяют это первым, раньше
         // Cancelled), поэтому здесь тоже нет проверки Lifecycle.
