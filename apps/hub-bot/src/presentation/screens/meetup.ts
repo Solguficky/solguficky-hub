@@ -1,5 +1,7 @@
+import { encodeAuctionCallback } from "@solguficky/auction-bot-ui";
 import { InlineKeyboard } from "grammy";
 import type {
+  MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
 } from "../../application/types.js";
@@ -320,6 +322,27 @@ function posterBlock(photos: readonly ScreenPhoto[]): string | undefined {
     : `<tg-slideshow>${images.join("")}</tg-slideshow>`;
 }
 
+function auctionButton(
+  auction: MeetupAuctionView | undefined,
+  editable: boolean,
+  token: string,
+): { label: string; data: string } | undefined {
+  if (auction?.kind === "open") {
+    return {
+      label: "Лоты",
+      data: encodeAuctionCallback({
+        kind: "feed",
+        auctionId: auction.auctionId,
+        page: 0,
+      }),
+    };
+  }
+  if (auction?.kind === "none" && editable) {
+    return { label: "Включить аукцион", data: `v1:manage:auction:${token}` };
+  }
+  return undefined;
+}
+
 export type CardView = {
   meetup: MeetupSnapshot;
   author?: MeetupAuthor | undefined;
@@ -327,6 +350,8 @@ export type CardView = {
   subscribed?: boolean | undefined;
   /** Смотрящий управляет сходкой: видны правка, статус и рассылка. */
   manageable: boolean;
+  /** Нет — Auction не ответил, и ряда аукциона на карточке нет. */
+  auction?: MeetupAuctionView | undefined;
   /** Ответ на действие человека: стоит первой строкой, над заголовком. */
   note?: string | undefined;
   presentation: "rich" | "plain";
@@ -360,10 +385,20 @@ export function cardScreen(view: CardView): ShownScreen {
       .row();
   }
   if (editable || meetup.materials.length > 0) {
-    keyboard
-      .text(`Материалы (${meetup.materials.length})`, `v1:mm:list:${token}`)
-      .row();
+    keyboard.text(
+      `Материалы (${meetup.materials.length})`,
+      `v1:mm:list:${token}`,
+    );
   }
+  // Аукцион сходки стоит в ряду материалов: оба — содержимое сходки, и
+  // отдельным рядом он вывел бы карточку организатора за пять рядов. Вход —
+  // всем, у кого аукцион есть; включение — организатору, пока аукциона нет и
+  // сходка не отменена. Auction не ответил — ряда аукциона нет вовсе.
+  const auction = auctionButton(view.auction, editable, token);
+  if (auction !== undefined) {
+    keyboard.text(auction.label, auction.data);
+  }
+  nextRow(keyboard);
   // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
   // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.
   if (manageable) {

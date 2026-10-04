@@ -45,7 +45,7 @@ const config: LintConfig = {
   tag,
   catalog,
   parentGroups: { list: ["upcoming", "archive"] },
-  namedPairs: new Set(["Изменить|Статус"]),
+  namedPairs: new Set(["Изменить|Статус", "Материалы (#)|Лоты"]),
 };
 
 type Key = { text: string; callback_data?: string; style?: string };
@@ -114,6 +114,32 @@ describe("inspectCall configuration", () => {
           "edit",
           "<b>Изменить</b>",
           rows([key("Изменить"), key("Удалить сходку")]),
+        ),
+      ),
+    ).toEqual(["rows"]);
+  });
+
+  it("reads # in a named pair as any number in the label", () => {
+    const rows = (pair: Key[]) => [pair, [key("‹ Меню")]];
+    for (const count of ["0", "7", "12"]) {
+      expect(
+        rulesOf(
+          "editMessageText",
+          call(
+            "edit",
+            "<b>Изменить</b>",
+            rows([key(`Материалы (${count})`), key("Лоты")]),
+          ),
+        ),
+      ).toEqual([]);
+    }
+    expect(
+      rulesOf(
+        "editMessageText",
+        call(
+          "edit",
+          "<b>Изменить</b>",
+          rows([key("Материалы (два)"), key("Лоты")]),
         ),
       ),
     ).toEqual(["rows"]);

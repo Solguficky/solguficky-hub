@@ -365,35 +365,38 @@ identity-image:
 # --- Hub Bot (TypeScript) --------------------------------------
 #
 # Кодогенерация — часть сборки. Рецепты собирают grammY-скелет,
-# клиент Identity и проверяют границу юзкейса без Telegram.
+# клиент Identity и проверяют границу юзкейса без Telegram. Аукцион у
+# сходки бот берёт из общего пакета `file:`-зависимостью (PER-307), а
+# `exports` пакета ведут в `dist`, поэтому рецепты, которые читают его
+# типы, сначала собирают пакет — как у бота аукциона.
 
 # Пакет живого контура ставится здесь же: его код типизирует, линтует и
 # гоняет на L0 конфиг бота, а mtcute боту не принадлежит (ADR-046). Скрипты
 # установки не нужны: сессия в памяти, нативный better-sqlite3 не строится
-hub-bot-tools:
+hub-bot-tools: auction-bot-ui-tools auction-bot-ui-build
     cd apps/hub-bot && npm ci
     cd tests/telegram-live && npm ci --ignore-scripts
 
 hub-bot-proto:
     buf generate {{ if path_exists("apps/hub-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template apps/hub-bot/buf.gen.yaml" } else { error("нужен protoc-gen-es: just hub-bot-tools") } }}
 
-hub-bot-build: hub-bot-proto
+hub-bot-build: auction-bot-ui-build hub-bot-proto
     cd apps/hub-bot && npm run build
 
-hub-bot-typecheck: hub-bot-proto
+hub-bot-typecheck: auction-bot-ui-build hub-bot-proto
     cd apps/hub-bot && npm run typecheck
 
 # Unit и component tests (L0): Docker не нужен, наборы `*.integration.test.ts`
 # исключены в vitest.config.ts
-hub-bot-test: hub-bot-proto
+hub-bot-test: auction-bot-ui-build hub-bot-proto
     cd apps/hub-bot && npm test
 
 # Наборы с Testcontainers (L1): нужен Docker. В `verify` не входит — его гоняют
 # CI и `test-all`
-hub-bot-test-integration: hub-bot-proto
+hub-bot-test-integration: auction-bot-ui-build hub-bot-proto
     cd apps/hub-bot && npm run test:integration
 
-hub-bot-lint: hub-bot-proto
+hub-bot-lint: auction-bot-ui-build hub-bot-proto
     cd apps/hub-bot && npm run lint
 
 hub-bot-run: hub-bot-build

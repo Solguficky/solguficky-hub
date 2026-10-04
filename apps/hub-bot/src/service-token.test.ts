@@ -3,9 +3,11 @@ import type { AddressInfo } from "node:net";
 import type { HandlerContext } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AuctionService } from "../gen/auction/v1/auction_service_pb.js";
 import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { MeetupsService } from "../gen/meetups/v1/meetups_service_pb.js";
 import { NotificationsService } from "../gen/notifications/v1/notifications_service_pb.js";
+import { createAuctionClient } from "./auction/client.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
@@ -50,6 +52,16 @@ beforeAll(async () => {
           .service(NotificationsService, {
             getGlobalNotificationPreferences(_request, context) {
               record("notifications", context);
+              return {};
+            },
+          })
+          .service(AuctionService, {
+            getMeetupAuction(_request, context) {
+              record("auction", context);
+              return {};
+            },
+            listAuctionLots(_request, context) {
+              record("auction-screens", context);
               return {};
             },
           }),
@@ -109,5 +121,28 @@ describe("notifications client", () => {
       notifications.close();
     }
     expect(seen.get("notifications")).toEqual(presented);
+  });
+});
+
+describe("auction client", () => {
+  it("presents the bot token next to the request id", async () => {
+    const auction = createAuctionClient(baseUrl, options());
+    try {
+      await auction.getMeetupAuction(
+        { identityId: "id-1", globalRoles: ["member"] },
+        "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+        meta,
+      );
+      // Порты экранов пакета ходят тем же транспортом.
+      await auction.screenPorts(meta).auction.listAuctionLots({
+        viewer: { identityId: "id-1", globalRoles: ["member"] },
+        auctionId: "daef05c7-cd68-5048-b03d-cb4860e8dc73",
+        pageToken: "",
+      });
+    } finally {
+      auction.close();
+    }
+    expect(seen.get("auction")).toEqual(presented);
+    expect(seen.get("auction-screens")).toEqual(presented);
   });
 });

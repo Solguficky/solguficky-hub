@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ScreenEntry } from "../../../testkit/screen-lint.js";
-import { meetupListParent, meetupLists, screenCatalog } from "./catalog.js";
+import {
+  auctionFeedParent,
+  auctionFeedParents,
+  meetupListParent,
+  meetupLists,
+  screenCatalog,
+} from "./catalog.js";
 
 const entries: [string, ScreenEntry][] = Object.entries(screenCatalog);
 
@@ -12,7 +18,9 @@ describe("screen catalog", () => {
         const parents: readonly string[] =
           entry.parent === meetupListParent
             ? meetupLists
-            : [entry.parent ?? ""];
+            : entry.parent === auctionFeedParent
+              ? auctionFeedParents
+              : [entry.parent ?? ""];
         return !parents.every(
           (parent) =>
             (screenCatalog as Record<string, ScreenEntry>)[parent]?.backName !==

@@ -19,6 +19,11 @@ export type Person = { identityId: string; globalRoles: readonly string[] };
 export type MeetupAuthor =
   | { kind: "self" }
   | { kind: "organizer"; telegramUsername: string };
+// Аукцион сходки на карточке. `none` — ответ Auction «аукциона нет», а не
+// отказ: только тогда администратор видит «Включить аукцион».
+export type MeetupAuctionView =
+  | { kind: "none" }
+  | { kind: "open"; auctionId: string };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
 // до него код доносит операция входа (PER-316).
@@ -54,6 +59,17 @@ export type ExecuteRequest =
       identity: Person;
       intent: "view-meetup";
       meetupId: string;
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
+  | {
+      // Включение аукциона у сходки (PER-307). `opId` рождается на нажатие:
+      // аукцион сходки один при любом числе нажатий, его ключ выводит Auction.
+      identity: Person;
+      intent: "enable-auction";
+      meetupId: string;
+      opId: string;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;
@@ -238,13 +254,30 @@ export type ExecuteResult =
   // устаревшим или выдуманным значением. `categories` — действующие значения
   // категорий сходки, их несёт только ответ на подписку: по ним карточка
   // называет, что будет приходить (PER-402).
+  // `auction` отсутствует, когда Auction не ответил или не настроен: тогда ни
+  // входа в аукцион, ни кнопки включения на карточке нет — по тому же правилу,
+  // что у подписки.
   | {
       kind: "meetup-card";
       meetup: MeetupSnapshot;
       subscribed?: boolean;
       categories?: readonly CategoryState<MeetupCategory>[];
       author?: MeetupAuthor;
+      auction?: MeetupAuctionView;
     }
+  // Аукцион включён: карточка перечитана после команды. `alreadyExisted` —
+  // аукцион у сходки уже был, и второго не родилось. `card` нет — аукцион
+  // включён, а перечитать карточку не вышло: бюджет действия ушёл на команду.
+  | {
+      kind: "auction-enabled";
+      meetupId: string;
+      auctionId: string;
+      card?: Extract<ExecuteResult, { kind: "meetup-card" }>;
+      alreadyExisted: boolean;
+    }
+  // Auction отказал по праву администратора сходки — отказ окончательный, и
+  // бот его не повторяет.
+  | { kind: "auction-refused"; reason: "not-administrator" }
   | {
       kind: "meetup-notification-settings";
       meetup: MeetupSnapshot;

@@ -1,4 +1,5 @@
-import { type Context, InlineKeyboard } from "grammy";
+import { type Context, InlineKeyboard, type InputFile } from "grammy";
+import type { Message } from "grammy/types";
 import type { Waiting } from "../waiting.js";
 import type { ScreenId } from "./catalog.js";
 
@@ -41,9 +42,22 @@ export type ShownScreen = {
    * (`BUTTON_USER_PRIVACY_RESTRICTED`) — тогда экран уходит с этой клавиатурой.
    */
   privacyFallback?: InlineKeyboard;
+  /**
+   * Отказ Telegram не заменяется новым сообщением, а уходит вызывающему: так
+   * экран с загрузкой фото решает сам, чем его заменить (дизайн-код, «Показ
+   * фото лота»). Повтор тем же содержимым по-прежнему не отказ.
+   */
+  strict?: true;
 };
 
-export type ScreenPhoto = { id: string; fileId: string };
+/**
+ * Фото богатого сообщения: готовым `file_id` или байтами. Загрузку Telegram
+ * принимает и в отправке, и в правке (зонд PER-450), а `file_id` возвращает в
+ * блоках ответа.
+ */
+export type ScreenPhoto =
+  | { id: string; fileId: string }
+  | { id: string; upload: InputFile };
 
 /** Update с тем, что отправителю нужно знать о нажатии. */
 export type ScreenContext = Context & {
@@ -61,23 +75,31 @@ export type ScreenContext = Context & {
 export async function showScreen(
   ctx: ScreenContext,
   { privacyFallback, ...screen }: ShownScreen,
-): Promise<void> {
+): Promise<Message | undefined> {
   if (privacyFallback === undefined) {
-    await deliverScreen(ctx, screen);
-    return;
+    return await deliverScreen(ctx, screen);
   }
   try {
-    await deliverScreen(ctx, screen);
+    return await deliverScreen(ctx, screen);
   } catch (cause) {
     if (!isPrivacyRestricted(cause)) throw cause;
-    await deliverScreen(ctx, { ...screen, keyboard: privacyFallback });
+    return await deliverScreen(ctx, { ...screen, keyboard: privacyFallback });
   }
 }
 
 async function deliverScreen(
   ctx: ScreenContext,
-  { id, text, keyboard, format, delivery, fileTrace, media }: ShownScreen,
-): Promise<void> {
+  {
+    id,
+    text,
+    keyboard,
+    format,
+    delivery,
+    fileTrace,
+    media,
+    strict,
+  }: ShownScreen,
+): Promise<Message | undefined> {
   const rich = {
     html: text,
     ...(media === undefined || media.length === 0
@@ -85,7 +107,10 @@ async function deliverScreen(
       : {
           media: media.map((photo) => ({
             id: photo.id,
-            media: { type: "photo" as const, media: photo.fileId },
+            media: {
+              type: "photo" as const,
+              media: "fileId" in photo ? photo.fileId : photo.upload,
+            },
           })),
         }),
   };
@@ -94,19 +119,17 @@ async function deliverScreen(
     reply_markup: keyboard,
     ...(format === "HTML" ? { parse_mode: format } : {}),
   };
-  const send = (): Promise<unknown> =>
+  const send = (): Promise<Message> =>
     format === "rich"
       ? ctx.replyWithRichMessage(rich, other)
       : ctx.reply(text, other);
   const message = ctx.callbackQuery?.message;
   if (message === undefined || delivery === "new" || ctx.fresh === true) {
-    await send();
-    return;
+    return await send();
   }
   if ("document" in message || "photo" in message) {
     await leaveFileTrace(ctx, fileTrace);
-    await send();
-    return;
+    return await send();
   }
   // Экран тот же, что под нажатой кнопкой: править нечем, и молчание человек
   // прочёл бы как несработавшую кнопку. Всплывающий текст говорит, что
@@ -115,27 +138,28 @@ async function deliverScreen(
     await ctx.waiting?.answer(
       id === "refusal" ? "Пока не получилось." : "Без изменений.",
     );
-    return;
+    return undefined;
   }
   try {
-    if (format === "rich") {
-      await ctx.api.editMessageText(
-        message.chat.id,
-        message.message_id,
-        rich,
-        other,
-      );
-    } else {
-      await ctx.editMessageText(text, other);
-    }
+    const edited =
+      format === "rich"
+        ? await ctx.api.editMessageText(
+            message.chat.id,
+            message.message_id,
+            rich,
+            other,
+          )
+        : await ctx.editMessageText(text, other);
+    return edited === true ? undefined : edited;
   } catch (cause) {
     if (isNotModified(cause)) {
-      return;
+      return undefined;
     }
     // Новое сообщение с той же клавиатурой Telegram отклонит так же.
     if (isPrivacyRestricted(cause)) throw cause;
+    if (strict === true) throw cause;
     await clearCallbackKeyboard(ctx);
-    await send();
+    return await send();
   }
 }
 

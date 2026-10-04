@@ -78,6 +78,8 @@ jobs:
               - 'tests/telegram-live/**'
               # Линтер экрана: test kit бота берёт его исходники.
               - 'shared/typescript/screen-lint/**'
+              # Аукцион у сходки — общий пакет `file:`-зависимостью (PER-307).
+              - 'shared/typescript/auction-bot-ui/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction:
@@ -144,6 +146,7 @@ jobs:
               - 'apps/identity/**'
               - 'apps/hub-bot/**'
               - 'shared/typescript/screen-lint/**'
+              - 'shared/typescript/auction-bot-ui/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -367,6 +370,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
+            shared/typescript/auction-bot-ui/package-lock.json
             apps/hub-bot/package-lock.json
             tests/telegram-live/package-lock.json
       - id: tools
@@ -378,6 +382,10 @@ jobs:
           setup_only: true
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
+      # Общий пакет аукциона — `file:`-зависимость бота, а `exports` пакета ведут
+      # в `dist`: он собирается до установки бота.
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/auction-bot-ui
       - run: npm ci
         working-directory: apps/hub-bot
       # mtcute живого контура: код драйвера проходит typecheck, lint и L0 бота.
@@ -745,7 +753,11 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/hub-bot/package-lock.json
+          cache-dependency-path: |
+            shared/typescript/auction-bot-ui/package-lock.json
+            apps/hub-bot/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/auction-bot-ui
       - run: npm ci
         working-directory: apps/hub-bot
       - uses: extractions/setup-just@v4
