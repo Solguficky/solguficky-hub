@@ -9,7 +9,8 @@
 export type ImageKey = { lotId: string; version: string };
 
 // `none` — Telegram эту версию изображения не принял: до рестарта процесса
-// она не загружается, карточка идёт без фото (дизайн-код, «Показ фото лота»).
+// или вытеснения записи она не загружается, карточка идёт без фото
+// (дизайн-код, «Показ фото лота»).
 export type CachedPhoto = { kind: "file"; fileId: string } | { kind: "none" };
 
 export type PhotoCache = {

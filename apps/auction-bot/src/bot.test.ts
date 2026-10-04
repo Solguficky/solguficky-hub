@@ -575,6 +575,34 @@ describe("auction bot", () => {
     });
   });
 
+  // Отказ, который повторился и без фото, — не про изображение: лимит,
+  // права или разметка. Версия не помечается, экран не подменяется.
+  it("does not mark the photo when the edit fails without it too", async () => {
+    const photos = createPhotoCache();
+    const { bot } = makeBot(portsWith({ lot: withImage }), {
+      photos,
+      refuse: { editMessageText: "Too Many Requests: retry after 5" },
+    });
+    await expect(bot.handleUpdate(lotPress())).rejects.toThrow(
+      "Too Many Requests",
+    );
+    expect(photos.get({ lotId, version: "img-1" })).toBeUndefined();
+  });
+
+  // Новое сообщение после обрыва не повторяется: Telegram мог его принять,
+  // и повтор прислал бы второе. Update при этом пишется отказом, а не успехом.
+  it("does not send the card twice when a new message upload drops", async () => {
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
+      dropOnce: "sendRichMessage",
+    });
+    await expect(bot.handleUpdate(lotPress({ photo: true }))).rejects.toThrow(
+      "Network request failed",
+    );
+    expect(
+      calls.filter((call) => call.method === "sendRichMessage"),
+    ).toHaveLength(1);
+  });
+
   // Обрыв соединения отметки не оставляет: следующее открытие грузит снова.
   it("shows the card without the photo when the upload connection drops", async () => {
     const photos = createPhotoCache();

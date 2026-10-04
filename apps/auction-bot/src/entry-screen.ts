@@ -58,10 +58,14 @@ export type RenderOptions = {
   presentation?: Presentation;
 };
 
-// Лимиты Bot API: обычное сообщение — в символах UTF-16 после разбора
-// разметки, rich-сообщение — в символах текста.
+// Лимит обычного сообщения Bot API — 4096 символов UTF-16 после разбора
+// разметки. У rich-сообщения предел 32 768 «символов UTF-8», и единица не
+// уточнена: описание режется с запасом, чтобы уложиться и в байты.
 export const TEXT_LIMIT = 4096;
-export const RICH_TEXT_LIMIT = 32_768;
+export const RICH_TEXT_LIMIT = 10_000;
+
+// Абзацев описания в rich-карточке, дальше они сливаются в один.
+const PARAGRAPH_LIMIT = 50;
 
 // Подпись кнопки лота — название и цена в одну строку экрана телефона.
 const BUTTON_TITLE_LIMIT = 40;
@@ -255,9 +259,9 @@ function renderBlock(block: AuctionBlock): string {
 }
 
 // Карточка лота начинается с названия (дизайн-код, «Формат»). Rich-карточка
-// размечается блоками: перенос строки в её `html` не рисуется, поэтому каждый
-// абзац описания и каждая строка статуса — свой `<p>`, а фото адаптер ставит
-// последним блоком. Предела подписи у неё нет, описание приходит целиком.
+// размечается блоками: перенос строки в её `html` не рисуется, поэтому абзац
+// описания — свой `<p>`, строки внутри абзаца и строки статуса разделяет
+// `<br>`, а фото адаптер ставит последним блоком. Предела подписи у неё нет.
 // В `plain` та же карточка уходит обычным сообщением с HTML и без фото.
 function renderCard(
   block: LotBlock,
@@ -275,21 +279,29 @@ function renderCard(
   if (!rich) {
     return {
       format: "html",
-      text: [`<b>${escapeHtml(title)}</b>`, description, status.join("\n")]
+      text: [
+        `<b>${escapeHtml(title)}</b>`,
+        escapeHtml(description),
+        escapeHtml(status.join("\n")),
+      ]
         .filter((part) => part !== "")
-        .map((part, index) => (index === 0 ? part : escapeHtml(part)))
         .join("\n\n"),
     };
   }
-  const paragraphs = [
-    ...description.split("\n").filter((line) => line.trim() !== ""),
-    ...status,
-  ];
+  const paragraphs = description
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.split("\n").filter((l) => l.trim() !== ""))
+    .filter((lines) => lines.length > 0);
+  // Число блоков у rich-сообщения ограничено: абзацы сверх предела сливаются
+  // в последний, текст при этом не теряется.
+  const kept = paragraphs.slice(0, PARAGRAPH_LIMIT - 1);
+  const rest = paragraphs.slice(PARAGRAPH_LIMIT - 1).flat();
+  const blocks = [...kept, ...(rest.length === 0 ? [] : [rest]), status];
   const image = block.card?.image;
   return {
     format: "rich",
-    text: `<h1>${escapeHtml(title)}</h1>${paragraphs
-      .map((line) => `<p>${escapeHtml(line)}</p>`)
+    text: `<h1>${escapeHtml(title)}</h1>${blocks
+      .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
       .join("")}`,
     ...(image === undefined
       ? {}

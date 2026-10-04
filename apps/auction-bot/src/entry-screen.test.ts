@@ -19,7 +19,7 @@ const plain = (text: string) => text.replace(/[  ]/g, " ");
 // Видимый текст карточки: теги сняты, сущности раскрыты.
 const visible = (html: string) =>
   html
-    .replace(/<\/(h1|p)>/g, "\n")
+    .replace(/<\/(h1|p)>|<br>/g, "\n")
     .replace(/<[^>]+>/g, "")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
@@ -194,18 +194,34 @@ describe("renderEntryScreen", () => {
     expect(screen.text).not.toContain("…");
   });
 
-  // Перенос строки в html rich-сообщения не рисуется: абзац — свой блок.
-  it("marks every paragraph and status line as a block and escapes the text", () => {
+  // Перенос строки в html rich-сообщения не рисуется: абзац — свой блок,
+  // строки внутри абзаца и строки статуса разделяет `<br>`.
+  it("marks paragraphs as blocks, breaks lines and escapes the text", () => {
     const screen = lotScreen({
       card: {
         title: "Кружка <XL> & блюдце",
-        description: "Роспись.\n\nРучная.",
+        description: "Роспись.\nРучная.\n\nОбъём 300 мл.",
       },
+      status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+      participantName: "Сыч",
     });
-    expect(screen.text).toBe(
+    expect(plain(screen.text)).toBe(
       "<h1>Кружка &lt;XL&gt; &amp; блюдце</h1>" +
-        "<p>Роспись.</p><p>Ручная.</p><p>Торги закончились, лот не продан.</p>",
+        "<p>Роспись.<br>Ручная.</p><p>Объём 300 мл.</p>" +
+        "<p>Продан за 3 000 ₽.<br>Победитель: Сыч.</p>",
     );
+  });
+
+  // Блоков у rich-сообщения не бесконечно: лишние абзацы сливаются в один,
+  // и текст не теряется.
+  it("merges paragraphs beyond the block limit without losing text", () => {
+    const description = Array.from({ length: 120 }, (_, i) => `п${i}`).join(
+      "\n\n",
+    );
+    const screen = lotScreen({ card: { title: "Кружка", description } });
+    expect(screen.text.match(/<p>/g)?.length).toBe(51);
+    expect(screen.text).toContain("п0");
+    expect(screen.text).toContain("п119");
   });
 
   it("puts the plain card into an HTML message without a photo", () => {

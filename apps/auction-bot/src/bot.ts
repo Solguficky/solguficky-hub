@@ -346,23 +346,31 @@ async function deliver(
   let photo = await photoFor({ ...input, requestId: ctx.requestId });
   // Новое сообщение после отказа правки загрузку не повторяет.
   let mayUpload = true;
+  // Загруженная версия, на которой Telegram отказал.
+  let rejected: ImageKey | undefined;
   for (;;) {
     try {
       const rich = richMessageOf(screen, photo);
       const sent = editable
         ? await ctx.editMessageText(rich, markup)
         : await ctx.replyWithRichMessage(rich, markup);
-      remember({ photos: input.photos, photo, sent });
+      remember({ ...input, requestId: ctx.requestId, photo, sent });
+      // Без фото карточка дошла — значит, отказ был в самом изображении, а не
+      // в лимите, правах или разметке: только тогда версия помечается.
+      if (rejected !== undefined) input.photos.refuse(rejected);
       await leave();
       return;
     } catch (cause) {
       if (photo?.kind === "upload" && cause instanceof HttpError) {
-        // Обрыв соединения: Telegram мог правку и не получить. Отметки нет,
+        // Обрыв соединения: Telegram мог вызов и не получить. Отметки нет,
         // следующее открытие лота загрузит изображение снова.
         input.logger.warn("lot image upload interrupted", {
           request_id: ctx.requestId,
           error: messageOf(cause),
         });
+        // Новое сообщение не повторяется: если Telegram его принял, повтор
+        // прислал бы второе. Правка того же сообщения дубля не даёт.
+        if (!editable) throw cause;
         photo = undefined;
         continue;
       }
@@ -387,14 +395,15 @@ async function deliver(
         continue;
       }
       if (photo !== undefined) {
-        // Telegram не принял само изображение — файл велик, не картинка или
-        // не обработался. Сообщение после отказа прежнее, и карточка уходит
-        // той же правкой без фото, а эта версия больше не загружается.
+        // Telegram отказал вызову с фото — файл велик, не картинка или не
+        // обработался. Сообщение после отказа прежнее, и карточка уходит той
+        // же правкой без фото; загруженная версия помечается, если правка без
+        // фото пройдёт.
         input.logger.warn("lot image rejected by Telegram", {
           request_id: ctx.requestId,
           error: cause.description,
         });
-        input.photos.refuse(photo.key);
+        if (photo.kind === "upload") rejected = photo.key;
         photo = undefined;
         continue;
       }
@@ -416,6 +425,8 @@ function remember(input: {
   photos: PhotoCache;
   photo: Photo | undefined;
   sent: Message | true;
+  logger: Logger;
+  requestId: string;
 }): void {
   const { photos, photo, sent } = input;
   if (photo?.kind !== "upload" || sent === true) return;
@@ -423,7 +434,15 @@ function remember(input: {
     .flatMap((block) => (block.type === "photo" ? [block.photo] : []))
     .at(-1)
     ?.at(-1)?.file_id;
-  if (fileId !== undefined) photos.set(photo.key, fileId);
+  if (fileId !== undefined) {
+    photos.set(photo.key, fileId);
+    return;
+  }
+  // Загрузка прошла, а фото в ответе нет: без записи каждый показ грузил бы
+  // байты заново, и это должно быть видно.
+  input.logger.warn("lot image file_id missing in response", {
+    request_id: input.requestId,
+  });
 }
 
 // Описания отказов Bot API не закреплены контрактом: сравнение без учёта
