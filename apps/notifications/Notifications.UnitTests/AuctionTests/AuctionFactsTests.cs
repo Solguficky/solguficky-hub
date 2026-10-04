@@ -25,6 +25,23 @@ public class AuctionFactsTests
     }
 
     [Fact]
+    public void When_PurchaseFactBuilt_Expect_WinnerCauseLotPriceAndExpiryWithoutRequestId()
+    {
+        var sale = AuctionMappingTests.DecodeSale(EventFactory.Sold(EventFactory.NewId()));
+        var now = EventFactory.Committed;
+        var id = Guid.CreateVersion7();
+        var fact = AuctionFacts.Purchased(id, sale, now, now.AddHours(24));
+        fact.NotificationId.ShouldBe(id.ToString());
+        fact.RecipientId.ShouldBe(sale.Winner.ToString());
+        fact.Cause.AuctionLotEventId.ShouldBe(sale.EventId.ToString());
+        fact.LotPurchased.LotId.ShouldBe(sale.LotId.ToString());
+        fact.LotPurchased.Price.ShouldBe(sale.Price);
+        DateTimeOffset.Parse(fact.CreatedAt).ShouldBe(now);
+        DateTimeOffset.Parse(fact.NotAfter).ShouldBe(now.AddHours(24));
+        fact.HasRequestId.ShouldBeFalse();
+    }
+
+    [Fact]
     public void When_BidHasNoOutbidRecipient_Expect_FactBuilderRefuses()
     {
         var bid = AuctionMappingTests.Decode(EventFactory.Bid(EventFactory.NewId()));

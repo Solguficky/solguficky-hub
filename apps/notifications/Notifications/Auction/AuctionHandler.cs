@@ -9,6 +9,8 @@ namespace Notifications.Auction;
 public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetry, FactTelemetry facts,
     TimeProvider clock, ILogger<AuctionHandler> logger) : IEventHandler
 {
+    private sealed record EventRef(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt);
+
     public Task Start(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public async Task Handle(EventDelivery message, CancellationToken stoppingToken)
@@ -27,11 +29,18 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             Record(message, started, null, "poison", 0, "invariant", poison.Reason);
             return;
         }
-        var bid = ((AuctionDecoded.Bid)decoded).Value;
+        var (source, type, apply) = decoded switch
+        {
+            AuctionDecoded.Bid { Value: var bid } => (new EventRef(bid.EventId, bid.LotId, bid.Version, bid.OccurredAt),
+                AuctionFacts.OutbidType, (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
+            AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, sale.Version, sale.OccurredAt),
+                AuctionFacts.PurchasedType, () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
+            _ => throw new ArgumentOutOfRangeException(nameof(message)),
+        };
         AuctionApplication application;
         try
         {
-            application = await store.Apply(bid, clock.GetUtcNow(), stoppingToken);
+            application = await apply();
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -40,22 +49,23 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
         catch (Exception ex)
         {
             await message.Retry(stoppingToken);
-            Record(message, started, bid, "failed", 0, "dependency_unavailable", "auction cause apply failed; message returned to the stream", ex);
+            Record(message, started, source, "failed", 0, "dependency_unavailable", "auction cause apply failed; message returned to the stream", ex);
             return;
         }
-        facts.Record(AuctionFacts.OutbidType, new FactCount(application.FactsCreated, 0));
+        facts.Record(type, new FactCount(application.FactsCreated, 0));
         await message.Accept(stoppingToken);
-        Record(message, started, bid, application.Outcome switch
+        Record(message, started, source, application.Outcome switch
         {
             AuctionOutcome.Outbid => "outbid",
             AuctionOutcome.FirstBid => "first_bid",
             AuctionOutcome.LeaderUnchanged => "leader_unchanged",
+            AuctionOutcome.Purchased => "purchased",
             AuctionOutcome.Duplicate => "duplicate",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }
 
-    private void Record(EventDelivery message, long started, AuctionBid? bid, string outcome, int created,
+    private void Record(EventDelivery message, long started, EventRef? source, string outcome, int created,
         string? category = null, string? error = null, Exception? exception = null)
     {
         telemetry.Record(outcome);
@@ -70,12 +80,12 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             ["facts_created"] = created,
         };
         if (message.StreamSequence is { } sequence) fields["stream_sequence"] = sequence;
-        if (bid is not null)
+        if (source is not null)
         {
-            fields["event_id"] = bid.EventId;
-            fields["lot_id"] = bid.LotId;
-            fields["version"] = bid.Version;
-            fields["event_age_seconds"] = (clock.GetUtcNow() - bid.OccurredAt).TotalSeconds;
+            fields["event_id"] = source.EventId;
+            fields["lot_id"] = source.LotId;
+            fields["version"] = source.Version;
+            fields["event_age_seconds"] = (clock.GetUtcNow() - source.OccurredAt).TotalSeconds;
         }
         if (category is not null)
         {
