@@ -2,6 +2,8 @@ auction-bot-service-token: ParameterResource
   secret: True
 auction-db: PostgresDatabaseResource
   health: auction-db_check
+auction-service-token: ParameterResource
+  secret: True
 hub-bot: JavaScriptAppResource
   command: npm
   workdir: <repo>/apps/hub-bot
@@ -98,6 +100,7 @@ meetups: ProjectResource
   env: ASPNETCORE_URLS={meetups.bindings.grpc.scheme}://localhost:{meetups.bindings.grpc.targetPort}
   env: DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=true
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
+  env: MEETUPS_CALLER_TOKEN_AUCTION={auction-service-token.value}
   env: MEETUPS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: MEETUPS_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
@@ -109,6 +112,7 @@ meetups: ProjectResource
   waits: meetups-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: postgres WaitUntilHealthy
+  relationship: Reference auction-service-token
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
   relationship: Reference meetups-service-token

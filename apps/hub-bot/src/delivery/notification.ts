@@ -1,4 +1,5 @@
 import { fromBinary } from "@bufbuild/protobuf";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   type DateValue,
   type Schedule,
@@ -76,7 +77,13 @@ export type NotificationContent =
   // получает и не называет: имя не входит в контракт личности.
   | { kind: "organizer-message"; meetup: NotifiedMeetup; body: string }
   | { kind: "community-announcement"; body: string }
+  // Заявку на доступ получает администратор. Заявителя контракт не несёт: кто
+  // просит, модератор видит в очереди, куда ведёт сообщение.
+  | { kind: "access-requested"; circle: AccessCircle }
   | { kind: "unrendered"; type: string };
+
+// Круги, на которые ставят заявку: хаб и аукцион.
+export type AccessCircle = "member" | "public";
 
 export type RenderableContent = Exclude<
   NotificationContent,
@@ -197,6 +204,12 @@ function toContent(message: Notification): NotificationContent | undefined {
       return body === undefined
         ? undefined
         : { kind: "community-announcement", body };
+    }
+    case "accessRequested": {
+      const circle = toAccessCircle(type.value.circle);
+      return circle === undefined
+        ? undefined
+        : { kind: "access-requested", circle };
     }
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
@@ -337,4 +350,16 @@ function toDateTime(
     hours: value.time.hours,
     minutes: value.time.minutes,
   };
+}
+
+// Заявку ставят только на круги поверхностей; другой круг — дефект издателя.
+function toAccessCircle(value: GlobalRole): AccessCircle | undefined {
+  switch (value) {
+    case GlobalRole.MEMBER:
+      return "member";
+    case GlobalRole.PUBLIC:
+      return "public";
+    default:
+      return undefined;
+  }
 }

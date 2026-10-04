@@ -121,3 +121,61 @@ export type CommunityAdministrator = {
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<boolean>>;
 };
+
+// Отказанная заявка (ADR-060, пункт 14). Круг — то, что выдаст пересмотр;
+// исход — как отказали: блокировкой в `public` или `declined` в `member`.
+// Имени нет: его обнулило решение. Момент отказа — уже в поясе сообщества.
+export type RefusedApplication = {
+  applicationId: string;
+  identityId: string;
+  telegramUserId: bigint;
+  telegramUsername?: string;
+  circle: "member" | "public";
+  outcome: "blocked" | "declined";
+  // Нет, когда заявку закрыл не администратор.
+  decidedBy?: { telegramUserId: bigint; telegramUsername?: string };
+  decidedAt: CommunityMoment;
+};
+export type CommunityMoment = {
+  year: number;
+  month: number;
+  day: number;
+  hours: number;
+  minutes: number;
+};
+// `not-refused` — отказ сейчас не пересмотреть: заявка уже не в отказе или
+// профиль заблокирован, и пересмотр `declined` блокировку не снимает.
+export type ReconsiderResult =
+  | IdentityAdminResult<boolean>
+  | { kind: "not-refused" };
+
+export type ApplicationAdministrator = {
+  refusedApplications(
+    actor: IdentityActor,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<readonly RefusedApplication[]>>;
+  reconsiderApplication(
+    actor: IdentityActor,
+    applicationId: string,
+    meta?: RpcMetadata,
+  ): Promise<ReconsiderResult>;
+};
+
+// Канал прихода (ADR-060, пункт 18): код из payload `s_<код>` без префикса и
+// подпись, которую модератор видит на карточке заявки.
+export type SourceChannel = { code: string; label: string };
+
+// `invalid` у заведения — Identity отверг код или подпись: их вводит
+// администратор, и неверный ввод здесь отказ, а не «неизвестный источник».
+// `ok` с `false` — канал с этим кодом уже заведён, подпись не переписана.
+export type SourceChannelAdministrator = {
+  sourceChannels(
+    actor: IdentityActor,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<readonly SourceChannel[]>>;
+  createSourceChannel(
+    actor: IdentityActor,
+    channel: SourceChannel,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+};

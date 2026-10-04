@@ -68,29 +68,8 @@ final class LotJournalGap(serialization: Serialization) {
       version: Long,
       sequence: Long
   ): Vector[(Long, StoredLotEvent)] =
-    Using.resource(
-      connection.prepareStatement(
-        """SELECT sequence_number, event_ser_id, event_ser_manifest, event_payload FROM event_journal
-          |WHERE persistence_id = ? AND sequence_number > ? AND sequence_number < ? AND NOT deleted
-          |ORDER BY sequence_number""".stripMargin
-      )
-    ) { statement =>
-      statement.setString(1, persistenceId)
-      statement.setLong(2, version)
-      statement.setLong(3, sequence)
-      Using.resource(statement.executeQuery()) { rows =>
-        Iterator
-          .continually(rows)
-          .takeWhile(_.next())
-          .map { row =>
-            val event = serialization.deserialize(row.getBytes(4), row.getInt(2), row.getString(3)).get match {
-              case stored: StoredLotEvent => stored
-              case other => throw new IllegalStateException(s"lot journal row of type ${other.getClass.getName}")
-            }
-            row.getLong(1) -> event
-          }
-          .toVector
-      }
+    JournalGap.missing(connection, serialization, persistenceId, version, sequence) { case stored: StoredLotEvent =>
+      stored
     }
 
   /**
@@ -109,5 +88,46 @@ final class LotJournalGap(serialization: Serialization) {
       case Left(LotViewDefect.Gap(_, version, _)) =>
         missing(connection, persistenceId, version, sequence) :+ (sequence -> delivered)
       case _ => Vector(sequence -> delivered)
+    }
+}
+
+/** Чтение строк журнала одного persistence id мимо потока тега — общее для проекций лота и аукциона. */
+object JournalGap {
+
+  /**
+   * События строго между `version` и `sequence` по порядку. Строка другого типа, чем ждёт `cast`, — испорченный журнал.
+   */
+  def missing[E](
+      connection: Connection,
+      serialization: Serialization,
+      persistenceId: String,
+      version: Long,
+      sequence: Long
+  )(cast: PartialFunction[AnyRef, E]): Vector[(Long, E)] =
+    Using.resource(
+      connection.prepareStatement(
+        """SELECT sequence_number, event_ser_id, event_ser_manifest, event_payload FROM event_journal
+          |WHERE persistence_id = ? AND sequence_number > ? AND sequence_number < ? AND NOT deleted
+          |ORDER BY sequence_number""".stripMargin
+      )
+    ) { statement =>
+      statement.setString(1, persistenceId)
+      statement.setLong(2, version)
+      statement.setLong(3, sequence)
+      Using.resource(statement.executeQuery()) { rows =>
+        Iterator
+          .continually(rows)
+          .takeWhile(_.next())
+          .map { row =>
+            val event = serialization.deserialize(row.getBytes(4), row.getInt(2), row.getString(3)).get
+            val typed = cast.applyOrElse(
+              event,
+              (other: AnyRef) =>
+                throw new IllegalStateException(s"$persistenceId journal row of type ${other.getClass.getName}")
+            )
+            row.getLong(1) -> typed
+          }
+          .toVector
+      }
     }
 }

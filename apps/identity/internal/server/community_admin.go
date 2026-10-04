@@ -131,7 +131,9 @@ func (s identityService) AddAllowedUsername(ctx context.Context, req *identityv1
 	if err != nil {
 		return nil, err
 	}
-	changed, err := s.addAllowedUsername(ctx, req.GetUsername(), actor)
+	// Контракт заводит только запись хаба: поля круга в запросе нет, и
+	// аукционный список администратор отсюда не пополняет.
+	changed, err := s.addAllowedUsername(ctx, req.GetUsername(), roleMember, actor)
 	if err != nil {
 		return nil, allowedUsernameStatus(err)
 	}

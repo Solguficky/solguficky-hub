@@ -13,11 +13,17 @@ public sealed record FactCount(int Created, int Suppressed)
 public sealed record ProducedFacts(string Type, FactCount Facts)
 {
     /// <summary>
-    /// Неотправленные факты той же сходки, которые снял повод отмены: пустой
-    /// список — отмена была, но снимать было нечего. <c>null</c> у остальных
+    /// Неотправленные факты, которые снял повод: пустой список — правило снятия
+    /// сработало, но снимать было нечего. <c>null</c> у остальных
     /// поводов — правило снятия не запускалось, и в логе поля нет.
     /// </summary>
     public IReadOnlyList<WithdrawnFacts>? Withdrawn { get; init; }
+
+    /// <summary>
+    /// Причина снятия из <c>notification.withdrawal_reason</c>. Отмена сходки —
+    /// у поводов Meetups, закрытая заявка — у поводов Identity.
+    /// </summary>
+    public string WithdrawalReason { get; init; } = NotificationFacts.WithdrawnOnCancellation;
 }
 
 /// <summary>Сколько неотправленных фактов одного типа снято одним действием.</summary>

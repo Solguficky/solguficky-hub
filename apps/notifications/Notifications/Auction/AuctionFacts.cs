@@ -6,6 +6,7 @@ namespace Notifications.Auction;
 public static class AuctionFacts
 {
     public const string OutbidType = "lot_outbid";
+    public const string PurchasedType = "lot_purchased";
     public const string CauseKind = "auction_lot_event";
 
     public static Notification Outbid(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) => new()
@@ -16,5 +17,15 @@ public static class AuctionFacts
         NotAfter = notAfter.ToUniversalTime().ToString("O"),
         Cause = new Cause { AuctionLotEventId = bid.EventId.ToString() },
         LotOutbid = new LotOutbid { LotId = bid.LotId.ToString(), CurrentPrice = bid.Price.Clone() },
+    };
+
+    public static Notification Purchased(Guid notificationId, AuctionSale sale, DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = sale.Winner.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionLotEventId = sale.EventId.ToString() },
+        LotPurchased = new LotPurchased { LotId = sale.LotId.ToString(), Price = sale.Price.Clone() },
     };
 }

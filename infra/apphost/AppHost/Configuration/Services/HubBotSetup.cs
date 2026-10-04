@@ -6,6 +6,16 @@ namespace AppHost.Configuration.Services;
 
 internal static class HubBotSetup
 {
+    /// <summary>
+    /// Имя бота аукциона без «@» (PER-441): экран каналов прихода собирает по
+    /// нему вторую ссылку <c>s_&lt;код&gt;</c>. Бот хаба не знает его сам — getMe
+    /// по чужому токену дал бы ему чужой секрет. Не секрет и не параметр Aspire,
+    /// как <see cref="AuctionBotSetup.AuctionIdKey"/>: без значения экран отдаёт
+    /// только ссылку в бот хаба. Задаётся user-secrets AppHost или переменной
+    /// <c>HubBot__AuctionBotUsername</c>.
+    /// </summary>
+    internal const string AuctionBotUsernameKey = "HubBot:AuctionBotUsername";
+
     // Проб нет: у бота нет ни порта, ни health-эндпоинта, а exec-проба «процесс
     // жив» дала бы сигнал, которому нельзя верить. Остаётся рестарт по выходу.
     private static readonly ClusterWorkload Cluster = new(
@@ -14,7 +24,7 @@ internal static class HubBotSetup
         MemoryRequest: "128Mi",
         CpuLimit: "500m",
         MemoryLimit: "256Mi",
-        Grpc: null);
+        Probe: null);
 
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context) =>
         Wire(
@@ -51,6 +61,13 @@ internal static class HubBotSetup
         // от среды, поэтому прогон спрашивает ровно один токен — тот, которым
         // ходит в выбранный Telegram.
         var token = context.Builder.AddParameter(environment.TokenParameter, secret: true);
+
+        // Форму значения проверяет сам бот на старте: AppHost передаёт его как есть.
+        var auctionBotUsername = context.Builder.Configuration[AuctionBotUsernameKey]?.Trim();
+        if (!string.IsNullOrEmpty(auctionBotUsername))
+        {
+            bot.WithEnvironment("HUB_BOT_AUCTION_BOT_USERNAME", auctionBotUsername);
+        }
 
         return bot
             .WithEnvironment("HUB_BOT_TOKEN", token)

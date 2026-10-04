@@ -49,7 +49,7 @@ message SetGlobalCategoryPreferenceRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Any category of the dictionary below.
+  // Any category of the dictionary below that the person can see.
   NotificationCategory category = 2;
 
   // Target state of this one category, never a toggle of the current value.
@@ -95,6 +95,9 @@ message GlobalNotificationPreferences {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
+  // Every category of the dictionary the person can see, in dictionary order.
+  // A category reserved to a role the person does not hold is absent, not
+  // reported as off.
   repeated CategoryPreference categories = 2;
 }
 
@@ -189,4 +192,8 @@ enum NotificationCategory {
 
   // Global scope only: it is bound to no meetup.
   NOTIFICATION_CATEGORY_COMMUNITY_ANNOUNCEMENT = 6;
+
+  // Global scope only, and visible to administrators only: new applications
+  // for access. Nobody else sees it or may set it.
+  NOTIFICATION_CATEGORY_ACCESS_REQUEST = 7;
 }

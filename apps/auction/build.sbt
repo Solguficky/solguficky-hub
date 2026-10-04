@@ -130,38 +130,29 @@ lazy val auction = (project in file("."))
     //
     // Из identity берётся только файл значений: его импортирует схема сервиса
     // аукциона. Весь каталог дал бы ещё и серверный трейт IdentityService —
-    // сервиса, которого аукцион не обслуживает.
+    // сервиса, которого аукцион не обслуживает. Из meetups — сервис и его
+    // сообщения: аукцион спрашивает право администратора CheckMeetupAuthority
+    // (ADR-047, ADR-051); схема событий Meetups ему не нужна.
     Compile / PB.generate / includeFilter := new SimpleFileFilter(schema => {
       val path = schema.getPath.replace('\\', '/')
       schema.isFile &&
       schema.getName.endsWith(".proto") &&
-      (path.contains("/proto/auction/") || path.endsWith("/proto/identity/v1/roles.proto"))
+      (path.contains("/proto/auction/") ||
+        path.endsWith("/proto/identity/v1/roles.proto") ||
+        path.endsWith("/proto/meetups/v1/meetups_service.proto") ||
+        path.endsWith("/proto/meetups/v1/meetups.proto"))
     }),
-    // Только серверная сторона: аукцион обслуживает AuctionService и ни одного
-    // чужого RPC не вызывает. Клиент появится вместе с первым исходящим
-    // вызовом — тот же явный выбор, что GrpcServices у элементов Protobuf в
-    // контрактном проекте Meetups. Цели ScalaPB задаёт сам плагин pekko-grpc.
+    // Сервер AuctionService и клиент MeetupsService. Выбор сторон у плагина
+    // общий на все схемы, поэтому рядом рождаются и неиспользуемые половины —
+    // трейт сервера Meetups и клиент самого аукциона; второй нужен L1-тестам
+    // gRPC-границы, которые ходят в сервер так же, как бот. Цели ScalaPB задаёт
+    // сам плагин pekko-grpc.
     pekkoGrpcGeneratedLanguages := Seq(PekkoGrpc.Scala),
-    pekkoGrpcGeneratedSources := Seq(PekkoGrpc.Server),
+    pekkoGrpcGeneratedSources := Seq(PekkoGrpc.Server, PekkoGrpc.Client),
     // Плагин по умолчанию включает flat_package, и identity/v1/roles.proto
     // переезжает из identity.v1.roles в identity.v1. Без флага Scala-пакет
     // выводится из файла так же, как до стабов и как записано в protobuf.md.
     pekkoGrpcCodeGeneratorSettings -= "flat_package",
-    // Клиент AuctionService нужен только L1-тестам gRPC-границы: они ходят в
-    // сервер так же, как бот. В Test генерируется один клиентский стаб поверх
-    // тех же схем, а сообщения берутся из Compile — вторая копия классов
-    // ScalaPB на test classpath конфликтовала бы с первой. Рантайм сервиса
-    // клиента не получает: выбор «только сервер» выше остаётся в силе.
-    Test / PB.protoSources := (Compile / PB.protoSources).value,
-    Test / PB.generate / includeFilter := new SimpleFileFilter(schema =>
-      schema.isFile && schema.getPath.replace('\\', '/').endsWith("/proto/auction/v1/auction_service.proto")
-    ),
-    Test / pekkoGrpcGeneratedSources := Seq(PekkoGrpc.Client),
-    Test / PB.targets := (Test / PB.targets).value.filterNot(_.generator.name == "scala"),
-    // Генератор клиента кладёт рядом и описание сервиса `AuctionService` —
-    // тот же класс, что уже есть в Compile. Тестовая копия затенила бы его на
-    // classpath, поэтому в Test остаётся только сам клиент.
-    Test / managedSources := (Test / managedSources).value.filterNot(_.getName == "AuctionService.scala"),
     // Prefix в имени процесса не нужен: `just auction-run` запускает ровно
     // один main, и sbt не должен спрашивать, какой именно.
     Compile / mainClass := Some("auction.Main"),

@@ -39,6 +39,14 @@ public class AuctionMappingTests
     }
 
     [Fact]
+    public void When_AuctionBornAtMeetup_Expect_UuidV5AuctionAccepted()
+    {
+        var message = EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId());
+        message.State.AuctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+        Decode(message).LotId.ShouldBe(Guid.Parse(message.LotId));
+    }
+
+    [Fact]
     public void When_LeaderProxyRaisesPrice_Expect_NoRecipient()
     {
         var leader = EventFactory.NewId();
@@ -47,10 +55,114 @@ public class AuctionMappingTests
 
     [Theory]
     [InlineData("events.auction.auction_scheduled")]
-    [InlineData("events.auction.lot_sold")]
+    [InlineData("events.auction.lot_unsold")]
+    [InlineData("events.auction.lot_held_for_final")]
     [InlineData("events.auction.future_occasion")]
     public void When_UnrelatedSubject_Expect_NotParsedAsLotEvent(string subject) =>
         AuctionMapping.Decode(subject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Ignored>();
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void When_LotUnsoldOrHeldForFinal_Expect_IgnoredWithoutFact(bool held)
+    {
+        var (subject, message) = held
+            ? ("events.auction.lot_held_for_final", EventFactory.HeldForFinal(EventFactory.NewId()))
+            : ("events.auction.lot_unsold", EventFactory.Unsold(EventFactory.NewId()));
+        AuctionMapping.Decode(subject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Ignored>();
+    }
+
+    [Fact]
+    public void When_LotSold_Expect_WinnerAddressedWithSalePrice()
+    {
+        var winner = EventFactory.NewId();
+        var message = EventFactory.Sold(EventFactory.NewId(), winner);
+        var sale = DecodeSale(message);
+        sale.Winner.ShouldBe(Guid.Parse(winner));
+        sale.Price.ShouldBe(message.State.Sold.Price);
+        sale.EventId.ShouldBe(Guid.Parse(message.EventId));
+        sale.LotId.ShouldBe(Guid.Parse(message.LotId));
+        sale.Version.ShouldBe(message.Version);
+    }
+
+    // Auction сегодня не выставляет config у проданного лота; продажа из-за
+    // этого не должна стать ядом и потеряться без повтора.
+    [Fact]
+    public void When_SoldStateHasNoConfig_Expect_SaleAccepted() =>
+        DecodeSale(EventFactory.Sold(EventFactory.NewId(), config: false)).Price.Currency.ShouldBe("RUB");
+
+    // Instant.toString производителя на наносекундных часах пишет девять
+    // знаков дроби; DateTimeOffset держит семь.
+    [Fact]
+    public void When_SaleInstantsHaveNanoseconds_Expect_SaleAcceptedTruncatedToTicks()
+    {
+        var message = EventFactory.Sold(EventFactory.NewId());
+        message.OccurredAt = "2026-10-03T12:00:00.123456789Z";
+        message.State.Sold.SoldAt = "2026-10-03T12:00:00.123456789Z";
+        DecodeSale(message).OccurredAt.ShouldBe(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero).AddTicks(1234567));
+    }
+
+    [Fact]
+    public void When_BidInstantHasNanoseconds_Expect_BidAccepted()
+    {
+        var message = EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId());
+        message.OccurredAt = "2026-10-03T12:00:00.123456789Z";
+        Decode(message).OccurredAt.ShouldBe(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero).AddTicks(1234567));
+    }
+
+    [Fact]
+    public void When_BrokenSoldProtobuf_Expect_Poison() =>
+        AuctionMapping.Decode(AuctionFeed.LotSoldSubject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Poison>();
+
+    [Theory]
+    [InlineData("event_id")]
+    [InlineData("version")]
+    [InlineData("occurred_at")]
+    [InlineData("occasion")]
+    [InlineData("state")]
+    [InlineData("state_id")]
+    [InlineData("auction_id")]
+    [InlineData("status")]
+    [InlineData("winner")]
+    [InlineData("winner_version")]
+    [InlineData("bid_id")]
+    [InlineData("price")]
+    [InlineData("negative_price")]
+    [InlineData("currency")]
+    [InlineData("config_currency")]
+    [InlineData("sold_at")]
+    [InlineData("sold_at_non_utc")]
+    public void When_RequiredSaleFieldInvalid_Expect_Poison(string field)
+    {
+        var message = EventFactory.Sold(EventFactory.NewId());
+        switch (field)
+        {
+            case "event_id": message.EventId = "bad"; break;
+            case "version": message.Version = 0; break;
+            case "occurred_at": message.OccurredAt = "2026-09-01"; break;
+            case "occasion": message.LotUnsold = new LotUnsold(); break;
+            case "state": message.State = null; break;
+            case "state_id": message.State.Id = EventFactory.NewId(); break;
+            case "auction_id": message.State.AuctionId = ""; break;
+            case "status": message.State.Unsold = UnsoldReason.NoBids; break;
+            case "winner": message.State.Sold.WinnerId = ""; break;
+            case "winner_version": message.State.Sold.WinnerId = Guid.NewGuid().ToString(); break;
+            case "bid_id": message.State.Sold.BidId = "bad"; break;
+            case "price": message.State.Sold.Price = null; break;
+            case "negative_price": message.State.Sold.Price.MinorUnits = -1; break;
+            case "currency": message.State.Sold.Price.Currency = "rub"; break;
+            case "config_currency": message.State.Config.Currency = "EUR"; break;
+            case "sold_at": message.State.Sold.SoldAt = ""; break;
+            case "sold_at_non_utc": message.State.Sold.SoldAt = "2026-09-01T12:00:00+03:00"; break;
+            default: throw new ArgumentOutOfRangeException(nameof(field));
+        }
+        AuctionMapping.Decode(AuctionFeed.LotSoldSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Poison>();
+    }
+
+    [Fact]
+    public void When_BidPayloadArrivesOnLotSoldSubject_Expect_Poison() =>
+        AuctionMapping.Decode(AuctionFeed.LotSoldSubject, EventFactory.Bytes(EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId())))
+            .ShouldBeOfType<AuctionDecoded.Poison>();
 
     [Fact]
     public void When_BrokenProtobuf_Expect_Poison() =>
@@ -67,6 +179,7 @@ public class AuctionMappingTests
     [InlineData("state")]
     [InlineData("state_id")]
     [InlineData("auction_id")]
+    [InlineData("auction_id_version")]
     [InlineData("status")]
     [InlineData("leader")]
     [InlineData("bid_id")]
@@ -94,6 +207,7 @@ public class AuctionMappingTests
             case "state": message.State = null; break;
             case "state_id": message.State.Id = EventFactory.NewId(); break;
             case "auction_id": message.State.AuctionId = ""; break;
+            case "auction_id_version": message.State.AuctionId = Guid.NewGuid().ToString(); break;
             case "status": message.State.Draft = new LotDraft(); break;
             case "leader": message.State.Trading.ClearLeaderId(); break;
             case "bid_id": message.State.Trading.LeadingBidId = ""; break;
@@ -113,4 +227,7 @@ public class AuctionMappingTests
 
     internal static AuctionBid Decode(LotEvent message) =>
         AuctionMapping.Decode(AuctionFeed.BidPlacedSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Bid>().Value;
+
+    internal static AuctionSale DecodeSale(LotEvent message) =>
+        AuctionMapping.Decode(AuctionFeed.LotSoldSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Sale>().Value;
 }

@@ -12,6 +12,7 @@ import {
   createNotificationApi,
   createNotificationSender,
 } from "./presentation/notification-message.js";
+import { isTelegramBotUsername } from "./presentation/source-deep-link.js";
 import { createShutdown } from "./shutdown.js";
 import {
   type Logs,
@@ -91,6 +92,20 @@ async function main(): Promise<number> {
     logger.error("HUB_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name");
     return 1;
   }
+  // Имя бота аукциона нужно только экрану каналов прихода (PER-441). Опечатка
+  // дала бы администратору ссылку в чужой или несуществующий бот, поэтому
+  // форма проверяется на старте, а не молча.
+  const auctionBotUsername =
+    readEnv("HUB_BOT_AUCTION_BOT_USERNAME") || undefined;
+  if (
+    auctionBotUsername !== undefined &&
+    !isTelegramBotUsername(auctionBotUsername)
+  ) {
+    logger.error(
+      "HUB_BOT_AUCTION_BOT_USERNAME must be a Telegram bot username",
+    );
+    return 1;
+  }
   const metrics = startMetrics();
   const tracing = startTraces();
   const meetups = createMeetupsClient(meetupsUrl, {
@@ -107,6 +122,7 @@ async function main(): Promise<number> {
   const today = () => communityDay(new Date(), communityTimeZone);
   const dispatcher = createDispatcher(meetups, notifications, today);
   const identity = createIdentityClient(identityUrl, {
+    communityTimeZone,
     tracing,
     serviceToken,
   });
@@ -119,6 +135,7 @@ async function main(): Promise<number> {
     presentation: presentationRaw,
     environment,
     today,
+    ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
   });
   // Второй вход компонента: адресные факты Notifications из шины. Он стартует
   // до поллера, чтобы отказ шины остановил процесс сразу, а не после того, как
@@ -198,6 +215,9 @@ async function main(): Promise<number> {
     logger.info(`${serviceName} starting`, {
       service: serviceName,
       telegram_environment: environment,
+      // Без имени бота аукциона экран каналов отдаёт только ссылку хаба: по
+      // записи старта видно, задумано это или настройка потерялась.
+      auction_bot_links: auctionBotUsername !== undefined,
     });
     // Меню пишется без ожидания: медленный или отказавший Telegram не должен
     // задерживать polling и остановку, а отказ registerCommands пишет в лог сам.

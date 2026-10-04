@@ -6,6 +6,7 @@ import {
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
+import { inspectCall, reportViolations } from "../testkit/screen-lint.js";
 import { createBot } from "./bot.js";
 import type { PortsFactory } from "./clients.js";
 import { entryCallback } from "./faq.js";
@@ -62,6 +63,9 @@ function makeBot(
   // ослабление типа в тесте. Отказ Bot API задаётся описанием по методу.
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push({ method, payload });
+    // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
+    // найденное снимает хук набора (`testkit/lint-setup.ts`).
+    reportViolations(inspectCall(method, payload));
     const once = options.refuseOnce?.[method];
     if (once !== undefined && options.refuseOnce !== undefined) {
       delete options.refuseOnce[method];
@@ -222,6 +226,32 @@ describe("auction bot", () => {
         ],
       },
     });
+  });
+
+  it("answers /start with a channel or a foreign payload like a plain /start", async () => {
+    const answer = async (text: string) => {
+      const { bot, calls } = makeBot(publicPorts);
+      await bot.handleUpdate(
+        startUpdate({
+          message_id: 1,
+          date: 0,
+          chat: privateChat,
+          from,
+          text,
+          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+        }),
+      );
+      return calls.map((call) => call.payload);
+    };
+    const plain = await answer("/start");
+    for (const text of [
+      "/start s_tg_ads",
+      "/start s_",
+      "/start m_AZLzpLXGfY6fChssPU5fYA",
+      "/start not a payload",
+    ]) {
+      expect(await answer(text)).toEqual(plain);
+    }
   });
 
   it("stays silent in a group", async () => {

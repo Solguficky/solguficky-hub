@@ -39,6 +39,12 @@ public sealed class PreferencesUnderTest : IAsyncDisposable
     /// </summary>
     public PreferenceOperations Operations => silo.Service<PreferenceOperations>();
 
+    /// <summary>
+    /// База сервиса. Нужна сценариям, которым человек в реплике задаётся
+    /// напрямую: категория, видимая роли, читает роль из реплики.
+    /// </summary>
+    public IsolatedDatabase Database => database;
+
     public static async Task<PreferencesUnderTest> Start()
     {
         var database = new IsolatedDatabase();

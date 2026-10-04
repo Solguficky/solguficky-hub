@@ -53,6 +53,17 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     )
   }
 
+  def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] = {
+    val from = after.getOrElse(new UUID(0L, 0L)).toString
+    database.run(
+      sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description
+            FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
+            LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
+            WHERE r.auction_id = ${auctionId.toString}::uuid AND r.lot_id > $from::uuid
+            ORDER BY r.lot_id LIMIT $limit""".as[LotSnapshotView].map(_.toList)
+    )
+  }
+
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.
   private def restored(lotId: UUID, title: String): LotTitle =
     LotTitle(title).getOrElse(throw IllegalStateException(s"lot_catalog holds a blank title for lot $lotId"))

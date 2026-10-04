@@ -71,6 +71,30 @@ export function disableMeetupCategoryCallback(
 export function renderNotification(
   content: RenderableContent,
 ): NotificationMessage {
+  if (content.kind === "access-requested") {
+    // Минимальный кадр PER-435: повод и переход в очередь, где заявку решают.
+    // Кнопки отключения пока нет — её и строку в общих настройках несёт
+    // PER-466.
+    if (content.circle === "public") {
+      // Очередь «Ожидают допуска» решает допуск в хаб: «Допустить» там выдаёт
+      // member. Вести туда аукционную заявку значило бы дать заявителю больше,
+      // чем он просил, поэтому кнопки нет, пока у бота нет карточки заявки с
+      // кругом (PER-439).
+      return {
+        text: "Новая заявка на участие в аукционе",
+        keyboard: undefined,
+      };
+    }
+    return {
+      text: "Новая заявка на доступ в сообщество",
+      keyboard: new InlineKeyboard().text(
+        "Открыть очередь",
+        // Кнопка следа: очередь придёт новым сообщением, а уведомление
+        // останется в истории.
+        traceCallback("v1:cm:p"),
+      ),
+    };
+  }
   if (content.kind === "community-announcement") {
     return {
       text: withHeadline("Объявление сообщества", content.body),

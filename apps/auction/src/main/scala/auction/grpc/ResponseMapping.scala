@@ -1,5 +1,9 @@
 package auction.grpc
 
+import auction.aggregate.AuctionState
+import auction.aggregate.Denial
+import auction.aggregate.Drafted
+import auction.aggregate.RemovalRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
 import auction.lot.Envelope
@@ -8,7 +12,9 @@ import auction.lot.Money
 import auction.lot.PlaceBidRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimitRejected
+import auction.projection.AuctionSnapshotView
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction_events.AuctionState as AuctionStateMessage
 import auction.v1.auction_service as wire
 import io.grpc.Status
 
@@ -132,6 +138,105 @@ object ResponseMapping {
       case PlaceBidRejected.LotNotFound =>
         throw new IllegalStateException("LotNotFound is a status, not a refusal value")
     }
+
+  /**
+   * Отказ по праву — значение ответа, как отказ каталога: он окончателен, и экран администратора показывает его
+   * человеку. `Unavailable` — статус: право сейчас не подтвердить, и повтор уместен. Аукциона нет — `NOT_FOUND`, как у
+   * лота (integration.md, «Аукцион у сходки»).
+   */
+  def draftAuction(outcome: Either[Denial, Drafted]): Either[Status, wire.DraftAuctionResponse] =
+    outcome match {
+      case Right(drafted) =>
+        Right(
+          wire
+            .DraftAuctionResponse()
+            .withAccepted(wire.DraftAuctionAccepted(drafted.auctionId.value.toString, drafted.alreadyExisted))
+        )
+      case Left(Denial.NotAdministrator) =>
+        Right(
+          wire
+            .DraftAuctionResponse()
+            .withRefused(
+              wire.DraftAuctionRefusal(
+                wire.DraftAuctionRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())
+              )
+            )
+        )
+      case Left(Denial.MeetupNotFound) =>
+        Right(
+          wire
+            .DraftAuctionResponse()
+            .withRefused(
+              wire.DraftAuctionRefusal(wire.DraftAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
+            )
+        )
+      case Left(Denial.Unavailable) => Left(unavailable)
+      case Left(Denial.AuctionNotFound | Denial.LotOfAnotherAuction) =>
+        throw new IllegalStateException("auction draft answered a registry denial")
+    }
+
+  def addLot(outcome: Either[Denial, Unit]): Either[Status, wire.AddLotResponse] =
+    outcome match {
+      case Right(()) => Right(wire.AddLotResponse().withAccepted(wire.LotAdditionAccepted()))
+      case Left(Denial.NotAdministrator) =>
+        Right(
+          wire
+            .AddLotResponse()
+            .withRefused(
+              wire.AddLotRefusal(wire.AddLotRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+            )
+        )
+      case Left(Denial.MeetupNotFound) =>
+        Right(
+          wire
+            .AddLotResponse()
+            .withRefused(wire.AddLotRefusal(wire.AddLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+        )
+      case Left(Denial.Unavailable) => Left(unavailable)
+      case Left(Denial.AuctionNotFound) => Left(auctionNotFound)
+      case Left(Denial.LotOfAnotherAuction) =>
+        Left(Status.FAILED_PRECONDITION.withDescription("lot belongs to another auction"))
+    }
+
+  def removeLot(outcome: Either[RemovalRefusal, Unit]): Either[Status, wire.RemoveLotResponse] =
+    outcome match {
+      case Right(()) => Right(wire.RemoveLotResponse().withAccepted(wire.LotRemovalAccepted()))
+      case Left(RemovalRefusal.LotNotInAuction) =>
+        Right(removalRefused(wire.RemoveLotRefusal.Reason.LotNotInAuction(wire.LotNotInAuction())))
+      case Left(RemovalRefusal.Denied(Denial.NotAdministrator)) =>
+        Right(removalRefused(wire.RemoveLotRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
+      case Left(RemovalRefusal.Denied(Denial.MeetupNotFound)) =>
+        Right(removalRefused(wire.RemoveLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(RemovalRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(RemovalRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(RemovalRefusal.Denied(Denial.LotOfAnotherAuction)) =>
+        throw new IllegalStateException("lot removal answered LotOfAnotherAuction")
+    }
+
+  /**
+   * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у
+   * черновика нет; реестр — по возрастанию `lot_id`, порядок смысла не несёт.
+   */
+  def auctionSnapshot(view: AuctionSnapshotView): wire.AuctionSnapshot = {
+    val status = view.auction.state match {
+      case AuctionState.Draft => wire.AuctionSnapshot.Status.Draft(AuctionStateMessage.Draft())
+      case AuctionState.Initial =>
+        throw new IllegalStateException(s"auction view ${view.auctionId} holds an unborn auction")
+    }
+    wire.AuctionSnapshot(
+      id = view.auctionId.toString,
+      config = None,
+      lotIds = view.auction.lots.toList.map(_.value).sorted.map(_.toString),
+      status = status
+    )
+  }
+
+  private def removalRefused(reason: wire.RemoveLotRefusal.Reason): wire.RemoveLotResponse =
+    wire.RemoveLotResponse().withRefused(wire.RemoveLotRefusal(reason))
+
+  private def unavailable: Status = Status.UNAVAILABLE.withDescription("meetup authority is unavailable")
+
+  private def auctionNotFound: Status = Status.NOT_FOUND.withDescription("auction not found")
 
   private def lotCard(card: LotCard): wire.LotCard = wire.LotCard(card.title.value, card.description)
 

@@ -1,9 +1,12 @@
 package auction.grpc
 
+import auction.aggregate.AuctionCommands
+import auction.aggregate.Correlation
 import auction.catalog.LotCatalogCommands
 import auction.entity.Initiator
 import auction.entity.LotGateway
 import auction.onboarding.FaqAcknowledgements
+import auction.projection.AuctionViews
 import auction.projection.LotViews
 import auction.v1.auction_service as wire
 import io.grpc.Status
@@ -24,9 +27,15 @@ final class AuctionGrpcService(
     lots: LotGateway,
     catalog: LotCatalogCommands,
     faq: FaqAcknowledgements,
-    views: LotViews
+    views: LotViews,
+    auctions: AuctionCommands,
+    auctionViews: AuctionViews
 )(using ExecutionContext)
     extends wire.AuctionService {
+
+  /** Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями. */
+  def within(correlation: Correlation): AuctionGrpcService =
+    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews)
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
@@ -95,8 +104,9 @@ final class AuctionGrpcService(
     }
 
   /**
-   * Лоты аукциона страницами по возрастанию `lot_id`. Аукцион без лотов и аукцион, которого нет, отвечают одинаково —
-   * пустой страницей: агрегата аукциона в сервисе ещё нет, и read model знает аукцион только по его лотам.
+   * Лоты аукциона страницами по возрастанию `lot_id`. Аукцион сходки (UUIDv5) перечисляется по своему реестру: снятый
+   * лот из ленты уходит. Тестовый аукцион из настройки бота (UUIDv7) журнала аукциона не имеет и перечисляется по
+   * лотам, рождённым в нём. Аукцион без лотов и аукцион, которого нет, отвечают одинаково — пустой страницей.
    */
   def listAuctionLots(in: wire.ListAuctionLotsRequest): Future[wire.ListAuctionLotsResponse] =
     RequestMapping.listAuctionLots(in) match {
@@ -105,7 +115,8 @@ final class AuctionGrpcService(
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
       case Right(query) =>
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
-        views.page(query.auctionId, query.after, query.limit + 1).map { found =>
+        val read = if (AuctionGrpcService.isMeetupAuction(query.auctionId)) views.registryPage else views.page
+        read(query.auctionId, query.after, query.limit + 1).map { found =>
           val page = found.take(query.limit)
           val next = if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
           wire.ListAuctionLotsResponse(
@@ -138,11 +149,70 @@ final class AuctionGrpcService(
   def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = unimplemented
 
   /**
+   * Аукцион у сходки (ADR-047, дополнение 2026-10-03). Роли смотрящего права не дают: его спрашивает у Meetups
+   * [[AuctionCommands]], и человек команды — `viewer.identity_id`.
+   */
+  def draftAuction(in: wire.DraftAuctionRequest): Future[wire.DraftAuctionResponse] =
+    RequestMapping.draftAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .draft(command.meetup, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.draftAuction(outcome).fold(refuse, Future.successful))
+    }
+
+  def addLot(in: wire.AddLotRequest): Future[wire.AddLotResponse] =
+    RequestMapping.addLot(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .addLot(command.auctionId, command.lotId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.addLot(outcome).fold(refuse, Future.successful))
+    }
+
+  def removeLot(in: wire.RemoveLotRequest): Future[wire.RemoveLotResponse] =
+    RequestMapping.removeLot(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .removeLot(command.auctionId, command.lotId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.removeLot(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Чтения аукционов идут из read model и видимость сходки не проверяют (ADR-047): путь «сходка → аукцион» есть только
+   * у бота хаба после ответа Meetups, а списки сходку не называют. Аукциона у сходки нет — пустой ответ, а не ошибка.
+   */
+  def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] =
+    RequestMapping.getMeetupAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        auctionViews
+          .byMeetup(query.meetup)
+          .map(found => wire.GetMeetupAuctionResponse(found.map(ResponseMapping.auctionSnapshot)))
+    }
+
+  def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] =
+    RequestMapping.listAuctions(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        auctionViews.page(query.listing, query.after, query.limit + 1).map { found =>
+          val page = found.take(query.limit)
+          val next =
+            if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.auctionId)) else None
+          wire.ListAuctionsResponse(page.map(ResponseMapping.auctionSnapshot), next.getOrElse(""))
+        }
+    }
+
+  /**
    * Ответа entity не дождались. Команда могла быть принята, поэтому это `DEADLINE_EXCEEDED`, а не `UNAVAILABLE`: повтор
    * с тем же `op_id` вернёт исходный ответ, а не запишет команду второй раз.
    */
   private def awaited[T]: PartialFunction[Throwable, Future[T]] = { case _: TimeoutException =>
-    refuse(Status.DEADLINE_EXCEEDED.withDescription("lot did not answer in time"))
+    refuse(Status.DEADLINE_EXCEEDED.withDescription("entity did not answer in time"))
   }
 
   private def invalid[T](error: FormError): Future[T] =
@@ -151,4 +221,13 @@ final class AuctionGrpcService(
   private def unimplemented[T]: Future[T] = refuse(Status.UNIMPLEMENTED)
 
   private def refuse[T](status: Status): Future[T] = Future.failed(new GrpcServiceException(status))
+}
+
+object AuctionGrpcService {
+
+  /**
+   * Аукцион сходки — UUIDv5, выведенный из `meetup_id` (ADR-047); тестовый аукцион из настройки бота — UUIDv7 без
+   * журнала аукциона. Форму идентификатора граница уже проверила, поэтому версия здесь различает два вида аукциона.
+   */
+  def isMeetupAuction(auctionId: java.util.UUID): Boolean = auctionId.version == 5
 }

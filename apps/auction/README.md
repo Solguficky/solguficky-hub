@@ -2,7 +2,7 @@
 
 Auction Service на Scala 3 и Apache Pekko. Ответственность сервиса — [бриф](../../docs/services/auction.md), стек — [ADR-045](../../docs/decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md), сборка и кодогенерация — [ADR-048](../../docs/decisions/ADR-048-auction-sbt-and-scalapb-build.md).
 
-Сейчас здесь одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, каталог карточек лота, HTTP-граница с health-эндпоинтом, gRPC-граница `AuctionService` с проверкой вызывающего, кодогенерация Protobuf из `contracts/proto` и тесты. По gRPC открыты ставка (`PlaceBid`), прокси-лимиты, команды каталога (`CreateLotCard`, `EditLotCard`) и чтение лота (`GetLot`, `ListAuctionLots`) из read model проекции; имя участника отвечает `UNIMPLEMENTED` до своего листа. Агрегата аукциона в сервисе нет.
+Сейчас здесь одноузловой кластер с Cluster Sharding, журнал и snapshots Pekko Persistence JDBC в своей базе PostgreSQL, entity лота, которая открывает торги и принимает ставку, каталог карточек лота, HTTP-граница с health-эндпоинтом, gRPC-граница `AuctionService` с проверкой вызывающего, кодогенерация Protobuf из `contracts/proto` и тесты. По gRPC открыты ставка (`PlaceBid`), прокси-лимиты, команды каталога (`CreateLotCard`, `EditLotCard`) и чтение лота (`GetLot`, `ListAuctionLots`) из read model проекции, рождение аукциона у сходки (`DraftAuction`), реестр лотов (`AddLot`, `RemoveLot`) с правом администратора у Meetups и чтения аукционов (`GetMeetupAuction`, `ListAuctions`); имя участника отвечает `UNIMPLEMENTED` до своего листа. Машины аукциона — планирования и открытия торгов — в сервисе ещё нет.
 
 Нужны JDK версии из `.java-version` и sbt. Ни то, ни другое репозиторий не ставит: `just auction-tools` прогревает уже установленный sbt. Одного `update` для этого мало, поэтому рецепт гонит ещё генерацию и проверку формата — `protocbridge` тянет бинарник protoc на первой генерации, а `scalafmt-core` подтягивается на первой проверке. Отсюда два следствия: рецепт оставляет в `target/` вывод кодогенерации и краснеет на неотформатированном коде, то есть повторяет вердикт `just auction-lint` до гейта.
 
@@ -45,13 +45,30 @@ just aspire auction
 | `AUCTION_GRPC_PORT` | `8081` | порт gRPC-границы, h2c |
 | `AUCTION_CALLER_TOKEN_HUB_BOT` | нет, обязательна | токен бота хаба как вызывающего ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) |
 | `AUCTION_CALLER_TOKEN_AUCTION_BOT` | нет, обязательна | токен бота аукциона как вызывающего; значение отличается от токена бота хаба |
+| `AUCTION_MEETUPS_GRPC_URL` | нет | адрес gRPC Meetups, `http://<хост>:<порт>`, для проверки права администратора сходки; без него команды администратора аукциону отвечают `UNAVAILABLE` |
+| `AUCTION_SERVICE_TOKEN` | нет, обязательна при адресе Meetups | собственный токен Auction как вызывающего Meetups; не совпадает ни с одним токеном вызывающих |
 | `AUCTION_DATABASE_JDBC_URL` | нет, обязательна | JDBC URL базы Auction без учётных данных, `jdbc:postgresql://<хост>:<порт>/auction` |
 | `AUCTION_DATABASE_USER` | нет, обязательна | пользователь базы |
 | `AUCTION_DATABASE_PASSWORD` | нет, обязательна | пароль базы |
 | `AUCTION_NATS_URL` | нет | адрес NATS для релея фактов лота, `nats://[<пользователь>:<пароль>@]<хост>:<порт>`; без него релей не стартует, а факты ждут в outbox |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | нет | адрес OTLP-коллектора для метрик проекции; без него экспорт метрик выключен. Остальные `OTEL_*` читает SDK, их подставляет AppHost |
 
-Переопределение живёт в `src/main/resources/application.conf`: код читает готовое значение и о способе переопределения не знает. На старте сервис применяет схему журнала миграциями Flyway; без переменных базы, без токена любого из вызывающих, с одинаковыми токенами у двух вызывающих или при отказе миграции он завершается с ненулевым кодом и называет причину, но не значение токена.
+Переопределение живёт в `src/main/resources/application.conf`: код читает готовое значение и о способе переопределения не знает. На старте сервис применяет схему журнала миграциями Flyway; без переменных базы, без токена любого из вызывающих, с одинаковыми токенами у двух вызывающих, с адресом Meetups без своего токена или со своим токеном, равным токену вызывающего, или при отказе миграции он завершается с ненулевым кодом и называет причину, но не значение токена.
+
+## Production-образ
+
+```bash
+just auction-image
+IMAGE_ENGINE=docker just auction-image
+```
+
+Образ собирается по `Containerfile` из контекста корня репозитория: кодогенерации ScalaPB нужен `contracts/proto`. Что попадает в контекст, решает `Containerfile.dockerignore` — список разрешённого, поэтому `target/` и тесты рабочего дерева в сборку не доезжают. JDK и sbt на машине не нужны: стадия `build` на `eclipse-temurin` JDK ставит sbt из релиза GitHub по записанной в `Containerfile` контрольной сумме, генерирует код, компилирует и складывает jar'ы runtime classpath в `/app/lib`. Порядок classpath держит argfile JVM `/app/classpath`, а не `-cp /app/lib/*`, у которого порядок — порядок каталога.
+
+- Каждая внешняя база закреплена по digest; `tools/image/check-containerfile.sh` роняет сборку на теге кодом `SOLG-IMG-TAG`. Мажор JDK в базе сборки обязан совпадать с `.java-version`, версия sbt — с `project/build.properties`: сверки в стадии `build` роняют сборку на расхождении. Новая версия sbt меняет и контрольную сумму в `Containerfile`.
+- Финальная база — `eclipse-temurin` JRE, а не distroless: `podman run --rm <образ> id` исполняет `id` из образа, а канарейки `tools/image/check-test.sh` собираются на ней же и исполняют `RUN`. Процесс идёт от uid 1000, команда стоит в CMD в exec-форме, и SIGTERM доходит до JVM. Образ задаёт `AUCTION_HTTP_HOST` и `AUCTION_GRPC_HOST` равными `0.0.0.0`: умолчание `127.0.0.1` из контейнера недостижимо. Куча — 60% лимита памяти контейнера: остальное занимают metaspace, code cache и стеки потоков.
+- Пустая база проверена запуском с `--read-only --memory 512m` против PostgreSQL 16: Flyway применяет шесть миграций, узел выходит в `Up`, `/health` отвечает `200` примерно через шесть секунд, процесс держит около 240 МиБ. Остановленная база даёт `503` с причиной `journal`. На `SIGTERM` запускается coordinated shutdown, и узел выходит из кластера за две секунды.
+
+Публикацию делает только CI: `.github/workflows/image-auction.yml` вызывает переиспользуемый `image-publish.yml` веткой `containerfile`, как образы Identity и Hub Bot. Pull request собирает и проверяет образ, ничего не записывая в реестр; push в `develop` публикует `ghcr.io/solguficky/auction` с SBOM и attestation на registry digest. В чарте прода Auction — workload с HTTP-пробами: readiness спрашивает `/health`, startup и liveness — TCP-подключение к HTTP-порту, потому что `/health` при недоступной базе отвечает `503` и перезапускал бы под по кругу ([ADR-055](../../docs/decisions/ADR-055-k3s-runtime-from-aspire-chart.md)).
 
 ## Проверка
 

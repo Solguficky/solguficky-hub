@@ -33,6 +33,9 @@ final class CallerTable private (digests: Seq[(Caller, Array[Byte])]) {
       if (MessageDigest.isEqual(presented, expected)) Some(caller) else found
     }
   }
+
+  /** Токен совпадает с токеном одного из вызывающих: собственный токен Auction таким быть не может (ADR-056). */
+  def recognizes(token: String): Boolean = identify(token).isDefined
 }
 
 object CallerTable {

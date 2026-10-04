@@ -363,7 +363,7 @@ func TestAllowedUsernameClosesApplicationWithoutDecider(t *testing.T) {
 	adminID := seedProfile(t, db, 9751)
 	applicantID := resolveInternal(t, svc, 9752, "applicant")
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
-	if _, err := svc.addAllowedUsername(t.Context(), "applicant", uuid.NullUUID{}); err != nil {
+	if _, err := svc.addAllowedUsername(t.Context(), "applicant", roleMember, uuid.NullUUID{}); err != nil {
 		t.Fatalf("add allowed username: %v", err)
 	}
 	resolveDirect(t, svc, 9752, "applicant")
@@ -380,16 +380,18 @@ func TestDecisionErasesSourceAndName(t *testing.T) {
 	adminID := seedProfile(t, db, 9761)
 	applicantID := seedProfile(t, db, 9762)
 	applicationID := seedApplication(t, db, applicantID, rolePublic, time.Now())
-	execApplication(t, db, `UPDATE identity_applications SET source_code = 'tg_ads', first_name = 'Anna' WHERE id = $1`, applicationID)
+	createChannel(t, svc, adminID, "tg_ads", "Реклама")
+	execApplication(t, db, `UPDATE identity_applications SET source_channel = 'tg_ads', first_name = 'Anna' WHERE id = $1`, applicationID)
 
 	decide(t, svc.AdmitApplication, adminID, applicationID)
-	var source, name sql.NullString
+	var channel, name sql.NullString
+	var unknown bool
 	if err := db.QueryRowContext(t.Context(),
-		`SELECT source_code, first_name FROM identity_applications WHERE id = $1`, applicationID).Scan(&source, &name); err != nil {
+		`SELECT source_channel, source_unknown, first_name FROM identity_applications WHERE id = $1`, applicationID).Scan(&channel, &unknown, &name); err != nil {
 		t.Fatal(err)
 	}
-	if source.Valid || name.Valid {
-		t.Fatalf("after decision: source=%v name=%v", source, name)
+	if channel.Valid || unknown || name.Valid {
+		t.Fatalf("after decision: channel=%v unknown=%t name=%v", channel, unknown, name)
 	}
 }
 
@@ -459,7 +461,7 @@ func TestApplicationCardCarriesApplicantAndSource(t *testing.T) {
 	applicantID := resolveInternal(t, svc, 9792, "applicant")
 	moment := time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC)
 	withSource := seedApplication(t, db, applicantID, rolePublic, moment)
-	execApplication(t, db, `UPDATE identity_applications SET source_code = 'tg_ads', first_name = 'Anna' WHERE id = $1`, withSource)
+	execApplication(t, db, `UPDATE identity_applications SET source_unknown = true, first_name = 'Anna' WHERE id = $1`, withSource)
 	withoutSource := seedApplication(t, db, applicantID, roleMember, moment.Add(time.Second))
 	actor := adminActor(adminID)
 
@@ -534,7 +536,8 @@ func adminActor(identityID string) *identityv1.IdentityActor {
 	return &identityv1.IdentityActor{IdentityId: identityID, GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN}}
 }
 
-// seedApplication открывает заявку прямым SQL: создание заявки на /start — PER-266.
+// seedApplication открывает заявку прямым SQL с заданным моментом: курсор
+// очереди проверяется на моментах, которых RequestRole не выбирает.
 func seedApplication(t *testing.T, db *sql.DB, identityID, circle string, createdAt time.Time) string {
 	t.Helper()
 	id, err := uuid.NewV7()

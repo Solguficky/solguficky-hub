@@ -17,7 +17,7 @@ internal static class MeetupsSetup
         MemoryRequest: "192Mi",
         CpuLimit: "1",
         MemoryLimit: "384Mi",
-        Grpc: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Meetups));
+        Probe: new GrpcProbe(ContainerGrpcPort, AppHostNames.Readiness.Meetups));
 
     public static IResourceBuilder<ProjectResource> Configure(ServiceGraphContext context)
     {
@@ -49,7 +49,11 @@ internal static class MeetupsSetup
             // Meetups и вызывающий (CheckGlobalRole в Identity), и вызываемый;
             // вызывающие — по колонке Caller в integration.md (ADR-056).
             .WithServiceToken(context)
-            .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.Notifications)
+            .AcceptCallers(
+                context,
+                AppHostNames.Resources.HubBot,
+                AppHostNames.Resources.Notifications,
+                AppHostNames.Resources.Auction)
             // Источник права для CheckMeetupAuthority: роль администратора Meetups
             // спрашивает у Identity сам (ADR-051). Профиль без identity оставляет
             // переменную пустой, и метод честно отвечает UNAVAILABLE — остальные

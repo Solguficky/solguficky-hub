@@ -19,8 +19,12 @@ import { rejectedValueText } from "../application/meetup-form.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
+  ApplicationAdministrator,
   CommunityAdministrator,
   IdentityResolver,
+  RefusedApplication,
+  SourceChannel,
+  SourceChannelAdministrator,
   TelegramRecipientResolver,
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
@@ -1292,6 +1296,202 @@ describe("presentation adapter", () => {
     });
   });
 
+  describe("refused applications", () => {
+    const applicationId = "0192f3a4-b5c6-7d8e-9f0a-00000000a001";
+    const applicationToken = uuidToToken(applicationId);
+    const blocked: RefusedApplication = {
+      applicationId,
+      identityId: "0192f3a4-b5c6-7d8e-9f0a-00000000b001",
+      telegramUserId: 77n,
+      telegramUsername: "refused",
+      circle: "public",
+      outcome: "blocked",
+      decidedBy: { telegramUserId: 7n, telegramUsername: "admin" },
+      decidedAt: { year: 2026, month: 10, day: 2, hours: 14, minutes: 5 },
+    };
+
+    // Identity отдаёт список по состоянию: после пересмотра человека в нём нет.
+    function refusing(
+      lists: readonly (readonly RefusedApplication[])[],
+      changed = true,
+    ) {
+      const refusedApplications =
+        vi.fn<ApplicationAdministrator["refusedApplications"]>();
+      for (const list of lists) {
+        refusedApplications.mockResolvedValueOnce({ kind: "ok", value: list });
+      }
+      const reconsiderApplication = vi
+        .fn<ApplicationAdministrator["reconsiderApplication"]>()
+        .mockResolvedValue({ kind: "ok", value: changed });
+      return {
+        ...resolvedIdentity(["admin"]),
+        refusedApplications,
+        reconsiderApplication,
+      };
+    }
+
+    it("lists the refused with the outcome caption", async () => {
+      const identity = refusing([
+        [blocked, { ...blocked, circle: "member", outcome: "declined" }],
+      ]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:r"));
+
+      expect(identity.refusedApplications).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      const text = JSON.stringify(calls.at(-1)?.payload);
+      expect(text).toContain("@refused — заявка в аукцион, заблокирован");
+      expect(text).toContain("@refused — заявка в хаб, отклонена");
+    });
+
+    it("does not open the list for a non-administrator", async () => {
+      const identity = {
+        ...resolvedIdentity(["member"]),
+        refusedApplications: vi
+          .fn<ApplicationAdministrator["refusedApplications"]>()
+          .mockResolvedValue({ kind: "forbidden" }),
+      };
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:r"));
+
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: "<b>Пересматривать отказы может только администратор.</b>",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "‹ Управление", callback_data: "v1:manage:menu" },
+                { text: "Меню", callback_data: "v1:nav:start" },
+              ],
+            ],
+          },
+        },
+      });
+    });
+
+    it("asks before reconsidering and names the consequence", async () => {
+      const identity = refusing([[blocked]]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:rq:${applicationToken}:0`));
+
+      expect(identity.reconsiderApplication).not.toHaveBeenCalled();
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: "<b>Пересмотреть отказ?</b>\n\nБлокировка @refused снимется, и сразу откроется доступ к аукциону.",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Да, пересмотреть",
+                  callback_data: `v1:cm:ry:${applicationToken}:0`,
+                },
+              ],
+              [{ text: "Нет", callback_data: "v1:cm:r:0" }],
+            ],
+          },
+        },
+      });
+    });
+
+    it("reconsiders with one press and drops the person from the list", async () => {
+      const identity = refusing([[]]);
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
+
+      expect(identity.reconsiderApplication).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        applicationId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Отказ пересмотрен." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Отказанные</b>\n\nПока никого.",
+      });
+      expectBoundary(records.at(-1), {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "manage_community",
+      });
+    });
+
+    it("answers already reconsidered when another administrator was first", async () => {
+      const identity = refusing([[]], false);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
+
+      expect(calls[0]?.payload).toMatchObject({ text: "Уже пересмотрено." });
+    });
+
+    it("answers already reconsidered when the refusal left the list before the question", async () => {
+      const identity = refusing([[]]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:rq:${applicationToken}:0`));
+
+      expect(calls[0]?.payload).toMatchObject({ text: "Уже пересмотрено." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Отказанные</b>\n\nПока никого.",
+      });
+    });
+
+    it("says why a declined refusal of a blocked profile stays", async () => {
+      const identity = refusing([[blocked]]);
+      identity.reconsiderApplication.mockResolvedValue({ kind: "not-refused" });
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Пересмотреть нельзя: профиль заблокирован.",
+      });
+      expectBoundary(records.at(-1), {
+        level: "info",
+        result: "ok",
+        operation: "callback_query",
+        use_case: "manage_community",
+      });
+    });
+
+    it("opens a full page through the screen linter", async () => {
+      const identity = refusing([
+        Array.from({ length: 20 }, (_, index) => ({
+          ...blocked,
+          applicationId: `0192f3a4-b5c6-7d8e-9f0a-${index.toString(16).padStart(12, "0")}`,
+          telegramUsername: `user${index}`,
+        })),
+      ]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:r:1"));
+
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "<b>Отказанные · 2 из 3</b>",
+      );
+    });
+  });
+
   // Полные подэкраны проходят через линтер экранов: потолок рядов, словарь и
   // ряд возврата проверяются на странице из восьми строк, а не на пустой.
   it.each([
@@ -1816,6 +2016,9 @@ describe("presentation adapter", () => {
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
     expect(JSON.stringify(calls[1]?.payload)).toContain(
       '{"text":"Скрытые сходки","callback_data":"v1:manage:hidden"}',
+    );
+    expect(JSON.stringify(calls[1]?.payload)).toContain(
+      '{"text":"Отказанные","callback_data":"v1:cm:r"}',
     );
   });
 
@@ -6529,5 +6732,178 @@ describe("meetup author", () => {
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
       "Автор: @organizer_nick",
     );
+  });
+});
+
+describe("source channels", () => {
+  function channels(
+    lists: readonly (readonly SourceChannel[])[],
+    changed = true,
+  ) {
+    const sourceChannels =
+      vi.fn<SourceChannelAdministrator["sourceChannels"]>();
+    for (const list of lists) {
+      sourceChannels.mockResolvedValueOnce({ kind: "ok", value: list });
+    }
+    const createSourceChannel = vi
+      .fn<SourceChannelAdministrator["createSourceChannel"]>()
+      .mockResolvedValue({ kind: "ok", value: changed });
+    return {
+      ...resolvedIdentity(["admin"]),
+      sourceChannels,
+      createSourceChannel,
+    };
+  }
+
+  function answer(text: string, calls: readonly RecordedCall[]): Update {
+    return replyUpdate({
+      text,
+      fromId: 42,
+      replyMessageId: lastQuestionId(calls),
+      replyFromId: 1,
+    });
+  }
+
+  function lastSent(calls: readonly RecordedCall[]): string {
+    return JSON.stringify(
+      calls.findLast((call) => call.method === "sendMessage")?.payload,
+    );
+  }
+
+  it("opens from management with a link ready to forward", async () => {
+    const identity = channels([[{ code: "tg_ads", label: "Реклама" }]]);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:l"));
+
+    expect(identity.sourceChannels).toHaveBeenCalledWith(
+      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ useCase: "manage_community" }),
+    );
+    const text = JSON.stringify(calls.at(-1)?.payload);
+    expect(text).toContain("Реклама · tg_ads");
+    expect(text).toContain("https://t.me/stub_bot?start=s_tg_ads");
+  });
+
+  it("does not open the screen or ask a question for a non-administrator", async () => {
+    const identity = {
+      ...channels([[]]),
+      ...resolvedIdentity(["member"]),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:l"));
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+    expect(JSON.stringify(calls)).not.toContain("force_reply");
+    expect(JSON.stringify(calls)).toContain(
+      "Вести каналы прихода может только администратор.",
+    );
+  });
+
+  it("creates a channel by code, then label, and shows it with its link", async () => {
+    const identity = channels([[{ code: "tg_ads", label: "Реклама" }]]);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"force_reply":true',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("v1:q:cc");
+
+    // Код вне алфавита переспрашивается до вопроса о подписи.
+    await bot.handleUpdate(answer("tg ads", calls));
+    expect(lastSent(calls)).toContain("Такой код в ссылку не встанет.");
+
+    await bot.handleUpdate(answer(" tg_ads ", calls));
+    expect(lastSent(calls)).toContain("Как подписать канал?");
+    expect(identity.createSourceChannel).not.toHaveBeenCalled();
+
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(identity.createSourceChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ globalRoles: ["admin"] }),
+      { code: "tg_ads", label: "Реклама" },
+      expect.objectContaining({ useCase: "manage_community" }),
+    );
+    const screen = JSON.stringify(calls.at(-1)?.payload);
+    expect(screen).toContain("Канал заведён.");
+    expect(screen).toContain("https://t.me/stub_bot?start=s_tg_ads");
+  });
+
+  it("asks the label again when Identity rejects it", async () => {
+    const identity = {
+      ...channels([]),
+      createSourceChannel: vi
+        .fn<SourceChannelAdministrator["createSourceChannel"]>()
+        .mockResolvedValue({ kind: "invalid" }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("x".repeat(65), calls));
+
+    expect(lastSent(calls)).toContain("Подпись — одна строка до 64 символов.");
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+  });
+
+  it("asks the label again when Identity is unavailable", async () => {
+    const identity = {
+      ...channels([]),
+      createSourceChannel: vi
+        .fn<SourceChannelAdministrator["createSourceChannel"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(lastSent(calls)).toContain("Канал не сохранился.");
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+  });
+
+  it("says the channel is saved when only the list fails afterwards", async () => {
+    const identity = {
+      ...channels([]),
+      sourceChannels: vi
+        .fn<SourceChannelAdministrator["sourceChannels"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(identity.createSourceChannel).toHaveBeenCalled();
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Канал заведён, но список не загрузился.",
+    );
+  });
+
+  it("answers /start with a source payload like a plain /start", async () => {
+    const plain = createHarness(resolvedIdentity());
+    await plain.bot.init();
+    await plain.bot.handleUpdate(messageUpdate("/start"));
+
+    const sourced = createHarness(resolvedIdentity());
+    await sourced.bot.init();
+    await sourced.bot.handleUpdate(messageUpdate("/start s_tg_ads"));
+    await sourced.bot.handleUpdate(messageUpdate("/start s_"));
+
+    expect(sourced.calls.map((call) => call.payload)).toEqual([
+      ...plain.calls.map((call) => call.payload),
+      ...plain.calls.map((call) => call.payload),
+    ]);
   });
 });

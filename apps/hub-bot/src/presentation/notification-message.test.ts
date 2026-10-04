@@ -307,6 +307,36 @@ describe("organizer message", () => {
   });
 });
 
+describe("access request", () => {
+  it("names the hub request and leads to the queue as a trace", () => {
+    const content: RenderableContent = {
+      kind: "access-requested",
+      circle: "member",
+    };
+    expect(renderNotification(content).text).toBe(
+      "Новая заявка на доступ в сообщество",
+    );
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({
+        text: "Открыть очередь",
+        callback_data: "v1:t:cm:p",
+      }),
+    ]);
+  });
+
+  // Очередь хаба допускает в member: аукционную заявку туда не ведут.
+  it("names the auction request without leading to the hub queue", () => {
+    const content: RenderableContent = {
+      kind: "access-requested",
+      circle: "public",
+    };
+    expect(renderNotification(content).text).toBe(
+      "Новая заявка на участие в аукционе",
+    );
+    expect(renderNotification(content).keyboard).toBeUndefined();
+  });
+});
+
 describe("community announcement", () => {
   const announcement = (body: string): RenderableContent => ({
     kind: "community-announcement",

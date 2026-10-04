@@ -12,12 +12,16 @@ let BotToken = "meetups-test-bot-token"
 let NotificationsToken = "meetups-test-notifications-token"
 
 [<Literal>]
+let AuctionToken = "meetups-test-auction-token"
+
+[<Literal>]
 let OwnToken = "meetups-test-own-token"
 
 let configuration =
     [|
         $"--MEETUPS_CALLER_TOKEN_HUB_BOT={BotToken}"
         $"--MEETUPS_CALLER_TOKEN_NOTIFICATIONS={NotificationsToken}"
+        $"--MEETUPS_CALLER_TOKEN_AUCTION={AuctionToken}"
         $"--MEETUPS_SERVICE_TOKEN={OwnToken}"
     |]
 

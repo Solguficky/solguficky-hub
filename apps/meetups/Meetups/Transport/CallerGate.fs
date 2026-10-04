@@ -28,7 +28,7 @@ module MethodAccess =
             "ListArchivedMeetups", bot
             "GetMeetup", bot
             "ListMeetupStates", Set.empty
-            "CheckMeetupAuthority", Set.singleton Caller.Notifications
+            "CheckMeetupAuthority", set [ Caller.Notifications; Caller.Auction ]
         ]
         |> Map.ofList
 

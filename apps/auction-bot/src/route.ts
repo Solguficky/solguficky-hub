@@ -64,10 +64,14 @@ export async function routeAuctionCallback(input: {
   });
 }
 
+// `sourceCode` — код канала из payload `s_<код>`. Входа с кругом и кодом
+// здесь ещё нет: `/start` разрешает личность через ResolveIdentity, и код
+// доносит до Identity операция входа RequestRole (PER-316).
 export function routeAuctionStart(input: {
   ports: EntryPorts;
   user: TelegramUser;
   auctionId?: string;
+  sourceCode?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({ ...input, action: { kind: "start" } });
 }

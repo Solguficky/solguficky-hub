@@ -63,6 +63,28 @@ describe("parseUpdate", () => {
     });
   });
 
+  it("reads a source channel payload as its code without the prefix", () => {
+    expect(messageText("/start s_tg_ads")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+      deepLink: { kind: "source", code: "tg_ads" },
+    });
+  });
+
+  it("passes an empty source code as received", () => {
+    expect(messageText("/start s_")).toEqual({
+      kind: "start",
+      telegramUserId: 42n,
+      deepLink: { kind: "source", code: "" },
+    });
+  });
+
+  it("does not read a meetup payload as a source", () => {
+    expect(messageText("/start m_AZLzpLXGfY6fChssPU5fYA")).toMatchObject({
+      deepLink: { kind: "meetup" },
+    });
+  });
+
   it("accepts /start with a bot mention and ignores case", () => {
     expect(messageText("/START@Stub_Bot").kind).toBe("start");
     expect(messageText("/start@stub_bot m_AZLzpLXGfY6fChssPU5fYA")).toEqual({

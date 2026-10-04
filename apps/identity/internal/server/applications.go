@@ -29,8 +29,9 @@ var applicationCircles = []string{rolePublic, roleMember}
 var circleRank = map[string]int{rolePublic: 1, roleMember: 2, roleAdmin: 3, roleMaintainer: 4}
 
 // standingRefusalSQL — условие «отказ в силе»: заявка закрыта отказом, а круг её
-// после отказа не выдан. Его читает список отказанных, а вход на /start (PER-266)
-// дополняет исходом declined, чтобы не ставить новую заявку на тот же круг.
+// после отказа не выдан. Его читает список отказанных, а вход на /start
+// (standingDeclineSQL) дополняет исходом declined, чтобы не ставить новую заявку
+// на тот же круг.
 const standingRefusalSQL = `a.outcome IN ('declined', 'blocked') AND a.refusal_lifted_at IS NULL`
 
 const (
@@ -40,7 +41,7 @@ const (
 	closeApplicationsOnGrantSQL = `
 UPDATE identity_applications
 SET outcome = 'closed_by_grant', decided_by = $2, decided_at = now(),
-    source_code = NULL, first_name = NULL
+    source_channel = NULL, source_unknown = false, first_name = NULL
 WHERE identity_id = $1 AND outcome IS NULL AND requested_role = ANY($3)`
 
 	liftRefusalsSQL = `
@@ -52,7 +53,7 @@ WHERE identity_id = $1 AND outcome IN ('declined', 'blocked')
 	closeApplicationsOnBlockSQL = `
 UPDATE identity_applications
 SET outcome = 'closed_by_block', decided_by = $2, decided_at = now(),
-    source_code = NULL, first_name = NULL
+    source_channel = NULL, source_unknown = false, first_name = NULL
 WHERE identity_id = $1 AND outcome IS NULL`
 
 	selectApplicationSQL = `
@@ -61,13 +62,13 @@ SELECT identity_id, requested_role FROM identity_applications WHERE id = $1`
 	decideApplicationSQL = `
 UPDATE identity_applications
 SET outcome = $2, decided_by = $3, decided_at = now(),
-    source_code = NULL, first_name = NULL
+    source_channel = NULL, source_unknown = false, first_name = NULL
 WHERE id = $1 AND outcome IS NULL`
 
 	admitOpenApplicationSQL = `
 UPDATE identity_applications
 SET outcome = 'admitted', decided_by = $3, decided_at = now(),
-    source_code = NULL, first_name = NULL
+    source_channel = NULL, source_unknown = false, first_name = NULL
 WHERE identity_id = $1 AND requested_role = $2 AND outcome IS NULL`
 
 	selectDecisionSQL = `
@@ -93,7 +94,7 @@ FROM identity_applications a WHERE a.id = $1`
 	// есть из одного снимка: в ответе position не больше total.
 	readApplicationQueueSQL = `
 WITH open AS (
-    SELECT id, identity_id, requested_role, source_code, first_name, created_at
+    SELECT id, identity_id, requested_role, source_channel, source_unknown, first_name, created_at
     FROM identity_applications
     WHERE outcome IS NULL
 ), next AS (
@@ -103,12 +104,13 @@ WITH open AS (
     LIMIT 1
 )
 SELECT n.id, n.identity_id, p.telegram_user_id, p.username, n.first_name,
-       n.requested_role, n.source_code IS NOT NULL, n.created_at,
+       n.requested_role, c.label, n.source_unknown, n.created_at,
        (SELECT count(*) FROM open o WHERE (o.created_at, o.id) <= (n.created_at, n.id)),
        (SELECT count(*) FROM open)
 FROM (SELECT 1) AS one
 LEFT JOIN next n ON true
-LEFT JOIN profiles p ON p.id = n.identity_id`
+LEFT JOIN profiles p ON p.id = n.identity_id
+LEFT JOIN source_channels c ON c.code = n.source_channel`
 
 	listRefusedApplicationsSQL = `
 SELECT a.id, a.identity_id, p.telegram_user_id, p.username, a.requested_role,
@@ -195,12 +197,13 @@ func (s identityService) ReadApplicationQueue(ctx context.Context, req *identity
 		id, identityID, role sql.NullString
 		username, firstName  sql.NullString
 		telegramUserID       sql.NullInt64
-		hasSource            sql.NullBool
+		channelLabel         sql.NullString
+		sourceUnknown        sql.NullBool
 		createdAt            sql.NullTime
 		position, total      int32
 	)
 	err := s.db.QueryRowContext(ctx, readApplicationQueueSQL, afterAt, afterID).Scan(
-		&id, &identityID, &telegramUserID, &username, &firstName, &role, &hasSource, &createdAt, &position, &total)
+		&id, &identityID, &telegramUserID, &username, &firstName, &role, &channelLabel, &sourceUnknown, &createdAt, &position, &total)
 	if err != nil {
 		return nil, internal("read application queue", err)
 	}
@@ -221,9 +224,11 @@ func (s identityService) ReadApplicationQueue(ctx context.Context, req *identity
 	if firstName.Valid {
 		card.FirstName = &firstName.String
 	}
-	// Реестра каналов ещё нет (PER-438), поэтому любой код — «неизвестный
-	// источник»: source без подписи, а не отсутствие источника.
-	if hasSource.Bool {
+	// «Неизвестный источник» — source без подписи, а не отсутствие источника.
+	switch {
+	case channelLabel.Valid:
+		card.Source = &identityv1.ApplicationSource{ChannelLabel: &channelLabel.String}
+	case sourceUnknown.Bool:
 		card.Source = &identityv1.ApplicationSource{}
 	}
 	response.Application = card

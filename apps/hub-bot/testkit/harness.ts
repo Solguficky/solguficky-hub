@@ -3,8 +3,10 @@ import type { UserFromGetMe } from "grammy/types";
 import type { Dispatcher } from "../src/application/dispatcher.js";
 import { createDispatcher } from "../src/application/dispatcher.js";
 import type {
+  ApplicationAdministrator,
   CommunityAdministrator,
   IdentityResolver,
+  SourceChannelAdministrator,
 } from "../src/identity/port.js";
 import type { LogFields, Logger } from "../src/logging.js";
 import { createBot } from "../src/presentation/bot.js";
@@ -77,7 +79,10 @@ export function createCapturingLogger(): {
  * чате: новый бот теряет память, а история сообщений у человека остаётся.
  */
 export function createHarness(
-  identity: IdentityResolver & Partial<CommunityAdministrator>,
+  identity: IdentityResolver &
+    Partial<CommunityAdministrator> &
+    Partial<ApplicationAdministrator> &
+    Partial<SourceChannelAdministrator>,
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),

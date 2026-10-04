@@ -1,7 +1,14 @@
 package auction.contracts
 
 import auction.v1.auction_events.{AuctionState, BidPlaced, LotEvent, LotState, ManualBid, ProxyBid}
-import auction.v1.auction_service.{AuctionService, ChooseDisplayNameRequest, LotCard, LotImageRef, LotSnapshot}
+import auction.v1.auction_service.{
+  AuctionService,
+  AuctionSnapshot,
+  ChooseDisplayNameRequest,
+  LotCard,
+  LotImageRef,
+  LotSnapshot
+}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -50,19 +57,6 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
     // полей совпадают». Ни buf, ни гейт nats-tester их не сравнивают: до этого
     // теста зеркальность держалась на комментарии в схеме.
     "keeps the lot state of the bus aligned with the read snapshot field for field" in {
-      // Имя, тип, label и принадлежность oneof: поле, вынесенное из `status`
-      // наверх с тем же номером и типом, — тоже расхождение.
-      def shape(descriptor: Descriptor): Map[Int, (String, String, String, Option[String])] =
-        descriptor.getFields.asScala.map { field =>
-          val typeName = field.getType match {
-            case FieldDescriptor.Type.MESSAGE => field.getMessageType.getFullName
-            case FieldDescriptor.Type.ENUM => field.getEnumType.getFullName
-            case other => other.name
-          }
-          val label = if (field.toProto.getProto3Optional) "optional" else field.toProto.getLabel.name
-          field.getNumber -> (field.getName, typeName, label, Option(field.getContainingOneof).map(_.getName))
-        }.toMap
-
       val state = shape(LotState.javaDescriptor)
       val snapshot = shape(LotSnapshot.javaDescriptor)
       val reservedByState = LotState.javaDescriptor.toProto.getReservedRangeList.asScala
@@ -70,6 +64,21 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
 
       state.foreach { case (number, field) => snapshot.get(number) shouldBe Some(field) }
       (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
+    }
+
+    // Тот же довод для аукциона, с обратным исключением: шина несёт сходку
+    // аукциона, а чтение — нет, потому что список не должен вести от аукциона к
+    // сходке (ADR-047, дополнение 2026-10-03, «Видимость сходки»).
+    "keeps the auction state of the bus aligned with the read snapshot field for field" in {
+      val state = shape(AuctionState.javaDescriptor)
+      val snapshot = shape(AuctionSnapshot.javaDescriptor)
+      val reservedBySnapshot = AuctionSnapshot.javaDescriptor.toProto.getReservedRangeList.asScala
+        .flatMap(range => range.getStart until range.getEnd)
+
+      snapshot.foreach { case (number, field) => state.get(number) shouldBe Some(field) }
+      (state.keySet -- snapshot.keySet) should contain theSameElementsAs reservedBySnapshot
+      AuctionSnapshot.javaDescriptor.toProto.getReservedNameList.asScala should contain theSameElementsAs
+        reservedBySnapshot.map(number => AuctionState.javaDescriptor.findFieldByNumber(number).getName)
     }
 
     // Лот без строки каталога (ADR-057) читается отсутствием карточки, а не
@@ -110,4 +119,17 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       AuctionService.name shouldBe "auction.v1.AuctionService"
     }
   }
+
+  // Имя, тип, label и принадлежность oneof: поле, вынесенное из `status` наверх
+  // с тем же номером и типом, — тоже расхождение.
+  private def shape(descriptor: Descriptor): Map[Int, (String, String, String, Option[String])] =
+    descriptor.getFields.asScala.map { field =>
+      val typeName = field.getType match {
+        case FieldDescriptor.Type.MESSAGE => field.getMessageType.getFullName
+        case FieldDescriptor.Type.ENUM => field.getEnumType.getFullName
+        case other => other.name
+      }
+      val label = if (field.toProto.getProto3Optional) "optional" else field.toProto.getLabel.name
+      field.getNumber -> (field.getName, typeName, label, Option(field.getContainingOneof).map(_.getName))
+    }.toMap
 }

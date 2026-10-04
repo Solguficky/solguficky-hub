@@ -122,6 +122,31 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Открыта заявка на круг. Снимок — тот, что был до заявки: незаблокирован и
+    /// без запрошенного круга, с ролями <paramref name="held" />, если они есть.
+    /// </summary>
+    public static IdentityEvent Application(
+        string identityId,
+        long version,
+        GlobalRole circle,
+        string? eventId = null,
+        params GlobalRole[] held)
+    {
+        var message = new IdentityEvent
+        {
+            EventId = eventId ?? NewId(),
+            IdentityId = identityId,
+            Version = version,
+            OccurredAt = Committed.AddMinutes(version).ToString("O"),
+            State = new IdentityState { Id = identityId },
+            ApplicationSubmitted = new ApplicationSubmitted { Role = circle },
+        };
+        message.State.GlobalRoles.Add(held);
+
+        return message;
+    }
+
     public static ReadOnlyMemory<byte> Bytes(IMessage message) => message.ToByteArray();
 
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
@@ -132,12 +157,7 @@ public static class EventFactory
         State = new global::Auction.V1.LotState
         {
             Id = lotId, AuctionId = NewId(),
-            Config = new global::Auction.V1.LotConfig
-            {
-                Currency = "RUB", ProxyEnabled = true,
-                StepPolicy = new global::Auction.V1.StepPolicy { Fixed = new global::Auction.V1.Money { MinorUnits = 100, Currency = "RUB" } },
-                AntiSnipe = new global::Auction.V1.AntiSnipe(),
-            },
+            Config = Config(),
             Trading = new global::Auction.V1.LotTrading
             {
                 LeaderId = leader ?? NewId(), LeadingBidId = NewId(),
@@ -146,6 +166,60 @@ public static class EventFactory
             },
         },
         BidPlaced = Placed(previousLeader, proxy),
+    };
+
+    /// <summary>
+    /// Продажа лота. Config по умолчанию выставлен, как требует контракт;
+    /// <paramref name="config" /> = false повторяет сегодняшнего производителя.
+    /// </summary>
+    public static global::Auction.V1.LotEvent Sold(string lotId, string? winner = null, long version = 7, bool config = true)
+    {
+        var message = Closed(lotId, version);
+        if (config) message.State.Config = Config();
+        message.State.Sold = new global::Auction.V1.LotSale
+        {
+            WinnerId = winner ?? NewId(), BidId = NewId(),
+            Price = new global::Auction.V1.Money { MinorUnits = 45600, Currency = "RUB" },
+            SoldAt = message.OccurredAt,
+        };
+        message.LotSold = new global::Auction.V1.LotSold();
+        return message;
+    }
+
+    public static global::Auction.V1.LotEvent Unsold(string lotId, long version = 7)
+    {
+        var message = Closed(lotId, version);
+        message.State.Config = Config();
+        message.State.Unsold = global::Auction.V1.UnsoldReason.NoBids;
+        message.LotUnsold = new global::Auction.V1.LotUnsold();
+        return message;
+    }
+
+    public static global::Auction.V1.LotEvent HeldForFinal(string lotId, long version = 7)
+    {
+        var message = Closed(lotId, version);
+        message.State.Config = Config();
+        message.State.Held = new global::Auction.V1.LotHeld
+        {
+            CurrentPrice = new global::Auction.V1.Money { MinorUnits = 12300, Currency = "RUB" },
+            LeaderId = NewId(), LeadingBidId = NewId(),
+        };
+        message.LotHeldForFinal = new global::Auction.V1.LotHeldForFinal();
+        return message;
+    }
+
+    private static global::Auction.V1.LotEvent Closed(string lotId, long version) => new()
+    {
+        EventId = NewId(), LotId = lotId, Version = version,
+        OccurredAt = Committed.AddMinutes(version).ToString("O"),
+        State = new global::Auction.V1.LotState { Id = lotId, AuctionId = NewId() },
+    };
+
+    private static global::Auction.V1.LotConfig Config() => new()
+    {
+        Currency = "RUB", ProxyEnabled = true,
+        StepPolicy = new global::Auction.V1.StepPolicy { Fixed = new global::Auction.V1.Money { MinorUnits = 100, Currency = "RUB" } },
+        AntiSnipe = new global::Auction.V1.AntiSnipe(),
     };
 
     private static global::Auction.V1.BidPlaced Placed(string? previous, bool proxy)

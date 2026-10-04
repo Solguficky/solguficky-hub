@@ -302,21 +302,50 @@ public static class ReplicaMapping
             // Неизвестная роль — не повод отбросить её молча: новая роль
             // приходит изменением контракта, которое обновляет и этого
             // потребителя, а пропущенная тихо исказила бы разворот аудитории.
-            var name = role switch
-            {
-                GlobalRole.Admin => "admin",
-                GlobalRole.Maintainer => "maintainer",
-                GlobalRole.Member => "member",
-                GlobalRole.Public => "public",
-                _ => null,
-            };
-
-            if (name is null)
+            if (RoleName(role) is not { } name)
             {
                 return new Decoded.Poison($"state.global_roles carries unknown role {role}");
             }
 
             roles.Add(name);
+        }
+
+        // Поводы, которых этот потребитель не знает, применяются к реплике как
+        // раньше: снимок самодостаточен, а повод нужен только адресным фактам.
+        IdentityOccasion occasion;
+        string? occasionRole = null;
+        switch (message.OccasionCase)
+        {
+            case IdentityEvent.OccasionOneofCase.ApplicationSubmitted:
+                // Заявку ставят только на круги поверхностей: другой круг —
+                // испорченное событие, а не повод оповестить администраторов.
+                occasionRole = RoleName(message.ApplicationSubmitted.Role);
+
+                if (occasionRole is not ("member" or "public"))
+                {
+                    return new Decoded.Poison($"application_submitted.role {message.ApplicationSubmitted.Role} is not a requestable circle");
+                }
+
+                occasion = IdentityOccasion.ApplicationSubmitted;
+                break;
+
+            case IdentityEvent.OccasionOneofCase.RoleGranted:
+                if (RoleName(message.RoleGranted.Role) is not { } granted)
+                {
+                    return new Decoded.Poison($"role_granted.role carries unknown role {message.RoleGranted.Role}");
+                }
+
+                occasionRole = granted;
+                occasion = IdentityOccasion.RoleGranted;
+                break;
+
+            case IdentityEvent.OccasionOneofCase.ProfileBlocked:
+                occasion = IdentityOccasion.ProfileBlocked;
+                break;
+
+            default:
+                occasion = IdentityOccasion.Other;
+                break;
         }
 
         return new Decoded.Fact(new IdentityFact(
@@ -325,8 +354,19 @@ public static class ReplicaMapping
             message.Version,
             Instant(message.OccurredAt)!.Value,
             roles.ToArray(),
-            state.Blocked));
+            state.Blocked,
+            occasion,
+            occasionRole));
     }
+
+    private static string? RoleName(GlobalRole role) => role switch
+    {
+        GlobalRole.Admin => "admin",
+        GlobalRole.Maintainer => "maintainer",
+        GlobalRole.Member => "member",
+        GlobalRole.Public => "public",
+        _ => null,
+    };
 
     /// <summary>Общие правила конверта обоих источников.</summary>
     private static Decoded.Poison? Envelope(string eventId, string aggregateId, long version, string occurredAt)

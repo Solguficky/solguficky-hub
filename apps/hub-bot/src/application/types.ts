@@ -19,8 +19,12 @@ export type Person = { identityId: string; globalRoles: readonly string[] };
 export type MeetupAuthor =
   | { kind: "self" }
   | { kind: "organizer"; telegramUsername: string };
+// `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
+// недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
+// до него код доносит операция входа (PER-316).
 export type DeepLink =
   | { kind: "meetup"; payload: string }
+  | { kind: "source"; code: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
