@@ -1,6 +1,6 @@
 # Solguficky Hub
 
-> Единая точка входа для AI-агентов. `CLAUDE.md` только импортирует этот файл — не редактируй его. Вложенные `AGENTS.md` содержат локальные правила сервисов, и рядом с каждым лежит `CLAUDE.md` из одной строки `@AGENTS.md`: вложенную память Claude Code подхватывает только по имени `CLAUDE.md`, файл `AGENTS.md` сам по себе он не читает.
+> Единая точка входа для AI-агентов. `CLAUDE.md` только импортирует этот файл — не редактируй его. Вложенные `AGENTS.md` содержат локальные правила сервисов и указатели каталогов agent tooling, и рядом с каждым лежит `CLAUDE.md` из одной строки `@AGENTS.md`: вложенную память Claude Code подхватывает только по имени `CLAUDE.md`, файл `AGENTS.md` сам по себе он не читает.
 
 Платформа для организации сходок Telegram-сообщества. Проект одновременно решает продуктовую задачу и служит полигоном для Event Sourcing, акторов и распределённых систем. При конфликте приоритетов выигрывает работающий продукт.
 
@@ -35,275 +35,65 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `infra/apphost/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Оба режима проверяются там же: граф публикации — составом workload'ов, снимком `cluster.publish.txt` и отказом на узле без отображения, локальный — снимком `hub.run.txt`; оба снимка лежат в `TestUtilities/Snapshots/`. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
 - `tests/` — наборы уровня решения, которые не принадлежат ни одному компоненту, потому что пересекают несколько. Сейчас это `tests/contour/` — сквозной уровень L2 на `Aspire.Hosting.Testing`: `Contour.Environment` поднимает топологию и отдаёт адреса, `Contour.E2ETests` гоняет дымовой сценарий через настоящие Identity и Meetups, `Contour.Host` отдаёт `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `IDENTITY_MAINTAINER_TOKEN` и `HUB_BOT_SERVICE_TOKEN` внешнему потребителю и не пропускает к нему унаследованные `OTEL_*`, `Contour.Contracts` держит generated-only C#-клиента Identity, а `bot-wire/` — сценарии провода Hub Bot против настоящих Identity и Meetups на TypeScript, которые берут зависимости и test kit у бота (`apps/hub-bot/testkit/`). Рецепты `just contour-test`, `just contour-bot-test`, `just contour-up` и `just contour-contracts-check`; в `verify` наборы не входят и гоняются джобой `contour` в CI. Рядом — `tests/telegram-live/`, живой уровень L3 из [ADR-046](docs/decisions/ADR-046-telegram-test-contour.md): драйвер на mtcute от синтетического аккаунта тестовой среды Telegram шлёт `/start` боту, которого владелец поднял с `--telegram-environment test`, и читает ответ. Зависимость mtcute лежит в собственном `package.json` каталога, а не у бота; раннер, typecheck, lint и L0-тесты классификатора отказов — конфиги бота. Рецепты `just telegram-live-test` и `just telegram-live-login`; ни в `verify`, ни в `test-all`, ни в CI живой прогон не входит ни при какой стабильности. Там же `console/` — живой пульт: тот же аккаунт ведёт разговор с ботом по шагу через HTTP на `127.0.0.1`, рецепт `just telegram-live-console`, вне `verify`, `test-all` и CI. В `tests/contour/bot-wire/explore/` лежит исследующий прогон RFC-012: случайные последовательности действий поверх провода бота с оракулами каркаса логов. Он не гейт: рецепт `just contour-bot-explore` не входит ни в `verify`, ни в `test-all`, ни в CI, а его кандидаты разбирает владелец. В `tests/contour/bot-wire/console/` лежит пульт провода: разговор с ботом по шагу через HTTP на `127.0.0.1` — завести людей с ролями, писать, жать кнопки по подписи и читать экраны JSON-ом. Рецепт `just contour-bot-console`, клиент `send.sh` рядом; в `verify`, `test-all` и CI пульт не входит.
-- `tools/git-hooks/` — POSIX sh скрипты локальных хуков. Сейчас их два: `check-commit-message.sh` вызывает только хук `commit-msg`, `sync-skillshare-targets.sh` — хуки `post-checkout` и `post-merge`, чтобы таргеты skillshare не отставали от источника после смены ветки, pull и создания дерева.
-- `tools/skillshare/` — два скрипта: `check-frontmatter.sh` разбирает YAML-frontmatter каждого `SKILL.md`, `install.sh` ставит внешние скиллы и падает, если install переписал объявление зависимостей. Первый вызывают `just check-agent-tools` и CI, второй — `just skillshare-install`.
-- `tools/identity/` — прогоны Identity. `test-integration.sh` гоняет тесты под тегом сборки `integration` с `-json`, а `check-test-log.py` разбирает лог и роняет прогон на пропуске и на числе тестов верхнего уровня ниже порога `IDENTITY_TEST_THRESHOLD` из `justfile`: ни того, ни другого `go test` сам не ловит, а опечатка в теге молча выключает файл, на который не ссылаются соседние файлы пакета. Скрипт вызывает `just identity-test-integration` локально и в джобе `identity` в CI, фикстуры `check-test-log-test.sh` — `just identity-test-log-check` из `verify`.
-- `tools/meetups/` — проверки Meetups. Сейчас это `check-contracts-generated.sh`: он держит контрактный C#-проект generated-only. Его вызывают `just meetups-contracts-check` и CI.
-- `tools/image/` — проверки production-образов по Containerfile. `check-containerfile.sh` требует digest у каждой внешней базы, `check-no-token.sh` ищет токен Bot API в слоях и конфиге образа, `check-node-runtime.sh` — пакеты разработки и исходники TypeScript в Node-образе, `check-test.sh` доказывает, что первые две ловят дефект своим кодом. Их вызывают `just hub-bot-image`, `just identity-image`, `just auction-image`, `just image-checks-test` и ветка `containerfile` в `image-publish.yml`.
-- `tools/notifications/` — проверки Notifications. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта сервиса. Его вызывают `just notifications-contracts-check` и CI.
-- `tools/contour/` — проверки сквозного контура. Сейчас это `check-contracts-generated.sh`: тот же гейт generated-only для контрактного проекта контура. Его вызывают `just contour-contracts-check` и CI.
-- `tools/apphost/` — проверки AppHost и установка их инструмента. Проверок три. `smoke.sh` — живой smoke-test профиля: он ждёт конечного состояния всех ресурсов, делает доменный вызов каждого gRPC-сервиса с общим `x-request-id` и проверяет топологию JetStream. Его вызывает `just aspire-smoke`; в `verify` и CI он не входит, потому что нужны Docker и живой AppHost. `check-config.py` статически проверяет, что `appHost.path` в корневом `aspire.config.json` ведёт на существующий проект с `Aspire.AppHost.Sdk`: путь читает только Aspire CLI, и без проверки опечатка в нём проходит зелёной. Его и фикстуры `check-config-test.sh` вызывают `just apphost-config-check` и джоба `apphost` в CI. `check-chart.py` рендерит чарт прода с фикстурой values `chart-values.fixture.yaml` и сверяет workload'ы с правилами ADR-055: ровно пять сервисов — четыре сервиса MVP и Auction, одна реплика, `Recreate` без `rollingUpdate`, образ по digest, non-root, лимиты и пробы. Его вызывает `just apphost-chart` — в джобе `apphost` на PR и в `chart-publish.yml` перед публикацией в GHCR, но не в `verify`, потому что нужны helm и сеть; фикстуры `check-chart-test.sh` вызывает `just apphost-chart-test` из `verify`. `install-helm.sh` ставит в CI helm версии `HELM_VERSION` из релиза и сверяет архив с `HELM_SHA256`, без стороннего setup-action — как protoc в джобе `nats-tester`.
-- `tools/community-site/` — проверки публикуемых страниц. Сейчас это `check-published-pages.sh`: он держит раскладку `docs/published/` картой адресов сайта и проверяет, что корневые ссылки разрешаются. Его вызывают `just check-published-pages`, CI и деплой-workflow.
-- `tools/docs/` — механические проверки документации. Сейчас их три. `check-document-numbers.sh`: номер встречается ровно один раз, и у каждого файла есть строка в индексе своего каталога; его вызывают `just check-document-numbers` и джоба `document-numbers` в CI. `check-adr-applicability.sh`: у не-Active ADR баннер применимости стоит первой строкой после заголовка и совпадает со строкой индекса; его вызывают `just check-adr-applicability` и джоба `adr-applicability` в CI. `check-doc-links.py`: относительная ссылка из `docs/**/*.md` на `.md` ведёт в существующий файл, а якорь — на заголовок со slug по правилам GitHub; внешние URL пропускаются. Написан на Python, потому что slug переводит кириллицу в нижний регистр, а байтовый awk этого не умеет без UTF-8 локали. Его вызывают `just check-doc-links` и джоба `doc-links` в CI.
-- `tools/agent-env/` — готовность среды агента к контуру. `ready.sh` проверяет инструменты из контракта среды в [agent-execution-loop.md](docs/development/agent-execution-loop.md#контракт-среды) и называет каждый поимённо с состоянием `ok`, `missing`, `unauthorized` или `unverified`. Авторизацию Linear MCP он спрашивает у CLI названного харнесса; где харнесс её не сообщает, ответ — `unverified`, а не зелёный. Его вызывает `just agent-ready <харнесс>`. Фикстуры `ready-test.sh` гоняют его на заглушках в PATH, без сети и харнесса; их вызывают `just check-agent-ready` и джоба `repo-hygiene` в CI.
-- `tools/env/` — установка среды на образе Debian/Ubuntu. `install.sh` ставит системный тулинг — Go, .NET, protoc, Node, JDK, sbt, `just`, lefthook, skillshare — и затем зовёт `just tools`, `just setup` и `just skillshare-install`, после чего `just verify` проходит без ручных шагов. Своих констант версий у скрипта нет: он читает их из `justfile`, `global.json`, `go.mod` и `.java-version`. Aspire CLI bundle версии `Aspire.AppHost.Sdk` из `AppHost.csproj` скрипт ставит в `~/.aspire` через `dnx` сам: сборка AppHost умеет это и без него, но даёт установке 120 секунд, которых на медленной сети не хватает. Каждый шаг сверяет установленную версию, поэтому повторный запуск ничего не переустанавливает. Где сеть закрывает установщики поставщиков — так в облачной среде Claude Code, — скрипт берёт `just` и sbt из релизов GitHub с проверкой контрольной суммы, .NET SDK из официального образа SDK, JDK из `packages.microsoft.com` и поднимает остановленный Docker-демон. Его вызывает облачный агент Cursor через `.cursor/environment.json`, а в облаке Claude Code его ставят setup script среды; CI его не запускает.
-- `tools/verify/` — сужение механического гейта. `select-recipes.sh` выбирает рецепты `verify` по изменённым путям, читая карту из джобы `changes` в `.github/workflows/ci.yml`; его вызывает `just verify-changed`. Фикстуры `select-recipes-test.sh` держат выбор равным составу `verify` на правке `justfile`; их вызывают `just check-verify-selection` и джоба `repo-hygiene` в CI.
+- `tools/git-hooks/` — POSIX sh скрипты локальных хуков lefthook: формат сообщения коммита (`commit-msg`) и синхронизация таргетов skillshare после смены ветки, pull и создания дерева (`post-checkout`, `post-merge`).
+- `tools/skillshare/` — разбор YAML-frontmatter каждого `SKILL.md` и обёртка `skillshare install`, которая падает, если install переписал объявление зависимостей.
+- `tools/identity/` — интеграционный прогон Identity с разбором лога: `go test` сам не ловит ни пропуск, ни опечатку в теге сборки, которая молча выключает файл без ссылок из соседних, поэтому прогон падает на пропуске и на числе тестов ниже порога `IDENTITY_TEST_THRESHOLD`.
+- `tools/meetups/`, `tools/notifications/`, `tools/contour/` — гейт generated-only для контрактного C#-проекта своего компонента.
+- `tools/image/` — проверки production-образов по Containerfile: digest у внешней базы, токен Bot API в слоях и конфиге, пакеты разработки и исходники в Node-образе; фикстуры доказывают, что проверки ловят дефект своим кодом.
+- `tools/apphost/` — проверки AppHost: живой smoke профиля, статическая проверка `appHost.path` в `aspire.config.json` (путь читает только Aspire CLI, и опечатка без проверки проходит зелёной), правила чарта прода из ADR-055 и установка helm в CI со сверкой контрольной суммы, без стороннего setup-action. Smoke и рендер чарта в `verify` не входят: им нужны Docker, живой AppHost, helm и сеть; фикстуры проверок — входят.
+- `tools/community-site/` — проверка раскладки `docs/published/` по карте адресов сайта и корневых ссылок публикуемых страниц.
+- `tools/docs/` — механические проверки документации: номер ADR и RFC и строка индекса, баннер применимости не-Active ADR, относительные ссылки и якоря внутри `docs/`. Проверка ссылок написана на Python: slug переводит кириллицу в нижний регистр, а байтовый awk без UTF-8 локали этого не умеет.
+- `tools/agent-env/` — готовность среды агента по [контракту среды](docs/development/agent-execution-loop.md#контракт-среды): каждый инструмент поимённо с состоянием; где харнесс не сообщает авторизацию Linear MCP, ответ — `unverified`, а не зелёный. Фикстуры гоняют проверку на заглушках в PATH, без сети и харнесса.
+- `tools/env/` — установка среды на образе Debian/Ubuntu, после которой `just verify` проходит без ручных шагов. Своих констант версий у скрипта нет: он читает их из `justfile`, `global.json`, `go.mod` и `.java-version`, и повторный запуск ничего не переустанавливает. Aspire CLI bundle он ставит сам: сборка AppHost умеет это и без него, но даёт установке 120 секунд, которых на медленной сети не хватает. Где сеть закрывает установщики поставщиков — так в облачной среде Claude Code, — `just` и sbt берутся из релизов GitHub с проверкой контрольной суммы, .NET SDK из официального образа SDK, JDK из `packages.microsoft.com`, а остановленный Docker-демон поднимается. Его вызывают облачный агент Cursor и setup script облака Claude Code; CI его не запускает.
+- `tools/verify/` — выбор рецептов `verify-changed` по изменённым путям из карты джобы `changes` в CI, с фикстурами, которые держат выбор равным составу `verify`.
 - `.skillshare/` — источник правды по agent tooling: скиллы в `.skillshare/skills/`, роли подагентов в `.skillshare/agents/`. Из них `skillshare sync --all -p` раскладывает `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/`. В Git лежит только источник, таргеты собираются на каждой машине.
 - `.rulesync/` — источник правды по MCP-серверам и командам агента: `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из `.rulesync/mcp.jsonc`, а `.claude/commands/` и `.opencode/commands/` — из `.rulesync/commands/`.
-- `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений; единственный сервис репозитория с закоммиченными сгенерированными классами. Проверку держит `python -m nats_tester.gate`: импорт классов, состав генерации против схем, согласие реестра. Её вызывают `just nats-tester-check` и джоба `nats-tester` в CI; джоба дополнительно перегенерирует классы закреплённым `protoc` и падает на расхождении со схемой.
+- `tools/nats-tester/` — Python CLI для ручной проверки NATS-сообщений; единственный компонент с закоммиченными сгенерированными классами, поэтому их согласие со схемами держит отдельный гейт, а CI ещё и перегенерирует их закреплённым `protoc`.
 - `justfile` — единая точка входа для команд репозитория; новый компонент добавляет туда свои рецепты, свою проверку в `verify` и установку своего тулинга в `tools` в том же коммите, что и сборку.
 
 ## Команды
 
-Собраны в корневом `justfile` (`just --list`). Ниже — то же самое напрямую, если `just` не установлен.
+Собраны в корневом `justfile`: `just --list` печатает рецепты и последнюю строку комментария над каждым, а полный комментарий над рецептом в самом `justfile` называет его условия — что нужно среде, входит ли он в `verify` и `test-all`. Ниже только то, чего `just --list` не скажет.
 
 ```bash
-# Git-хуки — один раз после клонирования, из корня
-lefthook install
+# Первичная настройка — после клонирования, `git worktree add` или создания
+# дерева приложением, из корня и до первого `just verify`.
+lefthook install          # Git-хуки, включая sync таргетов skillshare
+just skillshare-install   # внешние скиллы по config.yaml; единственный шаг с сетью
+skillshare sync --all -p  # proj-скиллы и роли; без --all роли молча пустые
+just tools                # node_modules, Go-плагины и dotnet tools компонентов
 
-# Скиллы и роли подагентов — один раз после клонирования или создания
-# рабочего дерева. В Git лежит только источник .skillshare/; таргеты
-# .claude/skills/, .agents/skills/ и .claude/agents/ собирает sync, и до
-# него у агента нет ни своих proj-скиллов, ни ролей. Флаг --all обязателен:
-# без него sync раскладывает одни скиллы и молча оставляет роли пустыми.
-# Внешние скиллы ставит install по config.yaml, и только он ходит в сеть:
-# без неё запускают один sync и получают свои proj-скиллы и роли.
-# Дальше sync запускают хуки post-checkout и post-merge (lefthook); руками
-# он нужен, только если хуки не установлены или skillshare нет в PATH.
-just skillshare-install
-skillshare sync --all -p
-
-# Тулинг компонентов — один раз после клонирования или создания рабочего
-# дерева, до первого `just verify`. Дерево от `git worktree add` получает
-# хуки и скиллы, но не node_modules, Go-плагины и dotnet tools: без них гейт
-# красный по окружению, а не по правке, и гоняет он все компоненты, даже
-# когда правка только в docs/.
-just tools
+# Без сети запускают один sync: свои proj-скиллы и роли он раскладывает и так.
+# Дальше sync запускают хуки post-checkout и post-merge; руками он нужен, только
+# если хуков нет или skillshare нет в PATH. Дерево без `just tools` красное по
+# окружению, а не по правке, даже когда правка только в docs/.
 
 # Среда целиком на чистом образе Debian/Ubuntu: системные инструменты
-# закреплённых версий, затем just tools, хуки и скиллы. Повторный запуск
+# закреплённых версий, затем just tools, хуки и скиллы; повторный запуск
 # ничего не переустанавливает
 bash tools/env/install.sh
 
-# Готовность среды к контуру по контракту из agent-execution-loop.md: называет
-# отсутствующий и неавторизованный инструмент поимённо. Харнесс — claude, codex,
-# cursor, opencode или copilot. Код 0 — готова, 1 — не готова, 3 — не проверено
-# (в Claude Code вне терминального CLI и в харнессах без команды состояния MCP
-# Linear подтверждает get_issue из сессии), 2 — не отработала сама проверка.
-# В verify входят только её фикстуры
+# Готовность среды к контуру; харнесс — claude, codex, cursor, opencode или copilot.
+# Код 0 — готова, 1 — не готова, 3 — не проверено (в Claude Code вне терминального
+# CLI и в харнессах без команды состояния MCP Linear подтверждает get_issue из
+# сессии), 2 — не отработала сама проверка
 just agent-ready claude
-just check-agent-ready
-
-# Проверка из хука (можно запускать вручную); в CI не дублируется
-sh tools/git-hooks/check-commit-message.sh <файл-с-сообщением>
-
-# Скиллы и роли: раскладка по таргетам после правок в .skillshare/
-skillshare sync --all -p
-
-# Frontmatter скиллов после sync
-just check-agent-tools
-
-# MCP и команды: раскладка по агентам после правок в .rulesync/
-just sync-mcp
-just sync-commands
-
-# Конфигурация MCP и команды каждого агента совпадают с источником
-just check-mcp
-just check-commands
-
-# Раскладка docs/published совпадает с адресами сайта, а ссылки разрешаются
-just check-published-pages
-
-# Номер ADR и RFC встречается один раз, у каждого файла есть строка в индексе
-just check-document-numbers
-
-# Применимость не-Active ADR в индексе совпадает с баннером в самом файле
-just check-adr-applicability
-
-# Относительные ссылки в docs/ ведут на существующий файл и заголовок
-just check-doc-links
-
-# Весь модуль contracts/proto компилируется, включая домен без потребителя
-just contracts-build
-
-# Стиль схем и совместимость с origin/develop: buf lint и buf breaking
-just contracts-check
-
-# Весь модуль contracts/proto генерируется на Go, TypeScript и Scala
-just contracts-codegen
-
-# Механический гейт перед сдачей, сужённый до затронутых компонентов; правило
-# выбора — комментарий над рецептом `verify-changed` в justfile
-just verify-changed
-
-# Полный механический гейт; состав — комментарий над рецептом `verify` в justfile
-just verify
-
-# Выбор verify-changed совпадает с картой путей CI и с составом verify
-just check-verify-selection
-
-# Все уровни тестов (unit, интеграционные, сквозной); падает на пропуске.
-# Нужны Docker и PostgreSQL для Identity; в verify не входит
-just test-all
 
 # Локальная оркестрация — AppHost называет aspire.config.json в корне;
-# wait/describe/stop к запущенному AppHost — из корня
+# wait/describe/stop к запущенному AppHost — из корня. Профили — данные в
+# Topology:Profiles (infra/apphost/AppHost/appsettings.json)
 aspire run
-
-# Профили топологии — данные в Topology:Profiles (infra/apphost/AppHost/appsettings.json)
 TOPOLOGY__PROFILE=infra aspire run
 aspire run -- --profile hub
-
-# Срез внутри профиля
 aspire run -- --profile hub --run-services identity
 
-# Живой smoke-test профиля; нужны Docker, grpcurl и python3
-just aspire-smoke hub
-
-# AppHost — сборка и тесты графа и профилей; Docker не нужен
-just apphost-config-check
-just apphost-build
-just apphost-test
-just apphost-chart-test
-
-# Чарт прода из графа: aspire publish, helm lint, helm template и правила чарта.
-# Нужны helm (HELM_VERSION в justfile) и сеть; в verify не входит
-just apphost-chart
-
-# Identity — инструменты, кодогенерация, сборка, тесты и линт
-just identity-tools
-just identity-proto
-just identity-build
-just identity-test
-just identity-test-integration
-just identity-test-log-check
-just identity-lint
-just identity-run
-just identity-image
-# identity-image — движок IMAGE_ENGINE, podman по умолчанию.
-# IDENTITY_DATABASE_URL обязателен для identity-run и identity-test-integration: умолчания
-# на 127.0.0.1:5432 нет, без переменной рецепт отказывает до go test. identity-test —
-# unit без базы; тесты с PostgreSQL лежат под тегом сборки integration
-
-# Community site API — зависимости, typecheck, линт и тесты
-just community-site-api-tools
-just community-site-api-typecheck
-just community-site-api-lint
-just community-site-api-test
-# Сборки нет: функцию бандлит Netlify CLI при деплое сайта
-
-# Screen lint — зависимости, typecheck, линт и тесты линтера экрана
-just screen-lint-tools
-just screen-lint-typecheck
-just screen-lint-lint
-just screen-lint-test
-# Сборки нет: тестовый код ботов берёт исходники относительным путём
-
-# Auction bot UI — зависимости, сборка, typecheck, линт и тесты общего пакета
-just auction-bot-ui-tools
-just auction-bot-ui-build
-just auction-bot-ui-typecheck
-just auction-bot-ui-lint
-just auction-bot-ui-test
-# typecheck сначала собирает пакет: проверка границы читает exports из dist
-
-# Auction Bot — зависимости, кодогенерация, сборка, typecheck, линт, тесты и запуск
-just auction-bot-tools
-just auction-bot-proto
-just auction-bot-build
-just auction-bot-typecheck
-just auction-bot-lint
-just auction-bot-test
-just auction-bot-run
-# Рецепты, читающие типы общего пакета, сначала собирают его dist.
-# Обычный запуск — профиль: aspire run -- --profile auction-bot
-
-# Hub Bot — зависимости, кодогенерация, сборка, тесты, линт и запуск
-just hub-bot-tools
-just hub-bot-proto
-just hub-bot-build
-just hub-bot-typecheck
-just hub-bot-test
-just hub-bot-test-integration
-just hub-bot-lint
-just hub-bot-run
-just hub-bot-image
-just image-checks-test
-# hub-bot-image и image-checks-test — движок IMAGE_ENGINE, podman по умолчанию.
-# hub-bot-test — без Docker; *.integration.test.ts с Testcontainers идут в
-# hub-bot-test-integration
-
-# Живой контур Telegram (L3) — вход синтетическим аккаунтом и прогон /start.
-# Бот поднят заранее: aspire run -- --profile hub --telegram-environment test.
-# Секреты TelegramLive:* — в user-secrets AppHost; в verify и test-all не входит
-just telegram-live-login 99966XYYYY
-just telegram-live-test
-just telegram-live-console
-
-# Meetups — кодогенерация C#, сборка gRPC-сервиса, тесты и формат
-just meetups-build
-just meetups-test
-just meetups-test-integration
-just meetups-contracts-check
-just meetups-run
-just meetups-format
-just meetups-format-check
-just meetups-image
-# Fantomas берётся из .config/dotnet-tools.json; `just dotnet-tools` восстанавливает его
-
-# Notifications — сборка силоса, тесты, гейт контрактов и запуск
-just notifications-build
-just notifications-test
-just notifications-test-integration
-just notifications-contracts-check
-just notifications-run
-just notifications-image
-# NOTIFICATIONS_DATABASE_URL обязателен для notifications-run. *-test — unit без Docker;
-# *-test-integration поднимает PostgreSQL через Testcontainers и без Docker падает
-
-# Auction — зависимости, кодогенерация, сборка, тесты, формат и запуск
-just auction-tools
-just auction-proto
-just auction-build
-just auction-test
-just auction-test-integration
-just auction-lint
-just auction-format
-just auction-run
-just auction-image
-# Нужны JDK версии из apps/auction/.java-version и sbt; на Linux их ставит
-# tools/env/install.sh, на остальных машинах — владелец.
-# Кодогенерация входит в сборку: auction-proto нужен только отдельным шагом.
-# auction-test — L0 без Docker; *IntegrationSpec с Testcontainers идут в
-# auction-test-integration. auction-run требует AUCTION_DATABASE_* и
-# AUCTION_CALLER_TOKEN_* — без базы или токена вызывающего сервис не стартует.
-# auction-image собирает образ внутри движка IMAGE_ENGINE, podman по умолчанию:
-# JDK и sbt на машине ему не нужны
-
-# Сквозной контур (L2) — дымовой прогон, провод бота, среда наружу, гейт контрактов
-just contour-test
-just contour-bot-test
-just contour-bot-explore
-just contour-bot-console
-just contour-up '--env-file .contour.env'
-just contour-contracts-check
-# contour-bot-explore — исследование, не гейт: вне verify, test-all и CI
-# contour-bot-console — пульт по шагу: команда POST-ом на 127.0.0.1:7357
-# (tests/contour/bot-wire/console/send.sh), ответ — экраны JSON-ом; не гейт
-# Нужны Docker, go и buf в PATH: узел Identity сначала генерирует Go-код и
-# собирает бинарник; провод бота нужен ещё Node. В verify набор не входит; в CI его гоняет джоба contour,
-# которая намеренно не числится в обязательных проверках ветки
-
-# .NET — из папки проекта
+# Вне рецептов: .NET-проект собирается и из своей папки, nats-tester — CLI
 dotnet build
 dotnet test
-
-# nats-tester — зависимости, регенерация закоммиченных классов, гейт и запуск
-just nats-tester-tools
-just nats-tester-proto
-just nats-tester-check
 cd tools/nats-tester && nats-tester --help
 ```
+
+Обязательные переменные окружения умолчаний не имеют, и без них рецепт или сервис отказывает до работы: `IDENTITY_DATABASE_URL` — для `identity-run` и `identity-test-integration`, `NOTIFICATIONS_DATABASE_URL` — для `notifications-run`, `AUCTION_DATABASE_*` и `AUCTION_CALLER_TOKEN_*` — для `auction-run`. Auction нужны JDK версии из `apps/auction/.java-version` и sbt: на Linux их ставит `tools/env/install.sh`, на остальных машинах — владелец; `auction-image` собирает образ внутри движка и без них.
 
 Часть проверок запускается без команды: PostToolUse-хуки в `.claude/settings.json` прогоняют `just check-agent-tools` после правки `.skillshare/**`, `just identity-proto && just hub-bot-proto` после правки `contracts/proto/**` и `just sync-mcp && just sync-commands` после правки `.rulesync/**`. Хук видит правку через Edit и Write; изменение тех же файлов через Bash он не ловит, поэтому `just verify-changed` перед сдачей нужен в любом случае.
 
@@ -343,35 +133,18 @@ CodeRabbit не ревьюит pull request автоматически; запу
 
 Нормативные правила качества находятся в [docs/standards/](docs/standards/README.md). Не копируй их целиком сюда или в skills. Skill задаёт последовательность работы и ссылается на стандарт; вложенный `AGENTS.md` добавляет только специфику конкретного сервиса или языка.
 
-Источник правды по MCP-серверам — `.rulesync/mcp.jsonc`; `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` и `opencode.jsonc` генерируются из него командой `just sync-mcp`, и сгенерированный ключ `mcp` руками не правится. Остальные ключи `opencode.jsonc` генерация не трогает: они переживают `sync-mcp` и не считаются расхождением в `check-mcp`, поэтому проектные настройки OpenCode (`permission` и подобные), которых rulesync не умеет, живут в том же файле. Здесь не копирование, а перевод: Claude Code и Cursor читают JSON с ключом `mcpServers`, VS Code — JSON с ключом `servers`, OpenCode — JSONC с ключом `mcp`, а Codex — TOML с таблицами `mcp_servers`. Версия rulesync закреплена в `justfile`; `just check-mcp` возвращает 1 при расхождении таргета с источником и входит в `verify`. В источник попадают только серверы, от которых зависит контур исполнения; какие подключать сверх Linear и Aspire — решение владельца, а кандидаты и ограничения разобраны в [mcp-servers.md](docs/development/mcp-servers.md).
-
-Граница с skillshare проведена по фичам: rulesync умеет ещё skills, subagents и hooks, но закреплены только `mcp` и `commands` — рецептами `sync-mcp`/`check-mcp` и `sync-commands`/`check-commands`, поэтому внешние скиллы продолжает собирать только skillshare. Zed не входит в `RULESYNC_MCP_TARGETS`, потому что rulesync владеет `.zed/settings.json` целиком. Проектные настройки Codex в его конфигурации не добавляют вручную; `opencode.jsonc` — исключение, там rulesync владеет только ключом `mcp`.
-
-Источник правды по скиллам — `.skillshare/skills/`; `.claude/skills/` и `.agents/skills/` собираются из него командой `skillshare sync --all -p`, в Git не хранятся и руками не правятся. Раскладка источника: `proj/` — свои скиллы репозитория, `golang/_golang/`, `mattpocock/_skills/` и `_aspire-skills/` — tracked-клоны [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang), [mattpocock/skills](https://github.com/mattpocock/skills) и [microsoft/aspire-skills](https://github.com/microsoft/aspire-skills) (обновляются `skillshare update <путь> -p` — путь с группой обязателен, по одному имени `_golang` skillshare клон не находит; сами клоны в `.gitignore`), остальные внешние скиллы лежат в корне. Aspire ставится клоном, а не шестью поскиллыми источниками вынужденно: в его скиллах лежит симлинк `evals/fixtures` на корневой `evals/` репозитория, и skillshare 0.21 такой скилл при поскилльной установке не копирует, а клон сохраняет симлинк внутри дерева, на которое тот указывает. Оба таргета используют `target_naming: standard`, поэтому имена каталогов в таргетах остаются плоскими независимо от групп.
-
-Tracked-клон приносит репозиторий целиком, поэтому лишнее гасится в `.skillignore`: из 46 скиллов пака Go включены 23, остальные выключены как ненужные этому репозиторию, а не как конфликтующие с нормативом. У клона Aspire там же погашены путь `_aspire-skills/.github/` — зеркало тех же скиллов под `.github/plugins/`, дубли имён из которого `sync` не раскладывает ни в одной копии, — и `aspire-project-v2-migration`, которого в составе раньше не было. Таргеты — сгенерированный артефакт и в Git не лежат ([ADR-041](docs/decisions/ADR-041-skillshare-targets-not-committed.md)): оба каталога погашены в корневом `.gitignore`, а собирает их `skillshare sync --all -p` на каждой машине. Поэтому свежий клон, дерево от `git worktree add` и дерево от приложения получают один и тот же состав, а `sync` в дереве без внешних источников больше не может признать закоммиченную копию осиротевшей и удалить её — раньше одна команда так вычищала 46 записей манифеста на таргет. Цена: репозиторий не хранит сам текст скилла, который исполнял агент, — только коммит, из которого текст ставится. Коммит держит lockfile `.skillshare/skills.lock.json`: skillshare с 0.21.2 пишет туда точный коммит каждого внешнего скилла и tracked-клона, а `skillshare install -p` ставит ровно его, как бы далеко ни ушёл upstream. Сдвигает пины `skillshare update --all -p`, и lockfile коммитится заново. Правку `proj-`скилла без `sync` ловить больше не нужно: копии, с которой её сверяли, нет, а сама правка читается в диффе источника один раз вместо трёх. Скилл со сломанным frontmatter ловится по-прежнему — `check-frontmatter.sh` разбирает источники напрямую, а не запись в манифесте, ради которой манифест и держали в Git. Объявление зависимостей — `.skillshare/config.yaml`, `.skillshare/skills.lock.json` и `.skillshare/skills/.metadata.json` — остаётся в Git, и правит его сам `skillshare install`: скилл, который отслеживается в Git, но не объявлен в `config.yaml`, он дописывает в объявление, а скилл, который не удалось скопировать, отмечает крестиком и всё равно выходит с кодом 0. Поэтому install запускается через `just skillshare-install`: обёртка завершается ненулевым кодом, если изменился набор объявленных скиллов или объявленного скилла нет на диске, и называет его. `.metadata.json` каждая установка переписывает меткой времени, поэтому при неизменном lockfile обёртка возвращает его к закоммиченному. Ложное срабатывание аудита на клоне Aspire — строка чужого руководства, запрещающая агенту врать про сборку, — записано в том же `.metadata.json` полем `audit_accepted`: его ставит однократная установка с `--force`, и bulk-прогон на нём больше не блокирует, а новая находка блокирует по-прежнему. Версия skillshare закреплена в `justfile` (`SKILLSHARE_VERSION`), и lockfile с поскилльными пинами требует не ниже 0.21.2.
-
-Скиллы ставятся командой `skillshare install <url>`. `npx skills find` служит поиском по каталогу и ничего не устанавливает: установка мимо skillshare кладёт скилл в обход источника правды, и следующий `sync` его снесёт.
-
-Внешний скилл берётся только если адаптируется через существующий шов — `docs/standards/`, `docs/agents/` и вложенные `AGENTS.md`. Скилл, который несёт свой шаблон задачи, свою таксономию меток или свой формат ADR внутри `SKILL.md`, спорит с нормативом и выключается в `.skillshare/skills/.skillignore`; править tracked-клон бессмысленно, `skillshare update` его перезапишет. По этой причине выключен `retro`: он несёт свои категории улучшений, опирается на `CODING_STANDARDS.md`, которого в репозитории нет, и не знает про журнал наблюдений; нужная функция вынесена в свой `proj-record-observation`. Вторая причина выключить внешний скилл — занятое имя: скиллы, команды и встроенные команды Claude Code делят одно пространство `/`, и вендоренный скилл перекрывает одноимённую встроенную команду молча. Так выключен `code-review`: имя вернулось встроенной команде, а нужная функция вынесена в свой `proj-review-change`. Список выключенного — в самом `.skillignore`, снимается командой `skillshare enable <имя> -p`. Если функция нужна по существу, дешевле написать свой `proj-`скилл поверх норматива, чем чинить чужой.
-
-Источник правды по ролям подагентов — `.skillshare/agents/`; тот же sync раскладывает из него `.claude/agents/` и `.opencode/agents/`. В Git они не лежат по [ADR-041](docs/decisions/ADR-041-skillshare-targets-not-committed.md): решение говорит про таргеты skillshare, и каталоги ролей — такие же таргеты, что записано в `.gitignore` рядом с самим правилом. Набор ролей закреплённый и харнесс-независимый: файл несёт `name`, `description`, инструменты на чтение и тело с заданием, но **не несёт поля `model`**. Модель выбирает вызывающая сторона параметром вызова, беря уровень из таблицы «Маршрутизация по модели» в [agent-execution-cost.md](docs/development/agent-execution-cost.md); вызывающая сторона фактическую модель подагента не видит, поэтому отчёт называет две — запрошенную параметром вызова и ту, что подагент назвал о себе сам первой строкой ответа. Расхождение между ними и есть пойманная подмена заблокированной модели: без этой пары она проходит молча. Без поля `model` один и тот же файл копируется в оба таргета дословно, без перевода под диалект харнесса, а выбор модели остаётся на стороне вызова. Планирование и ревью логической корректности ролей не получают намеренно: они идут на модели сессии. Флаг `--all` в `skillshare sync --all -p` обязателен — `skillshare sync -p` раскладывает одни скиллы и оставляет роли неразложенными молча, а `just verify` этого не видит: вызов такой роли падает уже в сессии, с неизвестным `subagent_type`.
-
-Упавший вызов роли сначала повторяют: реестр ролей в живой сессии обновляется не мгновенно, и роль, разложенная минуту назад, доступна не сразу. Падает и на повторе — проверяют раскладку тем же `sync --all -p`. Раскладка верна, а роль всё равно не находится — значит устарел реестр подагентов сессии, и диагностика на этом кончается: дальше ничего не чинится и появления ролей не ждут. В дереве от приложения причина одна: приложение копирует `.claude/` из основного клона при создании дерева, сессия читает роли из этой копии до первого действия агента, и отставший основной клон отдаёт отставший состав каждому новому дереву. Поэтому основной клон держат синхронизированным — это делают хуки `post-checkout` и `post-merge` из `lefthook.yml`, — а `sync` внутри уже открытой сессии реестр не чинит: роли приезжают уведомлением через десятки минут. Работу это не останавливает ни в одном случае: вызывающая сторона запускает подагента без роли, вставив задание из её тела в промпт, и передаёт ту же модель — отсутствие роли её не отменяет. Подмена и её причина называются в отчёте. Скиллы ссылаются на это правило, а не переписывают его.
-
-Команды агента — источник правды `.rulesync/commands/`; `.claude/commands/` и `.opencode/commands/` генерируются из него командой `just sync-commands` и руками не правятся (`just check-commands` возвращает 1 при расхождении и входит в `verify`). Тело команды пишется в universal-синтаксисе rulesync — `$ARGUMENTS` и вставка вывода `` !`cmd` `` — а генератор переводит его в форму таргета, поэтому в теле не остаётся ни позиционных `$1`, ни путей вида `.claude/`. Таргетов два, а не пять, как у MCP: Codex CLI читает промпты только из домашнего каталога `~/.codex/prompts`, а Cursor и Copilot не раскрывают ни аргументы, ни вставки вывода команд — там тело доехало бы до модели текстом с `$ARGUMENTS` внутри. Расширить список — строка `RULESYNC_COMMAND_TARGETS` в `justfile`; сузить, когда команда нужна одному харнесу, — поле `targets` в её файле. Ключи, которых у других харнесов нет (`argument-hint`, `allowed-tools`), живут в блоке `claudecode:` frontmatter и в чужие таргеты не попадают. Свои скиллы, команды и роли подагентов носят префикс `proj-`, чтобы отличаться от внешних, персональных и плагинных: скиллы и команды делят одно пространство `/`, а роли — одно пространство `subagent_type` с плагинными вроде `codex-rescue`. Имя называет действие: скиллы `proj-record-decision`, `proj-change-contract`, `proj-create-task`, `proj-reflect-work`, `proj-record-learning`, `proj-record-observation`, `proj-write-commit`, `proj-start-task`, `proj-deliver-task`, `proj-review-change`, `proj-write-typescript`, `proj-write-grammy-bot`, `proj-write-aspire-apphost`, `proj-write-fsharp`, `proj-test-fsharp`, `proj-write-fsharp-vsa`, `proj-write-scala`, `proj-test-scala`; команды `proj-draft-commit-message`, `proj-take-task`; роли `proj-recon`, `proj-review-standards`, `proj-review-spec`, `proj-orleans-specialist`.
-
-F#-инструментарий намеренно разделён по контекстам: `proj-write-fsharp` отвечает за язык и interop, `proj-test-fsharp` — за xUnit v3, Unquote, FsCheck, Moq и Testcontainers, `proj-write-fsharp-vsa` — за выбранные в ADR-033 функциональные vertical slices и Oxpecker boundary. Основа синтезирована из общего `managedcode/dotnet-skills:fsharp` и проверенных практик владельца из рабочих проектов, а не установлена пакетом: исходные skills не знают локальных ADR и несут либо слишком общий scaffolding, либо чужие архитектурные допущения. `ECC:fsharp-testing` не установлен отдельно, потому что его полезный стек закреплён проектным standard, а FsUnit и NSubstitute не вводятся вторым способом утверждений и mocking. Пакеты `majiayu` исключены из-за Giraffe/Fable/SQLite и заранее заданной структуры приложения; Akka-specific skill из тех же рабочих проектов к Meetups не применяется, потому что ADR-024 прямо оставляет actor runtime за границей сервиса.
-
-Orleans-инструментарий собран по той же границе, но другим способом: скилл `orleans` из `managedcode/dotnet-skills` установлен как есть — он несёт решающие таблицы «примитив — назначение — модель отказа», своего шаблона задачи и своей структуры приложения не навязывает и потому адаптируется через существующий шов. Роль `proj-orleans-specialist` рядом с ним синтезирована, а не установлена: исходный `dotnet-orleans-specialist` несёт поле `model`, права на запись и ссылки на три скилла, которых в репозитории нет, а первое прямо запрещено правилом ролей выше. Свой файл вместо чужого решает и вторую задачу — роль читает границы ADR-029 и запрет на два механизма миграций до того, как начнёт советовать. Установка скилла показала цену обёртки `just skillshare-install`: прямой `skillshare install` переписал `.skillshare/config.yaml`, оставив две записи из семнадцати, поэтому объявление правится руками, а вывод install сверяется с `git diff` до коммита.
-
-Scala-инструментарий разделён по тому же принципу: `proj-write-scala` отвечает за язык, границу с Pekko Typed и interop со сгенерированным ScalaPB, `proj-test-scala` — за ScalaTest, ScalaCheck, Pekko TestKit и выбор уровня. Оба ссылаются на [languages/scala.md](docs/standards/languages/scala.md) и не пересказывают его. Из внешних взят один `akka-streams` ([alexandru/skills](https://github.com/alexandru/skills), MIT): он покрывает Pekko Streams явно, не несёт ни своей раскладки проекта, ни своего инструмента сборки и адаптируется существующим швом. Остальные кандидаты разведки отвергнуты по существу, а не по качеству: [j5ik2o/okite-ai](https://github.com/j5ik2o/okite-ai) предписывает `PersistenceEffector` вместо `EventSourcedBehavior`, ZIO-слой use case и read model через DynamoDB Streams — это прямое противоречие [ADR-045](docs/decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md); [VirtusLab/scala-skill](https://github.com/VirtusLab/scala-skill) несёт direct-style на Ox, то есть конкурирующую акторам модель конкурентности; [majk-p/scala-skills](https://github.com/majk-p/scala-skills) сам называет себя very opinionated, навязывает `-no-indent` и typelevel-экосистему и в `scala-build-tools` предписывает свою раскладку проекта. Растиражированные по агрегаторам `scala-pro`, `moai-lang-scala` и `pcl@scala-expert` — persona-style и технической опоры не несут. Пакет Akka.NET от `aaronontheweb` к Scala не применяется.
-
-Плагины включаются полем `enabledPlugins` в `.claude/settings.json` и действуют на весь проект. Сейчас включён `codex@openai-codex`: он приносит скиллы с префиксом `codex:` и агента `codex-rescue`, которые делегируют работу локальному Codex CLI. Плагин приходит мимо `.skillshare/` — `skillshare sync` его не раскладывает, `just check-agent-tools` его не проверяет, а без установленного Codex CLI его скиллы бесполезны.
-
-Скилл, который агент не должен запускать сам, помечается `disable-model-invocation: true`. Так помечены `proj-record-learning` и `proj-record-observation`: агент сам находит кандидаты через `proj-reflect-work`, но владелец решает, что стоит записи. Детектор отделён от пишущих скиллов, чтобы инициатива агента не превращала гипотезу или разовый сбой в долговечный документ.
-
 Перед изменением сервиса проверь наличие его локального `AGENTS.md`. Если стандарта ещё нет, следуй существующему коду и тестам; устойчивое повторяемое правило оформляй отдельно только после согласования.
+
+Agent tooling — скиллы, роли подагентов, MCP-серверы и команды агента. Механика раскладки, обоснования наборов скиллов F#, Orleans и Scala и история решений — в [docs/agents/agent-tooling.md](docs/agents/agent-tooling.md); прочитай его до правки `.skillshare/**` или `.rulesync/**`, туда же ведут вложенные `AGENTS.md` этих каталогов. Правила, которые действуют всегда:
+
+- **Источники правды.** Скиллы — `.skillshare/skills/`, роли подагентов — `.skillshare/agents/`, MCP-серверы — `.rulesync/mcp.jsonc`, команды агента — `.rulesync/commands/`. Таргеты генерируются и руками не правятся: `.claude/skills/`, `.agents/skills/`, `.claude/agents/` и `.opencode/agents/` собирает `skillshare sync --all -p` (в Git их нет, [ADR-041](docs/decisions/ADR-041-skillshare-targets-not-committed.md)), MCP-конфигурации агентов с ключом `mcp` в `opencode.jsonc` — `just sync-mcp`, `.claude/commands/` и `.opencode/commands/` — `just sync-commands`. Генераты rulesync сверяют с источником `just check-mcp` и `just check-commands`; `just check-agent-tools` разбирает frontmatter скиллов, а раскладку skillshare не сверяет ничто. Проектные настройки Codex в его конфигурацию вручную не добавляют; ключи `opencode.jsonc` кроме `mcp` генерация не трогает, и они правятся на месте.
+- **`--all` обязателен.** `skillshare sync -p` без него раскладывает одни скиллы и молча оставляет роли пустыми, а `just verify` этого не видит.
+- **Ставит только skillshare.** Установка объявленных скиллов — `just skillshare-install`. Новый внешний скилл — `skillshare install <url>`, и до коммита его вывод сверяют с `git diff .skillshare/`: голый install переписывает объявление в `config.yaml` и выходит с кодом 0 даже на нескопированном скилле. `npx skills` только ищет: поставленное мимо skillshare не попадает ни в источник, ни на другие машины. Внешний скилл, который спорит с нормативом или занимает имя встроенной команды, выключается в `.skillshare/skills/.skillignore`, а не правится.
+- **Новый MCP-сервер в источнике — решение владельца**: туда попадают только серверы, от которых зависит контур исполнения ([mcp-servers.md](docs/development/mcp-servers.md)).
+- **Префикс `proj-`** у своих скиллов, команд и ролей: они делят пространство `/` и `subagent_type` с внешними и плагинными.
+- **Роль подагента не несёт поля `model`.** Модель передаёт вызывающая сторона параметром вызова по таблице из [agent-execution-cost.md](docs/development/agent-execution-cost.md), а отчёт называет две — запрошенную и ту, что подагент назвал о себе первой строкой. Планирование и ось логической корректности ревью ролей не получают: они идут на модели сессии.
+- **Упавший вызов роли:** повтор, затем проверка раскладки `skillshare sync --all -p`, и в любом исходе — подагент без роли с заданием из её тела в промпте и той же моделью; подмена и причина называются в отчёте ([полное правило](docs/agents/agent-tooling.md#упавший-вызов-роли)).
+- **`disable-model-invocation: true`** у скилла, который агент не запускает сам: так помечены `proj-record-learning` и `proj-record-observation` — что стоит записи, решает владелец.
 
 ## Agent skills
 

@@ -23,7 +23,7 @@ skills:
 
 # Маршрутизация по Orleans
 
-Роль синтезирована поверх внешнего `dotnet-orleans-specialist` из [managedcode/dotnet-skills](https://github.com/managedcode/dotnet-skills) (MIT), а не установлена пакетом: исходный файл несёт поле `model`, права на запись и ссылки на три скилла, которых в репозитории нет. Основание — правило `.skillshare/agents/` в [AGENTS.md](../../AGENTS.md).
+Роль синтезирована поверх внешнего `dotnet-orleans-specialist` из [managedcode/dotnet-skills](https://github.com/managedcode/dotnet-skills) (MIT), а не установлена пакетом: исходный файл несёт поле `model`, права на запись и ссылки на три скилла, которых в репозитории нет. Основание — [правило ролей подагентов](../../docs/agents/agent-tooling.md#роли-подагентов).
 
 Работа маршрутная: определить доминирующий вопрос и указать наименьший достаточный reference. Подробное руководство живёт в скилле `orleans`; эта роль его не пересказывает и не подменяет.
 
