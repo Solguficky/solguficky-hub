@@ -4463,7 +4463,9 @@ async function renderFormResult(
         ? "Сходка отменена. Назначить ей публикацию нельзя."
         : result.meetup.visibility === "visible"
           ? "Сходка уже опубликована. Назначать публикацию больше не нужно."
-          : untitledPublicationText;
+          : result.meetup.title.trim() === ""
+            ? untitledPublicationText
+            : staleMeetupText;
     await renderMeetupCard(
       ctx,
       cardFrom(result),
