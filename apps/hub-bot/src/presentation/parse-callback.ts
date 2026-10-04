@@ -95,7 +95,9 @@ export function blockOriginData(origin: BlockOrigin): string {
 // меняется, пока карточка висит.
 export type CardCursor = { token: string; createdAtMs: number };
 
-const MillisSchema = z.string().regex(/^[0-9a-z]{1,11}$/);
+// Десять знаков base36 — до 3,6·10¹⁵ мс, внутри диапазона Date (8,64·10¹⁵):
+// подделанный момент длиннее не дойдёт до toISOString и не уронит запрос.
+const MillisSchema = z.string().regex(/^[0-9a-z]{1,10}$/);
 
 /** Сегменты `callback_data`: `<токен>:<момент base36>`. */
 export function cardCursorData(cursor: CardCursor): string {

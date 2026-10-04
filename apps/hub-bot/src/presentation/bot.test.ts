@@ -1439,13 +1439,13 @@ describe("presentation adapter", () => {
       expect(identity.readApplicationQueue).toHaveBeenCalledWith(
         expect.anything(),
         {
-          createdAtMs: first.createdAtMs - 1,
-          applicationId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+          createdAtMs: first.createdAtMs,
+          applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a000",
         },
         expect.anything(),
       );
       expect(calls[0]?.payload).toMatchObject({
-        text: "Не получилось сохранить. Попробуй ещё раз.",
+        text: "Решение не подтвердилось. Карточка перечитана заново.",
       });
       expect(JSON.stringify(calls[1]?.payload)).toContain("Иван (@ivan_p)");
     });
@@ -1468,7 +1468,7 @@ describe("presentation adapter", () => {
       expect(calls.at(-1)).toMatchObject({
         method: "editMessageText",
         payload: {
-          text: "<b>Заявки</b>\n\nОчередь кончилась. Пропущенных заявок: 2.",
+          text: "<b>Заявки</b>\n\nОчередь кончилась. Ещё открыто заявок: 2.",
         },
       });
     });

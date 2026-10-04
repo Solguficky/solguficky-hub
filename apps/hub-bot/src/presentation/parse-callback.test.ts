@@ -376,7 +376,7 @@ describe("callback parser", () => {
       `v1:cm:qa:short:mfz0`,
       `v1:cm:qd:${token}:MFZ0`,
       `v1:cm:qy:${token}:-1`,
-      `v1:cm:qy:${token}:${"z".repeat(12)}`,
+      `v1:cm:qy:${token}:${"z".repeat(11)}`,
       `v1:cm:qa:${token}:mfz0:extra`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });

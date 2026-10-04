@@ -149,7 +149,7 @@ describe("application queue end", () => {
     const screen = applicationQueueEndScreen(2, true);
 
     expect(screen.text).toBe(
-      "<b>Заявки</b>\n\nОчередь кончилась. Пропущенных заявок: 2.",
+      "<b>Заявки</b>\n\nОчередь кончилась. Ещё открыто заявок: 2.",
     );
     expect(screen.keyboard.inline_keyboard[0]).toEqual([
       { text: "С начала", callback_data: "v1:cm:q" },

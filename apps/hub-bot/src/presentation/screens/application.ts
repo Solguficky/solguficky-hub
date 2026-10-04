@@ -151,7 +151,7 @@ export function applicationQueueEndScreen(
       total === 0
         ? "Новых заявок нет."
         : afterCursor
-          ? `Очередь кончилась. Пропущенных заявок: ${total}.`
+          ? `Очередь кончилась. Ещё открыто заявок: ${total}.`
           : undefined,
     ),
     keyboard: withNav(keyboard, toManage),

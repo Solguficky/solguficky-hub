@@ -1852,18 +1852,19 @@ async function handleCallback(
               tokenToUuid(action.cursor.token),
               rpcCall(ctx, "manage_community"),
             );
+      // Сбой не значит, что решения нет: ответ мог потеряться после записи
+      // или не разобраться. Поэтому ответ не утверждает ни того, ни другого,
+      // а экран перечитывает заявку: открыта — та же карточка, решена —
+      // следующая.
       await waiting.answer(
         result.kind === "ok"
           ? decisionToast(result.value)
-          : result.kind === "invalid"
-            ? "Решение не сохранилось. Очередь перечитана заново."
-            : result.kind === "forbidden"
-              ? "Это может только администратор."
-              : "Не получилось сохранить. Попробуй ещё раз.",
+          : result.kind === "forbidden"
+            ? "Это может только администратор."
+            : "Решение не подтвердилось. Карточка перечитана заново.",
       );
-      // Решённая заявка уступает место следующей. Несохранённое решение
-      // оставляет ту же карточку: уйди очередь дальше, отказ выглядел бы
-      // принятым.
+      // Решённая заявка уступает место следующей. Неподтверждённое решение
+      // перечитывает ту же: уйди очередь дальше, отказ выглядел бы принятым.
       await renderApplicationCard(
         ctx,
         runtime,
@@ -3440,21 +3441,26 @@ function sourceChannelsForbiddenOutcome(person: Person): BoundaryOutcome {
 }
 
 // Курсор очереди из кнопки. `after` — следующая заявка за этой. `at` — эта же,
-// если она ещё открыта: курсор на миллисекунду раньше с наибольшим UUID, и
-// сравнение «(момент, id) больше курсора» пропускает всё до её момента.
+// если она ещё открыта: тот же момент и предшествующий UUID, и сравнение
+// «(момент, id) больше курсора» начинает ровно с неё. Момент на миллисекунду
+// раньше тут не годится: у двух заявок одной миллисекунды он вернул бы первую.
 function queueCursor(
   cursor: CardCursor,
   from: "after" | "at",
 ): ApplicationCursor {
-  return from === "after"
-    ? {
-        createdAtMs: cursor.createdAtMs,
-        applicationId: tokenToUuid(cursor.token),
-      }
-    : {
-        createdAtMs: cursor.createdAtMs - 1,
-        applicationId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-      };
+  const applicationId = tokenToUuid(cursor.token);
+  return {
+    createdAtMs: cursor.createdAtMs,
+    applicationId:
+      from === "after" ? applicationId : previousUuid(applicationId),
+  };
+}
+
+function previousUuid(uuid: string): string {
+  const value = BigInt(`0x${uuid.replaceAll("-", "")}`);
+  // Нулевого UUIDv7 не бывает; на нём курсор просто начнёт с момента.
+  const hex = (value === 0n ? 0n : value - 1n).toString(16).padStart(32, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function readApplicationQueue(
