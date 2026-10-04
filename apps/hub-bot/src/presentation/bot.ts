@@ -3564,12 +3564,12 @@ function showApplicationRefusal(
   );
 }
 
-function showApplicationQueue(
+async function showApplicationQueue(
   ctx: UpdateContext,
   read: ApplicationQueueRead,
   afterCursor: boolean,
 ): Promise<void> {
-  return showScreen(
+  await showScreen(
     ctx,
     read.card === undefined
       ? applicationQueueEndScreen(read.total, afterCursor)
