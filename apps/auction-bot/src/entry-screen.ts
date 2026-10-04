@@ -192,14 +192,33 @@ function renderBody(
     limit,
   );
   return {
-    // Тело с карточкой — экран лота, иначе — лента.
-    id: body.blocks.some((block) => block.kind === "lot") ? "lot" : "feed",
+    id: screenOf(body.blocks),
     text,
     keyboard: body.keyboard.map((row) =>
       row.map((button) => renderButton(button, items)),
     ),
     ...(photo === undefined ? {} : { photo }),
   };
+}
+
+// Запись каталога для тела: тело с карточкой — экран лота, с лентой — лента.
+// Новый вид блока не становится лентой молча: без своей ветки он не собирается.
+function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
+  let screen: ScreenId = "feed";
+  for (const block of blocks) {
+    switch (block.kind) {
+      case "lot":
+        screen = "lot";
+        break;
+      case "feed":
+        break;
+      default: {
+        const _exhaustive: never = block;
+        return _exhaustive;
+      }
+    }
+  }
+  return screen;
 }
 
 function photoOf(

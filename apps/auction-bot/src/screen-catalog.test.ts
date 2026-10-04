@@ -1,16 +1,13 @@
 import type { AuctionScreenBody } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
-import {
-  configFor,
-  inspectWith,
-  type ScreenEntry,
-} from "../testkit/screen-lint.js";
+import { inspectCall, type ScreenEntry } from "../testkit/screen-lint.js";
+import { markupOf } from "./bot.js";
 import {
   type AuctionEntryScreen,
   type RenderedScreen,
   renderEntryScreen,
 } from "./entry-screen.js";
-import { type ScreenId, screenCatalog, screenMark } from "./screen-catalog.js";
+import { type ScreenId, screenCatalog } from "./screen-catalog.js";
 
 // Исключения каталога не переживают свою причину: каждая запись рендерится во
 // всех своих видах, линтер гоняется без исключений, и набор сработавших
@@ -108,12 +105,10 @@ const shown: readonly { screen: AuctionEntryScreen; faq?: typeof urls }[] = [
 ];
 
 // Вызов в той форме, в какой его собирает адаптер (`bot.ts`): карточка с
-// изображением — подпись к фото, остальное — текст.
+// изображением — подпись к фото, остальное — текст. Параметры разметки и метку
+// даёт сам адаптер.
 function sent(screen: RenderedScreen): [method: string, payload: unknown] {
-  const markup = {
-    ...screenMark(screen.id),
-    reply_markup: { inline_keyboard: screen.keyboard.map((row) => [...row]) },
-  };
+  const markup = markupOf(screen);
   return screen.photo === undefined
     ? ["sendMessage", { chat_id: 42, text: screen.text, ...markup }]
     : ["sendPhoto", { chat_id: 42, caption: screen.text, ...markup }];
@@ -121,10 +116,8 @@ function sent(screen: RenderedScreen): [method: string, payload: unknown] {
 
 const entries = Object.entries(screenCatalog) as [ScreenId, ScreenEntry][];
 
-const bare = configFor(
-  Object.fromEntries(
-    entries.map(([id, { waive: _waive, ...entry }]) => [id, entry]),
-  ),
+const bare = Object.fromEntries(
+  entries.map(([id, { waive: _waive, ...entry }]) => [id, entry]),
 );
 
 function brokenRules(): Map<ScreenId, Set<string>> {
@@ -135,7 +128,7 @@ function brokenRules(): Map<ScreenId, Set<string>> {
       ...(faq === undefined ? {} : { faq }),
     });
     const rules = broken.get(rendered.id) ?? new Set<string>();
-    for (const violation of inspectWith(bare, ...sent(rendered))) {
+    for (const violation of inspectCall(...sent(rendered), bare)) {
       rules.add(violation.rule);
     }
     broken.set(rendered.id, rules);

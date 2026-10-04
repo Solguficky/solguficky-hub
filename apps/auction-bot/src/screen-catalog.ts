@@ -30,6 +30,10 @@ export const screenCatalog = {
     backName: "Меню",
     waive: { title: shellTitle },
   },
+  // Короткого имени для возврата у FAQ нет: подпись возврата из его состояний
+  // выбирает перевёрстка. До неё `nav` у `details` и `question` не проходит ни
+  // при какой клавиатуре, и снимать его исключение можно только вместе с
+  // `backName` здесь.
   faq: {
     class: "screen",
     nav: "tree",

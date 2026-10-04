@@ -190,8 +190,9 @@ function refusalCategory(
 }
 
 // Метка экрана едет в параметрах каждой отправки: по ней линтер test kit
-// сверяет экран с каталогом, а клавиатура без метки роняет тест.
-function markupOf(screen: RenderedScreen) {
+// сверяет экран с каталогом, а клавиатура без метки роняет тест. Тот же
+// параметр собирает тест каталога экранов, а не свою копию.
+export function markupOf(screen: RenderedScreen) {
   return {
     ...screenMark(screen.id),
     reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },

@@ -13,12 +13,10 @@ import { screenCatalog, screenTag } from "../src/screen-catalog.js";
 // `bot.test.ts`, а найденное снимает `lint-setup.ts`.
 
 export {
-  inspectCall as inspectWith,
   reportViolations,
   type ScreenEntry,
   type ScreenViolation,
   takeViolations,
-  type WaivableRule,
 } from "../../../shared/typescript/screen-lint/src/index.js";
 
 // Каталог объявлен без `satisfies` — сборка бота не видит общего пакета, — и
@@ -28,17 +26,21 @@ const catalogShape: [UnknownEntryKeys<typeof screenCatalog>] extends [never]
   : never = true;
 void catalogShape;
 
-export function configFor(
-  catalog: Readonly<Record<string, ScreenEntry>>,
-): LintConfig {
+function configFor(catalog: Readonly<Record<string, ScreenEntry>>): LintConfig {
   return { tag: screenTag, catalog };
 }
 
 const auction = configFor(screenCatalog);
 
+/** Каталог передаётся только тестом каталога; в работе он один. */
 export function inspectCall(
   method: string,
   payload: unknown,
+  catalog?: Readonly<Record<string, ScreenEntry>>,
 ): ScreenViolation[] {
-  return inspectWith(auction, method, payload);
+  return inspectWith(
+    catalog === undefined ? auction : configFor(catalog),
+    method,
+    payload,
+  );
 }
