@@ -57,14 +57,15 @@ internal static class JetStreamTopology
         // Канал доставки (PER-217). Durable свой у каждого канала: общий на все
         // каналы сделал бы их конкурентами за одно сообщение.
         new("hub-bot", ["NOTIFICATIONS_EVENTS"]),
+        new("auction-bot", ["NOTIFICATIONS_EVENTS"]),
         new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS", "NOTIFICATIONS_EVENTS"]),
     ];
 
     /// <summary>
-    /// Журнал попыток доставки Telegram-бота (ADR-052): ключ — notification_id,
-    /// значение — последнее состояние доставки. Объявлен здесь по тому же
-    /// правилу, что durable: хранилищем владеет платформа, бот к нему только
-    /// привязывается.
+    /// Журналы попыток доставки Telegram-ботов (ADR-052), у каждого бота свой:
+    /// ключ — notification_id, значение — последнее состояние доставки.
+    /// Объявлены здесь по тому же правилу, что durable: хранилищем владеет
+    /// платформа, бот к нему только привязывается.
     /// </summary>
     /// <remarks>
     /// Запись обязана пережить любую повторную выдачу своего сообщения, а стрим
@@ -75,6 +76,7 @@ internal static class JetStreamTopology
     public static readonly IReadOnlyList<KeyValueSpec> KeyValueBuckets =
     [
         new("hub-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
+        new("auction-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>

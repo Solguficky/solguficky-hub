@@ -23,6 +23,7 @@ jobs:
       identity: ${{ steps.filter.outputs.identity }}
       meetups: ${{ steps.filter.outputs.meetups }}
       notifications: ${{ steps.filter.outputs.notifications }}
+      telegram-delivery: ${{ steps.filter.outputs.telegram-delivery }}
       hub-bot: ${{ steps.filter.outputs.hub-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
@@ -69,9 +70,15 @@ jobs:
               - 'justfile'
               - 'global.json'
               - '.github/workflows/ci.yml'
+            telegram-delivery:
+              - 'shared/typescript/telegram-delivery/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
             hub-bot:
               - 'contracts/proto/**'
               - 'apps/hub-bot/**'
+              # Механику доставки уведомлений бот берёт `file:`-зависимостью.
+              - 'shared/typescript/telegram-delivery/**'
               # Сценарии провода бота и живого контура типизирует и линтует
               # конфиг бота; живой прогон (L3) CI не гоняет никогда.
               - 'tests/contour/bot-wire/**'
@@ -111,6 +118,7 @@ jobs:
               - 'contracts/proto/**'
               - 'apps/auction-bot/**'
               - 'shared/typescript/auction-bot-ui/**'
+              - 'shared/typescript/telegram-delivery/**'
               - 'shared/typescript/screen-lint/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
@@ -146,6 +154,7 @@ jobs:
               - 'apps/identity/**'
               - 'apps/hub-bot/**'
               - 'shared/typescript/screen-lint/**'
+              - 'shared/typescript/telegram-delivery/**'
               - 'shared/typescript/auction-bot-ui/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
@@ -370,6 +379,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
+            shared/typescript/telegram-delivery/package-lock.json
             shared/typescript/auction-bot-ui/package-lock.json
             apps/hub-bot/package-lock.json
             tests/telegram-live/package-lock.json
@@ -382,8 +392,10 @@ jobs:
           setup_only: true
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
-      # Общий пакет аукциона — `file:`-зависимость бота, а `exports` пакета ведут
-      # в `dist`: он собирается до установки бота.
+      # Общие пакеты — `file:`-зависимости бота, а их `exports` ведут в `dist`:
+      # они собираются до установки бота.
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/telegram-delivery
       - run: npm ci && npm run build
         working-directory: shared/typescript/auction-bot-ui
       - run: npm ci
@@ -474,6 +486,34 @@ jobs:
       - run: npm test
         working-directory: shared/typescript/screen-lint
 
+  # Общий пакет механики доставки уведомлений двух ботов: потребитель durable,
+  # журнал попыток и классы отказов Telegram. Джобы ботов стоят на его пути и
+  # проверяют пакет глазами потребителя.
+  telegram-delivery:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.telegram-delivery == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: shared/typescript/telegram-delivery/package-lock.json
+      - run: npm ci
+        working-directory: shared/typescript/telegram-delivery
+      - run: npm run typecheck
+        working-directory: shared/typescript/telegram-delivery
+      - run: npm run lint
+        working-directory: shared/typescript/telegram-delivery
+      - run: npm test
+        working-directory: shared/typescript/telegram-delivery
+
   # Общий пакет аукционного интерфейса ботов (ADR-044). Typecheck сначала
   # собирает пакет: test/boundary.typecheck.ts проверяет `exports` по собранным
   # декларациям, тем же путём, каким пакет увидит приложение.
@@ -502,8 +542,8 @@ jobs:
       - run: npm test
         working-directory: shared/typescript/auction-bot-ui
 
-  # Бот аукциона (ADR-044). Пакет собирается первым: `exports` ведут в его
-  # `dist`, и без сборки typecheck бота не нашёл бы типов шлюза.
+  # Бот аукциона (ADR-044). Пакеты собираются первыми: `exports` ведут в их
+  # `dist`, и без сборки typecheck бота не нашёл бы типов шлюза и доставки.
   auction-bot:
     needs: changes
     if: >-
@@ -521,6 +561,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             shared/typescript/auction-bot-ui/package-lock.json
+            shared/typescript/telegram-delivery/package-lock.json
             apps/auction-bot/package-lock.json
       - id: tools
         run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
@@ -533,6 +574,8 @@ jobs:
           github_token: ${{ github.token }}
       - run: npm ci && npm run build
         working-directory: shared/typescript/auction-bot-ui
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/telegram-delivery
       - run: npm ci
         working-directory: apps/auction-bot
       - run: buf generate --template apps/auction-bot/buf.gen.yaml
@@ -754,8 +797,12 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
+            shared/typescript/telegram-delivery/package-lock.json
             shared/typescript/auction-bot-ui/package-lock.json
             apps/hub-bot/package-lock.json
+      # Провод бота читает код хаба, а тот — собранные общие пакеты.
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/telegram-delivery
       - run: npm ci && npm run build
         working-directory: shared/typescript/auction-bot-ui
       - run: npm ci

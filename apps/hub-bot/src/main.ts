@@ -1,8 +1,12 @@
+import {
+  createDeliverNotification,
+  startNatsDelivery,
+} from "@solguficky/telegram-delivery";
 import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
 import { communityDay, parseTimeZone } from "./community-time.js";
-import { createDeliverNotification } from "./delivery/deliver.js";
-import { startNatsDelivery } from "./delivery/nats.js";
+import { decodeNotification } from "./delivery/notification.js";
+import { countFailure } from "./failures.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLogger, serviceName } from "./logging.js";
 import { createMeetupsClient } from "./meetups/client.js";
@@ -14,6 +18,7 @@ import {
   createNotificationSender,
 } from "./presentation/notification-message.js";
 import { isTelegramBotUsername } from "./presentation/source-deep-link.js";
+import { rpcMeta } from "./rpc-metadata.js";
 import { createShutdown } from "./shutdown.js";
 import {
   type Logs,
@@ -171,9 +176,24 @@ async function main(): Promise<number> {
   );
   const delivery = await startNatsDelivery({
     url: natsUrl,
+    channel: serviceName,
     logger,
+    countFailure,
+    decode: decodeNotification,
     deliver: (journal) =>
-      createDeliverNotification({ journal, recipients: identity, sender }),
+      createDeliverNotification({
+        journal,
+        recipients: {
+          resolveTelegramUserId: (identityId, requestId) =>
+            identity.resolveTelegramUserId(
+              identityId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+        },
+        // Хабу для текста соседи не нужны: содержимое рисует отправитель.
+        render: async (content) => ({ kind: "ready", message: content }),
+        sender,
+      }),
   });
   let failed = false;
   const shutdown = createShutdown({

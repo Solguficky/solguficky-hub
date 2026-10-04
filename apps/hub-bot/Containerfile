@@ -1,6 +1,7 @@
 # Production-образ Hub Bot. Контекст сборки — корень репозитория:
-# `buf generate` нужен contracts/proto, а аукцион у сходки — общий пакет
-# shared/typescript/auction-bot-ui (ADR-044). Что попадает в контекст, решает
+# `buf generate` нужен contracts/proto, аукцион у сходки — общий пакет
+# shared/typescript/auction-bot-ui, а механика доставки уведомлений — пакет
+# shared/typescript/telegram-delivery (ADR-044). Что попадает в контекст, решает
 # соседний Containerfile.dockerignore — список разрешённого, а не запрещённого.
 #
 # Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
@@ -14,13 +15,18 @@ FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756
 FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS build
 WORKDIR /src
 COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
-# Общий пакет собирается первым: бот берёт его `file:`-зависимостью, а
-# `exports` пакета ведут в `dist`.
+# Общие пакеты собираются первыми: бот берёт их `file:`-зависимостями, а
+# `exports` пакетов ведут в `dist`.
 COPY shared/typescript/auction-bot-ui/package.json shared/typescript/auction-bot-ui/package-lock.json shared/typescript/auction-bot-ui/
 RUN cd shared/typescript/auction-bot-ui && npm ci --ignore-scripts
 COPY shared/typescript/auction-bot-ui/tsconfig.json shared/typescript/auction-bot-ui/tsconfig.build.json shared/typescript/auction-bot-ui/
 COPY shared/typescript/auction-bot-ui/src shared/typescript/auction-bot-ui/src
 RUN cd shared/typescript/auction-bot-ui && npm run build
+COPY shared/typescript/telegram-delivery/package.json shared/typescript/telegram-delivery/package-lock.json shared/typescript/telegram-delivery/
+RUN cd shared/typescript/telegram-delivery && npm ci --ignore-scripts
+COPY shared/typescript/telegram-delivery/tsconfig.json shared/typescript/telegram-delivery/tsconfig.build.json shared/typescript/telegram-delivery/
+COPY shared/typescript/telegram-delivery/src shared/typescript/telegram-delivery/src
+RUN cd shared/typescript/telegram-delivery && npm run build
 COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json apps/hub-bot/
 RUN cd apps/hub-bot && npm ci --ignore-scripts
 COPY contracts/proto contracts/proto
@@ -31,23 +37,38 @@ RUN buf generate --template apps/hub-bot/buf.gen.yaml && cd apps/hub-bot && npm 
 # Production-зависимости ставятся отдельно от сборки: в стадии build лежат
 # devDependencies, и копировать оттуда node_modules значило бы везти их в образ.
 #
-# Общий пакет — `file:`-зависимость, и её ключ в lockfile — путь от каталога
+# Общие пакеты — `file:`-зависимости, и их ключи в lockfile — пути от каталога
 # бота (`../../shared/...`). Поэтому стадия повторяет глубину репозитория: из
 # /app путь ушёл бы выше корня, и npm не нашёл бы запись ссылки. `npm ci` ставит
 # пакет симлинком, и он здесь же заменяется копией: образ несёт собранный `dist`
 # пакета внутри node_modules бота, без исходников и без каталога shared.
 # `--install-links` дал бы копию сам, но вместе с ней ставит peer-зависимость
-# пакета vitest, а пакеты разработки в образ не едут (check-node-runtime.sh).
-# Зависимость пакета (zod) бот держит и сам, и она находится в его node_modules.
+# пакета аукциона vitest, а пакеты разработки в образ не едут
+# (check-node-runtime.sh).
 FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS deps
-WORKDIR /src/apps/hub-bot
-COPY shared/typescript/auction-bot-ui/package.json /src/shared/typescript/auction-bot-ui/
-COPY --from=build /src/shared/typescript/auction-bot-ui/dist /src/shared/typescript/auction-bot-ui/dist
-COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts \
+WORKDIR /src
+# Пакет доставки ставится со своими production-зависимостями по своему
+# lock-файлу: npm кладёт `file:`-зависимость симлинком, и её зависимости бот не
+# ставит. Пакету аукциона хватает `package.json` и `dist`: его зависимость (zod)
+# бот держит сам.
+COPY shared/typescript/telegram-delivery/package.json shared/typescript/telegram-delivery/package-lock.json shared/typescript/telegram-delivery/
+RUN cd shared/typescript/telegram-delivery && npm ci --omit=dev --ignore-scripts
+COPY --from=build /src/shared/typescript/telegram-delivery/dist shared/typescript/telegram-delivery/dist
+COPY shared/typescript/auction-bot-ui/package.json shared/typescript/auction-bot-ui/
+COPY --from=build /src/shared/typescript/auction-bot-ui/dist shared/typescript/auction-bot-ui/dist
+COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json apps/hub-bot/
+# Симлинки заменяются копиями пакетов: путь `../../shared/...` из /app в образе
+# никуда не ведёт, а копия кладёт пакет внутрь node_modules, где его и ищет
+# проверка состава /app.
+RUN cd apps/hub-bot && npm ci --omit=dev --ignore-scripts && npm cache clean --force \
+    && rm node_modules/@solguficky/telegram-delivery \
+    && mkdir node_modules/@solguficky/telegram-delivery \
+    && cp -R ../../shared/typescript/telegram-delivery/package.json \
+        ../../shared/typescript/telegram-delivery/dist \
+        ../../shared/typescript/telegram-delivery/node_modules \
+        node_modules/@solguficky/telegram-delivery/ \
     && rm node_modules/@solguficky/auction-bot-ui \
-    && cp -R /src/shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui \
-    && npm cache clean --force
+    && cp -R ../../shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui
 
 # База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
 # исполняет `id` из образа. Файлы приложения принадлежат root, процесс идёт от

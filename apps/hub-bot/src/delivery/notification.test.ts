@@ -100,6 +100,50 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Ветку бота аукциона хаб узнаёт и отдаёт механике как чужую: общий поток
+  // несёт её каждому каналу, и это не отказ.
+  it.each([
+    [
+      "lotOutbid",
+      {
+        case: "lotOutbid",
+        value: {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+        },
+      },
+    ],
+    [
+      "lotPurchased",
+      {
+        case: "lotPurchased",
+        value: {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          price: { minorUnits: 150_000n, currency: "RUB" },
+        },
+      },
+    ],
+  ] as const)(
+    "hands the auction branch %s over as another channel's",
+    (name, type) => {
+      const decoded = decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type,
+          }),
+        ),
+      );
+      expect(decoded).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "foreign", type: name } },
+      });
+    },
+  );
+
   describe("a manual broadcast", () => {
     const senderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
     // Сходка берётся из готового факта о публикации: карточка у сообщения

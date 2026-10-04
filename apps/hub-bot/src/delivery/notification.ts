@@ -1,4 +1,10 @@
 import { fromBinary } from "@bufbuild/protobuf";
+import {
+  type DeliveryNotification as ChannelNotification,
+  type DecodeResult,
+  type OtherBranch,
+  toDeliveryNotification,
+} from "@solguficky/telegram-delivery";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   type DateValue,
@@ -57,11 +63,11 @@ export type MeetupAspect =
 export type MeetupLifecycle = "planned" | "held" | "cancelled";
 export type MeetupVisibility = "hidden" | "visible";
 
-// Тип, которого канал не рисует, — из схемы новее этой сборки или ещё не
-// нарисованный, — доезжает до решения явным вариантом, а не пропадает на
-// разборе: контракт запрещает доставлять неизвестное молча, и отказ обязан быть
-// виден в журнале и логах.
-export type NotificationContent =
+// Ветки, которые рисует бот хаба. Ветка, которой канал не рисует, — из схемы
+// новее этой сборки или ещё не нарисованная, — доезжает до решения явным
+// вариантом пакета доставки (OtherBranch), а не пропадает на разборе: контракт
+// запрещает доставлять неизвестное молча.
+export type RenderableContent =
   | { kind: "meetup-published"; meetup: NotifiedMeetup }
   | {
       kind: "meetup-changed";
@@ -79,33 +85,21 @@ export type NotificationContent =
   | { kind: "community-announcement"; body: string }
   // Заявку на доступ получает администратор. Заявителя контракт не несёт: кто
   // просит, модератор видит в очереди, куда ведёт сообщение.
-  | { kind: "access-requested"; circle: AccessCircle }
-  | { kind: "unrendered"; type: string };
+  | { kind: "access-requested"; circle: AccessCircle };
 
 // Круги, на которые ставят заявку: хаб и аукцион.
 export type AccessCircle = "member" | "public";
 
-export type RenderableContent = Exclude<
-  NotificationContent,
-  { kind: "unrendered" }
->;
+export type NotificationContent = RenderableContent | OtherBranch;
 
-export type DeliveryNotification = {
-  notificationId: string;
-  recipientId: string;
-  notAfter?: Date;
-  requestId?: string;
-  content: NotificationContent;
-};
-
-export type DecodeResult =
-  | { kind: "ok"; notification: DeliveryNotification }
-  | { kind: "malformed"; error: string };
+export type DeliveryNotification = ChannelNotification<RenderableContent>;
 
 // Сообщение шины — ввод соседа: формат проверил рантайм Protobuf, а инварианты
-// контракта, которые схема выразить не может, проверяются здесь. Нарушение —
-// дефект издателя, и повтор его не лечит.
-export function decodeNotification(data: Uint8Array): DecodeResult {
+// конверта, которые схема выразить не может, проверяет пакет доставки.
+// Нарушение — дефект издателя, и повтор его не лечит.
+export function decodeNotification(
+  data: Uint8Array,
+): DecodeResult<RenderableContent> {
   let message: Notification;
   try {
     message = fromBinary(NotificationSchema, data);
@@ -115,28 +109,7 @@ export function decodeNotification(data: Uint8Array): DecodeResult {
       error: cause instanceof Error ? cause.message : String(cause),
     };
   }
-  if (message.notificationId === "") return malformed("notification_id");
-  if (message.recipientId === "") return malformed("recipient_id");
-  const content = toContent(message);
-  if (content === undefined) return malformed("notification body");
-  const notification: DeliveryNotification = {
-    notificationId: message.notificationId,
-    recipientId: message.recipientId,
-    content,
-  };
-  if (message.notAfter !== undefined) {
-    const notAfter = new Date(message.notAfter);
-    if (Number.isNaN(notAfter.getTime())) return malformed("not_after");
-    notification.notAfter = notAfter;
-  }
-  if (message.requestId !== undefined && message.requestId !== "") {
-    notification.requestId = message.requestId;
-  }
-  return { kind: "ok", notification };
-}
-
-function malformed(field: string): DecodeResult {
-  return { kind: "malformed", error: `invalid ${field}` };
+  return toDeliveryNotification(message, toContent(message));
 }
 
 function toContent(message: Notification): NotificationContent | undefined {
@@ -211,6 +184,11 @@ function toContent(message: Notification): NotificationContent | undefined {
         ? undefined
         : { kind: "access-requested", circle };
     }
+    // Ветки аукциона доставляет бот аукциона (PER-328): общий поток несёт их
+    // и сюда, и хаб подтверждает их без журнала и без отказа.
+    case "lotOutbid":
+    case "lotPurchased":
+      return { kind: "foreign", type: type.case };
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }

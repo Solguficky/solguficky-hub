@@ -1,3 +1,4 @@
+using Aspire.Hosting.JavaScript;
 using AppHost.Configuration.Extensions;
 using AppHost.Configuration.Topology;
 using Microsoft.Extensions.Configuration;
@@ -40,7 +41,15 @@ internal static class AuctionBotSetup
             .WithEnvironment("AUCTION_BOT_ENVIRONMENT", environment.Value)
             .WithEnvironment("AUCTION_BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "IDENTITY_GRPC_URL")
-            .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "AUCTION_GRPC_URL");
+            .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "AUCTION_GRPC_URL")
+            // Второй вход бота — адресные факты аукциона из шины (PER-328).
+            // WaitFor(nats) внутри BindConnection ждёт и применения топологии:
+            // durable и bucket журнала заводит AppHost, а бот без них не стартует.
+            .BindConnection<JavaScriptAppResource, IResourceWithConnectionString>(
+                context,
+                AppHostNames.Resources.Nats,
+                "AUCTION_BOT_NATS_URL",
+                nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
 
         // Форму значения проверяет сам бот на старте: AppHost передаёт его как есть.
         var auctionId = configuration[AuctionIdKey]?.Trim();

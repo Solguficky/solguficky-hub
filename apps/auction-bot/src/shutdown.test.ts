@@ -3,7 +3,7 @@ import type { LogFields, Logger } from "./logging.js";
 import { createShutdown } from "./shutdown.js";
 
 type LogRecord = {
-  level: "info" | "warn" | "error";
+  level: "debug" | "info" | "warn" | "error";
   message: string;
   fields: LogFields;
 };
@@ -18,6 +18,7 @@ function createCapturingLogger(): { logger: Logger; records: LogRecord[] } {
   return {
     records,
     logger: {
+      debug: push("debug"),
       info: push("info"),
       warn: push("warn"),
       error: push("error"),

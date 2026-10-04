@@ -11,6 +11,19 @@ import {
 import { Kvm } from "@nats-io/kv";
 import { connect, type NatsConnection, nanos } from "@nats-io/transport-node";
 import {
+  createDeliverNotification,
+  createKvJournal,
+  type DeliveryJournal,
+  type DeliveryPolicy,
+  handleDeliveryMessage,
+  type NotificationSender,
+  notificationStream,
+  notificationSubject,
+  type SendResult,
+  startNotificationDelivery,
+  type TelegramRecipientResolver,
+} from "@solguficky/telegram-delivery";
+import {
   GenericContainer,
   type StartedTestContainer,
   Wait,
@@ -25,21 +38,8 @@ import {
   vi,
 } from "vitest";
 import { NotificationSchema } from "../../gen/notifications/v1/notifications_pb.js";
-import type { TelegramRecipientResolver } from "../identity/port.js";
 import type { Logger } from "../logging.js";
-import {
-  handleDeliveryMessage,
-  notificationStream,
-  notificationSubject,
-  startNotificationDelivery,
-} from "./consumer.js";
-import { createDeliverNotification, type DeliveryPolicy } from "./deliver.js";
-import { createKvJournal } from "./kv-journal.js";
-import type {
-  DeliveryJournal,
-  NotificationSender,
-  SendResult,
-} from "./port.js";
+import { decodeNotification, type RenderableContent } from "./notification.js";
 
 // Короткий ack_wait вместо 30 с топологии: потерянный ack возвращается шиной
 // за секунды, и сценарий рестарта укладывается в тест. Остальная конфигурация
@@ -70,7 +70,7 @@ function scriptedSender(...results: SendResult[]) {
   const send = vi.fn(
     async (): Promise<SendResult> => results.shift() ?? { kind: "sent" },
   );
-  return { send } satisfies NotificationSender;
+  return { send } satisfies NotificationSender<RenderableContent>;
 }
 
 function fact(id: number): { id: string; data: Uint8Array } {
@@ -167,8 +167,17 @@ describe("notification delivery over JetStream", () => {
     return info.num_pending === 0 && info.num_ack_pending === 0;
   }
 
-  function deliverWith(sender: NotificationSender) {
-    return createDeliverNotification({ journal, recipients, sender, policy });
+  function deliverWith(sender: NotificationSender<RenderableContent>) {
+    return createDeliverNotification({
+      journal,
+      recipients,
+      render: async (content: RenderableContent) => ({
+        kind: "ready" as const,
+        message: content,
+      }),
+      sender,
+      policy,
+    });
   }
 
   // Критерий приёмки: рестарт не отправляет уже доставленное второй раз.
@@ -190,6 +199,9 @@ describe("notification delivery over JetStream", () => {
     await handleDeliveryMessage(lostAck, {
       deliver: deliverWith(before),
       logger: silent,
+      decode: decodeNotification,
+      countFailure: () => {},
+      recordOutcome: () => {},
     });
     expect(before.send).toHaveBeenCalledOnce();
 
@@ -198,6 +210,9 @@ describe("notification delivery over JetStream", () => {
       consumer,
       deliver: deliverWith(after),
       logger: silent,
+      decode: decodeNotification,
+      countFailure: () => {},
+      recordOutcome: () => {},
     });
     await waitFor(settled);
     await restarted.stop();
@@ -212,6 +227,9 @@ describe("notification delivery over JetStream", () => {
       consumer,
       deliver: deliverWith(sender),
       logger: silent,
+      decode: decodeNotification,
+      countFailure: () => {},
+      recordOutcome: () => {},
     });
     await waitFor(settled);
     await delivery.stop();
@@ -222,6 +240,9 @@ describe("notification delivery over JetStream", () => {
       consumer,
       deliver: deliverWith(again),
       logger: silent,
+      decode: decodeNotification,
+      countFailure: () => {},
+      recordOutcome: () => {},
     });
     await new Promise((resolve) => setTimeout(resolve, ackWaitMs + 500));
     await restarted.stop();
@@ -239,6 +260,9 @@ describe("notification delivery over JetStream", () => {
       consumer,
       deliver: deliverWith(sender),
       logger: silent,
+      decode: decodeNotification,
+      countFailure: () => {},
+      recordOutcome: () => {},
     });
     await waitFor(settled);
     await new Promise((resolve) => setTimeout(resolve, ackWaitMs + 500));
@@ -260,6 +284,9 @@ describe("notification delivery over JetStream", () => {
       consumer,
       deliver: deliverWith(sender),
       logger: silent,
+      decode: decodeNotification,
+      countFailure: () => {},
+      recordOutcome: () => {},
     });
     await waitFor(async () => sender.send.mock.calls.length === 2);
     await waitFor(settled);

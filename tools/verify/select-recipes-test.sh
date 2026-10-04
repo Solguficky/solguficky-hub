@@ -67,6 +67,8 @@ assert_selects "shared package selects its own recipes and both bots" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/auction-bot-ui/src/index.ts
 assert_selects "screen lint selects its own recipes and every consumer" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/screen-lint/src/inspect.ts
+assert_selects "delivery package selects its own recipes and both bots" \
+    "$always telegram-delivery-typecheck telegram-delivery-lint telegram-delivery-test hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/telegram-delivery/src/deliver.ts
 assert_selects "auction bot selects only its own recipes" \
     "$always auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" apps/auction-bot/src/main.ts
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md

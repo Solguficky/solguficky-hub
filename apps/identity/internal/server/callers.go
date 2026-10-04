@@ -39,8 +39,8 @@ func (c Caller) TokenVariable() string {
 var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerHubBot, CallerAuctionBot},
 	identityv1.IdentityService_RequestRole_FullMethodName:              {CallerHubBot, CallerAuctionBot},
-	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerHubBot},
-	identityv1.IdentityService_CheckGlobalRole_FullMethodName:          {CallerMeetups, CallerNotifications},
+	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerHubBot, CallerAuctionBot},
+	identityv1.IdentityService_CheckGlobalRole_FullMethodName:          {CallerMeetups, CallerNotifications, CallerAuctionBot},
 	identityv1.IdentityService_ResolveOrganizerUsername_FullMethodName: {CallerHubBot},
 	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_AdmitCommunityMember_FullMethodName:     {CallerHubBot},

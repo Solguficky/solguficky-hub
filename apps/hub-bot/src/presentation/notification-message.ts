@@ -1,4 +1,9 @@
-import { Api, GrammyError, InlineKeyboard } from "grammy";
+import {
+  classifyTelegramFailure,
+  type NotificationSender,
+  type SendResult,
+} from "@solguficky/telegram-delivery";
+import { Api, InlineKeyboard } from "grammy";
 import type {
   LocalDate,
   LocalDateTime,
@@ -7,7 +12,6 @@ import type {
   NotifiedMeetup,
   RenderableContent,
 } from "../delivery/notification.js";
-import type { NotificationSender, SendResult } from "../delivery/port.js";
 import type { TelegramEnvironment } from "./bot.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
@@ -330,11 +334,13 @@ function pad(part: number): string {
 
 export type SendMessageApi = Pick<Api, "sendMessage">;
 
+// Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
+// нужны, и рендер пакета доставки отдаёт содержимое как есть.
 export function createNotificationSender(
   api: SendMessageApi,
-): NotificationSender {
+): NotificationSender<RenderableContent> {
   return {
-    async send({ telegramUserId, content }) {
+    async send({ telegramUserId, message: content }) {
       const message = renderNotification(content);
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
@@ -353,19 +359,8 @@ export function createNotificationSender(
   };
 }
 
-// 403 — получатель заблокировал бота или удалил аккаунт: повтор не поможет, и
-// бесконечные попытки запрещены задачей. 429 несёт готовую паузу. Остальные 4xx —
-// нарушение формы запроса, 5xx и сетевой сбой — временная недоступность.
+// Классы отказов Bot API общие у обоих ботов и живут в пакете доставки:
+// правка правила одна на два канала.
 export function classifySendFailure(cause: unknown): SendResult {
-  if (cause instanceof GrammyError) {
-    if (cause.error_code === 403) return { kind: "bot-blocked", cause };
-    if (cause.error_code === 429) {
-      const seconds = cause.parameters.retry_after ?? 1;
-      return { kind: "rate-limited", retryAfterMs: seconds * 1_000, cause };
-    }
-    if (cause.error_code >= 500) return { kind: "unavailable", cause };
-    return { kind: "rejected", cause };
-  }
-  // HttpError, истёкший таймаут и прочий сбой до ответа Telegram.
-  return { kind: "unavailable", cause };
+  return classifyTelegramFailure(cause);
 }
