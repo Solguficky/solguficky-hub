@@ -8,7 +8,8 @@ import "identity/v1/roles.proto";
 
 // Commands of a participant, commands of the lot catalog, the birth of an auction
 // at a meetup and the registry of its lots, reads of a lot, of its image, of the
-// display names of participants and of auctions.
+// display names of participants and of auctions, and the invoices of sold lots:
+// the commands of the organizer and of the winner and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -36,6 +37,11 @@ service AuctionService {
   rpc RemoveLot(RemoveLotRequest) returns (RemoveLotResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
+  rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
+  rpc MarkInvoiceHandedOver(MarkInvoiceHandedOverRequest) returns (MarkInvoiceHandedOverResponse);
+  rpc ChooseFulfillment(ChooseFulfillmentRequest) returns (ChooseFulfillmentResponse);
+  rpc ListMyInvoices(ListMyInvoicesRequest) returns (ListMyInvoicesResponse);
+  rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
 }
 
 message Viewer {
@@ -648,5 +654,184 @@ message AuctionSnapshot {
     AuctionState.LineupFrozen lineup_frozen = 15;
     AuctionState.Final in_final = 16;
     AuctionState.Finished finished = 17;
+  }
+}
+
+message MarkInvoicePaidRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see InvoiceState.id.
+  string invoice_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message MarkInvoicePaidResponse {
+  // Exactly one is set. An invoice that is already paid or handed over is
+  // accepted, not refused, and no second transition is recorded.
+  oneof outcome {
+    InvoicePaymentAccepted accepted = 1;
+    MarkInvoicePaidRefusal refused = 2;
+  }
+}
+
+message InvoicePaymentAccepted {}
+
+message MarkInvoicePaidRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+  }
+}
+
+message MarkInvoiceHandedOverRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see InvoiceState.id.
+  string invoice_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message MarkInvoiceHandedOverResponse {
+  // Exactly one is set. An invoice that is already handed over is accepted, not
+  // refused, and no second transition is recorded.
+  oneof outcome {
+    InvoiceHandoverAccepted accepted = 1;
+    MarkInvoiceHandedOverRefusal refused = 2;
+  }
+}
+
+message InvoiceHandoverAccepted {}
+
+message MarkInvoiceHandedOverRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    InvoiceNotPaid invoice_not_paid = 3;
+  }
+}
+
+// The invoice still awaits payment: a lot is handed over only after it is paid.
+message InvoiceNotPaid {}
+
+message ChooseFulfillmentRequest {
+  // The winner the invoice is addressed to. An invoice of someone else is not
+  // found for the viewer.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see InvoiceState.id.
+  string invoice_id = 2;
+
+  // UNSPECIFIED is not a value: a choice cannot be taken back to none.
+  FulfillmentMethod method = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message ChooseFulfillmentResponse {
+  // Exactly one is set. The method replaces the previous choice, if any.
+  oneof outcome {
+    FulfillmentAccepted accepted = 1;
+    ChooseFulfillmentRefusal refused = 2;
+  }
+}
+
+message FulfillmentAccepted {}
+
+message ChooseFulfillmentRefusal {
+  // Exactly one is set.
+  oneof reason {
+    FulfillmentFrozen fulfillment_frozen = 1;
+  }
+}
+
+// The lot is already handed over: the method no longer changes.
+message FulfillmentFrozen {}
+
+message ListMyInvoicesRequest {
+  // The winner. Only the invoices addressed to the viewer are returned.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
+  string auction_id = 2;
+}
+
+message ListMyInvoicesResponse {
+  // Every invoice of the viewer in the auction, in no meaningful order. There are
+  // no pages: the list is bounded by the lots of one auction, and a total is
+  // summed from the whole of it. Empty when the viewer won nothing.
+  repeated InvoiceSnapshot invoices = 1;
+}
+
+message ListAuctionInvoicesRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+}
+
+message ListAuctionInvoicesResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionInvoices invoices = 1;
+    ListAuctionInvoicesRefusal refused = 2;
+  }
+}
+
+message AuctionInvoices {
+  // Every invoice of the auction, in no meaningful order. There are no pages, for
+  // the reason ListMyInvoicesResponse gives. Empty when no lot is sold.
+  repeated InvoiceSnapshot invoices = 1;
+}
+
+message ListAuctionInvoicesRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+  }
+}
+
+// The state of an invoice as a read returns it. Field numbers and status types
+// match auction.v1.InvoiceState so that the two stay readable side by side.
+message InvoiceSnapshot {
+  // Canonical lowercase UUIDv5 with hyphens: see InvoiceState.id.
+  string id = 1;
+
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the winner the invoice is addressed
+  // to.
+  string winner_id = 4;
+
+  // The amount to pay: the price of the sale.
+  Money amount = 5;
+
+  // RFC 3339 instant in UTC: the payment is due by this moment. An invoice is
+  // overdue when it still awaits payment after it.
+  string payment_due_at = 6;
+
+  // How the winner receives the lot. UNSPECIFIED is a real value: the winner has
+  // not chosen yet. Not on the bus: see InvoiceState.
+  FulfillmentMethod fulfillment = 7;
+
+  // Where the invoice is. Exactly one is set.
+  oneof status {
+    InvoiceState.AwaitingPayment awaiting_payment = 10;
+    InvoiceState.Paid paid = 11;
+    InvoiceState.HandedOver handed_over = 12;
   }
 }
