@@ -6,6 +6,8 @@ import {
   type UnknownEntryKeys,
 } from "../../../shared/typescript/screen-lint/src/index.js";
 import {
+  auctionFeedParent,
+  auctionFeedParents,
   meetupListParent,
   meetupLists,
   screenCatalog,
@@ -33,18 +35,26 @@ void catalogShape;
 
 // Пары, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
-// PER-402, и отдельным рядом она вывела бы карточку за пять рядов.
+// PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
+// и аукцион сходки — содержимое сходки одним рядом (PER-307): у организатора
+// ряд аукциона иначе стал бы шестым. «#» — число материалов в подписи.
 const namedPairs: ReadonlySet<string> = new Set([
   "Изменить|Статус",
   "Отписаться|Уведомления сходки",
+  "Материалы (#)|Лоты",
+  "Материалы (#)|Включить аукцион",
 ]);
 
 function configFor(catalog: Readonly<Record<string, ScreenEntry>>): LintConfig {
   return {
     tag: screenTag,
     catalog,
-    // Карточка возвращает в тот список, в котором сходка стоит.
-    parentGroups: { [meetupListParent]: meetupLists },
+    // Карточка возвращает в тот список, в котором сходка стоит; лента лотов —
+    // к сходке аукциона, а если бот её не знает, в «Ближайшие».
+    parentGroups: {
+      [meetupListParent]: meetupLists,
+      [auctionFeedParent]: auctionFeedParents,
+    },
     namedPairs,
   };
 }

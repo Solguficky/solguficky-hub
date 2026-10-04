@@ -1,4 +1,5 @@
 import { createDispatcher } from "./application/dispatcher.js";
+import { createAuctionClient } from "./auction/client.js";
 import { communityDay, parseTimeZone } from "./community-time.js";
 import { createDeliverNotification } from "./delivery/deliver.js";
 import { startNatsDelivery } from "./delivery/nats.js";
@@ -76,6 +77,10 @@ async function main(): Promise<number> {
   const meetupsUrl = readEnv("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052";
   const notificationsUrl =
     readEnv("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053";
+  // Аукцион сходки (PER-307) — расширение, а не опора бота: без адреса Auction
+  // карточка сходки обходится без ряда аукциона. В графе AppHost адрес
+  // передаётся всегда; пустым он остаётся только у запуска вне графа.
+  const auctionUrl = readEnv("AUCTION_GRPC_URL");
   const natsUrl = readEnv("HUB_BOT_NATS_URL") ?? "nats://127.0.0.1:4222";
   const presentationRaw = readEnv("HUB_BOT_PRESENTATION") ?? "rich";
   if (presentationRaw !== "rich" && presentationRaw !== "plain") {
@@ -120,7 +125,26 @@ async function main(): Promise<number> {
   // День сообщества считается тем же поясом, что и у Meetups: иначе граница
   // «прошедшей» даты разойдётся с той, по которой сходка уходит в архив.
   const today = () => communityDay(new Date(), communityTimeZone);
-  const dispatcher = createDispatcher(meetups, notifications, today);
+  // Отказ `GetDisplayNames` пакет гасит, и карточка лота остаётся без имени;
+  // запись на warn делает деградацию видимой.
+  const auction =
+    auctionUrl === undefined || auctionUrl === ""
+      ? undefined
+      : createAuctionClient(auctionUrl, {
+          tracing,
+          serviceToken,
+          onNamesRefused: (cause, meta) =>
+            logger.warn("auction display names unavailable", {
+              ...(meta?.requestId === undefined
+                ? {}
+                : { request_id: meta.requestId }),
+              error: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+  if (auction === undefined) {
+    logger.info("AUCTION_GRPC_URL is not set: meetup auctions are off");
+  }
+  const dispatcher = createDispatcher(meetups, notifications, today, auction);
   const identity = createIdentityClient(identityUrl, {
     communityTimeZone,
     tracing,
@@ -136,6 +160,8 @@ async function main(): Promise<number> {
     environment,
     today,
     ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
+    communityTimeZone,
+    ...(auction === undefined ? {} : { auction }),
   });
   // Второй вход компонента: адресные факты Notifications из шины. Он стартует
   // до поллера, чтобы отказ шины остановил процесс сразу, а не после того, как
@@ -160,6 +186,7 @@ async function main(): Promise<number> {
         identity.close();
         meetups.close();
         notifications.close();
+        auction?.close();
         // Трейсы и метрики закрываются последними и независимо: недоступный
         // collector роняет сброс одного сигнала, но не отменяет сброс другого
         // и не делает остановку неуспешной. Update, который ещё обрабатывается,

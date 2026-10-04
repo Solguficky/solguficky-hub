@@ -8,6 +8,13 @@
 
 export const meetupListParent = "meetup-list";
 
+/**
+ * Родитель ленты лотов: сходка, у которой идёт аукцион. После рестарта бот её
+ * может не знать — тогда лента возвращает в «Ближайшие» (ADR-030, дополнение
+ * 2026-10-04; PER-307).
+ */
+export const auctionFeedParent = "auction-feed-parent";
+
 export const screenCatalog = {
   menu: {
     class: "screen",
@@ -123,6 +130,22 @@ export const screenCatalog = {
     parent: "card",
     backName: "Материалы",
   },
+  // Аукцион сходки (PER-307): тело — общий пакет, оболочка — хаб.
+  lots: {
+    class: "screen",
+    nav: "tree",
+    title: "Лоты",
+    parent: auctionFeedParent,
+    backName: "Лоты",
+  },
+  // Заголовок карточки лота — его название. «Обновить» тело ставит, пока у
+  // лота нет итога: цена и лидер меняются без участия человека.
+  lot: {
+    class: "screen",
+    nav: "tree",
+    parent: "lots",
+    refresh: true,
+  },
   "notify-meetup": {
     class: "screen",
     nav: "tree",
@@ -158,3 +181,6 @@ export type ScreenId = keyof typeof screenCatalog;
 
 /** Списки, в которых может стоять сходка: родитель карточки — один из них. */
 export const meetupLists = ["upcoming", "archive", "hidden"] as const;
+
+/** Куда возвращает лента лотов: к сходке либо, если она неизвестна, в «Ближайшие». */
+export const auctionFeedParents = ["card", "upcoming"] as const;

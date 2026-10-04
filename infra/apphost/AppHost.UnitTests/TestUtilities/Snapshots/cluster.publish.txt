@@ -41,6 +41,7 @@ auction-service-token: ParameterResource
 hub-bot: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/hub-bot/Containerfile context=<repo>
+  env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: HUB_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: HUB_BOT_ENVIRONMENT=prod
   env: HUB_BOT_NATS_URL={nats.connectionString}
@@ -49,16 +50,19 @@ hub-bot: ContainerResource
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  waits: auction WaitUntilHealthy
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: notifications WaitUntilHealthy
+  relationship: Reference auction
   relationship: Reference hub-bot-service-token
   relationship: Reference hub-bot-token
   relationship: Reference identity
   relationship: Reference meetups
   relationship: Reference nats
   relationship: Reference notifications
+  relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor meetups
   relationship: WaitFor nats

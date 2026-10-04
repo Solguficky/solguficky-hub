@@ -10,7 +10,7 @@ import type {
   SourceChannelAdministrator,
 } from "../src/identity/port.js";
 import type { LogFields, Logger } from "../src/logging.js";
-import { createBot } from "../src/presentation/bot.js";
+import { type BotRuntime, createBot } from "../src/presentation/bot.js";
 import { noopTracing, type Tracing } from "../src/tracing.js";
 import { inspectCall, reportViolations } from "./screen-lint.js";
 
@@ -76,6 +76,20 @@ export function createCapturingLogger(): {
 }
 
 /**
+ * Что ещё получает бот: экраны аукциона и их память процесса, а также ответ
+ * Telegram на вызов, которому мало `true`, — например, правка rich-сообщения
+ * с загрузкой фото, из ответа которой бот берёт `file_id`.
+ */
+export type HarnessOptions = Partial<
+  Pick<
+    BotRuntime,
+    "auction" | "auctionParents" | "lotPhotos" | "communityTimeZone"
+  >
+> & {
+  respond?: (method: ApiMethod, payload: ApiPayload) => unknown;
+};
+
+/**
  * `calls` передаётся снаружи, когда рестарт процесса нужно показать в том же
  * чате: новый бот теряет память, а история сообщений у человека остаётся.
  */
@@ -91,8 +105,10 @@ export function createHarness(
   presentation?: "rich" | "plain",
   /** Закреплённый день сообщества: от него зависят заготовки дат. */
   today?: () => { year: number; month: number; day: number },
+  options: HarnessOptions = {},
 ) {
   const { logger, records } = createCapturingLogger();
+  const { respond, ...runtime } = options;
   const bot = createBot({
     token: "111:test-token",
     dispatcher,
@@ -101,6 +117,7 @@ export function createHarness(
     tracing,
     ...(presentation === undefined ? {} : { presentation }),
     ...(today === undefined ? {} : { today }),
+    ...runtime,
   });
   bot.botInfo = botInfo;
   const recorder: Transformer = (_prev, method, payload) => {
@@ -108,6 +125,16 @@ export function createHarness(
     // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
     // найденное снимает хук набора (`lint-setup.ts`) либо пульт.
     reportViolations(inspectCall(method, payload));
+    // Ответ с полем `ok` — готовый ответ Bot API, в том числе отказ: из него
+    // grammY сам соберёт GrammyError. Остальное — результат успешного вызова.
+    const answer = respond?.(method, payload);
+    if (answer instanceof Error) return Promise.reject(answer);
+    if (typeof answer === "object" && answer !== null && "ok" in answer) {
+      return Promise.resolve(answer as never);
+    }
+    if (answer !== undefined) {
+      return Promise.resolve({ ok: true, result: answer as never });
+    }
     if (method === "sendMessage") {
       return Promise.resolve({
         ok: true,

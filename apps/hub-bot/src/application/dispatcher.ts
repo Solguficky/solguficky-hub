@@ -1,7 +1,9 @@
+import type { MeetupAuctions } from "../auction/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { createBroadcasts } from "./broadcasts.js";
+import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
@@ -16,7 +18,10 @@ export function createDispatcher(
   meetups?: Meetups,
   notifications?: Notifications,
   today?: CommunityToday,
+  auctions?: MeetupAuctions,
 ): Dispatcher {
+  const meetupAuction =
+    auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
     meetups === undefined ? undefined : createMeetupForm(meetups, today);
   // Кадры уведомлений читают и сходку тоже: заголовок кадра берётся из Meetups,
@@ -29,6 +34,55 @@ export function createDispatcher(
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
+  // Карточка сходки: сама сходка из Meetups, подписка из Notifications и
+  // аукцион из Auction. Отказ соседа сходки карточку не роняет.
+  async function viewMeetup(
+    request: Extract<ExecuteRequest, { intent: "view-meetup" }>,
+    readAuction: boolean,
+  ): Promise<ExecuteResult> {
+    if (meetups === undefined)
+      return { kind: "rejected", reason: "meetups-not-configured" };
+    const result = await meetups.get(
+      request.identity,
+      request.meetupId,
+      rpcMeta(request),
+    );
+    if (result.kind === "ok") {
+      const card: Extract<ExecuteResult, { kind: "meetup-card" }> = {
+        kind: "meetup-card",
+        meetup: result.meetup,
+      };
+      const withAuction =
+        readAuction && meetupAuction !== undefined
+          ? await meetupAuction.withAuction(card, request)
+          : card;
+      if (notifications === undefined) return withAuction;
+      // Отказ Notifications карточку не роняет: сходка читается из
+      // Meetups и остаётся верной. Состояние подписки при этом не
+      // показывается, и кнопки подписки в кадре не будет — вместо
+      // выдуманного «выключены» человек видит отсутствие выбора.
+      const preferences = await notifications.getMeetupPreferences(
+        request.identity.identityId,
+        request.meetupId,
+        rpcMeta(request),
+      );
+      return preferences.kind === "ok"
+        ? {
+            ...withAuction,
+            subscribed: preferences.preferences.subscribed,
+          }
+        : withAuction;
+    }
+    if (result.kind === "not-found") return { kind: "meetup-not-found" };
+    return result.kind === "invalid"
+      ? {
+          kind: "dependency-rejected",
+          reason: "invalid",
+          cause: result.cause,
+        }
+      : { kind: "dependency-rejected", reason: result.kind };
+  }
+
   return {
     async execute(request) {
       switch (request.intent) {
@@ -70,42 +124,18 @@ export function createDispatcher(
                 }
               : { kind: "dependency-rejected", reason: result.kind };
         }
-        case "view-meetup": {
-          if (meetups === undefined)
-            return { kind: "rejected", reason: "meetups-not-configured" };
-          const result = await meetups.get(
-            request.identity,
-            request.meetupId,
-            rpcMeta(request),
+        case "view-meetup":
+          return viewMeetup(request, true);
+        case "enable-auction":
+          if (meetupAuction === undefined)
+            return { kind: "rejected", reason: "auction-not-configured" };
+          return meetupAuction.enable(request, () =>
+            viewMeetup(
+              { ...request, intent: "view-meetup" },
+              // Аукцион у карточки уже назван ответом команды.
+              false,
+            ),
           );
-          if (result.kind === "ok") {
-            const card: ExecuteResult = {
-              kind: "meetup-card",
-              meetup: result.meetup,
-            };
-            if (notifications === undefined) return card;
-            // Отказ Notifications карточку не роняет: сходка читается из
-            // Meetups и остаётся верной. Состояние подписки при этом не
-            // показывается, и кнопки подписки в кадре не будет — вместо
-            // выдуманного «выключены» человек видит отсутствие выбора.
-            const preferences = await notifications.getMeetupPreferences(
-              request.identity.identityId,
-              request.meetupId,
-              rpcMeta(request),
-            );
-            return preferences.kind === "ok"
-              ? { ...card, subscribed: preferences.preferences.subscribed }
-              : card;
-          }
-          if (result.kind === "not-found") return { kind: "meetup-not-found" };
-          return result.kind === "invalid"
-            ? {
-                kind: "dependency-rejected",
-                reason: "invalid",
-                cause: result.cause,
-              }
-            : { kind: "dependency-rejected", reason: result.kind };
-        }
         case "create-meetup":
         case "set-meetup-field":
         case "update-meetup-field":

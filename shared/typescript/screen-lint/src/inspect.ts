@@ -28,7 +28,11 @@ export type LintConfig = {
    * в тот список, где сходка стоит. Возврат принимается к любому из них.
    */
   parentGroups?: Readonly<Record<string, readonly string[]>>;
-  /** Пары кнопок в одном ряду, которые дерево бота называет поимённо. */
+  /**
+   * Пары кнопок в одном ряду, которые дерево бота называет поимённо: подписи
+   * через «|». Знак «#» стоит на месте числа в подписи — счётчика вроде
+   * «Материалы (#)», — и пара принимается с любым числом.
+   */
   namedPairs?: ReadonlySet<string>;
 };
 
@@ -262,6 +266,7 @@ function checkRules(
       index === rows.length - 1 ||
       entry.nav === "root" ||
       config.namedPairs?.has(pair) === true ||
+      config.namedPairs?.has(pair.replace(/\d+/g, "#")) === true ||
       row.some((button) => button.text === "Убрать");
     if (row.length === 2 && !allowed) {
       found.push(["rows", `пара вне дизайн-кода: ${describeRow(row)}`]);

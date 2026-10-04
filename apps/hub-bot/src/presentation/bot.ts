@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Bot, GrammyError, InlineKeyboard } from "grammy";
+import type {
+  AuctionResult,
+  AuctionScreenBody,
+  LotImagePort,
+  Viewer,
+} from "@solguficky/auction-bot-ui";
+import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
@@ -28,6 +34,7 @@ import type {
   PublishMomentRetry,
 } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
+import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type ApplicationAdministrator,
@@ -59,12 +66,23 @@ import type {
 } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import type { Tracing } from "../tracing.js";
+import {
+  type AuctionParents,
+  createAuctionParents,
+} from "./auction-parents.js";
+import {
+  hubTradeCallback,
+  isAuctionCallback,
+  packageIdentity,
+  photoFileId,
+} from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
 import {
   parseEditQuestion,
   parsePublishMomentQuestion,
 } from "./edit-question.js";
+import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationHtml,
@@ -100,6 +118,11 @@ import {
   decisionToast,
   declineConfirmScreen,
 } from "./screens/application.js";
+import {
+  type AuctionView,
+  auctionScreen,
+  lotPhotoId,
+} from "./screens/auction.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -113,6 +136,7 @@ import {
   escapeHtml,
   heading,
   menuOnly,
+  type Parent,
   refusalText,
   retryLabel,
   toCard,
@@ -150,6 +174,7 @@ import {
 } from "./screens/schedule-presets.js";
 import {
   clearCallbackKeyboard,
+  type ScreenPhoto,
   type ShownScreen,
   screenMark,
   showScreen,
@@ -191,6 +216,14 @@ export type BotRuntime = {
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
+  // Экраны аукциона сходки (PER-307): порты общего пакета поверх клиента
+  // Auction. Нет — кнопки домена `auc` отвечают кадром недоступности.
+  auction?: AuctionScreens;
+  // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
+  communityTimeZone?: string;
+  // Память процесса: тесты подставляют свою, чтобы проверить рестарт.
+  auctionParents?: AuctionParents;
+  lotPhotos?: LotPhotos;
 };
 
 export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
@@ -278,7 +311,9 @@ type ProductUseCase =
   | "view_meetup"
   | "manage_community"
   | "manage_notifications"
-  | "send_broadcast";
+  | "send_broadcast"
+  | "view_auction"
+  | "enable_auction";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 const publishMomentPrompt =
@@ -405,6 +440,8 @@ type UpdateContext = TracedContext & {
   // Telegram отверг карточку с постерами, и она ушла без них: причина едет в
   // запись границы, иначе деградация оператору не видна.
   postersRejected?: string;
+  // Сходки аукционов, которые бот видел: родитель ленты лотов.
+  auctionParents?: AuctionParents;
 };
 
 type BoundaryOutcome =
@@ -441,17 +478,20 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     client: { environment: runtime.environment ?? defaultTelegramEnvironment },
   });
   const questions = new Map<string, PendingInput>();
+  const auctionParents = runtime.auctionParents ?? createAuctionParents();
+  const lotPhotos = runtime.lotPhotos ?? createLotPhotos();
   bot.use((ctx, next) => {
     const requestId = randomUUID();
     ctx.requestId = requestId;
     ctx.startedAt = process.hrtime.bigint();
     ctx.today = runtime.today ?? utcToday;
+    ctx.auctionParents = auctionParents;
     // Спан открывается в первом middleware: всё, что ниже, включая вызовы Bot
     // API и gRPC, становится его потомком.
     return traceUpdate({ tracing: runtime.tracing, ctx, requestId, next });
   });
   bot.on("callback_query:data", (ctx) =>
-    handleCallback(ctx, runtime, questions),
+    handleCallback(ctx, runtime, questions, lotPhotos),
   );
   bot.on("message", (ctx) => handleMessage(ctx, runtime, questions));
   bot.catch((botError) => {
@@ -1201,6 +1241,8 @@ async function handleMessage(
       case "meetup-notification-settings":
       case "global-notification-settings":
       case "archived-meetup-list":
+      case "auction-enabled":
+      case "auction-refused":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -1238,6 +1280,7 @@ async function handleCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
+  lotPhotos: LotPhotos,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -1247,6 +1290,19 @@ async function handleCallback(
   const waiting = startWaiting(ctx);
   ctx.waiting = waiting;
   try {
+    // Кнопки домена `auc` пишет и разбирает общий пакет аукциона (ADR-044):
+    // до разбора хаба они не доходят.
+    const data = ctx.callbackQuery?.data ?? "";
+    if (isAuctionCallback(data)) {
+      useCase = "view_auction";
+      await dropOpenQuestions(
+        ctx,
+        questions,
+        ctx.callbackQuery?.message?.message_id,
+      );
+      outcome = await handleAuctionCallback(ctx, runtime, data, lotPhotos);
+      return;
+    }
     const pressed = parseCallback(ctx.callbackQuery?.data);
     // «Отмена» под вопросом: вопрос удаляется, а экран, с которого он задан,
     // приходит новым сообщением. Правка вопроса на месте режим ответа в
@@ -2880,6 +2936,10 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "manage-auction") {
+      outcome = await enableAuction(ctx, runtime, person, action.token);
+      return;
+    }
     const _exhaustive: never = action;
     outcome = unexpectedOutcome(
       `unhandled callback ${_exhaustive}`,
@@ -3698,14 +3758,14 @@ async function renderArchiveList(
 
 // Кадр отказа или итоговый кадр: первое предложение жирным вместо заголовка
 // и выход последним рядом. Тексты кадров ошибок по смыслу не меняются.
-function showFrame(
+async function showFrame(
   ctx: UpdateContext,
   id: "refusal" | "broadcast-result" | "no-access",
   text: string,
   keyboard: InlineKeyboard,
   delivery?: "new",
 ): Promise<void> {
-  return showScreen(ctx, {
+  await showScreen(ctx, {
     id,
     text: refusalText(text),
     keyboard,
@@ -3735,14 +3795,14 @@ function exitRetry(data: string): InlineKeyboard {
 
 // Переходная форма единого отправителя: срезы перевёрстки заменяют её
 // экранами-данными, а до тех пор каждое место называет свою запись каталога.
-function editScreen(
+async function editScreen(
   ctx: UpdateContext,
   id: ScreenId,
   text: string,
   keyboard: InlineKeyboard,
   parseMode?: "HTML",
 ): Promise<void> {
-  return showScreen(ctx, {
+  await showScreen(ctx, {
     id,
     text,
     keyboard,
@@ -3878,6 +3938,321 @@ function cardFrom(result: {
     : { kind: "meetup-card", meetup: result.meetup, author: result.author };
 }
 
+// «Включить аукцион» на карточке сходки (PER-307). Право решает Auction,
+// спрашивая Meetups; край кнопку только показывает администратору. Ключ
+// команды рождается на нажатие, а аукцион сходки один при любом их числе:
+// повторное нажатие отвечает тем же аукционом.
+async function enableAuction(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  token: string,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "enable_auction";
+  const meetupId = tokenToUuid(token);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "enable-auction",
+    meetupId,
+    opId: createUuidV7(),
+    ...rpcCall(ctx, useCase),
+  });
+  if (result.kind === "auction-enabled") {
+    await renderMeetupCard(
+      ctx,
+      result.card,
+      true,
+      runtime.presentation ?? "rich",
+      isAdministrator(person),
+      result.alreadyExisted
+        ? "Аукцион у этой сходки уже включён."
+        : "Аукцион включён. Лоты появятся в нём, когда их добавят.",
+    );
+    return {
+      level: "info",
+      message: result.alreadyExisted
+        ? "auction already enabled"
+        : "auction enabled",
+      result: "ok",
+      use_case: useCase,
+      meetup_id: meetupId,
+      identity_id: person.identityId,
+    };
+  }
+  if (result.kind === "auction-refused") {
+    await showRefusal(ctx, forbiddenText, exitToCard(token));
+    return {
+      level: "warn",
+      message: "auction enabling rejected",
+      result: "error",
+      use_case: useCase,
+      meetup_id: meetupId,
+      identity_id: person.identityId,
+      error_category: "authorization",
+      error: "not_meetup_administrator",
+    };
+  }
+  if (result.kind === "meetup-not-found") {
+    await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
+    return screenBoundary(result, {
+      ok: [],
+      okMessage: "auction enabled",
+      rejectedMessage: "auction enabling rejected",
+      useCase,
+      meetupId,
+    });
+  }
+  await showRefusal(
+    ctx,
+    result.kind === "dependency-rejected" && result.reason === "forbidden"
+      ? forbiddenText
+      : unavailableText,
+    result.kind === "dependency-rejected" && result.reason === "forbidden"
+      ? exitToCard(token)
+      : exitRetry(`v1:manage:auction:${token}`),
+  );
+  return screenBoundary(result, {
+    ok: [],
+    okMessage: "auction enabled",
+    rejectedMessage: "auction enabling rejected",
+    useCase,
+    meetupId,
+  });
+}
+
+// Кнопка аукциона сходки (PER-307). Политика хаба идёт первой — кадры P-14 и
+// P-17, как у любой кнопки, — затем шлюз пакета с поверхностью `hub`. Отказ
+// Auction — кадр недоступности с повтором: экран не показывается без чтения.
+async function handleAuctionCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  data: string,
+  lotPhotos: LotPhotos,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "view_auction";
+  if (runtime.auction === undefined) {
+    await showRefusal(ctx, unavailableText, menuOnly());
+    return {
+      level: "error",
+      message: "auction is not configured",
+      result: "error",
+      use_case: useCase,
+      error_category: "dependency_unavailable",
+      error: "auction_not_configured",
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase, data);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, true);
+  if (denied !== undefined) return denied;
+  const person = identity.person;
+  const resolved = packageIdentity(person, identity.blocked);
+  const ports = runtime.auction.screenPorts(rpcCall(ctx, useCase));
+  let result: AuctionResult;
+  try {
+    result = await hubTradeCallback({
+      ports: {
+        // Личность уже разрешена этим update: шлюз её не перечитывает.
+        identity: { resolveIdentity: () => Promise.resolve(resolved) },
+        auction: ports.auction,
+      },
+      identity: resolved,
+      data,
+    });
+  } catch (cause) {
+    const notFound =
+      cause instanceof ConnectError && cause.code === Code.NotFound;
+    await showRefusal(
+      ctx,
+      notFound ? "Лот не найден или больше недоступен." : unavailableText,
+      notFound ? menuOnly() : exitRetry(data),
+    );
+    return {
+      level: notFound ? "warn" : "error",
+      message: "auction screen rejected",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: notFound
+        ? "visibility"
+        : cause instanceof ConnectError
+          ? grpcFailureCategory(Code[cause.code])
+          : "unexpected",
+      ...(cause instanceof ConnectError ? { grpc_code: Code[cause.code] } : {}),
+      error: errorText(cause),
+    };
+  }
+  switch (result.kind) {
+    case "denied": {
+      // Политика хаба уже пропустила человека, поэтому отказ шлюза — расхождение
+      // кругов, а не штатный путь; кадр тот же, что у политики хаба.
+      const access = result.reason === "blocked" ? "blocked" : "pending";
+      await showFrame(
+        ctx,
+        "no-access",
+        hubAccessText(access, person.identityId, ctx.from?.username),
+        new InlineKeyboard(),
+      );
+      return hubAccessOutcome(access, person.identityId, useCase);
+    }
+    case "unreadable":
+      await showRefusal(
+        ctx,
+        "Не получилось прочитать эту кнопку. Открой актуальное меню.",
+        menuOnly(),
+      );
+      return {
+        level: "warn",
+        message: "malformed auction callback data",
+        result: "error",
+        use_case: useCase,
+        identity_id: person.identityId,
+        error_category: "invariant",
+        error: result.error.reason,
+      };
+    case "screen":
+      break;
+    default: {
+      const _exhaustive: never = result;
+      return unexpectedOutcome(String(_exhaustive), undefined, useCase);
+    }
+  }
+  const view: AuctionView = {
+    body: result.body,
+    feedParent: feedParentOf(ctx, result.body),
+    presentation: runtime.presentation ?? "rich",
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  const photoNote = await deliverAuctionScreen(ctx, {
+    view,
+    lotPhotos,
+    image: ports.image,
+    viewer: viewerOf(person),
+    logger: runtime.logger,
+  });
+  return {
+    level: "info",
+    message:
+      photoNote === undefined
+        ? "auction screen sent"
+        : `auction screen sent; ${photoNote}`,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  };
+}
+
+// Родитель ленты: сходка аукциона, если бот её видел, иначе «Ближайшие»
+// (ADR-030, дополнение 2026-10-04).
+function feedParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
+  for (const block of body.blocks) {
+    if (block.kind !== "feed") continue;
+    const meetupId = ctx.auctionParents?.meetupOf(block.auctionId);
+    return meetupId === undefined ? toUpcoming : toCard(uuidToToken(meetupId));
+  }
+  return toUpcoming;
+}
+
+// Доставка экрана аукциона (дизайн-код, «Показ фото лота»). Лента и карточка
+// делят одно сообщение: rich-карточка правится на месте в обе стороны. Фото —
+// из кэша `file_id` либо загрузкой байтов из Auction; загрузка — тот же вызов
+// Bot API, что доставляет карточку, и обрывать его по времени нельзя.
+// Изображение не получилось — карточка уходит без фото, а не пропадает.
+// Возвращает пометку о деградации для записи границы.
+async function deliverAuctionScreen(
+  ctx: UpdateContext,
+  input: {
+    view: AuctionView;
+    lotPhotos: LotPhotos;
+    image: LotImagePort;
+    viewer: Viewer;
+    logger: Logger;
+  },
+): Promise<string | undefined> {
+  const { lotPhotos } = input;
+  const warn = (message: string, cause: unknown) =>
+    input.logger.warn(message, {
+      ...(ctx.requestId === undefined ? {} : { request_id: ctx.requestId }),
+      error: errorText(cause),
+    });
+  const shown = auctionScreen(input.view);
+  const key = shown.image;
+  if (key === undefined) {
+    await showScreen(ctx, shown.screen);
+    return undefined;
+  }
+  const withPhoto = (photo: ScreenPhoto) =>
+    auctionScreen({ ...input.view, photo }).screen;
+  const cached = lotPhotos.get(key);
+  if (cached?.kind === "rejected") {
+    await showScreen(ctx, shown.screen);
+    return "lot image skipped: rejected earlier";
+  }
+  if (cached?.kind === "file") {
+    try {
+      await showScreen(ctx, {
+        ...withPhoto({ id: lotPhotoId, fileId: cached.fileId }),
+        strict: true,
+      });
+      return undefined;
+    } catch (cause) {
+      // Telegram больше не принимает этот `file_id`: запись вытесняется, и
+      // показ один раз повторяется загрузкой байтов.
+      lotPhotos.delete(key);
+      warn("cached lot photo rejected", cause);
+    }
+  }
+  let bytes: Awaited<ReturnType<LotImagePort["getLotImage"]>>;
+  try {
+    bytes = await input.image.getLotImage({
+      viewer: input.viewer,
+      lotId: key.lotId,
+    });
+  } catch (cause) {
+    // Бюджет действия исчерпан на изображении или Auction его не отдал:
+    // карточка уходит без фото (дизайн-код, «Показ фото лота»).
+    warn("lot image unavailable", cause);
+    await showScreen(ctx, shown.screen);
+    return "lot image unavailable";
+  }
+  // Ключ — версия самих байтов: изображение могли сменить между чтением
+  // карточки и загрузкой, и старое фото не ляжет под новым ключом.
+  const uploaded = { lotId: key.lotId, version: bytes.version };
+  try {
+    const sent = await showScreen(ctx, {
+      ...withPhoto({
+        id: lotPhotoId,
+        upload: new InputFile(bytes.content, "lot"),
+      }),
+      strict: true,
+    });
+    const fileId = photoFileId(sent);
+    if (fileId !== undefined) {
+      lotPhotos.set(uploaded, { kind: "file", fileId });
+    }
+    return undefined;
+  } catch (cause) {
+    // Telegram ответил отказом — эта версия до рестарта больше не грузится.
+    // Обрыв соединения отметки не оставляет: следующее открытие лота грузит
+    // изображение снова. В обоих случаях сообщение правится в карточку без
+    // фото обычной правкой.
+    if (cause instanceof GrammyError && !notEditable(cause.description)) {
+      lotPhotos.set(uploaded, { kind: "rejected" });
+    }
+    warn("lot image rejected by Telegram", cause);
+    await showScreen(ctx, shown.screen);
+    return "lot image rejected";
+  }
+}
+
+function notEditable(description: string): boolean {
+  return (
+    description.includes("message can't be edited") ||
+    description.includes("message to edit not found")
+  );
+}
+
 async function renderMeetupCard(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
@@ -3896,10 +4271,16 @@ async function renderMeetupCard(
     return;
   }
   if (result.kind === "meetup-card") {
+    // Пара «аукцион — сходка» запоминается с каждой карточки, где аукцион
+    // виден: из неё лента лотов берёт свой возврат «‹ Сходка».
+    if (result.auction?.kind === "open") {
+      ctx.auctionParents?.remember(result.auction.auctionId, result.meetup.id);
+    }
     const view = {
       meetup: result.meetup,
       author: result.author,
       subscribed: result.subscribed,
+      auction: result.auction,
       manageable,
       note,
       presentation,
@@ -4838,6 +5219,7 @@ function callbackUseCase(
     | "manage-field"
     | "manage-draft"
     | "manage-status"
+    | "manage-auction"
     | "manage-publish"
     | "manage-unpublish"
     | "manage-confirm-unpublish"
@@ -4943,6 +5325,8 @@ function callbackUseCase(
     case "notify-subscription":
     case "notify-set-meetup":
       return "manage_notifications";
+    case "manage-auction":
+      return "enable_auction";
     case "home":
     case "hub":
     case "archive":
