@@ -20,6 +20,9 @@ import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
   ApplicationAdministrator,
+  ApplicationCard,
+  ApplicationModerator,
+  ApplicationQueueRead,
   CommunityAdministrator,
   IdentityResolver,
   RefusedApplication,
@@ -1293,6 +1296,271 @@ describe("presentation adapter", () => {
       expect(calls[1]?.payload).toMatchObject({
         text: "<b>Допущенные</b>\n\nПока никого.",
       });
+    });
+  });
+
+  describe("application card", () => {
+    const first: ApplicationCard = {
+      applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a001",
+      identityId: "0192f3a4-b5c6-7d8e-9f0a-0000c0de0001",
+      telegramUserId: 77n,
+      telegramUsername: "ivan_p",
+      firstName: "Иван",
+      circle: "public",
+      source: { kind: "channel", label: "Солегуфики" },
+      createdAtMs: Date.parse("2026-10-02T11:05:00.123Z"),
+    };
+    const second: ApplicationCard = {
+      ...first,
+      applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a002",
+      identityId: "0192f3a4-b5c6-7d8e-9f0a-0000c0de0002",
+      telegramUsername: "petr",
+      firstName: "Пётр",
+      circle: "member",
+      createdAtMs: first.createdAtMs + 60_000,
+    };
+    const cursorOf = (card: ApplicationCard) =>
+      `${uuidToToken(card.applicationId)}:${card.createdAtMs.toString(36)}`;
+    const shown = (card: ApplicationCard, position: number, total: number) =>
+      ({
+        kind: "ok",
+        value: { card: { application: card, position }, total },
+      }) as const;
+
+    // Identity отдаёт очередь по состоянию, по одному чтению на нажатие.
+    function moderating(
+      reads: readonly { kind: "ok"; value: ApplicationQueueRead }[],
+    ) {
+      const readApplicationQueue =
+        vi.fn<ApplicationModerator["readApplicationQueue"]>();
+      for (const read of reads) {
+        readApplicationQueue.mockResolvedValueOnce(read);
+      }
+      return {
+        ...resolvedIdentity(["admin"]),
+        readApplicationQueue,
+        admitApplication: vi
+          .fn<ApplicationModerator["admitApplication"]>()
+          .mockResolvedValue({
+            kind: "ok",
+            value: { already: false, outcome: "admitted" },
+          }),
+        declineApplication: vi
+          .fn<ApplicationModerator["declineApplication"]>()
+          .mockResolvedValue({
+            kind: "ok",
+            value: { already: false, outcome: "blocked" },
+          }),
+      };
+    }
+
+    it("opens the oldest card from management", async () => {
+      const identity = moderating([shown(first, 1, 2)]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:q"));
+
+      expect(identity.readApplicationQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        undefined,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: expect.stringMatching(
+            /^<b>Заявка 1 из 2 · аукцион<\/b>\n\nИван \(@ivan_p\)\nПришёл: канал «Солегуфики» · /,
+          ),
+        },
+      });
+    });
+
+    it("admits and edits the card into the next one", async () => {
+      const identity = moderating([shown(second, 1, 1)]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
+
+      expect(identity.admitApplication).toHaveBeenCalledWith(
+        expect.objectContaining({ globalRoles: ["admin"] }),
+        first.applicationId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(identity.readApplicationQueue).toHaveBeenCalledWith(
+        expect.anything(),
+        { createdAtMs: first.createdAtMs, applicationId: first.applicationId },
+        expect.anything(),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Человек допущен." });
+      expect(JSON.stringify(calls[1]?.payload)).toContain(
+        "Заявка 1 из 1 · хаб",
+      );
+    });
+
+    it("tells the second administrator who decided and how, then moves on", async () => {
+      const identity = moderating([shown(second, 1, 1)]);
+      identity.admitApplication.mockResolvedValue({
+        kind: "ok",
+        value: {
+          already: true,
+          outcome: "blocked",
+          decidedBy: { telegramUserId: 7n, telegramUsername: "admin" },
+        },
+      });
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Уже решено: заблокирован, @admin.",
+      });
+      expect(calls[1]).toMatchObject({ method: "editMessageText" });
+      expect(JSON.stringify(calls[1]?.payload)).toContain("Пётр (@petr)");
+    });
+
+    it("keeps the same card when the decision was not saved", async () => {
+      const identity = moderating([shown(first, 1, 1)]);
+      identity.admitApplication.mockResolvedValue({
+        kind: "unavailable",
+        cause: new Error("down"),
+      });
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
+
+      expect(identity.readApplicationQueue).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          createdAtMs: first.createdAtMs,
+          applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a000",
+        },
+        expect.anything(),
+      );
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Решение не подтвердилось. Карточка перечитана заново.",
+      });
+      expect(JSON.stringify(calls[1]?.payload)).toContain("Иван (@ivan_p)");
+    });
+
+    it("ends the queue on skipping the last card instead of looping", async () => {
+      const identity = moderating([{ kind: "ok", value: { total: 2 } }]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:q:${cursorOf(second)}`));
+
+      expect(identity.readApplicationQueue).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          createdAtMs: second.createdAtMs,
+          applicationId: second.applicationId,
+        },
+        expect.anything(),
+      );
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: "<b>Заявки</b>\n\nОчередь кончилась. Ещё открыто заявок: 2.",
+        },
+      });
+    });
+
+    it("does not open the card for a non-administrator", async () => {
+      const identity = {
+        ...resolvedIdentity(["member"]),
+        readApplicationQueue: vi
+          .fn<ApplicationModerator["readApplicationQueue"]>()
+          .mockResolvedValue({ kind: "forbidden" }),
+      };
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:q"));
+
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: "<b>Разбирать заявки может только администратор.</b>",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "‹ Управление", callback_data: "v1:manage:menu" },
+                { text: "Меню", callback_data: "v1:nav:start" },
+              ],
+            ],
+          },
+        },
+      });
+    });
+
+    it("asks before declining and declines with one press", async () => {
+      const identity = moderating([shown(first, 1, 2), shown(second, 1, 1)]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qd:${cursorOf(first)}`));
+
+      expect(identity.declineApplication).not.toHaveBeenCalled();
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: { text: expect.stringContaining("<b>Отказать?</b>") },
+      });
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qy:${cursorOf(first)}`));
+
+      expect(identity.declineApplication).toHaveBeenCalledWith(
+        expect.anything(),
+        first.applicationId,
+        expect.anything(),
+      );
+      expect(calls.at(-2)?.payload).toMatchObject({
+        text: "Отказано: профиль заблокирован.",
+      });
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Пётр (@petr)");
+    });
+
+    it("does not ask about a card another administrator already decided", async () => {
+      const identity = moderating([shown(second, 1, 1)]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qd:${cursorOf(first)}`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Эту заявку уже решили.",
+      });
+      expect(JSON.stringify(calls[1]?.payload)).toContain("Пётр (@petr)");
+    });
+
+    it("links the profile by username when privacy refuses the id link", async () => {
+      const identity = moderating([shown(first, 1, 1)]);
+      const { bot, calls } = createHarness(identity);
+      // Telegram отклоняет сообщение со ссылкой tg://user целиком.
+      bot.api.config.use((prev, method, payload, signal) =>
+        JSON.stringify(payload).includes("tg://user?id=")
+          ? Promise.resolve({
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: BUTTON_USER_PRIVACY_RESTRICTED",
+            })
+          : prev(method, payload, signal),
+      );
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate("v1:cm:q"));
+
+      expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "https://t.me/ivan_p",
+      );
     });
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cardCursorData,
   parseCallback,
   type QuestionStep,
   questionData,
@@ -339,6 +340,44 @@ describe("callback parser", () => {
       `v1:cm:rq:short:0`,
       `v1:cm:ry:${token}:x`,
       `v1:cm:ry:${token}:0:extra`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+
+  it("parses the application card cursor of every card action", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const cursor = {
+      token,
+      createdAtMs: Date.parse("2026-10-02T11:05:00.123Z"),
+    };
+    const data = cardCursorData(cursor);
+    const cases: readonly (readonly [`v1:${string}`, unknown])[] = [
+      ["v1:cm:q", { kind: "application-card" }],
+      [`v1:cm:q:${data}`, { kind: "application-card", cursor, from: "after" }],
+      [`v1:cm:qc:${data}`, { kind: "application-card", cursor, from: "at" }],
+      [`v1:cm:qa:${data}`, { kind: "admit-application", cursor }],
+      [`v1:cm:qd:${data}`, { kind: "ask-decline-application", cursor }],
+      [`v1:cm:qy:${data}`, { kind: "decline-application", cursor }],
+    ];
+    for (const [raw, action] of cases) {
+      // С префиксом трассировки данные длиннее на два байта.
+      expect(Buffer.byteLength(traceCallback(raw))).toBeLessThanOrEqual(64);
+      expect(parseCallback(raw)).toEqual(action);
+    }
+  });
+
+  it("rejects application card callbacks with a broken cursor", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    for (const data of [
+      "v1:cm:qc",
+      `v1:cm:q:${token}`,
+      `v1:cm:qa:${token}`,
+      `v1:cm:qa:short:mfz0`,
+      `v1:cm:qd:${token}:MFZ0`,
+      `v1:cm:qy:${token}:-1`,
+      `v1:cm:qy:${token}:${"z".repeat(11)}`,
+      `v1:cm:qa:${token}:mfz0:extra`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }

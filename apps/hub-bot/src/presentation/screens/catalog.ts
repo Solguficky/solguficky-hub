@@ -91,6 +91,12 @@ export const screenCatalog = {
     parent: "manage",
     backName: "Каналы",
   },
+  // Заголовок карточки — номер заявки и круг, поэтому его даёт содержимое.
+  application: {
+    class: "screen",
+    nav: "tree",
+    parent: "manage",
+  },
   card: {
     class: "screen",
     nav: "tree",
@@ -136,6 +142,7 @@ export const screenCatalog = {
   "broadcast-confirm": { class: "screen", nav: "confirm" },
   "community-close-confirm": { class: "screen", nav: "confirm" },
   "reconsider-confirm": { class: "screen", nav: "confirm" },
+  "application-decline-confirm": { class: "screen", nav: "confirm" },
   "broadcast-result": { class: "screen", nav: "exit" },
   question: { class: "question", nav: "question" },
   // Выбор даты кнопками: экран, а не вопрос. Режима ответа у него нет, поэтому

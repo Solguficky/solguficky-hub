@@ -90,6 +90,33 @@ export function blockOriginData(origin: BlockOrigin): string {
     : `p${origin.next ?? ""}`;
 }
 
+// Место карточки заявки в кнопке: токен заявки и момент её создания в
+// миллисекундах. Вместе это курсор очереди Identity, а не номер: очередь
+// меняется, пока карточка висит.
+export type CardCursor = { token: string; createdAtMs: number };
+
+// Десять знаков base36 — до 3,6·10¹⁵ мс, внутри диапазона Date (8,64·10¹⁵):
+// подделанный момент длиннее не дойдёт до toISOString и не уронит запрос.
+const MillisSchema = z.string().regex(/^[0-9a-z]{1,10}$/);
+
+/** Сегменты `callback_data`: `<токен>:<момент base36>`. */
+export function cardCursorData(cursor: CardCursor): string {
+  return `${cursor.token}:${cursor.createdAtMs.toString(36)}`;
+}
+
+function parseCardCursor(
+  token: string | undefined,
+  millis: string | undefined,
+): CardCursor | undefined {
+  const parsedToken = TokenSchema.safeParse(token);
+  const parsedMillis = MillisSchema.safeParse(millis);
+  if (!parsedToken.success || !parsedMillis.success) return undefined;
+  const createdAtMs = Number.parseInt(parsedMillis.data, 36);
+  return Number.isSafeInteger(createdAtMs)
+    ? { token: parsedToken.data, createdAtMs }
+    : undefined;
+}
+
 type PlainAction =
   | { kind: "home" }
   // Списки листаются: страница едет в кнопке листания, без неё — первая.
@@ -115,6 +142,12 @@ type PlainAction =
   // Каналы прихода (ADR-060, пункт 18): список со ссылками и вопрос о новом.
   | { kind: "source-channels"; page: number }
   | { kind: "ask-source-channel" }
+  // Карточка заявки: без курсора — первая в очереди, `after` — следующая за
+  // курсором («Пропустить»), `at` — та же, если она ещё открыта.
+  | { kind: "application-card"; cursor?: CardCursor; from?: "after" | "at" }
+  | { kind: "admit-application"; cursor: CardCursor }
+  | { kind: "ask-decline-application"; cursor: CardCursor }
+  | { kind: "decline-application"; cursor: CardCursor }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
@@ -631,13 +664,43 @@ function parseBlockOrigin(raw: string | undefined): BlockOrigin | undefined {
 // Подэкраны состава: `p` — очередь, `a` — допущенные, `u` — ники, `ad` —
 // допустить, `bq` и `by` — вопрос о закрытии доступа и его «Да», `rm` — убрать
 // ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о пересмотре и его «Да»;
-// токен у них — заявки, а не человека. Имена сжаты: `ad` и `by` несут двух людей и с длинным доменом вышли бы
-// ровно в 64 байта.
+// токен у них — заявки, а не человека. Карточка заявки: `q` — первая или
+// следующая за курсором, `qc` — та же, `qa` — допустить, `qd` и `qy` — вопрос
+// об отказе и его «Да». Имена сжаты: `ad` и `by` несут двух людей и с длинным
+// доменом вышли бы ровно в 64 байта.
 function parseCommunity(parts: readonly string[]): CallbackAction {
   const malformed = { kind: "malformed" } as const;
   if (parts.length > 5) return malformed;
   const [, , verb, first, second] = parts;
   switch (verb) {
+    case "q":
+    case "qc": {
+      if (verb === "q" && first === undefined) {
+        return { kind: "application-card" };
+      }
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind: "application-card",
+        cursor,
+        from: verb === "q" ? "after" : "at",
+      };
+    }
+    case "qa":
+    case "qd":
+    case "qy": {
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind:
+          verb === "qa"
+            ? "admit-application"
+            : verb === "qd"
+              ? "ask-decline-application"
+              : "decline-application",
+        cursor,
+      };
+    }
     case "p": {
       if (second !== undefined) return malformed;
       if (first === undefined) return { kind: "community-pending" };

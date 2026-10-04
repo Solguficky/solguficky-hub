@@ -31,6 +31,9 @@ import { startExecuteRequest } from "../application/types.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type ApplicationAdministrator,
+  type ApplicationCursor,
+  type ApplicationModerator,
+  type ApplicationQueueRead,
   type CommunityAdministrator,
   type CommunitySnapshot,
   type IdentityAdminResult,
@@ -80,6 +83,7 @@ import {
 } from "./notification-message.js";
 import {
   type CallbackAction,
+  type CardCursor,
   type NotifiedMeetupCategory,
   type PublishOrigin,
   parseCallback,
@@ -90,6 +94,12 @@ import {
 } from "./parse-callback.js";
 import { parseUpdate } from "./parse-update.js";
 import { RepliedKeyboardSchema } from "./schemas.js";
+import {
+  applicationCardScreen,
+  applicationQueueEndScreen,
+  decisionToast,
+  declineConfirmScreen,
+} from "./screens/application.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -168,6 +178,7 @@ export type BotRuntime = {
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
+    Partial<ApplicationModerator> &
     Partial<OrganizerResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
@@ -252,6 +263,8 @@ const channelSaveRetryPrompt =
   "Канал не сохранился. Это на моей стороне. Пришли подпись ещё раз через минуту.";
 // Ответ второму администратору, чей пересмотр опередили (ADR-060, пункт 14).
 const reconsideredText = "Уже пересмотрено.";
+const applicationsForbiddenText =
+  "Разбирать заявки может только администратор.";
 type ProductUseCase =
   | "create_meetup"
   | "update_meetup"
@@ -1781,6 +1794,84 @@ async function handleCallback(
         use_case: "manage_community",
         identity_id: person.identityId,
       };
+      return;
+    }
+    if (action.kind === "application-card") {
+      const result = await renderApplicationCard(
+        ctx,
+        runtime,
+        person,
+        action.cursor === undefined
+          ? undefined
+          : queueCursor(action.cursor, action.from ?? "after"),
+      );
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "ask-decline-application") {
+      const result = await readApplicationQueue(
+        ctx,
+        runtime,
+        person,
+        queueCursor(action.cursor, "at"),
+      );
+      if (result.kind !== "ok") {
+        await showApplicationRefusal(ctx, result);
+      } else {
+        const card = result.value.card;
+        if (
+          card?.application.applicationId === tokenToUuid(action.cursor.token)
+        ) {
+          await showScreen(ctx, declineConfirmScreen(card.application));
+        } else {
+          // Заявку решил другой администратор, пока карточка висела: исход
+          // назовёт только решение, а вопрос о нём уже не к месту.
+          await waiting.answer("Эту заявку уже решили.");
+          await showApplicationQueue(ctx, result.value, true);
+        }
+      }
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (
+      action.kind === "admit-application" ||
+      action.kind === "decline-application"
+    ) {
+      const decide =
+        action.kind === "admit-application"
+          ? runtime.identity.admitApplication
+          : runtime.identity.declineApplication;
+      const result =
+        decide === undefined
+          ? {
+              kind: "unavailable" as const,
+              cause: new Error("application moderation is not configured"),
+            }
+          : await decide(
+              person,
+              tokenToUuid(action.cursor.token),
+              rpcCall(ctx, "manage_community"),
+            );
+      // Сбой не значит, что решения нет: ответ мог потеряться после записи
+      // или не разобраться. Поэтому ответ не утверждает ни того, ни другого,
+      // а экран перечитывает заявку: открыта — та же карточка, решена —
+      // следующая.
+      await waiting.answer(
+        result.kind === "ok"
+          ? decisionToast(result.value)
+          : result.kind === "forbidden"
+            ? "Это может только администратор."
+            : "Решение не подтвердилось. Карточка перечитана заново.",
+      );
+      // Решённая заявка уступает место следующей. Неподтверждённое решение
+      // перечитывает ту же: уйди очередь дальше, отказ выглядел бы принятым.
+      await renderApplicationCard(
+        ctx,
+        runtime,
+        person,
+        queueCursor(action.cursor, result.kind === "ok" ? "after" : "at"),
+      );
+      outcome = adminOutcome(result, person.identityId);
       return;
     }
     if (action.kind === "ask-allowed-username") {
@@ -3349,6 +3440,87 @@ function sourceChannelsForbiddenOutcome(person: Person): BoundaryOutcome {
   };
 }
 
+// Курсор очереди из кнопки. `after` — следующая заявка за этой. `at` — эта же,
+// если она ещё открыта: тот же момент и предшествующий UUID, и сравнение
+// «(момент, id) больше курсора» начинает ровно с неё. Момент на миллисекунду
+// раньше тут не годится: у двух заявок одной миллисекунды он вернул бы первую.
+function queueCursor(
+  cursor: CardCursor,
+  from: "after" | "at",
+): ApplicationCursor {
+  const applicationId = tokenToUuid(cursor.token);
+  return {
+    createdAtMs: cursor.createdAtMs,
+    applicationId:
+      from === "after" ? applicationId : previousUuid(applicationId),
+  };
+}
+
+function previousUuid(uuid: string): string {
+  const value = BigInt(`0x${uuid.replaceAll("-", "")}`);
+  // Нулевого UUIDv7 не бывает; на нём курсор просто начнёт с момента.
+  const hex = (value === 0n ? 0n : value - 1n).toString(16).padStart(32, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function readApplicationQueue(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  after: ApplicationCursor | undefined,
+): Promise<IdentityAdminResult<ApplicationQueueRead>> {
+  return runtime.identity.readApplicationQueue === undefined
+    ? Promise.resolve({
+        kind: "unavailable" as const,
+        cause: new Error("application moderation is not configured"),
+      })
+    : runtime.identity.readApplicationQueue(
+        actor,
+        after,
+        rpcCall(ctx, "manage_community"),
+      );
+}
+
+// Карточка открывается из управления, туда и возвращает отказ.
+function showApplicationRefusal(
+  ctx: UpdateContext,
+  result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
+): Promise<void> {
+  return showRefusal(
+    ctx,
+    result.kind === "forbidden" ? applicationsForbiddenText : unavailableText,
+    withNav(new InlineKeyboard(), toManage),
+  );
+}
+
+function showApplicationQueue(
+  ctx: UpdateContext,
+  read: ApplicationQueueRead,
+  afterCursor: boolean,
+): Promise<void> {
+  return showScreen(
+    ctx,
+    read.card === undefined
+      ? applicationQueueEndScreen(read.total, afterCursor)
+      : applicationCardScreen(read.card, read.total, Date.now()),
+  );
+}
+
+async function renderApplicationCard(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  after: ApplicationCursor | undefined,
+): Promise<IdentityAdminResult<ApplicationQueueRead>> {
+  const result = await readApplicationQueue(ctx, runtime, actor, after);
+  if (result.kind !== "ok") {
+    await showApplicationRefusal(ctx, result);
+    return result;
+  }
+  await showApplicationQueue(ctx, result.value, after !== undefined);
+  return result;
+}
+
 // Сообщение о допуске — побочный результат действия администратора, а не его
 // часть: допуск уже сохранён, поэтому отказ Identity или Telegram его не
 // отменяет и возвращается причиной для записи границы. Получатель, которого
@@ -4639,6 +4811,10 @@ function callbackUseCase(
     | "reconsider"
     | "source-channels"
     | "ask-source-channel"
+    | "application-card"
+    | "admit-application"
+    | "ask-decline-application"
+    | "decline-application"
     | "create-meetup"
     | "publish-meetup"
     | "manage-edit"
@@ -4728,6 +4904,10 @@ function callbackUseCase(
     case "reconsider":
     case "source-channels":
     case "ask-source-channel":
+    case "application-card":
+    case "admit-application":
+    case "ask-decline-application":
+    case "decline-application":
     case "community":
     case "community-pending":
     case "community-admitted":

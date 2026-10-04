@@ -4,6 +4,7 @@ import type { Dispatcher } from "../src/application/dispatcher.js";
 import { createDispatcher } from "../src/application/dispatcher.js";
 import type {
   ApplicationAdministrator,
+  ApplicationModerator,
   CommunityAdministrator,
   IdentityResolver,
   SourceChannelAdministrator,
@@ -82,7 +83,8 @@ export function createHarness(
   identity: IdentityResolver &
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
-    Partial<SourceChannelAdministrator>,
+    Partial<SourceChannelAdministrator> &
+    Partial<ApplicationModerator>,
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),
