@@ -325,6 +325,7 @@ public class NotificationWithdrawalTests
         var facts = new List<Notification>();
         var result = await store.Dispatch(
             100,
+            new DispatchOptions().MaxAttempts,
             (pending, _) =>
             {
                 facts.Add(Notification.Parser.ParseFrom(pending.Payload));
