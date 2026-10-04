@@ -18,7 +18,7 @@ export function sourceStartLink(botUsername: string, code: string): string {
 
 // Имя бота без «@»: 5–32 символа, латиница, цифры и «_», в конце «bot».
 // Telegram требует того же при создании бота.
-const telegramBotUsernamePattern = /^[A-Za-z][A-Za-z0-9_]{2,29}bot$/i;
+const telegramBotUsernamePattern = /^[A-Za-z][A-Za-z0-9_]{1,28}bot$/i;
 
 export function isTelegramBotUsername(value: string): boolean {
   return telegramBotUsernamePattern.test(value);

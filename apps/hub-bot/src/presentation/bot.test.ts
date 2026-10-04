@@ -6853,6 +6853,44 @@ describe("source channels", () => {
     expect(identity.sourceChannels).not.toHaveBeenCalled();
   });
 
+  it("asks the label again when Identity is unavailable", async () => {
+    const identity = {
+      ...channels([]),
+      createSourceChannel: vi
+        .fn<SourceChannelAdministrator["createSourceChannel"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(lastSent(calls)).toContain("Канал не сохранился.");
+    expect(identity.sourceChannels).not.toHaveBeenCalled();
+  });
+
+  it("says the channel is saved when only the list fails afterwards", async () => {
+    const identity = {
+      ...channels([]),
+      sourceChannels: vi
+        .fn<SourceChannelAdministrator["sourceChannels"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
+    await bot.handleUpdate(answer("tg_ads", calls));
+    await bot.handleUpdate(answer("Реклама", calls));
+
+    expect(identity.createSourceChannel).toHaveBeenCalled();
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Канал заведён, но список не загрузился.",
+    );
+  });
+
   it("answers /start with a source payload like a plain /start", async () => {
     const plain = createHarness(resolvedIdentity());
     await plain.bot.init();

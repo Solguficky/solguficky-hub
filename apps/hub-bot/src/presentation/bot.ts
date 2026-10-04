@@ -236,16 +236,20 @@ const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
 const refusedForbiddenText =
   "Пересматривать отказы может только администратор.";
+const channelSavedListFailedText =
+  "Канал заведён, но список не загрузился. Открой каналы ещё раз через минуту.";
 const sourceChannelsForbiddenText =
   "Вести каналы прихода может только администратор.";
 const channelCodePrompt =
-  "Какой код у канала? Латиница, цифры, «_» и «-», до 62 символов: он станет хвостом ссылки после s_.";
+  "Какой код у канала? Латиница, цифры, «_» и «-», до 62 символов, например tg_ads: он станет хвостом ссылки после s_.";
 const channelCodeRetryPrompt =
   "Такой код в ссылку не встанет. Пришли код ещё раз: латиница, цифры, «_» и «-», до 62 символов.";
 const channelLabelPrompt =
   "Как подписать канал? Подпись модератор увидит на карточке заявки.";
 const channelLabelRetryPrompt =
   "Подпись — одна строка до 64 символов. Пришли её ещё раз.";
+const channelSaveRetryPrompt =
+  "Канал не сохранился. Это на моей стороне. Пришли подпись ещё раз через минуту.";
 // Ответ второму администратору, чей пересмотр опередили (ADR-060, пункт 14).
 const reconsideredText = "Уже пересмотрено.";
 type ProductUseCase =
@@ -833,29 +837,36 @@ async function handleMessage(
               { code: pending.code, label: answer },
               rpcCall(ctx, useCase),
             );
-      if (result.kind === "invalid") {
-        // Код проверен на первом шаге, поэтому отказ — о подписи.
+      if (result.kind === "invalid" || result.kind === "unavailable") {
+        // Код проверен на первом шаге, поэтому отказ — о подписи. Сбой
+        // Identity тоже переспрашивает подпись: канал не сохранён, и тот же
+        // ответ можно прислать ещё раз, а не набирать код заново.
         await askQuestion(
           ctx,
           questions,
           bodyOf(pending),
-          channelLabelRetryPrompt,
+          result.kind === "invalid"
+            ? channelLabelRetryPrompt
+            : channelSaveRetryPrompt,
           replyId,
         );
         outcome = adminOutcome(result, identity.person.identityId);
         return;
       }
-      if (result.kind === "ok") await answered();
+      await answered();
+      if (result.kind === "forbidden") {
+        await showRefusal(ctx, sourceChannelsForbiddenText, menuOnly());
+        outcome = adminOutcome(result, identity.person.identityId);
+        return;
+      }
       await renderSourceChannels(
         ctx,
         runtime,
         identity.person,
         { code: pending.code },
-        result.kind === "ok"
-          ? result.value
-            ? "Канал заведён."
-            : "Канал с этим кодом уже есть, подпись прежняя."
-          : undefined,
+        result.value
+          ? "Канал заведён."
+          : "Канал с этим кодом уже есть, подпись прежняя.",
       );
       outcome = adminOutcome(result, identity.person.identityId);
       return;
@@ -1020,7 +1031,10 @@ async function handleMessage(
       replyId !== undefined &&
       ctx.message?.reply_to_message?.from?.id === ctx.me.id
     ) {
-      useCase = "create_meetup";
+      useCase =
+        askedStep?.kind === "channel-label"
+          ? "manage_community"
+          : "create_meetup";
       // Название материала по кнопке вопроса не восстановить — источник файла
       // жил в памяти процесса. Выход ведёт к материалам той же сходки.
       // Подпись канала — тоже: код, к которому она относится, жил в памяти.
@@ -3279,6 +3293,9 @@ async function renderSourceChannels(
   at: { page: number } | { code: string },
   notice?: string,
 ): Promise<IdentityAdminResult<readonly SourceChannel[]>> {
+  // После заведения канал уже сохранён: сбой чтения списка не должен
+  // выглядеть как сбой заведения, иначе администратор заведёт его заново.
+  const saved = "code" in at;
   const result: IdentityAdminResult<readonly SourceChannel[]> =
     runtime.identity.sourceChannels === undefined
       ? {
@@ -3294,8 +3311,10 @@ async function renderSourceChannels(
       ctx,
       result.kind === "forbidden"
         ? sourceChannelsForbiddenText
-        : unavailableText,
-      withNav(new InlineKeyboard(), toManage),
+        : saved
+          ? channelSavedListFailedText
+          : unavailableText,
+      withNav(new InlineKeyboard(), saved ? toSourceChannels : toManage),
     );
     return result;
   }

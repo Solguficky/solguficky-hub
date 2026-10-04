@@ -215,6 +215,9 @@ async function main(): Promise<number> {
     logger.info(`${serviceName} starting`, {
       service: serviceName,
       telegram_environment: environment,
+      // Без имени бота аукциона экран каналов отдаёт только ссылку хаба: по
+      // записи старта видно, задумано это или настройка потерялась.
+      auction_bot_links: auctionBotUsername !== undefined,
     });
     // Меню пишется без ожидания: медленный или отказавший Telegram не должен
     // задерживать polling и остановку, а отказ registerCommands пишет в лог сам.

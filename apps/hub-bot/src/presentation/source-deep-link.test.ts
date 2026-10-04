@@ -29,7 +29,17 @@ describe("source deep link", () => {
   it("checks a bot username by Telegram rules", () => {
     expect(isTelegramBotUsername("solguficky_auction_bot")).toBe(true);
     expect(isTelegramBotUsername("AuctionBot")).toBe(true);
-    for (const name of ["@auction_bot", "auction", "1auction_bot", "a b_bot"]) {
+    // Границы длины Telegram: от 5 до 32 символов.
+    expect(isTelegramBotUsername("a1bot")).toBe(true);
+    expect(isTelegramBotUsername(`a${"b".repeat(28)}bot`)).toBe(true);
+    for (const name of [
+      "@auction_bot",
+      "auction",
+      "1auction_bot",
+      "a b_bot",
+      "abot",
+      `a${"b".repeat(29)}bot`,
+    ]) {
       expect(isTelegramBotUsername(name)).toBe(false);
     }
   });
