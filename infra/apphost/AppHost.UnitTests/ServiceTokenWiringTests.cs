@@ -29,7 +29,7 @@ public class ServiceTokenWiringTests
     private static readonly Dictionary<string, string[]> Callers = new()
     {
         [Identity] = [HubBot, AuctionBot, Meetups, Notifications],
-        [Meetups] = [HubBot, Notifications],
+        [Meetups] = [HubBot, Notifications, Auction],
         [Notifications] = [HubBot],
     };
 
@@ -45,10 +45,11 @@ public class ServiceTokenWiringTests
 
         foreach (var (callee, callers) in Callers)
         {
-            // Бота аукциона hub не поднимает: его пару проверяет
-            // AuctionBotWiringTests на профиле auction-bot. Исключение
-            // названо по имени, чтобы выпавший из hub вызывающий падал здесь.
-            foreach (var caller in callers.Where(caller => caller != AuctionBot))
+            // Бота аукциона и Auction hub не поднимает: пару бота проверяет
+            // AuctionBotWiringTests на профиле auction-bot, свой токен Auction —
+            // тест профиля auction ниже. Исключения названы по имени, чтобы
+            // выпавший из hub вызывающий падал здесь.
+            foreach (var caller in callers.Where(caller => caller != AuctionBot && caller != Auction))
             {
                 var callerSide = tokens[caller][$"{Env(caller)}_SERVICE_TOKEN"];
                 var calleeSide = tokens[callee][$"{Env(callee)}_CALLER_TOKEN_{Env(caller)}"];
@@ -88,7 +89,7 @@ public class ServiceTokenWiringTests
         var expected = new Dictionary<string, string[]>
         {
             [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS"],
-            [Meetups] = ["MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
+            [Meetups] = ["MEETUPS_CALLER_TOKEN_AUCTION", "MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
             [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
             [HubBot] = ["HUB_BOT_SERVICE_TOKEN"],
         };
@@ -98,6 +99,10 @@ public class ServiceTokenWiringTests
         {
             tokens[resource].Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe(keys, customMessage: resource);
         }
+
+        // Узла Auction в hub нет, но таблица Meetups полна: строка Auction —
+        // тот же параметр, что Auction предъявляет своим AUCTION_SERVICE_TOKEN.
+        tokens[Meetups]["MEETUPS_CALLER_TOKEN_AUCTION"].Name.ShouldBe("auction-service-token");
     }
 
     [Fact]
@@ -108,7 +113,7 @@ public class ServiceTokenWiringTests
 
         // Пустой реестр прошёл бы цикл без единой проверки.
         parameters.Select(parameter => parameter.Name).Order(StringComparer.Ordinal).ToArray().ShouldBe(
-            ["auction-bot-service-token", "hub-bot-service-token", "meetups-service-token", "notifications-service-token"]);
+            ["auction-bot-service-token", "auction-service-token", "hub-bot-service-token", "meetups-service-token", "notifications-service-token"]);
         foreach (var parameter in parameters)
         {
             parameter.Secret.ShouldBeTrue(parameter.Name);
@@ -144,7 +149,9 @@ public class ServiceTokenWiringTests
 
         tokens.Keys.ShouldBe([Auction]);
         tokens[Auction].Keys.Order(StringComparer.Ordinal).ToArray()
-            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_HUB_BOT"]);
+            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_HUB_BOT", "AUCTION_SERVICE_TOKEN"]);
+        // Свой токен Auction — тот, что принимает Meetups (CheckMeetupAuthority).
+        tokens[Auction]["AUCTION_SERVICE_TOKEN"].Name.ShouldBe("auction-service-token");
         tokens[Auction]["AUCTION_CALLER_TOKEN_HUB_BOT"].Name.ShouldBe("hub-bot-service-token");
         tokens[Auction]["AUCTION_CALLER_TOKEN_AUCTION_BOT"].Name.ShouldBe("auction-bot-service-token");
     }

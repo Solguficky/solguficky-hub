@@ -1,6 +1,9 @@
 package auction.grpc
 
 import auction.access.GlobalRole
+import auction.aggregate.MeetupId
+import auction.lot.AuctionId
+import auction.projection.AuctionListing
 import auction.access.Viewer
 import auction.catalog.LotId
 import auction.lot.BidSource
@@ -12,8 +15,14 @@ import auction.lot.PlaceBid
 import auction.lot.SetProxyLimit
 import auction.lot.WithdrawProxyLimit
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction_service.AddLotRequest
+import auction.v1.auction_service.AuctionListing as AuctionListingMessage
+import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.GetLotRequest
+import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
+import auction.v1.auction_service.ListAuctionsRequest
+import auction.v1.auction_service.RemoveLotRequest
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
@@ -48,6 +57,18 @@ final case class LotQuery(lotId: UUID, acting: Acting)
 /** Страница лотов аукциона: после `after` по возрастанию `lot_id`, не больше `limit`. */
 final case class LotsQuery(auctionId: UUID, after: Option[UUID], limit: Int, acting: Acting)
 
+/** Рождение аукциона у сходки. Роли смотрящего права не дают: право спрашивается у Meetups (ADR-047). */
+final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
+
+/** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
+final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
+
+/** Чтение аукциона сходки. */
+final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
+
+/** Страница аукционов выборки: после `after` по возрастанию `auction_id`, не больше `limit`. */
+final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], limit: Int, acting: Acting)
+
 /** Команда каталога в домене: создание и правка несут одно и то же. */
 final case class CardCommand(lotId: LotId, title: String, description: String, viewer: Viewer)
 
@@ -59,6 +80,13 @@ final case class CardCommand(lotId: LotId, title: String, description: String, v
 object RequestMapping {
 
   private val CanonicalUuidV7 = "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$".r
+
+  /**
+   * Аукцион сходки — UUIDv5, выведенный из `meetup_id` (ADR-047, исключение из ADR-020); тестовый аукцион из настройки
+   * бота остаётся UUIDv7. Поэтому поле, которое называет аукцион лота, принимает обе версии, а поле, которое называет
+   * аукцион сходки, — только пятую (integration.md, «Аукцион у сходки»).
+   */
+  private val CanonicalUuidV5 = "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$".r
 
   private val CurrencyAlpha = "^[A-Z]{3}$".r
 
@@ -105,10 +133,60 @@ object RequestMapping {
   def listAuctionLots(request: ListAuctionLotsRequest): Either[FormError, LotsQuery] =
     for {
       acting <- acting(request.viewer)
-      auctionId <- uuidV7("auction_id", request.auctionId)
+      auctionId <- canonicalUuidV5(request.auctionId)
+        .orElse(canonicalUuidV7(request.auctionId))
+        .toRight(FormError("auction_id"))
       after <- PageToken.decode(request.pageToken).toRight(FormError("page_token"))
       limit <- pageSize(request.pageSize)
     } yield LotsQuery(auctionId, after, limit, acting)
+
+  def draftAuction(request: DraftAuctionRequest): Either[FormError, DraftCommand] =
+    for {
+      acting <- acting(request.viewer)
+      meetup <- uuidV7("meetup_id", request.meetupId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield DraftCommand(MeetupId(meetup), OpId(opId), acting)
+
+  def addLot(request: AddLotRequest): Either[FormError, RegistryCommand] =
+    registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def removeLot(request: RemoveLotRequest): Either[FormError, RegistryCommand] =
+    registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def getMeetupAuction(request: GetMeetupAuctionRequest): Either[FormError, MeetupAuctionQuery] =
+    for {
+      acting <- acting(request.viewer)
+      meetup <- uuidV7("meetup_id", request.meetupId)
+    } yield MeetupAuctionQuery(MeetupId(meetup), acting)
+
+  def listAuctions(request: ListAuctionsRequest): Either[FormError, AuctionsQuery] =
+    for {
+      acting <- acting(request.viewer)
+      listing <- listing(request.listing)
+      after <- PageToken.decode(request.pageToken, canonicalUuidV5).toRight(FormError("page_token"))
+      limit <- pageSize(request.pageSize)
+    } yield AuctionsQuery(listing, after, limit, acting)
+
+  private def registry(
+      viewer: Option[ViewerMessage],
+      auctionId: String,
+      lotId: String,
+      opId: String
+  ): Either[FormError, RegistryCommand] =
+    for {
+      acting <- acting(viewer)
+      auction <- canonicalUuidV5(auctionId).toRight(FormError("auction_id"))
+      lot <- uuidV7("lot_id", lotId)
+      op <- uuidV7("op_id", opId)
+    } yield RegistryCommand(AuctionId(auction), LotId(lot), OpId(op), acting)
+
+  private def listing(value: AuctionListingMessage): Either[FormError, AuctionListing] =
+    value match {
+      case AuctionListingMessage.AUCTION_LISTING_ACTIVE => Right(AuctionListing.Active)
+      case AuctionListingMessage.AUCTION_LISTING_FINISHED => Right(AuctionListing.Finished)
+      case AuctionListingMessage.AUCTION_LISTING_UNSPECIFIED | AuctionListingMessage.Unrecognized(_) =>
+        Left(FormError("listing"))
+    }
 
   /** Размер страницы по умолчанию и предел: больший запрошенный размер сужается, а не отвергается. */
   val DefaultPageSize: Int = 50
@@ -154,6 +232,9 @@ object RequestMapping {
   private[grpc] def canonicalUuidV7(value: String): Option[UUID] =
     Option.when(CanonicalUuidV7.matches(value))(UUID.fromString(value))
 
+  private[grpc] def canonicalUuidV5(value: String): Option[UUID] =
+    Option.when(CanonicalUuidV5.matches(value))(UUID.fromString(value))
+
   private def money(field: String, value: Option[MoneyMessage]): Either[FormError, Money] =
     value match {
       case Some(message) if CurrencyAlpha.matches(message.currency) =>
@@ -163,22 +244,24 @@ object RequestMapping {
 }
 
 /**
- * Токен продолжения `ListAuctionLots`: последний отданный `lot_id` в base64url. Непрозрачен для вызывающего по
- * контракту, но не секрет: подделанный токен даёт ту же выборку, что и честный с тем же `lot_id`, — лоты аукциона после
- * него, которые смотрящий и так вправе читать.
+ * Токен продолжения `ListAuctionLots` и `ListAuctions`: последний отданный `lot_id` или `auction_id` в base64url.
+ * Непрозрачен для вызывающего по контракту, но не секрет: подделанный токен даёт ту же выборку, что и честный с тем же
+ * `lot_id`, — лоты аукциона после него, которые смотрящий и так вправе читать.
  */
 object PageToken {
 
-  def encode(lotId: UUID): String =
-    Base64.getUrlEncoder.withoutPadding.encodeToString(lotId.toString.getBytes(StandardCharsets.US_ASCII))
+  def encode(id: UUID): String =
+    Base64.getUrlEncoder.withoutPadding.encodeToString(id.toString.getBytes(StandardCharsets.US_ASCII))
 
-  /** Пустой токен — начало перечисления, `Some(None)`; токен, который не выдавал сервис, — `None`. */
-  def decode(token: String): Option[Option[UUID]] =
+  /**
+   * Пустой токен — начало перечисления, `Some(None)`; токен, который не выдавал сервис, — `None`. `canonical` — форма
+   * идентификатора перечисления: лоты — UUIDv7, аукционы сходок — UUIDv5.
+   */
+  def decode(token: String, canonical: String => Option[UUID] = RequestMapping.canonicalUuidV7): Option[Option[UUID]] =
     if (token.isEmpty) Some(None)
     else
       try
-        RequestMapping
-          .canonicalUuidV7(new String(Base64.getUrlDecoder.decode(token), StandardCharsets.US_ASCII))
+        canonical(new String(Base64.getUrlDecoder.decode(token), StandardCharsets.US_ASCII))
           .map(Some(_))
       catch { case _: IllegalArgumentException => None }
 }

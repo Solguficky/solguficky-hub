@@ -1,12 +1,28 @@
 package auction.grpc
 
+import auction.aggregate.AddLot
+import auction.aggregate.Auction
+import auction.aggregate.AuctionCommands
+import auction.aggregate.AuctionState
+import auction.aggregate.Authority
+import auction.aggregate.DraftAuction
+import auction.aggregate.Inspection
+import auction.aggregate.MeetupAuthority
+import auction.aggregate.MeetupId
+import auction.aggregate.RemoveLot
 import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotCatalogStore
 import auction.catalog.LotId
+import auction.entity.AuctionAnswer
+import auction.entity.AuctionGateway
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.lot.AuctionId
+import auction.lot.DraftLot
+import auction.lot.DraftLotRejected
 import auction.lot.Envelope
+import auction.lot.OpId
 import auction.lot.LotFixtures.*
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
@@ -16,6 +32,9 @@ import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimit
 import auction.lot.WithdrawProxyLimitRejected
 import auction.onboarding.FaqAcknowledgements
+import auction.projection.AuctionListing
+import auction.projection.AuctionSnapshotView
+import auction.projection.AuctionViews
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
 import auction.v1.auction.Money as MoneyMessage
@@ -40,6 +59,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   /** Шлюз, до которого запрос не должен дойти: любой вызов, который тест не переопределил, роняет тест. */
   private class Gateway extends LotGateway {
+    def draftLot(lotId: UUID, command: DraftLot, initiator: Initiator): Future[Either[DraftLotRejected, Envelope]] =
+      fail("the lot was reached")
+
+    def auctionOf(lotId: UUID): Future[Option[AuctionId]] = fail("the lot was reached")
+
     def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]] =
       fail("the lot was reached")
 
@@ -79,14 +103,42 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def acknowledge(participant: ParticipantId): Future[Unit] = fail("the FAQ store was touched")
   }
 
-  private object UntouchableViews extends LotViews {
+  /** Read model лота: выборка, которую тест не переопределил, роняет тест. */
+  private abstract class Views extends LotViews {
     def find(lotId: UUID): Future[Option[LotSnapshotView]] = fail("the read model was touched")
     def page(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
       fail("the read model was touched")
+    def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
+      fail("the registry was touched")
   }
 
-  private def service(lots: LotGateway, faq: FaqAcknowledgements = UntouchableFaq, views: LotViews = UntouchableViews) =
-    AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore), faq, views)
+  private object UntouchableViews extends Views
+
+  /** Шлюз аукциона: команда, которую тест не переопределил, роняет тест. */
+  private class Auctions extends AuctionGateway {
+    def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] = fail("the auction was reached")
+    def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] =
+      fail("the auction was reached")
+    def addLot(auctionId: AuctionId, command: AddLot, initiator: Initiator) = fail("the auction was reached")
+    def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) = fail("the auction was reached")
+  }
+
+  private val NoMeetups: MeetupAuthority = (_, _) => fail("meetups was asked")
+
+  private object UntouchableAuctionViews extends AuctionViews {
+    def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
+    def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] =
+      fail("the auction read model was touched")
+  }
+
+  private def service(
+      lots: LotGateway,
+      faq: FaqAcknowledgements = UntouchableFaq,
+      views: LotViews = UntouchableViews,
+      auctions: AuctionCommands = AuctionCommands(new Auctions, Unreachable, NoMeetups),
+      auctionViews: AuctionViews = UntouchableAuctionViews
+  ) =
+    AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore), faq, views, auctions, auctionViews)
 
   private def statusOf(call: Future[?]): Status.Code =
     call.failed.futureValue match {
@@ -259,19 +311,17 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
     "answers NOT_FOUND to a lot the read model does not hold" in {
-      val empty = new LotViews {
-        def find(lotId: UUID) = Future.successful(None)
-        def page(auctionId: UUID, after: Option[UUID], limit: Int) = Future.successful(Nil)
+      val empty = new Views {
+        override def find(lotId: UUID) = Future.successful(None)
       }
       statusOf(service(Unreachable, views = empty).getLot(wire.GetLotRequest(Some(viewer), lot))) shouldBe
         Status.Code.NOT_FOUND
     }
 
     "answers a lot from the read model as the viewer sees it" in {
-      val held = new LotViews {
-        def find(lotId: UUID) =
+      val held = new Views {
+        override def find(lotId: UUID) =
           Future.successful(Some(LotSnapshotView(lotId, auctionId(1).value, 3, trading(price = 120), None)))
-        def page(auctionId: UUID, after: Option[UUID], limit: Int) = fail("a page was read")
       }
       val snapshot = service(Unreachable, views = held).getLot(wire.GetLotRequest(Some(viewer), lot)).futureValue
       snapshot.id shouldBe lot
@@ -280,9 +330,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "pages the lots of an auction and continues after the last lot it answered" in {
       val ids = (1 to 5).map(n => new UUID(0x01926f3c8b7a7cdeL, 0x8f00000000000000L | n.toLong)).toList
-      val catalog = new LotViews {
-        def find(lotId: UUID) = fail("a single lot was read")
-        def page(auctionId: UUID, after: Option[UUID], limit: Int) =
+      val catalog = new Views {
+        override def page(auctionId: UUID, after: Option[UUID], limit: Int) =
           Future.successful(
             ids
               .filter(id => after.forall(id.compareTo(_) > 0))
@@ -300,6 +349,100 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot, second.nextPageToken, 2)).futureValue
       last.lots.map(_.id) shouldBe ids.drop(4).map(_.toString)
       last.nextPageToken shouldBe ""
+    }
+
+    "reads the lots of a meetup auction from its registry and of a test auction from the lots born in it" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val both = new Views {
+        override def page(auctionId: UUID, after: Option[UUID], limit: Int) =
+          Future.successful(List(LotSnapshotView(UUID.fromString(lot), auctionId, 1, drafted, None)))
+        override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) = Future.successful(Nil)
+      }
+      val auction = service(Unreachable, views = both)
+      auction
+        .listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), meetupAuction.toString))
+        .futureValue
+        .lots shouldBe empty
+      auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot)).futureValue.lots should have size 1
+    }
+
+    "answers a draft to an existing meetup auction with its derived id and the already-existed mark" in {
+      val existing = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId))))
+        override def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator) =
+          Future.successful(AuctionAnswer.Unchanged)
+      }
+      val granted: MeetupAuthority = (_, _) => Future.successful(Authority.Granted)
+      val answer = service(Unreachable, auctions = AuctionCommands(existing, Unreachable, granted))
+        .draftAuction(wire.DraftAuctionRequest(Some(viewer), meetupId, op))
+        .futureValue
+      answer.getAccepted.auctionId shouldBe Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
+      answer.getAccepted.alreadyExisted shouldBe true
+    }
+
+    "answers UNAVAILABLE when meetups cannot confirm the administrator" in {
+      val absent = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) = Future.successful(Inspection.Absent)
+      }
+      val unavailable: MeetupAuthority = (_, _) => Future.successful(Authority.Unavailable)
+      statusOf(
+        service(Unreachable, auctions = AuctionCommands(absent, Unreachable, unavailable))
+          .draftAuction(wire.DraftAuctionRequest(Some(viewer), meetupId, op))
+      ) shouldBe Status.Code.UNAVAILABLE
+    }
+
+    "refuses auction requests of a wrong form before asking the auction or meetups" in {
+      val auction = service(Unreachable)
+      statusOf(auction.draftAuction(wire.DraftAuctionRequest(Some(viewer), "meetup", op))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      // Реестр есть только у аукциона сходки, UUIDv5: UUIDv7 тестового аукциона здесь — нарушение формы.
+      statusOf(auction.addLot(wire.AddLotRequest(Some(viewer), lot, lot, op))) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.removeLot(wire.RemoveLotRequest(Some(viewer), lot, lot, op))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(auction.getMeetupAuction(wire.GetMeetupAuctionRequest(Some(viewer), "meetup"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listAuctions(wire.ListAuctionsRequest(Some(viewer)))) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers a meetup without an auction with an empty response, not an error" in {
+      val none = new AuctionViews {
+        def byMeetup(meetup: MeetupId) = Future.successful(None)
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")
+      }
+      service(Unreachable, auctionViews = none)
+        .getMeetupAuction(wire.GetMeetupAuctionRequest(Some(viewer), meetupId))
+        .futureValue
+        .auction shouldBe None
+    }
+
+    "answers a meetup auction draft with its registry and pages a listing by auction id" in {
+      val ids = (1 to 3).map(n => Auction.idOf(MeetupId(new UUID(0x01926f3c8b7a7cdeL, 0x8f00000000000000L | n))).value)
+      val sorted = ids.sorted.toList
+      val draft = Auction(
+        AuctionState.Draft,
+        Some(MeetupId(UUID.fromString(meetupId))),
+        Set(LotId(UUID.fromString(lot))),
+        Map.empty
+      )
+      val views = new AuctionViews {
+        def byMeetup(meetup: MeetupId) = Future.successful(Some(AuctionSnapshotView(sorted.head, draft)))
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int) =
+          Future.successful(
+            sorted.filter(id => after.forall(id.compareTo(_) > 0)).take(limit).map(AuctionSnapshotView(_, draft))
+          )
+      }
+      val auction = service(Unreachable, auctionViews = views)
+      val read = auction.getMeetupAuction(wire.GetMeetupAuctionRequest(Some(viewer), meetupId)).futureValue.getAuction
+      read.lotIds shouldBe Seq(lot)
+      read.status.isDraft shouldBe true
+      val active = wire.AuctionListing.AUCTION_LISTING_ACTIVE
+      val first = auction.listAuctions(wire.ListAuctionsRequest(Some(viewer), active, "", 2)).futureValue
+      first.auctions.map(_.id) shouldBe sorted.take(2).map(_.toString)
+      val rest =
+        auction.listAuctions(wire.ListAuctionsRequest(Some(viewer), active, first.nextPageToken, 2)).futureValue
+      rest.auctions.map(_.id) shouldBe sorted.drop(2).map(_.toString)
+      rest.nextPageToken shouldBe ""
     }
 
     "answers UNIMPLEMENTED on display names and images that belong to later slices" in {

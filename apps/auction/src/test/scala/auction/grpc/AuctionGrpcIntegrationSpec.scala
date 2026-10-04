@@ -1,11 +1,18 @@
 package auction.grpc
 
 import auction.AuctionNode
+import auction.aggregate.Auction
+import auction.aggregate.AuctionState
+import auction.aggregate.Authority
+import auction.aggregate.MeetupAuthority
+import auction.aggregate.MeetupId
+import auction.entity.AuctionEntity
 import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.UuidV7
 import auction.lot.*
 import auction.lot.LotFixtures.*
+import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
@@ -99,17 +106,42 @@ final class AuctionGrpcIntegrationSpec
     )
     .fold(reason => fail(reason), table => table)
 
-  private final case class Node(kit: ActorTestKit, sharding: ClusterSharding, client: wire.AuctionServiceClient)
+  /**
+   * Meetups узла: отвечает тем, что тест положил, и считает вопросы. Провод Auction → Meetups этот сьют не проверяет —
+   * его держит L0 адаптера и контур; здесь проверяется, что делает с ответом узел.
+   */
+  private final class StubAuthority extends MeetupAuthority {
+    @volatile var answer: Authority = Authority.Granted
+    @volatile var asked: Int = 0
+    def check(meetup: MeetupId, person: ParticipantId): Future[Authority] = {
+      asked += 1
+      Future.successful(answer)
+    }
+  }
+
+  private final case class Node(
+      kit: ActorTestKit,
+      sharding: ClusterSharding,
+      client: wire.AuctionServiceClient,
+      authority: StubAuthority
+  )
 
   private def withNode[A](use: Node => A): A = {
     val database = freshDatabase()
     JournalSchema.migrate(database)
+    onDatabase(database)(use)
+  }
+
+  /** Узел на уже размеченной базе: второй вызов на той же базе — рестарт сервиса. */
+  private def onDatabase[A](database: DatabaseSettings)(use: Node => A): A = {
     val kit = ActorTestKit(s"auction-grpc-${UUID.randomUUID()}", nodeConfig(database))
     given ActorSystem[?] = kit.system
+    val authority = StubAuthority()
     try {
       val clock = Clock.systemUTC()
       val sharding = AuctionNode.join(kit.system)
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
+      AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock))
       AuctionNode.startProjection(
         kit.system,
         ProjectionMetrics(OpenTelemetry.noop().getMeter("auction"), clock),
@@ -117,12 +149,12 @@ final class AuctionGrpcIntegrationSpec
       )
       val binding = Http()
         .newServerAt("127.0.0.1", 0)
-        .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds))
+        .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, authority))
         .futureValue
       val client = wire.AuctionServiceClient(
         GrpcClientSettings.connectToServiceAt("127.0.0.1", binding.localAddress.getPort).withTls(false)
       )
-      try use(Node(kit, sharding, client))
+      try use(Node(kit, sharding, client, authority))
       finally client.close().futureValue
     } finally kit.shutdownTestKit()
   }
@@ -175,6 +207,139 @@ final class AuctionGrpcIntegrationSpec
       case refused: StatusRuntimeException => refused.getStatus.getCode
       case other => fail(s"expected a status, got $other")
     }
+
+  private def newId(): String = UuidV7.generator(Clock.systemUTC())().toString
+
+  private def administrator: wire.Viewer = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN)
+
+  private def enable(node: Node, meetup: String, op: String = newId()): wire.DraftAuctionResponse =
+    asHubBot(node.client.draftAuction()).invoke(wire.DraftAuctionRequest(Some(administrator), meetup, op)).futureValue
+
+  private def meetupAuction(node: Node, meetup: String): Option[wire.AuctionSnapshot] =
+    asHubBot(node.client.getMeetupAuction())
+      .invoke(wire.GetMeetupAuctionRequest(Some(administrator), meetup))
+      .futureValue
+      .auction
+
+  private def feed(node: Node, auction: String): Seq[String] =
+    asHubBot(node.client.listAuctionLots())
+      .invoke(wire.ListAuctionLotsRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), auction))
+      .futureValue
+      .lots
+      .map(_.id)
+
+  private def auctionState(node: Node, auction: String): Auction =
+    node.sharding.entityRefFor(AuctionEntity.TypeKey, auction).ask[Auction](AuctionEntity.Get(_)).futureValue
+
+  "auction at a meetup grpc" should {
+
+    "enables one auction per meetup: a repeated op_id answers as the first call and a new one finds it" in withNode {
+      node =>
+        val meetup = newId()
+        val op = newId()
+        val first = enable(node, meetup, op).getAccepted
+        first.alreadyExisted shouldBe false
+        first.auctionId shouldBe Auction.idOf(MeetupId(UUID.fromString(meetup))).value.toString
+        enable(node, meetup, op).getAccepted shouldBe first
+        enable(node, meetup).getAccepted shouldBe first.copy(alreadyExisted = true)
+        // Один аукцион — одна строка журнала рождения, сколько бы раз его ни включали.
+        auctionState(node, first.auctionId).seen should have size 1
+        eventually {
+          val read = meetupAuction(node, meetup).getOrElse(fail("the meetup auction is not readable yet"))
+          read.id shouldBe first.auctionId
+          read.status.isDraft shouldBe true
+        }
+    }
+
+    "refuses a viewer whom meetups does not confirm as administrator and creates no auction" in withNode { node =>
+      val meetup = newId()
+      node.authority.answer = Authority.NotAdministrator
+      enable(node, meetup).getRefused.reason.isNotMeetupAdministrator shouldBe true
+      node.authority.answer = Authority.MeetupNotFound
+      enable(node, meetup).getRefused.reason.isMeetupNotFound shouldBe true
+      node.authority.answer = Authority.Unavailable
+      statusOf(
+        asHubBot(node.client.draftAuction()).invoke(wire.DraftAuctionRequest(Some(administrator), meetup, newId()))
+      ) shouldBe Status.Code.UNAVAILABLE
+      auctionState(node, Auction.idOf(MeetupId(UUID.fromString(meetup))).value.toString).state shouldBe
+        AuctionState.Initial
+      meetupAuction(node, meetup) shouldBe None
+    }
+
+    "answers NOT_FOUND to a registry command on an auction that was never enabled, without asking meetups" in withNode {
+      node =>
+        val auction = Auction.idOf(MeetupId(UUID.fromString(newId()))).value.toString
+        statusOf(
+          asHubBot(node.client.addLot()).invoke(wire.AddLotRequest(Some(administrator), auction, newId(), newId()))
+        ) shouldBe Status.Code.NOT_FOUND
+        node.authority.asked shouldBe 0
+    }
+
+    "shows an added lot in the feed of the meetup auction and drops it after RemoveLot" in withNode { node =>
+      val auction = enable(node, newId()).getAccepted.auctionId
+      val lot = newId()
+      val add = wire.AddLotRequest(Some(administrator), auction, lot, newId())
+      asHubBot(node.client.addLot()).invoke(add).futureValue.outcome.isAccepted shouldBe true
+      // Повтор того же op_id отвечает так же и не спрашивает Meetups второй раз.
+      val asked = node.authority.asked
+      asHubBot(node.client.addLot()).invoke(add).futureValue.outcome.isAccepted shouldBe true
+      node.authority.asked shouldBe asked
+      eventually(feed(node, auction) shouldBe Seq(lot))
+      eventually(meetupAuction(node, auctionMeetup(node, auction)).map(_.lotIds) shouldBe Some(Seq(lot)))
+
+      val remove = wire.RemoveLotRequest(Some(administrator), auction, lot, newId())
+      asHubBot(node.client.removeLot()).invoke(remove).futureValue.outcome.isAccepted shouldBe true
+      eventually(feed(node, auction) shouldBe empty)
+      asHubBot(node.client.removeLot())
+        .invoke(remove.withOpId(newId()))
+        .futureValue
+        .getRefused
+        .reason
+        .isLotNotInAuction shouldBe true
+
+      // Лот, снятый с реестра, остаётся рождённым и возвращается в ленту повторным добавлением.
+      asHubBot(node.client.addLot()).invoke(add.withOpId(newId())).futureValue.outcome.isAccepted shouldBe true
+      eventually(feed(node, auction) shouldBe Seq(lot))
+    }
+
+    "refuses a lot born in another auction with FAILED_PRECONDITION and keeps it out of the feed" in withNode { node =>
+      val auction = enable(node, newId()).getAccepted.auctionId
+      // Лот тестового аукциона из настройки бота: рождён в нём, а не в аукционе сходки.
+      val foreign = tradingLot(node, AuctionId(UuidV7.generator(Clock.systemUTC())()))
+      statusOf(
+        asHubBot(node.client.addLot())
+          .invoke(wire.AddLotRequest(Some(administrator), auction, foreign.toString, newId()))
+      ) shouldBe Status.Code.FAILED_PRECONDITION
+      auctionState(node, auction).lots shouldBe empty
+    }
+
+    "keeps the auction, its meetup and its registry over a service restart" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val meetup = newId()
+      val lot = newId()
+      val auction = onDatabase(database) { node =>
+        val id = enable(node, meetup).getAccepted.auctionId
+        asHubBot(node.client.addLot())
+          .invoke(wire.AddLotRequest(Some(administrator), id, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        id
+      }
+      onDatabase(database) { node =>
+        val restored = auctionState(node, auction)
+        restored.meetup shouldBe Some(MeetupId(UUID.fromString(meetup)))
+        restored.lots.map(_.value.toString) shouldBe Set(lot)
+        enable(node, meetup).getAccepted.alreadyExisted shouldBe true
+        eventually(feed(node, auction) shouldBe Seq(lot))
+      }
+    }
+  }
+
+  /** Сходка аукциона — из entity: снимок чтения её не несёт, а чтение по сходке её требует. */
+  private def auctionMeetup(node: Node, auction: String): String =
+    auctionState(node, auction).meetup.map(_.value.toString).getOrElse(fail("the auction has no meetup"))
 
   "auction grpc" should {
 

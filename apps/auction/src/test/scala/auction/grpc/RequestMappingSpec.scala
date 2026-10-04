@@ -104,6 +104,7 @@ object RequestMappingSpec {
   val identity = "01890a5d-ac96-774b-bcce-b302099a8057"
   val lot = "01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e5f"
   val op = "01890a5d-ac98-7aaa-8bbb-cccccccccccc"
+  val meetupId = "0190a0e0-0000-7000-8000-000000000001"
 
   val viewer: ViewerMessage = ViewerMessage(identity, Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
 

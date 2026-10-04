@@ -107,6 +107,12 @@ internal static class AuctionSetup
             // сервис не стартует, поэтому она приходит и в профиле без ботов, и в
             // чарте, куда бот аукциона не входит.
             .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.AuctionBot)
+            // Auction и вызываемый, и вызывающий: право администратора сходки он
+            // спрашивает у Meetups (CheckMeetupAuthority, ADR-047). Профиль без
+            // meetups оставляет адрес пустым — bind молчит, и команды
+            // администратора аукциону отвечают UNAVAILABLE, а остальное работает.
+            .WithServiceToken(context)
+            .BindEndpoint(context, AppHostNames.Resources.Meetups, AppHostNames.Endpoints.Grpc, "AUCTION_MEETUPS_GRPC_URL")
             // Метрики проекции уходят по OTLP (ADR-053): исполняемый файл получает
             // OTEL-переменные только так. Без OTEL_EXPORTER_OTLP_ENDPOINT сервис
             // экспорт метрик выключает сам.

@@ -9,11 +9,13 @@ open System.Text
 type Caller =
     | HubBot
     | Notifications
+    | Auction
 
     member this.Node =
         match this with
         | Caller.HubBot -> "hub-bot"
         | Caller.Notifications -> "notifications"
+        | Caller.Auction -> "auction"
 
     member this.TokenVariable =
         "MEETUPS_CALLER_TOKEN_"

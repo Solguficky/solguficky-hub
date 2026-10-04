@@ -1,13 +1,20 @@
 package auction
 
+import auction.aggregate.AuctionCommands
+import auction.aggregate.MeetupAuthority
 import auction.catalog.LotCatalogCommands
+import auction.entity.AuctionEntity
+import auction.entity.AuctionGateway
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
 import auction.persistence.JournalDatabase
+import auction.persistence.SlickAuctionViews
 import auction.persistence.SlickLotViews
+import auction.projection.AuctionProjection
+import auction.projection.AuctionViewHandler
 import auction.projection.LotProjection
 import auction.projection.LotViewHandler
 import auction.publication.JetStreamPublisher
@@ -68,13 +75,23 @@ object AuctionNode {
   ): ActorRef[ShardingEnvelope[LotEntity.Command]] =
     sharding.init(Entity(LotEntity.TypeKey)(context => LotEntity(context.entityId, clock, newId)))
 
+  /** Регистрирует entity аукциона; идентификатор entity — идентификатор аукциона (ADR-047, дополнение 2026-10-03). */
+  def registerAuctions(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID
+  ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] =
+    sharding.init(Entity(AuctionEntity.TypeKey)(context => AuctionEntity(context.entityId, clock, newId)))
+
   /**
-   * Проекция журнала лотов в read model (ADR-045). Метрики отставания регистрируются вместе с ней; `backlogTimeout`
-   * ограничивает запрос к базе на сборе метрики.
+   * Проекции журналов лотов и аукционов в read model (ADR-045). Метрики отставания регистрируются вместе с ними;
+   * `backlogTimeout` ограничивает запрос к базе на сборе метрики.
    */
   def startProjection(system: ActorSystem[?], metrics: ProjectionMetrics, backlogTimeout: FiniteDuration): Unit = {
     LotProjection.init(system, LotProjection.Name, metrics, () => LotViewHandler(system))
     metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(system, LotProjection.Name, backlogTimeout))
+    AuctionProjection.init(system, metrics, () => AuctionViewHandler(system))
+    metrics.watchBacklog(AuctionProjection.Name, AuctionProjection.backlog(system, backlogTimeout))
   }
 
   /**
@@ -112,22 +129,26 @@ object AuctionNode {
   }
 
   /**
-   * gRPC-граница узла: сервис поверх шардинга лотов, каталога и read model лота, обёрнутый проверкой вызывающего и
-   * записью операции. Entity лота к этому моменту уже зарегистрирована в `sharding`.
+   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, read model и права у Meetups, обёрнутый
+   * проверкой вызывающего и записью операции. Entity лота и аукциона к этому моменту уже зарегистрированы в `sharding`.
    */
   def grpc(
       system: ActorSystem[?],
       sharding: ClusterSharding,
       callers: CallerTable,
-      askTimeout: FiniteDuration
+      askTimeout: FiniteDuration,
+      authority: MeetupAuthority
   ): HttpRequest => Future[HttpResponse] = {
     given ActorSystem[?] = system
     import system.executionContext
+    val lots = LotGateway.sharded(sharding, askTimeout)
     val service = AuctionGrpcService(
-      LotGateway.sharded(sharding, askTimeout),
+      lots,
       LotCatalogCommands(SlickLotCatalogStore(system)),
       SlickFaqAcknowledgements(system),
-      SlickLotViews(system)
+      SlickLotViews(system),
+      AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),
+      SlickAuctionViews(system)
     )
     GrpcBoundary(callers, service)
   }
