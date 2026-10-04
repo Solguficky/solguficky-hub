@@ -6,6 +6,7 @@ import type {
   ApplicationAdministrator,
   CommunityAdministrator,
   IdentityResolver,
+  SourceChannelAdministrator,
 } from "../src/identity/port.js";
 import type { LogFields, Logger } from "../src/logging.js";
 import { createBot } from "../src/presentation/bot.js";
@@ -80,7 +81,8 @@ export function createCapturingLogger(): {
 export function createHarness(
   identity: IdentityResolver &
     Partial<CommunityAdministrator> &
-    Partial<ApplicationAdministrator>,
+    Partial<ApplicationAdministrator> &
+    Partial<SourceChannelAdministrator>,
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),

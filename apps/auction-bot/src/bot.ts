@@ -21,6 +21,7 @@ import {
   routeAuctionCallback,
   routeAuctionStart,
 } from "./route.js";
+import { sourceCodeOf } from "./start-payload.js";
 
 export type BotOptions = {
   token: string;
@@ -66,8 +67,10 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const direct = bot.chatType("private");
 
   direct.command("start", async (ctx) => {
+    const sourceCode = sourceCodeOf(ctx.match);
     const outcome = await routeAuctionStart({
       ...auction,
+      ...(sourceCode === undefined ? {} : { sourceCode }),
       ports: options.ports(ctx.requestId),
       user: {
         telegramUserId: ctx.from.id,

@@ -9,6 +9,7 @@ import {
   MeetupDeepLinkPayloadSchema,
   TelegramDeepLinkPayloadSchema,
 } from "./schemas.js";
+import { sourceDeepLinkPrefix } from "./source-deep-link.js";
 
 export type ParsedUpdate =
   | ({ kind: "start" } & ResolveIdentityInput &
@@ -96,6 +97,9 @@ function startDeepLink(payloadRaw: string | undefined): DeepLink | undefined {
 function classifyDeepLink(payload: string): DeepLink {
   if (MeetupDeepLinkPayloadSchema.safeParse(payload).success) {
     return { kind: "meetup", payload };
+  }
+  if (payload.startsWith(sourceDeepLinkPrefix)) {
+    return { kind: "source", code: payload.slice(sourceDeepLinkPrefix.length) };
   }
   return { kind: "unclassified", payload };
 }

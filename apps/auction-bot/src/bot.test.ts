@@ -224,6 +224,32 @@ describe("auction bot", () => {
     });
   });
 
+  it("answers /start with a channel or a foreign payload like a plain /start", async () => {
+    const answer = async (text: string) => {
+      const { bot, calls } = makeBot(publicPorts);
+      await bot.handleUpdate(
+        startUpdate({
+          message_id: 1,
+          date: 0,
+          chat: privateChat,
+          from,
+          text,
+          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+        }),
+      );
+      return calls.map((call) => call.payload);
+    };
+    const plain = await answer("/start");
+    for (const text of [
+      "/start s_tg_ads",
+      "/start s_",
+      "/start m_AZLzpLXGfY6fChssPU5fYA",
+      "/start not a payload",
+    ]) {
+      expect(await answer(text)).toEqual(plain);
+    }
+  });
+
   it("stays silent in a group", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(

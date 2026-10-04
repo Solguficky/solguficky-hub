@@ -38,6 +38,8 @@ import {
   type OrganizerResolver,
   type ReconsiderResult,
   type RefusedApplication,
+  type SourceChannel,
+  type SourceChannelAdministrator,
   type TelegramRecipientResolver,
   toResolveIdentityInput,
 } from "../identity/port.js";
@@ -107,6 +109,7 @@ import {
   toCommunity,
   toManage,
   toMaterials,
+  toSourceChannels,
   toUpcoming,
   withNav,
 } from "./screens/kit.js";
@@ -142,6 +145,11 @@ import {
   showScreen,
 } from "./screens/show.js";
 import {
+  sourceChannelPage,
+  sourceChannelsScreen,
+} from "./screens/source-channels.js";
+import { isSourceChannelCode } from "./source-deep-link.js";
+import {
   markUpdateFailed,
   type TracedContext,
   traceUpdate,
@@ -159,12 +167,16 @@ export type BotRuntime = {
   identity: IdentityResolver &
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
+    Partial<SourceChannelAdministrator> &
     Partial<OrganizerResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
   tracing: Tracing;
   presentation?: "rich" | "plain";
   environment?: TelegramEnvironment;
+  // Имя бота аукциона без «@»: экран каналов собирает по нему вторую ссылку
+  // `s_<код>`. Нет — экран отдаёт только ссылку в бот хаба.
+  auctionBotUsername?: string;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -224,6 +236,16 @@ const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
 const refusedForbiddenText =
   "Пересматривать отказы может только администратор.";
+const sourceChannelsForbiddenText =
+  "Вести каналы прихода может только администратор.";
+const channelCodePrompt =
+  "Какой код у канала? Латиница, цифры, «_» и «-», до 62 символов: он станет хвостом ссылки после s_.";
+const channelCodeRetryPrompt =
+  "Такой код в ссылку не встанет. Пришли код ещё раз: латиница, цифры, «_» и «-», до 62 символов.";
+const channelLabelPrompt =
+  "Как подписать канал? Подпись модератор увидит на карточке заявки.";
+const channelLabelRetryPrompt =
+  "Подпись — одна строка до 64 символов. Пришли её ещё раз.";
 // Ответ второму администратору, чей пересмотр опередили (ADR-060, пункт 14).
 const reconsideredText = "Уже пересмотрено.";
 type ProductUseCase =
@@ -323,10 +345,25 @@ type PendingBroadcastBody = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Канал заводится двумя вопросами: код, затем подпись. Код ждёт подписи в
+// памяти процесса — в кнопку «Отмена» он не помещается.
+type PendingChannelCode = {
+  kind: "channel-code";
+  telegramUserId: number;
+  expiresAt: number;
+};
+type PendingChannelLabel = {
+  kind: "channel-label";
+  code: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput =
   | PendingQuestion
   | PendingPublishMoment
   | PendingUsername
+  | PendingChannelCode
+  | PendingChannelLabel
   | PendingMaterialInput
   | PendingMaterialTitle
   | PendingBroadcastBody;
@@ -732,6 +769,99 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
+      (pending?.kind === "channel-code" || pending?.kind === "channel-label") &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_community";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign channel answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      if (!isAdministrator(identity.person)) {
+        await answered();
+        await showRefusal(ctx, sourceChannelsForbiddenText, menuOnly());
+        outcome = sourceChannelsForbiddenOutcome(identity.person);
+        return;
+      }
+      const answer = ctx.message.text.trim();
+      if (pending.kind === "channel-code") {
+        // Код проверяется до вопроса о подписи: иначе отказ Identity пришёл бы
+        // только после второго ответа, и подпись пришлось бы набирать заново.
+        const valid = isSourceChannelCode(answer);
+        await askQuestion(
+          ctx,
+          questions,
+          valid
+            ? {
+                kind: "channel-label",
+                code: answer,
+                telegramUserId: pending.telegramUserId,
+              }
+            : bodyOf(pending),
+          valid ? channelLabelPrompt : channelCodeRetryPrompt,
+          replyId,
+        );
+        outcome = {
+          level: "info",
+          message: valid
+            ? "source channel label requested"
+            : "source channel code rejected",
+          result: "ok",
+          use_case: useCase,
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
+      const result: IdentityAdminResult<boolean> =
+        runtime.identity.createSourceChannel === undefined
+          ? {
+              kind: "unavailable",
+              cause: new Error("source channels are not configured"),
+            }
+          : await runtime.identity.createSourceChannel(
+              identity.person,
+              { code: pending.code, label: answer },
+              rpcCall(ctx, useCase),
+            );
+      if (result.kind === "invalid") {
+        // Код проверен на первом шаге, поэтому отказ — о подписи.
+        await askQuestion(
+          ctx,
+          questions,
+          bodyOf(pending),
+          channelLabelRetryPrompt,
+          replyId,
+        );
+        outcome = adminOutcome(result, identity.person.identityId);
+        return;
+      }
+      if (result.kind === "ok") await answered();
+      await renderSourceChannels(
+        ctx,
+        runtime,
+        identity.person,
+        { code: pending.code },
+        result.kind === "ok"
+          ? result.value
+            ? "Канал заведён."
+            : "Канал с этим кодом уже есть, подпись прежняя."
+          : undefined,
+      );
+      outcome = adminOutcome(result, identity.person.identityId);
+      return;
+    }
+    if (
+      replyId !== undefined &&
       pending !== undefined &&
       (pending.kind === "allowed-username" || pending.kind === "meetup") &&
       ctx.message?.text !== undefined
@@ -850,11 +980,15 @@ async function handleMessage(
       pending !== undefined &&
       (pending.kind === "meetup" ||
         pending.kind === "allowed-username" ||
+        pending.kind === "channel-code" ||
+        pending.kind === "channel-label" ||
         pending.kind === "publish-moment") &&
       ctx.message?.text === undefined
     ) {
       useCase =
-        pending.kind === "allowed-username"
+        pending.kind === "allowed-username" ||
+        pending.kind === "channel-code" ||
+        pending.kind === "channel-label"
           ? "manage_community"
           : pending.kind === "meetup" && pending.mode === "create"
             ? "create_meetup"
@@ -889,14 +1023,19 @@ async function handleMessage(
       useCase = "create_meetup";
       // Название материала по кнопке вопроса не восстановить — источник файла
       // жил в памяти процесса. Выход ведёт к материалам той же сходки.
+      // Подпись канала — тоже: код, к которому она относится, жил в памяти.
       await showRefusal(
         ctx,
         askedStep?.kind === "material-title"
           ? "Этот вопрос уже устарел. Прикрепи материал заново."
-          : "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
+          : askedStep?.kind === "channel-label"
+            ? "Этот вопрос уже устарел. Заведи канал заново."
+            : "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
         askedStep?.kind === "material-title"
           ? withNav(new InlineKeyboard(), toMaterials(askedStep.token))
-          : menuOnly(),
+          : askedStep?.kind === "channel-label"
+            ? withNav(new InlineKeyboard(), toSourceChannels)
+            : menuOnly(),
       );
       outcome = {
         level: "info",
@@ -1144,14 +1283,18 @@ async function handleCallback(
     // Meetups и Identity (PER-396). Отказ приходит правкой, как любой экран.
     if (
       (action.kind === "manage-menu" ||
-        action.kind === "ask-allowed-username") &&
+        action.kind === "ask-allowed-username" ||
+        action.kind === "source-channels" ||
+        action.kind === "ask-source-channel") &&
       !isAdministrator(person)
     ) {
       await showRefusal(
         ctx,
         action.kind === "manage-menu"
           ? managementForbiddenText
-          : communityForbiddenText,
+          : action.kind === "ask-allowed-username"
+            ? communityForbiddenText
+            : sourceChannelsForbiddenText,
         menuOnly(),
       );
       outcome = {
@@ -1601,6 +1744,29 @@ async function handleCallback(
       await waiting.answer(toast);
       await renderRefused(ctx, runtime, person, action.page);
       outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "source-channels") {
+      const result = await renderSourceChannels(ctx, runtime, person, {
+        page: action.page,
+      });
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "ask-source-channel") {
+      await askQuestion(
+        ctx,
+        questions,
+        { kind: "channel-code", telegramUserId: ctx.from?.id ?? 0 },
+        channelCodePrompt,
+      );
+      outcome = {
+        level: "info",
+        message: "source channel code requested",
+        result: "ok",
+        use_case: "manage_community",
+        identity_id: person.identityId,
+      };
       return;
     }
     if (action.kind === "ask-allowed-username") {
@@ -3104,6 +3270,66 @@ async function renderRefused(
   await showScreen(ctx, refusedScreen(result.value, page, communityToday(ctx)));
 }
 
+// Экран каналов открывается из управления, туда и возвращает отказ. После
+// заведения он открывается на странице нового канала: ссылку видно сразу.
+async function renderSourceChannels(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  at: { page: number } | { code: string },
+  notice?: string,
+): Promise<IdentityAdminResult<readonly SourceChannel[]>> {
+  const result: IdentityAdminResult<readonly SourceChannel[]> =
+    runtime.identity.sourceChannels === undefined
+      ? {
+          kind: "unavailable",
+          cause: new Error("source channels are not configured"),
+        }
+      : await runtime.identity.sourceChannels(
+          actor,
+          rpcCall(ctx, "manage_community"),
+        );
+  if (result.kind !== "ok") {
+    await showRefusal(
+      ctx,
+      result.kind === "forbidden"
+        ? sourceChannelsForbiddenText
+        : unavailableText,
+      withNav(new InlineKeyboard(), toManage),
+    );
+    return result;
+  }
+  const page =
+    "page" in at ? at.page : sourceChannelPage(result.value, at.code);
+  await showScreen(
+    ctx,
+    sourceChannelsScreen(
+      result.value,
+      page,
+      {
+        hub: ctx.me.username,
+        ...(runtime.auctionBotUsername === undefined
+          ? {}
+          : { auction: runtime.auctionBotUsername }),
+      },
+      notice,
+    ),
+  );
+  return result;
+}
+
+function sourceChannelsForbiddenOutcome(person: Person): BoundaryOutcome {
+  return {
+    level: "warn",
+    message: "management rejected",
+    result: "error",
+    use_case: "manage_community",
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "management_forbidden",
+  };
+}
+
 // Сообщение о допуске — побочный результат действия администратора, а не его
 // часть: допуск уже сохранён, поэтому отказ Identity или Telegram его не
 // отменяет и возвращается причиной для записи границы. Получатель, которого
@@ -4102,6 +4328,10 @@ function stepOf(pending: PendingBody): QuestionStep {
         : { kind: "broadcast" };
     case "allowed-username":
       return { kind: "username" };
+    case "channel-code":
+      return { kind: "channel-code" };
+    case "channel-label":
+      return { kind: "channel-label" };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -4157,6 +4387,10 @@ function pendingOf(
       };
     case "username":
       return { kind: "allowed-username", telegramUserId, expiresAt };
+    case "channel-code":
+      return { kind: "channel-code", telegramUserId, expiresAt };
+    case "channel-label":
+      return undefined;
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -4190,6 +4424,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         : { kind: "view-meetup", token: step.token };
     case "username":
       return { kind: "community-usernames", page: 0 };
+    case "channel-code":
+    case "channel-label":
+      return { kind: "source-channels", page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -4381,6 +4618,8 @@ function callbackUseCase(
     | "refused-applications"
     | "ask-reconsider"
     | "reconsider"
+    | "source-channels"
+    | "ask-source-channel"
     | "create-meetup"
     | "publish-meetup"
     | "manage-edit"
@@ -4468,6 +4707,8 @@ function callbackUseCase(
     case "refused-applications":
     case "ask-reconsider":
     case "reconsider":
+    case "source-channels":
+    case "ask-source-channel":
     case "community":
     case "community-pending":
     case "community-admitted":
