@@ -1,3 +1,4 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
   encodeAuctionCallback,
   type LotImagePort,
@@ -5,13 +6,25 @@ import {
 } from "@solguficky/auction-bot-ui";
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import { inspectCall, reportViolations } from "../testkit/screen-lint.js";
 import { createBot } from "./bot.js";
-import type { PortsFactory } from "./clients.js";
+import {
+  type AuctionRpc,
+  createPorts,
+  type IdentityRpc,
+  type PortsFactory,
+} from "./clients.js";
 import { entryCallback } from "./faq.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
+import {
+  actionBudgetMs,
+  pressWatchdogMs,
+  typingAfterMs,
+  typingEveryMs,
+} from "./waiting.js";
 
 const botInfo: UserFromGetMe = {
   id: 1,
@@ -269,7 +282,7 @@ describe("auction bot", () => {
     expect(calls).toEqual([]);
   });
 
-  it("answers the press before calling services and edits the screen through the gateway", async () => {
+  it("answers the press with the result after the services and edits the screen through the gateway", async () => {
     const order: string[] = [];
     const ports = vi.fn<PortsFactory>((requestId) => {
       const base = publicPorts(requestId);
@@ -306,8 +319,11 @@ describe("auction bot", () => {
         },
       },
     } as Update);
-    expect(order.indexOf("answerCallbackQuery")).toBeLessThan(
+    expect(order.indexOf("answerCallbackQuery")).toBeGreaterThan(
       order.indexOf("identity"),
+    );
+    expect(order.indexOf("answerCallbackQuery")).toBe(
+      order.indexOf("editMessageText") - 1,
     );
     const edit = calls.find((call) => call.method === "editMessageText");
     expect(edit?.payload).toMatchObject({
@@ -321,7 +337,7 @@ describe("auction bot", () => {
         ],
       },
     });
-    expect(ports).toHaveBeenCalledWith(expect.any(String));
+    expect(ports).toHaveBeenCalledWith(expect.any(String), expect.any(Number));
   });
 
   it("sends a new message when the pressed message cannot be edited", async () => {
@@ -501,6 +517,193 @@ describe("auction bot", () => {
     });
     expect(lines.join("")).not.toContain('"42"');
     expect(lines.join("")).not.toContain("v1:auc");
+  });
+});
+
+// Правило ожидания дизайн-кода на собранном боте. Сервис здесь — обещание,
+// которое отвечает по фальшивым таймерам: так видно, что человек получает
+// между нажатием и результатом.
+describe("waiting", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const methods = (calls: ReadonlyArray<{ method: string }>) =>
+    calls.map((call) => call.method);
+  const visible = (calls: ReadonlyArray<{ method: string }>) =>
+    methods(calls).filter((method) => method !== "sendChatAction");
+
+  // Порты, у которых Auction отдаёт лот через `delayMs` либо когда скажет тест.
+  function slowLot(delayMs?: number) {
+    let respond: () => void = () => undefined;
+    const ports: PortsFactory = (requestId, deadlineAt) => {
+      const base = publicPorts(requestId, deadlineAt);
+      return {
+        ...base,
+        auction: {
+          ...base.auction,
+          getLot: (request) =>
+            new Promise((resolve) => {
+              respond = () => resolve(base.auction.getLot(request));
+              if (delayMs !== undefined) setTimeout(respond, delayMs);
+            }),
+        },
+      };
+    };
+    return { ports, respond: () => respond() };
+  }
+
+  it("shows typing while Auction is slow and answers the press with the result", async () => {
+    const { bot, calls } = makeBot(slowLot(1_500).ports);
+
+    const handled = bot.handleUpdate(lotPress());
+    await vi.advanceTimersByTimeAsync(typingAfterMs - 1);
+    expect(methods(calls)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(methods(calls)).toEqual(["sendChatAction"]);
+    expect(calls[0]?.payload).toMatchObject({ chat_id: 42, action: "typing" });
+
+    await vi.advanceTimersByTimeAsync(500);
+    await handled;
+    await vi.advanceTimersByTimeAsync(typingEveryMs * 2);
+    expect(methods(calls)).toEqual([
+      "sendChatAction",
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[1]?.payload).not.toHaveProperty("text");
+  });
+
+  // Транспорт Connect обрывает вызов по `timeoutMs`; фальшивый RPC делает то
+  // же, поэтому бюджет здесь проверяется настоящими портами клиента.
+  function rpcAfter<T>(ms: number, value?: T) {
+    return vi.fn(
+      (_request: unknown, options?: { timeoutMs?: number }) =>
+        new Promise<T>((resolve, reject) => {
+          const limit = options?.timeoutMs ?? Number.POSITIVE_INFINITY;
+          if (limit < ms) {
+            setTimeout(
+              () =>
+                reject(
+                  new ConnectError("deadline exceeded", Code.DeadlineExceeded),
+                ),
+              limit,
+            );
+          } else {
+            setTimeout(() => resolve(value as T), ms);
+          }
+        }),
+    );
+  }
+
+  it("shows the unavailable frame once the action budget runs out", async () => {
+    const identity = {
+      resolveIdentity: rpcAfter(2_500, {
+        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+        globalRoles: [GlobalRole.PUBLIC],
+        blocked: false,
+      }),
+    };
+    const getLot = rpcAfter(Number.POSITIVE_INFINITY);
+    const auction = {
+      getFaqAcknowledgement: rpcAfter(1_500, { acknowledged: true }),
+      getLot,
+    };
+    // Моки отвечают формой сгенерированных сообщений без их классов.
+    const ports = createPorts(
+      identity as unknown as IdentityRpc,
+      auction as unknown as AuctionRpc,
+    );
+    const { bot, calls } = makeBot(ports);
+
+    const handled = bot.handleUpdate(lotPress());
+    await vi.advanceTimersByTimeAsync(actionBudgetMs - 1);
+    expect(methods(calls)).not.toContain("editMessageText");
+    // Чтение лота получило остаток бюджета, а не свои 3 секунды.
+    expect(getLot).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 1_000 }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1);
+    await handled;
+    expect(visible(calls)).toEqual(["answerCallbackQuery", "editMessageText"]);
+    const edit = calls.find((call) => call.method === "editMessageText");
+    expect(edit?.payload).toMatchObject({
+      text: expect.stringContaining("недоступен"),
+    });
+  });
+
+  it("answers a hanging press by the watchdog and only once", async () => {
+    const lot = slowLot();
+    const { bot, calls } = makeBot(lot.ports);
+
+    const handled = bot.handleUpdate(lotPress());
+    await vi.advanceTimersByTimeAsync(pressWatchdogMs - 1);
+    expect(methods(calls)).not.toContain("answerCallbackQuery");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(visible(calls)).toEqual(["answerCallbackQuery"]);
+
+    lot.respond();
+    await handled;
+    expect(visible(calls)).toEqual(["answerCallbackQuery", "editMessageText"]);
+  });
+
+  it("delivers the screen when Telegram refuses the press answer", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", (line) => lines.push(line));
+    const { bot, calls } = makeBot(publicPorts, {
+      logger,
+      refuse: { answerCallbackQuery: "Bad Request: query is too old" },
+    });
+
+    await bot.handleUpdate(lotPress());
+
+    expect(methods(calls)).toEqual(["answerCallbackQuery", "editMessageText"]);
+    expect(
+      lines.some((line) => line.includes("answerCallbackQuery failed")),
+    ).toBe(true);
+    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
+      operation: "callback",
+      result: "ok",
+    });
+  });
+
+  it("shows typing while /start waits for the services", async () => {
+    const ports: PortsFactory = (requestId, deadlineAt) => {
+      const base = publicPorts(requestId, deadlineAt);
+      return {
+        ...base,
+        identity: {
+          resolveIdentity: (user) =>
+            new Promise((resolve) => {
+              setTimeout(
+                () => resolve(base.identity.resolveIdentity(user)),
+                1_500,
+              );
+            }),
+        },
+      };
+    };
+    const { bot, calls } = makeBot(ports);
+
+    const handled = bot.handleUpdate(
+      startUpdate({
+        message_id: 1,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "/start",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(1_500);
+    await handled;
+    expect(methods(calls)).toEqual(["sendChatAction", "sendMessage"]);
   });
 });
 
