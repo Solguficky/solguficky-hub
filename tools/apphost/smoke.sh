@@ -16,7 +16,9 @@
 # Why a health probe is not enough: PER-7 saw Identity answer SERVING while
 # every ResolveIdentity failed on a commit the schema rejected. The domain
 # calls below share one x-request-id, so the same chain can be found in
-# Structured logs by that value afterwards.
+# Structured logs by that value afterwards. The calls only read, because a
+# write would leave smoke data among real records (PER-398): a failure that
+# hits writes alone, as PER-7's did, is left to the integration tests.
 #
 # Why resources are read from `aspire describe` instead of waited on one by
 # one: a resource whose dependency failed stays Waiting forever, and waiting on
@@ -235,28 +237,27 @@ for triple in "identity identity.v1.IdentityService $IDENTITY" \
   fi
 done
 
-# A synthetic Telegram id far above real ones: the smoke leaves a profile
-# behind in the worktree's own database, never in anyone else's.
-VIEWER=
-if [ -n "$IDENTITY" ]; then
-  tg=$(python3 -c 'import random; print(9_000_000_000_000 + random.randrange(10**9))')
-  out=$(call "$IDENTITY" identity.v1.IdentityService/ResolveIdentity "{\"telegram_user_id\":$tg}")
-  VIEWER=$(echo "$out" | python3 -c 'import json, sys
-try: print(json.load(sys.stdin)["identityId"])
-except Exception: pass')
-  if [ -n "$VIEWER" ]; then
-    ok "identity ResolveIdentity: new profile $VIEWER"
-  else
-    fail "identity ResolveIdentity: $(echo "$out" | tr '\n' ' ')"
-  fi
-fi
-# Without Identity in the profile the other services still get a well-formed
-# viewer: they check its shape, not its existence.
-[ -n "$VIEWER" ] || VIEWER=$(python3 -c '
+# A fresh UUIDv7 nobody holds. The services check a viewer's shape, not its
+# existence, so no real profile is needed for the calls below.
+VIEWER=$(python3 -c '
 import os, time
 b = bytearray(int(time.time() * 1000).to_bytes(6, "big") + os.urandom(10))
 b[6] = (b[6] & 0x0F) | 0x70; b[8] = (b[8] & 0x3F) | 0x80
 h = b.hex(); print(f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}")')
+
+# Identity is asked a read, not ResolveIdentity: that one creates a profile at
+# first contact, and a smoke profile then sat among real people in the
+# administrator's community list (PER-398). NotFound proves the caller token
+# was accepted and the profiles table was read; a rejected token is
+# Unauthenticated or PermissionDenied instead.
+if [ -n "$IDENTITY" ]; then
+  out=$(call "$IDENTITY" identity.v1.IdentityService/ResolveTelegramUserId "{\"identity_id\":\"$VIEWER\"}")
+  if echo "$out" | has NotFound; then
+    ok "identity ResolveTelegramUserId of a missing id: NotFound"
+  else
+    fail "identity ResolveTelegramUserId: $(echo "$out" | tr '\n' ' ')"
+  fi
+fi
 
 if [ -n "$MEETUPS" ]; then
   out=$(call "$MEETUPS" meetups.v1.MeetupsService/GetMeetup \
