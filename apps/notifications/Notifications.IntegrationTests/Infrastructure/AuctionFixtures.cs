@@ -29,6 +29,9 @@ public static class AuctionFixtures
     public static AuctionBid Decode(global::Auction.V1.LotEvent message) =>
         AuctionMapping.Decode(AuctionFeed.BidPlacedSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Bid>().Value;
 
+    public static AuctionSale DecodeSale(global::Auction.V1.LotEvent message) =>
+        AuctionMapping.Decode(AuctionFeed.LotSoldSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Sale>().Value;
+
     public static Task<long> Count(IsolatedDatabase db, string table) =>
         Scalar<long>(db, $"SELECT count(*) FROM {table};");
 
