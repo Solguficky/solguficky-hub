@@ -10,6 +10,7 @@
 |---|---|---|
 | `/` | [index.html](index.html) — индекс сайта | — |
 | `/auction-2026` | [auction-2026/index.html](auction-2026/index.html) — «Аукцион 2026», страница обсуждения формата и фич | [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md) |
+| `/hub-mvp` | [hub-mvp/index.html](hub-mvp/index.html) — «Solguficky Hub: что бот умеет сейчас», знакомство с ботом сходок для администратора и сообщества: концепция, пути участника и администратора, ограничения | [продукт и границы MVP](../product/overview.md), [дизайн-код экранов](../design/bot/design-code.md), [живые прогоны](../development/local-development.md) |
 | `/archive/auction-module` | [archive/auction-module/index.html](archive/auction-module/index.html) — презентация прошлой реализации, состояние на 28.10.2025 | [исходник в Marp](../archive/services/auction-module-slides.md) |
 
 Колонка «Связанный документ» — обратная сторона связи: сама страница на репозиторий не ссылается, потому что на сайте относительного пути в репозиторий не существует.
