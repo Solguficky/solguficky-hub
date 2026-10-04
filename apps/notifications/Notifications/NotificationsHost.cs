@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Options;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using Notifications.Broadcasts;
@@ -243,7 +244,17 @@ public static class NotificationsHost
             .Bind(builder.Configuration.GetSection(FactOptions.SectionName))
             .Validate(FactOptions.IsValid, FactOptions.ValidationMessage)
             .ValidateOnStart();
-        builder.Services.Configure<DispatchOptions>(builder.Configuration.GetSection(DispatchOptions.SectionName));
+        // Горизонт короче срока жизни ключей события сломал бы дедупликацию
+        // повода, а ноль попыток вычеркнул бы строку без публикации: оба
+        // ловятся на старте, а не на первой чистке.
+        builder.Services.AddOptions<DispatchOptions>()
+            .Bind(builder.Configuration.GetSection(DispatchOptions.SectionName))
+            .Validate<IOptions<ConsumerOptions>>(
+                (dispatch, consumer) => DispatchOptions.IsValid(dispatch, consumer.Value),
+                DispatchOptions.ValidationMessage)
+            .ValidateOnStart();
+        // Чистка, как и ключей событий, шины не требует.
+        builder.Services.AddHostedService<NotificationPruner>();
 
         if (natsUrl is not null)
         {

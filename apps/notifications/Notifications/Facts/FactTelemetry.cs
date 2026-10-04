@@ -23,6 +23,9 @@ public sealed class FactTelemetry
     private static readonly Counter<long> Withdrawn = Meter.CreateCounter<long>("notifications.facts.withdrawn");
     private static readonly Counter<long> Dispatched = Meter.CreateCounter<long>("notifications.facts.dispatched");
     private static readonly Counter<long> DispatchFailures = Meter.CreateCounter<long>("notifications.facts.dispatch_failures");
+    private static readonly Counter<long> RelayOutcomes = Meter.CreateCounter<long>(
+        "notifications.facts.relay_outcomes",
+        description: "Relay outcomes per row: published, expired, refused (bus rejected the row, attempt counted), rejected (attempts exhausted, row left the queue); failed counts passes stopped by a transient failure of the bus or the database.");
     private static readonly Gauge<double> OldestPendingAge = Meter.CreateGauge<double>(
         "notifications.facts.oldest_pending_age_seconds",
         unit: "s",
@@ -81,15 +84,45 @@ public sealed class FactTelemetry
 
         Dispatched.Add(count);
         Add("dispatched", count);
+        Outcome("published", count);
     }
 
+    /// <summary>
+    /// Учитывает исходы прохода релея, кроме вынесенного: снятое по сроку,
+    /// отказ «всегда» с оставленной строкой и вычеркнутые строки.
+    /// </summary>
+    public void RecordPass(int expired, int refused, int rejected)
+    {
+        Outcome("expired", expired);
+        Outcome("refused", refused);
+        Outcome("rejected", rejected);
+    }
+
+    /// <summary>
+    /// Проход, остановленный временным отказом шины или базы. Счёт идёт по
+    /// проходам, а не по строкам: строка с отказом остаётся в очереди, и
+    /// следующий проход начнёт с неё же. Отличить шину от базы можно по
+    /// записи notification_dispatch и по solguficky.failures.
+    /// </summary>
     public void DispatchFailed()
     {
         DispatchFailures.Add(1);
         Add("dispatch_failures", 1);
+        Outcome("failed", 1);
     }
 
     public void ObserveOldestPending(double seconds) => OldestPendingAge.Record(seconds);
+
+    private void Outcome(string outcome, long count)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
+        RelayOutcomes.Add(count, new KeyValuePair<string, object?>("outcome", outcome));
+        Add($"relay_{outcome}", count);
+    }
 
     private void Add(string name, long count) => totals.AddOrUpdate(name, count, (_, held) => held + count);
 }

@@ -56,7 +56,13 @@ public sealed class NatsUnderTest : IAsyncDisposable
     /// Окно хранения стримов; по умолчанию — то же, что у топологии AppHost.
     /// Другое значение проверяет, что сервис сверяет с ним срок жизни ключей.
     /// </param>
-    public static async Task<NatsUnderTest> Start(bool withDurables = true, TimeSpan? streamMaxAge = null)
+    /// <param name="factsMaxMessageSize">
+    /// Предел размера сообщения стрима адресных фактов; по умолчанию его нет.
+    /// Заданный превращает крупный факт в отказ «всегда»: шина отвечает на
+    /// публикацию ошибкой о самом сообщении.
+    /// </param>
+    public static async Task<NatsUnderTest> Start(
+        bool withDurables = true, TimeSpan? streamMaxAge = null, int? factsMaxMessageSize = null)
     {
         var container = new NatsBuilder("nats:2.10-alpine").Build();
         await container.StartAsync();
@@ -94,6 +100,7 @@ public sealed class NatsUnderTest : IAsyncDisposable
             Storage = StreamConfigStorage.File,
             MaxAge = streamMaxAge ?? ReplicaFeeds.StreamMaxAge,
             DuplicateWindow = TimeSpan.FromMinutes(2),
+            MaxMsgSize = factsMaxMessageSize ?? -1,
         });
 
         return bus;
