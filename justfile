@@ -183,8 +183,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Hub Bot, API сайта, общий пакет аукционного интерфейса ботов, бот аукциона, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, Hub Bot, API сайта, линтер экрана дизайн-кода, общий пакет аукционного интерфейса ботов, бот аукциона, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -203,10 +203,10 @@ verify-changed:
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test auction-bot-ui-test auction-bot-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
+test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test screen-lint-test auction-bot-ui-test auction-bot-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools hub-bot-tools community-site-api-tools auction-bot-ui-tools auction-bot-tools dotnet-tools auction-tools nats-tester-tools
+tools: identity-tools hub-bot-tools community-site-api-tools screen-lint-tools auction-bot-ui-tools auction-bot-tools dotnet-tools auction-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -480,6 +480,25 @@ community-site-api-e2e:
 # Статика docs/published плюс /api/notes — для ручного прогона страницы
 community-site-serve:
     cd apps/community-site-api && node e2e/server.mjs
+
+# --- Screen lint (TypeScript) ----------------------------------------------
+#
+# Линтер экрана дизайн-кода и форма каталога экранов, общие для двух ботов и
+# пакета аукционного интерфейса. Сборки нет: тестовый код потребителей берёт
+# исходники относительным путём, и проверяют их и эти рецепты, и наборы
+# потребителей. `npm ci` ставит только инструменты разработки пакета.
+
+screen-lint-tools:
+    cd shared/typescript/screen-lint && npm ci
+
+screen-lint-typecheck:
+    cd shared/typescript/screen-lint && npm run typecheck
+
+screen-lint-test:
+    cd shared/typescript/screen-lint && npm test
+
+screen-lint-lint:
+    cd shared/typescript/screen-lint && npm run lint
 
 # --- Auction bot UI (TypeScript) -------------------------------------------
 #

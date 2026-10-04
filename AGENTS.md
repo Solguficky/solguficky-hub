@@ -30,6 +30,7 @@ Milestones, приоритеты, задачи и прогресс ведутс�
 - `contracts/proto/` — канонические Protobuf-контракты NATS и gRPC, разложенные по домену-владельцу и major-версии; код генерируется потребителями при сборке, стиль и совместимость схем держат `buf lint` и `buf breaking` в CI.
 - `shared/dotnet/` — общий код .NET-сервисов: ServiceDefaults, его потребляют Meetups и Notifications, и `Container.targets` — правила production-образа SDK-контейнером с отказом сборки на базе без digest, его импортируют Meetups и Notifications. `shared/` содержит только подкаталоги по языкам и никогда не получает языконезависимый общий модуль.
 - `shared/typescript/auction-bot-ui/` — общий пакет аукционного интерфейса двух ботов ([ADR-044](docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)): шлюз `handleAuctionUpdate(surface, update)`, порты Auction и Identity интерфейсами, каноническое тело экрана `AuctionScreenBody`, `callback_data` домена `auc` с parser, юзкейсы ленты и карточки лота и contract suite на подпути `./contract`. Сырые юзкейсы и диспетчер в `exports` не входят, и проверку этого держит typecheck. Ставится своим `npm ci`, как приложения; бот аукциона берёт его `file:`-зависимостью, бот хаба пока не импортирует.
+- `shared/typescript/screen-lint/` — линтер экрана и форма каталога экранов, общие для двух ботов и пакета аукционного интерфейса: исполнение правил [дизайн-кода](docs/design/bot/design-code.md#исполнение-правил). Каталог держит каждый бот у себя и передаёт линтеру вместе с частными правилами своего дерева. Сборки и `exports` нет: пакет берёт только тестовый код потребителей, относительным путём, а прод-код и образы о нём не знают. Свои рецепты `just screen-lint-*`; его путь поднимает в CI джобы обоих ботов и пакета аукциона.
 - `infra/apphost/` — локальная оркестрация .NET Aspire, разложенная как компонент: проект `AppHost/` и его тесты `AppHost.UnitTests/`. Какой AppHost запускать, CLI читает из `appHost.path` в корневом `aspire.config.json`. Из того же графа `aspire publish` собирает Helm-чарт прода ([ADR-055](docs/decisions/ADR-055-k3s-runtime-from-aspire-chart.md)): каждый узел регистрируется с отображением в чарт, профиль чарта называет `Topology:PublishProfile`, а PostgreSQL и NATS в нём — строки подключения среды.
 - `infra/apphost/AppHost.UnitTests/` — тесты графа и профилей AppHost на xUnit v3: валидация владения узлом и материализация модели отрабатывают до старта ресурсов, поэтому Docker набору не нужен. Оба режима проверяются там же: граф публикации — составом workload'ов, снимком `cluster.publish.txt` и отказом на узле без отображения, локальный — снимком `hub.run.txt`; оба снимка лежат в `TestUtilities/Snapshots/`. Рецепт `just apphost-test`, входит в `verify` и в джобу `apphost` в CI.
 - `infra/observability/` — конфигурация Loki, Promtail и Grafana для локального стека логов.
@@ -190,6 +191,13 @@ just community-site-api-typecheck
 just community-site-api-lint
 just community-site-api-test
 # Сборки нет: функцию бандлит Netlify CLI при деплое сайта
+
+# Screen lint — зависимости, typecheck, линт и тесты линтера экрана
+just screen-lint-tools
+just screen-lint-typecheck
+just screen-lint-lint
+just screen-lint-test
+# Сборки нет: тестовый код ботов берёт исходники относительным путём
 
 # Auction bot UI — зависимости, сборка, typecheck, линт и тесты общего пакета
 just auction-bot-ui-tools

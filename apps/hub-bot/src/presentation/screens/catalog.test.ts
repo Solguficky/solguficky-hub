@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  meetupListParent,
-  meetupLists,
-  type ScreenEntry,
-  screenCatalog,
-} from "./catalog.js";
+import type { ScreenEntry } from "../../../testkit/screen-lint.js";
+import { meetupListParent, meetupLists, screenCatalog } from "./catalog.js";
 
 const entries: [string, ScreenEntry][] = Object.entries(screenCatalog);
 
