@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Options;
 using NATS.Client.JetStream;
 using Notifications.Infrastructure;
+using Notifications.Messaging;
 using Notifications.Observability;
 using Notifications.Replica;
 
@@ -21,6 +22,40 @@ public sealed class DispatchOptions
 
     /// <summary>Сколько строк берёт один проход.</summary>
     public int BatchSize { get; set; } = 100;
+
+    /// <summary>
+    /// Сколько отказов «всегда» (<see cref="BusRejection" />) строка переносит
+    /// до вычёркивания. Такой отказ детерминирован, и повтор страхует только
+    /// от единичного ошибочного ответа: попытки идут проход за проходом, без
+    /// паузы, и перенастройку стрима не дожидаются. Уменьшенный по ошибке
+    /// <c>max_msg_size</c> вычеркнет крупные строки за несколько секунд.
+    /// </summary>
+    public int MaxAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Горизонт хранения строки после её исхода — выноса, снятия или
+    /// вычёркивания. Не меньше окна повтора повода плюс срок операторского
+    /// разбора (docs/services/notifications.md).
+    /// </summary>
+    public TimeSpan Retention { get; set; } = TimeSpan.FromDays(30);
+
+    /// <summary>Период чистки строк старше горизонта.</summary>
+    public TimeSpan PrunePeriod { get; set; } = TimeSpan.FromHours(1);
+
+    public const string ValidationMessage =
+        "Notifications:Dispatch:MaxAttempts must be at least 1, PrunePeriod positive, " +
+        "and Retention not shorter than Notifications:Replica:KeyRetention";
+
+    /// <summary>
+    /// Горизонт короче срока жизни ключей события сломал бы дедупликацию: ключ
+    /// повода живёт в строке <c>notification</c>, и повтор события, ключ
+    /// которого в <c>consumed_event</c> уже вычищен, после удаления строки
+    /// родил бы второй факт. Ноль попыток вычеркнул бы строку без публикации.
+    /// </summary>
+    public static bool IsValid(DispatchOptions options, ConsumerOptions consumer) =>
+        options.MaxAttempts >= 1
+        && options.PrunePeriod > TimeSpan.Zero
+        && options.Retention >= consumer.KeyRetention;
 }
 
 /// <summary>
@@ -69,7 +104,7 @@ public sealed class NotificationDispatcher(
                 // Отказ базы: таблица на месте, следующий проход повторит.
                 telemetry.DispatchFailed();
                 ReplicaTelemetry.Fail("dependency_unavailable");
-                Log(LogLevel.Error, startedAt, 0, "dependency_unavailable", ex.Message, ex, 0);
+                Log(LogLevel.Error, startedAt, new PassSummary(0, 0, 0, 0), "dependency_unavailable", ex.Message, ex);
             }
         }
         while (await Tick(timer, stoppingToken));
@@ -77,26 +112,39 @@ public sealed class NotificationDispatcher(
 
     private async Task Pass(long startedAt, CancellationToken stoppingToken)
     {
-        var pass = await store.Dispatch(options.Value.BatchSize, Publish, clock.GetUtcNow(), stoppingToken);
+        var pass = await store.Dispatch(
+            options.Value.BatchSize, options.Value.MaxAttempts, Publish, clock.GetUtcNow(), stoppingToken);
         telemetry.Dispatch(pass.Published);
         telemetry.RecordWithdrawn(NotificationFacts.WithdrawnExpired, pass.Expired);
         var expired = pass.Expired.Sum(facts => facts.Count);
+        telemetry.RecordPass(expired, pass.Refused, pass.Rejected.Count);
+
+        foreach (var rejected in pass.Rejected)
+        {
+            // Вычеркнутый факт потерян для человека, поэтому он — отказ по
+            // нормативу: шина назвала причиной само сообщение, и это
+            // нарушение её объявленного правила, а не её недоступность.
+            ReplicaTelemetry.Fail("invariant");
+            LogRejected(rejected);
+        }
 
         var oldest = await store.OldestPending(stoppingToken);
         telemetry.ObserveOldestPending(oldest is { } moment ? (clock.GetUtcNow() - moment).TotalSeconds : 0);
+
+        var summary = new PassSummary(pass.Published, expired, pass.Refused, pass.Rejected.Count);
 
         if (pass.Failure is { } failure)
         {
             telemetry.DispatchFailed();
             ReplicaTelemetry.Fail("dependency_unavailable");
-            Log(LogLevel.Error, startedAt, pass.Published, "dependency_unavailable", failure.Message, failure, expired);
+            Log(LogLevel.Error, startedAt, summary, "dependency_unavailable", failure.Message, failure);
         }
-        else if (pass.Published > 0 || expired > 0)
+        else if (summary.Any)
         {
             // Пустой проход не пишется: он повторяется раз в секунду, и лог
             // состоял бы из них. Молчащий релей виден по возрасту старейшего
             // неотправленного факта, а не по тишине в логе.
-            Log(LogLevel.Information, startedAt, pass.Published, null, null, null, expired);
+            Log(LogLevel.Information, startedAt, summary, null, null, null);
         }
     }
 
@@ -108,17 +156,26 @@ public sealed class NotificationDispatcher(
             opts: new NatsJSPubOpts { MsgId = notification.NotificationId.ToString() },
             cancellationToken: cancellationToken);
 
+        // Дубликат — это подтверждение, а не отказ: сообщение с этим
+        // notification_id уже в стриме. Так выглядит повтор после публикации,
+        // ответ на которую потерялся — шина замёрзла или оборвала соединение
+        // уже после записи. EnsureSuccess бросил бы на нём исключение, и строка
+        // стояла бы в очереди до конца окна дедупликации, хотя факт вынесен.
+        if (ack.Duplicate)
+        {
+            return;
+        }
+
         ack.EnsureSuccess();
     }
 
     private void Log(
         LogLevel level,
         long startedAt,
-        int published,
+        PassSummary summary,
         string? errorCategory,
         string? error,
-        Exception? exception,
-        int expired)
+        Exception? exception)
     {
         // Та же форма, что у replica_apply и снимка sweeper'а
         // (Observability/OperationLog), с каркасом
@@ -129,10 +186,15 @@ public sealed class NotificationDispatcher(
             ["operation"] = "notification_dispatch",
             ["result"] = errorCategory is null ? "ok" : "error",
             ["duration_us"] = (long)Stopwatch.GetElapsedTime(startedAt).TotalMicroseconds,
-            ["published"] = published,
+            ["published"] = summary.Published,
 
             // Снятые по сроку годности: в шину не вынесены и не потеряны.
-            ["expired"] = expired,
+            ["expired"] = summary.Expired,
+
+            // Отказ «всегда», после которого строка осталась в очереди, и
+            // вычеркнутые: у каждой вычеркнутой ещё и своя запись.
+            ["refused"] = summary.Refused,
+            ["rejected"] = summary.Rejected,
         };
 
         if (errorCategory is not null)
@@ -142,6 +204,30 @@ public sealed class NotificationDispatcher(
         }
 
         OperationLog.Write(logger, level, exception, fields);
+    }
+
+    // Запись на строку, а не только сумма прохода: разбор начинается с
+    // notification_id, по которому строку находят в таблице и у канала.
+    private void LogRejected(RejectedNotification rejected) =>
+        OperationLog.Write(logger, LogLevel.Error, rejected.Error, new Dictionary<string, object>
+        {
+            ["service"] = NotificationsHost.ServiceId,
+            ["operation"] = "notification_reject",
+            ["result"] = "error",
+            // Вычёркивание — отметка внутри прохода, а не своя операция:
+            // длительность нулевая, как у перехода в BusConnectionWatcher.
+            // Каркас требует поле всегда, а длину прохода несёт его запись.
+            ["duration_us"] = 0L,
+            ["error_category"] = "invariant",
+            ["error"] = rejected.Error.Message,
+            ["notification_id"] = rejected.NotificationId.ToString(),
+            ["type"] = rejected.Type,
+            ["attempts"] = rejected.Attempts,
+        });
+
+    private sealed record PassSummary(int Published, int Expired, int Refused, int Rejected)
+    {
+        public bool Any => Published > 0 || Expired > 0 || Refused > 0 || Rejected > 0;
     }
 
     private static async Task<bool> Tick(PeriodicTimer timer, CancellationToken stoppingToken)

@@ -43,6 +43,11 @@ export const hubAccessErrors = {
 
 const memberCircleRoles = ["admin", "maintainer", "member"] as const;
 
+/** Круг `member` хаба: Identity отдаёт роли плоско и вложенность не разворачивает. */
+export function inMemberCircle(globalRoles: readonly string[]): boolean {
+  return memberCircleRoles.some((role) => globalRoles.includes(role));
+}
+
 export function decideHubAccess(
   globalRoles: readonly string[],
   blocked: boolean,
@@ -50,7 +55,7 @@ export function decideHubAccess(
   if (blocked) {
     return "blocked";
   }
-  if (memberCircleRoles.some((role) => globalRoles.includes(role))) {
+  if (inMemberCircle(globalRoles)) {
     return "admitted";
   }
   return "pending";

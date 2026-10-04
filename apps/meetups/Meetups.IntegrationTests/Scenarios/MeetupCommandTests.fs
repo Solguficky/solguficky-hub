@@ -364,20 +364,25 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
+        // Момент получает только сходка с заголовком (PER-457).
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
         let scheduled =
             MeetupCommands.schedulePublication
                 source
-                secondEvent
+                thirdEvent
                 (MeetupId meetupId)
                 (MeetupCommands.localMoment 2026 10 5 19 0)
 
-        test <@ MeetupCommands.versionIn scheduled = Some 2L @>
-        test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+        test <@ MeetupCommands.versionIn scheduled = Some 3L @>
+        test <@ MeetupCommands.countEvents dsn meetupId = 3L @>
 
         test
             <@
                 MeetupCommands.eventTypes dsn meetupId = [
                     "meetup_created"
+                    "meetup_changed"
                     "meetup_publication_scheduled"
                 ]
             @>
@@ -412,22 +417,27 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
+        // Момент получает только сходка с заголовком (PER-457).
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
         MeetupCommands.schedulePublication
             source
-            secondEvent
+            thirdEvent
             (MeetupId meetupId)
             (MeetupCommands.localMoment 2026 10 5 19 0)
         |> ignore
 
         let cancelled =
-            MeetupCommands.cancelPublication source thirdEvent (MeetupId meetupId)
+            MeetupCommands.cancelPublication source fourthEvent (MeetupId meetupId)
 
-        test <@ MeetupCommands.versionIn cancelled = Some 3L @>
+        test <@ MeetupCommands.versionIn cancelled = Some 4L @>
 
         test
             <@
                 MeetupCommands.eventTypes dsn meetupId = [
                     "meetup_created"
+                    "meetup_changed"
                     "meetup_publication_scheduled"
                     "meetup_publication_cancelled"
                 ]
@@ -436,8 +446,8 @@ type MeetupCommandTests() =
         test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
         test <@ MeetupCommands.visibilityOf dsn meetupId = "hidden" @>
 
-    /// Прошедший момент отвергается доменом до записи: у сходки остаётся только
-    /// событие создания.
+    /// Прошедший момент отвергается доменом до записи: у сходки остаются только
+    /// создание и правка заголовка.
     [<Fact>]
     member _.``A past publication moment is rejected without writing``() =
         use db = SchemaSql.applyIsolated ()
@@ -447,11 +457,15 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
+        // Момент получает только сходка с заголовком (PER-457).
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
         // 19:00 предыдущего дня в Москве: «сейчас» сценария — 12:00 UTC седьмого.
         let refused =
             MeetupCommands.schedulePublication
                 source
-                secondEvent
+                thirdEvent
                 (MeetupId meetupId)
                 (MeetupCommands.localMoment 2026 9 6 19 0)
 
@@ -459,6 +473,36 @@ type MeetupCommandTests() =
             Error(
                 Meetups.Slices.ScheduleMeetupPublication.ScheduleMeetupPublicationError.Domain
                     PublicationMomentInThePast
+            )
+
+        test <@ refused = expected @>
+
+        test <@ MeetupCommands.countEvents dsn meetupId = 2L @>
+        test <@ not (MeetupCommands.scheduledPublicationIsSet dsn meetupId) @>
+
+    /// Черновик без заголовка момента не получает: воркер такую сходку не публикует,
+    /// и назначенный момент обещал бы публикацию, которой не будет (PER-457). Отказ
+    /// приходит до записи — в журнале остаётся одно создание.
+    [<Fact>]
+    member _.``A publication moment for an untitled draft is rejected without writing``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        use source = MeetupCommands.source dsn
+
+        MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
+        |> ignore
+
+        let refused =
+            MeetupCommands.schedulePublication
+                source
+                secondEvent
+                (MeetupId meetupId)
+                (MeetupCommands.localMoment 2026 10 5 19 0)
+
+        let expected: Result<MeetupSnapshot, Meetups.Slices.ScheduleMeetupPublication.ScheduleMeetupPublicationError> =
+            Error(
+                Meetups.Slices.ScheduleMeetupPublication.ScheduleMeetupPublicationError.Domain
+                    TitleRequiredForPublication
             )
 
         test <@ refused = expected @>
@@ -478,14 +522,18 @@ type MeetupCommandTests() =
         MeetupCommands.create source firstEvent (MeetupId meetupId) MeetupCommands.administrator
         |> ignore
 
+        // Момент получает только сходка с заголовком (PER-457).
+        MeetupCommands.change source secondEvent (MeetupId meetupId)
+        |> ignore
+
         MeetupCommands.schedulePublication
             source
-            secondEvent
+            thirdEvent
             (MeetupId meetupId)
             (MeetupCommands.localMoment 2026 10 5 19 0)
         |> ignore
 
-        MeetupCommands.cancel source thirdEvent (MeetupId meetupId)
+        MeetupCommands.cancel source fourthEvent (MeetupId meetupId)
         |> ignore
 
         test

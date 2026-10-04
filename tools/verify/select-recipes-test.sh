@@ -63,8 +63,8 @@ assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
 assert_selects "aspire.config.json selects apphost" \
     "$always apphost-config-check apphost-build apphost-test apphost-chart-test" aspire.config.json
-assert_selects "shared package selects its own recipes and its consumer" \
-    "$always auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/auction-bot-ui/src/index.ts
+assert_selects "shared package selects its own recipes and both bots" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/auction-bot-ui/src/index.ts
 assert_selects "screen lint selects its own recipes and every consumer" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/screen-lint/src/inspect.ts
 assert_selects "delivery package selects its own recipes and both bots" \

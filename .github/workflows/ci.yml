@@ -85,6 +85,8 @@ jobs:
               - 'tests/telegram-live/**'
               # Линтер экрана: test kit бота берёт его исходники.
               - 'shared/typescript/screen-lint/**'
+              # Аукцион у сходки — общий пакет `file:`-зависимостью (PER-307).
+              - 'shared/typescript/auction-bot-ui/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction:
@@ -153,6 +155,7 @@ jobs:
               - 'apps/hub-bot/**'
               - 'shared/typescript/screen-lint/**'
               - 'shared/typescript/telegram-delivery/**'
+              - 'shared/typescript/auction-bot-ui/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -377,6 +380,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             shared/typescript/telegram-delivery/package-lock.json
+            shared/typescript/auction-bot-ui/package-lock.json
             apps/hub-bot/package-lock.json
             tests/telegram-live/package-lock.json
       - id: tools
@@ -388,9 +392,12 @@ jobs:
           setup_only: true
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
-      # Пакет доставки собирается первым: `exports` ведут в его `dist`.
+      # Общие пакеты — `file:`-зависимости бота, а их `exports` ведут в `dist`:
+      # они собираются до установки бота.
       - run: npm ci && npm run build
         working-directory: shared/typescript/telegram-delivery
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/auction-bot-ui
       - run: npm ci
         working-directory: apps/hub-bot
       # mtcute живого контура: код драйвера проходит typecheck, lint и L0 бота.
@@ -791,10 +798,13 @@ jobs:
           cache: npm
           cache-dependency-path: |
             shared/typescript/telegram-delivery/package-lock.json
+            shared/typescript/auction-bot-ui/package-lock.json
             apps/hub-bot/package-lock.json
-      # Провод бота читает код хаба, а тот — собранный пакет доставки.
+      # Провод бота читает код хаба, а тот — собранные общие пакеты.
       - run: npm ci && npm run build
         working-directory: shared/typescript/telegram-delivery
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/auction-bot-ui
       - run: npm ci
         working-directory: apps/hub-bot
       - uses: extractions/setup-just@v4

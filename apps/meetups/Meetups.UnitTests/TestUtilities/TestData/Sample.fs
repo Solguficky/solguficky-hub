@@ -80,6 +80,10 @@ let cancelled = Meetup.apply (Existing titled) MeetupCancelled
 /// Состояния «запланирована публикация» не существует — признак выводится из поля.
 let scheduled = Meetup.apply (Existing titled) (MeetupPublicationScheduled later)
 
+/// Сходка, которую воркер опубликовал в назначенный момент: видима, момент забран
+/// публикацией. Из неё отмена момента видит проигранную гонку (PER-457).
+let publishedByWorker = Meetup.apply (Existing scheduled) (MeetupPublished later)
+
 /// Отменённая скрытая сходка без заголовка: на ней видно, что состояние проверяется
 /// раньше заголовка и настоящая причина отказа не подменяется.
 let cancelledDraft = Meetup.apply (Existing draft) MeetupCancelled

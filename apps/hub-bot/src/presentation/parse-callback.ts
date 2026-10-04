@@ -156,6 +156,9 @@ type PlainAction =
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
   | { kind: "manage-draft"; token: string; field?: FormField }
   | { kind: "manage-status"; token: string }
+  // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
+  // здесь нет: она домена `auc`, и её пишет и разбирает общий пакет.
+  | { kind: "manage-auction"; token: string }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string }
@@ -536,6 +539,8 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "status")
     return { kind: "manage-status", token: token.data };
+  if (parts.length === 4 && parts[2] === "auction")
+    return { kind: "manage-auction", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
     return { kind: "manage-publish", token: token.data };
   if (parts.length === 4 && parts[2] === "unpublish")

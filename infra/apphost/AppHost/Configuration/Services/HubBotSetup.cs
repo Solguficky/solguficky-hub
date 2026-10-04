@@ -83,6 +83,10 @@ internal static class HubBotSetup
             .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Notifications, "grpc", "NOTIFICATIONS_GRPC_URL")
+            // Аукцион у сходки (PER-307): вход и включение на карточке, лента
+            // и лот через общий пакет. Auction принимает бота хаба по его же
+            // токену вызывающего (AuctionSetup.AcceptCallers).
+            .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "AUCTION_GRPC_URL")
             // Второй вход бота — адресные факты Notifications. WaitFor(nats)
             // внутри BindConnection ждёт и применения топологии: durable и
             // bucket журнала заводит AppHost, а бот без них не стартует.

@@ -140,6 +140,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         WHERE meetup_id = @MeetupId
             AND dispatched_at IS NULL
             AND withdrawn_at IS NULL
+            AND rejected_at IS NULL
             AND type = ANY(@Types)
         RETURNING type;
         """;
@@ -155,41 +156,67 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         WHERE applicant_id = @ApplicantId
             AND dispatched_at IS NULL
             AND withdrawn_at IS NULL
+            AND rejected_at IS NULL
             AND access_circle = ANY(@Circles)
             AND application_version < @Version
         RETURNING type;
         """;
 
     // SKIP LOCKED: второй экземпляр сервиса берёт другие строки, а не ждёт
-    // блокировки. Порядок между фактами контракт не обещает — каждый факт
-    // самостоятелен. Строка, которую шина отвергает всегда, при этом держит
-    // очередь: проход останавливается на первом отказе и следующим начинает с
-    // неё же. Виден такой затор по возрасту старейшего неотправленного факта;
-    // dead-letter — PER-72.
+    // блокировки, и счётчик попыток одной строки два прохода не делят. Порядок
+    // между фактами контракт не обещает — каждый факт самостоятелен.
     private const string PendingSql = """
-        SELECT notification_id AS NotificationId, type AS Type, not_after AS NotAfter, payload AS Payload
+        SELECT notification_id AS NotificationId, type AS Type, not_after AS NotAfter, payload AS Payload,
+               dispatch_attempts AS Attempts
         FROM notification
-        WHERE dispatched_at IS NULL AND withdrawn_at IS NULL
+        WHERE dispatched_at IS NULL AND withdrawn_at IS NULL AND rejected_at IS NULL
         ORDER BY created_at
         LIMIT @Limit
         FOR UPDATE SKIP LOCKED;
         """;
 
-    // Условие на withdrawn_at здесь не решает гонку — строку держит этот же
-    // проход, — а повторяет инвариант схемы notification_withdrawn_not_dispatched.
+    // Условия на исходы здесь не решают гонку — строку держит этот же проход, —
+    // а повторяют инвариант схемы notification_single_outcome.
     private const string MarkSql = """
         UPDATE notification SET dispatched_at = @Now
-        WHERE notification_id = @NotificationId AND dispatched_at IS NULL AND withdrawn_at IS NULL;
+        WHERE notification_id = @NotificationId
+            AND dispatched_at IS NULL AND withdrawn_at IS NULL AND rejected_at IS NULL;
         """;
 
     private const string ExpireSql = """
         UPDATE notification SET withdrawn_at = @Now, withdrawal_reason = @Reason
-        WHERE notification_id = @NotificationId AND dispatched_at IS NULL AND withdrawn_at IS NULL;
+        WHERE notification_id = @NotificationId
+            AND dispatched_at IS NULL AND withdrawn_at IS NULL AND rejected_at IS NULL;
         """;
 
-    // Снятое в очередь не входит: его возраст означал бы затор, которого нет.
-    private const string OldestPendingSql =
-        "SELECT MIN(created_at) FROM notification WHERE dispatched_at IS NULL AND withdrawn_at IS NULL;";
+    // Попытка считается и тогда, когда предела она не исчерпала: строка
+    // остаётся в очереди, а следующий проход начнёт с неё и, если отказ
+    // повторится, сделает следующую. Отметка вычёркивания ставится только на
+    // последней.
+    private const string RefuseSql = """
+        UPDATE notification
+        SET dispatch_attempts = @Attempts,
+            rejected_at = CASE WHEN @Rejected THEN @Now END,
+            rejection_error = CASE WHEN @Rejected THEN @Error END
+        WHERE notification_id = @NotificationId
+            AND dispatched_at IS NULL AND withdrawn_at IS NULL AND rejected_at IS NULL;
+        """;
+
+    // Снятое и вычеркнутое в очередь не входят: их возраст означал бы затор,
+    // которого нет.
+    private const string OldestPendingSql = """
+        SELECT MIN(created_at) FROM notification
+        WHERE dispatched_at IS NULL AND withdrawn_at IS NULL AND rejected_at IS NULL;
+        """;
+
+    // Возраст закрытой строки считается от её исхода, а не от рождения: факт,
+    // который пролежал в очереди неделю простоя шины, хранится после выноса
+    // полный горизонт. Строка без исхода не удаляется ни при каком возрасте —
+    // COALESCE даёт ей NULL, а сравнение с NULL ложно.
+    private const string PruneSql = """
+        DELETE FROM notification
+        WHERE COALESCE(dispatched_at, withdrawn_at, rejected_at) < @Threshold;
+        """;
 
     // Типы, которые отмена снимает. Всё, что связано со сходкой, кроме
     // служебного сообщения о снятии с публикации (см. WithdrawOnCancellationSql).
@@ -683,16 +710,26 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// <paramref name="publish" /> и отмечает подтверждённое. Строку с
     /// истёкшим сроком не публикует, а снимает.
     /// </summary>
+    /// <param name="maxAttempts">
+    /// Сколько отказов «всегда» (<see cref="BusRejection" />) строка переносит
+    /// до вычёркивания.
+    /// </param>
     /// <remarks>
     /// Отметка ставится сразу за подтверждением, а коммит — в конце пачки или на
-    /// первом отказе: отметки, поставленные до отказа, фиксируются, а строка с
-    /// отказом остаётся неотправленной и уходит следующим проходом. Упавший до
+    /// временном отказе: отметки, поставленные до отказа, фиксируются, а строка
+    /// с отказом остаётся неотправленной и уходит следующим проходом. Упавший до
     /// коммита процесс опубликует уже отправленное снова — с тем же
     /// <c>notification_id</c>, который отсекает сервер в окне дедупликации, а
     /// после окна канал.
+    ///
+    /// Отказ «всегда» проход не останавливает: он говорит о строке, а не о
+    /// шине, и следующие за ней факты уходят тем же проходом. Временный отказ
+    /// останавливает проход и попытки не тратит — сколько бы ни лежала шина,
+    /// строку он не вычеркнет.
     /// </remarks>
     public async Task<DispatchPass> Dispatch(
         int limit,
+        int maxAttempts,
         Func<PendingNotification, CancellationToken, Task> publish,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -702,6 +739,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         var published = 0;
         var expired = new List<string>();
+        var refused = 0;
+        var rejected = new List<RejectedNotification>();
         Exception? failure = null;
 
         foreach (var notification in pending)
@@ -728,6 +767,34 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             {
                 await publish(notification, cancellationToken);
             }
+            catch (Exception ex) when (BusRejection.IsPermanent(ex))
+            {
+                var attempts = notification.Attempts + 1;
+                var exhausted = attempts >= maxAttempts;
+
+                await work.Execute(
+                    RefuseSql,
+                    new
+                    {
+                        notification.NotificationId,
+                        Attempts = attempts,
+                        Rejected = exhausted,
+                        Now = now.UtcDateTime,
+                        Error = ex.Message,
+                    },
+                    cancellationToken);
+
+                if (exhausted)
+                {
+                    rejected.Add(new RejectedNotification(notification.NotificationId, notification.Type, attempts, ex));
+                }
+                else
+                {
+                    refused++;
+                }
+
+                continue;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 failure = ex;
@@ -740,7 +807,29 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         await work.Commit(cancellationToken);
 
-        return new DispatchPass(published, WithdrawnFacts.ByType(expired), failure);
+        return new DispatchPass(published, WithdrawnFacts.ByType(expired), failure)
+        {
+            Refused = refused,
+            Rejected = rejected,
+        };
+    }
+
+    /// <summary>
+    /// Удаляет строки, исход которых — вынос, снятие или вычёркивание — старше
+    /// <paramref name="threshold" />. Строка без исхода остаётся при любом
+    /// возрасте. Возвращает число удалённых.
+    /// </summary>
+    /// <remarks>
+    /// Ключ повода живёт в самой строке (008, notification_cause_once_per_recipient),
+    /// поэтому порог обязан лежать дальше окна, в котором повод может прийти
+    /// снова: это держит проверка горизонта на старте (<see cref="DispatchOptions" />).
+    /// </remarks>
+    public async Task<int> Prune(DateTimeOffset threshold, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+
+        return await connection.ExecuteAsync(
+            new CommandDefinition(PruneSql, new { Threshold = threshold.UtcDateTime }, cancellationToken: cancellationToken));
     }
 
     /// <summary>Момент появления самого старого неотправленного факта.</summary>
@@ -795,10 +884,23 @@ public sealed class PendingNotification
 
     /// <summary>Сериализованный <c>notifications.v1.Notification</c>.</summary>
     public byte[] Payload { get; init; } = [];
+
+    /// <summary>Сколько отказов «всегда» строка уже получила.</summary>
+    public int Attempts { get; init; }
 }
 
+/// <summary>Строка, исчерпавшая предел попыток в этом проходе.</summary>
+public sealed record RejectedNotification(Guid NotificationId, string Type, int Attempts, Exception Error);
+
 /// <summary>
-/// Итог прохода релея: сколько подтверждено, сколько снято по сроку и на чём
-/// остановился.
+/// Итог прохода релея: сколько подтверждено, сколько снято по сроку, сколько
+/// отвергнуто шиной и на чём остановился.
 /// </summary>
-public sealed record DispatchPass(int Published, IReadOnlyList<WithdrawnFacts> Expired, Exception? Failure);
+public sealed record DispatchPass(int Published, IReadOnlyList<WithdrawnFacts> Expired, Exception? Failure)
+{
+    /// <summary>Отказы «всегда», после которых строка осталась в очереди.</summary>
+    public int Refused { get; init; }
+
+    /// <summary>Строки, вычеркнутые этим проходом.</summary>
+    public IReadOnlyList<RejectedNotification> Rejected { get; init; } = [];
+}

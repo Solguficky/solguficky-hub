@@ -14,9 +14,12 @@ plugins:
 inputs:
   - directory: contracts/proto
     paths:
-      # Из аукциона — только файл значений: его импортирует словарь уведомлений,
-      # а сервис торгов и его события боту хаба не нужны.
+      # Аукцион у сходки (PER-307): включение, аукцион сходки и чтения ленты и
+      # лота. Схему фактов шины бот не читает, но генерирует: снимок аукциона
+      # в ответе чтения берёт её типы статусов.
       - contracts/proto/auction/v1/auction.proto
+      - contracts/proto/auction/v1/auction_events.proto
+      - contracts/proto/auction/v1/auction_service.proto
       - contracts/proto/identity
       - contracts/proto/meetups
       - contracts/proto/notifications

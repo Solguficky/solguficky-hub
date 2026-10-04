@@ -118,10 +118,12 @@ module Api =
             Status(StatusCode.PermissionDenied, "an administrator role is required")
         | MarkMeetupHeldError.Domain MeetupNotFound
         | MarkMeetupHeldError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
-        // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение
-        // внутреннего контракта, а не код отказа.
+        // Инварианты публикации и её момента решают другие срезы: пары невозможны,
+        // поэтому нарушение внутреннего контракта, а не код отказа.
         | MarkMeetupHeldError.Domain TitleRequiredForPublication ->
             invalidOp "marking as held does not decide publication"
+        | MarkMeetupHeldError.Domain PublicationMomentInThePast ->
+            invalidOp "marking as held does not decide a publication moment"
         // Единственный отклонённый переход этой оси — «отменена → состоялась»:
         // отмена необратима (ADR-022).
         | MarkMeetupHeldError.Domain TransitionNotAllowed ->

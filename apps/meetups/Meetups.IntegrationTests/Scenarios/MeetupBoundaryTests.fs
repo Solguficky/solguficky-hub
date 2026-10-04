@@ -448,8 +448,19 @@ type MeetupBoundaryTests() =
         let id = newId ()
         let key = id.ToString "D"
 
-        let draft =
+        let created =
             client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = key))
+
+        // Момент получает только сходка с заголовком (PER-457).
+        let draft =
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(
+                    Viewer = admin,
+                    Id = key,
+                    ExpectedVersion = created.Version,
+                    Title = "Scheduled"
+                )
+            )
 
         let scheduled =
             client.ScheduleMeetupPublication(
@@ -507,8 +518,20 @@ type MeetupBoundaryTests() =
 
         let draftKey = (newId ()).ToString "D"
 
-        let draft =
+        let created =
             client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = admin, Id = draftKey))
+
+        // С заголовком: иначе отказ по заголовку пришёл бы раньше отказа по времени
+        // и тем же FAILED_PRECONDITION, что у опубликованной (PER-457).
+        let draft =
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(
+                    Viewer = admin,
+                    Id = draftKey,
+                    ExpectedVersion = created.Version,
+                    Title = "Not yet visible"
+                )
+            )
 
         let past =
             Rpc.codeOf (fun () ->

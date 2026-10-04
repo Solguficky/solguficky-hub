@@ -387,37 +387,39 @@ telegram-delivery-lint:
 # --- Hub Bot (TypeScript) --------------------------------------
 #
 # Кодогенерация — часть сборки. Рецепты собирают grammY-скелет,
-# клиент Identity и проверяют границу юзкейса без Telegram. Механику доставки
-# уведомлений бот берёт `file:`-зависимостью из пакета telegram-delivery, и
-# рецепты, читающие его типы, сначала собирают пакет.
+# клиент Identity и проверяют границу юзкейса без Telegram. Аукцион у
+# сходки бот берёт из общего пакета auction-bot-ui (PER-307), механику
+# доставки уведомлений — из пакета telegram-delivery; оба — `file:`-зависимости,
+# а их `exports` ведут в `dist`, поэтому рецепты, которые читают их типы,
+# сначала собирают пакеты — как у бота аукциона.
 
 # Пакет живого контура ставится здесь же: его код типизирует, линтует и
 # гоняет на L0 конфиг бота, а mtcute боту не принадлежит (ADR-046). Скрипты
 # установки не нужны: сессия в памяти, нативный better-sqlite3 не строится
-hub-bot-tools: telegram-delivery-tools telegram-delivery-build
+hub-bot-tools: auction-bot-ui-tools auction-bot-ui-build telegram-delivery-tools telegram-delivery-build
     cd apps/hub-bot && npm ci
     cd tests/telegram-live && npm ci --ignore-scripts
 
 hub-bot-proto:
     buf generate {{ if path_exists("apps/hub-bot/node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es") == "true" { "--template apps/hub-bot/buf.gen.yaml" } else { error("нужен protoc-gen-es: just hub-bot-tools") } }}
 
-hub-bot-build: telegram-delivery-build hub-bot-proto
+hub-bot-build: auction-bot-ui-build telegram-delivery-build hub-bot-proto
     cd apps/hub-bot && npm run build
 
-hub-bot-typecheck: telegram-delivery-build hub-bot-proto
+hub-bot-typecheck: auction-bot-ui-build telegram-delivery-build hub-bot-proto
     cd apps/hub-bot && npm run typecheck
 
 # Unit и component tests (L0): Docker не нужен, наборы `*.integration.test.ts`
 # исключены в vitest.config.ts
-hub-bot-test: telegram-delivery-build hub-bot-proto
+hub-bot-test: auction-bot-ui-build telegram-delivery-build hub-bot-proto
     cd apps/hub-bot && npm test
 
 # Наборы с Testcontainers (L1): нужен Docker. В `verify` не входит — его гоняют
 # CI и `test-all`
-hub-bot-test-integration: telegram-delivery-build hub-bot-proto
+hub-bot-test-integration: auction-bot-ui-build telegram-delivery-build hub-bot-proto
     cd apps/hub-bot && npm run test:integration
 
-hub-bot-lint: hub-bot-proto
+hub-bot-lint: auction-bot-ui-build hub-bot-proto
     cd apps/hub-bot && npm run lint
 
 hub-bot-run: hub-bot-build
@@ -586,13 +588,13 @@ auction-bot-run: auction-bot-build
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Пороги числа тестов по уровням, в сумме 691. Поднимаются вручную вместе с
+# Пороги числа тестов по уровням, в сумме 709. Поднимаются вручную вместе с
 # набором — добавил тест, обнови число своего уровня здесь тем же изменением.
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "553"
-MEETUPS_INTEGRATION_TEST_THRESHOLD := "138"
+MEETUPS_UNIT_TEST_THRESHOLD := "570"
+MEETUPS_INTEGRATION_TEST_THRESHOLD := "139"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
 # а не пропуском: проекты решения названы по уровню.
@@ -645,12 +647,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 299. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 520. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "365"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "135"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "380"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "140"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

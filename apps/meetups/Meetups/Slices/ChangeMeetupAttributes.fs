@@ -114,10 +114,13 @@ module Api =
         | ChangeMeetupAttributesError.Domain MeetupNotFound
         | ChangeMeetupAttributesError.Domain DraftBelongsToAnotherAuthor ->
             Status(StatusCode.NotFound, "meetup not found")
-        // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение
-        // внутреннего контракта, а не код отказа.
+        // Правка стирает заголовок у сходки с назначенным моментом: воркер её не
+        // опубликовал бы (PER-457). Чинится сходка, а не значение поля в отрыве от
+        // неё, поэтому FAILED_PRECONDITION, как у назначения без заголовка.
         | ChangeMeetupAttributesError.Domain TitleRequiredForPublication ->
-            invalidOp "changing attributes does not decide publication"
+            Status(StatusCode.FailedPrecondition, "a meetup with a scheduled publication needs a title")
+        // Момент назначения правка не решает: пара невозможна, поэтому нарушение
+        // внутреннего контракта, а не код отказа.
         | ChangeMeetupAttributesError.Domain PublicationMomentInThePast ->
             invalidOp "changing attributes does not decide a publication moment"
         | ChangeMeetupAttributesError.Domain TransitionNotAllowed ->

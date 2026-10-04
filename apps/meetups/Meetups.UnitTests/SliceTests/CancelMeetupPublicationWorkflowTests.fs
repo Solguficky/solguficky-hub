@@ -90,6 +90,40 @@ let ``Cancelling an absent meetup is rejected without writing`` () =
     test <@ run (stub |> loading None) = Error(CancelMeetupPublicationError.Domain MeetupNotFound) @>
 
 [<Fact>]
+let ``A meetup the worker has already published is refused without writing`` () =
+    let publishedByWorker = Meetup.toSnapshot Sample.publishedByWorker
+
+    let result = stub |> loading (Some publishedByWorker) |> run
+
+    test <@ result = Error(CancelMeetupPublicationError.Domain TransitionNotAllowed) @>
+
+[<Fact>]
+let ``Losing the race to the worker is a conflict, not a cancelled moment`` () =
+    // Решение принято из скрытой сходки с моментом, а запись проиграла воркеру:
+    // перечитанная видимая сходка — не достигнутая цель (PER-457, PER-78).
+    let publishedByWorker = Meetup.toSnapshot Sample.publishedByWorker
+
+    let mutable loads = 0
+
+    let deps =
+        { stub with
+            Load =
+                fun _ ->
+                    loads <- loads + 1
+
+                    if loads = 1 then
+                        Task.FromResult(Some(Meetup.toSnapshot Sample.scheduled))
+                    else
+                        Task.FromResult(Some publishedByWorker)
+            Commit =
+                fun _ _ _ _ ->
+                    Error MeetupStore.VersionConflict
+                    |> Task.FromResult
+        }
+
+    test <@ run deps = Error CancelMeetupPublicationError.Conflict @>
+
+[<Fact>]
 let ``A version conflict from the store becomes a rejected command`` () =
     let loaded =
         stub

@@ -87,6 +87,43 @@ let ``When the meetup is cancelled and the moment is in the past expect the stat
     test <@ decision = Error TransitionNotAllowed @>
 
 [<Fact>]
+let ``When the draft has no title expect the moment is refused like publication`` () =
+    // Воркер черновик без заголовка не публикует, поэтому назначенный ему момент
+    // обещал бы публикацию, которой не будет (PER-457).
+    let decision =
+        Meetup.decideSchedulePublication Sample.fixedNow Sample.later (Existing Sample.draft)
+
+    test <@ decision = Error TitleRequiredForPublication @>
+
+[<Fact>]
+let ``When the untitled draft repeats its moment expect the title reason wins`` () =
+    // Момент, назначенный до PER-457, повтором не подтверждается: I4 стоит раньше I5.
+    let stuck =
+        Meetup.apply (Existing Sample.draft) (MeetupPublicationScheduled Sample.later)
+
+    let decision =
+        Meetup.decideSchedulePublication Sample.fixedNow Sample.later (Existing stuck)
+
+    test <@ decision = Error TitleRequiredForPublication @>
+
+[<Fact>]
+let ``When the untitled draft asks for a past moment expect the title reason wins`` () =
+    // Заголовок — состояние сходки, момент — значение запроса: состояние раньше.
+    let past = Sample.fixedNow.AddMinutes -1.0
+
+    let decision =
+        Meetup.decideSchedulePublication Sample.fixedNow past (Existing Sample.draft)
+
+    test <@ decision = Error TitleRequiredForPublication @>
+
+[<Fact>]
+let ``When the untitled draft is cancelled expect the state reason wins`` () =
+    let decision =
+        Meetup.decideSchedulePublication Sample.fixedNow Sample.later (Existing Sample.cancelledDraft)
+
+    test <@ decision = Error TransitionNotAllowed @>
+
+[<Fact>]
 let ``When the meetup took place expect the moment is still scheduled`` () =
     // Ретроспективно заведённую состоявшуюся сходку показывают сообществу;
     // назначение закрывают видимость и отмена, а не жизненный цикл.
