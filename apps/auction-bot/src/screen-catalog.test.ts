@@ -1,7 +1,7 @@
 import type { AuctionScreenBody } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
 import { inspectCall, type ScreenEntry } from "../testkit/screen-lint.js";
-import { markupOf } from "./bot.js";
+import { markupOf, richMessageOf } from "./bot.js";
 import {
   type AuctionEntryScreen,
   type RenderedScreen,
@@ -86,7 +86,11 @@ const urls = {
 };
 
 // Каждый вид каждого экрана, который оболочка умеет отдать.
-const shown: readonly { screen: AuctionEntryScreen; faq?: typeof urls }[] = [
+const shown: readonly {
+  screen: AuctionEntryScreen;
+  faq?: typeof urls;
+  presentation?: "plain";
+}[] = [
   { screen: { kind: "welcome" } },
   { screen: { kind: "menu" } },
   { screen: { kind: "faq" } },
@@ -98,20 +102,28 @@ const shown: readonly { screen: AuctionEntryScreen; faq?: typeof urls }[] = [
   { screen: { kind: "auction", body: emptyFeed } },
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
+  { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
   { screen: { kind: "outdated" } },
   { screen: { kind: "unavailable" } },
 ];
 
-// Вызов в той форме, в какой его собирает адаптер (`bot.ts`): карточка с
-// изображением — подпись к фото, остальное — текст. Параметры разметки и метку
-// даёт сам адаптер.
+// Вызов в той форме, в какой его собирает адаптер (`bot.ts`): rich-карточка —
+// rich-сообщение, остальное — текст. Параметры разметки и метку даёт сам
+// адаптер.
 function sent(screen: RenderedScreen): [method: string, payload: unknown] {
   const markup = markupOf(screen);
-  return screen.photo === undefined
-    ? ["sendMessage", { chat_id: 42, text: screen.text, ...markup }]
-    : ["sendPhoto", { chat_id: 42, caption: screen.text, ...markup }];
+  return screen.format === "rich"
+    ? [
+        "sendRichMessage",
+        {
+          chat_id: 42,
+          rich_message: richMessageOf(screen, undefined),
+          ...markup,
+        },
+      ]
+    : ["sendMessage", { chat_id: 42, text: screen.text, ...markup }];
 }
 
 const entries = Object.entries(screenCatalog) as [ScreenId, ScreenEntry][];
@@ -122,10 +134,11 @@ const bare = Object.fromEntries(
 
 function brokenRules(): Map<ScreenId, Set<string>> {
   const broken = new Map<ScreenId, Set<string>>();
-  for (const { screen, faq } of shown) {
+  for (const { screen, faq, presentation } of shown) {
     const rendered = renderEntryScreen(screen, {
       timeZone: "Europe/Moscow",
       ...(faq === undefined ? {} : { faq }),
+      ...(presentation === undefined ? {} : { presentation }),
     });
     const rules = broken.get(rendered.id) ?? new Set<string>();
     for (const violation of inspectCall(...sent(rendered), bare)) {

@@ -1,13 +1,14 @@
 import type { AuctionBlock, Money } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
 import {
-  CAPTION_LIMIT,
   money,
+  type RenderOptions,
   renderEntryScreen,
   TEXT_LIMIT,
 } from "./entry-screen.js";
 
 const options = { timeZone: "Europe/Moscow" };
+const plainCard = { ...options, presentation: "plain" as const };
 const rub = (rubles: number): Money => ({
   minorUnits: rubles * 100,
   currency: "RUB",
@@ -15,7 +16,19 @@ const rub = (rubles: number): Money => ({
 // Intl разделяет разряды неразрывным пробелом; тесты читают его обычным.
 const plain = (text: string) => text.replace(/[  ]/g, " ");
 
-function lotScreen(block: Partial<Extract<AuctionBlock, { kind: "lot" }>>) {
+// Видимый текст карточки: теги сняты, сущности раскрыты.
+const visible = (html: string) =>
+  html
+    .replace(/<\/(h1|p)>/g, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+
+function lotScreen(
+  block: Partial<Extract<AuctionBlock, { kind: "lot" }>>,
+  render: RenderOptions = options,
+) {
   return renderEntryScreen(
     {
       kind: "auction",
@@ -33,7 +46,7 @@ function lotScreen(block: Partial<Extract<AuctionBlock, { kind: "lot" }>>) {
         keyboard: [[{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }]],
       },
     },
-    options,
+    render,
   );
 }
 
@@ -134,8 +147,9 @@ describe("renderEntryScreen", () => {
       },
       participantName: "@owl",
     });
-    const text = plain(screen.text);
-    expect(text).toContain("Кружка\n\nРоспись.");
+    expect(screen.format).toBe("rich");
+    expect(screen.text).toMatch(/^<h1>Кружка<\/h1><p>Роспись\.<\/p>/);
+    const text = plain(visible(screen.text));
     expect(text).toContain("Текущая цена: 1 200 ₽.");
     expect(text).toContain("Лидер: @owl.");
     expect(text).toContain("Следующая ставка — от 1 250 ₽.");
@@ -170,47 +184,75 @@ describe("renderEntryScreen", () => {
     expect(text).not.toContain("Победитель");
   });
 
-  it("asks for the photo and keeps a long caption within the limit", () => {
+  it("asks for the photo and keeps a long description whole", () => {
+    const description = "я".repeat(5_000);
     const screen = lotScreen({
-      card: {
-        title: "Кружка",
-        description: "я".repeat(5_000),
-        image: { version: "img-1" },
-      },
+      card: { title: "Кружка", description, image: { version: "img-1" } },
     });
     expect(screen.photo).toEqual({ lotId: "lot-1", version: "img-1" });
-    expect(screen.text.length).toBeLessThanOrEqual(CAPTION_LIMIT);
+    expect(screen.text).toContain(`<p>${description}</p>`);
+    expect(screen.text).not.toContain("…");
+  });
+
+  // Перенос строки в html rich-сообщения не рисуется: абзац — свой блок.
+  it("marks every paragraph and status line as a block and escapes the text", () => {
+    const screen = lotScreen({
+      card: {
+        title: "Кружка <XL> & блюдце",
+        description: "Роспись.\n\nРучная.",
+      },
+    });
+    expect(screen.text).toBe(
+      "<h1>Кружка &lt;XL&gt; &amp; блюдце</h1>" +
+        "<p>Роспись.</p><p>Ручная.</p><p>Торги закончились, лот не продан.</p>",
+    );
+  });
+
+  it("puts the plain card into an HTML message without a photo", () => {
+    const screen = lotScreen(
+      {
+        card: {
+          title: "Кружка <XL>",
+          description: "Роспись & глазурь.",
+          image: { version: "img-1" },
+        },
+      },
+      plainCard,
+    );
+    expect(screen.format).toBe("html");
+    expect(screen.photo).toBeUndefined();
+    expect(screen.text).toBe(
+      "<b>Кружка &lt;XL&gt;</b>\n\nРоспись &amp; глазурь.\n\nТорги закончились, лот не продан.",
+    );
+  });
+
+  it("keeps a long plain card within the message limit", () => {
+    const screen = lotScreen(
+      { card: { title: "Кружка", description: "я".repeat(10_000) } },
+      plainCard,
+    );
+    expect(visible(screen.text).length).toBeLessThanOrEqual(TEXT_LIMIT);
     expect(screen.text).toContain("…");
     expect(screen.text).toContain("лот не продан");
   });
 
-  it("keeps a long text card within the message limit", () => {
+  // Длину названия Auction не ограничивает: цена и исход остаются на карточке.
+  it("keeps the price of a card with a very long title", () => {
     const screen = lotScreen({
-      card: { title: "Кружка", description: "я".repeat(10_000) },
-    });
-    expect(screen.text.length).toBeLessThanOrEqual(TEXT_LIMIT);
-  });
-
-  // Длину названия Auction не ограничивает: цена и исход остаются в подписи.
-  it("keeps the price of a photo card with a very long title", () => {
-    const screen = lotScreen({
-      card: {
-        title: "К".repeat(5_000),
-        description: "",
-        image: { version: "v" },
-      },
+      card: { title: "К".repeat(5_000), description: "" },
       status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
     });
-    expect(screen.text.length).toBeLessThanOrEqual(CAPTION_LIMIT);
-    expect(plain(screen.text)).toContain("Продан за 3 000 ₽.");
+    expect(plain(visible(screen.text))).toContain("Продан за 3 000 ₽.");
+    expect(screen.text.length).toBeLessThan(1_000);
   });
 
   // Срез по UTF-16 разрезал бы эмодзи пополам, и Telegram отверг бы строку.
   it("never cuts a surrogate pair in half", () => {
-    const screen = lotScreen({
-      card: { title: "Кружка", description: "🦉".repeat(3_000) },
-    });
-    expect(screen.text.length).toBeLessThanOrEqual(TEXT_LIMIT);
+    const screen = lotScreen(
+      { card: { title: "Кружка", description: "🦉".repeat(3_000) } },
+      plainCard,
+    );
+    expect(visible(screen.text).length).toBeLessThanOrEqual(TEXT_LIMIT);
     expect(screen.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 

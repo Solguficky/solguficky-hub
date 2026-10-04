@@ -8,9 +8,14 @@
 // фото по новому ключу не находится.
 export type ImageKey = { lotId: string; version: string };
 
+// `none` — Telegram эту версию изображения не принял: до рестарта процесса
+// она не загружается, карточка идёт без фото (дизайн-код, «Показ фото лота»).
+export type CachedPhoto = { kind: "file"; fileId: string } | { kind: "none" };
+
 export type PhotoCache = {
-  get(key: ImageKey): string | undefined;
+  get(key: ImageKey): CachedPhoto | undefined;
   set(key: ImageKey, fileId: string): void;
+  refuse(key: ImageKey): void;
   delete(key: ImageKey): void;
 };
 
@@ -19,28 +24,34 @@ export type PhotoCache = {
 export const PHOTO_CACHE_LIMIT = 200;
 
 export function createPhotoCache(limit = PHOTO_CACHE_LIMIT): PhotoCache {
-  const entries = new Map<string, string>();
+  const entries = new Map<string, CachedPhoto>();
   const keyOf = (key: ImageKey) => `${key.lotId}:${key.version}`;
+  const put = (key: ImageKey, value: CachedPhoto) => {
+    const k = keyOf(key);
+    entries.delete(k);
+    entries.set(k, value);
+    while (entries.size > limit) {
+      const oldest = entries.keys().next().value;
+      if (oldest === undefined) break;
+      entries.delete(oldest);
+    }
+  };
   return {
     get(key) {
       const k = keyOf(key);
-      const fileId = entries.get(k);
-      if (fileId !== undefined) {
+      const value = entries.get(k);
+      if (value !== undefined) {
         // Map хранит порядок вставки: перевставка делает запись свежей.
         entries.delete(k);
-        entries.set(k, fileId);
+        entries.set(k, value);
       }
-      return fileId;
+      return value;
     },
     set(key, fileId) {
-      const k = keyOf(key);
-      entries.delete(k);
-      entries.set(k, fileId);
-      while (entries.size > limit) {
-        const oldest = entries.keys().next().value;
-        if (oldest === undefined) break;
-        entries.delete(oldest);
-      }
+      put(key, { kind: "file", fileId });
+    },
+    refuse(key) {
+      put(key, { kind: "none" });
     },
     delete(key) {
       entries.delete(keyOf(key));

@@ -33,17 +33,13 @@ const quietMethods: ReadonlySet<string> = new Set([
   "deleteMessage",
 ]);
 
-// Файл к загрузке лежит в параметрах отправки (`photo`) либо внутри медиа
-// правки (`media.media`): глубже Bot API его не кладёт.
+// Файл к загрузке лежит где угодно в параметрах: у rich-карточки — в
+// `rich_message.media[].media.media`. Обход тот же, каким grammY решает, нужна
+// ли multipart-загрузка.
 function carriesUpload(payload: unknown): boolean {
+  if (payload instanceof InputFile) return true;
   if (typeof payload !== "object" || payload === null) return false;
-  return Object.values(payload).some(
-    (value) =>
-      value instanceof InputFile ||
-      (typeof value === "object" &&
-        value !== null &&
-        Object.values(value).some((inner) => inner instanceof InputFile)),
-  );
+  return Object.values(payload).some(carriesUpload);
 }
 
 /**
