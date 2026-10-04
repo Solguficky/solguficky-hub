@@ -103,15 +103,43 @@ public sealed record ScheduleColumns(
 }
 
 /// <summary>Факт о допуске человека из Identity.</summary>
+/// <param name="OccasionRole">
+/// Роль повода: запрошенный круг у заявки, выданная роль у выдачи. У
+/// остальных поводов пусто.
+/// </param>
 public sealed record IdentityFact(
     Guid EventId,
     Guid IdentityId,
     long Version,
     DateTimeOffset OccurredAt,
     IReadOnlyList<string> GlobalRoles,
-    bool Blocked) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
+    bool Blocked,
+    IdentityOccasion Occasion = IdentityOccasion.Other,
+    string? OccasionRole = null) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.IdentitySource;
+}
+
+/// <summary>
+/// Повод события Identity, сведённый к тому, что различает адресные факты.
+/// </summary>
+/// <remarks>
+/// Своего типа факта удостоена только заявка. Выдача и блокировка различаются
+/// потому, что закрывают заявку и снимают неотправленный факт о ней. Остальные
+/// поводы, включая неизвестные этому потребителю, только двигают реплику.
+/// </remarks>
+public enum IdentityOccasion
+{
+    Other,
+
+    /// <summary><c>application_submitted</c>: открыта новая заявка на круг.</summary>
+    ApplicationSubmitted,
+
+    /// <summary><c>role_granted</c>: роль стала активной.</summary>
+    RoleGranted,
+
+    /// <summary><c>profile_blocked</c>: человек заблокирован.</summary>
+    ProfileBlocked,
 }
 
 /// <summary>Итог разбора сообщения шины.</summary>

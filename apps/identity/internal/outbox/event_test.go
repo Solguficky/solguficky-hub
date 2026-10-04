@@ -16,11 +16,12 @@ const (
 func TestRecordSubjectNamesTheOccasion(t *testing.T) {
 	t.Parallel()
 	cases := map[outbox.Occasion]string{
-		outbox.ProfileRegistered: "events.identity.profile_registered",
-		outbox.RoleGranted:       "events.identity.role_granted",
-		outbox.RoleRevoked:       "events.identity.role_revoked",
-		outbox.ProfileBlocked:    "events.identity.profile_blocked",
-		outbox.ProfileUnblocked:  "events.identity.profile_unblocked",
+		outbox.ProfileRegistered:    "events.identity.profile_registered",
+		outbox.RoleGranted:          "events.identity.role_granted",
+		outbox.RoleRevoked:          "events.identity.role_revoked",
+		outbox.ProfileBlocked:       "events.identity.profile_blocked",
+		outbox.ProfileUnblocked:     "events.identity.profile_unblocked",
+		outbox.ApplicationSubmitted: "events.identity.application_submitted",
 	}
 	for occasion, want := range cases {
 		if got := (outbox.Record{Occasion: occasion}).Subject(); got != want {
@@ -86,6 +87,9 @@ func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 		}},
 		{outbox.ProfileBlocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileBlocked() != nil }},
 		{outbox.ProfileUnblocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
+		{outbox.ApplicationSubmitted, "public", func(e *identityv1.IdentityEvent) bool {
+			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC
+		}},
 	}
 	for _, tc := range cases {
 		message, err := (outbox.Record{EventID: eventID, IdentityID: identityID, Version: 1, Occasion: tc.occasion, Role: tc.role}).Message()

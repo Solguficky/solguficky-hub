@@ -37,6 +37,9 @@ public static class NotificationFacts
     public const string CommunityAnnouncementType = "community_announcement";
 
     /// <inheritdoc cref="MeetupPublishedType" />
+    public const string AccessRequestedType = "access_requested";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
 
     /// <inheritdoc cref="MeetupPublishedType" />
@@ -44,6 +47,9 @@ public static class NotificationFacts
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string CommandRequestCause = "command_request";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string IdentityEventCause = "identity_event";
 
     /// <summary>
     /// Причины снятия неотправленного факта в колонке
@@ -54,6 +60,11 @@ public static class NotificationFacts
 
     /// <inheritdoc cref="WithdrawnOnCancellation" />
     public const string WithdrawnExpired = "expired";
+
+    /// <summary>
+    /// Заявку закрыл допуск или блокировка, пока факт о ней ждал релея.
+    /// </summary>
+    public const string WithdrawnOnApplicationClosed = "application_closed";
 
     /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
@@ -79,6 +90,12 @@ public static class NotificationFacts
 
     /// <summary>Категория объявления сообществу. Настраивается только глобально.</summary>
     public const NotificationCategory CommunityAnnouncementCategory = NotificationCategory.CommunityAnnouncement;
+
+    /// <summary>
+    /// Категория запросов доступа. Настраивается только глобально и видна только
+    /// администратору (ADR-062).
+    /// </summary>
+    public const NotificationCategory AccessRequestCategory = NotificationCategory.AccessRequest;
 
     /// <summary>
     /// Роли круга <c>member</c>, который принимает хаб (ADR-043). Identity
@@ -239,6 +256,42 @@ public static class NotificationFacts
             SenderId = senderId.ToString(),
             Body = body,
         };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Факт «новая заявка» одному администратору. Заявитель в сообщение не
+    /// попадает: кто просит и откуда пришёл, модератор читает в очереди.
+    /// </summary>
+    /// <param name="fact">Событие Identity об открытой заявке.</param>
+    public static Notification AccessRequested(
+        Guid notificationId,
+        Guid recipientId,
+        IdentityFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        if (fact.Occasion != IdentityOccasion.ApplicationSubmitted)
+        {
+            throw new ArgumentException($"occasion {fact.Occasion} is not an application", nameof(fact));
+        }
+
+        var circle = fact.OccasionRole switch
+        {
+            "member" => Identity.V1.GlobalRole.Member,
+            "public" => Identity.V1.GlobalRole.Public,
+            _ => throw new ArgumentException($"circle {fact.OccasionRole} is not requestable", nameof(fact)),
+        };
+
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { IdentityEventId = fact.EventId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.AccessRequested = new V1.AccessRequested { Circle = circle };
 
         return notification;
     }

@@ -122,6 +122,31 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Открыта заявка на круг. Снимок — тот, что был до заявки: незаблокирован и
+    /// без запрошенного круга, с ролями <paramref name="held" />, если они есть.
+    /// </summary>
+    public static IdentityEvent Application(
+        string identityId,
+        long version,
+        GlobalRole circle,
+        string? eventId = null,
+        params GlobalRole[] held)
+    {
+        var message = new IdentityEvent
+        {
+            EventId = eventId ?? NewId(),
+            IdentityId = identityId,
+            Version = version,
+            OccurredAt = Committed.AddMinutes(version).ToString("O"),
+            State = new IdentityState { Id = identityId },
+            ApplicationSubmitted = new ApplicationSubmitted { Role = circle },
+        };
+        message.State.GlobalRoles.Add(held);
+
+        return message;
+    }
+
     public static ReadOnlyMemory<byte> Bytes(IMessage message) => message.ToByteArray();
 
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,

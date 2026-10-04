@@ -74,6 +74,42 @@ public class NotificationCategoriesTests
     }
 
     [Fact]
+    public void MeetupScoped_AccessRequests_AreGlobalOnly()
+    {
+        // Заявка не привязана ни к одной сходке.
+        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequest);
+    }
+
+    [Fact]
+    public void DefaultEnabled_AccessRequests_IsEnabled()
+    {
+        // Иначе очередь заявок копится незамеченной, пока каждый администратор
+        // сам не найдёт настройку.
+        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequest).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(new[] { "admin" }, true)]
+    [InlineData(new[] { "admin", "member", "public" }, true)]
+    [InlineData(new[] { "maintainer", "member" }, false)]
+    [InlineData(new[] { "member", "public" }, false)]
+    [InlineData(new string[0], false)]
+    public void IsVisibleTo_AccessRequests_OnlyToAdmin(string[] roles, bool visible)
+    {
+        // maintainer — техническая роль, ортогональная продуктовым: заявки
+        // решает администратор (ADR-062).
+        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequest, roles).ShouldBe(visible);
+    }
+
+    [Fact]
+    public void IsVisibleTo_EveryOtherCategory_IsVisibleWithoutRoles()
+    {
+        NotificationCategories.All
+            .Where(category => category != NotificationCategory.AccessRequest)
+            .ShouldAllBe(category => NotificationCategories.IsVisibleTo(category, Array.Empty<string>()));
+    }
+
+    [Fact]
     public void MeetupScoped_EveryOtherCategory_CanBeOverridden()
     {
         NotificationCategories.MeetupScoped.ShouldBe(

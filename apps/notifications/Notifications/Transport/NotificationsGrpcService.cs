@@ -57,13 +57,22 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Br
 
         // enabled не проверяется на присутствие: presence у поля нет, и false —
         // тотальное значение «выключено», а не пропущенное поле.
-        var preferences = await operations.SetGlobalCategory(
-            identityId,
-            category,
-            request.Enabled,
-            context.CancellationToken);
+        try
+        {
+            var preferences = await operations.SetGlobalCategory(
+                identityId,
+                category,
+                request.Enabled,
+                context.CancellationToken);
 
-        return Map(preferences);
+            return Map(preferences);
+        }
+        catch (CategoryNotVisibleException)
+        {
+            // Категория известна, но не этому человеку: это право, а не форма
+            // запроса, поэтому PERMISSION_DENIED, а не INVALID_ARGUMENT.
+            throw Refused(StatusCode.PermissionDenied, "category is reserved to another role");
+        }
     }
 
     public override async Task<MeetupNotificationPreferences> SetMeetupCategoryPreference(
