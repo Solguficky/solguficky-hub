@@ -155,6 +155,7 @@ final class AuctionGrpcIntegrationSpec
       )
       val binding = Http()
         .newServerAt("127.0.0.1", 0)
+        .withSettings(AuctionNode.grpcServerSettings(kit.system))
         .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, authority))
         .futureValue
       val client = wire.AuctionServiceClient(
@@ -468,11 +469,14 @@ final class AuctionGrpcIntegrationSpec
           .card
           .flatMap(_.image) shouldBe Some(wire.LotImageRef(version))
 
-        val oversized = IArray.genericWrapArray(TestImages.jpeg(LotImage.MaxBytes + 1)).toArray
-        val refused = asHubBot(node.client.editLotCard())
-          .invoke(wire.EditLotCardRequest(Some(admin), lotId.toString, "Лот", "").withReplaceImage(upload(oversized)))
-          .futureValue
-        refused.getRefused.reason.imageTooLarge shouldBe Some(wire.ImageTooLarge(LotImage.MaxBytes.toLong))
+        // Сразу за пределом и крупнее умолчания pekko-http в 8 MiB: оба получают именованный отказ, а не сбой транспорта.
+        for (size <- Seq(LotImage.MaxBytes + 1, 12 * 1024 * 1024)) {
+          val oversized = IArray.genericWrapArray(TestImages.jpeg(size)).toArray
+          val refused = asHubBot(node.client.editLotCard())
+            .invoke(wire.EditLotCardRequest(Some(admin), lotId.toString, "Лот", "").withReplaceImage(upload(oversized)))
+            .futureValue
+          refused.getRefused.reason.imageTooLarge shouldBe Some(wire.ImageTooLarge(LotImage.MaxBytes.toLong))
+        }
 
         val replaced = asHubBot(node.client.editLotCard())
           .invoke(
