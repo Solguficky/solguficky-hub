@@ -41,7 +41,13 @@ COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json apps/hub-bot/
 # Симлинк заменяется копией пакета: путь `../../shared/...` из /app в образе
 # никуда не ведёт, а копия кладёт пакет внутрь node_modules, где его и ищет
 # проверка состава /app.
-RUN cd apps/hub-bot && npm ci --omit=dev --ignore-scripts && npm cache clean --force     && rm node_modules/@solguficky/telegram-delivery     && mkdir node_modules/@solguficky/telegram-delivery     && cp -R ../../shared/typescript/telegram-delivery/package.json         ../../shared/typescript/telegram-delivery/dist         ../../shared/typescript/telegram-delivery/node_modules         node_modules/@solguficky/telegram-delivery/
+RUN cd apps/hub-bot && npm ci --omit=dev --ignore-scripts && npm cache clean --force \
+    && rm node_modules/@solguficky/telegram-delivery \
+    && mkdir node_modules/@solguficky/telegram-delivery \
+    && cp -R ../../shared/typescript/telegram-delivery/package.json \
+        ../../shared/typescript/telegram-delivery/dist \
+        ../../shared/typescript/telegram-delivery/node_modules \
+        node_modules/@solguficky/telegram-delivery/
 
 # База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
 # исполняет `id` из образа. Файлы приложения принадлежат root, процесс идёт от
