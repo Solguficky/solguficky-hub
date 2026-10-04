@@ -11,9 +11,14 @@ import type {
   TelegramUser,
   Viewer,
 } from "@solguficky/auction-bot-ui";
+import {
+  classifyRecipientFailure,
+  type TelegramRecipientResolver,
+} from "@solguficky/telegram-delivery";
 import { AuctionService } from "../gen/auction/v1/auction_service_pb.js";
 import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole as WireRole } from "../gen/identity/v1/roles_pb.js";
+import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
 import { lotViewOf } from "./snapshot.js";
 
@@ -29,7 +34,7 @@ export const requestIdHeader = "x-request-id";
 // сгенерированному Client роняет typecheck на первом расхождении с contracts/proto.
 export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
-  "resolveIdentity"
+  "resolveIdentity" | "resolveTelegramUserId" | "checkGlobalRole"
 >;
 export type AuctionRpc = Pick<
   Client<typeof AuctionService>,
@@ -190,8 +195,67 @@ export function createPorts(
   };
 }
 
+// Канал доставки (PER-328): получатель уведомления, его роль `public` и
+// название лота для текста. Личности из update здесь нет — только
+// `identity_id` из факта, и `request_id` цепочки приходит из него же.
+export type DeliveryPorts = {
+  recipients: TelegramRecipientResolver;
+  reads: NotificationReads;
+};
+
+export function createDeliveryPorts(
+  identity: IdentityRpc,
+  auction: AuctionRpc,
+  timeoutMs = rpcTimeoutMs,
+): DeliveryPorts {
+  const options = (requestId: string | undefined) => ({
+    timeoutMs,
+    ...(requestId === undefined
+      ? {}
+      : { headers: { [requestIdHeader]: requestId } }),
+  });
+  return {
+    recipients: {
+      async resolveTelegramUserId(identityId, requestId) {
+        try {
+          const response = await identity.resolveTelegramUserId(
+            { identityId },
+            options(requestId),
+          );
+          return { kind: "resolved", telegramUserId: response.telegramUserId };
+        } catch (cause) {
+          return classifyRecipientFailure(cause);
+        }
+      },
+    },
+    reads: {
+      async hasPublicRole(identityId, requestId) {
+        const response = await identity.checkGlobalRole(
+          { identityId, acceptedRoles: [WireRole.PUBLIC] },
+          options(requestId),
+        );
+        return response.granted;
+      },
+      async lotTitle(identityId, lotId, requestId) {
+        // Роль `public` у зрителя проверена шагом раньше: Auction без неё лот
+        // не отдаёт, а выдумывать её зрителю канал не вправе.
+        const snapshot = await auction.getLot(
+          {
+            viewer: { identityId, globalRoles: [WireRole.PUBLIC] },
+            lotId,
+          },
+          options(requestId),
+        );
+        // Карточки у лота может не быть: тогда текст обходится без названия.
+        return snapshot.card?.title ?? "";
+      },
+    },
+  };
+}
+
 export type Clients = {
   ports: PortsFactory;
+  delivery: DeliveryPorts;
   close(): void;
 };
 
@@ -238,6 +302,7 @@ export function createClients(options: {
         ? {}
         : { onNamesRefused: options.onNamesRefused },
     ),
+    delivery: createDeliveryPorts(identity, auction),
     close() {
       identitySession.abort();
       auctionSession.abort();

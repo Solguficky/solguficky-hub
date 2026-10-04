@@ -28,6 +28,7 @@ public class AuctionBotWiringTests
     private const string AuctionBot = AppHostNames.Resources.AuctionBot;
     private const string Identity = AppHostNames.Resources.Identity;
     private const string Auction = AppHostNames.Resources.Auction;
+    private const string Nats = AppHostNames.Resources.Nats;
 
     private static readonly DistributedApplicationExecutionContext RunMode = new(DistributedApplicationOperation.Run);
 
@@ -61,6 +62,7 @@ public class AuctionBotWiringTests
             [
                 "AUCTION_BOT_COMMUNITY_TIME_ZONE",
                 "AUCTION_BOT_ENVIRONMENT",
+                "AUCTION_BOT_NATS_URL",
                 "AUCTION_BOT_SERVICE_TOKEN",
                 "AUCTION_BOT_TOKEN",
                 "AUCTION_GRPC_URL",
@@ -71,6 +73,7 @@ public class AuctionBotWiringTests
         environment["AUCTION_BOT_COMMUNITY_TIME_ZONE"].ShouldBe("Europe/Moscow");
         ((EndpointReference)environment["IDENTITY_GRPC_URL"]).Resource.Name.ShouldBe(Identity);
         ((EndpointReference)environment["AUCTION_GRPC_URL"]).Resource.Name.ShouldBe(Auction);
+        environment["AUCTION_BOT_NATS_URL"].ShouldNotBeNull();
     }
 
     [Fact]
@@ -82,6 +85,9 @@ public class AuctionBotWiringTests
 
         awaited.ShouldContain(Identity);
         awaited.ShouldContain(Auction);
+        // Шину бот ждёт вместе с топологией: durable и bucket журнала заводит
+        // AppHost, а бот без них не стартует (PER-328).
+        awaited.ShouldContain(Nats);
     }
 
     /// <summary>
@@ -133,6 +139,7 @@ public class AuctionBotWiringTests
             ["Topology:Profiles:auction-bot:Services:0"] = Identity,
             ["Topology:Profiles:auction-bot:Services:1"] = Auction,
             ["Topology:Profiles:auction-bot:Services:2"] = AuctionBot,
+            ["Topology:Profiles:auction-bot:Infrastructure:0"] = Nats,
             ["telegram-environment"] = telegramEnvironment,
             ["Parameters:auction-bot-token"] = "111:auction",
             ["Parameters:auction-bot-test-token"] = "444:auction-test",
@@ -141,13 +148,16 @@ public class AuctionBotWiringTests
             [AuctionBotSetup.AuctionIdKey] = auctionId,
         });
 
-        var profile = new ProfileConfig { Name = "auction-bot", Services = [Identity, Auction, AuctionBot], Infrastructure = [] };
+        var profile = new ProfileConfig { Name = "auction-bot", Services = [Identity, Auction, AuctionBot], Infrastructure = [Nats] };
         var graph = new ServiceGraph(builder, profile);
         ServiceGraphContext? captured = null;
 
+        // Шина — строка подключения, а не контейнер: тест видит привязку, а
+        // ресурсов не запускает.
+        graph.AddInfrastructure(Nats, context => context.Builder.AddConnectionString(Nats), LocalOnly);
         graph.AddService(Identity, [], context => CheapGrpcNode(context, Identity), LocalOnly);
         graph.AddService(Auction, [], context => CheapGrpcNode(context, Auction), LocalOnly);
-        graph.AddService(AuctionBot, [Identity, Auction], context =>
+        graph.AddService(AuctionBot, [Nats, Identity, Auction], context =>
         {
             captured = context;
             return AuctionBotSetup.Configure(context);

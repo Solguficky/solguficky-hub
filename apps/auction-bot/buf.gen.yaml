@@ -14,11 +14,15 @@ plugins:
 inputs:
   - directory: contracts/proto
     paths:
-      # Боту аукциона нужны ResolveIdentity Identity и чтения Auction:
-      # лот, лента, имена участников и изображение. Meetups и Notifications
-      # он не зовёт. Схему фактов шины он не читает, но генерирует: снимок
-      # аукциона в ответе чтения берёт её типы статусов.
+      # Боту аукциона нужны Identity и чтения Auction: лот, лента, имена
+      # участников и изображение. Схему фактов аукциона он не читает, но
+      # генерирует: снимок аукциона в ответе чтения берёт её типы статусов.
+      # Адресный факт Notifications бот читает из шины как канал доставки
+      # (PER-328); схема сходок нужна ему только как импорт конверта.
+      # Сервисов Meetups и Notifications он не зовёт.
       - contracts/proto/auction/v1/auction.proto
       - contracts/proto/auction/v1/auction_events.proto
       - contracts/proto/auction/v1/auction_service.proto
       - contracts/proto/identity
+      - contracts/proto/meetups/v1/meetups.proto
+      - contracts/proto/notifications/v1/notifications.proto

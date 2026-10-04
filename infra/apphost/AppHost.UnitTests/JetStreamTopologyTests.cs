@@ -77,13 +77,27 @@ public class JetStreamTopologyTests
             .ShouldBe(["hub-bot-notifications-events"]);
 
     /// <summary>
+    /// Бот аукциона — второй канал доставки (PER-328): свой durable на тех же
+    /// адресных фактах, а не общий с хабом, иначе каналы стали бы конкурентами
+    /// за одно сообщение.
+    /// </summary>
+    [Fact]
+    public void Durables_AuctionBot_ReadsNotificationFactsOnItsOwnDurable() =>
+        JetStreamTopology.Durables
+            .Where(durable => durable.Durable.StartsWith("auction-bot-", StringComparison.Ordinal))
+            .Select(durable => durable.Durable)
+            .ShouldBe(["auction-bot-notifications-events"]);
+
+    /// <summary>
     /// Запись журнала обязана пережить последнюю повторную выдачу своего
     /// сообщения: истеки она раньше стрима, повтор ушёл бы человеку второй раз.
     /// </summary>
-    [Fact]
-    public void KeyValueBuckets_DeliveryJournal_OutlivesStreamRetention()
+    [Theory]
+    [InlineData("hub-bot-deliveries")]
+    [InlineData("auction-bot-deliveries")]
+    public void KeyValueBuckets_DeliveryJournal_OutlivesStreamRetention(string bucketName)
     {
-        var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "hub-bot-deliveries");
+        var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == bucketName);
 
         journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
     }

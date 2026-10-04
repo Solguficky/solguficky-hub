@@ -7,10 +7,11 @@ export type ErrorCategory =
   | "invariant"
   | "dependency_unavailable"
   | "timeout"
+  | "visibility"
   | "unexpected";
 
-// Поля каркаса logging.md, которые бот сейчас пишет, и `screen` — какой экран
-// оболочки получил человек. Telegram user id и ник сюда не входят: после
+// Поля каркаса logging.md, которые бот сейчас пишет, `screen` — какой экран
+// оболочки получил человек, и поля доставки уведомлений (PER-328). Telegram user id и ник сюда не входят: после
 // разрешения личности пишется `identity_id`.
 //
 // `use_case` бот пока не пишет: в словаре продуктовых сценариев аукционных
@@ -28,15 +29,22 @@ export type LogFields = {
   signal?: string;
   timeout?: number;
   telegram_environment?: string;
+  stack?: string;
+  reply_error?: string;
+  notification_id?: string;
+  notification_type?: string;
+  attempt?: number;
+  retry_delay_ms?: number;
 };
 
 export type Logger = {
+  debug(message: string, fields?: LogFields): void;
   info(message: string, fields?: LogFields): void;
   warn(message: string, fields?: LogFields): void;
   error(message: string, fields?: LogFields): void;
 };
 
-const levels = { info: 30, warn: 40, error: 50 } as const;
+const levels = { debug: 20, info: 30, warn: 40, error: 50 } as const;
 type Level = keyof typeof levels;
 
 // Запись уходит JSON-строкой в stdout: Aspire показывает её в консольном логе
@@ -55,6 +63,7 @@ export function createLogger(
     );
   };
   return {
+    debug: (message, fields) => write("debug", message, fields),
     info: (message, fields) => write("info", message, fields),
     warn: (message, fields) => write("warn", message, fields),
     error: (message, fields) => write("error", message, fields),
@@ -62,5 +71,5 @@ export function createLogger(
 }
 
 function parseLevel(raw: string): Level {
-  return raw === "warn" || raw === "error" ? raw : "info";
+  return raw === "debug" || raw === "warn" || raw === "error" ? raw : "info";
 }

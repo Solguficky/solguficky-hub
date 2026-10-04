@@ -8,6 +8,8 @@ export type Config = {
   environment: TelegramEnvironment;
   identityUrl: string;
   auctionUrl: string;
+  // Шина: адресные факты Notifications, которые бот доставляет (PER-328).
+  natsUrl: string;
   logLevel: string;
   faq: FaqContent;
   // Пояс, в котором человек читает дедлайн лота.
@@ -87,6 +89,7 @@ export function readConfig(
       environment,
       identityUrl: read("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051",
       auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
+      natsUrl: read("AUCTION_BOT_NATS_URL") ?? "nats://127.0.0.1:4222",
       logLevel: read("AUCTION_BOT_LOG_LEVEL") ?? "info",
       faq: faq.content,
       communityTimeZone,

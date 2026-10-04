@@ -4,6 +4,7 @@ import { Bot, type Context, GrammyError, InputFile } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
 import type { TelegramEnvironment } from "./config.js";
+import { parseTraceCallback } from "./delivery/message.js";
 import {
   type AuctionEntryScreen,
   type RenderedScreen,
@@ -100,6 +101,10 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     // либо `finish` ниже.
     const waiting = startWaiting(ctx);
     let outcome: RouteOutcome | undefined;
+    // Кнопка под уведомлением: внутри обычная кнопка лота, а экран уходит
+    // новым сообщением, и уведомление остаётся в истории целым (дизайн-код,
+    // «Доставка»).
+    const traced = parseTraceCallback(ctx.callbackQuery.data);
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
       waiting.begin();
@@ -112,7 +117,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
             ? {}
             : { telegramUsername: ctx.from.username }),
         },
-        data: ctx.callbackQuery.data,
+        data: traced ?? ctx.callbackQuery.data,
       });
       await deliver(ctx, {
         screen: render(outcome.screen),
@@ -120,6 +125,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         image: ports.image,
         viewer: outcome.viewer,
         logger,
+        keepCurrent: traced !== undefined,
       });
     } finally {
       await waiting.finish();
@@ -273,12 +279,16 @@ async function deliver(
     image: LotImagePort;
     viewer: Viewer | undefined;
     logger: Logger;
+    // Нажатие под следом: сообщение, под которым нажали, не правится и не
+    // удаляется — экран уходит новым.
+    keepCurrent?: boolean;
   },
 ): Promise<void> {
   let photo = await photoFor({ ...input, requestId: ctx.requestId });
   const { screen } = input;
   const markup = markupOf(screen);
-  const current = ctx.callbackQuery?.message;
+  const current =
+    input.keepCurrent === true ? undefined : ctx.callbackQuery?.message;
   const currentIsPhoto = current !== undefined && "photo" in current;
   for (;;) {
     try {

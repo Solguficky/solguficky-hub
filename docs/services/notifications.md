@@ -192,7 +192,7 @@ Notifications ведёт локальную проекцию, собранную
 Контрактные события проверены на настоящих JetStream и PostgreSQL: адресация,
 отсутствие факта на первой и собственной ставке, повторы, рестарт, конкуренция,
 запоздавший повод и откат при отказе outbox. Publisher Auction — PER-331,
-доставка в Telegram — PER-328; сквозной прогон с producer'ом не подтверждён.
+доставка в Telegram — бот аукциона (PER-328); сквозной прогон с producer'ом не подтверждён.
 
 ### Адресный факт покупки лота
 
@@ -398,6 +398,7 @@ JetStream участвует в первой границе, но не заме�
 | Identity | метод разрешения внутреннего идентификатора в Telegram id |
 | Identity | синхронная проверка глобальной роли для объявления сообществу — `IdentityService.CheckGlobalRole`, реализован в [PER-232](https://linear.app/anticnvm/issue/per-232) |
 | Hub Bot | роль потребителя уведомлений: собственный durable consumer `hub-bot-notifications-events`, резолвинг получателя, рендеринг текста, retry и журнал попыток в JetStream KV ([ADR-052](../decisions/ADR-052-telegram-bot-delivery-journal-in-jetstream-kv.md); имена уточнены ADR-044 от 2026-10-03; устройство — [бриф бота](hub-bot.md#доставка-уведомлений)) |
+| Бот аукциона | та же роль для веток `lot_outbid` и `lot_purchased`: собственный durable `auction-bot-notifications-events` и журнал `auction-bot-deliveries`, механика общая с Hub Bot (дополнение ADR-044 от 2026-10-04, [PER-328](https://linear.app/anticnvm/issue/per-328)) |
 
 Метод разрешения внутреннего идентификатора в Telegram id нужен каналу, а не Notifications: в [ADR-026](../decisions/ADR-026-identity-mvp-model-and-access.md) описан только обратный путь. Он принят отдельным вызовом `IdentityService.ResolveTelegramUserId` ([integration.md](../architecture/integration.md)), реализован в [PER-231](https://linear.app/anticnvm/issue/per-231).
 

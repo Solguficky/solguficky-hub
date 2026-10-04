@@ -161,6 +161,10 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 		{identityv1.IdentityService_RequestRole_FullMethodName, CallerAuctionBot},
 		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerMeetups},
 		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerNotifications},
+		// Канал доставки бота аукциона (PER-328): получатель уведомления и его
+		// роль `public`, без которой Auction не отдаст лот для текста.
+		{identityv1.IdentityService_ResolveTelegramUserId_FullMethodName, CallerAuctionBot},
+		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerAuctionBot},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.caller)+tc.method, func(t *testing.T) {

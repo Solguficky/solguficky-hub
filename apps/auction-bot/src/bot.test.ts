@@ -16,6 +16,7 @@ import {
   type IdentityRpc,
   type PortsFactory,
 } from "./clients.js";
+import { traceLotCallback } from "./delivery/message.js";
 import { entryCallback } from "./faq.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
@@ -46,7 +47,12 @@ const lotId = "01926f3c-8b7a-7cde-8f00-0123456789ab";
 const from = { id: 42, is_bot: false, first_name: "Person" };
 const privateChat = { id: 42, type: "private" as const, first_name: "Person" };
 
-const silent: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+const silent: Logger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
 
 function makeBot(
   ports: PortsFactory,
@@ -407,6 +413,30 @@ describe("auction bot", () => {
     });
     expect(photos.get({ lotId, version: "img-1" })).toBe("large");
     expect(getLotImage).toHaveBeenCalledTimes(1);
+  });
+
+  // Кнопка «К лоту» под уведомлением (PER-328): карточка приходит новым
+  // сообщением, а уведомление не правится и не удаляется (дизайн-код,
+  // «Доставка»).
+  it("opens the lot under a notification as a new message and keeps it", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(lotPress({ data: traceLotCallback(lotId) }));
+    // Порядок ответа на нажатие задаёт правило ожидания; здесь важно только,
+    // что карточка ушла новым сообщением, а уведомление не тронуто.
+    expect(
+      calls.map((call) => call.method).sort((a, b) => a.localeCompare(b)),
+    ).toEqual(["answerCallbackQuery", "sendMessage"]);
+    expect(calls[1]?.payload).toMatchObject({
+      text: expect.stringContaining("Кружка"),
+    });
+  });
+
+  it("does not drop the notification when the lot card is a photo", async () => {
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }));
+    await bot.handleUpdate(lotPress({ data: traceLotCallback(lotId) }));
+    expect(
+      calls.map((call) => call.method).sort((a, b) => a.localeCompare(b)),
+    ).toEqual(["answerCallbackQuery", "sendPhoto"]);
   });
 
   it("edits a photo card in place from the cache without loading bytes", async () => {

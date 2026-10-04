@@ -1,0 +1,128 @@
+import {
+  encodeAuctionCallback,
+  parseAuctionCallback,
+} from "@solguficky/auction-bot-ui";
+import {
+  classifyTelegramFailure,
+  type NotificationSender,
+  type RenderMessage,
+} from "@solguficky/telegram-delivery";
+import { Api } from "grammy";
+import type { TelegramEnvironment } from "../config.js";
+import { money } from "../entry-screen.js";
+import type { AuctionNotificationContent } from "./notification.js";
+
+export type NotificationMessage = {
+  text: string;
+  button: { text: string; callback_data: string };
+};
+
+// Кнопка под следом (дизайн-код, «Доставка»): карточка лота приходит новым
+// сообщением, а уведомление остаётся в истории целым. Внутри — обычная кнопка
+// лота общего пакета, поэтому маршрут и шлюз доступа у неё те же; префикс
+// говорит краю только одно — не править и не удалять сообщение, под которым
+// нажали. Первая страница ленты — родитель лота, на который ведёт возврат.
+const tracePrefix = "v1:t:";
+
+export function traceLotCallback(lotId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({ kind: "lot", lotId, page: 0 })}`;
+}
+
+// Кнопка аукциона внутри следа. Не след или след без читаемой кнопки лота —
+// undefined: такую кнопку край разбирает как обычную.
+export function parseTraceCallback(data: string): string | undefined {
+  if (!data.startsWith(tracePrefix)) return undefined;
+  const inner = data.slice(tracePrefix.length);
+  const parsed = parseAuctionCallback(inner);
+  return parsed.ok && parsed.intent.kind === "lot" ? inner : undefined;
+}
+
+// Чтения, которые нужны тексту уведомления. Название лота отдаёт Auction
+// только зрителю с ролью `public` (Viewer.isParticipant), а роль получателя
+// канал не придумывает — спрашивает у Identity.
+export type NotificationReads = {
+  // true — роль есть, false — нет; недоступность Identity — исключение.
+  hasPublicRole(identityId: string, requestId?: string): Promise<boolean>;
+  // Название лота глазами получателя; любой отказ — исключение.
+  lotTitle(
+    identityId: string,
+    lotId: string,
+    requestId?: string,
+  ): Promise<string>;
+};
+
+// Сборка сообщения. Без роли `public` уведомление не отправляется вовсе:
+// кнопка упёрлась бы в тот же отказ, а человек, у которого роль сняли, о
+// торгах больше не слышит. Отказ Auction названия не роняет: перебитие ценно
+// вовремя, а название видно в карточке по кнопке.
+export function createRenderMessage(
+  reads: NotificationReads,
+  onTitleMissing: (cause: unknown, requestId?: string) => void,
+): RenderMessage<AuctionNotificationContent, NotificationMessage> {
+  return async (content, { recipientId, requestId }) => {
+    let eligible: boolean;
+    try {
+      eligible = await reads.hasPublicRole(recipientId, requestId);
+    } catch (cause) {
+      return { kind: "unavailable", cause };
+    }
+    if (!eligible) return { kind: "ineligible" };
+    let title: string | undefined;
+    try {
+      title = await reads.lotTitle(recipientId, content.lotId, requestId);
+    } catch (cause) {
+      onTitleMissing(cause, requestId);
+    }
+    return { kind: "ready", message: renderNotification(content, title) };
+  };
+}
+
+export function renderNotification(
+  content: AuctionNotificationContent,
+  title?: string,
+): NotificationMessage {
+  const lot = title === undefined || title === "" ? undefined : `«${title}»`;
+  const text =
+    content.kind === "lot-outbid"
+      ? `Вашу ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`
+      : `Лот ${lot === undefined ? "" : `${lot} `}ваш за ${money(content.price)}.`;
+  return {
+    text,
+    button: { text: "К лоту", callback_data: traceLotCallback(content.lotId) },
+  };
+}
+
+// Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст
+// то же сообщение второй раз, пока первая отправка ещё висит. Умолчание grammY
+// рассчитано на long polling, поэтому у доставки свой клиент со своим
+// таймаутом — как у бота хаба.
+const sendTimeoutSeconds = 10;
+
+export function createNotificationApi(
+  token: string,
+  environment: TelegramEnvironment,
+): Api {
+  return new Api(token, { environment, timeoutSeconds: sendTimeoutSeconds });
+}
+
+export type SendMessageApi = Pick<Api, "sendMessage">;
+
+export function createNotificationSender(
+  api: SendMessageApi,
+): NotificationSender<NotificationMessage> {
+  return {
+    async send({ telegramUserId, message }) {
+      try {
+        // Личный чат с человеком имеет id самого человека. Telegram держит id в
+        // 52 битах, поэтому переход из bigint в number точен.
+        await api.sendMessage(Number(telegramUserId), message.text, {
+          reply_markup: { inline_keyboard: [[message.button]] },
+          link_preview_options: { is_disabled: true },
+        });
+        return { kind: "sent" };
+      } catch (cause) {
+        return classifyTelegramFailure(cause);
+      }
+    },
+  };
+}
