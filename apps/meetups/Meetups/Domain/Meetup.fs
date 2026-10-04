@@ -321,13 +321,28 @@ module Meetup =
         | Existing meetup when meetup.Author = author -> Ok None
         | Existing _ -> Error DraftBelongsToAnotherAuthor
 
+    /// Назначенный момент обещает публикацию, а публикацию закрывает пустой
+    /// заголовок (I4): правка, которая стирает заголовок у сходки с моментом,
+    /// оставила бы её в голове очереди воркера навсегда (PER-457). Отказ тот же,
+    /// что у назначения черновику без заголовка.
+    ///
+    /// Запрещено именно стирание, а не пустой заголовок при моменте: атрибуты
+    /// тотальны и правка несёт все пять, поэтому черновик без заголовка с моментом,
+    /// назначенным до этого правила, иначе не позволил бы поправить даже место.
+    let private erasesTitleOfScheduled (attributes: MeetupAttributes) (meetup: Meetup) : bool =
+        meetup.ScheduledPublishAt.IsSome
+        && String.IsNullOrWhiteSpace attributes.Title
+        && not (String.IsNullOrWhiteSpace meetup.Title)
+
     /// Атрибуты и расписание тотальны, а стоячего инварианта «видимая сходка имеет
-    /// заголовок» в срезе нет: единственный отказ этих двух команд — несуществующая
-    /// сходка.
+    /// заголовок» в срезе нет. Отказы правки атрибутов — несуществующая сходка,
+    /// отменённая и стирание заголовка у сходки с назначенным моментом
+    /// (`erasesTitleOfScheduled`); у расписания — только первые два.
     let decideChangeAttributes (attributes: MeetupAttributes) (state: MeetupState) : Result<MeetupEvent, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
         | Existing meetup when meetup.Lifecycle = Cancelled -> Error TransitionNotAllowed
+        | Existing meetup when erasesTitleOfScheduled attributes meetup -> Error TitleRequiredForPublication
         | Existing _ -> Ok(MeetupChanged(AttributesChanged attributes))
 
     let decideSetSchedule (schedule: Schedule) (state: MeetupState) : Result<MeetupEvent, DomainError> =
@@ -352,9 +367,8 @@ module Meetup =
     /// I4 — тот же `TitleRequiredForPublication`, что у публикации, и стоит между
     /// состоянием и значением: заголовок — данные сходки, а не выбор человека. Без
     /// него момент назначался бы, а воркер такую сходку не публиковал и держал бы в
-    /// голове очереди (PER-457). Правило закрывает назначение, а не саму очередь:
-    /// заголовок, стёртый правкой после назначения, по-прежнему оставляет сходку в
-    /// наборе воркера (`PublishDueMeetups.Attempt.Blocked`). Раньше I5 он стоит намеренно: повтор момента на
+    /// голове очереди (PER-457). Второй вход в то же состояние — правка, стирающая
+    /// заголовок после назначения, — закрыт в `decideChangeAttributes`. Раньше I5 он стоит намеренно: повтор момента на
     /// черновике без заголовка, назначенного до этого правила, отвечал бы успехом
     /// и подтверждал бы публикацию, которой не будет.
     let decideSchedulePublication

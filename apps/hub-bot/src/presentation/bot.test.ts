@@ -6011,13 +6011,15 @@ describe("deferred publication frames", () => {
     });
 
     it("offers the same presets for the publication moment and schedules a picked time", async () => {
+      // Момент получает только сходка с названием (PER-457).
+      const titled = { ...draft, title: "Настолки" };
       const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
         request.intent === "view-meetup"
-          ? { kind: "meetup-card", meetup: draft }
+          ? { kind: "meetup-card", meetup: titled }
           : {
               kind: "publication-scheduled",
               meetup: {
-                ...draft,
+                ...titled,
                 publishAt: {
                   year: 2026,
                   month: 10,
@@ -6226,7 +6228,8 @@ describe("deferred publication frames", () => {
   });
 
   it("asks for the moment from the status menu and schedules the answer", async () => {
-    const draft = draftMeetup();
+    // Момент получает только сходка с названием (PER-457).
+    const draft = { ...draftMeetup(), title: "Настолки" };
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "view-meetup"
         ? { kind: "meetup-card", meetup: draft }
@@ -6404,6 +6407,62 @@ describe("deferred publication frames", () => {
         ),
       },
     });
+  });
+
+  it("refuses the publish-later button on an untitled draft before asking for a moment", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: draftMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:publish-later:${token}`));
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: refusalText(
+          "У сходки нет названия, а без него публикацию не назначить. Добавь название через «Изменить» на карточке.",
+        ),
+      },
+    });
+  });
+
+  it("names the missing title when Meetups refuses a moment for a hidden meetup", async () => {
+    // Название стёрли, пока висел вопрос о моменте: FAILED_PRECONDITION
+    // назначения различается по перечитанному снимку, а не по тексту статуса.
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "publication-unavailable",
+      meetup: draftMeetup(),
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    await bot.init();
+    const question = publishMomentQuestion({
+      prompt: "Когда опубликовать?",
+      botUsername: botInfo.username,
+      token,
+    });
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "05.10.2026 19:00",
+        fromId: 42,
+        replyMessageId: 7,
+        replyFromId: 1,
+        replyText: question.text,
+        replyEntities: question.entities,
+      }),
+    );
+
+    const answered = JSON.stringify(calls.map((call) => call.payload));
+    expect(answered).toContain("У сходки нет названия");
+    expect(answered).not.toContain("Сходка уже опубликована");
   });
 
   it("cancels a scheduled publication only from the confirmation callback", async () => {

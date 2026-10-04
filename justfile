@@ -561,12 +561,12 @@ auction-bot-run: auction-bot-build
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Пороги числа тестов по уровням, в сумме 704. Поднимаются вручную вместе с
+# Пороги числа тестов по уровням, в сумме 709. Поднимаются вручную вместе с
 # набором — добавил тест, обнови число своего уровня здесь тем же изменением.
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "565"
+MEETUPS_UNIT_TEST_THRESHOLD := "570"
 MEETUPS_INTEGRATION_TEST_THRESHOLD := "139"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,

@@ -380,6 +380,27 @@ let ``A concurrent cancellation while changing attributes is a real conflict, no
 
     test <@ actual = Some StatusCode.Aborted @>
 
+/// Правка, стирающая заголовок у сходки с назначенным моментом, — отказ по
+/// состоянию сходки, а не падение на невозможной паре (PER-457).
+[<Fact>]
+let ``Erasing the title of a scheduled meetup is refused as FAILED_PRECONDITION`` () =
+    let scheduled =
+        Change.deps
+            (fun _ -> Task.FromResult(Some(Meetup.toSnapshot Sample.scheduled)))
+            (fun _ _ _ _ -> unreachable "Commit")
+
+    let erasing =
+        Meetups.V1.ChangeMeetupAttributesRequest(
+            Viewer = administrator (),
+            Id = meetupId,
+            ExpectedVersion = Sample.expectedVersion,
+            Title = ""
+        )
+
+    let actual = codeOf (fun () -> ChangeMeetupAttributes.Api.handle scheduled erasing)
+
+    test <@ actual = Some StatusCode.FailedPrecondition @>
+
 [<Fact>]
 let ``A version conflict while changing attributes is refused as ABORTED`` () =
     let conflicting =
