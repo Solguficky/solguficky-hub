@@ -213,6 +213,7 @@ const dropCategory: Record<DropReason, FailureCategory> = {
   recipient_blocked: "authorization",
   recipient_rejected: "invariant",
   recipient_ineligible: "authorization",
+  render_rejected: "invariant",
   bot_blocked: "authorization",
   telegram_rejected: "invariant",
   attempts_exhausted: "dependency_unavailable",

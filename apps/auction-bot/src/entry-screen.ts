@@ -357,7 +357,7 @@ function fitWithin(
 // Обрезка по кодовым точкам: срез по UTF-16 разрезал бы суррогатную пару, и
 // Telegram получил бы битую строку. Кодовая точка длиннее единицы UTF-16 не
 // бывает короче, поэтому результат укладывается в `limit` единиц.
-function truncate(text: string, limit: number): string {
+export function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
   let kept = "";
   for (const point of text) {

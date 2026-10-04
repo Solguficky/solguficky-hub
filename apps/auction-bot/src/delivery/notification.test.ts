@@ -89,6 +89,10 @@ describe("decodeNotification", () => {
       "a price without currency",
       { lotId, currentPrice: { minorUnits: 1n, currency: "" } },
     ],
+    [
+      "a currency that is not an ISO 4217 code",
+      { lotId, currentPrice: { minorUnits: 1n, currency: "R" } },
+    ],
   ])("treats an outbid fact with %s as malformed", (_name, value) => {
     expect(
       decodeNotification(fact({ case: "lotOutbid", value: value as never })),

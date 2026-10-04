@@ -4,7 +4,7 @@ import { Bot, type Context, GrammyError, InputFile } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
 import type { TelegramEnvironment } from "./config.js";
-import { parseTraceCallback } from "./delivery/message.js";
+import { isTraceCallback, parseTraceCallback } from "./delivery/message.js";
 import {
   type AuctionEntryScreen,
   type RenderedScreen,
@@ -125,7 +125,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         image: ports.image,
         viewer: outcome.viewer,
         logger,
-        keepCurrent: traced !== undefined,
+        keepCurrent: isTraceCallback(ctx.callbackQuery.data),
       });
     } finally {
       await waiting.finish();

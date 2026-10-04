@@ -18,6 +18,7 @@ export type DropReason =
   | "recipient_blocked"
   | "recipient_rejected"
   | "recipient_ineligible"
+  | "render_rejected"
   | "bot_blocked"
   | "telegram_rejected"
   | "attempts_exhausted";
@@ -208,6 +209,8 @@ export function createDeliverNotification<C extends ChannelContent, M>(deps: {
         break;
       case "ineligible":
         return drop(notification, attempt, "recipient_ineligible");
+      case "rejected":
+        return drop(notification, attempt, "render_rejected", rendered.cause);
       case "unavailable":
         return retry(
           notification,

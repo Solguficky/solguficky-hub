@@ -40,6 +40,13 @@ describe("renderNotification", () => {
     );
   });
 
+  // Предел сообщения Telegram отверг бы уведомление окончательно.
+  it("shortens a title that would not fit the message", () => {
+    const { text } = renderNotification(outbid, "Кружка ".repeat(1_000));
+    expect(text.length).toBeLessThan(300);
+    expect(text).toContain("…»");
+  });
+
   it("does without the title when it is unknown", () => {
     expect(renderNotification(outbid).text).toBe(
       `Вашу ставку на лот перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
@@ -106,6 +113,33 @@ describe("createRenderMessage", () => {
       kind: "ineligible",
     });
     expect(source.lotTitle).not.toHaveBeenCalled();
+  });
+
+  // Отказ, который повтор не изменит, — дефект: снимается без повторов.
+  it("rejects for good when Identity refuses the role check", async () => {
+    const denied = Object.assign(new Error("permission denied"), { code: 7 });
+    const render = createRenderMessage(
+      reads({ hasPublicRole: vi.fn(async () => Promise.reject(denied)) }),
+      () => {},
+    );
+    await expect(render(outbid, { recipientId })).resolves.toEqual({
+      kind: "rejected",
+      cause: denied,
+    });
+  });
+
+  it("does not send a lot Auction cannot find", async () => {
+    const missing = vi.fn();
+    const notFound = Object.assign(new Error("lot not found"), { code: 5 });
+    const render = createRenderMessage(
+      reads({ lotTitle: vi.fn(async () => Promise.reject(notFound)) }),
+      missing,
+    );
+    await expect(render(outbid, { recipientId })).resolves.toEqual({
+      kind: "rejected",
+      cause: notFound,
+    });
+    expect(missing).not.toHaveBeenCalled();
   });
 
   it("asks for a retry when Identity cannot say", async () => {

@@ -431,6 +431,17 @@ describe("auction bot", () => {
     });
   });
 
+  // След, который эта сборка уже не читает, отвечает «устарело» новым
+  // сообщением: уведомление под ним всё равно не затирается.
+  it("keeps the notification under a trace it cannot read", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(lotPress({ data: "v1:t:v0:auc:lot:gone:0" }));
+    const methods = calls.map((call) => call.method);
+    expect(methods).not.toContain("editMessageText");
+    expect(methods).not.toContain("deleteMessage");
+    expect(methods).toContain("sendMessage");
+  });
+
   it("does not drop the notification when the lot card is a photo", async () => {
     const { bot, calls } = makeBot(portsWith({ lot: withImage }));
     await bot.handleUpdate(lotPress({ data: traceLotCallback(lotId) }));

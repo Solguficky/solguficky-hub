@@ -181,6 +181,19 @@ describe("deliver notification", () => {
     );
   });
 
+  // Отказ соседа, который повтор не изменит, снимается сразу, а не крутится
+  // до исчерпания попыток.
+  it("drops a notification the renderer cannot build for good", async () => {
+    const { deliver, send } = setup({
+      render: rendering({ kind: "rejected", cause: new Error("not found") }),
+    });
+    await expect(deliver(notification(), 1)).resolves.toMatchObject({
+      kind: "drop",
+      reason: "render_rejected",
+    });
+    expect(send.send).not.toHaveBeenCalled();
+  });
+
   it("retries when the renderer cannot reach a neighbour", async () => {
     const { deliver, send } = setup({
       render: rendering({ kind: "unavailable", cause: new Error("down") }),

@@ -47,12 +47,14 @@ export type TelegramRecipientResolver = {
 };
 
 // Сборка сообщения из содержимого своего канала. Бот, которому для текста
-// нужны соседи, ходит к ним здесь: недоступный сосед — повтор, а получатель, у
-// которого нет права на то, о чём сообщение, — окончательный отказ.
+// нужны соседи, ходит к ним здесь: недоступный сосед — повтор, получатель, у
+// которого нет права на то, о чём сообщение, — окончательный отказ, а отказ
+// соседа, который повтор не изменит, — дефект, снимаемый без повторов.
 export type RenderResult<M> =
   | { kind: "ready"; message: M }
   | { kind: "ineligible" }
-  | { kind: "unavailable"; cause: unknown };
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; cause: unknown };
 
 export type RenderContext = {
   recipientId: string;

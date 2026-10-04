@@ -4,12 +4,13 @@ import {
 } from "@solguficky/auction-bot-ui";
 import {
   classifyTelegramFailure,
+  isPermanentFailure,
   type NotificationSender,
   type RenderMessage,
 } from "@solguficky/telegram-delivery";
 import { Api } from "grammy";
 import type { TelegramEnvironment } from "../config.js";
-import { money } from "../entry-screen.js";
+import { money, truncate } from "../entry-screen.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
 export type NotificationMessage = {
@@ -23,6 +24,12 @@ export type NotificationMessage = {
 // говорит краю только одно — не править и не удалять сообщение, под которым
 // нажали. Первая страница ленты — родитель лота, на который ведёт возврат.
 const tracePrefix = "v1:t:";
+
+// След опознаётся по префиксу, а не по успеху разбора: кнопка следа, которую
+// эта сборка уже не читает, всё равно не должна затереть уведомление.
+export function isTraceCallback(data: string): boolean {
+  return data.startsWith(tracePrefix);
+}
 
 export function traceLotCallback(lotId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "lot", lotId, page: 0 })}`;
@@ -43,7 +50,7 @@ export function parseTraceCallback(data: string): string | undefined {
 export type NotificationReads = {
   // true — роль есть, false — нет; недоступность Identity — исключение.
   hasPublicRole(identityId: string, requestId?: string): Promise<boolean>;
-  // Название лота глазами получателя; любой отказ — исключение.
+  // Название лота глазами получателя; любой отказ — исключение со своим кодом.
   lotTitle(
     identityId: string,
     lotId: string,
@@ -53,8 +60,10 @@ export type NotificationReads = {
 
 // Сборка сообщения. Без роли `public` уведомление не отправляется вовсе:
 // кнопка упёрлась бы в тот же отказ, а человек, у которого роль сняли, о
-// торгах больше не слышит. Отказ Auction названия не роняет: перебитие ценно
-// вовремя, а название видно в карточке по кнопке.
+// торгах больше не слышит. Недоступный Auction названия не роняет: перебитие
+// ценно вовремя, а название видно в карточке по кнопке. Отказ, который повтор
+// не изменит, — лот не найден или не виден получателю с ролью, — дефект: такое
+// уведомление снимается, а не уходит с кнопкой в тот же отказ.
 export function createRenderMessage(
   reads: NotificationReads,
   onTitleMissing: (cause: unknown, requestId?: string) => void,
@@ -64,24 +73,34 @@ export function createRenderMessage(
     try {
       eligible = await reads.hasPublicRole(recipientId, requestId);
     } catch (cause) {
-      return { kind: "unavailable", cause };
+      return isPermanentFailure(cause)
+        ? { kind: "rejected", cause }
+        : { kind: "unavailable", cause };
     }
     if (!eligible) return { kind: "ineligible" };
     let title: string | undefined;
     try {
       title = await reads.lotTitle(recipientId, content.lotId, requestId);
     } catch (cause) {
+      if (isPermanentFailure(cause)) return { kind: "rejected", cause };
       onTitleMissing(cause, requestId);
     }
     return { kind: "ready", message: renderNotification(content, title) };
   };
 }
 
+// Название лота у Auction ничем не ограничено, а сообщение длиннее предела
+// Telegram отвергается окончательно: уведомление потерялось бы целиком.
+const TITLE_LIMIT = 200;
+
 export function renderNotification(
   content: AuctionNotificationContent,
   title?: string,
 ): NotificationMessage {
-  const lot = title === undefined || title === "" ? undefined : `«${title}»`;
+  const lot =
+    title === undefined || title === ""
+      ? undefined
+      : `«${truncate(title, TITLE_LIMIT)}»`;
   const text =
     content.kind === "lot-outbid"
       ? `Вашу ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`

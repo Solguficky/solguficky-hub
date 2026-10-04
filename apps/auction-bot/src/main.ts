@@ -67,6 +67,7 @@ async function main(): Promise<number> {
           (cause, requestId) =>
             logger.warn("lot title unavailable", {
               ...(requestId === undefined ? {} : { request_id: requestId }),
+              error_category: "dependency_unavailable",
               error: cause instanceof Error ? cause.message : String(cause),
             }),
         ),
@@ -102,14 +103,17 @@ async function main(): Promise<number> {
   delivery.done.catch((cause: unknown) => {
     failed = true;
     logger.error("notification delivery stopped", {
+      error_category: "dependency_unavailable",
       error: cause instanceof Error ? cause.message : String(cause),
     });
     void shutdown.request("delivery-stopped");
   });
 
   try {
+    // Канал уведомлений мог отказать раньше старта поллера: такая остановка —
+    // отказ, а не штатный выход.
     if (shutdown.requested) {
-      return 0;
+      return failed ? 1 : 0;
     }
     logger.info("auction-bot starting", {
       telegram_environment: config.environment,

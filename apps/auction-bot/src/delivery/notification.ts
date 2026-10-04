@@ -84,10 +84,13 @@ function canonical(id: string): string | undefined {
   return CANONICAL_UUID.test(id) ? id : undefined;
 }
 
-// Сумма без валюты или вне безопасного целого — нарушение контракта: цену в
-// уведомлении нельзя показать приблизительно.
+// Сумма без кода валюты ISO 4217 или вне безопасного целого — нарушение
+// контракта: цену в уведомлении нельзя показать приблизительно, а код не той
+// формы уронил бы форматирование на каждой попытке.
+const CURRENCY = /^[A-Z]{3}$/;
+
 function toMoney(money: WireMoney | undefined): Money | undefined {
-  if (money === undefined || money.currency === "") return undefined;
+  if (money === undefined || !CURRENCY.test(money.currency)) return undefined;
   const minorUnits = Number(money.minorUnits);
   if (!Number.isSafeInteger(minorUnits) || minorUnits < 0) return undefined;
   return { minorUnits, currency: money.currency };
