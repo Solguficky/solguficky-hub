@@ -27,6 +27,7 @@ export const categoryLabels: Record<NotificationCategory, string> = {
   reminder: "Напоминание перед началом",
   organizer: "Сообщения организатора",
   announcement: "Объявления сообщества",
+  access: "Запросы доступа",
 };
 
 // Новые сходки и объявления сообществу не привязаны ни к какой сходке, и
@@ -51,10 +52,17 @@ export function globalNotificationsScreen(
   categories: readonly CategoryState<NotificationCategory>[],
 ): ShownScreen {
   // Подзаголовков у клавиатуры нет, поэтому группы называет текст, а кнопки
-  // идут в том же порядке: сначала то, что приходит без подписки.
+  // идут в том же порядке: сначала то, что приходит без подписки, потом
+  // запросы доступа, потом категории сходок. Запросы доступа бот не
+  // показывает и не прячет сам: их нет в снимке у того, кто не администратор.
+  const access = categories.filter((entry) => entry.category === "access");
   const ordered = [
     ...categories.filter((entry) => withoutSubscription(entry.category)),
-    ...categories.filter((entry) => !withoutSubscription(entry.category)),
+    ...access,
+    ...categories.filter(
+      (entry) =>
+        !withoutSubscription(entry.category) && entry.category !== "access",
+    ),
   ];
   const keyboard = new InlineKeyboard();
   for (const entry of ordered) {
@@ -70,6 +78,9 @@ export function globalNotificationsScreen(
     text: screenText(
       "Уведомления",
       "Приходят всем, без подписки: новые сходки и объявления сообщества.",
+      access.length === 0
+        ? undefined
+        : "Только администратору: запросы доступа — новые заявки в сообщество и в аукцион.",
       "По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. Здесь — значение для всех таких сходок, включая будущие. У отдельной сходки его можно поменять в её уведомлениях, и тогда общая настройка её уже не меняет.",
       "Нажми на категорию, чтобы включить или выключить её.",
     ),

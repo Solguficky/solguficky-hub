@@ -34,6 +34,10 @@ export const telegramTextLimit = 4096;
 // Объявление ни к какой сходке не привязано, и категория у него только общая.
 export const disableAnnouncementCallback = "v1:notify:off:announcement";
 
+// Заявка тоже не привязана к сходке. Категория одна на оба круга, поэтому
+// кнопка стоит и под заявкой в хаб, и под заявкой в аукцион.
+export const disableAccessRequestCallback = "v1:notify:off:access";
+
 // Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст то
 // же сообщение второй раз, пока первая отправка ещё висит. Умолчание клиента
 // grammY рассчитано на long polling и измеряется минутами, поэтому у доставки
@@ -72,26 +76,33 @@ export function renderNotification(
   content: RenderableContent,
 ): NotificationMessage {
   if (content.kind === "access-requested") {
-    // Минимальный кадр PER-435: повод и переход в очередь, где заявку решают.
-    // Кнопки отключения пока нет — её и строку в общих настройках несёт
-    // PER-466.
+    // Повод и переход в очередь, где заявку решают, и выключатель категории.
+    const disable = (keyboard: InlineKeyboard) =>
+      keyboard.text(
+        "Не присылать запросы доступа",
+        disableAccessRequestCallback,
+      );
     if (content.circle === "public") {
       // Очередь «Ожидают допуска» решает допуск в хаб: «Допустить» там выдаёт
       // member. Вести туда аукционную заявку значило бы дать заявителю больше,
-      // чем он просил, поэтому кнопки нет. Карточка заявки с кругом (PER-439)
-      // уже есть, но след к ней — часть оповещения, а не карточки.
+      // чем он просил, поэтому кнопки перехода нет. Карточка заявки с кругом
+      // (PER-439) уже есть, но след к ней — часть оповещения, а не карточки.
       return {
         text: "Новая заявка на участие в аукционе",
-        keyboard: undefined,
+        keyboard: disable(new InlineKeyboard()),
       };
     }
     return {
       text: "Новая заявка на доступ в сообщество",
-      keyboard: new InlineKeyboard().text(
-        "Открыть очередь",
-        // Кнопка следа: очередь придёт новым сообщением, а уведомление
-        // останется в истории.
-        traceCallback("v1:cm:p"),
+      keyboard: disable(
+        new InlineKeyboard()
+          .text(
+            "Открыть очередь",
+            // Кнопка следа: очередь придёт новым сообщением, а уведомление
+            // останется в истории.
+            traceCallback("v1:cm:p"),
+          )
+          .row(),
       ),
     };
   }

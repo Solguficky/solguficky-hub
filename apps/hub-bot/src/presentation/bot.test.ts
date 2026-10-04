@@ -5243,6 +5243,87 @@ describe("notification frames", () => {
     });
   });
 
+  // Категорию присылает только снимок администратора: бот рисует строку, когда
+  // она пришла, и её группу называет текст.
+  it("renders access requests between global and meetup categories when the snapshot has them", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "global-notification-settings",
+      categories: [
+        { category: "changes", enabled: true },
+        { category: "access", enabled: true },
+        { category: "published", enabled: true },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+    const payload = screen(calls[1]);
+    expect(payload.text).toContain("Только администратору: запросы доступа");
+    expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
+      text: "Вкл · Запросы доступа",
+      callback_data: "v1:notify:gset:access:0",
+    });
+    expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
+      text: "Вкл · Изменения данных и статуса",
+      callback_data: "v1:notify:gset:changes:0",
+    });
+  });
+
+  it("leaves access requests out when the snapshot does not have them", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "global-notification-settings",
+      categories: [{ category: "published", enabled: true }],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+    const payload = screen(calls[1]);
+    expect(payload.text).not.toContain("запросы доступа");
+    const data = (payload.reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(data.some((value) => value.includes(":access:"))).toBe(false);
+  });
+
+  it("toggles access requests and refuses a former admin with the reason", async () => {
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValueOnce({
+        kind: "global-notification-settings",
+        categories: [{ category: "access", enabled: false }],
+      })
+      .mockResolvedValueOnce({
+        kind: "dependency-rejected",
+        reason: "forbidden",
+      });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:notify:gset:access:0"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "set-global-category",
+        category: "access",
+        enabled: false,
+      }),
+    );
+    const toggled = calls.length;
+    expect(
+      screen(calls.findLast((call) => call.method !== "answerCallbackQuery"))
+        .reply_markup?.inline_keyboard[0]?.[0],
+    ).toEqual({
+      text: "Выкл · Запросы доступа",
+      callback_data: "v1:notify:gset:access:1",
+    });
+    await bot.handleUpdate(callbackUpdate("v1:notify:gset:access:1"));
+    expect(
+      screen(
+        calls
+          .slice(toggled)
+          .findLast((call) => call.method !== "answerCallbackQuery"),
+      ).text,
+    ).toContain("Запросы доступа настраивает только администратор.");
+  });
+
   describe("disabling a category from a notification", () => {
     const notification = {
       text: "Новая сходка: Настолки у Лёши\n12.08.2026 19:00",
@@ -5519,6 +5600,56 @@ describe("notification frames", () => {
         },
       ],
     ]);
+  });
+
+  describe("turning access requests off from a request", () => {
+    const off = "v1:notify:off:access";
+    const request = {
+      text: "Новая заявка на доступ в сообщество",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Открыть очередь", callback_data: "v1:t:cm:p" }],
+          [{ text: "Не присылать запросы доступа", callback_data: off }],
+        ],
+      },
+    };
+
+    it("disables the global category and confirms under the request", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "global-notification-settings",
+        categories: [{ category: "access", enabled: false }],
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, request));
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-global-category",
+          category: "access",
+          enabled: false,
+        }),
+      );
+      const payload = screen(calls[1]);
+      expect(payload.text).toContain(request.text);
+      expect(payload.text).toContain("Больше не присылаю: запросы доступа");
+    });
+
+    // Кнопка пережила роль: сервис отвечает `PERMISSION_DENIED`, и ответ
+    // называет причину отдельным сообщением, не стирая уведомление.
+    it("answers a stale button of a former admin with the reason", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "forbidden",
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(callbackMessageUpdate(off, request));
+      expect(calls.map((call) => call.method)).toContain("sendMessage");
+      expect(calls.map((call) => call.method)).not.toContain("editMessageText");
+      expect(
+        screen(calls.find((call) => call.method === "sendMessage")).text,
+      ).toContain("Запросы доступа настраивает только администратор.");
+    });
   });
 
   describe("confirming a disabled announcement", () => {

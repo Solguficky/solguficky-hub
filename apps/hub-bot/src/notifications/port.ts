@@ -5,9 +5,11 @@ import type { RpcMetadata } from "../rpc-metadata.js";
 // `INVALID_ARGUMENT`, и этот отказ дешевле не получить вовсе, чем отобразить.
 export type MeetupCategory = "changes" | "material" | "reminder" | "organizer";
 
-// Две глобальные категории поверх тех же четырёх: подписаться на ещё не
-// созданную сходку нельзя, а объявление не привязано ни к одной.
-export type GlobalOnlyCategory = "published" | "announcement";
+// Глобальные категории поверх тех же четырёх: подписаться на ещё не созданную
+// сходку нельзя, а объявление и заявка не привязаны ни к одной. Запросы
+// доступа видит только администратор, но решает это сервис: категории нет в
+// снимке остальных, и бот рисует снимок, а не роль.
+export type GlobalOnlyCategory = "published" | "announcement" | "access";
 
 export type NotificationCategory = MeetupCategory | GlobalOnlyCategory;
 

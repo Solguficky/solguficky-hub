@@ -242,6 +242,12 @@ const materialForbiddenText = "Это действие доступно орга
 // Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
 // кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
 const forbiddenText = "Это действие тебе недоступно.";
+// Категорию запросов доступа сервис показывает и даёт менять только
+// администратору. Нажатие из старого уведомления или экрана настроек после
+// потери роли получает `PERMISSION_DENIED`, и ответ называет причину, а не
+// одно «недоступно».
+const accessRequestsForbiddenText =
+  "Запросы доступа настраивает только администратор.";
 const managementForbiddenText = "Управление сходками доступно администратору.";
 const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
@@ -2674,7 +2680,12 @@ async function handleCallback(
       if (result.kind === "global-notification-settings") {
         await waiting.answer(toggleToast(action.category, action.enabled));
       }
-      await renderNotificationSettings(ctx, result, "v1:notify:global");
+      await renderNotificationSettings(
+        ctx,
+        result,
+        "v1:notify:global",
+        categoryForbiddenText(action.category),
+      );
       outcome = screenBoundary(result, {
         ok: ["global-notification-settings"],
         okMessage: "global notification settings sent",
@@ -2708,7 +2719,7 @@ async function handleCallback(
         await showRefusal(
           ctx,
           result.kind === "dependency-rejected" && result.reason === "forbidden"
-            ? forbiddenText
+            ? categoryForbiddenText(action.category)
             : unavailableText,
           menuOnly(),
           "new",
@@ -3933,6 +3944,7 @@ async function renderNotificationSettings(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   retry: string,
+  forbidden: string = forbiddenText,
 ): Promise<void> {
   if (result.kind === "global-notification-settings") {
     await showScreen(ctx, globalNotificationsScreen(result.categories));
@@ -3942,7 +3954,11 @@ async function renderNotificationSettings(
     await showScreen(ctx, meetupNotificationsScreen(result));
     return;
   }
-  await renderNotificationFailure(ctx, result, retry);
+  await renderNotificationFailure(ctx, result, retry, forbidden);
+}
+
+function categoryForbiddenText(category: NotificationCategory): string {
+  return category === "access" ? accessRequestsForbiddenText : forbiddenText;
 }
 
 // Настройка у сходки сильнее общей, а снять её одной кнопкой контракт не даёт:
@@ -4030,9 +4046,10 @@ async function renderNotificationFailure(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   retry: string,
+  forbidden: string = forbiddenText,
 ): Promise<void> {
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
-    await showRefusal(ctx, forbiddenText, menuOnly());
+    await showRefusal(ctx, forbidden, menuOnly());
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {

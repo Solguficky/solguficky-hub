@@ -441,6 +441,11 @@ describe("notification callbacks", () => {
       category: "published",
       enabled: false,
     });
+    expect(parseCallback("v1:notify:gset:access:1")).toEqual({
+      kind: "notify-set-global",
+      category: "access",
+      enabled: true,
+    });
   });
 
   it("parses disabling a category from a notification", () => {
@@ -455,6 +460,10 @@ describe("notification callbacks", () => {
     expect(parseCallback("v1:notify:off:announcement")).toEqual({
       kind: "notify-disable-global",
       category: "announcement",
+    });
+    expect(parseCallback("v1:notify:off:access")).toEqual({
+      kind: "notify-disable-global",
+      category: "access",
     });
     expect(parseCallback("v1:notify:off:unknown")).toEqual({
       kind: "malformed",
@@ -481,7 +490,12 @@ describe("notification callbacks", () => {
       category: "organizer",
     });
     // Категорий, о которых уведомления по сходке не приходит, кнопка не несёт.
-    for (const category of ["reminder", "announcement", "published"]) {
+    for (const category of [
+      "reminder",
+      "announcement",
+      "published",
+      "access",
+    ]) {
       expect(parseCallback(`v1:notify:moff:${token}:${category}`)).toEqual({
         kind: "malformed",
       });
@@ -516,6 +530,9 @@ describe("notification callbacks", () => {
       kind: "malformed",
     });
     expect(parseCallback(`v1:notify:set:${token}:announcement:1`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:notify:set:${token}:access:1`)).toEqual({
       kind: "malformed",
     });
   });

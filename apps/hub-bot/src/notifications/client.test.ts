@@ -30,6 +30,7 @@ describe("notifications client", () => {
           { category: WireCategory.MEETUP_REMINDER, enabled: false },
           { category: WireCategory.ORGANIZER_MESSAGE, enabled: true },
           { category: WireCategory.COMMUNITY_ANNOUNCEMENT, enabled: true },
+          { category: WireCategory.ACCESS_REQUEST, enabled: false },
         ],
       }),
     });
@@ -46,6 +47,7 @@ describe("notifications client", () => {
           { category: "reminder", enabled: false },
           { category: "organizer", enabled: true },
           { category: "announcement", enabled: true },
+          { category: "access", enabled: false },
         ],
       },
     });
@@ -80,6 +82,7 @@ describe("notifications client", () => {
         categories: [
           { category: WireCategory.MEETUP_CHANGED, enabled: true },
           { category: WireCategory.COMMUNITY_ANNOUNCEMENT, enabled: true },
+          { category: WireCategory.ACCESS_REQUEST, enabled: true },
         ],
       }),
     });
@@ -121,6 +124,31 @@ describe("notifications client", () => {
         enabled: true,
       },
       expect.objectContaining({ timeoutMs: 3_000 }),
+    );
+  });
+
+  // Запросы доступа меняет только администратор: остальным сервис отвечает
+  // `PERMISSION_DENIED`, и это отказ по праву, а не недоступность.
+  it("sends access requests on the wire and reads a refusal as forbidden", async () => {
+    const setGlobalCategoryPreference = vi
+      .fn()
+      .mockRejectedValue(new ConnectError("admin only", Code.PermissionDenied));
+    const notifications = adapter({ setGlobalCategoryPreference });
+
+    const result = await notifications.setGlobalCategory(
+      "identity-id",
+      "access",
+      false,
+    );
+
+    expect(result).toEqual({ kind: "forbidden" });
+    expect(setGlobalCategoryPreference).toHaveBeenCalledWith(
+      {
+        identityId: "identity-id",
+        category: WireCategory.ACCESS_REQUEST,
+        enabled: false,
+      },
+      expect.anything(),
     );
   });
 
