@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import type {
-  AuctionResult,
-  AuctionScreenBody,
-  LotImagePort,
-  Viewer,
+import {
+  type AuctionResult,
+  type AuctionScreenBody,
+  type LotImagePort,
+  parseAuctionCallback,
+  type Viewer,
 } from "@solguficky/auction-bot-ui";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import {
@@ -3958,16 +3959,24 @@ async function enableAuction(
     ...rpcCall(ctx, useCase),
   });
   if (result.kind === "auction-enabled") {
-    await renderMeetupCard(
-      ctx,
-      result.card,
-      true,
-      runtime.presentation ?? "rich",
-      isAdministrator(person),
-      result.alreadyExisted
-        ? "Аукцион у этой сходки уже включён."
-        : "Аукцион включён. Лоты появятся в нём, когда их добавят.",
-    );
+    ctx.auctionParents?.remember(result.auctionId, result.meetupId);
+    const note = result.alreadyExisted
+      ? "Аукцион у этой сходки уже включён."
+      : "Аукцион включён. Лоты появятся в нём, когда их добавят.";
+    if (result.card === undefined) {
+      // Аукцион включён, а карточку перечитать не вышло: человек узнаёт об
+      // итоге и открывает сходку сам, а не видит сбой и не жмёт повтор.
+      await showRefusal(ctx, note, exitToCard(token));
+    } else {
+      await renderMeetupCard(
+        ctx,
+        result.card,
+        true,
+        runtime.presentation ?? "rich",
+        isAdministrator(person),
+        note,
+      );
+    }
     return {
       level: "info",
       message: result.alreadyExisted
@@ -4002,14 +4011,12 @@ async function enableAuction(
       meetupId,
     });
   }
+  const forbidden =
+    result.kind === "dependency-rejected" && result.reason === "forbidden";
   await showRefusal(
     ctx,
-    result.kind === "dependency-rejected" && result.reason === "forbidden"
-      ? forbiddenText
-      : unavailableText,
-    result.kind === "dependency-rejected" && result.reason === "forbidden"
-      ? exitToCard(token)
-      : exitRetry(`v1:manage:auction:${token}`),
+    forbidden ? forbiddenText : unavailableText,
+    forbidden ? exitToCard(token) : exitRetry(`v1:manage:auction:${token}`),
   );
   return screenBoundary(result, {
     ok: [],
@@ -4030,6 +4037,11 @@ async function handleAuctionCallback(
   lotPhotos: LotPhotos,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
+  const identity = await resolvePerson(ctx, runtime, useCase, data);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, true);
+  if (denied !== undefined) return denied;
+  const person = identity.person;
   if (runtime.auction === undefined) {
     await showRefusal(ctx, unavailableText, menuOnly());
     return {
@@ -4037,15 +4049,11 @@ async function handleAuctionCallback(
       message: "auction is not configured",
       result: "error",
       use_case: useCase,
+      identity_id: person.identityId,
       error_category: "dependency_unavailable",
       error: "auction_not_configured",
     };
   }
-  const identity = await resolvePerson(ctx, runtime, useCase, data);
-  if (identity.kind === "failed") return identity.outcome;
-  const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, true);
-  if (denied !== undefined) return denied;
-  const person = identity.person;
   const resolved = packageIdentity(person, identity.blocked);
   const ports = runtime.auction.screenPorts(rpcCall(ctx, useCase));
   let result: AuctionResult;
@@ -4060,8 +4068,15 @@ async function handleAuctionCallback(
       data,
     });
   } catch (cause) {
+    // Лот, которого Auction не знает или который смотрящему не виден, —
+    // NOT_FOUND у `GetLot`. Лента на аукцион, которого нет, отвечает пустой
+    // страницей, так что её отказ — всегда сбой.
+    const parsed = parseAuctionCallback(data);
     const notFound =
-      cause instanceof ConnectError && cause.code === Code.NotFound;
+      cause instanceof ConnectError &&
+      cause.code === Code.NotFound &&
+      parsed.ok &&
+      parsed.intent.kind === "lot";
     await showRefusal(
       ctx,
       notFound ? "Лот не найден или больше недоступен." : unavailableText,
@@ -4190,13 +4205,17 @@ async function deliverAuctionScreen(
     return "lot image skipped: rejected earlier";
   }
   if (cached?.kind === "file") {
+    const photo = withPhoto({ id: lotPhotoId, fileId: cached.fileId });
     try {
-      await showScreen(ctx, {
-        ...withPhoto({ id: lotPhotoId, fileId: cached.fileId }),
-        strict: true,
-      });
+      await showScreen(ctx, { ...photo, strict: true });
       return undefined;
     } catch (cause) {
+      if (!rejectedFile(cause)) {
+        // Отказ не про файл — сообщение не правится или Telegram моргнул:
+        // запись остаётся, а экран идёт обычным путём края с тем же фото.
+        await showScreen(ctx, photo);
+        return undefined;
+      }
       // Telegram больше не принимает этот `file_id`: запись вытесняется, и
       // показ один раз повторяется загрузкой байтов.
       lotPhotos.delete(key);
@@ -4219,31 +4238,46 @@ async function deliverAuctionScreen(
   // Ключ — версия самих байтов: изображение могли сменить между чтением
   // карточки и загрузкой, и старое фото не ляжет под новым ключом.
   const uploaded = { lotId: key.lotId, version: bytes.version };
-  try {
-    const sent = await showScreen(ctx, {
-      ...withPhoto({
-        id: lotPhotoId,
-        upload: new InputFile(bytes.content, "lot"),
-      }),
-      strict: true,
-    });
+  const upload = withPhoto({
+    id: lotPhotoId,
+    upload: new InputFile(bytes.content, "lot"),
+  });
+  const remember = (sent: unknown) => {
     const fileId = photoFileId(sent);
     if (fileId !== undefined) {
       lotPhotos.set(uploaded, { kind: "file", fileId });
     }
+  };
+  try {
+    remember(await showScreen(ctx, { ...upload, strict: true }));
     return undefined;
   } catch (cause) {
-    // Telegram ответил отказом — эта версия до рестарта больше не грузится.
-    // Обрыв соединения отметки не оставляет: следующее открытие лота грузит
-    // изображение снова. В обоих случаях сообщение правится в карточку без
-    // фото обычной правкой.
-    if (cause instanceof GrammyError && !notEditable(cause.description)) {
+    if (cause instanceof GrammyError && notEditable(cause.description)) {
+      // Сообщение не правится — карточка уходит новым сообщением с той же
+      // загрузкой: изображение тут ни при чём.
+      remember(await showScreen(ctx, { ...upload, delivery: "new" }));
+      return undefined;
+    }
+    // Telegram отверг сам запрос (400) — эта версия до рестарта больше не
+    // грузится. Обрыв соединения, лимит и сбой Telegram отметки не
+    // оставляют: следующее открытие лота грузит изображение снова. В обоих
+    // случаях сообщение правится в карточку без фото обычной правкой.
+    if (cause instanceof GrammyError && cause.error_code === 400) {
       lotPhotos.set(uploaded, { kind: "rejected" });
     }
     warn("lot image rejected by Telegram", cause);
     await showScreen(ctx, shown.screen);
     return "lot image rejected";
   }
+}
+
+// Описания отказов Bot API не закреплены контрактом: сравнение без учёта
+// регистра и по известным написаниям — как у бота аукциона.
+const REJECTED_FILE =
+  /wrong (remote )?file identifier|file[_ ]reference|wrong file_id/i;
+
+function rejectedFile(cause: unknown): boolean {
+  return cause instanceof GrammyError && REJECTED_FILE.test(cause.description);
 }
 
 function notEditable(description: string): boolean {

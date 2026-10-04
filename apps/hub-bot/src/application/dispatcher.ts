@@ -8,7 +8,7 @@ import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { start } from "./start.js";
-import type { ExecuteRequest, ExecuteResult } from "./types.js";
+import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
 
 export type Dispatcher = {
   execute(request: ExecuteRequest): ExecuteResult | Promise<ExecuteResult>;
@@ -52,21 +52,23 @@ export function createDispatcher(
         kind: "meetup-card",
         meetup: result.meetup,
       };
-      const withAuction =
+      // Аукцион и подписка читаются параллельно: оба — вторичные ряды
+      // карточки, и зависший один не должен съесть бюджет действия другого.
+      const [withAuction, preferences] = await Promise.all([
         readAuction && meetupAuction !== undefined
-          ? await meetupAuction.withAuction(card, request)
-          : card;
-      if (notifications === undefined) return withAuction;
+          ? meetupAuction.withAuction(card, request)
+          : card,
+        notifications?.getMeetupPreferences(
+          request.identity.identityId,
+          request.meetupId,
+          rpcMeta(request),
+        ),
+      ]);
       // Отказ Notifications карточку не роняет: сходка читается из
       // Meetups и остаётся верной. Состояние подписки при этом не
       // показывается, и кнопки подписки в кадре не будет — вместо
       // выдуманного «выключены» человек видит отсутствие выбора.
-      const preferences = await notifications.getMeetupPreferences(
-        request.identity.identityId,
-        request.meetupId,
-        rpcMeta(request),
-      );
-      return preferences.kind === "ok"
+      return preferences?.kind === "ok"
         ? {
             ...withAuction,
             subscribed: preferences.preferences.subscribed,
@@ -81,6 +83,19 @@ export function createDispatcher(
           cause: result.cause,
         }
       : { kind: "dependency-rejected", reason: result.kind };
+  }
+
+  // Карточка, которую вернула команда на ней же — подписка, — несёт и ряд
+  // аукциона: иначе нажатие «Подписаться» убирало бы с карточки «Лоты».
+  async function withCardAuction(
+    result: ExecuteResult,
+    request: { identity: Person; requestId?: string; deadlineAt?: number },
+  ): Promise<ExecuteResult> {
+    return result.kind === "meetup-card" &&
+      result.auction === undefined &&
+      meetupAuction !== undefined
+      ? meetupAuction.withAuction(result, request)
+      : result;
   }
 
   return {
@@ -150,9 +165,9 @@ export function createDispatcher(
         case "view-meetup-notifications":
         case "set-meetup-subscription":
         case "set-meetup-category":
-          return settings === undefined
-            ? { kind: "rejected", reason: "notifications-not-configured" }
-            : settings(request);
+          if (settings === undefined)
+            return { kind: "rejected", reason: "notifications-not-configured" };
+          return withCardAuction(await settings(request), request);
         case "attach-material":
         case "remove-material":
           return materials === undefined

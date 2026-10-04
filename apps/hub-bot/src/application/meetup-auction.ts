@@ -52,10 +52,21 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
         // Аукцион берётся из ответа команды — чтение read model Auction могло
         // бы его ещё не увидеть.
         const current = await viewCard();
-        if (current.kind !== "meetup-card") return current;
+        // Аукцион уже родился: отказ перечитать карточку — не отказ команды.
+        // Человек узнаёт, что аукцион включён, и открывает карточку сам.
+        if (current.kind !== "meetup-card") {
+          return {
+            kind: "auction-enabled",
+            alreadyExisted: enabled.alreadyExisted,
+            meetupId: request.meetupId,
+            auctionId: enabled.auctionId,
+          };
+        }
         return {
           kind: "auction-enabled",
           alreadyExisted: enabled.alreadyExisted,
+          meetupId: request.meetupId,
+          auctionId: enabled.auctionId,
           card: {
             ...current,
             auction: { kind: "open", auctionId: enabled.auctionId },

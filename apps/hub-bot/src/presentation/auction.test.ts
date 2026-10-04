@@ -22,6 +22,7 @@ import type {
 import type { IdentityResolver } from "../identity/port.js";
 import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
 import { createAuctionParents } from "./auction-parents.js";
+import { isAuctionCallback } from "./auction-route.js";
 import { createLotPhotos } from "./lot-photos.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 
@@ -83,7 +84,7 @@ function identity(globalRoles: readonly string[], blocked = false) {
   } satisfies IdentityResolver;
 }
 
-function fakeMeetups(snapshot = meetup()): Meetups {
+function fakeMeetups(snapshot = meetup(), down = false): Meetups {
   const notUsed = async (): Promise<never> => {
     throw new Error("not used");
   };
@@ -91,7 +92,10 @@ function fakeMeetups(snapshot = meetup()): Meetups {
     listVisible: notUsed,
     listArchived: notUsed,
     createDraft: notUsed,
-    get: async () => ({ kind: "ok", meetup: snapshot }),
+    get: async () =>
+      down
+        ? { kind: "timeout", cause: new Error("budget spent") }
+        : { kind: "ok", meetup: snapshot },
     changeAttributes: notUsed,
     setSchedule: notUsed,
     publish: notUsed,
@@ -178,13 +182,19 @@ function harness(
   options: Omit<HarnessOptions, "auction"> & {
     blocked?: boolean;
     snapshot?: MeetupSnapshot;
+    meetupsDown?: boolean;
     presentation?: "rich" | "plain";
   } = {},
 ) {
-  const { blocked, snapshot, presentation, ...rest } = options;
+  const { blocked, snapshot, meetupsDown, presentation, ...rest } = options;
   return createHarness(
     identity(roles, blocked),
-    createDispatcher(fakeMeetups(snapshot), undefined, undefined, auction.port),
+    createDispatcher(
+      fakeMeetups(snapshot, meetupsDown),
+      undefined,
+      undefined,
+      auction.port,
+    ),
     [],
     undefined,
     presentation,
@@ -568,5 +578,112 @@ describe("lot photo delivery", () => {
     expect(card.text).toMatch(/^<b>Кружка с совой<\/b>/);
     expect(card.rich_message).toBeUndefined();
     expect(auction.getLotImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("review findings", () => {
+  it("reports an enabled auction when the card cannot be read again", async () => {
+    const auction = fakeAuction();
+    const parents = createAuctionParents();
+    const { bot, calls, records } = harness(["admin"], auction, {
+      meetupsDown: true,
+      auctionParents: parents,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    const frame = lastScreen(calls);
+    expect(frame.text).toContain("Аукцион включён.");
+    expect(data(frame, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+    expect(JSON.stringify(frame)).not.toContain("Повторить");
+    expect(parents.meetupOf(auctionId)).toBe(meetupId);
+    expect(records.at(-1)?.fields).toMatchObject({ result: "ok" });
+  });
+
+  it("leaves a hub button without a version to the hub parser", () => {
+    expect(isAuctionCallback("manage:menu")).toBe(false);
+    expect(isAuctionCallback("v1:nav:hub")).toBe(false);
+    expect(isAuctionCallback(feedData)).toBe(true);
+    // Своя кнопка, даже нечитаемая, остаётся аукционной.
+    expect(isAuctionCallback("v9:auc:feed:broken")).toBe(true);
+  });
+
+  it("shows the blocking frame, not an outage, when Auction is not configured", async () => {
+    const { bot, calls } = createHarness(
+      identity(["member"], true),
+      createDispatcher(fakeMeetups()),
+    );
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+
+    expect(lastScreen(calls).text).toContain("Доступ к Solguficky Hub закрыт");
+  });
+
+  it("names a missing lot, but treats a failing feed as an outage", async () => {
+    const auction = fakeAuction({ existing: true });
+    auction.getLot.mockRejectedValue(new ConnectError("no", Code.NotFound));
+    auction.listAuctionLots.mockRejectedValue(
+      new ConnectError("no", Code.NotFound),
+    );
+    const { bot, calls } = harness(["member"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(lotData));
+    expect(lastScreen(calls).text).toContain("Лот не найден");
+    await bot.handleUpdate(press(feedData));
+    expect(lastScreen(calls).text).not.toContain("Лот не найден");
+    expect(data(lastScreen(calls), "Повторить")).toBe(feedData);
+  });
+
+  it("does not mark the photo rejected on a transient Telegram failure", async () => {
+    const auction = fakeAuction({ existing: true });
+    const photos = createLotPhotos();
+    const { bot } = harness(["member"], auction, {
+      lotPhotos: photos,
+      respond: (method, payload) =>
+        method === "editMessageText" &&
+        (payload as Shown).rich_message?.media !== undefined
+          ? {
+              ok: false,
+              error_code: 429,
+              description: "Too Many Requests: retry after 1",
+              parameters: { retry_after: 1 },
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    expect(photos.get({ lotId, version: "img-1" })).toBeUndefined();
+  });
+
+  it("keeps a working file_id when only the message cannot be edited", async () => {
+    const auction = fakeAuction({ existing: true });
+    const photos = createLotPhotos();
+    photos.set({ lotId, version: "img-1" }, { kind: "file", fileId: "big" });
+    const { bot, calls } = harness(["member"], auction, {
+      lotPhotos: photos,
+      respond: (method) =>
+        method === "editMessageText"
+          ? {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: message can't be edited",
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    expect(photos.get({ lotId, version: "img-1" })).toEqual({
+      kind: "file",
+      fileId: "big",
+    });
+    expect(auction.getLotImage).not.toHaveBeenCalled();
+    const sent = calls.filter((call) => call.method === "sendRichMessage");
+    expect(
+      (sent.at(-1)?.payload as Shown | undefined)?.rich_message?.media?.[0]
+        ?.media.media,
+    ).toBe("big");
   });
 });

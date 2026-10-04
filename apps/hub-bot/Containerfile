@@ -43,7 +43,7 @@ WORKDIR /src/apps/hub-bot
 COPY shared/typescript/auction-bot-ui/package.json /src/shared/typescript/auction-bot-ui/
 COPY --from=build /src/shared/typescript/auction-bot-ui/dist /src/shared/typescript/auction-bot-ui/dist
 COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts     && rm node_modules/@solguficky/auction-bot-ui     && cp -R /src/shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui     && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts \n    && rm node_modules/@solguficky/auction-bot-ui \n    && cp -R /src/shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui \n    && npm cache clean --force
 
 # База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
 # исполняет `id` из образа. Файлы приложения принадлежат root, процесс идёт от

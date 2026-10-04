@@ -1,12 +1,12 @@
 import {
+  AUCTION_CALLBACK_DOMAIN,
   type AuctionBotPorts,
   type AuctionResult,
-  type GlobalRole,
   handleAuctionUpdate,
-  parseAuctionCallback,
   type ResolvedIdentity,
 } from "@solguficky/auction-bot-ui";
 import type { Person } from "../application/types.js";
+import { viewerOf } from "../auction/port.js";
 
 // Торговое нажатие в боте хаба (ADR-044, «Доступ как обязательный шлюз»):
 // личность уже разрешена краем, один раз на update, и уезжает в шлюз пакета
@@ -24,33 +24,20 @@ export function hubTradeCallback(input: {
 }
 
 /**
- * Кнопка принадлежит аукциону: домен `auc`, даже нечитаемая. Чужой домен —
- * кнопка хаба, и её разбирает `parse-callback.ts`.
+ * Кнопка принадлежит аукциону: второй сегмент — домен `auc`, даже если сама
+ * кнопка нечитаема. Всё остальное, включая кнопки хаба без версии, разбирает
+ * `parse-callback.ts`: пакет назвал бы их нечитаемыми, а не чужими.
  */
 export function isAuctionCallback(data: string): boolean {
-  const parsed = parseAuctionCallback(data);
-  return parsed.ok || parsed.error.reason !== "foreign";
+  return data.split(":")[1] === AUCTION_CALLBACK_DOMAIN;
 }
-
-const packageRoles: readonly GlobalRole[] = [
-  "admin",
-  "maintainer",
-  "member",
-  "public",
-];
 
 /** Личность края в словаре пакета: роли, которых пакет не знает, не едут. */
 export function packageIdentity(
   person: Person,
   blocked: boolean,
 ): ResolvedIdentity {
-  return {
-    identityId: person.identityId,
-    globalRoles: packageRoles.filter((role) =>
-      person.globalRoles.includes(role),
-    ),
-    blocked,
-  };
+  return { ...viewerOf(person), blocked };
 }
 
 /**

@@ -266,10 +266,13 @@ export type ExecuteResult =
       auction?: MeetupAuctionView;
     }
   // Аукцион включён: карточка перечитана после команды. `alreadyExisted` —
-  // аукцион у сходки уже был, и второго не родилось.
+  // аукцион у сходки уже был, и второго не родилось. `card` нет — аукцион
+  // включён, а перечитать карточку не вышло: бюджет действия ушёл на команду.
   | {
       kind: "auction-enabled";
-      card: Extract<ExecuteResult, { kind: "meetup-card" }>;
+      meetupId: string;
+      auctionId: string;
+      card?: Extract<ExecuteResult, { kind: "meetup-card" }>;
       alreadyExisted: boolean;
     }
   // Auction отказал по праву администратора сходки — отказ окончательный, и

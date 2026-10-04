@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MeetupAuctions } from "../auction/port.js";
 import type { Meetups } from "../meetups/port.js";
+import type { Notifications } from "../notifications/port.js";
 import { createDispatcher } from "./dispatcher.js";
 
 // Аукцион у сходки в прикладном слое (PER-307). Политика хаба уже не пускает
@@ -121,5 +122,34 @@ describe("meetup auction", () => {
       card: { auction: { kind: "open", auctionId } },
     });
     expect(port.getMeetupAuction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the auction row on the card a subscription returns", async () => {
+    const port = auctions();
+    const notifications = {
+      setSubscription: async () => ({
+        kind: "ok" as const,
+        preferences: { meetupId, subscribed: true, categories: [] },
+      }),
+    } as unknown as Notifications;
+    const dispatcher = createDispatcher(
+      meetups(),
+      notifications,
+      undefined,
+      port,
+    );
+
+    await expect(
+      dispatcher.execute({
+        identity: person(["member"]),
+        intent: "set-meetup-subscription",
+        meetupId,
+        subscribed: true,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-card",
+      subscribed: true,
+      auction: { kind: "open", auctionId },
+    });
   });
 });

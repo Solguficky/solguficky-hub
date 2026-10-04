@@ -8,6 +8,7 @@ import type {
 } from "@solguficky/auction-bot-ui";
 import { InlineKeyboard } from "grammy";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import type { ImageKey } from "../lot-photos.js";
 import {
   buttonText,
   escapeHtml,
@@ -26,9 +27,6 @@ import type { ScreenPhoto, ShownScreen } from "./show.js";
 // подписями, а последним рядом встаёт навигация хаба. Состав и порядок кнопок
 // тела оболочка не меняет: кнопку, которой правило не допускает, убирает пакет.
 
-/** Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает ключа. */
-export type LotImageKey = { lotId: string; version: string };
-
 export type AuctionView = {
   body: AuctionScreenBody;
   /** Родитель ленты: сходка аукциона либо «Ближайшие», если бот её не знает. */
@@ -40,12 +38,16 @@ export type AuctionView = {
   photo?: ScreenPhoto;
 };
 
-export type AuctionShown = { screen: ShownScreen; image?: LotImageKey };
+/** Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает ключа. */
+export type AuctionShown = { screen: ShownScreen; image?: ImageKey };
 
 // Идентификатор фото в rich-сообщении: на него ссылается `tg://photo?id=`.
 export const lotPhotoId = "lot";
 
 const untitled = "Лот без названия";
+// Длину названия Auction не ограничивает. Предел держит заголовок карточки и
+// подпись кнопки внутри лимитов Telegram при любом названии.
+const titleLimit = 256;
 // Telegram режет обычное сообщение на 4096 символах UTF-16. У rich-карточки
 // предела подписи нет, и описание в ней идёт целиком (дизайн-код, «Показ фото
 // лота»); в режиме `plain` под предел режется только описание.
@@ -141,7 +143,7 @@ function lotScreen(
   if (back === undefined) {
     throw new Error("lot body without a way back to the feed");
   }
-  const title = lot.card?.title ?? untitled;
+  const title = truncate(lot.card?.title ?? untitled, titleLimit);
   const description =
     lot.card?.description === undefined || lot.card.description === ""
       ? undefined
