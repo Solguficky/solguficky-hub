@@ -5,6 +5,8 @@ import auction.boundary.HealthRoutes
 import auction.entity.UuidV7
 import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
+import auction.meetup.GrpcMeetupAuthority
+import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.publication.PublicationSettings
@@ -33,8 +35,8 @@ import scala.util.control.NonFatal
  * Точка входа Auction Service.
  *
  * Доменной логики торгов здесь нет и не будет: composition root собирает конфигурацию, схему журнала, actor system с
- * кластером, entity лота в шардинге, проекцию лота в read model с метриками, публикацию фактов лота в шину,
- * HTTP-границу с health и gRPC-границу.
+ * кластером, entity лота и аукциона в шардинге, проекции лота и аукциона в read model с метриками, публикацию фактов
+ * лота в шину, HTTP-границу с health и gRPC-границу с клиентом права у Meetups.
  */
 object Main {
 
@@ -62,6 +64,13 @@ object Main {
       case Left(reason) => fail(reason, None)
     }
 
+    // Адрес и собственный токен для Meetups — тоже до ActorSystem: адрес без
+    // токена или токен вызывающего вместо своего — дефект развёртывания.
+    val meetups = MeetupsSettings.fromConfig(config, callers.recognizes) match {
+      case Right(settings) => settings
+      case Left(reason) => fail(reason, None)
+    }
+
     // Схема применяется до ActorSystem: журнал, поднятый на базе без таблиц,
     // отказал бы только на первой записи агрегата, а не на старте.
     val migrations =
@@ -86,6 +95,11 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
+    AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock))
+    if (meetups.url.isEmpty)
+      logger.warn(
+        "auction meetup authority is off: AUCTION_MEETUPS_GRPC_URL is not set, admin commands are unavailable"
+      )
     val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
     AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
     AuctionNode.startPublication(
@@ -104,7 +118,7 @@ object Main {
 
     Http()
       .newServerAt(grpcConfig.host, grpcConfig.port)
-      .bind(AuctionNode.grpc(system, sharding, callers, askTimeout))
+      .bind(AuctionNode.grpc(system, sharding, callers, askTimeout, GrpcMeetupAuthority(meetups)))
       .onComplete(bound("grpc", system))
   }
 

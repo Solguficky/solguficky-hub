@@ -18,6 +18,12 @@ final case class LotSnapshotView(lotId: UUID, auctionId: UUID, version: Long, lo
 trait LotViews {
   def find(lotId: UUID): Future[Option[LotSnapshotView]]
 
-  /** Лоты аукциона по возрастанию `lot_id`, строго после `after`, не больше `limit`. */
+  /** Лоты, рождённые в аукционе, по возрастанию `lot_id`, строго после `after`, не больше `limit`. */
   def page(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]]
+
+  /**
+   * Лоты реестра аукциона сходки (`auction_lot`) в том же порядке. Снятый лот остаётся рождённым в аукционе, но в
+   * реестре его нет. Лот реестра без журнала лота в выдачу не попадает: снимка торгов у него ещё нет.
+   */
+  def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]]
 }

@@ -16,6 +16,7 @@ let private read name =
     match name with
     | "MEETUPS_CALLER_TOKEN_HUB_BOT" -> "bot-secret"
     | "MEETUPS_CALLER_TOKEN_NOTIFICATIONS" -> "notifications-secret"
+    | "MEETUPS_CALLER_TOKEN_AUCTION" -> "auction-secret"
     | "MEETUPS_SERVICE_TOKEN" -> "own-secret"
     | _ -> null
 
@@ -99,7 +100,7 @@ let ``Method access should cover the contract and admit only its declared caller
         let expected =
             match method with
             | "ListMeetupStates" -> Set.empty
-            | "CheckMeetupAuthority" -> Set.singleton Caller.Notifications
+            | "CheckMeetupAuthority" -> set [ Caller.Notifications; Caller.Auction ]
             | _ -> Set.singleton Caller.HubBot
 
         test <@ callers = expected @>
@@ -140,12 +141,21 @@ let ``Caller gate should refuse known callers on methods that do not declare the
                 Caller.Notifications
             && CallerGate.decide table (path "CheckMeetupAuthority") "Bearer bot-secret" = GateDecision.NotDeclared
                 Caller.HubBot
+            && CallerGate.decide table (path "GetMeetup") "Bearer auction-secret" = GateDecision.NotDeclared
+                Caller.Auction
+            && CallerGate.decide table (path "CheckMeetupAuthority") "Bearer auction-secret" = GateDecision.Admitted
+                Caller.Auction
         @>
 
 [<Fact>]
 let ``Caller gate should close enumeration and future methods to every known caller`` () =
     for method in [ "ListMeetupStates"; "FutureMethod" ] do
-        for caller in [ Caller.HubBot; Caller.Notifications ] do
+        for caller in
+            [
+                Caller.HubBot
+                Caller.Notifications
+                Caller.Auction
+            ] do
             let decision =
                 CallerGate.decide table (path method) $"Bearer {read caller.TokenVariable}"
 
@@ -160,7 +170,11 @@ let ``Caller gate should close enumeration and future methods to every known cal
 [<Fact>]
 let ``Caller table should reject every missing or blank declared token without disclosing values`` () =
     let errors =
-        [ Caller.HubBot; Caller.Notifications ]
+        [
+            Caller.HubBot
+            Caller.Notifications
+            Caller.Auction
+        ]
         |> List.collect (fun caller ->
             [ null; ""; "  " ]
             |> List.map (fun value ->

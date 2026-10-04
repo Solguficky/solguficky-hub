@@ -120,6 +120,7 @@ type CallerAuthenticationTests(host: MeetupsHostFixture) =
             [
                 "--MEETUPS_CALLER_TOKEN_HUB_BOT="
                 "--MEETUPS_CALLER_TOKEN_NOTIFICATIONS="
+                "--MEETUPS_CALLER_TOKEN_AUCTION="
                 $"--MEETUPS_CALLER_TOKEN_NOTIFICATIONS={AuthenticatedClient.BotToken}"
                 "--MEETUPS_SERVICE_TOKEN="
                 $"--MEETUPS_SERVICE_TOKEN={AuthenticatedClient.BotToken}"
