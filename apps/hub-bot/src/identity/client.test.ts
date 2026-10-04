@@ -3,8 +3,11 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ApplicationCardSchema,
   ApplicationOutcome,
+  DecideApplicationResponseSchema,
   ListRefusedApplicationsResponseSchema,
+  ReadApplicationQueueResponseSchema,
   RefusedApplicationSchema,
   ResolveIdentityResponseSchema,
 } from "../../gen/identity/v1/identity_service_pb.js";
@@ -12,6 +15,7 @@ import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { noopTracing } from "../tracing.js";
 import {
   createApplicationAdministrator,
+  createApplicationModerator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
@@ -508,6 +512,234 @@ describe("application administrator", () => {
 
     await expect(
       administrator.reconsiderApplication(actor, applicationId),
+    ).resolves.toMatchObject({ kind });
+  });
+});
+
+describe("application moderator", () => {
+  const actor = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    globalRoles: ["admin"],
+  };
+  const applicationId = "0192f0a0-0000-7000-8000-00000000a001";
+  const createdAt = "2026-10-02T11:05:00.123Z";
+
+  function reading(card?: Parameters<typeof cardRow>[0]) {
+    const readApplicationQueue = vi.fn().mockResolvedValue(
+      create(ReadApplicationQueueResponseSchema, {
+        ...(card === undefined
+          ? {}
+          : { application: cardRow(card), position: 3 }),
+        total: 17,
+      }),
+    );
+    return {
+      readApplicationQueue,
+      moderator: createApplicationModerator({
+        readApplicationQueue,
+        admitApplication: vi.fn(),
+        declineApplication: vi.fn(),
+      }),
+    };
+  }
+
+  function cardRow(
+    overrides: Partial<{
+      requestedRole: GlobalRole;
+      createdAt: string;
+      source: { channelLabel?: string } | undefined;
+    }> = {},
+  ) {
+    return create(ApplicationCardSchema, {
+      applicationId,
+      identityId: "0192f0a0-0000-7000-8000-00000000b001",
+      telegramUserId: 42n,
+      firstName: "Иван",
+      requestedRole: overrides.requestedRole ?? GlobalRole.PUBLIC,
+      ...("source" in overrides
+        ? overrides.source === undefined
+          ? {}
+          : { source: overrides.source }
+        : { source: { channelLabel: "Солегуфики" } }),
+      createdAt: overrides.createdAt ?? createdAt,
+    });
+  }
+
+  it("maps a card and sends the cursor as an RFC 3339 moment", async () => {
+    const { moderator, readApplicationQueue } = reading({});
+
+    const result = await moderator.readApplicationQueue(actor, {
+      createdAtMs: Date.parse(createdAt),
+      applicationId,
+    });
+
+    expect(result).toEqual({
+      kind: "ok",
+      value: {
+        card: {
+          application: {
+            applicationId,
+            identityId: "0192f0a0-0000-7000-8000-00000000b001",
+            telegramUserId: 42n,
+            firstName: "Иван",
+            circle: "public",
+            source: { kind: "channel", label: "Солегуфики" },
+            createdAtMs: Date.parse(createdAt),
+          },
+          position: 3,
+        },
+        total: 17,
+      },
+    });
+    expect(readApplicationQueue).toHaveBeenCalledWith(
+      {
+        actor: {
+          identityId: actor.identityId,
+          globalRoles: [GlobalRole.ADMIN],
+        },
+        after: { createdAt, applicationId },
+      },
+      expect.anything(),
+    );
+  });
+
+  it("reads from the start without a cursor", async () => {
+    const { moderator, readApplicationQueue } = reading();
+
+    await expect(
+      moderator.readApplicationQueue(actor, undefined),
+    ).resolves.toEqual({ kind: "ok", value: { total: 17 } });
+    expect(readApplicationQueue.mock.calls[0]?.[0]).not.toHaveProperty("after");
+  });
+
+  it.each([
+    ["no source code", undefined, { kind: "none" }],
+    ["a code the registry did not know", {}, { kind: "unknown" }],
+  ])("tells %s apart", async (_, source, expected) => {
+    const { moderator } = reading({ source });
+
+    await expect(
+      moderator.readApplicationQueue(actor, undefined),
+    ).resolves.toMatchObject({
+      value: { card: { application: { source: expected } } },
+    });
+  });
+
+  it.each([
+    ["a circle the surfaces never ask", { requestedRole: GlobalRole.ADMIN }],
+    ["a moment that is not RFC 3339", { createdAt: "yesterday" }],
+  ])("calls a card with %s a contract violation", async (_, card) => {
+    await expect(
+      reading(card).moderator.readApplicationQueue(actor, undefined),
+    ).resolves.toEqual({ kind: "invalid" });
+  });
+
+  it("tells a decision made now from one made before by another administrator", async () => {
+    const decision = {
+      outcome: ApplicationOutcome.ADMITTED,
+      decidedBy: {
+        identityId: actor.identityId,
+        telegramUserId: 7n,
+        telegramUsername: "admin",
+      },
+      decidedAt: createdAt,
+    };
+    const admitApplication = vi
+      .fn()
+      .mockResolvedValueOnce(
+        create(DecideApplicationResponseSchema, {
+          result: { case: "decided", value: decision },
+        }),
+      )
+      .mockResolvedValueOnce(
+        create(DecideApplicationResponseSchema, {
+          result: { case: "alreadyDecided", value: decision },
+        }),
+      );
+    const moderator = createApplicationModerator({
+      readApplicationQueue: vi.fn(),
+      admitApplication,
+      declineApplication: vi.fn(),
+    });
+
+    await expect(
+      moderator.admitApplication(actor, applicationId),
+    ).resolves.toEqual({
+      kind: "ok",
+      value: {
+        already: false,
+        outcome: "admitted",
+        decidedBy: { telegramUserId: 7n, telegramUsername: "admin" },
+      },
+    });
+    await expect(
+      moderator.admitApplication(actor, applicationId),
+    ).resolves.toMatchObject({ kind: "ok", value: { already: true } });
+    expect(admitApplication).toHaveBeenCalledWith(
+      {
+        actor: {
+          identityId: actor.identityId,
+          globalRoles: [GlobalRole.ADMIN],
+        },
+        applicationId,
+      },
+      expect.anything(),
+    );
+  });
+
+  it("names the block outcome of a decline", async () => {
+    const moderator = createApplicationModerator({
+      readApplicationQueue: vi.fn(),
+      admitApplication: vi.fn(),
+      declineApplication: vi.fn().mockResolvedValue(
+        create(DecideApplicationResponseSchema, {
+          result: {
+            case: "decided",
+            value: {
+              outcome: ApplicationOutcome.BLOCKED,
+              decidedAt: createdAt,
+            },
+          },
+        }),
+      ),
+    });
+
+    await expect(
+      moderator.declineApplication(actor, applicationId),
+    ).resolves.toEqual({
+      kind: "ok",
+      value: { already: false, outcome: "blocked" },
+    });
+  });
+
+  it("calls an empty decision a contract violation", async () => {
+    const moderator = createApplicationModerator({
+      readApplicationQueue: vi.fn(),
+      admitApplication: vi
+        .fn()
+        .mockResolvedValue(create(DecideApplicationResponseSchema, {})),
+      declineApplication: vi.fn(),
+    });
+
+    await expect(
+      moderator.admitApplication(actor, applicationId),
+    ).resolves.toEqual({ kind: "invalid" });
+  });
+
+  it.each([
+    [Code.PermissionDenied, "forbidden"],
+    [Code.NotFound, "invalid"],
+    [Code.Unavailable, "unavailable"],
+  ])("maps a decision failure %s to %s", async (code, kind) => {
+    const moderator = createApplicationModerator({
+      readApplicationQueue: vi.fn(),
+      admitApplication: vi.fn(),
+      declineApplication: () =>
+        Promise.reject(new ConnectError("refused", code)),
+    });
+
+    await expect(
+      moderator.declineApplication(actor, applicationId),
     ).resolves.toMatchObject({ kind });
   });
 });

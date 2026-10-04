@@ -149,6 +149,68 @@ export type ReconsiderResult =
   | IdentityAdminResult<boolean>
   | { kind: "not-refused" };
 
+// Место в очереди заявок: момент создания и идентификатор карточки. Момент —
+// миллисекунды эпохи: Identity хранит его ровно с этой точностью и сравнивает
+// курсор как момент, поэтому кнопка несёт его короче строки RFC 3339.
+export type ApplicationCursor = { createdAtMs: number; applicationId: string };
+
+// Карточка заявки (ADR-060, пункт 21). Источник различает три случая: кода не
+// было, код был, но реестр его не знал, и канал с подписью.
+export type ApplicationCard = {
+  applicationId: string;
+  identityId: string;
+  telegramUserId: bigint;
+  telegramUsername?: string;
+  // Нет у заявок, созданных миграцией данных.
+  firstName?: string;
+  circle: "member" | "public";
+  source:
+    | { kind: "none" }
+    | { kind: "unknown" }
+    | { kind: "channel"; label: string };
+  createdAtMs: number;
+};
+
+// Пустая очередь после курсора — карточки нет, а `total` всё равно считает все
+// открытые заявки: по нему экран отличает конец очереди от пустой очереди.
+export type ApplicationQueueRead = {
+  card?: { application: ApplicationCard; position: number };
+  total: number;
+};
+
+export type ApplicationOutcome =
+  | "admitted"
+  | "declined"
+  | "blocked"
+  | "closed-by-grant"
+  | "closed-by-block";
+
+// `already` — заявку закрыли раньше этого вызова, и он ничего не изменил
+// (ADR-060, пункт 9). Решившего нет, когда заявку закрыл разрешённый ник.
+export type ApplicationDecision = {
+  already: boolean;
+  outcome: ApplicationOutcome;
+  decidedBy?: { telegramUserId: bigint; telegramUsername?: string };
+};
+
+export type ApplicationModerator = {
+  readApplicationQueue(
+    actor: IdentityActor,
+    after: ApplicationCursor | undefined,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<ApplicationQueueRead>>;
+  admitApplication(
+    actor: IdentityActor,
+    applicationId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<ApplicationDecision>>;
+  declineApplication(
+    actor: IdentityActor,
+    applicationId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<ApplicationDecision>>;
+};
+
 export type ApplicationAdministrator = {
   refusedApplications(
     actor: IdentityActor,

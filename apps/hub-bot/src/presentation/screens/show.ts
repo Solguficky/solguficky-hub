@@ -35,6 +35,12 @@ export type ShownScreen = {
    * становится следом. Без подписи у него только снимается клавиатура.
    */
   fileTrace?: string;
+  /**
+   * Клавиатура без ссылки `tg://user?id=`. Ссылку на профиль Telegram пускает
+   * только по настройкам приватности человека, а иначе отклоняет всё сообщение
+   * (`BUTTON_USER_PRIVACY_RESTRICTED`) — тогда экран уходит с этой клавиатурой.
+   */
+  privacyFallback?: InlineKeyboard;
 };
 
 export type ScreenPhoto = { id: string; fileId: string };
@@ -53,6 +59,22 @@ export type ScreenContext = Context & {
  * которую Telegram не принял, тоже заменяет новое сообщение.
  */
 export async function showScreen(
+  ctx: ScreenContext,
+  { privacyFallback, ...screen }: ShownScreen,
+): Promise<void> {
+  if (privacyFallback === undefined) {
+    await deliverScreen(ctx, screen);
+    return;
+  }
+  try {
+    await deliverScreen(ctx, screen);
+  } catch (cause) {
+    if (!isPrivacyRestricted(cause)) throw cause;
+    await deliverScreen(ctx, { ...screen, keyboard: privacyFallback });
+  }
+}
+
+async function deliverScreen(
   ctx: ScreenContext,
   { id, text, keyboard, format, delivery, fileTrace, media }: ShownScreen,
 ): Promise<void> {
@@ -110,6 +132,8 @@ export async function showScreen(
     if (isNotModified(cause)) {
       return;
     }
+    // Новое сообщение с той же клавиатурой Telegram отклонит так же.
+    if (isPrivacyRestricted(cause)) throw cause;
     await clearCallbackKeyboard(ctx);
     await send();
   }
@@ -171,6 +195,12 @@ function visibleText(html: string): string {
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
     .replaceAll("&amp;", "&");
+}
+
+/** Ссылку `tg://user?id=` не пускают настройки приватности её владельца. */
+export function isPrivacyRestricted(cause: unknown): boolean {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return text.includes("BUTTON_USER_PRIVACY_RESTRICTED");
 }
 
 /** Повторная правка тем же содержимым: Telegram отвечает отказом, человеку это успех. */

@@ -47,6 +47,8 @@ export function manageScreen(
     .row()
     .text("Скрытые сходки", "v1:manage:hidden")
     .row()
+    .text("Заявки", "v1:cm:q")
+    .row()
     .text("Состав сообщества", "v1:community:list")
     .row()
     .text("Отказанные", "v1:cm:r")

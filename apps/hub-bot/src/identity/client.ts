@@ -6,7 +6,9 @@ import {
 } from "@connectrpc/connect-node";
 import {
   ApplicationOutcome,
+  type DecideApplicationResponse,
   IdentityService,
+  type ApplicationCard as WireApplicationCard,
   type RefusedApplication as WireRefusedApplication,
 } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
@@ -20,10 +22,14 @@ import {
 import { type RpcClientOptions, traceRpc } from "../tracing.js";
 import type {
   ApplicationAdministrator,
+  ApplicationCard,
+  ApplicationDecision,
+  ApplicationModerator,
   CommunityAdministrator,
   IdentityResolver,
   OrganizerResolver,
   OrganizerUsernameResult,
+  ApplicationOutcome as Outcome,
   ReconsiderResult,
   RefusedApplication,
   ResolveIdentityInput,
@@ -69,13 +75,18 @@ type SourceChannelAdminRpc = Pick<
   Client<typeof IdentityService>,
   "listSourceChannels" | "createSourceChannel"
 >;
+type ApplicationModeratorRpc = Pick<
+  Client<typeof IdentityService>,
+  "readApplicationQueue" | "admitApplication" | "declineApplication"
+>;
 
 export type IdentityClient = IdentityResolver &
   TelegramRecipientResolver &
   OrganizerResolver &
   CommunityAdministrator &
   ApplicationAdministrator &
-  SourceChannelAdministrator & {
+  SourceChannelAdministrator &
+  ApplicationModerator & {
     close(): void;
   };
 
@@ -103,6 +114,7 @@ export function createIdentityClient(
     communityTimeZone,
   });
   const sourceChannels = createSourceChannelAdministrator(client, timeoutMs);
+  const moderator = createApplicationModerator(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
@@ -114,6 +126,7 @@ export function createIdentityClient(
     ...administrator,
     ...applications,
     ...sourceChannels,
+    ...moderator,
     close() {
       sessionManager.abort();
     },
@@ -310,12 +323,7 @@ function refusedOf(
   value: WireRefusedApplication,
   communityTimeZone: string,
 ): RefusedApplication | undefined {
-  const circle =
-    value.requestedRole === GlobalRole.MEMBER
-      ? "member"
-      : value.requestedRole === GlobalRole.PUBLIC
-        ? "public"
-        : undefined;
+  const circle = circleOf(value.requestedRole);
   const outcome =
     value.decision?.outcome === ApplicationOutcome.BLOCKED
       ? "blocked"
@@ -353,6 +361,160 @@ function refusedOf(
           },
         }),
     decidedAt,
+  };
+}
+
+// Карточка заявки и решение по ней (ADR-060, пункты 9 и 21). Курсор едет в
+// Identity строкой RFC 3339, собранной из миллисекунд: Identity сравнивает его
+// как момент, а момент создания хранит ровно с этой точностью.
+export function createApplicationModerator(
+  rpc: ApplicationModeratorRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): ApplicationModerator {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  const actorMessage = (actor: {
+    identityId: string;
+    globalRoles: readonly string[];
+  }) => ({
+    identityId: actor.identityId,
+    globalRoles: actor.globalRoles.map(roleValue),
+  });
+  const decide = async (
+    call: () => Promise<DecideApplicationResponse>,
+  ): Promise<
+    | { kind: "ok"; value: ApplicationDecision }
+    | ReturnType<typeof classifyAdminFailure>
+  > => {
+    let response: DecideApplicationResponse;
+    try {
+      response = await call();
+    } catch (cause) {
+      return classifyAdminFailure(cause);
+    }
+    const decision = decisionOf(response);
+    return decision === undefined
+      ? { kind: "invalid" }
+      : { kind: "ok", value: decision };
+  };
+  return {
+    async readApplicationQueue(actor, after, meta) {
+      let response: Awaited<
+        ReturnType<ApplicationModeratorRpc["readApplicationQueue"]>
+      >;
+      try {
+        response = await rpc.readApplicationQueue(
+          {
+            actor: actorMessage(actor),
+            ...(after === undefined
+              ? {}
+              : {
+                  after: {
+                    createdAt: new Date(after.createdAtMs).toISOString(),
+                    applicationId: after.applicationId,
+                  },
+                }),
+          },
+          options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      if (response.application === undefined) {
+        return { kind: "ok", value: { total: response.total } };
+      }
+      const application = cardOf(response.application);
+      // Карточка вне контракта — рассинхрон схемы: показать её без круга или
+      // момента значило бы решать заявку вслепую.
+      if (application === undefined) return { kind: "invalid" };
+      return {
+        kind: "ok",
+        value: {
+          card: { application, position: response.position },
+          total: response.total,
+        },
+      };
+    },
+    admitApplication: (actor, applicationId, meta) =>
+      decide(() =>
+        rpc.admitApplication(
+          { actor: actorMessage(actor), applicationId },
+          options(meta),
+        ),
+      ),
+    declineApplication: (actor, applicationId, meta) =>
+      decide(() =>
+        rpc.declineApplication(
+          { actor: actorMessage(actor), applicationId },
+          options(meta),
+        ),
+      ),
+  };
+}
+
+function circleOf(role: GlobalRole): "member" | "public" | undefined {
+  return role === GlobalRole.MEMBER
+    ? "member"
+    : role === GlobalRole.PUBLIC
+      ? "public"
+      : undefined;
+}
+
+function cardOf(value: WireApplicationCard): ApplicationCard | undefined {
+  const circle = circleOf(value.requestedRole);
+  const createdAtMs = Date.parse(value.createdAt);
+  if (circle === undefined || Number.isNaN(createdAtMs)) return undefined;
+  const label = value.source?.channelLabel;
+  return {
+    applicationId: value.applicationId,
+    identityId: value.identityId,
+    telegramUserId: value.telegramUserId,
+    ...(value.telegramUsername === undefined
+      ? {}
+      : { telegramUsername: value.telegramUsername }),
+    ...(value.firstName === undefined ? {} : { firstName: value.firstName }),
+    circle,
+    source:
+      value.source === undefined
+        ? { kind: "none" }
+        : label === undefined
+          ? { kind: "unknown" }
+          : { kind: "channel", label },
+    createdAtMs,
+  };
+}
+
+const outcomeNames: ReadonlyMap<ApplicationOutcome, Outcome> = new Map([
+  [ApplicationOutcome.ADMITTED, "admitted"],
+  [ApplicationOutcome.DECLINED, "declined"],
+  [ApplicationOutcome.BLOCKED, "blocked"],
+  [ApplicationOutcome.CLOSED_BY_GRANT, "closed-by-grant"],
+  [ApplicationOutcome.CLOSED_BY_BLOCK, "closed-by-block"],
+]);
+
+function decisionOf(
+  response: DecideApplicationResponse,
+): ApplicationDecision | undefined {
+  const { result } = response;
+  if (result.case === undefined) return undefined;
+  const outcome = outcomeNames.get(result.value.outcome);
+  if (outcome === undefined) return undefined;
+  const decider = result.value.decidedBy;
+  return {
+    already: result.case === "alreadyDecided",
+    outcome,
+    ...(decider === undefined
+      ? {}
+      : {
+          decidedBy: {
+            telegramUserId: decider.telegramUserId,
+            ...(decider.telegramUsername === undefined
+              ? {}
+              : { telegramUsername: decider.telegramUsername }),
+          },
+        }),
   };
 }
 
