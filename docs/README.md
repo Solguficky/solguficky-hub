@@ -21,7 +21,7 @@
 | [rfcs/](rfcs/) | Предложения и варианты до принятия решения |
 | [decisions/](decisions/) | Принятые архитектурные решения и причины |
 | [development/](development/) | Рабочий процесс, local development и CI |
-| [agents/](agents/) | Конфигурация репозитория для агентских скиллов: трекер, доменные доки, устройство agent tooling |
+| [agents/](agents/) | Конфигурация репозитория для агентских скиллов: контракт флоу из пяти файлов, доменные доки, устройство agent tooling |
 | [design/](design/) | Макеты и UI-решения |
 | [published/](published/) | Страницы с публичным адресом на сайте сообщества: путь в каталоге равен адресу |
 | [learning/](learning/) | Разборы незнакомых технологий: почему код выглядит так |
@@ -47,7 +47,8 @@
 | Сервисные границы и открытые вопросы | [services/](services/) |
 | Local development и процесс | [development/](development/) |
 | Инструкции агентам | корневой и вложенные `AGENTS.md` |
-| Где скиллы берут трекер и доменные доки | [agents/](agents/) |
+| Где скиллы флоу берут трекер, гейт, ветвление, решения и наблюдения | [agents/README.md](agents/README.md) |
+| Где скиллы берут доменные доки | [agents/domain.md](agents/domain.md) |
 | Раскладка скиллов, ролей подагентов, MCP и команд агента | [agents/agent-tooling.md](agents/agent-tooling.md) |
 | Состав сайта сообщества и адреса страниц | [published/README.md](published/README.md) |
 | Заполненное на странице «Аукцион 2026» | документ в Netlify Blobs; читается `GET /api/notes/<идентификатор>` ([ADR-042](decisions/ADR-042-published-page-notes-own-backend.md)) |
