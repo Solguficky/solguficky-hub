@@ -5,16 +5,24 @@ import auction.aggregate.Correlation
 import auction.catalog.LotCatalogCommands
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.lot.AuctionId
+import auction.lot.ParticipantId
+import auction.naming.DisplayNameCommands
+import auction.naming.NameNotChosen
 import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionViews
 import auction.projection.LotViews
 import auction.v1.auction_service as wire
 import io.grpc.Status
+import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.grpc.GrpcServiceException
+import org.slf4j.LoggerFactory
 
 import java.util.concurrent.TimeoutException
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.jdk.CollectionConverters.*
+import scala.util.control.NonFatal
 
 /**
  * Реализация `AuctionService`. Вызывающего здесь уже проверила [[GrpcBoundary]]; здесь порядок «форма → роль → домен»,
@@ -29,25 +37,71 @@ final class AuctionGrpcService(
     faq: FaqAcknowledgements,
     views: LotViews,
     auctions: AuctionCommands,
-    auctionViews: AuctionViews
+    auctionViews: AuctionViews,
+    names: DisplayNameCommands
 )(using ExecutionContext)
     extends wire.AuctionService {
 
   /** Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями. */
   def within(correlation: Correlation): AuctionGrpcService =
-    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews)
+    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews, names)
 
+  /**
+   * Имя участника проверяется до лота (ADR-059): аукцион лота граница спрашивает у entity, а не у read model, которая
+   * отстаёт на проекцию и не знала бы только что рождённый лот. После принятой ставки имя замораживается.
+   */
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
       case Left(error) => invalid(error)
       case Right(command) if !command.acting.viewer.isParticipant =>
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
       case Right(command) =>
-        lots
-          .placeBid(command.lotId, command.bid, Initiator.Participant(command.acting.participant))
-          .recoverWith(awaited)
-          .flatMap(outcome => ResponseMapping.placeBid(outcome).fold(refuse, Future.successful))
+        val participant = command.acting.participant
+        lots.auctionOf(command.lotId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+          case Some(auction) =>
+            names.requireChosen(auction, participant).flatMap {
+              case Left(NameNotChosen) => Future.successful(ResponseMapping.displayNameNotChosen)
+              case Right(_) =>
+                lots
+                  .placeBid(command.lotId, command.bid, Initiator.Participant(participant))
+                  .recoverWith(awaited)
+                  .flatMap { outcome =>
+                    val frozen = if (outcome.isRight) freeze(auction, command.lotId, participant) else Future.unit
+                    frozen.flatMap(_ => ResponseMapping.placeBid(outcome).fold(refuse, Future.successful))
+                  }
+            }
+        }
     }
+
+  /**
+   * Заморозка после принятой ставки. Общей транзакции с лотом нет (ADR-059), поэтому сбой заморозки ставку не отменяет:
+   * она повторяется до `FreezeAttempts` раз, а исчерпанные попытки пишутся отдельным событием, и ответ остаётся
+   * принятым. Это событие — не вторая запись операции: для границы операция успешна. Сообщения исключения в нём нет,
+   * как и в записи операции.
+   */
+  private def freeze(auction: AuctionId, lotId: java.util.UUID, participant: ParticipantId): Future[Unit] = {
+    def attempt(left: Int): Future[Unit] =
+      names.participated(auction, participant).map(_ => ()).recoverWith {
+        case NonFatal(_) if left > 1 => attempt(left - 1)
+      }
+    attempt(AuctionGrpcService.FreezeAttempts).recover { case NonFatal(cause) =>
+      AuctionGrpcService.logger.warn(
+        "display name freeze failed",
+        StructuredArguments.entries(
+          Map[String, Any](
+            "operation" -> AuctionGrpcService.FreezeOperation,
+            "result" -> "error",
+            "error_category" -> "unexpected",
+            "error" -> cause.getClass.getName,
+            "auction_id" -> auction.value.toString,
+            "lot_id" -> lotId.toString,
+            "attempts" -> AuctionGrpcService.FreezeAttempts
+          ).asJava
+        )
+      )
+    }
+  }
 
   def createLotCard(in: wire.CreateLotCardRequest): Future[wire.CreateLotCardResponse] =
     RequestMapping.card(in.viewer, in.lotId, in.title, in.description) match {
@@ -126,10 +180,26 @@ final class AuctionGrpcService(
         }
     }
 
-  // Имя участника: правила и хранилище есть в `naming/` (ADR-059), провязку с границей и ставкой приносит отдельная задача.
-  def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] = unimplemented
+  /** Выбор имени в аукционе (ADR-059). Отказ выбора — значение ответа, как отказ торгов. */
+  def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] =
+    RequestMapping.chooseDisplayName(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if !command.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(command) =>
+        names
+          .choose(command.auctionId, command.acting.participant, command.choice)
+          .map(ResponseMapping.chooseDisplayName)
+    }
 
-  def getDisplayNames(in: wire.GetDisplayNamesRequest): Future[wire.GetDisplayNamesResponse] = unimplemented
+  /** Готовые имена: каждый запрошенный участник в ответе есть, без выбора — заглушкой. */
+  def getDisplayNames(in: wire.GetDisplayNamesRequest): Future[wire.GetDisplayNamesResponse] =
+    RequestMapping.getDisplayNames(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(query) => names.names(query.auctionId, query.participants).map(ResponseMapping.displayNames)
+    }
 
   def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] =
     withParticipant(in.viewer)(participant => faq.acknowledged(participant).map(wire.FaqAcknowledgement(_)))
@@ -237,6 +307,14 @@ final class AuctionGrpcService(
 }
 
 object AuctionGrpcService {
+
+  /** Попыток заморозки имени после принятой ставки; подряд, без паузы: у сервиса нет планировщика. */
+  val FreezeAttempts: Int = 3
+
+  /** Имя события об исчерпанных попытках заморозки в логе. */
+  val FreezeOperation: String = "auction.display_name.freeze"
+
+  private val logger = LoggerFactory.getLogger(classOf[AuctionGrpcService])
 
   /**
    * Аукцион сходки — UUIDv5, выведенный из `meetup_id` (ADR-047); тестовый аукцион из настройки бота — UUIDv7 без

@@ -9,9 +9,13 @@ import auction.catalog.LotCard
 import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.Money
+import auction.lot.ParticipantId
 import auction.lot.PlaceBidRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimitRejected
+import auction.naming.DisplayKind
+import auction.naming.DisplayName
+import auction.naming.NamingRefusal
 import auction.projection.AuctionSnapshotView
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_events.AuctionState as AuctionStateMessage
@@ -33,6 +37,39 @@ object ResponseMapping {
       case Left(PlaceBidRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
       case Left(rejected) => Right(wire.PlaceBidResponse().withRefused(wire.PlaceBidRefusal(refusal(rejected))))
     }
+
+  /** Участник не выбрал имя в аукционе лота: отказ рождается на границе, лот его не знает (ADR-059). */
+  val displayNameNotChosen: wire.PlaceBidResponse =
+    wire
+      .PlaceBidResponse()
+      .withRefused(wire.PlaceBidRefusal(wire.PlaceBidRefusal.Reason.DisplayNameNotChosen(wire.DisplayNameNotChosen())))
+
+  def chooseDisplayName(outcome: Either[NamingRefusal, DisplayName]): wire.ChooseDisplayNameResponse =
+    outcome match {
+      case Right(name) => wire.ChooseDisplayNameResponse().withAccepted(displayName(name))
+      case Left(refusal) =>
+        val reason = refusal match {
+          case NamingRefusal.UsernameMissing =>
+            wire.ChooseDisplayNameRefusal.Reason.UsernameMissing(wire.UsernameMissing())
+          case NamingRefusal.AliasInvalid => wire.ChooseDisplayNameRefusal.Reason.AliasInvalid(wire.AliasInvalid())
+          case NamingRefusal.AliasTaken => wire.ChooseDisplayNameRefusal.Reason.AliasTaken(wire.AliasTaken())
+          case NamingRefusal.NameFrozen => wire.ChooseDisplayNameRefusal.Reason.NameFrozen(wire.NameFrozen())
+        }
+        wire.ChooseDisplayNameResponse().withRefused(wire.ChooseDisplayNameRefusal(reason))
+    }
+
+  /** Ключ — каноническая строка идентификатора участника, та же, что пришла в запросе. */
+  def displayNames(names: Map[ParticipantId, DisplayName]): wire.GetDisplayNamesResponse =
+    wire.GetDisplayNamesResponse(names.map((participant, name) => participant.value.toString -> displayName(name)))
+
+  private def displayName(name: DisplayName): wire.DisplayName = {
+    val kind = name.kind match {
+      case DisplayKind.Username => wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME
+      case DisplayKind.Pseudonym => wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS
+      case DisplayKind.Placeholder => wire.DisplayNameKind.DISPLAY_NAME_KIND_PLACEHOLDER
+    }
+    wire.DisplayName(name.text, kind)
+  }
 
   /**
    * Принятый лимит ответа не несёт: выросла ли за ним цена, видно в состоянии лота (контракт). Конверт другого события

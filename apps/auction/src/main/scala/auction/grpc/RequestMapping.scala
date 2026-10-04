@@ -14,10 +14,14 @@ import auction.lot.ParticipantId
 import auction.lot.PlaceBid
 import auction.lot.SetProxyLimit
 import auction.lot.WithdrawProxyLimit
+import auction.naming.NameChoice
+import auction.naming.TelegramUsername
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
+import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.DraftAuctionRequest
+import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotRequest
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
@@ -71,6 +75,12 @@ final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], lim
 
 /** Команда каталога в домене: создание и правка несут одно и то же. */
 final case class CardCommand(lotId: LotId, title: String, description: String, viewer: Viewer)
+
+/** Выбор имени участника в аукционе; участник — тот, от чьего имени действует смотрящий. */
+final case class ChooseCommand(auctionId: AuctionId, choice: NameChoice, acting: Acting)
+
+/** Имена названных участников аукциона. */
+final case class NamesQuery(auctionId: AuctionId, participants: Set[ParticipantId], acting: Acting)
 
 /**
  * Отображение сгенерированных сообщений в доменные типы — trusted boundary.
@@ -133,12 +143,43 @@ object RequestMapping {
   def listAuctionLots(request: ListAuctionLotsRequest): Either[FormError, LotsQuery] =
     for {
       acting <- acting(request.viewer)
-      auctionId <- canonicalUuidV5(request.auctionId)
-        .orElse(canonicalUuidV7(request.auctionId))
-        .toRight(FormError("auction_id"))
+      auctionId <- lotAuction(request.auctionId)
       after <- PageToken.decode(request.pageToken).toRight(FormError("page_token"))
       limit <- pageSize(request.pageSize)
     } yield LotsQuery(auctionId, after, limit, acting)
+
+  def chooseDisplayName(request: ChooseDisplayNameRequest): Either[FormError, ChooseCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auctionId <- lotAuction(request.auctionId)
+      choice <- nameChoice(request.choice)
+    } yield ChooseCommand(AuctionId(auctionId), choice, acting)
+
+  def getDisplayNames(request: GetDisplayNamesRequest): Either[FormError, NamesQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auctionId <- lotAuction(request.auctionId)
+      participants <- request.participantIds.foldLeft[Either[FormError, Set[ParticipantId]]](Right(Set.empty)) {
+        (acc, id) => acc.flatMap(set => uuidV7("participant_ids", id).map(uuid => set + ParticipantId(uuid)))
+      }
+    } yield NamesQuery(AuctionId(auctionId), participants, acting)
+
+  /**
+   * Пустой ник — выставленный выбор «ника нет», и отвечает на него отказ выбора, а не форма (integration.md, «Имя
+   * участника»). Непустая строка, какой Telegram ником не присылает, — нарушение формы.
+   */
+  private def nameChoice(choice: ChooseDisplayNameRequest.Choice): Either[FormError, NameChoice] =
+    choice match {
+      case ChooseDisplayNameRequest.Choice.TelegramUsername("") => Right(NameChoice.Username(None))
+      case ChooseDisplayNameRequest.Choice.TelegramUsername(raw) =>
+        TelegramUsername.from(raw).map(name => NameChoice.Username(Some(name))).toRight(FormError("telegram_username"))
+      case ChooseDisplayNameRequest.Choice.Alias(raw) => Right(NameChoice.Pseudonym(raw))
+      case ChooseDisplayNameRequest.Choice.Empty => Left(FormError("choice"))
+    }
+
+  /** Аукцион, которому принадлежит лот: сходки (UUIDv5) или тестовый из настройки бота (UUIDv7). */
+  private def lotAuction(value: String): Either[FormError, UUID] =
+    canonicalUuidV5(value).orElse(canonicalUuidV7(value)).toRight(FormError("auction_id"))
 
   def draftAuction(request: DraftAuctionRequest): Either[FormError, DraftCommand] =
     for {

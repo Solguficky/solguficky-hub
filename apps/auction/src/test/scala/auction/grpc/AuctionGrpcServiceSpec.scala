@@ -23,6 +23,7 @@ import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.Envelope
 import auction.lot.OpId
+import auction.lot.LotFixtures
 import auction.lot.LotFixtures.*
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
@@ -31,6 +32,12 @@ import auction.lot.SetProxyLimit
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimit
 import auction.lot.WithdrawProxyLimitRejected
+import auction.naming.Alias
+import auction.naming.ChooseResult
+import auction.naming.ChosenName
+import auction.naming.DisplayNameCommands
+import auction.naming.DisplayNameStore
+import auction.naming.TelegramUsername
 import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionListing
 import auction.projection.AuctionSnapshotView
@@ -82,6 +89,68 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private object Unreachable extends Gateway
 
+  /** Аукцион, в котором родились лоты этих тестов. */
+  private val TheAuction = auctionId(1)
+
+  private val ViewerId = ParticipantId(UUID.fromString(identity))
+
+  /** Лот, который родился в `TheAuction`; команды, которые тест не переопределил, роняют тест. */
+  private class Born extends Gateway {
+    override def auctionOf(lotId: UUID): Future[Option[AuctionId]] = Future.successful(Some(TheAuction))
+  }
+
+  /**
+   * Имена в памяти. Заморозка падает первые `failingFreezes` раз и считает каждый вызов; уникальность псевдонима
+   * держится по ключу, как индекс базы.
+   */
+  private class Names(initial: Map[ParticipantId, ChosenName] = Map.empty, failingFreezes: Int = 0)
+      extends DisplayNameStore {
+    var chosen: Map[ParticipantId, ChosenName] = initial
+    var frozen: Set[ParticipantId] = Set.empty
+    var freezes: Int = 0
+
+    def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName): Future[ChooseResult] =
+      Future.successful {
+        if (frozen(participant) && chosen.contains(participant)) ChooseResult.Frozen(chosen(participant))
+        else if (chosen.exists((other, held) => other != participant && sameAlias(held, name))) ChooseResult.AliasTaken
+        else {
+          chosen += participant -> name
+          ChooseResult.Written
+        }
+      }
+
+    def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] = {
+      freezes += 1
+      if (freezes <= failingFreezes) Future.failed(IllegalStateException("database is down"))
+      else {
+        frozen += participant
+        Future.successful(chosen.contains(participant))
+      }
+    }
+
+    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]] =
+      Future.successful(chosen.view.filterKeys(participants).toMap)
+
+    private def sameAlias(held: ChosenName, wanted: ChosenName): Boolean =
+      (held, wanted) match {
+        case (ChosenName.Pseudonym(a), ChosenName.Pseudonym(b)) => a.key == b.key
+        case _ => false
+      }
+  }
+
+  private def named: Map[ParticipantId, ChosenName] =
+    Map(ViewerId -> ChosenName.Telegram(TelegramUsername.from("vasya").getOrElse(fail("not a username"))))
+
+  /** Хранилище имён, до которого запрос не должен дойти. */
+  private object UntouchableNames extends DisplayNameStore {
+    private def touched = fail("the display name store was touched")
+    def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName) = touched
+    def freeze(auction: AuctionId, participant: ParticipantId) = touched
+    def find(auction: AuctionId, participants: Set[ParticipantId]) = touched
+  }
+
+  private val accepted: Envelope = Envelope(4, LotFixtures.op(1), manual(bid(7), 1, 150, None))
+
   private object UntouchableStore extends LotCatalogStore {
     private def touched = fail("the catalog store was touched")
     def insertIfAbsent(card: LotCard): Future[Option[LotCard]] = touched
@@ -90,7 +159,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   }
 
   private def answering(outcome: Future[Either[PlaceBidRejected, Envelope]]): LotGateway =
-    new Gateway {
+    new Born {
       override def placeBid(
           lotId: UUID,
           command: PlaceBid,
@@ -136,9 +205,18 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       faq: FaqAcknowledgements = UntouchableFaq,
       views: LotViews = UntouchableViews,
       auctions: AuctionCommands = AuctionCommands(new Auctions, Unreachable, NoMeetups),
-      auctionViews: AuctionViews = UntouchableAuctionViews
+      auctionViews: AuctionViews = UntouchableAuctionViews,
+      names: DisplayNameStore = Names(named)
   ) =
-    AuctionGrpcService(lots, LotCatalogCommands(UntouchableStore), faq, views, auctions, auctionViews)
+    AuctionGrpcService(
+      lots,
+      LotCatalogCommands(UntouchableStore),
+      faq,
+      views,
+      auctions,
+      auctionViews,
+      DisplayNameCommands(names)
+    )
 
   private def statusOf(call: Future[?]): Status.Code =
     call.failed.futureValue match {
@@ -216,7 +294,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "sends the viewer's bid to the addressed lot as a participant" in {
       var seen = Option.empty[(UUID, PlaceBid, Initiator)]
-      val recording = new Gateway {
+      val recording = new Born {
         override def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) = {
           seen = Some((lotId, command, initiator))
           Future.successful(Left(PlaceBidRejected.LotNotOpen))
@@ -243,6 +321,74 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     "answers DEADLINE_EXCEEDED when the lot does not answer in time" in {
       val silent = answering(Future.failed(new AskTimeoutException("no reply")))
       statusOf(service(silent).placeBid(validBid)) shouldBe Status.Code.DEADLINE_EXCEEDED
+    }
+
+    "answers DEADLINE_EXCEEDED when the lot does not tell its auction in time, without placing the bid" in {
+      val silent = new Gateway {
+        override def auctionOf(lotId: UUID) = Future.failed(new AskTimeoutException("no reply"))
+      }
+      statusOf(service(silent, names = UntouchableNames).placeBid(validBid)) shouldBe Status.Code.DEADLINE_EXCEEDED
+    }
+
+    "answers NOT_FOUND to a bid on a lot that was never drafted without asking for the name" in {
+      val unborn = new Gateway {
+        override def auctionOf(lotId: UUID) = Future.successful(None)
+      }
+      statusOf(service(unborn, names = UntouchableNames).placeBid(validBid)) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "refuses a bid of a participant without a chosen name with DisplayNameNotChosen before reaching the lot" in {
+      val response = service(new Born, names = Names()).placeBid(validBid).futureValue
+      response.getRefused.reason.isDisplayNameNotChosen shouldBe true
+    }
+
+    "asks for the name in the auction of the lot, not in another one" in {
+      val elsewhere = new Born {
+        override def auctionOf(lotId: UUID) = Future.successful(Some(auctionId(2)))
+      }
+      val store = new Names(named) {
+        override def find(auction: AuctionId, participants: Set[ParticipantId]) =
+          if (auction == auctionId(2)) Future.successful(Map.empty) else super.find(auction, participants)
+      }
+      service(elsewhere, names = store).placeBid(validBid).futureValue.getRefused.reason.isDisplayNameNotChosen shouldBe
+        true
+    }
+
+    "freezes the name after an accepted bid and leaves it free after a refused one" in {
+      val refusedNames = Names(named)
+      service(answering(Future.successful(Left(PlaceBidRejected.LotNotOpen))), names = refusedNames)
+        .placeBid(validBid)
+        .futureValue
+      refusedNames.freezes shouldBe 0
+      val acceptedNames = Names(named)
+      service(answering(Future.successful(Right(accepted))), names = acceptedNames)
+        .placeBid(validBid)
+        .futureValue
+        .getAccepted
+        .bidId shouldBe bid(7).value.toString
+      acceptedNames.frozen shouldBe Set(ViewerId)
+    }
+
+    "repeats a failing freeze and answers the accepted bid when a later attempt succeeds" in {
+      val store = Names(named, failingFreezes = AuctionGrpcService.FreezeAttempts - 1)
+      service(answering(Future.successful(Right(accepted))), names = store)
+        .placeBid(validBid)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      store.freezes shouldBe AuctionGrpcService.FreezeAttempts
+      store.frozen shouldBe Set(ViewerId)
+    }
+
+    "answers the accepted bid even when every freeze attempt fails, and stops after the last attempt" in {
+      val store = Names(named, failingFreezes = Int.MaxValue)
+      service(answering(Future.successful(Right(accepted))), names = store)
+        .placeBid(validBid)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      store.freezes shouldBe AuctionGrpcService.FreezeAttempts
+      store.frozen shouldBe empty
     }
 
     "answers a catalog command from a non-administrator with NotAdmin before touching the store" in {
@@ -445,11 +591,64 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       rest.nextPageToken shouldBe ""
     }
 
-    "answers UNIMPLEMENTED on display names and images that belong to later slices" in {
-      val auction = service(Unreachable)
-      statusOf(auction.chooseDisplayName(wire.ChooseDisplayNameRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.getDisplayNames(wire.GetDisplayNamesRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.getLotImage(wire.GetLotImageRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    "answers UNIMPLEMENTED on images that belong to a later slice" in {
+      statusOf(service(Unreachable).getLotImage(wire.GetLotImageRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    }
+
+    "refuses name requests of a wrong form or without the public role before the store" in {
+      val auction = service(Unreachable, names = UntouchableNames)
+      val choose = wire.ChooseDisplayNameRequest(Some(viewer), lot).withAlias("Кот")
+      val member = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER))
+      statusOf(auction.chooseDisplayName(choose.withViewer(member))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.chooseDisplayName(choose.clearChoice)) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.chooseDisplayName(choose.withAuctionId("auction"))) shouldBe Status.Code.INVALID_ARGUMENT
+      // Непустая строка, какой Telegram ником не присылает, — форма, а не отказ выбора.
+      statusOf(auction.chooseDisplayName(choose.withTelegramUsername("not a nick"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      val names = wire.GetDisplayNamesRequest(Some(viewer), lot, Seq(identity))
+      statusOf(auction.getDisplayNames(names.withViewer(member))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.getDisplayNames(names.withParticipantIds(Seq("someone")))) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers a chosen name ready to show and each refusal of the choice as a value" in {
+      val other = ParticipantId(UUID.fromString(lot))
+      val taken = Map(other -> ChosenName.Pseudonym(Alias("Пёс").getOrElse(fail("not an alias"))))
+      val auction = service(Unreachable, names = Names(taken))
+      val choose = wire.ChooseDisplayNameRequest(Some(viewer), lot)
+      auction.chooseDisplayName(choose.withAlias("Кот")).futureValue.getAccepted shouldBe
+        wire.DisplayName("Кот*", wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS)
+      auction.chooseDisplayName(choose.withTelegramUsername("vasya")).futureValue.getAccepted shouldBe
+        wire.DisplayName("@vasya", wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME)
+      auction
+        .chooseDisplayName(choose.withTelegramUsername(""))
+        .futureValue
+        .getRefused
+        .reason
+        .isUsernameMissing shouldBe
+        true
+      auction.chooseDisplayName(choose.withAlias("К*т")).futureValue.getRefused.reason.isAliasInvalid shouldBe true
+      auction.chooseDisplayName(choose.withAlias("пёс")).futureValue.getRefused.reason.isAliasTaken shouldBe true
+    }
+
+    "refuses another name after the freeze and accepts the same one again" in {
+      val store = Names(named)
+      val auction = service(answering(Future.successful(Right(accepted))), names = store)
+      auction.placeBid(validBid).futureValue.outcome.isAccepted shouldBe true
+      val choose = wire.ChooseDisplayNameRequest(Some(viewer), lot)
+      auction.chooseDisplayName(choose.withAlias("Кот")).futureValue.getRefused.reason.isNameFrozen shouldBe true
+      auction.chooseDisplayName(choose.withTelegramUsername("vasya")).futureValue.getAccepted.text shouldBe "@vasya"
+    }
+
+    "answers every requested participant and a placeholder for one without a choice" in {
+      val silent = "01890a5d-ac96-774b-bcce-b302099a8999"
+      val answer = service(Unreachable)
+        .getDisplayNames(wire.GetDisplayNamesRequest(Some(viewer), lot, Seq(identity, silent, identity)))
+        .futureValue
+      answer.names.keySet shouldBe Set(identity, silent)
+      answer
+        .names(identity) shouldBe wire.DisplayName("@vasya", wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME)
+      answer.names(silent).kind shouldBe wire.DisplayNameKind.DISPLAY_NAME_KIND_PLACEHOLDER
+      answer.names(silent).text shouldBe "Участник 8999"
     }
 
     "answers UNIMPLEMENTED on invoices until the invoice slice" in {

@@ -3,9 +3,6 @@ package auction.boundary
 import io.grpc.Status
 import org.apache.pekko.http.scaladsl.model.StatusCode
 
-import java.io.PrintWriter
-import java.io.StringWriter
-
 /**
  * Каркас записи об операции из [[docs/standards/observability/logging.md]].
  *
@@ -44,7 +41,7 @@ object OperationFrame {
       )
       // stack обязателен только при неожиданном отказе, а не при любом:
       // у отклонённого входа стека нет и придумывать его нечем.
-      failure.fold(classified)(cause => classified + ("stack" -> stackOf(cause)))
+      failure.fold(classified)(cause => classified + ("stack" -> framesOf(cause)))
     }
   }
 
@@ -137,24 +134,13 @@ object OperationFrame {
   /**
    * Текст отказа.
    *
-   * У неожиданного отказа это класс и сообщение исключения, у отклонённого входа — причина статуса. Второй случай не
+   * У неожиданного отказа это только класс исключения, у отклонённого входа — причина статуса. Второй случай не
    * заглушка: отклонение рождается в самом транспорте, и другого текста у него нет.
    *
-   * Сообщение исключения подчиняется запретам стандарта наравне с остальными полями. HTTP-граница пользовательского
-   * ввода не принимает, поэтому попасть в текст ему неоткуда; ввод приходит только по gRPC, и его запись санитизирует
-   * [[grpc]]. Маршрут HTTP, который такой ввод примет, обязан перейти на ту же санитизацию — об этом сказано в
-   * `AGENTS.md` компонента.
+   * Сообщение исключения сюда не попадает, как и в [[grpc]]: в сервис приходит пользовательский текст — карточка
+   * администратора и псевдоним участника, — а PostgreSQL кладёт значения строки в текст нарушения ограничения. Правило
+   * держится одинаково на обеих границах, а не только там, где ввод приходит сегодня.
    */
   private def errorText(status: StatusCode, failure: Option[Throwable]): String =
-    failure match {
-      case Some(cause) =>
-        Option(cause.getMessage).fold(cause.getClass.getName)(message => s"${cause.getClass.getName}: $message")
-      case None => status.reason
-    }
-
-  private def stackOf(cause: Throwable): String = {
-    val buffer = new StringWriter()
-    cause.printStackTrace(new PrintWriter(buffer))
-    buffer.toString
-  }
+    failure.fold(status.reason)(_.getClass.getName)
 }
