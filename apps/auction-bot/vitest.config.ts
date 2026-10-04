@@ -8,6 +8,8 @@ export default defineConfig({
     // Пропуск роняет прогон (vitest.fail-on-skip.ts); `default` перечислен
     // явно, иначе своё поле reporters снимает штатный вывод.
     reporters: ["default", new FailOnSkip()],
+    // Линтер экрана: нарушение дизайн-кода роняет тест, который его отправил.
+    setupFiles: ["./testkit/lint-setup.ts"],
     include: ["src/**/*.test.ts"],
     exclude: [...configDefaults.exclude],
   },

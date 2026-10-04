@@ -1,51 +1,10 @@
 // Каталог экранов бота — данные дизайн-кода (docs/design/bot/design-code.md).
 // Каждый вызов Bot API, который несёт клавиатуру, называет свою запись, и по
 // ней линтер test kit проверяет экран. Правила живут здесь, а не в ревью.
-
-/** Класс сообщения: от него зависит, что делает нажатие под ним. */
-export type MessageClass = "screen" | "question" | "trace";
-
-/**
- * Что обязано стоять в конце клавиатуры:
- * - `root` — меню, ряда возврата нет;
- * - `tree` — `[‹ Родитель] [Меню]`, у детей меню — `[‹ Меню]`;
- * - `confirm` — `[Да, …]` и `[Нет]` двумя рядами;
- * - `question` — режим ответа и `[Отмена]`;
- * - `choice` — выбор кнопками: `[Отмена]` последним рядом и без режима ответа;
- * - `exit` — кадр отказа: «Повторить», возврат или «Меню»;
- * - `free` — след: клавиатура принадлежит самому сообщению;
- * - `none` — клавиатуры нет вовсе.
- */
-export type NavRule =
-  | "root"
-  | "tree"
-  | "confirm"
-  | "question"
-  | "choice"
-  | "exit"
-  | "free"
-  | "none";
-
-export type ScreenEntry = {
-  class: MessageClass;
-  nav: NavRule;
-  /** Заголовок первой строкой; нет — заголовок даёт содержимое (сходка). */
-  title?: string;
-  /** Родитель в дереве. `meetup-list` — список, в котором сходка стоит. */
-  parent?: string;
-  /** Короткое имя для возврата с дочерних экранов: «‹ Имя». */
-  backName?: string;
-  /** «Обновить» разрешено: содержимое меняется без участия человека. */
-  refresh?: true;
-  /** Потолок рядов клавиатуры, если он строже общего. */
-  maxRows?: number;
-  /**
-   * Экран ещё не переведён на дизайн-код. Линтер его правилами не проверяет,
-   * но падает, когда такой экран уже проходит все правила: пометка не
-   * переживает свою причину.
-   */
-  legacy?: true;
-};
+//
+// Форма записи и сам линтер — общий пакет `shared/typescript/screen-lint`.
+// Сборка бота его не видит, поэтому `satisfies` здесь нет: форму каталога
+// проверяет test kit, когда отдаёт его линтеру (`testkit/screen-lint.ts`).
 
 export const meetupListParent = "meetup-list";
 
@@ -186,7 +145,7 @@ export const screenCatalog = {
   "no-access": { class: "screen", nav: "none" },
   notification: { class: "trace", nav: "free" },
   "access-opened": { class: "trace", nav: "free" },
-} as const satisfies Record<string, ScreenEntry>;
+} as const;
 
 export type ScreenId = keyof typeof screenCatalog;
 

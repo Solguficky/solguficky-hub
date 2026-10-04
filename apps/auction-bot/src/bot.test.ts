@@ -6,6 +6,7 @@ import {
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
+import { inspectCall, reportViolations } from "../testkit/screen-lint.js";
 import { createBot } from "./bot.js";
 import type { PortsFactory } from "./clients.js";
 import { entryCallback } from "./faq.js";
@@ -62,6 +63,9 @@ function makeBot(
   // ослабление типа в тесте. Отказ Bot API задаётся описанием по методу.
   const recorder: Transformer = (_prev, method, payload) => {
     calls.push({ method, payload });
+    // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
+    // найденное снимает хук набора (`testkit/lint-setup.ts`).
+    reportViolations(inspectCall(method, payload));
     const once = options.refuseOnce?.[method];
     if (once !== undefined && options.refuseOnce !== undefined) {
       delete options.refuseOnce[method];

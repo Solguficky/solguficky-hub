@@ -6,7 +6,7 @@ using Npgsql;
 
 namespace Notifications.Auction;
 
-public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Duplicate }
+public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Purchased, Duplicate }
 public sealed record AuctionApplication(AuctionOutcome Outcome, int FactsCreated);
 
 /// <summary>Ключ события и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
@@ -32,5 +32,21 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         }
         await work.Commit(cancellationToken);
         return new AuctionApplication(outcome, created);
+    }
+
+    public async Task<AuctionApplication> Apply(AuctionSale sale, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, sale.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, 0);
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var notification = AuctionFacts.Purchased(Guid.CreateVersion7(now), sale, now, notAfter);
+        var created = await NotificationStore.AddAddressed(work, notification, AuctionFacts.PurchasedType,
+            AuctionFacts.CauseKind, sale.EventId.ToString(), now, notAfter, cancellationToken);
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.Purchased, created);
     }
 }
