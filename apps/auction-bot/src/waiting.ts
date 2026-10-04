@@ -1,4 +1,4 @@
-import type { Context } from "grammy";
+import { type Context, InputFile } from "grammy";
 
 // Правило ожидания дизайн-кода (docs/design/bot/design-code.md, «Ожидание»).
 // Человек видит ожидание двумя индикаторами клиента: спиннером на нажатой
@@ -33,6 +33,19 @@ const quietMethods: ReadonlySet<string> = new Set([
   "deleteMessage",
 ]);
 
+// Файл к загрузке лежит в параметрах отправки (`photo`) либо внутри медиа
+// правки (`media.media`): глубже Bot API его не кладёт.
+function carriesUpload(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  return Object.values(payload).some(
+    (value) =>
+      value instanceof InputFile ||
+      (typeof value === "object" &&
+        value !== null &&
+        Object.values(value).some((inner) => inner instanceof InputFile)),
+  );
+}
+
 /**
  * Заводит ожидание одного update. Ответ на нажатие уходит вместе с первым
  * видимым вызовом Bot API: до него клиент сам крутит индикатор на кнопке.
@@ -49,15 +62,19 @@ export function startWaiting(ctx: Context): Waiting {
   let typing: NodeJS.Timeout | undefined;
 
   // Один раз и без текста: всплывающего текста у бота аукциона нет. Не
-  // бросает — отказ ответа доставку экрана не отменяет.
-  const answer = async (): Promise<void> => {
-    if (answered) return;
+  // бросает — отказ ответа доставку экрана не отменяет. Повторный вызов ждёт
+  // первый: ответ сторожа, ещё летящий к `finish`, свой отказ не теряет.
+  let answering: Promise<void> | undefined;
+  const answer = (): Promise<void> => {
+    if (answered) return answering ?? Promise.resolve();
     answered = true;
-    try {
-      await ctx.answerCallbackQuery();
-    } catch (cause) {
-      answerError = cause instanceof Error ? cause.message : String(cause);
-    }
+    answering = ctx.answerCallbackQuery().then(
+      () => undefined,
+      (cause: unknown) => {
+        answerError = cause instanceof Error ? cause.message : String(cause);
+      },
+    );
+    return answering;
   };
 
   const stopTyping = (): void => {
@@ -81,12 +98,25 @@ export function startWaiting(ctx: Context): Waiting {
         }, pressWatchdogMs);
   watchdog?.unref();
 
+  const show = async (): Promise<void> => {
+    shown = true;
+    stopTyping();
+    await answer();
+  };
+
   ctx.api.config.use(async (prev, method, payload, signal) => {
-    if (!quietMethods.has(method)) {
-      shown = true;
-      stopTyping();
-      await answer();
+    if (quietMethods.has(method)) return prev(method, payload, signal);
+    // Загрузка байтов идёт без предела по времени, и человек видит результат
+    // только с её концом: до него крутится кнопка, держится «печатает…», а
+    // на нажатие отвечает сторож (дизайн-код, «Показ фото лота»).
+    // Отказ Telegram на изображение — ещё не результат: карточку следом везёт
+    // текстовая доставка, и ответ уйдёт с ней.
+    if (carriesUpload(payload)) {
+      const response = await prev(method, payload, signal);
+      if (response.ok) await show();
+      return response;
     }
+    await show();
     return prev(method, payload, signal);
   });
 

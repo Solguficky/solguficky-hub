@@ -396,12 +396,13 @@ describe("auction bot", () => {
       { photos },
     );
     await bot.handleUpdate(lotPress());
+    // Загрузка доставляет карточку: ответ на нажатие уходит с её концом.
     expect(calls.map((call) => call.method)).toEqual([
-      "answerCallbackQuery",
       "sendPhoto",
+      "answerCallbackQuery",
       "deleteMessage",
     ]);
-    expect(calls[1]?.payload).toMatchObject({
+    expect(calls[0]?.payload).toMatchObject({
       caption: expect.stringContaining("Кружка"),
     });
     expect(photos.get({ lotId, version: "img-1" })).toBe("large");
@@ -452,8 +453,8 @@ describe("auction bot", () => {
     });
     await bot.handleUpdate(lotPress());
     expect(calls.map((call) => call.method)).toEqual([
-      "answerCallbackQuery",
       "sendPhoto",
+      "answerCallbackQuery",
       "editMessageText",
     ]);
     expect(
@@ -534,7 +535,7 @@ describe("waiting", () => {
 
   const methods = (calls: ReadonlyArray<{ method: string }>) =>
     calls.map((call) => call.method);
-  const visible = (calls: ReadonlyArray<{ method: string }>) =>
+  const withoutTyping = (calls: ReadonlyArray<{ method: string }>) =>
     methods(calls).filter((method) => method !== "sendChatAction");
 
   // Порты, у которых Auction отдаёт лот через `delayMs` либо когда скажет тест.
@@ -631,7 +632,10 @@ describe("waiting", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     await handled;
-    expect(visible(calls)).toEqual(["answerCallbackQuery", "editMessageText"]);
+    expect(withoutTyping(calls)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
     const edit = calls.find((call) => call.method === "editMessageText");
     expect(edit?.payload).toMatchObject({
       text: expect.stringContaining("недоступен"),
@@ -646,11 +650,14 @@ describe("waiting", () => {
     await vi.advanceTimersByTimeAsync(pressWatchdogMs - 1);
     expect(methods(calls)).not.toContain("answerCallbackQuery");
     await vi.advanceTimersByTimeAsync(1);
-    expect(visible(calls)).toEqual(["answerCallbackQuery"]);
+    expect(withoutTyping(calls)).toEqual(["answerCallbackQuery"]);
 
     lot.respond();
     await handled;
-    expect(visible(calls)).toEqual(["answerCallbackQuery", "editMessageText"]);
+    expect(withoutTyping(calls)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
   });
 
   it("delivers the screen when Telegram refuses the press answer", async () => {
@@ -671,6 +678,36 @@ describe("waiting", () => {
       operation: "callback",
       result: "ok",
     });
+  });
+
+  // Загрузка байтов — тот вызов, что доставляет карточку: пока она идёт,
+  // результата у человека нет, и индикаторы держатся до её конца.
+  it("keeps waiting through a slow cold upload of the lot photo", async () => {
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }));
+    const slowUpload: Transformer = async (prev, method, payload, signal) => {
+      if (method === "sendPhoto") {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
+      return prev(method, payload, signal);
+    };
+    bot.api.config.use(slowUpload);
+
+    const handled = bot.handleUpdate(lotPress());
+    await vi.advanceTimersByTimeAsync(pressWatchdogMs - 1);
+    expect(methods(calls)).toEqual(["sendChatAction", "sendChatAction"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(withoutTyping(calls)).toEqual(["answerCallbackQuery"]);
+
+    await vi.advanceTimersByTimeAsync(10_000 - pressWatchdogMs);
+    await handled;
+    expect(withoutTyping(calls)).toEqual([
+      "answerCallbackQuery",
+      "sendPhoto",
+      "deleteMessage",
+    ]);
+    expect(methods(calls).filter((m) => m === "sendChatAction")).toHaveLength(
+      3,
+    );
   });
 
   it("shows typing while /start waits for the services", async () => {
