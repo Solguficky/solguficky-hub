@@ -70,7 +70,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
 
   private final class Meetups(answer: Authority) extends MeetupAuthority {
     var asked = 0
-    def check(meetup: MeetupId, person: ParticipantId): Future[Authority] = {
+    def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] = {
       asked += 1
       Future.successful(answer)
     }
@@ -134,6 +134,15 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       AuctionCommands(Auctions(Inspection.Present(meetup)), lots, Meetups(Authority.Granted))
         .addLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Right(())
+    }
+
+    "refuses a lot that a repeated op_id drafted in another auction and leaves the registry untouched" in {
+      val auctions = Auctions(Inspection.Present(meetup))
+      val lots = Lots(Right(Envelope(1, op(2), LotEvent.LotDrafted(auctionId(9)))))
+      AuctionCommands(auctions, lots, Meetups(Authority.Granted))
+        .addLot(auctionOfMeetup, lot, op(2), person)
+        .futureValue shouldBe Left(Denial.LotOfAnotherAuction)
+      auctions.commands shouldBe empty
     }
 
     "refuses a lot born in another auction and leaves the registry untouched" in {

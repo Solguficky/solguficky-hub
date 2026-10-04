@@ -150,7 +150,7 @@ object AuctionNode {
       AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),
       SlickAuctionViews(system)
     )
-    GrpcBoundary(callers, service)
+    GrpcBoundary(callers, correlation => service.within(correlation))
   }
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {

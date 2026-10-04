@@ -1,6 +1,7 @@
 package auction.meetup
 
 import auction.aggregate.Authority
+import auction.aggregate.Correlation
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
 import auction.lot.ParticipantId
@@ -64,10 +65,11 @@ object MeetupsSettings {
 final class GrpcMeetupAuthority(client: MeetupsServiceClient, token: String)(using ExecutionContext)
     extends MeetupAuthority {
 
-  def check(meetup: MeetupId, person: ParticipantId): Future[Authority] =
-    client
-      .checkMeetupAuthority()
-      .addHeader("authorization", s"Bearer $token")
+  def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] = {
+    val authorized = client.checkMeetupAuthority().addHeader("authorization", s"Bearer $token")
+    val withRequest = correlation.requestId.fold(authorized)(authorized.addHeader("x-request-id", _))
+    correlation.useCase
+      .fold(withRequest)(withRequest.addHeader("x-use-case", _))
       .invoke(
         CheckMeetupAuthorityRequest(
           id = meetup.value.toString,
@@ -82,6 +84,7 @@ final class GrpcMeetupAuthority(client: MeetupsServiceClient, token: String)(usi
           case None => Future.failed(failure)
         }
       }
+  }
 }
 
 object GrpcMeetupAuthority {
@@ -101,7 +104,7 @@ object GrpcMeetupAuthority {
     }
 
   /** Без адреса Meetups право подтвердить нечем: каждая проверка — `Unavailable`, и события команда не порождает. */
-  val absent: MeetupAuthority = (_, _) => Future.successful(Authority.Unavailable)
+  val absent: MeetupAuthority = (_, _, _) => Future.successful(Authority.Unavailable)
 
   def apply(settings: MeetupsSettings)(using system: ActorSystem[?]): MeetupAuthority =
     (settings.url, settings.serviceToken) match {

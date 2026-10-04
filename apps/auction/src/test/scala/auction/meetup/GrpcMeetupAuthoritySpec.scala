@@ -1,6 +1,7 @@
 package auction.meetup
 
 import auction.aggregate.Authority
+import auction.aggregate.Correlation
 import auction.aggregate.MeetupId
 import auction.lot.ParticipantId
 import com.typesafe.config.ConfigFactory
@@ -34,7 +35,7 @@ final class GrpcMeetupAuthoritySpec extends AnyWordSpec with Matchers {
 
     "answers every check as unavailable without an address of meetups" in {
       GrpcMeetupAuthority.absent
-        .check(MeetupId(new UUID(1L, 1L)), ParticipantId(new UUID(1L, 2L)))
+        .check(MeetupId(new UUID(1L, 1L)), ParticipantId(new UUID(1L, 2L)), Correlation.none)
         .value
         .flatMap(_.toOption) shouldBe Some(Authority.Unavailable)
     }

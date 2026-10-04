@@ -8,6 +8,7 @@ import auction.entity.LotGateway
 import auction.lot.AuctionId
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
+import auction.lot.LotEvent
 import auction.lot.OpId
 import auction.lot.ParticipantId
 
@@ -25,9 +26,19 @@ enum Authority {
   case Unavailable
 }
 
+/**
+ * Сквозные значения цепочки, которые пришли на границу заголовками `x-request-id` и `x-use-case` и уходят дальше с
+ * вызовом Meetups тем же механизмом (logging.md): сервис их не рождает и не выводит.
+ */
+final case class Correlation(requestId: Option[String], useCase: Option[String])
+
+object Correlation {
+  val none: Correlation = Correlation(None, None)
+}
+
 /** Проверка права человека на сходку у её владельца — Meetups, с отношением «администратор сообщества». */
 trait MeetupAuthority {
-  def check(meetup: MeetupId, person: ParticipantId): Future[Authority]
+  def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority]
 }
 
 /**
@@ -65,9 +76,15 @@ enum RemovalRefusal {
  * родился, отвечает `LotAlreadyExists`; родился он в этом же аукционе — это не отказ (повторное добавление после
  * `RemoveLot`), в другом — `LotOfAnotherAuction`, и реестр не меняется.
  */
-final class AuctionCommands(auctions: AuctionGateway, lots: LotGateway, authority: MeetupAuthority)(using
-    ExecutionContext
-) {
+final class AuctionCommands(
+    auctions: AuctionGateway,
+    lots: LotGateway,
+    authority: MeetupAuthority,
+    correlation: Correlation = Correlation.none
+)(using ExecutionContext) {
+
+  /** Те же команды для одного входящего вызова: право у Meetups спрашивается с его сквозными значениями. */
+  def within(correlation: Correlation): AuctionCommands = AuctionCommands(auctions, lots, authority, correlation)
 
   def draft(meetup: MeetupId, opId: OpId, person: ParticipantId): Future[Either[Denial, Drafted]] = {
     val auctionId = Auction.idOf(meetup)
@@ -129,7 +146,7 @@ final class AuctionCommands(auctions: AuctionGateway, lots: LotGateway, authorit
   private def authorized[L, R](meetup: MeetupId, person: ParticipantId, deny: Denial => L)(
       run: => Future[Either[L, R]]
   ): Future[Either[L, R]] =
-    authority.check(meetup, person).flatMap {
+    authority.check(meetup, person, correlation).flatMap {
       case Authority.Granted => run
       case Authority.NotAdministrator => Future.successful(Left(deny(Denial.NotAdministrator)))
       case Authority.MeetupNotFound => Future.successful(Left(deny(Denial.MeetupNotFound)))
@@ -139,7 +156,12 @@ final class AuctionCommands(auctions: AuctionGateway, lots: LotGateway, authorit
   /** Лот родился в этом аукционе — сейчас или раньше. `false` — он уже есть, но в другом аукционе. */
   private def born(auctionId: AuctionId, lot: LotId, opId: OpId, person: ParticipantId): Future[Boolean] =
     lots.draftLot(lot.value, DraftLot(auctionId, opId), Initiator.Operator(person)).flatMap {
-      case Right(_) => Future.successful(true)
+      // Повтор того же `op_id` у лота отвечает исходным конвертом, а он мог родить лот в другом аукционе.
+      case Right(envelope) =>
+        envelope.event match {
+          case LotEvent.LotDrafted(born) => Future.successful(born == auctionId)
+          case _ => lots.auctionOf(lot.value).map(_.contains(auctionId))
+        }
       case Left(DraftLotRejected.LotAlreadyExists) => lots.auctionOf(lot.value).map(_.contains(auctionId))
     }
 

@@ -1,5 +1,7 @@
 package auction.grpc
 
+import auction.aggregate.Correlation
+
 import auction.boundary.OperationFrame
 import auction.v1.auction_service.AuctionService
 import auction.v1.auction_service.AuctionServiceHandler
@@ -41,6 +43,15 @@ object GrpcBoundary {
 
   def apply(table: CallerTable, service: AuctionService)(using
       system: ActorSystem[?]
+  ): HttpRequest => Future[HttpResponse] =
+    apply(table, (_: Correlation) => service)
+
+  /**
+   * Граница, которая собирает сервис на каждый вызов с его сквозными значениями: сгенерированный сервис заголовков не
+   * видит, а вызов Meetups обязан их передать (logging.md). Обработчик и так строится на каждый запрос.
+   */
+  def apply(table: CallerTable, service: Correlation => AuctionService)(using
+      system: ActorSystem[?]
   ): HttpRequest => Future[HttpResponse] = {
     import system.executionContext
     val refusing = new RefusingService
@@ -52,7 +63,8 @@ object GrpcBoundary {
       val outcome = new AtomicReference[Outcome](Outcome(Status.OK, None))
 
       val target = decision match {
-        case GateDecision.Admitted(_) => service
+        case GateDecision.Admitted(_) =>
+          service(Correlation(header(request, "x-request-id"), header(request, "x-use-case")))
         case GateDecision.Refused(_, _) => refusing
       }
 

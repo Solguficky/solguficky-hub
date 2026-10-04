@@ -4,6 +4,7 @@ import auction.AuctionNode
 import auction.aggregate.Auction
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
+import auction.aggregate.Correlation
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
 import auction.entity.AuctionEntity
@@ -113,8 +114,10 @@ final class AuctionGrpcIntegrationSpec
   private final class StubAuthority extends MeetupAuthority {
     @volatile var answer: Authority = Authority.Granted
     @volatile var asked: Int = 0
-    def check(meetup: MeetupId, person: ParticipantId): Future[Authority] = {
+    @volatile var correlations: List[Correlation] = Nil
+    def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] = {
       asked += 1
+      correlations :+= correlation
       Future.successful(answer)
     }
   }
@@ -264,6 +267,17 @@ final class AuctionGrpcIntegrationSpec
       auctionState(node, Auction.idOf(MeetupId(UUID.fromString(meetup))).value.toString).state shouldBe
         AuctionState.Initial
       meetupAuction(node, meetup) shouldBe None
+    }
+
+    "passes x-request-id and x-use-case of the call on to meetups" in withNode { node =>
+      asHubBot(node.client.draftAuction())
+        .addHeader("x-request-id", "req-auction-1")
+        .addHeader("x-use-case", "enable-meetup-auction")
+        .invoke(wire.DraftAuctionRequest(Some(administrator), newId(), newId()))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      node.authority.correlations shouldBe List(Correlation(Some("req-auction-1"), Some("enable-meetup-auction")))
     }
 
     "answers NOT_FOUND to a registry command on an auction that was never enabled, without asking meetups" in withNode {

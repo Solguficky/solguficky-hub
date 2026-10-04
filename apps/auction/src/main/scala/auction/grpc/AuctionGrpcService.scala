@@ -1,6 +1,7 @@
 package auction.grpc
 
 import auction.aggregate.AuctionCommands
+import auction.aggregate.Correlation
 import auction.catalog.LotCatalogCommands
 import auction.entity.Initiator
 import auction.entity.LotGateway
@@ -31,6 +32,10 @@ final class AuctionGrpcService(
     auctionViews: AuctionViews
 )(using ExecutionContext)
     extends wire.AuctionService {
+
+  /** Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями. */
+  def within(correlation: Correlation): AuctionGrpcService =
+    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews)
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {

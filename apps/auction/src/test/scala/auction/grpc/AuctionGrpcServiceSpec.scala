@@ -123,7 +123,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) = fail("the auction was reached")
   }
 
-  private val NoMeetups: MeetupAuthority = (_, _) => fail("meetups was asked")
+  private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
 
   private object UntouchableAuctionViews extends AuctionViews {
     def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
@@ -373,7 +373,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator) =
           Future.successful(AuctionAnswer.Unchanged)
       }
-      val granted: MeetupAuthority = (_, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
       val answer = service(Unreachable, auctions = AuctionCommands(existing, Unreachable, granted))
         .draftAuction(wire.DraftAuctionRequest(Some(viewer), meetupId, op))
         .futureValue
@@ -385,7 +385,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val absent = new Auctions {
         override def inspect(auctionId: AuctionId, opId: OpId) = Future.successful(Inspection.Absent)
       }
-      val unavailable: MeetupAuthority = (_, _) => Future.successful(Authority.Unavailable)
+      val unavailable: MeetupAuthority = (_, _, _) => Future.successful(Authority.Unavailable)
       statusOf(
         service(Unreachable, auctions = AuctionCommands(absent, Unreachable, unavailable))
           .draftAuction(wire.DraftAuctionRequest(Some(viewer), meetupId, op))
