@@ -308,7 +308,12 @@ describe("organizer message", () => {
 });
 
 describe("access request", () => {
-  it("names the hub request and leads to the queue as a trace", () => {
+  const stop = expect.objectContaining({
+    text: "Не присылать запросы доступа",
+    callback_data: "v1:notify:off:access",
+  });
+
+  it("names the hub request, leads to the queue and offers to stop requests", () => {
     const content: RenderableContent = {
       kind: "access-requested",
       circle: "member",
@@ -321,10 +326,12 @@ describe("access request", () => {
         text: "Открыть очередь",
         callback_data: "v1:t:cm:p",
       }),
+      stop,
     ]);
   });
 
-  // Очередь хаба допускает в member: аукционную заявку туда не ведут.
+  // Очередь хаба допускает в member: аукционную заявку туда не ведут. Категория
+  // у обоих кругов одна, и выключатель стоит под обоими.
   it("names the auction request without leading to the hub queue", () => {
     const content: RenderableContent = {
       kind: "access-requested",
@@ -333,7 +340,7 @@ describe("access request", () => {
     expect(renderNotification(content).text).toBe(
       "Новая заявка на участие в аукционе",
     );
-    expect(renderNotification(content).keyboard).toBeUndefined();
+    expect(buttons(content)).toEqual([stop]);
   });
 });
 

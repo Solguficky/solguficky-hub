@@ -38,6 +38,7 @@ const GlobalCategorySchema = z.enum([
   "reminder",
   "organizer",
   "announcement",
+  "access",
 ]);
 // Кнопка несёт целевое состояние, а не переворот: у двух человек, нажавших на
 // одну отрисовку, результат обязан совпасть.
@@ -851,8 +852,8 @@ function parseNotify(parts: readonly string[]): CallbackAction {
       : { kind: "malformed" };
   }
   if (parts.length === 6 && parts[2] === "set") {
-    // Только категории, которые сходка может нести: `published` и
-    // `announcement` сюда не проходят, и `INVALID_ARGUMENT` за них не платится.
+    // Только категории, которые сходка может нести: глобальные сюда не
+    // проходят, и `INVALID_ARGUMENT` за них не платится.
     const category = MeetupCategorySchema.safeParse(parts[4]);
     const state = TargetStateSchema.safeParse(parts[5]);
     return category.success && state.success

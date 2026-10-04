@@ -214,7 +214,11 @@ function toMeetup(
 function isMeetupCategory(
   category: NotificationCategory,
 ): category is MeetupCategory {
-  return category !== "published" && category !== "announcement";
+  return (
+    category !== "published" &&
+    category !== "announcement" &&
+    category !== "access"
+  );
 }
 
 function toWire(category: NotificationCategory): WireCategory {
@@ -231,6 +235,8 @@ function toWire(category: NotificationCategory): WireCategory {
       return WireCategory.ORGANIZER_MESSAGE;
     case "announcement":
       return WireCategory.COMMUNITY_ANNOUNCEMENT;
+    case "access":
+      return WireCategory.ACCESS_REQUEST;
     default: {
       const _exhaustive: never = category;
       throw new Error(`Unsupported notification category ${_exhaustive}`);
@@ -254,6 +260,8 @@ function fromWire(value: WireCategory): NotificationCategory | undefined {
       return "organizer";
     case WireCategory.COMMUNITY_ANNOUNCEMENT:
       return "announcement";
+    case WireCategory.ACCESS_REQUEST:
+      return "access";
     default:
       return undefined;
   }
