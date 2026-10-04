@@ -766,8 +766,9 @@ message ListMyInvoicesRequest {
 
 message ListMyInvoicesResponse {
   // Every invoice of the viewer in the auction, in no meaningful order. There are
-  // no pages: the list is bounded by the lots of one auction, and a total is
-  // summed from the whole of it. Empty when the viewer won nothing.
+  // no pages: the list is bounded by the sales of one auction - one invoice per
+  // sale, and a lot is sold to at most one bid at a time - and a total is summed
+  // from the whole of it. Empty when the viewer won nothing.
   repeated InvoiceSnapshot invoices = 1;
 }
 

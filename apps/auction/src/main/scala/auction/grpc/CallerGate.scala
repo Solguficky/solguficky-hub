@@ -32,9 +32,9 @@ object MethodAccess {
     "ListAuctions" -> bots,
     "MarkInvoicePaid" -> Set(Caller.AuctionBot),
     "MarkInvoiceHandedOver" -> Set(Caller.AuctionBot),
-    "ListAuctionInvoices" -> Set(Caller.AuctionBot),
     "ChooseFulfillment" -> Set(Caller.AuctionBot),
-    "ListMyInvoices" -> Set(Caller.AuctionBot)
+    "ListMyInvoices" -> Set(Caller.AuctionBot),
+    "ListAuctionInvoices" -> Set(Caller.AuctionBot)
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */

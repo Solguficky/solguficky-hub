@@ -5,9 +5,9 @@ package auction.v1;
 import "auction/v1/auction.proto";
 
 // Outgoing facts of the lot journal, of the auction journal and of the invoice
-// journal. They live apart
-// from auction_service.proto for the same reason the value types do: a consumer of
-// the events must not drag AuctionService and its requests into its codegen.
+// journal. They live apart from auction_service.proto for the same reason the
+// value types do: a consumer of the events must not drag AuctionService and its
+// requests into its codegen.
 //
 // This is not the journal row. The row also carries the aggregate type, the
 // operation id, the transaction id, the actor and the schema version; none of them
