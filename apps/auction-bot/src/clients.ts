@@ -1,5 +1,5 @@
 import type { Client, Interceptor } from "@connectrpc/connect";
-import { createClient } from "@connectrpc/connect";
+import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
@@ -19,7 +19,9 @@ import { lotViewOf } from "./snapshot.js";
 
 export const rpcTimeoutMs = 3_000;
 // Байты изображения — до нескольких мегабайт, им нужно больше времени, чем
-// снимку. Отказ здесь стоит карточке фото, а не экрана.
+// снимку. Отказ здесь стоит карточке фото, а не экрана. Бюджет действия
+// режет и его: `GetLotImage` делит 5 секунд с личностью и чтением лота
+// (дизайн-код, «Показ фото лота»).
 export const imageTimeoutMs = 10_000;
 export const requestIdHeader = "x-request-id";
 
@@ -40,12 +42,35 @@ export type AuctionRpc = Pick<
 >;
 
 // Порты пакета метаданных вызова не несут, поэтому они собираются на каждый
-// update: `request_id` края уезжает заголовком в каждый вызов цепочки.
+// update: `request_id` края уезжает заголовком в каждый вызов цепочки, а
+// `deadlineAt` — общий бюджет действия — режет дедлайн каждого вызова.
 //
 // Порт изображения пакет не зовёт: байты нужны только Telegram-краю бота.
 export type PortsFactory = (
   requestId: string,
+  deadlineAt?: number,
 ) => EntryPorts & { image: LotImagePort };
+
+/**
+ * Дедлайн одного вызова: меньшее из его собственного и остатка бюджета
+ * действия. Бюджет исчерпан — вызов не делается вовсе, а отказ тот же, что даёт
+ * истёкший дедлайн транспорта: маршрут разбирает его уже существующей ветвью.
+ */
+export function callTimeoutMs(
+  deadlineAt: number | undefined,
+  ownMs: number,
+  now: number = Date.now(),
+): number {
+  if (deadlineAt === undefined) return ownMs;
+  const left = deadlineAt - now;
+  if (left <= 0) {
+    throw new ConnectError(
+      "the action budget is exhausted",
+      Code.DeadlineExceeded,
+    );
+  }
+  return Math.min(ownMs, left);
+}
 
 export type PortsOptions = {
   timeoutMs?: number;
@@ -59,9 +84,13 @@ export function createPorts(
   auction: AuctionRpc,
   { timeoutMs = rpcTimeoutMs, onNamesRefused }: PortsOptions = {},
 ): PortsFactory {
-  return (requestId) => {
+  return (requestId, deadlineAt) => {
     const headers = { [requestIdHeader]: requestId };
-    const options = { timeoutMs, headers };
+    // Остаток бюджета считается в момент вызова, а не при сборке портов.
+    const callOptions = (ownMs: number) => ({
+      timeoutMs: callTimeoutMs(deadlineAt, ownMs),
+      headers,
+    });
     return {
       identity: {
         async resolveIdentity(user: TelegramUser): Promise<ResolvedIdentity> {
@@ -72,7 +101,7 @@ export function createPorts(
                 ? {}
                 : { telegramUsername: user.telegramUsername }),
             },
-            options,
+            callOptions(timeoutMs),
           );
           return {
             identityId: response.identityId,
@@ -87,7 +116,7 @@ export function createPorts(
         async getLot(request: { viewer: Viewer; lotId: string }) {
           const snapshot = await auction.getLot(
             { viewer: viewerOf(request.viewer), lotId: request.lotId },
-            options,
+            callOptions(timeoutMs),
           );
           return lotViewOf(snapshot);
         },
@@ -98,7 +127,7 @@ export function createPorts(
               auctionId: request.auctionId,
               pageToken: request.pageToken,
             },
-            options,
+            callOptions(timeoutMs),
           );
           return {
             lots: page.lots.map(lotViewOf),
@@ -113,7 +142,7 @@ export function createPorts(
                 auctionId: request.auctionId,
                 participantIds: [...request.participantIds],
               },
-              options,
+              callOptions(timeoutMs),
             );
             return Object.fromEntries(
               Object.entries(response.names).map(([id, name]) => [
@@ -131,7 +160,7 @@ export function createPorts(
         async getLotImage(request) {
           const image = await auction.getLotImage(
             { viewer: viewerOf(request.viewer), lotId: request.lotId },
-            { timeoutMs: imageTimeoutMs, headers },
+            callOptions(imageTimeoutMs),
           );
           return {
             content: image.content,
@@ -144,14 +173,14 @@ export function createPorts(
         async acknowledged(viewer) {
           const response = await auction.getFaqAcknowledgement(
             { viewer: viewerOf(viewer) },
-            options,
+            callOptions(timeoutMs),
           );
           return response.acknowledged;
         },
         async acknowledge(viewer) {
           const response = await auction.acknowledgeFaq(
             { viewer: viewerOf(viewer) },
-            options,
+            callOptions(timeoutMs),
           );
           if (!response.acknowledged)
             throw new Error("Auction did not acknowledge FAQ completion");

@@ -23,6 +23,7 @@ import {
 } from "./route.js";
 import { screenMark } from "./screen-catalog.js";
 import { sourceCodeOf } from "./start-payload.js";
+import { startWaiting } from "./waiting.js";
 
 export type BotOptions = {
   token: string;
@@ -67,56 +68,71 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   // Только личный чат: в группе бот аукциона молчит.
   const direct = bot.chatType("private");
 
+  // Бюджет действия у команды тот же, что у нажатия (дизайн-код, «Ожидание»).
   direct.command("start", async (ctx) => {
-    const sourceCode = sourceCodeOf(ctx.match);
-    const outcome = await routeAuctionStart({
-      ...auction,
-      ...(sourceCode === undefined ? {} : { sourceCode }),
-      ports: options.ports(ctx.requestId),
-      user: {
-        telegramUserId: ctx.from.id,
-        ...(ctx.from.username === undefined
-          ? {}
-          : { telegramUsername: ctx.from.username }),
-      },
-    });
-    const screen = render(outcome.screen);
-    await ctx.reply(screen.text, markupOf(screen));
-    log({ logger, ctx, outcome, operation: "start" });
+    const waiting = startWaiting(ctx);
+    waiting.begin();
+    try {
+      const sourceCode = sourceCodeOf(ctx.match);
+      const outcome = await routeAuctionStart({
+        ...auction,
+        ...(sourceCode === undefined ? {} : { sourceCode }),
+        ports: options.ports(ctx.requestId, waiting.deadlineAt),
+        user: {
+          telegramUserId: ctx.from.id,
+          ...(ctx.from.username === undefined
+            ? {}
+            : { telegramUsername: ctx.from.username }),
+        },
+      });
+      const screen = render(outcome.screen);
+      await ctx.reply(screen.text, markupOf(screen));
+      log({ logger, ctx, outcome, operation: "start" });
+    } finally {
+      await waiting.finish();
+    }
   });
 
   direct.on("callback_query:data", async (ctx) => {
-    // Ответ на нажатие уходит до похода к соседям: иначе клиент крутит
-    // индикатор, пока Identity и Auction отвечают.
-    await ctx.answerCallbackQuery().catch((cause: unknown) => {
-      logger.warn("answerCallbackQuery failed", {
-        request_id: ctx.requestId,
-        error: messageOf(cause),
-      });
-    });
-    const ports = options.ports(ctx.requestId);
-    const outcome = await routeAuctionCallback({
-      ...auction,
-      ports,
-      user: {
-        telegramUserId: ctx.from.id,
-        ...(ctx.from.username === undefined
-          ? {}
-          : { telegramUsername: ctx.from.username }),
-      },
-      data: ctx.callbackQuery.data,
-    });
-    const screen = render(outcome.screen);
+    // Ответ на нажатие уходит вместе с результатом, а не до похода к
+    // сервисам: пока его нет, клиент сам крутит индикатор на кнопке
+    // (дизайн-код, «Ожидание»). Отвечает первый видимый вызов Bot API, сторож
+    // либо `finish` ниже.
+    const waiting = startWaiting(ctx);
+    let outcome: RouteOutcome | undefined;
     try {
+      const ports = options.ports(ctx.requestId, waiting.deadlineAt);
+      waiting.begin();
+      outcome = await routeAuctionCallback({
+        ...auction,
+        ports,
+        user: {
+          telegramUserId: ctx.from.id,
+          ...(ctx.from.username === undefined
+            ? {}
+            : { telegramUsername: ctx.from.username }),
+        },
+        data: ctx.callbackQuery.data,
+      });
       await deliver(ctx, {
-        screen,
+        screen: render(outcome.screen),
         photos,
         image: ports.image,
         viewer: outcome.viewer,
         logger,
       });
     } finally {
-      log({ logger, ctx, outcome, operation: "callback" });
+      await waiting.finish();
+      // Отказ ответа на нажатие доставку не отменяет: он только пишется.
+      if (waiting.answerError !== undefined) {
+        logger.warn("answerCallbackQuery failed", {
+          request_id: ctx.requestId,
+          error: waiting.answerError,
+        });
+      }
+      if (outcome !== undefined) {
+        log({ logger, ctx, outcome, operation: "callback" });
+      }
     }
   });
 

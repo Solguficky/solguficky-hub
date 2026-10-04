@@ -1,7 +1,9 @@
+import { Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import {
   type AuctionRpc,
+  callTimeoutMs,
   createPorts,
   type IdentityRpc,
   imageTimeoutMs,
@@ -176,5 +178,47 @@ describe("createPorts", () => {
       { viewer: wireViewer, lotId: "lot-1" },
       { timeoutMs: imageTimeoutMs, headers: { [requestIdHeader]: "req-1" } },
     );
+  });
+});
+
+describe("action budget", () => {
+  const now = 1_000_000;
+
+  it("keeps the own deadline of a call without a budget", () => {
+    expect(callTimeoutMs(undefined, 3_000, now)).toBe(3_000);
+  });
+
+  it("cuts the call deadline down to what is left of the budget", () => {
+    expect(callTimeoutMs(now + 1_200, 3_000, now)).toBe(1_200);
+    expect(callTimeoutMs(now + 4_000, 3_000, now)).toBe(3_000);
+  });
+
+  it("refuses the call as an expired deadline once the budget is spent", () => {
+    expect(() => callTimeoutMs(now, 3_000, now)).toThrow(
+      expect.objectContaining({ code: Code.DeadlineExceeded }),
+    );
+  });
+
+  it("does not call a service after the budget is spent and cuts the image read", async () => {
+    vi.useFakeTimers({ now });
+    try {
+      const { auction } = rpcs();
+      const ports = createPorts(
+        {} as IdentityRpc,
+        auction as unknown as AuctionRpc,
+      )("req-1", now + 800);
+      await ports.image.getLotImage({ viewer, lotId: "lot-1" });
+      expect(auction.getLotImage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ timeoutMs: 800 }),
+      );
+      vi.setSystemTime(now + 800);
+      await expect(
+        ports.auction.getLot({ viewer, lotId: "lot-1" }),
+      ).rejects.toMatchObject({ code: Code.DeadlineExceeded });
+      expect(auction.getLot).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
