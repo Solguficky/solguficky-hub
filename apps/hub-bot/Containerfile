@@ -34,16 +34,20 @@ RUN buf generate --template apps/hub-bot/buf.gen.yaml && cd apps/hub-bot && npm 
 # Общий пакет — `file:`-зависимость, и её ключ в lockfile — путь от каталога
 # бота (`../../shared/...`). Поэтому стадия повторяет глубину репозитория: из
 # /app путь ушёл бы выше корня, и npm не нашёл бы запись ссылки. `npm ci` ставит
-# пакет симлинком, а `--install-links` lockfile со ссылкой не принимает, так что
-# симлинк здесь же заменяется копией: образ несёт собранный `dist` пакета внутри
-# node_modules бота, без исходников и без каталога shared. Зависимость пакета
-# (zod) бот держит и сам, и она находится в его node_modules.
+# пакет симлинком, и он здесь же заменяется копией: образ несёт собранный `dist`
+# пакета внутри node_modules бота, без исходников и без каталога shared.
+# `--install-links` дал бы копию сам, но вместе с ней ставит peer-зависимость
+# пакета vitest, а пакеты разработки в образ не едут (check-node-runtime.sh).
+# Зависимость пакета (zod) бот держит и сам, и она находится в его node_modules.
 FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS deps
 WORKDIR /src/apps/hub-bot
 COPY shared/typescript/auction-bot-ui/package.json /src/shared/typescript/auction-bot-ui/
 COPY --from=build /src/shared/typescript/auction-bot-ui/dist /src/shared/typescript/auction-bot-ui/dist
 COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts \n    && rm node_modules/@solguficky/auction-bot-ui \n    && cp -R /src/shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui \n    && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts \
+    && rm node_modules/@solguficky/auction-bot-ui \
+    && cp -R /src/shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui \
+    && npm cache clean --force
 
 # База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
 # исполняет `id` из образа. Файлы приложения принадлежат root, процесс идёт от
