@@ -26,6 +26,7 @@ jobs:
       hub-bot: ${{ steps.filter.outputs.hub-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
+      screen-lint: ${{ steps.filter.outputs.screen-lint }}
       auction-bot-ui: ${{ steps.filter.outputs.auction-bot-ui }}
       auction-bot: ${{ steps.filter.outputs.auction-bot }}
       auction: ${{ steps.filter.outputs.auction }}
@@ -75,6 +76,8 @@ jobs:
               # конфиг бота; живой прогон (L3) CI не гоняет никогда.
               - 'tests/contour/bot-wire/**'
               - 'tests/telegram-live/**'
+              # Линтер экрана: test kit бота берёт его исходники.
+              - 'shared/typescript/screen-lint/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction:
@@ -90,16 +93,23 @@ jobs:
               - 'docs/published/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
-            auction-bot-ui:
-              - 'shared/typescript/auction-bot-ui/**'
+            screen-lint:
+              - 'shared/typescript/screen-lint/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
-            # Бот аукциона берёт общий пакет `file:`-зависимостью: правка пакета
-            # обязана проверить и его потребителя.
+            # Тесты пакета проверяют тело экрана линтером дизайн-кода.
+            auction-bot-ui:
+              - 'shared/typescript/auction-bot-ui/**'
+              - 'shared/typescript/screen-lint/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Бот аукциона берёт общий пакет `file:`-зависимостью, а линтер экрана —
+            # исходниками в test kit: правка любого из них проверяет и бота.
             auction-bot:
               - 'contracts/proto/**'
               - 'apps/auction-bot/**'
               - 'shared/typescript/auction-bot-ui/**'
+              - 'shared/typescript/screen-lint/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             apphost:
@@ -133,6 +143,7 @@ jobs:
               - 'infra/apphost/**'
               - 'apps/identity/**'
               - 'apps/hub-bot/**'
+              - 'shared/typescript/screen-lint/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -427,6 +438,33 @@ jobs:
           name: playwright-report
           path: apps/community-site-api/playwright-report/
           retention-days: 7
+
+  # Линтер экрана дизайн-кода. Сборки у пакета нет: тестовый код ботов и
+  # пакета аукциона берёт его исходники, а их джобы стоят на этом же пути.
+  screen-lint:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.screen-lint == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: shared/typescript/screen-lint/package-lock.json
+      - run: npm ci
+        working-directory: shared/typescript/screen-lint
+      - run: npm run typecheck
+        working-directory: shared/typescript/screen-lint
+      - run: npm run lint
+        working-directory: shared/typescript/screen-lint
+      - run: npm test
+        working-directory: shared/typescript/screen-lint
 
   # Общий пакет аукционного интерфейса ботов (ADR-044). Typecheck сначала
   # собирает пакет: test/boundary.typecheck.ts проверяет `exports` по собранным

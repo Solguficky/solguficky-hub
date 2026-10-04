@@ -8,6 +8,7 @@ import type {
   Money,
 } from "@solguficky/auction-bot-ui";
 import { defaultFaq, entryCallback, type FaqContent } from "./faq.js";
+import type { ScreenId } from "./screen-catalog.js";
 
 // Оболочка бота аукциона (ADR-044, «Один аукцион, две оболочки»). Экран здесь
 // корневой: короткий контекст для пришедшего по пересланной ссылке и тело из
@@ -33,6 +34,8 @@ export type TelegramButton =
   | { text: string; url: string };
 
 export type RenderedScreen = {
+  /** Запись каталога экранов: её метку несёт отправка (`screen-catalog.ts`). */
+  id: ScreenId;
   text: string;
   keyboard: readonly (readonly TelegramButton[])[];
   // Изображение карточки лота: текст тогда уходит подписью к фото. Байты и
@@ -74,6 +77,7 @@ export function renderEntryScreen(
   switch (screen.kind) {
     case "faq":
       return {
+        id: "faq",
         text: [
           "Правила и FAQ",
           `Что продаём\n${faq.items}`,
@@ -105,6 +109,7 @@ export function renderEntryScreen(
       };
     case "menu":
       return {
+        id: "menu",
         text: `${context}\nВыберите раздел.`,
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
@@ -113,21 +118,25 @@ export function renderEntryScreen(
       };
     case "auctions":
       return {
+        id: "auctions",
         text: "Аукционы\nКаталог пока не открыт. Он появится здесь, когда будет готов.",
         keyboard: [[faqButton], [menuButton]],
       };
     case "details":
       return {
+        id: "details",
         text: "Организатор ещё не указал ссылку на подробные правила.",
         keyboard: [[faqButton], [menuButton]],
       };
     case "question":
       return {
+        id: "question",
         text: "Организатор ещё не указал, куда направлять вопросы.",
         keyboard: [[faqButton], [menuButton]],
       };
     case "welcome":
       return {
+        id: "welcome",
         text: `${context}\nЛоты появятся здесь, когда начнутся торги.`,
         keyboard: [],
       };
@@ -140,6 +149,7 @@ export function renderEntryScreen(
     }
     case "denied":
       return {
+        id: "denied",
         text:
           screen.reason === "blocked"
             ? "Доступ к аукциону закрыт."
@@ -148,11 +158,13 @@ export function renderEntryScreen(
       };
     case "outdated":
       return {
+        id: "outdated",
         text: "Этот экран устарел. Отправьте /start, чтобы открыть аукцион заново.",
         keyboard: [[faqButton]],
       };
     case "unavailable":
       return {
+        id: "unavailable",
         text: "Аукцион сейчас недоступен. Попробуйте позже.",
         keyboard: [[faqButton]],
       };
@@ -180,12 +192,33 @@ function renderBody(
     limit,
   );
   return {
+    id: screenOf(body.blocks),
     text,
     keyboard: body.keyboard.map((row) =>
       row.map((button) => renderButton(button, items)),
     ),
     ...(photo === undefined ? {} : { photo }),
   };
+}
+
+// Запись каталога для тела: тело с карточкой — экран лота, с лентой — лента.
+// Новый вид блока не становится лентой молча: без своей ветки он не собирается.
+function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
+  let screen: ScreenId = "feed";
+  for (const block of blocks) {
+    switch (block.kind) {
+      case "lot":
+        screen = "lot";
+        break;
+      case "feed":
+        break;
+      default: {
+        const _exhaustive: never = block;
+        return _exhaustive;
+      }
+    }
+  }
+  return screen;
 }
 
 function photoOf(

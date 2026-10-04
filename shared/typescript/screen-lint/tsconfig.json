@@ -15,10 +15,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node"],
-    "rootDir": "../../..",
-    "outDir": "dist",
-    "declaration": true,
+    "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "vitest.config.ts", "vitest.fail-on-skip.ts"]
 }

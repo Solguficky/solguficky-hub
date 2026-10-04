@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from "vitest/config";
+import { defineConfig } from "vitest/config";
 import { FailOnSkip } from "./vitest.fail-on-skip.js";
 
 export default defineConfig({
@@ -8,9 +8,9 @@ export default defineConfig({
     // Пропуск роняет прогон (vitest.fail-on-skip.ts); `default` перечислен
     // явно, иначе своё поле reporters снимает штатный вывод.
     reporters: ["default", new FailOnSkip()],
-    // Линтер экрана: нарушение дизайн-кода роняет тест, который его отправил.
-    setupFiles: ["./testkit/lint-setup.ts"],
     include: ["src/**/*.test.ts"],
-    exclude: [...configDefaults.exclude],
+    // Пустой набор и забытый `.only` — отказ, а не зелёный прогон.
+    passWithNoTests: false,
+    allowOnly: false,
   },
 });

@@ -1,10 +1,13 @@
 import { InlineKeyboard } from "grammy";
 import { describe, expect, it } from "vitest";
 import type { IdentityResolver } from "../src/identity/port.js";
-import type { ScreenEntry } from "../src/presentation/screens/catalog.js";
 import { screenMark, screenTag } from "../src/presentation/screens/show.js";
 import { createHarness } from "./harness.js";
-import { inspectCall, takeViolations } from "./screen-lint.js";
+import {
+  inspectCall,
+  type ScreenEntry,
+  takeViolations,
+} from "./screen-lint.js";
 
 // L0: правила дизайн-кода на записи одного вызова Bot API. Каталог здесь свой,
 // маленький: правило проверяется само по себе, а не состоянием перевёрстки.
