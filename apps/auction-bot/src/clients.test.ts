@@ -228,6 +228,7 @@ describe("createPorts", () => {
       lotId: "lot-1",
       auctionId: "auc-1",
       version: 7,
+      proxyEnabled: false,
       status: { kind: "unsold" },
     });
     expect(auction.getLot).toHaveBeenCalledWith(

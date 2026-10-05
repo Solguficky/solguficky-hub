@@ -62,7 +62,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
       val journal = Journal.of(trading(price = 150))
       val (result, after) = journal.limit(setProxyLimit(who = 1, max = 140, opN = 1))
 
-      result shouldBe Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)
+      result shouldBe Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150)))
       after shouldBe journal
       tradingOf(after.lot).proxyLimits shouldBe Map.empty
     }
@@ -71,7 +71,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
       val lot = trading(price = 150, ask = Some(200))
 
       Lot.decide(lot, setProxyLimit(who = 1, max = 190, opN = 1), 1, proxyBid(1)) shouldBe
-        Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)
+        Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(200)))
     }
 
     "accept a limit equal to the current price without a bid" in {
@@ -195,7 +195,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
       lowered shouldBe Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(1), money(110))))
       tradingOf(journal.lot).currentPrice shouldBe money(110)
       journal.limit(setProxyLimit(who = 1, max = 100, opN = 3))._1 shouldBe
-        Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)
+        Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(110)))
     }
 
     "let the stronger limit reach the weaker one plus a step even at the edge of the amount range" in {

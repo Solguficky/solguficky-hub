@@ -317,6 +317,7 @@ export async function checkAccessMatrixCase(
   const { person } = matrixCase;
   const identityCalls: IdentityCall[] = [];
   const auctionCalls: Parameters<typeof spyPorts>[0] = [];
+  const spy = spyPorts(auctionCalls, AUCTION);
   const act = createApp({
     identity: {
       async resolveIdentity(request) {
@@ -338,7 +339,8 @@ export async function checkAccessMatrixCase(
         };
       },
     },
-    auction: spyPorts(auctionCalls, AUCTION).auction,
+    auction: spy.auction,
+    operations: spy.operations,
   });
   const expectedCalls = expectedIdentityCalls(matrixCase);
 

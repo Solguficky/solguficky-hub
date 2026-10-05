@@ -13,6 +13,7 @@ describeAuctionContract(
       hubTradeCallback({
         ports,
         identity: await ports.identity.resolveIdentity(from),
-        data: input.data,
+        user: from,
+        input,
       }),
 );

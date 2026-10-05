@@ -113,7 +113,7 @@ object LotCommands extends Commands {
         case None =>
           val required = state.next
           if (foreign) Expected.Reject(PlaceBidRejected.CurrencyMismatch)
-          else if (state.leader.contains(who)) Expected.Reject(PlaceBidRejected.BidderIsLeader)
+          else if (state.leader.contains(who)) Expected.Reject(PlaceBidRejected.BidderIsLeader(money(state.price)))
           else if (state.phase == Phase.Live && amount != required)
             Expected.Reject(PlaceBidRejected.BidNotAtNextPrice(money(required)))
           else if (amount < required) Expected.Reject(PlaceBidRejected.BidBelowMinimum(money(required)))

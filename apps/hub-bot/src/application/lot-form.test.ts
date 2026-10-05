@@ -31,6 +31,7 @@ const drafted: LotView = {
   auctionId,
   version: 1,
   card: { title: "Ваза", description: "Синяя." },
+  proxyEnabled: false,
   status: { kind: "draft" },
 };
 
@@ -299,6 +300,7 @@ describe("lot form", () => {
           status: {
             kind: "trading",
             currentPrice: { minorUnits: 150_000, currency: "RUB" },
+            phase: "online",
           },
         },
       },

@@ -90,14 +90,19 @@ export const screenCatalog = {
   // «Обновить» разрешено, пока у лота нет итога (PER-462). Состояния лота
   // каталог не знает, поэтому кнопку под лотом с итогом (расхождение 8)
   // линтер не видит: её уводит из тела общий пакет (PER-463).
+  // Предел рядов под карточкой назвал лист ставки (PER-317): ставка по шагу,
+  // своя сумма, автоставка, «Обновить», «Ставки» и навигация — с рядом
+  // «Изменить лот» в хабе семь.
   lot: {
     class: "screen",
     nav: "tree",
     parent: "feed",
     backName: "Лот",
     refresh: true,
+    maxRows: 7,
     waive: {
       nav: "PER-463: возврат «К лотам», «Правила и FAQ» и «В меню» разными рядами (расхождения 5, 6, 7)",
+      rows: "PER-463: «Правила и FAQ» и «В меню» — лишние ряды под лотом (расхождения 6, 7)",
       vocabulary:
         "PER-463: возврат подписан «К лотам», а не «‹ Лоты» (расхождение 5)",
     },
@@ -107,6 +112,19 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     title: "Ставки",
+    parent: "lot",
+  },
+  // Лист ставки (PER-317) написан по дизайн-коду сразу: подтверждение без
+  // ряда навигации, вопросы с `force_reply` и «Отменой», выбор имени под лотом.
+  "bid-confirm": { class: "screen", nav: "confirm", title: "Ставка" },
+  "proxy-confirm": { class: "screen", nav: "confirm", title: "Автоставка" },
+  "bid-question": { class: "question", nav: "question" },
+  "proxy-question": { class: "question", nav: "question" },
+  "alias-question": { class: "question", nav: "question" },
+  "name-choice": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
     parent: "lot",
   },
   welcome: {

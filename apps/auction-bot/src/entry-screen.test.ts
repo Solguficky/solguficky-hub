@@ -150,6 +150,7 @@ describe("renderEntryScreen", () => {
         currentPrice: rub(1200),
         leaderId: "p-1",
         deadline: "2026-10-10T18:00:00Z",
+        phase: "online",
       },
       participantName: "@owl",
     });
@@ -167,7 +168,12 @@ describe("renderEntryScreen", () => {
 
   it("does not show an identifier when the leader's name is missing", () => {
     const text = lotScreen({
-      status: { kind: "trading", currentPrice: rub(1), leaderId: "p-1" },
+      status: {
+        kind: "trading",
+        currentPrice: rub(1),
+        leaderId: "p-1",
+        phase: "online",
+      },
     }).text;
     expect(text).toContain("Лидер есть.");
     expect(text).not.toContain("p-1");
@@ -283,5 +289,46 @@ describe("renderEntryScreen", () => {
       "1 200,50 ₽",
     );
     expect(plain(money(rub(7)))).toBe("7 ₽");
+  });
+});
+
+// Подтверждение автоставки объясняет её разницей цены и лимита (PER-317).
+describe("proxy limit confirmation", () => {
+  const confirm = (limit: number) =>
+    renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "confirm",
+              command: "proxy",
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              amount: rub(limit),
+              currentPrice: rub(1200),
+            },
+          ],
+          keyboard: [
+            [{ action: "confirm.yes", callbackData: "v1:auc:x:lot-1:op:1:0" }],
+            [{ action: "confirm.no", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      { timeZone: "Europe/Moscow" },
+    );
+
+  it("names how far the bot may raise the price", () => {
+    const screen = confirm(2000);
+    expect(screen.text).toMatch(/поднимет её не больше чем на 800\s₽/);
+    expect(screen.text).toContain("Лимит видишь только ты.");
+    expect(screen.keyboard[0]?.[0]).toMatchObject({
+      text: "Да, включить автоставку",
+      style: "danger",
+    });
+  });
+
+  it("says the bot will not outbid when the limit is not above the price", () => {
+    expect(confirm(1200).text).toContain("перебивать бот не будет");
   });
 });

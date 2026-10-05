@@ -67,6 +67,7 @@ const lot: LotView = {
     description: "Ручная роспись.",
     image: { version: "img-1" },
   },
+  proxyEnabled: false,
   status: {
     kind: "scheduled",
     startingPrice: { minorUnits: 50_000, currency: "RUB" },
@@ -117,8 +118,11 @@ function fakeAuction(
     lookup?: () => MeetupAuctionResult;
     enable?: () => EnableAuctionResult;
     image?: () => Promise<{ content: Uint8Array; version: string }>;
+    // Лот ленты и карточки; по умолчанию — запланированный.
+    lot?: LotView;
   } = {},
 ) {
+  const shownLot = options.lot ?? lot;
   const auctions = new Map<string, string>(
     options.existing === true ? [[meetupId, auctionId]] : [],
   );
@@ -129,10 +133,10 @@ function fakeAuction(
     (async () => ({ content: new Uint8Array([1, 2, 3]), version: "img-1" }));
   const getLotImage = vi.fn((_request: { lotId: string }) => image());
   const listAuctionLots = vi.fn(async () => ({
-    lots: [lot],
+    lots: [shownLot],
     nextPageToken: "",
   }));
-  const getLot = vi.fn(async () => lot);
+  const getLot = vi.fn(async () => shownLot);
   const port: MeetupAuctions & AuctionScreens = {
     async getMeetupAuction(_person, id) {
       lookups.push(id);
@@ -179,6 +183,12 @@ function fakeAuction(
             nextPageToken: "",
           }),
           getDisplayNames: async () => ({}),
+          placeBid: async () => ({ kind: "accepted" }),
+          setProxyLimit: async () => ({ kind: "accepted" }),
+          chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+        },
+        operations: {
+          newOperationId: () => "0198f2a4-7c1e-7d3a-9b21-00000000c001",
         },
         image: {
           getLotImage: async (request) => ({
@@ -737,5 +747,139 @@ describe("review findings", () => {
       (sent.at(-1)?.payload as Shown | undefined)?.rich_message?.media?.[0]
         ?.media.media,
     ).toBe("big");
+  });
+});
+
+// Лист ставки (PER-317) в оболочке хаба: вопрос новым сообщением с режимом
+// ответа, ответ reply-сообщением и «Отмена» по дизайн-коду, «Вопросы».
+describe("bid leaf in the hub", () => {
+  const trading: LotView = {
+    ...lot,
+    nextPrice: { minorUnits: 125_000, currency: "RUB" },
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: { minorUnits: 120_000, currency: "RUB" },
+      phase: "online",
+    },
+  };
+  const step = encodeAuctionCallback({
+    kind: "question",
+    question: "bid",
+    lotId,
+    page: 0,
+    addressee: 42,
+  });
+  const question = {
+    message_id: 9,
+    date: 0,
+    chat: { id: 42, type: "private", first_name: "tester" },
+    from: { id: 1, is_bot: true, first_name: "hub" },
+    text: "Своя сумма",
+    reply_markup: {
+      inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+    },
+  };
+  const answer = (extra: Record<string, unknown>): Update =>
+    ({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        reply_to_message: question,
+        ...extra,
+      },
+    }) as Update;
+  const setup = async () => {
+    const auction = fakeAuction({ existing: true, lot: trading });
+    const run = harness(["member", "public"], auction, {
+      presentation: "plain",
+    });
+    await run.bot.init();
+    return run;
+  };
+
+  it("puts the bid rows on the card of a lot in online trading", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(press(lotData));
+    const card = lastScreen(calls);
+    expect(labels(card).slice(0, 3)).toEqual([
+      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      ["Своя сумма"],
+      ["Автоставка"],
+    ]);
+  });
+
+  it("asks the amount in a new message with the reply mode", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({ kind: "ask", question: "bid", lotId, page: 0 }),
+      ),
+    );
+    expect(calls.map((call) => call.method)).toContain(
+      "editMessageReplyMarkup",
+    );
+    const asked = calls.find((call) => call.method === "sendMessage");
+    expect(asked?.payload).toMatchObject({
+      text: expect.stringContaining("Своя сумма"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+      },
+    });
+  });
+
+  it("confirms the typed amount and takes the cancel off the question", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(answer({ text: "1 300" }));
+    const confirm = calls.find((call) => call.method === "sendMessage");
+    expect(confirm?.payload).toMatchObject({
+      text: expect.stringMatching(/Сумма: 1\s300\s₽/),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: expect.stringMatching(/^Да, поставить 1\s300\s₽$/),
+              style: "danger",
+              callback_data: expect.stringMatching(/^v1:auc:b:/),
+            },
+          ],
+          [{ text: "Нет", callback_data: expect.any(String) }],
+        ],
+      },
+    });
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageReplyMarkup",
+      payload: { message_id: 9 },
+    });
+  });
+
+  it.each([
+    [{ text: "много" }, "Это не сумма."],
+    [{ text: "$20" }, "Ставки принимаются только в рублях."],
+    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом."],
+  ])("asks again with the reason for %j", async (extra, reason) => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(answer(extra));
+    const asked = calls.find((call) => call.method === "sendMessage");
+    const text = (asked?.payload as { text?: string } | undefined)?.text;
+    expect(text?.startsWith(reason)).toBe(true);
+    expect(asked?.payload).toMatchObject({
+      reply_markup: { force_reply: true },
+    });
+  });
+
+  it("deletes the question on cancel and sends the card anew", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(press(step, question));
+    const methods = calls.map((call) => call.method);
+    expect(methods.indexOf("deleteMessage")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("deleteMessage")).toBeLessThan(
+      methods.indexOf("sendMessage"),
+    );
+    expect(methods).not.toContain("editMessageText");
   });
 });

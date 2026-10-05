@@ -104,8 +104,8 @@ object ResponseMapping {
       case Left(rejected) =>
         val reason = rejected match {
           case SetProxyLimitRejected.LotNotOpen => wire.SetProxyLimitRefusal.Reason.LotNotOpen(wire.LotNotOpen())
-          case SetProxyLimitRejected.ProxyBelowCurrentPrice =>
-            wire.SetProxyLimitRefusal.Reason.ProxyBelowCurrentPrice(wire.ProxyBelowCurrentPrice())
+          case SetProxyLimitRejected.ProxyBelowCurrentPrice(minLimit) =>
+            wire.SetProxyLimitRefusal.Reason.ProxyBelowCurrentPrice(wire.ProxyBelowCurrentPrice(Some(money(minLimit))))
           case SetProxyLimitRejected.ProxyDisabledForLot =>
             wire.SetProxyLimitRefusal.Reason.ProxyDisabledForLot(wire.ProxyDisabledForLot())
           case SetProxyLimitRejected.CurrencyMismatch =>
@@ -191,9 +191,11 @@ object ResponseMapping {
   private def refusal(rejected: PlaceBidRejected): wire.PlaceBidRefusal.Reason =
     rejected match {
       case PlaceBidRejected.LotNotOpen => wire.PlaceBidRefusal.Reason.LotNotOpen(wire.LotNotOpen())
-      case PlaceBidRejected.LotOnHold => wire.PlaceBidRefusal.Reason.LotOnHold(wire.LotOnHold())
+      case PlaceBidRejected.LotOnHold(currentPrice) =>
+        wire.PlaceBidRefusal.Reason.LotOnHold(wire.LotOnHold(Some(money(currentPrice))))
       case PlaceBidRejected.CurrencyMismatch => wire.PlaceBidRefusal.Reason.CurrencyMismatch(wire.CurrencyMismatch())
-      case PlaceBidRejected.BidderIsLeader => wire.PlaceBidRefusal.Reason.BidderIsLeader(wire.BidderIsLeader())
+      case PlaceBidRejected.BidderIsLeader(currentPrice) =>
+        wire.PlaceBidRefusal.Reason.BidderIsLeader(wire.BidderIsLeader(Some(money(currentPrice))))
       case PlaceBidRejected.BidNotAtNextPrice(expected) =>
         wire.PlaceBidRefusal.Reason.BidNotAtNextPrice(wire.BidNotAtNextPrice(Some(money(expected))))
       case PlaceBidRejected.BidBelowMinimum(minRequired) =>

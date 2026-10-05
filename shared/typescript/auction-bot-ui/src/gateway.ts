@@ -1,7 +1,4 @@
-import {
-  type AuctionCallbackError,
-  parseAuctionCallback,
-} from "./callback-data.js";
+import { AuctionCallbackError, parseAuctionCallback } from "./callback-data.js";
 import { dispatchAuctionIntent } from "./dispatcher.js";
 import type {
   AuctionBotPorts,
@@ -9,6 +6,7 @@ import type {
   ResolvedIdentity,
   RoleRequestAnswer,
   SurfaceCircle,
+  TelegramUser,
 } from "./ports.js";
 import type { AuctionScreenBody } from "./screen.js";
 
@@ -29,9 +27,18 @@ export type AuctionSurface = {
 // по тому же ответу оно собирает свою оболочку. Второй вызов Identity внутри
 // шлюза дал бы оболочке и телу два разных ответа, и при отзыве роли между
 // вызовами они разошлись бы (ADR-044, «Доступ как обязательный шлюз»).
+//
+// `user` — кто прислал update: Telegram id становится адресатом вопроса, а
+// ник предлагается именем в аукционе (ADR-059). Пакет их не хранит.
+//
+// Ответ на вопрос приходит с шагом вопроса из `reply_to_message` — той же
+// строкой, что лежит в его «Отмене». `text` нет — ответили не текстом.
 export type AuctionUpdate = {
   identity: ResolvedIdentity;
-  input: { kind: "callback"; data: string };
+  user: TelegramUser;
+  input:
+    | { kind: "callback"; data: string }
+    | { kind: "reply"; data: string; text?: string };
 };
 
 export type AuctionDenial =
@@ -92,14 +99,32 @@ export async function handleAuctionUpdate(
     };
   }
   if (!parsed.ok) return { kind: "unreadable", error: parsed.error };
+  const { input, user } = update;
+  // Ответом служит только вопрос, и только тому, кому он задан: после
+  // рестарта адресата помнит шаг, а не процесс (дизайн-код, «Вопросы»).
+  if (
+    input.kind === "reply" &&
+    (parsed.intent.kind !== "question" ||
+      parsed.intent.addressee !== user.telegramUserId)
+  ) {
+    return {
+      kind: "unreadable",
+      error: new AuctionCallbackError("outdated"),
+    };
+  }
 
   const body = await dispatchAuctionIntent({
     auction: surface.ports.auction,
+    operations: surface.ports.operations,
     viewer: {
       identityId: identity.identityId,
       globalRoles: identity.globalRoles,
     },
+    user,
     intent: parsed.intent,
+    ...(input.kind === "reply"
+      ? { answer: input.text === undefined ? {} : { text: input.text } }
+      : {}),
   });
   return { kind: "screen", body };
 }

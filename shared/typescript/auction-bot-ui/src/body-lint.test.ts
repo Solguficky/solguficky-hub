@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { type BodyRules, inspectBody } from "../../screen-lint/src/index.js";
-import { encodeAuctionCallback } from "./callback-data.js";
+import {
+  encodeAuctionCallback,
+  MAX_COMMAND_AMOUNT,
+  MAX_FEED_PAGE,
+} from "./callback-data.js";
 import { type AuctionSurface, handleAuctionUpdate } from "./gateway.js";
 import type { LotView, ResolvedIdentity } from "./ports.js";
 
@@ -30,11 +34,21 @@ const lots: LotView[] = Array.from({ length: 20 }, (_, n) => ({
   auctionId,
   version: 1,
   card: { title: `Лот ${n}`, description: "" },
+  // Порог у потолка кнопки: сумма в `callback_data` — самая длинная.
+  nextPrice: { minorUnits: MAX_COMMAND_AMOUNT, currency: "RUB" },
+  proxyEnabled: true,
   status: {
     kind: "trading",
     currentPrice: { minorUnits: 1000 + n, currency: "RUB" },
+    phase: "online",
   },
 }));
+
+// Самый длинный Telegram id: адресат вопроса едет в его «Отмене».
+const user = {
+  telegramUserId: Number.MAX_SAFE_INTEGER,
+  telegramUsername: "owl_fan",
+};
 
 const identity: ResolvedIdentity = {
   identityId: "01929b7e-0000-7000-8000-000000000001",
@@ -76,6 +90,23 @@ const surface: AuctionSurface = {
       async getDisplayNames() {
         return {};
       },
+      async placeBid() {
+        return {
+          kind: "refused",
+          refusal: { kind: "display-name-not-chosen" },
+        };
+      },
+      async setProxyLimit() {
+        return { kind: "accepted" };
+      },
+      async chooseDisplayName() {
+        return { kind: "accepted", name: "@owl_fan" };
+      },
+    },
+    operations: {
+      newOperationId() {
+        return "01929b7e-5c1d-7a3f-8e4b-ffffffffffff";
+      },
     },
   },
 };
@@ -83,6 +114,7 @@ const surface: AuctionSurface = {
 async function bodyOf(data: string) {
   const result = await handleAuctionUpdate(surface, {
     identity,
+    user,
     input: { kind: "callback", data },
   });
   if (result.kind !== "screen") throw new Error(`no screen: ${result.kind}`);
@@ -106,6 +138,58 @@ describe("auction screen body", () => {
     const body = await bodyOf(
       encodeAuctionCallback({ kind: "lot", lotId: lot.lotId, page: 2 }),
     );
+    expect(inspectBody(body.keyboard, rules)).toEqual([]);
+  });
+
+  // Лист ставки на худшем случае: последняя страница ленты, сумма у потолка
+  // и самый длинный адресат вопроса.
+  const lotId = "01929b7e-5c1d-7a3f-8e4b-000000000013";
+  const pending = { command: "bid" as const, amount: MAX_COMMAND_AMOUNT };
+  it.each([
+    [
+      "confirm",
+      encodeAuctionCallback({
+        kind: "confirm",
+        command: "bid",
+        lotId,
+        amount: MAX_COMMAND_AMOUNT,
+        page: MAX_FEED_PAGE,
+      }),
+    ],
+    [
+      "name choice",
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId,
+        opId: "01929b7e-5c1d-7a3f-8e4b-ffffffffffff",
+        amount: MAX_COMMAND_AMOUNT,
+        page: MAX_FEED_PAGE,
+      }),
+    ],
+    [
+      "alias question",
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "alias",
+        lotId,
+        page: MAX_FEED_PAGE,
+        pending,
+      }),
+    ],
+    [
+      "limit result",
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "proxy",
+        lotId,
+        opId: "01929b7e-5c1d-7a3f-8e4b-ffffffffffff",
+        amount: MAX_COMMAND_AMOUNT,
+        page: MAX_FEED_PAGE,
+      }),
+    ],
+  ])("keeps the %s body within the body rules", async (_, data) => {
+    const body = await bodyOf(data);
     expect(inspectBody(body.keyboard, rules)).toEqual([]);
   });
 

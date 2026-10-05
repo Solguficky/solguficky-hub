@@ -1,5 +1,8 @@
 import type { LotStatusView, LotView, Money } from "@solguficky/auction-bot-ui";
-import type { Money as WireMoney } from "../../gen/auction/v1/auction_pb.js";
+import {
+  LotPhase,
+  type Money as WireMoney,
+} from "../../gen/auction/v1/auction_pb.js";
 import type { LotSnapshot } from "../../gen/auction/v1/auction_service_pb.js";
 
 // Перевод `auction.v1.LotSnapshot` в срез общего пакета. Тот же перевод
@@ -32,6 +35,11 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
       ? {}
       : { nextPrice: moneyOf(snapshot.nextPrice) }),
     ...(step?.case === "fixed" ? { fixedStep: moneyOf(step.value) } : {}),
+    // Без условий торгов лот лимитов не принимает: им неоткуда взяться.
+    proxyEnabled: snapshot.config?.proxyEnabled ?? false,
+    ...(snapshot.viewerProxyLimit === undefined
+      ? {}
+      : { viewerProxyLimit: moneyOf(snapshot.viewerProxyLimit) }),
     status: statusOf(snapshot.status),
   };
 }
@@ -55,6 +63,7 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
         ...(status.value.deadline === undefined
           ? {}
           : { deadline: status.value.deadline }),
+        phase: phaseOf(status.value.phase),
       };
     case "held":
       return {
@@ -94,4 +103,17 @@ export function moneyOf(money: WireMoney): Money {
     throw new Error("lot amount out of the safe integer range");
   }
   return { minorUnits, currency: money.currency };
+}
+
+// Фаза торгов решает, предлагать ли ставку из бота. Нулевое значение enum —
+// дефект соседа, а не онлайн по умолчанию.
+function phaseOf(phase: LotPhase): "online" | "live" {
+  switch (phase) {
+    case LotPhase.ONLINE:
+      return "online";
+    case LotPhase.LIVE:
+      return "live";
+    default:
+      throw new Error("lot snapshot without a trading phase");
+  }
 }

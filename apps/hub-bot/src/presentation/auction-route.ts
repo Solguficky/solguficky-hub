@@ -2,8 +2,10 @@ import {
   AUCTION_CALLBACK_DOMAIN,
   type AuctionBotPorts,
   type AuctionResult,
+  type AuctionUpdate,
   handleAuctionUpdate,
   type ResolvedIdentity,
+  type TelegramUser,
 } from "@solguficky/auction-bot-ui";
 import type { Person } from "../application/types.js";
 import { viewerOf } from "../auction/port.js";
@@ -12,14 +14,19 @@ import { viewerOf } from "../auction/port.js";
 // личность уже разрешена краем, один раз на update, и уезжает в шлюз пакета
 // готовой. Поверхность — `hub`: шлюз пускает круг `member`. Над этой функцией
 // идёт contract suite пакета — той же, что и в маршруте бота.
+//
+// `input` — нажатие кнопки либо ответ на аукционный вопрос: шаг вопроса из
+// `reply_to_message` и текст ответа (PER-317). `user` — кто прислал update:
+// адресат вопроса и ник для выбора имени в аукционе.
 export function hubTradeCallback(input: {
   ports: AuctionBotPorts;
   identity: ResolvedIdentity;
-  data: string;
+  user: TelegramUser;
+  input: AuctionUpdate["input"];
 }): Promise<AuctionResult> {
   return handleAuctionUpdate(
     { kind: "hub", ports: input.ports },
-    { identity: input.identity, input: { kind: "callback", data: input.data } },
+    { identity: input.identity, user: input.user, input: input.input },
   );
 }
 
