@@ -5,6 +5,7 @@ import auction.aggregate.MeetupAuthority
 import auction.catalog.LotCatalogCommands
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
+import auction.entity.AuctionLots
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
@@ -78,13 +79,20 @@ object AuctionNode {
   ): ActorRef[ShardingEnvelope[LotEntity.Command]] =
     sharding.init(Entity(LotEntity.TypeKey)(context => LotEntity(context.entityId, clock, newId)))
 
-  /** Регистрирует entity аукциона; идентификатор entity — идентификатор аукциона (ADR-047, дополнение 2026-10-03). */
+  /**
+   * Регистрирует entity аукциона; идентификатор entity — идентификатор аукциона (ADR-047, дополнение 2026-10-03). К
+   * лотам аукцион ходит через тот же шардинг, поэтому entity лота регистрируются раньше; `askTimeout` — срок ответа
+   * лота на вопрос о состоянии и на `OpenLot`.
+   */
   def registerAuctions(
       sharding: ClusterSharding,
       clock: Clock,
-      newId: () => UUID
-  ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] =
-    sharding.init(Entity(AuctionEntity.TypeKey)(context => AuctionEntity(context.entityId, clock, newId)))
+      newId: () => UUID,
+      askTimeout: FiniteDuration
+  ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
+    val lots = AuctionLots.sharded(sharding, askTimeout)
+    sharding.init(Entity(AuctionEntity.TypeKey)(context => AuctionEntity(context.entityId, clock, newId, lots)))
+  }
 
   /**
    * Проекции журналов лотов и аукционов в read model (ADR-045). Метрики отставания регистрируются вместе с ними;

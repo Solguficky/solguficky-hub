@@ -464,7 +464,7 @@ object LotJournal {
       .of(restoreMoney(stored.startingPrice), restoreConfig(stored.config))
       .fold(rejected => corrupted(s"schedule violates $rejected"), schedule => schedule)
 
-  private def storeConfig(config: LotConfig): StoredConfig =
+  private[entity] def storeConfig(config: LotConfig): StoredConfig =
     StoredConfig(
       currency = config.currency.value,
       stepPolicy = config.stepPolicy match {
@@ -482,7 +482,7 @@ object LotJournal {
     )
 
   /** Конфигурация восстанавливается через те же проверки, что и при планировании: журнал И-15 не обходит. */
-  private def restoreConfig(stored: StoredConfig): LotConfig = {
+  private[entity] def restoreConfig(stored: StoredConfig): LotConfig = {
     val policy = (stored.stepPolicy.fixed, stored.stepPolicy.tiers) match {
       case (Some(step), Nil) => StepPolicy.fixed(restoreMoney(step))
       case (None, tiers @ (_ :: _)) =>

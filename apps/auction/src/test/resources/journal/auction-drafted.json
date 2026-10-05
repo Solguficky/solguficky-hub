@@ -13,6 +13,7 @@
       "meetupId": "0190f2a0-0000-7000-8000-00000000000a"
     },
     "lotAdded": null,
-    "lotRemoved": null
+    "lotRemoved": null,
+    "auctionScheduled": null
   }
 }

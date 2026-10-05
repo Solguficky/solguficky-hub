@@ -1,5 +1,6 @@
 package auction.contract
 
+import auction.lot.AntiSnipe
 import auction.lot.HeldState
 import auction.lot.LotConfig
 import auction.lot.Money
@@ -25,13 +26,16 @@ object LotValues {
     model.LotConfig(
       currency = config.currency.value,
       stepPolicy = Some(stepPolicy(config.stepPolicy)),
-      antiSnipe = Some(
-        model.AntiSnipe(
-          windowSeconds = config.antiSnipe.window.getSeconds,
-          extensionSeconds = config.antiSnipe.extension.getSeconds,
-          maxExtensions = config.antiSnipe.maxExtensions
-        )
-      ),
+      antiSnipe = Some(antiSnipe(config.antiSnipe)),
+      proxyEnabled = config.proxyEnabled
+    )
+
+  /** Умолчания аукциона для условий лота: те же поля, что у конфигурации лота, но торгов по ним нет. */
+  def defaults(config: LotConfig): model.LotDefaults =
+    model.LotDefaults(
+      currency = config.currency.value,
+      stepPolicy = Some(stepPolicy(config.stepPolicy)),
+      antiSnipe = Some(antiSnipe(config.antiSnipe)),
       proxyEnabled = config.proxyEnabled
     )
 
@@ -77,6 +81,13 @@ object LotValues {
         val rest = tiers.map(tier => model.StepTier(Some(money(tier.bound)), Some(money(tier.step))))
         model.StepPolicy().withTiered(model.TieredSteps(first :: rest))
     }
+
+  private def antiSnipe(antiSnipe: AntiSnipe): model.AntiSnipe =
+    model.AntiSnipe(
+      windowSeconds = antiSnipe.window.getSeconds,
+      extensionSeconds = antiSnipe.extension.getSeconds,
+      maxExtensions = antiSnipe.maxExtensions
+    )
 
   private def phase(phase: Phase): model.LotPhase =
     phase match {

@@ -25,6 +25,19 @@ trait AuctionGateway {
       command: RemoveLot,
       initiator: Initiator
   ): Future[Either[RemoveLotRejected, AuctionAnswer]]
+
+  def schedule(
+      auctionId: AuctionId,
+      command: ScheduleAuction,
+      initiator: Initiator
+  ): Future[Either[ScheduleAuctionRejected, AuctionAnswer]]
+
+  /** Открытие онлайн-торгов. Ответ приходит после записи события и подтверждений лотов не ждёт. */
+  def startPrebidding(
+      auctionId: AuctionId,
+      command: StartPrebidding,
+      initiator: Initiator
+  ): Future[Either[StartPrebiddingRejected, AuctionAnswer]]
 }
 
 object AuctionGateway {
@@ -58,5 +71,19 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[RemoveLotRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Remove(command, initiator, _))
+
+      def schedule(
+          auctionId: AuctionId,
+          command: ScheduleAuction,
+          initiator: Initiator
+      ): Future[Either[ScheduleAuctionRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Schedule(command, initiator, _))
+
+      def startPrebidding(
+          auctionId: AuctionId,
+          command: StartPrebidding,
+          initiator: Initiator
+      ): Future[Either[StartPrebiddingRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Start(command, initiator, _))
     }
 }

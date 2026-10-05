@@ -2,9 +2,7 @@
   "sequence": 2,
   "state": "Draft",
   "meetupId": "0190f2a0-0000-7000-8000-00000000000a",
-  "lots": [
-    "0190f2a0-0000-7000-8000-00000000000b"
-  ],
+  "lots": ["0190f2a0-0000-7000-8000-00000000000b"],
   "seen": [
     {
       "sequence": 1,
@@ -15,8 +13,7 @@
           "meetupId": "0190f2a0-0000-7000-8000-00000000000a"
         },
         "lotAdded": null,
-        "lotRemoved": null,
-        "auctionScheduled": null
+        "lotRemoved": null
       }
     },
     {
@@ -28,11 +25,8 @@
         "lotAdded": {
           "lotId": "0190f2a0-0000-7000-8000-00000000000b"
         },
-        "lotRemoved": null,
-        "auctionScheduled": null
+        "lotRemoved": null
       }
     }
-  ],
-  "config": null,
-  "startedBy": null
+  ]
 }
