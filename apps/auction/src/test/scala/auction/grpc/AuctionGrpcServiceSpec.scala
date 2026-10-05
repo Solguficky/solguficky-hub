@@ -451,5 +451,14 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.getDisplayNames(wire.GetDisplayNamesRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.getLotImage(wire.GetLotImageRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
+
+    "answers UNIMPLEMENTED on invoices until the invoice slice" in {
+      val auction = service(Unreachable)
+      statusOf(auction.markInvoicePaid(wire.MarkInvoicePaidRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.markInvoiceHandedOver(wire.MarkInvoiceHandedOverRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.chooseFulfillment(wire.ChooseFulfillmentRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.listMyInvoices(wire.ListMyInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    }
   }
 }
