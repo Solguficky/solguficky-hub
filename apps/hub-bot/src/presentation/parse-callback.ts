@@ -252,10 +252,12 @@ type PlainAction =
       category: MeetupCategory;
       enabled: boolean;
     }
-  // «Отмена» под вопросом: кнопка несёт шаг вопроса. По нажатию вопрос
-  // правится в экран, с которого задан, а по ответу бот читает шаг из
-  // клавиатуры вопроса в `reply_to_message` — память процесса ему не нужна.
-  | { kind: "question"; step: QuestionStep }
+  // «Отмена» под вопросом: кнопка несёт шаг вопроса и Telegram id того, кому
+  // он задан. По нажатию вопрос правится в экран, с которого задан, а по ответу
+  // бот читает шаг из клавиатуры вопроса в `reply_to_message` — память процесса
+  // ему не нужна. Кнопка прошлого релиза id не несёт: «Отмена» на ней работает,
+  // а ответ на такой вопрос устарел (PER-461).
+  | { kind: "question"; step: QuestionStep; askedBy?: number }
   | { kind: "outdated" }
   | { kind: "malformed" };
 
@@ -277,8 +279,16 @@ export type QuestionStep =
   | { kind: "channel-code" }
   | { kind: "channel-label" };
 
-/** Данные кнопки «Отмена» для вопроса с этим шагом. */
-export function questionData(step: QuestionStep): string {
+/**
+ * Данные кнопки «Отмена» для вопроса с этим шагом, заданного человеку
+ * `askedBy`. Id идёт последней частью: самый длинный шаг — `ms` с девятью
+ * цифрами версии — занимает с ним 57 байт из 64.
+ */
+export function questionData(step: QuestionStep, askedBy: number): string {
+  return `${stepData(step)}:${askedBy}`;
+}
+
+function stepData(step: QuestionStep): string {
   switch (step.kind) {
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
@@ -344,6 +354,8 @@ export function parseCallback(raw: unknown): CallbackAction {
       : { kind: "malformed" };
   }
   if (parts[1] === "q") {
+    const asked = parseAskedQuestion(parts);
+    if (asked !== undefined) return { kind: "question", ...asked };
     const step = parseQuestionStep(parts);
     return step === undefined
       ? { kind: "malformed" }
@@ -569,6 +581,26 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "confirm-unschedule")
     return { kind: "manage-confirm-unschedule", token: token.data };
   return { kind: "malformed" };
+}
+
+// Telegram id пользователя: целое до 52 бит, не больше 16 цифр. Ноль — запасное
+// значение бота для update без `from`: «Отмена» под таким вопросом работает, а
+// ответ ни от кого не совпадёт с ним и будет отброшен.
+const TelegramIdSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,15})$/)
+  .transform(Number);
+
+// Кнопка с id спрашиваемого последней частью. Токен — 22 символа, поэтому за
+// id не сойдёт; версия материала без id — сойдёт, но шаг без последней части
+// тогда не разбирается, и кнопка читается как кнопка прошлого релиза.
+function parseAskedQuestion(
+  parts: readonly string[],
+): { step: QuestionStep; askedBy: number } | undefined {
+  const askedBy = TelegramIdSchema.safeParse(parts.at(-1));
+  if (!askedBy.success) return undefined;
+  const step = parseQuestionStep(parts.slice(0, -1));
+  return step === undefined ? undefined : { step, askedBy: askedBy.data };
 }
 
 function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
