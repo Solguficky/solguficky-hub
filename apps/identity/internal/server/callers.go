@@ -45,6 +45,7 @@ var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_AdmitCommunityMember_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_BlockCommunityMember_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_DemoteCommunityMember_FullMethodName:    {CallerHubBot},
 	identityv1.IdentityService_ListAllowedUsernames_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_AddAllowedUsername_FullMethodName:       {CallerHubBot},
 	identityv1.IdentityService_RemoveAllowedUsername_FullMethodName:    {CallerHubBot},

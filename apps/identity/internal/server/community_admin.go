@@ -103,6 +103,22 @@ func (s identityService) BlockCommunityMember(ctx context.Context, req *identity
 	return &identityv1.ChangeCommunityMemberResponse{Changed: changed}, nil
 }
 
+func (s identityService) DemoteCommunityMember(ctx context.Context, req *identityv1.ChangeCommunityMemberRequest) (*identityv1.ChangeCommunityMemberResponse, error) {
+	actor, err := authorizeAdmin(req.GetActor())
+	if err != nil {
+		return nil, err
+	}
+	identityID, err := canonicalIdentityID(req.GetIdentityId())
+	if err != nil {
+		return nil, err
+	}
+	changed, err := s.demoteMember(ctx, identityID, actor)
+	if err != nil {
+		return nil, demotionStatus(err)
+	}
+	return &identityv1.ChangeCommunityMemberResponse{Changed: changed}, nil
+}
+
 func (s identityService) ListAllowedUsernames(ctx context.Context, req *identityv1.ListAllowedUsernamesRequest) (*identityv1.ListAllowedUsernamesResponse, error) {
 	if _, err := authorizeAdmin(req.GetActor()); err != nil {
 		return nil, err

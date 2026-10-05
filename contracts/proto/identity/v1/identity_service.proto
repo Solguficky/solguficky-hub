@@ -29,6 +29,8 @@ service IdentityService {
   rpc ListCommunityMembers(ListCommunityMembersRequest) returns (ListCommunityMembersResponse);
   rpc AdmitCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Demotes a hub member out of the member circle.
+  rpc DemoteCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
   rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
   rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
