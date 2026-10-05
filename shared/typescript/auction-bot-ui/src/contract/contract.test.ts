@@ -6,6 +6,7 @@ import {
   type AuctionContractCase,
   CONTRACT_IDENTITY,
   CONTRACT_LOT,
+  CONTRACT_USER,
   checkAuctionContract,
   checkAuctionContractCase,
   describeAuctionContract,
@@ -29,7 +30,11 @@ const stubApp =
   async ({ from, input }) =>
     handleAuctionUpdate(
       { kind, ports },
-      { identity: await ports.identity.resolveIdentity(from), input },
+      {
+        identity: await ports.identity.resolveIdentity(from),
+        user: from,
+        input,
+      },
     );
 
 describeAuctionContract("hub stub", stubApp("hub"));
@@ -124,7 +129,7 @@ describe("auction contract self-check", () => {
       async ({ input }) =>
         handleAuctionUpdate(
           { kind: "hub", ports },
-          { identity: CONTRACT_IDENTITY, input },
+          { identity: CONTRACT_IDENTITY, user: CONTRACT_USER, input },
         );
     const kinds = (await checkAuctionContractCase(skipping, LOT_CASE)).map(
       (v) => v.kind,
@@ -168,6 +173,25 @@ describe("auction contract self-check", () => {
       "history: earlier page",
       "history: names unavailable",
       "history: empty",
+      "bid: confirm the step",
+      "bid: accepted",
+      "bid: refused below the minimum",
+      "bid: refused to the leader",
+      "bid: unanswered, then accepted",
+      "bid: unanswered twice",
+      "bid: name not chosen",
+      "name: use the username",
+      "name: alias taken",
+      "bid: ask the amount",
+      "bid: answer the amount",
+      "bid: answer not a number",
+      "bid: answer in another currency",
+      "bid: answer not in text",
+      "bid: cancel the question",
+      "proxy: ask the limit",
+      "proxy: answer the limit",
+      "proxy: accepted",
+      "proxy: refused below the current price",
     ]);
   });
 });

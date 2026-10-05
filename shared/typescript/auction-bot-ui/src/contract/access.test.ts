@@ -52,7 +52,11 @@ const stubApp =
     }
     const result = await handleAuctionUpdate(
       { kind, ports },
-      { identity: await ports.identity.resolveIdentity(from), input: action },
+      {
+        identity: await ports.identity.resolveIdentity(from),
+        user: from,
+        input: action,
+      },
     );
     if (result.kind === "screen") return "admitted";
     if (result.kind === "denied") return ANSWERS[result.reason];

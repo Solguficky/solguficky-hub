@@ -1,6 +1,19 @@
-import { encodeAuctionCallback, MAX_FEED_PAGE } from "../../callback-data.js";
-import type { AuctionPort, LotStatusView, Viewer } from "../../ports.js";
-import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
+import {
+  encodeAuctionCallback,
+  MAX_COMMAND_AMOUNT,
+  MAX_FEED_PAGE,
+} from "../../callback-data.js";
+import type {
+  AuctionPort,
+  LotStatusView,
+  LotView,
+  Viewer,
+} from "../../ports.js";
+import type {
+  AuctionButton,
+  AuctionScreenBody,
+  CommandResult,
+} from "../../screen.js";
 import { namesOf } from "./names.js";
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
@@ -17,6 +30,20 @@ export async function openLot(input: {
     viewer: input.viewer,
     lotId: input.lotId,
   });
+  return showLot({ ...input, lot });
+}
+
+// Карточка по уже прочитанному снимку. `result` — исход команды участника,
+// который карточка показывает первой строкой: после «Да» человек видит и
+// ответ Auction, и лот, на который он ставил.
+export async function showLot(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  lot: LotView;
+  page: number;
+  result?: CommandResult;
+}): Promise<AuctionScreenBody> {
+  const { lot } = input;
   const participantId = participantOf(lot.status);
   const names = await namesOf({
     auction: input.auction,
@@ -45,6 +72,9 @@ export async function openLot(input: {
     : [];
   return {
     blocks: [
+      ...(input.result === undefined
+        ? []
+        : [{ kind: "result" as const, result: input.result }]),
       {
         kind: "lot",
         lotId: lot.lotId,
@@ -55,9 +85,13 @@ export async function openLot(input: {
         ...(lot.fixedStep === undefined ? {} : { fixedStep: lot.fixedStep }),
         status: lot.status,
         ...(participantName === undefined ? {} : { participantName }),
+        ...(lot.viewerProxyLimit === undefined
+          ? {}
+          : { viewerProxyLimit: lot.viewerProxyLimit }),
       },
     ],
     keyboard: [
+      ...bidRows(lot, input.page),
       [
         {
           action: "lot.refresh",
@@ -124,4 +158,42 @@ function hasTraded(status: LotStatusView): boolean {
       return _exhaustive;
     }
   }
+}
+
+// Ставка из бота — только в онлайн-торгах: в живом финале ставят по шагу в
+// зале, а кнопку финала добавит его лист. Ряд «по шагу» несёт порог, который
+// видел человек; порог выше потолка кнопки ряда не получает — своя сумма его
+// тоже не примет. Лимит предлагается лоту, который его принимает.
+function bidRows(lot: LotView, page: number): AuctionButton[][] {
+  if (lot.status.kind !== "trading" || lot.status.phase !== "online") {
+    return [];
+  }
+  const step =
+    lot.nextPrice !== undefined &&
+    lot.nextPrice.minorUnits <= MAX_COMMAND_AMOUNT
+      ? [
+          [
+            {
+              action: "lot.bid-step" as const,
+              amount: lot.nextPrice,
+              callbackData: encodeAuctionCallback({
+                kind: "confirm",
+                command: "bid",
+                lotId: lot.lotId,
+                amount: lot.nextPrice.minorUnits,
+                page,
+              }),
+            },
+          ],
+        ]
+      : [];
+  const ask = (question: "bid" | "proxy") =>
+    encodeAuctionCallback({ kind: "ask", question, lotId: lot.lotId, page });
+  return [
+    ...step,
+    [{ action: "lot.bid-custom", callbackData: ask("bid") }],
+    ...(lot.proxyEnabled
+      ? [[{ action: "lot.proxy" as const, callbackData: ask("proxy") }]]
+      : []),
+  ];
 }

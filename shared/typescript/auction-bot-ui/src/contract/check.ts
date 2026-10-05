@@ -1,17 +1,25 @@
 import { isDeepStrictEqual } from "node:util";
-import { encodeAuctionCallback, MAX_FEED_PAGE } from "../callback-data.js";
+import {
+  type AuctionIntent,
+  encodeAuctionCallback,
+  MAX_FEED_PAGE,
+} from "../callback-data.js";
 import type { AuctionResult, AuctionUpdate } from "../gateway.js";
 import type {
   AuctionBotPorts,
+  BidRefusal,
+  CommandOutcome,
+  DisplayNameOutcome,
   LotHistoryEntryView,
   LotHistoryPage,
   LotPage,
   LotView,
   Money,
+  ProxyLimitRefusal,
   ResolvedIdentity,
   TelegramUser,
 } from "../ports.js";
-import type { AuctionScreenBody } from "../screen.js";
+import type { AuctionScreenBody, CommandResult } from "../screen.js";
 
 // Ядро contract suite из ADR-044, «Проверка общего поведения». Оно чистое и от
 // раннера не зависит: возвращает нарушения значением, поэтому самопроверка
@@ -56,6 +64,21 @@ export type PortCall =
       port: "auction";
       method: "getDisplayNames";
       request: Parameters<AuctionMethods["getDisplayNames"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "placeBid";
+      request: Parameters<AuctionMethods["placeBid"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "setProxyLimit";
+      request: Parameters<AuctionMethods["setProxyLimit"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "chooseDisplayName";
+      request: Parameters<AuctionMethods["chooseDisplayName"]>[0];
     };
 
 // Снимок Auction, над которым идёт намерение: шпион отвечает только им.
@@ -70,11 +93,23 @@ export type ContractAuction = {
   history?: Readonly<Record<string, Readonly<Record<string, LotHistoryPage>>>>;
   // Нет — `GetDisplayNames` отказывает, как Auction отвечает до PER-434.
   names?: Readonly<Record<string, string>>;
+  // Ответы команд участника по порядку вызовов. Нет ответа — команду в этом
+  // намерении звать не должны, и шпион падает.
+  bids?: readonly CommandOutcome<BidRefusal>[];
+  limits?: readonly CommandOutcome<ProxyLimitRefusal>[];
+  displayNames?: readonly DisplayNameOutcome[];
+  // Лоты после принятой команды: следующее чтение лота отдаёт их.
+  after?: readonly LotView[];
 };
 
 export type AuctionContractCase = {
   intent: string;
   callbackData: string;
+  // Ответ на вопрос: шаг — `callbackData`, текст — этот. Нет — нажатие.
+  // `text: undefined` — ответили не текстом.
+  reply?: { text?: string };
+  // Кто нажал, если не `CONTRACT_USER`: ник нужен выбору имени.
+  from?: TelegramUser;
   auction: ContractAuction;
   // Вызовы Auction по порядку. Identity сравнивается отдельно — числом
   // разрешений личности, одинаковым для всех намерений.
@@ -98,6 +133,18 @@ export type ContractViolation = {
 // Одна установленная личность и один снимок Auction для обеих фабрик. Роли
 // пускают её на обе поверхности: `member` — в хаб, `public` — в бот аукциона.
 export const CONTRACT_USER: TelegramUser = { telegramUserId: 424242 };
+
+// Тот же человек с ником: экран выбора имени предлагает его.
+const USER_WITH_USERNAME: TelegramUser = {
+  telegramUserId: CONTRACT_USER.telegramUserId,
+  telegramUsername: "owl_fan",
+};
+
+// `op_id`, которые отдаёт шпион по порядку: подтверждение берёт следующий.
+export const CONTRACT_OP_IDS = [
+  "01929b7e-5c1d-7a3f-8e4b-00000000c001",
+  "01929b7e-5c1d-7a3f-8e4b-00000000c002",
+] as const;
 
 export const CONTRACT_IDENTITY: ResolvedIdentity = {
   identityId: "01929b7e-5c1d-7a3f-8e4b-000000000001",
@@ -133,11 +180,13 @@ export const CONTRACT_LOT: LotView = {
   },
   nextPrice: rub(1250),
   fixedStep: rub(50),
+  proxyEnabled: true,
   status: {
     kind: "trading",
     currentPrice: rub(1200),
     leaderId: LEADER_ID,
     deadline: "2026-10-10T18:00:00Z",
+    phase: "online",
   },
 };
 
@@ -146,6 +195,7 @@ const SOLD_LOT: LotView = {
   auctionId: CONTRACT_AUCTION_ID,
   version: 9,
   card: { title: "Плакат", description: "" },
+  proxyEnabled: false,
   status: { kind: "sold", winnerId: WINNER_ID, price: rub(3000) },
 };
 
@@ -154,6 +204,7 @@ const UNSOLD_LOT: LotView = {
   auctionId: CONTRACT_AUCTION_ID,
   version: 5,
   card: { title: "Значок", description: "" },
+  proxyEnabled: false,
   status: { kind: "unsold" },
 };
 
@@ -162,6 +213,7 @@ const WITHDRAWN_LOT: LotView = {
   lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3f",
   auctionId: CONTRACT_AUCTION_ID,
   version: 2,
+  proxyEnabled: false,
   status: { kind: "withdrawn" },
 };
 
@@ -170,6 +222,7 @@ const SCHEDULED_LOT: LotView = {
   auctionId: CONTRACT_AUCTION_ID,
   version: 2,
   card: { title: "Носки", description: "" },
+  proxyEnabled: false,
   status: { kind: "scheduled", startingPrice: rub(500) },
 };
 
@@ -309,6 +362,47 @@ const backRow = (page: number) => [
   },
 ];
 
+const callback = (intent: AuctionIntent) => encodeAuctionCallback(intent);
+
+// Ряды ставки под лотом в онлайн-торгах: по шагу, своя сумма и лимит.
+const bidRows = (lot: LotView, page: number) => [
+  [
+    {
+      action: "lot.bid-step" as const,
+      amount: rub(1250),
+      callbackData: callback({
+        kind: "confirm",
+        command: "bid",
+        lotId: lot.lotId,
+        amount: 125000,
+        page,
+      }),
+    },
+  ],
+  [
+    {
+      action: "lot.bid-custom" as const,
+      callbackData: callback({
+        kind: "ask",
+        question: "bid",
+        lotId: lot.lotId,
+        page,
+      }),
+    },
+  ],
+  [
+    {
+      action: "lot.proxy" as const,
+      callbackData: callback({
+        kind: "ask",
+        question: "proxy",
+        lotId: lot.lotId,
+        page,
+      }),
+    },
+  ],
+];
+
 const lotKeyboard = (lotId: string, page: number) => [
   [{ action: "lot.refresh" as const, callbackData: lotCallback(lotId, page) }],
   [
@@ -387,6 +481,582 @@ const HISTORY_CALLS: readonly PortCall[] = [
   namesCall(RIVAL_ID, LEADER_ID),
 ];
 
+// Лот после принятой ставки смотрящего: цена его, лидер — он.
+const LOT_AFTER_BID: LotView = {
+  ...CONTRACT_LOT,
+  version: 4,
+  nextPrice: rub(1350),
+  status: {
+    kind: "trading",
+    currentPrice: rub(1300),
+    leaderId: CONTRACT_IDENTITY.identityId,
+    deadline: "2026-10-10T18:00:00Z",
+    phase: "online",
+  },
+};
+
+// Лот после принятого лимита: лимит виден смотрящему, цена не сдвинулась —
+// лимит выше порога, но перебивать пока некого, кроме лидера.
+const LOT_AFTER_LIMIT: LotView = {
+  ...CONTRACT_LOT,
+  version: 4,
+  viewerProxyLimit: rub(2000),
+  nextPrice: rub(1300),
+  status: {
+    kind: "trading",
+    currentPrice: rub(1250),
+    leaderId: CONTRACT_IDENTITY.identityId,
+    deadline: "2026-10-10T18:00:00Z",
+    phase: "online",
+  },
+};
+
+const OP = CONTRACT_OP_IDS[0];
+
+const commitCallback = (
+  command: "bid" | "proxy",
+  amount: number,
+  page = 2,
+  opId: string = OP,
+) =>
+  callback({
+    kind: "commit",
+    command,
+    lotId: CONTRACT_LOT.lotId,
+    opId,
+    amount,
+    page,
+  });
+
+const questionCallback = (
+  question: "bid" | "proxy" | "alias",
+  pending?: { command: "bid" | "proxy"; amount: number },
+) =>
+  callback({
+    kind: "question",
+    question,
+    lotId: CONTRACT_LOT.lotId,
+    page: 2,
+    addressee: CONTRACT_USER.telegramUserId,
+    ...(pending === undefined ? {} : { pending }),
+  });
+
+const confirmBody = (
+  command: "bid" | "proxy",
+  amount: number,
+  opId: string = OP,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "confirm",
+      command,
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      title: "Кружка с совой",
+      amount: { minorUnits: amount, currency: "RUB" },
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "confirm.yes",
+        callbackData: commitCallback(command, amount, 2, opId),
+      },
+    ],
+    [
+      {
+        action: "confirm.no",
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+      },
+    ],
+  ],
+});
+
+const questionBody = (
+  question: "bid" | "proxy" | "alias",
+  extra: {
+    current?: Money;
+    refusal?: AnswerRefusalOf;
+    pending?: { command: "bid" | "proxy"; amount: number };
+  } = {},
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "question",
+      question,
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      title: "Кружка с совой",
+      ...(extra.current === undefined ? {} : { current: extra.current }),
+      ...(extra.refusal === undefined ? {} : { refusal: extra.refusal }),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "question.cancel",
+        callbackData: questionCallback(question, extra.pending),
+      },
+    ],
+  ],
+});
+
+type AnswerRefusalOf = Extract<
+  AuctionScreenBody["blocks"][number],
+  { kind: "question" }
+>["refusal"];
+
+// Карточка лота в торгах с исходом команды первой строкой.
+const lotWithResult = (
+  lot: LotView,
+  result: CommandResult,
+  participantName?: string,
+): AuctionScreenBody => ({
+  blocks: [
+    { kind: "result", result },
+    {
+      kind: "lot",
+      lotId: lot.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      version: lot.version,
+      card: {
+        title: "Кружка с совой",
+        description: "Ручная роспись.",
+        image: { version: "img-1" },
+      },
+      ...(lot.nextPrice === undefined ? {} : { nextPrice: lot.nextPrice }),
+      fixedStep: rub(50),
+      status: lot.status,
+      ...(participantName === undefined ? {} : { participantName }),
+      ...(lot.viewerProxyLimit === undefined
+        ? {}
+        : { viewerProxyLimit: lot.viewerProxyLimit }),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "lot.bid-step",
+        amount: lot.nextPrice ?? rub(0),
+        callbackData: callback({
+          kind: "confirm",
+          command: "bid",
+          lotId: lot.lotId,
+          amount: (lot.nextPrice ?? rub(0)).minorUnits,
+          page: 2,
+        }),
+      },
+    ],
+    ...bidRows(lot, 2).slice(1),
+    ...lotKeyboard(lot.lotId, 2),
+  ],
+});
+
+const pending = (command: "bid" | "proxy", amount: number) => ({
+  command,
+  amount,
+});
+
+const nameChoiceBody = (
+  amount: number,
+  extra: { username?: string; refusal?: "name-frozen" } = {},
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "name-choice",
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      title: "Кружка с совой",
+      ...(extra.username === undefined ? {} : { username: extra.username }),
+      ...(extra.refusal === undefined ? {} : { refusal: extra.refusal }),
+    },
+  ],
+  keyboard: [
+    ...(extra.username === undefined
+      ? []
+      : [
+          [
+            {
+              action: "name.username" as const,
+              callbackData: callback({
+                kind: "username",
+                lotId: CONTRACT_LOT.lotId,
+                page: 2,
+                pending: pending("bid", amount),
+              }),
+            },
+          ],
+        ]),
+    [
+      {
+        action: "name.alias",
+        callbackData: callback({
+          kind: "ask",
+          question: "alias",
+          lotId: CONTRACT_LOT.lotId,
+          page: 2,
+          pending: pending("bid", amount),
+        }),
+      },
+    ],
+    [
+      {
+        action: "name.back",
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+      },
+    ],
+  ],
+});
+
+const bidCall = (amount: number, opId: string = OP): PortCall => ({
+  port: "auction",
+  method: "placeBid",
+  request: {
+    viewer: VIEWER,
+    lotId: CONTRACT_LOT.lotId,
+    amount: { minorUnits: amount, currency: "RUB" },
+    opId,
+  },
+});
+
+const limitCall = (amount: number): PortCall => ({
+  port: "auction",
+  method: "setProxyLimit",
+  request: {
+    viewer: VIEWER,
+    lotId: CONTRACT_LOT.lotId,
+    max: { minorUnits: amount, currency: "RUB" },
+    opId: OP,
+  },
+});
+
+const chooseCall = (
+  choice:
+    | { kind: "username"; username: string }
+    | { kind: "alias"; alias: string },
+): PortCall => ({
+  port: "auction",
+  method: "chooseDisplayName",
+  request: { viewer: VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
+});
+
+const LOT_CALL = getLotCall(CONTRACT_LOT.lotId);
+
+// Намерения листа ставки (PER-317): ставка и лимит от кнопки до карточки.
+const COMMAND_CASES: readonly AuctionContractCase[] = [
+  // «По шагу» — подтверждение с порогом из кнопки и новым `op_id`.
+  {
+    intent: "bid: confirm the step",
+    callbackData: callback({
+      kind: "confirm",
+      command: "bid",
+      lotId: CONTRACT_LOT.lotId,
+      amount: 125000,
+      page: 2,
+    }),
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: confirmBody("bid", 125000),
+  },
+  // «Да»: ставка меняет цену и лидера на карточке.
+  {
+    intent: "bid: accepted",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "accepted" }],
+      after: [LOT_AFTER_BID],
+      names: { ...NAMES, [CONTRACT_IDENTITY.identityId]: "@me" },
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      LOT_CALL,
+      namesCall(CONTRACT_IDENTITY.identityId),
+    ],
+    body: lotWithResult(
+      LOT_AFTER_BID,
+      { command: "bid", kind: "accepted", amount: rub(1300) },
+      "@me",
+    ),
+  },
+  // Именованный отказ окончателен: один вызов, цена из отказа на экране.
+  {
+    intent: "bid: refused below the minimum",
+    callbackData: commitCallback("bid", 125000),
+    auction: {
+      ...AUCTION,
+      bids: [
+        {
+          kind: "refused",
+          refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
+        },
+      ],
+    },
+    auctionCalls: [LOT_CALL, bidCall(125000), namesCall(LEADER_ID)],
+    body: lotWithResult(
+      CONTRACT_LOT,
+      {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
+      },
+      "@owl",
+    ),
+  },
+  {
+    intent: "bid: refused to the leader",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [
+        {
+          kind: "refused",
+          refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+        },
+      ],
+    },
+    auctionCalls: [LOT_CALL, bidCall(130000), namesCall(LEADER_ID)],
+    body: lotWithResult(
+      CONTRACT_LOT,
+      {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+      },
+      "@owl",
+    ),
+  },
+  // Ответа не было — повтор тем же `op_id`, и только один.
+  {
+    intent: "bid: unanswered, then accepted",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "unanswered" }, { kind: "accepted" }],
+      after: [LOT_AFTER_BID],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      bidCall(130000),
+      LOT_CALL,
+      namesCall(CONTRACT_IDENTITY.identityId),
+    ],
+    body: lotWithResult(LOT_AFTER_BID, {
+      command: "bid",
+      kind: "accepted",
+      amount: rub(1300),
+    }),
+  },
+  {
+    intent: "bid: unanswered twice",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "unanswered" }, { kind: "unanswered" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      bidCall(130000),
+      LOT_CALL,
+      namesCall(LEADER_ID),
+    ],
+    body: lotWithResult(
+      CONTRACT_LOT,
+      { command: "bid", kind: "unknown" },
+      "@owl",
+    ),
+  },
+  // Первая ставка без выбранного имени: предупреждение и выбор.
+  {
+    intent: "bid: name not chosen",
+    callbackData: commitCallback("bid", 130000),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "refused", refusal: { kind: "display-name-not-chosen" } }],
+    },
+    auctionCalls: [LOT_CALL, bidCall(130000)],
+    body: nameChoiceBody(130000, { username: "owl_fan" }),
+  },
+  {
+    intent: "name: use the username",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: pending("bid", 130000),
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+    ],
+    body: confirmBody("bid", 130000),
+  },
+  {
+    intent: "name: alias taken",
+    callbackData: questionCallback("alias", pending("bid", 130000)),
+    reply: { text: "Сыч" },
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "refused", refusal: "alias-taken" }],
+    },
+    auctionCalls: [LOT_CALL, chooseCall({ kind: "alias", alias: "Сыч" })],
+    body: questionBody("alias", {
+      refusal: "alias-taken",
+      pending: pending("bid", 130000),
+    }),
+  },
+  {
+    intent: "bid: ask the amount",
+    callbackData: callback({
+      kind: "ask",
+      question: "bid",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+    }),
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: questionBody("bid", { current: rub(1250) }),
+  },
+  {
+    intent: "bid: answer the amount",
+    callbackData: questionCallback("bid"),
+    reply: { text: "1 300 ₽" },
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: confirmBody("bid", 130000),
+  },
+  // Не число и чужая валюта — тот же вопрос с причиной, Auction не зовут.
+  {
+    intent: "bid: answer not a number",
+    callbackData: questionCallback("bid"),
+    reply: { text: "много" },
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: questionBody("bid", { current: rub(1250), refusal: "not-a-number" }),
+  },
+  {
+    intent: "bid: answer in another currency",
+    callbackData: questionCallback("bid"),
+    reply: { text: "$20" },
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: questionBody("bid", {
+      current: rub(1250),
+      refusal: "other-currency",
+    }),
+  },
+  {
+    intent: "bid: answer not in text",
+    callbackData: questionCallback("bid"),
+    reply: {},
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: questionBody("bid", { current: rub(1250), refusal: "not-text" }),
+  },
+  {
+    intent: "bid: cancel the question",
+    callbackData: questionCallback("bid"),
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: CONTRACT_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 3,
+          card: {
+            title: "Кружка с совой",
+            description: "Ручная роспись.",
+            image: { version: "img-1" },
+          },
+          nextPrice: rub(1250),
+          fixedStep: rub(50),
+          status: CONTRACT_LOT.status,
+          participantName: "@owl",
+        },
+      ],
+      keyboard: [
+        ...bidRows(CONTRACT_LOT, 2),
+        ...lotKeyboard(CONTRACT_LOT.lotId, 2),
+      ],
+    },
+  },
+  {
+    intent: "proxy: ask the limit",
+    callbackData: callback({
+      kind: "ask",
+      question: "proxy",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+    }),
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: questionBody("proxy", { current: rub(1250) }),
+  },
+  {
+    intent: "proxy: answer the limit",
+    callbackData: questionCallback("proxy"),
+    reply: { text: "2000" },
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: confirmBody("proxy", 200000),
+  },
+  {
+    intent: "proxy: accepted",
+    callbackData: commitCallback("proxy", 200000),
+    auction: {
+      ...AUCTION,
+      limits: [{ kind: "accepted" }],
+      after: [LOT_AFTER_LIMIT],
+      names: { ...NAMES, [CONTRACT_IDENTITY.identityId]: "@me" },
+    },
+    auctionCalls: [
+      LOT_CALL,
+      limitCall(200000),
+      LOT_CALL,
+      namesCall(CONTRACT_IDENTITY.identityId),
+    ],
+    body: lotWithResult(
+      LOT_AFTER_LIMIT,
+      { command: "proxy", kind: "accepted", amount: rub(2000) },
+      "@me",
+    ),
+  },
+  {
+    intent: "proxy: refused below the current price",
+    callbackData: commitCallback("proxy", 110000),
+    auction: {
+      ...AUCTION,
+      limits: [
+        {
+          kind: "refused",
+          refusal: { kind: "proxy-below-current-price", minLimit: rub(1200) },
+        },
+      ],
+    },
+    auctionCalls: [LOT_CALL, limitCall(110000), namesCall(LEADER_ID)],
+    body: lotWithResult(
+      CONTRACT_LOT,
+      {
+        command: "proxy",
+        kind: "refused",
+        refusal: { kind: "proxy-below-current-price", minLimit: rub(1200) },
+      },
+      "@owl",
+    ),
+  },
+];
+
 // Таблица аукционных намерений. Строку добавляет лист, который вводит
 // намерение, — вместе с юзкейсом.
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
@@ -446,7 +1116,10 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           participantName: "@owl",
         },
       ],
-      keyboard: lotKeyboard(CONTRACT_LOT.lotId, 2),
+      keyboard: [
+        ...bidRows(CONTRACT_LOT, 2),
+        ...lotKeyboard(CONTRACT_LOT.lotId, 2),
+      ],
     },
   },
   {
@@ -620,12 +1293,24 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
+  ...COMMAND_CASES,
 ];
 
 export function spyPorts(
   calls: PortCall[],
   snapshot: ContractAuction,
 ): AuctionBotPorts {
+  // Очереди ответов команд и `op_id`: каждый вызов берёт следующий.
+  const bids = [...(snapshot.bids ?? [])];
+  const limits = [...(snapshot.limits ?? [])];
+  const displayNames = [...(snapshot.displayNames ?? [])];
+  const opIds: string[] = [...CONTRACT_OP_IDS];
+  let changed = false;
+  const settled = <T extends { kind: string }>(outcome: T | undefined): T => {
+    if (outcome === undefined) throw new Error("command is not expected");
+    if (outcome.kind === "accepted") changed = true;
+    return outcome;
+  };
   return {
     identity: {
       async resolveIdentity(request) {
@@ -636,7 +1321,11 @@ export function spyPorts(
     auction: {
       async getLot(request) {
         calls.push({ port: "auction", method: "getLot", request });
-        const lot = snapshot.lots.find((each) => each.lotId === request.lotId);
+        const lots =
+          changed && snapshot.after !== undefined
+            ? [...snapshot.after, ...snapshot.lots]
+            : snapshot.lots;
+        const lot = lots.find((each) => each.lotId === request.lotId);
         if (lot === undefined) throw new Error("lot is not in the snapshot");
         return lot;
       },
@@ -665,6 +1354,25 @@ export function spyPorts(
           }),
         );
       },
+      async placeBid(request) {
+        calls.push({ port: "auction", method: "placeBid", request });
+        return settled(bids.shift());
+      },
+      async setProxyLimit(request) {
+        calls.push({ port: "auction", method: "setProxyLimit", request });
+        return settled(limits.shift());
+      },
+      async chooseDisplayName(request) {
+        calls.push({ port: "auction", method: "chooseDisplayName", request });
+        return settled(displayNames.shift());
+      },
+    },
+    operations: {
+      newOperationId() {
+        const opId = opIds.shift();
+        if (opId === undefined) throw new Error("no operation id left");
+        return opId;
+      },
     },
   };
 }
@@ -691,10 +1399,19 @@ export async function checkAuctionContractCase(
   // нарушение того же намерения, а не сбой самого прогона.
   let result: AuctionResult | undefined;
   let thrown: unknown;
+  const from = contractCase.from ?? CONTRACT_USER;
+  const { reply } = contractCase;
   try {
     result = await handle({
-      from: CONTRACT_USER,
-      input: { kind: "callback", data: contractCase.callbackData },
+      from,
+      input:
+        reply === undefined
+          ? { kind: "callback", data: contractCase.callbackData }
+          : {
+              kind: "reply",
+              data: contractCase.callbackData,
+              ...(reply.text === undefined ? {} : { text: reply.text }),
+            },
     });
   } catch (cause) {
     thrown = cause;
@@ -707,7 +1424,7 @@ export async function checkAuctionContractCase(
   // поэтому чужой пользователь виден только по самому запросу.
   const identityCalls = calls.filter((call) => call.port === "identity");
   const expectedIdentityCalls: PortCall[] = [
-    { port: "identity", method: "resolveIdentity", request: CONTRACT_USER },
+    { port: "identity", method: "resolveIdentity", request: from },
   ];
   if (!isDeepStrictEqual(identityCalls, expectedIdentityCalls)) {
     violations.push(
