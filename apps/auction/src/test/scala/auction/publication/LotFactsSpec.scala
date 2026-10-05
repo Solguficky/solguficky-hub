@@ -60,6 +60,20 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       (trading.deadline, trading.extensionsUsed) shouldBe (Some(deadline.plusSeconds(120).toString), 1)
     }
 
+    "publish the hold and the resume but keep the mark off the bus" in {
+      val held = LotEvent.LotHeldForFinal(deadline)
+      val steps = facts(lotDrafted, lotScheduled, opened, placed, LotEvent.LotMarkedForFinal, held, LotEvent.LotResumed)
+
+      steps.drop(4).map((_, fact) => fact.map(_.subject)) shouldBe List(
+        None,
+        Some("events.auction.lot_held_for_final"),
+        Some("events.auction.lot_resumed")
+      )
+      message(steps(5)._2).getState.status.isHeld shouldBe true
+      val live = message(steps(6)._2).getState.getTrading
+      (live.phase, live.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
+    }
+
     "keep proxy limits off the bus while they still take a version" in {
       val steps = facts(lotDrafted, lotScheduled, opened, limitSet, limitWithdrawn, placed)
       steps.map((step, fact) => step.sequence -> fact.isDefined) shouldBe List(

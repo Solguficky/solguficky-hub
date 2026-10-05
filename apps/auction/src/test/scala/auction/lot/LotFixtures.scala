@@ -73,6 +73,10 @@ object LotFixtures {
 
   def closeLot(opN: Int, reason: CloseReason = CloseReason.DeadlineReached): CloseLot = CloseLot(reason, op(opN))
 
+  def markForFinal(opN: Int): MarkForFinal = MarkForFinal(op(opN))
+
+  def resumeLot(opN: Int): ResumeLot = ResumeLot(op(opN))
+
   /** Лот аукциона `auctionId(1)` в данном состоянии с пустым окном дедупликации. */
   def lotIn(state: LotState): Lot = Lot(state, Some(auctionId(1)), Map.empty)
 
@@ -89,7 +93,8 @@ object LotFixtures {
       limits: Map[ParticipantId, ProxyLimit] = Map.empty,
       proxyEnabled: Boolean = true,
       closesAt: Option[Instant] = Some(deadline),
-      extensionsUsed: Int = 0
+      extensionsUsed: Int = 0,
+      markedForFinal: Boolean = false
   ): Lot =
     lotIn(
       LotState.Trading(
@@ -102,13 +107,14 @@ object LotFixtures {
           phase = phase,
           deadline = closesAt,
           extensionsUsed = extensionsUsed,
-          proxyLimits = limits
+          proxyLimits = limits,
+          markedForFinal = markedForFinal
         )
       )
     )
 
   def held(price: Long, leader: ParticipantId, limits: Map[ParticipantId, ProxyLimit] = Map.empty): Lot =
-    lotIn(LotState.Held(HeldState(config(), money(price), Some(leader), Some(bid(0)), limits)))
+    lotIn(LotState.Held(HeldState(config(), money(price), Some(leader), Some(bid(0)), limits, extensionsUsed = 0)))
 
   def sold(price: Long, winner: ParticipantId): Lot =
     lotIn(LotState.Sold(Sale(winner, money(price), bid(0), Instant.EPOCH)))
@@ -141,6 +147,12 @@ object LotFixtures {
     lot.state match {
       case LotState.Trading(state) => state
       case other => throw new AssertionError(s"лот не в торгах: $other")
+    }
+
+  def heldOf(lot: Lot): HeldState =
+    lot.state match {
+      case LotState.Held(state) => state
+      case other => throw new AssertionError(s"лот не удержан: $other")
     }
 
   final case class Journal(lot: Lot, entries: Vector[Envelope]) {
@@ -184,6 +196,12 @@ object LotFixtures {
 
     def close(command: CloseLot, now: Instant): (Either[CloseLotRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command, now))
+
+    def mark(command: MarkForFinal, now: Instant = calm): (Either[MarkForFinalRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, now))
+
+    def resume(command: ResumeLot): (Either[ResumeLotRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command))
 
     def submitAll(commands: Seq[PlaceBid]): (Vector[Either[PlaceBidRejected, Decision]], Journal) =
       commands.zipWithIndex.foldLeft((Vector.empty[Either[PlaceBidRejected, Decision]], this)) {

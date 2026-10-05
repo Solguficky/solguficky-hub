@@ -57,8 +57,7 @@ object LotValues {
       currentPrice = Some(money(held.currentPrice)),
       leaderId = held.leader.map(_.value.toString),
       leadingBidId = held.leadingBidId.map(_.value.toString),
-      // Удержания ещё нет (PER-310): переход в него принесёт счётчик продлений из торгов.
-      extensionsUsed = 0
+      extensionsUsed = held.extensionsUsed
     )
 
   def sale(sale: Sale): model.LotSale =

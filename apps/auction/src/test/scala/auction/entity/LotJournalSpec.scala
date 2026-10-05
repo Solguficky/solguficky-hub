@@ -55,6 +55,12 @@ final class LotJournalSpec
   /** Тот же лот после лимита, который лидер поставил себе пятой строкой. */
   private val limitedLot: Lot = Lot.apply(tradingLot, Envelope(5, op(5), limitSet))
 
+  private val heldForFinal = LotEvent.LotHeldForFinal(deadline)
+
+  /** Тот же лот, отмеченный для финала шестой строкой и удержанный на дедлайне седьмой. */
+  private val heldLot: Lot =
+    Lot.replay(limitedLot, List(Envelope(6, op(6), LotEvent.LotMarkedForFinal), Envelope(7, op(7), heldForFinal)))
+
   /** Эталон пишется так, как его пишет сервис, и сервис читает эталон в то же значение. */
   private def keepsGolden(name: String, stored: StoredLotEvent) = {
     val row = write(kit.system, stored)
@@ -130,6 +136,29 @@ final class LotJournalSpec
       )
     }
 
+    "keep the stored form of a mark, a hold and a resume equal to their golden files and read them back" in {
+      keepsGolden("lot-marked-for-final", storedEvent(LotEvent.LotMarkedForFinal, opN = 4))
+      keepsGolden("lot-held-for-final", storedEvent(heldForFinal, opN = 4))
+      keepsGolden("lot-resumed", storedEvent(LotEvent.LotResumed, opN = 4))
+    }
+
+    "read an event written before the hold section into the same event" in {
+      val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
+
+      read(kit.system, row).asInstanceOf[StoredLotEvent].event.lotHeldForFinal shouldBe None
+    }
+
+    "keep the stored form of a held lot snapshot equal to its golden file and read it back" in {
+      val row = write(kit.system, LotJournal.storeLot(heldLot, sequence = 7))
+
+      row.json shouldBe mapper.readTree(golden("lot-snapshot-held"))
+      LotJournal.restoreLot(
+        read(kit.system, row.copy(bytes = golden("lot-snapshot-held"))).asInstanceOf[StoredLot]
+      ) shouldBe
+        heldLot
+      heldLot.state shouldBe a[LotState.Held]
+    }
+
     "read an event written before the closing sections into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 
@@ -156,7 +185,7 @@ final class LotJournalSpec
       tradingOf(limitedLot).proxyLimits shouldBe Map(participant(2) -> limit(20000, setSeq = 5))
     }
 
-    "read a snapshot written before proxy limits and anti-sniping as trading without limits or extensions" in {
+    "read a snapshot written before proxy limits, anti-sniping and the mark as unmarked trading without limits" in {
       val row =
         write(kit.system, LotJournal.storeLot(tradingLot, sequence = 4)).copy(bytes = golden("legacy/lot-snapshot"))
 
@@ -186,7 +215,10 @@ final class LotJournalSpec
         limitWithdrawn,
         extension,
         lotSold,
-        lotUnsold
+        lotUnsold,
+        LotEvent.LotMarkedForFinal,
+        heldForFinal,
+        LotEvent.LotResumed
       ).zipWithIndex
         .foreach { (event, index) =>
           LotJournal.envelope(index.toLong + 7, storedEvent(event)) shouldBe Envelope(index.toLong + 7, op(1), event)
@@ -197,6 +229,9 @@ final class LotJournalSpec
         scheduled(),
         tradingLot,
         limitedLot,
+        lotIn(LotState.Trading(tradingOf(limitedLot).copy(markedForFinal = true))),
+        heldLot,
+        lotIn(LotState.Held(heldOf(heldLot).copy(extensionsUsed = 2))),
         held(price = 700, leader = participant(3), limits = Map(participant(5) -> limit(900, setSeq = 8))),
         sold(price = 900, winner = participant(4)),
         lotIn(LotState.Unsold(UnsoldReason.NoBids))
