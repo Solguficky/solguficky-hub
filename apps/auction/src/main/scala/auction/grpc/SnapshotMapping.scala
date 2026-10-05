@@ -45,6 +45,7 @@ object SnapshotMapping {
           .copy(viewerProxyLimit = own(held.proxyLimits, viewer))
           .withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
+      case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))
     }
   }
 

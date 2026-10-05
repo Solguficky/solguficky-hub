@@ -9,6 +9,7 @@ import auction.lot.Phase
 import auction.lot.Sale
 import auction.lot.StepPolicy
 import auction.lot.TradingState
+import auction.lot.UnsoldReason
 import auction.v1.auction as model
 
 import java.time.Instant
@@ -67,6 +68,12 @@ object LotValues {
       bidId = sale.bidId.value.toString,
       soldAt = instant(sale.at)
     )
+
+  /** У причины закрытия без продажи `UNSPECIFIED` нет в домене: значение всегда названо. */
+  def unsold(reason: UnsoldReason): model.UnsoldReason =
+    reason match {
+      case UnsoldReason.NoBids => model.UnsoldReason.UNSOLD_REASON_NO_BIDS
+    }
 
   def money(amount: Money): model.Money = model.Money(amount.minorUnits, amount.currency.value)
 

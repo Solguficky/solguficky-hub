@@ -3,11 +3,15 @@ package auction.aggregate
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
 import auction.lot.LotFixtures
+import auction.lot.CloseLot
+import auction.lot.CloseLotRejected
+import auction.lot.CloseReason
 import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.participant
 import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.UnsoldReason
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -28,6 +32,14 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
 
   private def opening(lot: LotId): LotRoster =
     LotRoster.observed(prebidding, asked, lot, LotFixtures.scheduled().state)._1
+
+  private val trading = LotFixtures.trading(price = 100)
+
+  private val ledByPerson = LotState.Trading(LotFixtures.tradingOf(trading).copy(deadline = None))
+
+  private def active: LotRoster = LotRoster.observed(prebidding, asked, first, trading.state)._1
+
+  private def closing: LotRoster = LotRoster.due(prebidding, active, first)._1
 
   "lot roster" should {
 
@@ -58,26 +70,38 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
         List(LotInstruction.Open(first, OpenLot(None, op(3))))
     }
 
-    "counts a lot that is already trading active without opening it again" in {
-      val (roster, instructions) = LotRoster.observed(prebidding, asked, first, LotFixtures.trading(price = 100).state)
+    "counts a lot that is already trading active without opening it again and arms its deadline" in {
+      val (roster, instructions) = LotRoster.observed(prebidding, asked, first, trading.state)
+      roster.active shouldBe Set(first)
+      instructions shouldBe List(LotInstruction.Arm(first, LotFixtures.deadline))
+    }
+
+    "arms no deadline for a trading lot that a person closes" in {
+      val (roster, instructions) = LotRoster.observed(prebidding, asked, first, ledByPerson)
       roster.active shouldBe Set(first)
       instructions shouldBe empty
     }
 
-    "does not count a held or a sold lot active and does not open it" in {
+    "does not count a held, a sold or an unsold lot active and does not open it" in {
       val held = LotRoster.observed(prebidding, asked, first, LotFixtures.held(100, participant(1)).state)
       held._1.lots(first) shouldBe LotStanding.Held
       val sold = LotRoster.observed(prebidding, asked, first, LotFixtures.sold(100, participant(1)).state)
       sold._1.lots(first) shouldBe LotStanding.Closed
-      held._2 ++ sold._2 shouldBe empty
+      val unsold = LotRoster.observed(prebidding, asked, first, LotState.Unsold(UnsoldReason.NoBids))
+      unsold._1.lots(first) shouldBe LotStanding.Closed
+      held._2 ++ sold._2 ++ unsold._2 shouldBe empty
     }
 
-    "counts a lot active only after it confirmed the opening" in {
-      LotRoster.opened(opening(first), first, Right(())).active shouldBe Set(first)
+    "counts a lot active only after it confirmed the opening and arms the deadline the lot opened with" in {
+      val (roster, instructions) = LotRoster.opened(opening(first), first, Right(Some(closesAt)))
+      roster.active shouldBe Set(first)
+      instructions shouldBe List(LotInstruction.Arm(first, closesAt))
+      LotRoster.opened(opening(first), first, Right(None))._2 shouldBe empty
     }
 
     "leaves a lot that refused the opening inactive and the other lots untouched" in {
-      val refused = LotRoster.opened(opening(first), first, Left(OpenLotRejected.LotNotScheduled))
+      val (refused, instructions) = LotRoster.opened(opening(first), first, Left(OpenLotRejected.LotNotScheduled))
+      instructions shouldBe empty
       refused.lots shouldBe Map(
         first -> LotStanding.Declined(OpenLotRejected.LotNotScheduled),
         second -> LotStanding.Asked
@@ -94,8 +118,8 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
     }
 
     "leaves answered lots alone on a repeated start" in {
-      val refused = LotRoster.opened(opening(first), first, Left(OpenLotRejected.LotNotScheduled))
-      val active = LotRoster.observed(prebidding, refused, second, LotFixtures.trading(price = 100).state)._1
+      val refused = LotRoster.opened(opening(first), first, Left(OpenLotRejected.LotNotScheduled))._1
+      val active = LotRoster.observed(prebidding, refused, second, trading.state)._1
       LotRoster.resume(prebidding, active) shouldBe (active, Nil)
     }
 
@@ -109,12 +133,54 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
     }
 
     "ignores an answer it is not waiting for" in {
-      val active = LotRoster.observed(prebidding, asked, first, LotFixtures.trading(price = 100).state)._1
       // Опоздавшее наблюдение «не открыт» подтверждённый лот не понижает и второго `OpenLot` не вызывает.
       LotRoster.observed(prebidding, active, first, LotFixtures.scheduled().state) shouldBe (active, Nil)
-      LotRoster.opened(active, first, Left(OpenLotRejected.LotNotScheduled)) shouldBe active
+      LotRoster.opened(active, first, Left(OpenLotRejected.LotNotScheduled)) shouldBe (active, Nil)
       LotRoster.unanswered(active, first) shouldBe active
-      LotRoster.opened(asked, first, Right(())) shouldBe asked
+      LotRoster.opened(asked, first, Right(Some(closesAt))) shouldBe (asked, Nil)
+      LotRoster.closed(active, first, Right(())) shouldBe (active, Nil)
+    }
+
+    "closes an active lot by its deadline with an op_id that stays the same after any restart" in {
+      val (roster, instructions) = LotRoster.due(prebidding, active, first)
+      roster.lots(first) shouldBe LotStanding.Closing
+      instructions shouldBe List(
+        LotInstruction.Close(first, CloseLot(CloseReason.DeadlineReached, LotRoster.closeOpId(op(3), first)))
+      )
+      LotRoster.closeOpId(op(3), first) shouldBe LotRoster.closeOpId(op(3), first)
+      LotRoster.closeOpId(op(3), first) should not be LotRoster.closeOpId(op(3), second)
+    }
+
+    "does not close a lot that is not active when its timer fires" in {
+      LotRoster.due(prebidding, asked, first) shouldBe (asked, Nil)
+      LotRoster.due(prebidding, closing, first) shouldBe (closing, Nil)
+      val sold = LotRoster.observed(prebidding, asked, first, LotFixtures.sold(100, participant(1)).state)._1
+      LotRoster.due(prebidding, sold, first) shouldBe (sold, Nil)
+      LotRoster.due(auctionIn(AuctionState.Scheduled(config())), active, first) shouldBe (active, Nil)
+    }
+
+    "counts a lot closed once it accepted the closing" in {
+      val (roster, instructions) = LotRoster.closed(closing, first, Right(()))
+      roster.lots(first) shouldBe LotStanding.Closed
+      instructions shouldBe empty
+    }
+
+    "asks a lot that refused the closing for its state instead of guessing why" in {
+      for (refusal <- List(CloseLotRejected.DeadlineNotReached, CloseLotRejected.LotNotOpen)) {
+        val (roster, instructions) = LotRoster.closed(closing, first, Left(refusal))
+        roster.lots(first) shouldBe LotStanding.Asked
+        instructions shouldBe List(LotInstruction.Ask(first))
+      }
+    }
+
+    "asks again on a recheck exactly the lots whose question or command went unanswered" in {
+      val silent = LotRoster.unanswered(closing, first)
+      silent.lots(first) shouldBe LotStanding.Unanswered
+      val (rechecked, instructions) = LotRoster.recheck(prebidding, silent)
+      instructions shouldBe List(LotInstruction.Ask(first))
+      rechecked.lots shouldBe Map(first -> LotStanding.Asked, second -> LotStanding.Asked)
+      LotRoster.recheck(prebidding, active) shouldBe (active, Nil)
+      LotRoster.recheck(auctionIn(AuctionState.Scheduled(config())), silent) shouldBe (silent, Nil)
     }
   }
 }

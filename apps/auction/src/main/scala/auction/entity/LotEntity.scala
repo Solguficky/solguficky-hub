@@ -12,6 +12,7 @@ import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
 import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
 import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -77,6 +78,10 @@ object LotEntity {
       replyTo: ActorRef[Either[WithdrawProxyLimitRejected, Envelope]]
   ) extends Command
 
+  /** Закрытие лота; по дедлайну его шлёт аукцион с инициатором `Scheduler`. */
+  final case class Close(command: CloseLot, initiator: Initiator, replyTo: ActorRef[Either[CloseLotRejected, Envelope]])
+      extends Command
+
   final case class Get(replyTo: ActorRef[Lot]) extends Command
 
   /**
@@ -113,20 +118,24 @@ object LotEntity {
   /** Номер следующей строки — `state.sequence + 1`, та же арифметика, что в `eventHandler`. */
   private def handle(state: State, command: Command, clock: Clock, newId: () => UUID): Effect[StoredLotEvent, State] = {
     val lot = state.lot
+    // Одно время на команду: оно и `now` решения, и `occurred_at` конверта, поэтому `LotSold.at` совпадает со строкой.
+    val now = clock.instant()
     command match {
       case Draft(draft, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, draft), draft.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, draft), draft.opId, initiator, replyTo, now, newId)
       case Plan(schedule, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, schedule), schedule.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, schedule), schedule.opId, initiator, replyTo, now, newId)
       case Open(open, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, open), open.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, open), open.opId, initiator, replyTo, now, newId)
       case Bid(bid, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, bid, BidId(newId()), BidId(newId())), bid.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, bid, BidId(newId()), BidId(newId())), bid.opId, initiator, replyTo, now, newId)
       case SetLimit(limit, initiator, replyTo) =>
         val decision = Lot.decide(lot, limit, state.sequence + 1, BidId(newId()))
-        record(lot, decision, limit.opId, initiator, replyTo, clock, newId)
+        record(lot, decision, limit.opId, initiator, replyTo, now, newId)
       case WithdrawLimit(withdrawal, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, clock, newId)
+        record(lot, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)
+      case Close(close, initiator, replyTo) =>
+        record(lot, Lot.decide(lot, close, now), close.opId, initiator, replyTo, now, newId)
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }
@@ -143,7 +152,7 @@ object LotEntity {
       opId: OpId,
       initiator: Initiator,
       replyTo: ActorRef[Either[R, Envelope]],
-      clock: Clock,
+      now: Instant,
       newId: () => UUID
   ): Effect[StoredLotEvent, State] =
     decision match {
@@ -155,7 +164,7 @@ object LotEntity {
           .getOrElse(
             throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without an auction")
           )
-        val transaction = Transaction(newId(), opId, auction, clock.instant(), initiator)
+        val transaction = Transaction(newId(), opId, auction, now, initiator)
         Effect
           .persist((event :: derived).map(LotJournal.store(newId(), transaction, _)))
           .thenReply(replyTo)(written => Right(firstOf(written.lot, opId)))

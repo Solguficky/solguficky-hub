@@ -135,6 +135,11 @@ final case class HeldState(
 
 final case class Sale(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
 
+/** Почему лот закрылся без продажи. Резервной цены в модели нет, поэтому причина одна (RFC-011, О-2). */
+enum UnsoldReason {
+  case NoBids
+}
+
 /**
  * Состояния лота (RFC-011, «Состояние лота»). Сумма запечатана: остальные терминальные добавятся случаями, а
  * исчерпывающий `match` в [[Lot.decide]] покажет, где их обработать.
@@ -150,6 +155,7 @@ enum LotState {
   case Trading(state: TradingState)
   case Held(state: HeldState)
   case Sold(sale: Sale)
+  case Unsold(reason: UnsoldReason)
 }
 
 /** Кто отправил ставку: участник из бота или аукционист за зал. */
@@ -191,6 +197,18 @@ final case class ScheduleLot(startingPrice: Money, config: LotConfigInput, opId:
 final case class OpenLot(deadline: Option[Instant], opId: OpId)
 
 /**
+ * Почему лот закрывают: наступил дедлайн — тогда наступил ли он, решает сам лот (RFC-011, П-05), — или закрывает
+ * ведущий, и дедлайн не проверяется.
+ */
+enum CloseReason {
+  case DeadlineReached
+  case ByAuctioneer
+}
+
+/** Закрытие лота. По дедлайну его шлёт аукцион, когда наступает дедлайн лота (ADR-045); время решения — серверное. */
+final case class CloseLot(reason: CloseReason, opId: OpId)
+
+/**
  * События лота. `LotOpened` несёт всю конфигурацию торгов, чтобы состояние восстанавливалось из журнала без обращения
  * наружу (И-07). `previousLeader` при первой ставке отсутствует, а не равен нулю (RFC-011, П-01).
  *
@@ -211,6 +229,8 @@ enum LotEvent {
   )
   case ProxyLimitSet(participant: ParticipantId, max: Money)
   case ProxyLimitWithdrawn(participant: ParticipantId)
+  case LotSold(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
+  case LotUnsold(reason: UnsoldReason)
 }
 
 /**
@@ -280,6 +300,17 @@ enum SetProxyLimitRejected {
   case ProxyDisabledForLot
   case CurrencyMismatch
   case ProxyBelowCurrentPrice
+}
+
+/**
+ * Отказы `CloseLot` (RFC-011, П-05). `LotNotOpen` — лот не в торгах и не удержан, в том числе уже закрытый (И-05).
+ * `DeadlineNotReached` — закрытие по дедлайну, которого у лота нет или который ещё не наступил: планировщик лишь
+ * присылает команду, а наступил ли момент, решает лот.
+ */
+enum CloseLotRejected {
+  case LotNotFound
+  case LotNotOpen
+  case DeadlineNotReached
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */
