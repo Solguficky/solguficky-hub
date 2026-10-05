@@ -22,5 +22,5 @@
 Не всё, что стоит сохранить после работы, — наблюдение:
 
 - **Разбор незнакомой технологии** — skill `proj-record-learning`, раздел [docs/learning/](../learning/README.md) с реестром тем. Разбор не пишется для C#, F#, .NET, Aspire, Markdown, YAML, sh, justfile, Python-тулинга и правки документации: владелец этим владеет.
-- **Принятое архитектурное решение** — `docs/agents/decisions.md`.
-- **Будущая работа** — задача в трекере по `docs/agents/issue-tracker.md`.
+- **Принятое архитектурное решение** — [decisions.md](decisions.md).
+- **Будущая работа** — задача в трекере по [issue-tracker.md](issue-tracker.md).
