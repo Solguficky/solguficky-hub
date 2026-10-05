@@ -8,7 +8,8 @@
 - прогоны той же сессии: L0-тест, который упал на полном прогоне и прошёл на одиночном, и мутация на L1;
 - `apps/auction/src/main/scala/auction/entity/AuctionEntity.scala` и `aggregate/LotRoster.scala` из среза PER-325 — разделы о сигнале восстановления, `pipeToSelf`, памяти вне журнала и пассивации;
 - для них же: `internal/ReplayingEvents.scala` и `internal/Running.scala` того же source-jar, `scaladsl/ActorContext.scala` из `pekko-actor-typed_3-1.6.0-sources.jar` и `reference.conf` из `pekko-cluster-sharding_3-1.6.0.jar`;
-- `PlanLot` в `AuctionEntity.scala` из среза PER-319 — раздел о порядке сообщений; для него `internal/ClusterShardingImpl.scala` из `pekko-cluster-sharding-typed_3-1.6.0-sources.jar`, `ShardRegion.scala` и `Shard.scala` из `pekko-cluster-sharding_3-1.6.0-sources.jar`, `actor/dungeon/Dispatch.scala` и `dispatch/Dispatcher.scala` из `pekko-actor_3-1.6.0-sources.jar` и мутация L1-теста `AuctionOpeningIntegrationSpec`.
+- `PlanLot` в `AuctionEntity.scala` из среза PER-319 — раздел о порядке сообщений; для него `internal/ClusterShardingImpl.scala` из `pekko-cluster-sharding-typed_3-1.6.0-sources.jar`, `ShardRegion.scala` и `Shard.scala` из `pekko-cluster-sharding_3-1.6.0-sources.jar`, `actor/dungeon/Dispatch.scala` и `dispatch/Dispatcher.scala` из `pekko-actor_3-1.6.0-sources.jar` и мутация L1-теста `AuctionOpeningIntegrationSpec`;
+- `entity/LotJournal.scala` и эталоны `src/test/resources/journal/` из среза PER-333 — раздел о новой секции модели хранения; для него `reference.conf` из `pekko-serialization-jackson_3-1.6.0.jar` и `LotJournal.scala` в `origin/develop` до среза.
 
 Формат, в котором событие лежит в базе, — в [ADR-058](../../decisions/ADR-058-auction-journal-row-json-storage-model.md). Сами правила торгов, `decide` и `apply`, — в [domain-types.md](domain-types.md).
 
@@ -103,6 +104,33 @@ eventHandler = (state, stored) => {
 ### Snapshot и его адаптер
 
 `.withRetention(RetentionCriteria.snapshotEvery(100, keepNSnapshots = 2))` велит Pekko сохранять состояние после каждого сотого события и держать два последних snapshot. События при этом не удаляются: журнал остаётся источником истины. `.snapshotAdapter(...)` переводит состояние в класс хранения и обратно, так же как для событий это делает модель хранения из ADR-058.
+
+### Модель хранения на `jackson-json`: что происходит с новым полем
+
+Строку журнала Auction пишет не доменный тип, а класс хранения из примитивов, и Jackson переводит его в JSON по именам полей ([ADR-058](../../decisions/ADR-058-auction-journal-row-json-storage-model.md)). Вариант события выбирается не наследованием, а полем `kind` и одной заполненной секцией — та же идея, что `oneof` в Protobuf:
+
+```scala
+final case class StoredEvent(
+    kind: String,
+    lotOpened: Option[StoredLotOpened],
+    ...
+    lotUnsold: Option[StoredLotUnsold],
+    deadlineExtended: Option[StoredDeadlineExtended]
+)
+```
+
+Новое событие — это новая секция `Option` в конце класса. Как Jackson с ней обходится, видно с трёх сторон.
+
+**Запись.** Пустая секция пишется явным `"deadlineExtended": null`, а не пропускается. Поэтому новая секция меняет байты строки *любого* вида, не только нового: срез PER-333 дописал по одной строке во все десять текущих эталонов `journal/*.json`. Эталон сравнивается с записью деревом JSON (`row.json shouldBe mapper.readTree(golden(name))`), и без этой правки упал бы каждый. Аналог в .NET — `System.Text.Json`, который тоже по умолчанию пишет `null`, а не пропускает свойство.
+
+**Чтение старой строки новым кодом.** Поле, которого в JSON нет, Jackson-модуль Scala читает как `None`. Отсюда два приёма среза: секция события необязательна по построению, а счётчик в snapshot объявлен `extensionsUsed: Option[Int]` и восстанавливается через `getOrElse(0)` — snapshot, записанный до правила, честно означает «продлений не было». Это держат эталоны `journal/legacy/`, в которых новых ключей нет, и тест `read a snapshot written before proxy limits and anti-sniping…`.
+
+**Чтение новой строки старым кодом** — то есть откат деплоя. `reference.conf` модуля `pekko-serialization-jackson` 1.6.0 выключает `FAIL_ON_UNKNOWN_PROPERTIES`, и незнакомый ключ просто пропускается. Последствия у двух видов строк разные:
+
+- строка `DeadlineExtended` читается прежним классом как `kind = "DeadlineExtended"` без единой секции, и прежний `restoreEvent` падает в `case _ => mismatch` — `JournalCorrupted`, лот не поднимается. Отказ громкий;
+- snapshot с `extensionsUsed` читается прежним классом, а ключ молча теряется: лот поднимется без счётчика, которого прежний код не знает. Отказа нет вовсе.
+
+Это не дефект среза, а свойство формы: совместимость у неё односторонняя — новый код читает старое, старый код новое не обязан. Откатить сервис после первого записанного продления можно только вперёд или через `JacksonMigration`.
 
 ### Тег — метка события при записи
 
@@ -288,6 +316,7 @@ shardRegion ! ShardingEnvelope(entityId, message)
 - **Таймер в памяти не хранят, а выводят.** Дедлайн лежит в журнале лота, таймер — производная от него, построенная на пробуждении. Нулевая задержка для прошедшего момента сводит «пропустили, пока лежали» к обычному срабатыванию. Тот же приём держит sweeper `reminder_task` в Notifications: момент в базе, будильник — производная.
 - **Включил «помни всё» — реши, что забывать.** Remember-entities запоминает любой ключ, по которому пришло сообщение, в том числе ошибочный. Без правила забвения запоминание растёт от внешних вызовов. Правило забвения само становится гонкой, если просьба забыть и смена состояния идут разными очередями.
 - **Гонку двух команд одного актора можно закрыть порядком, а не замком.** Условие одно: проверка и отправка следствия происходят в обработке одного сообщения, без промежуточного ожидания. Тогда всё, что пришло актору позже, и своё отправит позже. Перенос на другой стек — грин Orleans или обработчик с одной очередью — требует проверить, сохраняет ли транспорт порядок до получателя: здесь это видно по исходникам, а не по названию паттерна.
+- **У формата со схемой по именам полей совместимость односторонняя, и сторона отказа зависит от вида данных.** Новое необязательное поле дёшево читается назад, но откат кода видит его как незнакомый ключ. Если формат выбирает вариант по значению (`kind`), отказ громкий; если поле лишь добавляет данные к известному варианту — тихая потеря. Перенос на любой JSON-журнал (Marten, EventStoreDB с `System.Text.Json`): до первого деплоя нового события ответь, что сделает с ним предыдущая версия.
 - **«Долговечное» хранилище по умолчанию стоит проверять на своей топологии.** `ddata` долговечен на диске, но читает прошлое только при том же порте и том же каталоге. Узел с портом `0` или под без тома теряет его на каждом рестарте.
 
 ## Почему так, а не иначе
@@ -306,6 +335,9 @@ shardRegion ! ShardingEnvelope(entityId, message)
 - **Обходить просроченные лоты по read model раз в N секунд.** Отвергнуто: второй механизм закрытия рядом с таймером аукциона и опоздание на период обхода.
 - **`ScheduleLot` мимо аукциона: прочитать заморозку, затем слать лоту.** Так устроен `AddLot`: оболочка спрашивает аукцион `Inspect` и шлёт команду лоту сама. Для условий торгов отвергнуто: между чтением и командой проходит старт, и заморозка не держит. Принят ход через entity аукциона ([дополнение ADR-047 от 2026-10-05](../../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-05-schedulelot-через-аукцион)).
 - **Событие аукциона на каждое `ScheduleLot`.** Дало бы аукциону окно повторов, но условия торгов оказались бы в двух журналах. Отвергнуто тем же дополнением: упорядочивание даёт и очередь сообщений, без второй копии условий.
+- **Пропускать пустые секции вместо `null`** (`Include.NON_ABSENT` у Jackson). Эталоны тогда не менялись бы на каждое новое событие. Не выбрано: настройка общая для всех классов `JournalSerializable`, включая журнал аукциона, и её смена сама переписала бы все эталоны разом; к тому же явный `null` читается глазами как «секция есть в форме, но пуста». Проверь сам, когда будет чем: включить её в секции `serialization.jackson` файла `application.conf` и прогнать `sbt -batch "testOnly auction.entity.LotJournalSpec"` — ожидание: падают все эталоны.
+- **Полиморфные аннотации Jackson (`@JsonTypeInfo`) вместо `kind` и секций.** Отвергнуты ADR-058, п. 3: имя класса стало бы частью формата хранения, и переименование в коде ломало бы журнал.
+- **Новое событие через `JacksonMigration` с версией в manifest.** Не нужно: необязательное поле и новый `kind` — совместимая правка, и ADR-058 предсказывает, что до production миграций не будет. Миграция понадобится при переименовании поля или смене его смысла.
 - **Пассивировать всё, что вне торгов.** Первая версия фикса неограниченного запоминания. Отвергнута ревью: окно гонки забывало аукцион, вошедший в торги. Цена выбранного — `Draft` и `Scheduled` помнятся, но их число ограничено сходками.
 
 ## Схема
@@ -411,6 +443,9 @@ sequenceDiagram
 - `pekko-cluster-sharding_3-1.6.0-sources.jar` в Maven Central — зачем: `NoPassivationStrategy` при remember-entities (`ClusterShardingSettings.scala`), перезапуск остановившейся без `Passivate` entity и `remove` после пассивации (`Shard.scala`); `reference.conf` того же модуля — `durable.keys = ["shard-*"]`, а `reference.conf` модуля `pekko-distributed-data` — каталог LMDB с портом в имени.
 - [Дополнение ADR-045 от 2026-10-05](../../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md#дополнение-2026-10-05-аукцион-помнится-шардингом) — зачем: решение владельца, отвергнутые варианты и цена.
 - `pekko-cluster-sharding-typed_3-1.6.0-sources.jar`, `pekko-cluster-sharding_3-1.6.0-sources.jar` и `pekko-actor_3-1.6.0-sources.jar` в Maven Central — зачем: что `ask` к `EntityRef` уходит в регион без отправителя (`EntityRefImpl` в `ClusterShardingImpl.scala`), что регион и шард буферизуют по порядку (`ShardRegion.deliverMessage`, `Shard.deliverMessage`) и что локальная отправка синхронно кладёт сообщение в очередь (`Dispatcher.dispatch`).
+- [Pekko: Serialization with Jackson](https://pekko.apache.org/docs/pekko/current/serialization-jackson.html) — зачем: раздел об эволюции схемы — какие правки совместимы без миграции и как устроена `JacksonMigration`.
+- `reference.conf` из `pekko-serialization-jackson_3-1.6.0.jar` — зачем: `FAIL_ON_UNKNOWN_PROPERTIES = off` и `WRITE_DATES_AS_TIMESTAMPS = off`, то есть почему прежний код молча пропускает незнакомый ключ.
+- [ADR-058](../../decisions/ADR-058-auction-journal-row-json-storage-model.md) — зачем: почему строка — JSON модели хранения, а не Protobuf, и правило «вариант — `kind` и одна секция».
 - [Pekko: Message Delivery Reliability](https://pekko.apache.org/docs/pekko/current/general/message-delivery-reliability.html) — зачем: что обещано про порядок для пары «отправитель — получатель» и чего не обещано вовсе.
 - [Дополнение ADR-047 от 2026-10-05](../../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-05-schedulelot-через-аукцион) — зачем: решение владельца провести `ScheduleLot` через аукцион и отвергнутые варианты.
 
@@ -442,3 +477,9 @@ sequenceDiagram
    Ответ: лот откроется раньше, чем получит условия, откажет в открытии, а условия лягут в него уже вне торгов. Проверка мутацией: обернуть `lots.schedule(...)` в `PlanLot` в `Future(Thread.sleep(500))(ExecutionContext.global).flatMap(...)` и из `apps/auction` выполнить `AUCTION_INTEGRATION_TESTS=1 sbt -batch "testOnly auction.entity.AuctionOpeningIntegrationSpec -- -z \"right before the start\""`. Тест `opens a lot whose conditions reached the auction right before the start` падает: активен один лот из двух. Без мутации тест зелёный.
 13. На чём держится порядок «`ScheduleLot` раньше `OpenLot`», если `ask` к `EntityRef` уходит без отправителя?
    Ответ: не на гарантии для пары акторов, а на синхронной постановке в очередь региона и на том, что регион и шард пересылают и буферизуют по порядку. Проверка: `unzip -p pekko-cluster-sharding_3-1.6.0-sources.jar org/apache/pekko/cluster/sharding/ShardRegion.scala | grep -n "must be in right order"`.
+14. Почему новая секция события изменила эталон `lot-drafted.json`, хотя `LotDrafted` не менялся?
+   Ответ: пустая секция пишется явным `null`, и у каждой строки появился ключ `"deadlineExtended": null`. Проверка: `git show HEAD -- apps/auction/src/test/resources/journal/lot-drafted.json` на коммите среза — одна добавленная строка; без неё `sbt -batch "testOnly auction.entity.LotJournalSpec"` из `apps/auction` падает на сравнении дерева.
+15. Сколько продлений будет у лота, поднятого из snapshot, записанного до анти-снайпа?
+   Ответ: ноль — отсутствующий ключ читается как `None`, а `getOrElse(0)` делает из него ноль. Проверка: `grep -c extensionsUsed apps/auction/src/test/resources/journal/legacy/lot-snapshot.json` даёт 0, а тест `read a snapshot written before proxy limits and anti-sniping as trading without limits or extensions` в `LotJournalSpec` зелёный.
+16. Что сделает код до PER-333 со строкой `DeadlineExtended` и со snapshot, где есть `extensionsUsed`?
+   Ответ: строку отвергнет как испорченную — ноль секций у `kind`, которого он не знает, — а из snapshot молча выбросит счётчик. Опора: `unzip -p pekko-serialization-jackson_3-1.6.0.jar reference.conf | grep FAIL_ON_UNKNOWN` и ветка `case _ => mismatch` в `restoreEvent` прежнего `LotJournal.scala`. Прогоном не проверялось — проверь сам, когда будет чем: на коммите до среза прочитать эталон `deadline-extended.json` тестом по образцу `keepsGolden` и ждать `JournalCorrupted`.
