@@ -379,7 +379,7 @@ describe("routeAuctionCallback", () => {
   });
 });
 
-describe("routeAuctionStart entry", () => {
+describe("routeAuctionStart", () => {
   it("requests the public circle with the channel code and the first name", async () => {
     const p = ports(identity({ globalRoles: [] }));
     const outcome = await routeAuctionStart({

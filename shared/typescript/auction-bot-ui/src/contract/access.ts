@@ -69,7 +69,9 @@ export type AccessViolation = {
     // `/start` — один вход с кругом поверхности, остальное — одно разрешение.
     | "wrong-identity-calls"
     // До Auction дошёл человек, которого поверхность не пускает.
-    | "auction-reached";
+    | "auction-reached"
+    // Допущенное нажатие до Auction не дошло.
+    | "auction-not-reached";
   detail: string;
 };
 
@@ -338,53 +340,70 @@ export async function checkAccessMatrixCase(
     },
     auction: spyPorts(auctionCalls, AUCTION).auction,
   });
-  const violation = (
-    kind: AccessViolation["kind"],
-    detail: unknown,
-  ): AccessViolation => ({
-    case: matrixCase.name,
-    kind,
-    detail: JSON.stringify(detail),
-  });
-
-  let answer: AccessAnswer | undefined;
-  let thrown: unknown;
-  try {
-    answer = await act({
-      from: CONTRACT_USER,
-      firstName: FIRST_NAME,
-      action: matrixCase.action,
-    });
-  } catch (cause) {
-    thrown = cause;
-  }
-
-  const violations: AccessViolation[] = [];
   const expectedCalls = expectedIdentityCalls(matrixCase);
-  if (!isDeepStrictEqual(identityCalls, expectedCalls)) {
-    violations.push(
-      violation("wrong-identity-calls", {
-        expected: expectedCalls,
-        actual: identityCalls,
-      }),
-    );
+
+  // Действие идёт дважды, и второй раз обязан пройти как первый: Identity
+  // отвечает то же, значит и человек видит то же. Так строка держит и
+  // повторный `/start` — он не даёт отказа там, где первый его не дал, — и
+  // правило «один вызов Identity на update», а не на разговор.
+  for (const attempt of [1, 2]) {
+    identityCalls.length = 0;
+    auctionCalls.length = 0;
+    const violation = (
+      kind: AccessViolation["kind"],
+      detail: unknown,
+    ): AccessViolation => ({
+      case: matrixCase.name,
+      kind,
+      detail: JSON.stringify({ attempt, detail }),
+    });
+    let answer: AccessAnswer | undefined;
+    let thrown: unknown;
+    try {
+      answer = await act({
+        from: CONTRACT_USER,
+        firstName: FIRST_NAME,
+        action: matrixCase.action,
+      });
+    } catch (cause) {
+      thrown = cause;
+    }
+
+    const violations: AccessViolation[] = [];
+    if (!isDeepStrictEqual(identityCalls, expectedCalls)) {
+      violations.push(
+        violation("wrong-identity-calls", {
+          expected: expectedCalls,
+          actual: identityCalls,
+        }),
+      );
+    }
+    const admitted = matrixCase.answer === "admitted";
+    if (!admitted && auctionCalls.length > 0) {
+      violations.push(violation("auction-reached", auctionCalls));
+    }
+    // Допущенное нажатие обязано дойти до Auction: приложение, которое
+    // отвечает «пустили» и ничего не читает, матрицу не проходит.
+    if (
+      admitted &&
+      matrixCase.action.kind === "callback" &&
+      auctionCalls.length === 0
+    ) {
+      violations.push(violation("auction-not-reached", matrixCase.action));
+    }
+    if (answer === undefined) {
+      violations.push(violation("app-threw", String(thrown)));
+    } else if (answer !== matrixCase.answer) {
+      violations.push(
+        violation("wrong-answer", {
+          expected: matrixCase.answer,
+          actual: answer,
+        }),
+      );
+    }
+    if (violations.length > 0) return violations;
   }
-  if (matrixCase.answer !== "admitted" && auctionCalls.length > 0) {
-    violations.push(violation("auction-reached", auctionCalls));
-  }
-  if (answer === undefined) {
-    violations.push(violation("app-threw", String(thrown)));
-    return violations;
-  }
-  if (answer !== matrixCase.answer) {
-    violations.push(
-      violation("wrong-answer", {
-        expected: matrixCase.answer,
-        actual: answer,
-      }),
-    );
-  }
-  return violations;
+  return [];
 }
 
 // Пустой набор строк — нарушение, а не зелёный прогон: поверхность без строк

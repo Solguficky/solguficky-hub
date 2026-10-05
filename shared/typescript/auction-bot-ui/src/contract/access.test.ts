@@ -119,6 +119,57 @@ describe("access matrix self-check", () => {
     ]);
   });
 
+  // Адаптер, который отвечает «пустили» и ничего не читает: без этой
+  // проверки матрица зелёная над приложением, которое забыло Auction.
+  it("fails when an admitted press never reaches Auction", async () => {
+    const idle: AccessMatrixApp = (ports) => async (input) => {
+      if (input.action.kind === "start") return stubApp("hub")(ports)(input);
+      await ports.identity.resolveIdentity(input.from);
+      return "admitted";
+    };
+    expect(await kindsOf(idle, "hub: member presses")).toEqual([
+      "auction-not-reached",
+    ]);
+  });
+
+  // Повторный `/start` обязан ответить как первый: приложение, которое
+  // запомнило человека и на второй раз отказало, матрицу не проходит.
+  it("fails when a repeated /start answers differently", async () => {
+    const forgetful: AccessMatrixApp = (ports) => {
+      const act = stubApp("hub")(ports);
+      let seen = false;
+      return async (input) => {
+        const answer = await act(input);
+        if (seen) return "declined";
+        seen = true;
+        return answer;
+      };
+    };
+    const violations = await checkAccessMatrixCase(
+      forgetful,
+      caseOf("hub: newcomer starts"),
+    );
+    expect(violations.map((v) => v.kind)).toEqual(["wrong-answer"]);
+    expect(violations[0]?.detail).toContain('"attempt":2');
+  });
+
+  it("fails when the second update skips Identity", async () => {
+    const caching: AccessMatrixApp = (ports) => {
+      const act = stubApp("auction")(ports);
+      let cached: Awaited<ReturnType<typeof act>> | undefined;
+      return async (input) => {
+        cached ??= await act(input);
+        return cached;
+      };
+    };
+    const violations = await checkAccessMatrixCase(
+      caching,
+      caseOf("auction: newcomer starts"),
+    );
+    expect(violations.map((v) => v.kind)).toEqual(["wrong-identity-calls"]);
+    expect(violations[0]?.detail).toContain('"attempt":2');
+  });
+
   it("fails when the blocked get the answer of the pending", async () => {
     const flattening: AccessMatrixApp = (ports) => async (input) => {
       const answer = await stubApp("hub")(ports)(input);

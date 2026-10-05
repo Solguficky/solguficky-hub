@@ -79,7 +79,7 @@ export function describeAccessMatrix(
       expect(own.length).toBeGreaterThan(0);
     });
     for (const matrixCase of own) {
-      it(matrixCase.name, async () => {
+      it(`${matrixCase.name}: ${matrixCase.answer}`, async () => {
         expect(await checkAccessMatrixCase(createApp, matrixCase)).toEqual([]);
       });
     }

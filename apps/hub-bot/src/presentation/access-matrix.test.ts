@@ -115,5 +115,12 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
   for (const [text, answer] of frames) {
     if (shown.includes(refusalText(text))) return answer;
   }
+  // Запись границы без единого сообщения — не ответ человеку: «ok» в логе
+  // ещё не значит, что он что-то увидел.
+  const answered = calls.some(
+    (call) =>
+      call.method === "sendMessage" || call.method === "editMessageText",
+  );
+  if (!answered) throw new Error("the person got no answer");
   return boundary.fields.result === "ok" ? "admitted" : "unavailable";
 });

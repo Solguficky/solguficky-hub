@@ -38,7 +38,7 @@ describe("decideHubAccess", () => {
     expect(decideHubAccess(["admin"], true)).toBe("blocked");
   });
 
-  it("names pending and blocked refusals differently", () => {
+  it("names pending, declined and blocked refusals differently", () => {
     expect(hubAccessErrors.pending).toBe("hub_access_pending");
     expect(hubAccessErrors.declined).toBe("hub_access_declined");
     expect(hubAccessText("declined", identityId, undefined)).toBe(
