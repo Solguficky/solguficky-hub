@@ -7,7 +7,8 @@
 - исходники `pekko-persistence-typed_3-1.6.0-sources.jar`: `EventSourcedBehavior.scala`, `internal/ReplayingEvents.scala`, `internal/Running.scala`, `internal/StashManagement.scala`;
 - прогоны той же сессии: L0-тест, который упал на полном прогоне и прошёл на одиночном, и мутация на L1;
 - `apps/auction/src/main/scala/auction/entity/AuctionEntity.scala` и `aggregate/LotRoster.scala` из среза PER-325 — разделы о сигнале восстановления, `pipeToSelf`, памяти вне журнала и пассивации;
-- для них же: `internal/ReplayingEvents.scala` и `internal/Running.scala` того же source-jar, `scaladsl/ActorContext.scala` из `pekko-actor-typed_3-1.6.0-sources.jar` и `reference.conf` из `pekko-cluster-sharding_3-1.6.0.jar`.
+- для них же: `internal/ReplayingEvents.scala` и `internal/Running.scala` того же source-jar, `scaladsl/ActorContext.scala` из `pekko-actor-typed_3-1.6.0-sources.jar` и `reference.conf` из `pekko-cluster-sharding_3-1.6.0.jar`;
+- `PlanLot` в `AuctionEntity.scala` из среза PER-319 — раздел о порядке сообщений; для него `internal/ClusterShardingImpl.scala` из `pekko-cluster-sharding-typed_3-1.6.0-sources.jar`, `ShardRegion.scala` и `Shard.scala` из `pekko-cluster-sharding_3-1.6.0-sources.jar`, `actor/dungeon/Dispatch.scala` и `dispatch/Dispatcher.scala` из `pekko-actor_3-1.6.0-sources.jar` и мутация L1-теста `AuctionOpeningIntegrationSpec`.
 
 Формат, в котором событие лежит в базе, — в [ADR-058](../../decisions/ADR-058-auction-journal-row-json-storage-model.md). Сами правила торгов, `decide` и `apply`, — в [domain-types.md](domain-types.md).
 
@@ -241,6 +242,41 @@ Entity может сама попросить шард её усыпить: по
 
 Тонкость в окне между просьбой и остановкой. Просьба — обычное сообщение шарду, и пока шард его не обработал, команды доходят до entity мимо буфера. Аукцион поэтому просит пассивацию только из `Initial`, без журнала. Из `Draft` или `Scheduled` команда старта торгов, принятая в это окно, ввела бы аукцион в торги, а пассивация тут же убрала бы его из запоминания вместе с таймерами. Это поймало внешнее ревью первой версии фикса.
 
+### Порядок сообщений вместо блокировки
+
+Администратор задаёт лоту цену и шаг командой `ScheduleLot`, а со стартом торгов условия должны замёрзнуть. Обе команды приходят аукциону, но условия живут в журнале лота: аукцион решает «можно ли» и пересылает команду лоту. Между решением и пересылкой есть окно. Проскочи в него старт торгов — аукцион скажет «можно», лот откроется без условий и откажет, а условия лягут в него уже после.
+
+В .NET такое окно закрывают блокировкой. Здесь блокировки нет, окно закрыто порядком сообщений:
+
+```scala
+case PlanLot(plan, initiator, replyTo) =>
+  Auction.decide(state.auction, plan) match {
+    case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+    case Right(schedule) =>
+      Effect.none.thenRun { _ =>
+        context.pipeToSelf(lots.schedule(plan.lot, schedule, initiator))(LotPlanned(plan.lot, replyTo, _))
+      }
+  }
+```
+
+Решение и отправка лоту происходят в обработке одного сообщения: `Effect.none.thenRun` выполняет действие сразу, без ожидания журнала (раздел выше). Пока аукцион обрабатывает `PlanLot`, `StartPrebidding` ждёт в его почтовом ящике. Дойдя до обработки, старт сначала запишет событие, потом спросит у лота состояние и только по ответу пошлёт `OpenLot`. Всё это уходит позже, чем ушёл `ScheduleLot`.
+
+Остаётся вопрос, дойдёт ли до лота первым то, что раньше ушло. Между аукционом и лотом стоит шардинг, а `ask` к лоту каждый раз создаёт временного получателя ответа. Документация Pekko обещает порядок для пары «отправитель — получатель», но отправитель здесь формально не аукцион: в `ClusterShardingImpl.scala` и `tell`, и `ask` у `EntityRef` сводятся к одной строке без явного отправителя:
+
+```scala
+shardRegion ! ShardingEnvelope(entityId, message)
+```
+
+Порядок держится не на обещании для пары, а на трёх фактах из исходников 1.6.0:
+
+- **Отправка локальному актору синхронно кладёт сообщение в его очередь.** `!` ведёт в `Dispatch.sendMessage`, оттуда в `Dispatcher.dispatch`, первая строка которого — `mbox.enqueue(receiver.self, invocation)`. Два вызова `!` подряд из одного потока ложатся в очередь в том же порядке. Аналог в .NET — `Channel<T>` с одним читателем: записи из одного потока он не переставляет.
+- **Регион шардинга пересылает и буферизует по порядку.** В `ShardRegion.deliverMessage` сообщение уходит поднятому шарду, а если к шарду уже есть буфер, встаёт в его конец, а не обгоняет. В коде так и написано: «Since now messages to a shard is buffered then those messages must be in right order».
+- **Шард делает то же для entity.** В `Shard.deliverMessage` живая entity получает `ref.tell`, entity в пассивации — `appendToMessageBuffer`, отсутствующую шард создаёт и передаёт ей сообщение. Просыпающаяся entity держит пришедшее в stash в порядке прихода (раздел «Восстановление и stash»).
+
+Каждое звено — очередь, которая не переставляет, поэтому `ScheduleLot` доходит до лота раньше вопроса о состоянии и раньше `OpenLot`. Гарантия проверена для одного узла: регион, шард и обе entity живут в одном процессе. Как порядок держится, когда регион пересылает сообщение на другой узел, разбор не проверял — Auction пока одноузловой.
+
+Цена решения — проверку нельзя отделить от отправки. Появится между ними второй асинхронный шаг, «спросить кого-то и только потом слать лоту», — окно откроется снова, и порядок уже ничего не защитит.
+
 ## Урок
 
 - **Функция вида «дай текущий X» у фреймворка может читать не твоё состояние, а состояние того, кто сейчас держит управление.** `lastSequenceNumber` верна внутри обработчиков в устойчивом состоянии и ошибается в переходном — при выполнении из stash сразу после восстановления. Там, где значение выводится из собственных данных, его надёжнее вывести самому.
@@ -251,6 +287,7 @@ Entity может сама попросить шард её усыпить: по
 - **«После восстановления» под шардингом значит «при каждом пробуждении», и только при нём.** Код на `RecoveryCompleted` дешёв в тесте и дорог на каталоге в сотни лотов: каждое пробуждение — вопрос каждому лоту, а каждый вопрос будит лот.
 - **Таймер в памяти не хранят, а выводят.** Дедлайн лежит в журнале лота, таймер — производная от него, построенная на пробуждении. Нулевая задержка для прошедшего момента сводит «пропустили, пока лежали» к обычному срабатыванию. Тот же приём держит sweeper `reminder_task` в Notifications: момент в базе, будильник — производная.
 - **Включил «помни всё» — реши, что забывать.** Remember-entities запоминает любой ключ, по которому пришло сообщение, в том числе ошибочный. Без правила забвения запоминание растёт от внешних вызовов. Правило забвения само становится гонкой, если просьба забыть и смена состояния идут разными очередями.
+- **Гонку двух команд одного актора можно закрыть порядком, а не замком.** Условие одно: проверка и отправка следствия происходят в обработке одного сообщения, без промежуточного ожидания. Тогда всё, что пришло актору позже, и своё отправит позже. Перенос на другой стек — грин Orleans или обработчик с одной очередью — требует проверить, сохраняет ли транспорт порядок до получателя: здесь это видно по исходникам, а не по названию паттерна.
 - **«Долговечное» хранилище по умолчанию стоит проверять на своей топологии.** `ddata` долговечен на диске, но читает прошлое только при том же порте и том же каталоге. Узел с портом `0` или под без тома теряет его на каждом рестарте.
 
 ## Почему так, а не иначе
@@ -267,6 +304,8 @@ Entity может сама попросить шард её усыпить: по
 - **Хранилище запоминания `ddata`** — умолчание. Отвергнуто: при порте remoting `0` каталог LMDB на каждом старте новый, в поде без тома он пропадает с подом. Закрепить порт и смонтировать том можно, но это вторая долговечная система рядом с PostgreSQL. Цена `eventsourced`: служебные строки шардинга лежат в таблице журнала не в JSON модели хранения ADR-058.
 - **Будить аукционы при старте узла по read model.** Отвергнуто: аукцион, открытый за мгновение до падения, проекция ещё не видела, и его никто не поднимет.
 - **Обходить просроченные лоты по read model раз в N секунд.** Отвергнуто: второй механизм закрытия рядом с таймером аукциона и опоздание на период обхода.
+- **`ScheduleLot` мимо аукциона: прочитать заморозку, затем слать лоту.** Так устроен `AddLot`: оболочка спрашивает аукцион `Inspect` и шлёт команду лоту сама. Для условий торгов отвергнуто: между чтением и командой проходит старт, и заморозка не держит. Принят ход через entity аукциона ([дополнение ADR-047 от 2026-10-05](../../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-05-schedulelot-через-аукцион)).
+- **Событие аукциона на каждое `ScheduleLot`.** Дало бы аукциону окно повторов, но условия торгов оказались бы в двух журналах. Отвергнуто тем же дополнением: упорядочивание даёт и очередь сообщений, без второй копии условий.
 - **Пассивировать всё, что вне торгов.** Первая версия фикса неограниченного запоминания. Отвергнута ревью: окно гонки забывало аукцион, вошедший в торги. Цена выбранного — `Draft` и `Scheduled` помнятся, но их число ограничено сходками.
 
 ## Схема
@@ -333,6 +372,28 @@ sequenceDiagram
     Note over A: лот Closed, журнал аукциона не вырос
 ```
 
+`ScheduleLot` и старт торгов: порядок держат очереди, а не замок.
+
+```mermaid
+sequenceDiagram
+    participant B as Бот (gRPC)
+    participant A as Аукцион
+    participant R as Регион и шард
+    participant L as Лот
+    B->>A: PlanLot
+    B->>A: Start (ждёт в очереди за PlanLot)
+    Note over A: decide: Scheduled, лот в реестре
+    A->>R: ScheduleLot (в той же обработке)
+    Note over A: Start: persist PrebiddingStarted
+    A->>R: вопрос о состоянии
+    R->>L: ScheduleLot
+    R->>L: вопрос о состоянии
+    L-->>A: Scheduled
+    A->>R: OpenLot
+    R->>L: OpenLot
+    Note over L: торги с условиями администратора
+```
+
 ## Первоисточники
 
 - [Pekko: Event Sourcing](https://pekko.apache.org/docs/pekko/current/typed/persistence.html) — зачем: команда, эффект, событие, stash во время восстановления и snapshot глазами документации.
@@ -349,6 +410,9 @@ sequenceDiagram
 - [Pekko: Interaction Patterns, Scheduling messages to self](https://pekko.apache.org/docs/pekko/current/typed/interaction-patterns.html#scheduling-messages-to-self) — зачем: `Behaviors.withTimers`, ключ таймера и замена по ключу.
 - `pekko-cluster-sharding_3-1.6.0-sources.jar` в Maven Central — зачем: `NoPassivationStrategy` при remember-entities (`ClusterShardingSettings.scala`), перезапуск остановившейся без `Passivate` entity и `remove` после пассивации (`Shard.scala`); `reference.conf` того же модуля — `durable.keys = ["shard-*"]`, а `reference.conf` модуля `pekko-distributed-data` — каталог LMDB с портом в имени.
 - [Дополнение ADR-045 от 2026-10-05](../../decisions/ADR-045-auction-scala-pekko-persistence-jdbc.md#дополнение-2026-10-05-аукцион-помнится-шардингом) — зачем: решение владельца, отвергнутые варианты и цена.
+- `pekko-cluster-sharding-typed_3-1.6.0-sources.jar`, `pekko-cluster-sharding_3-1.6.0-sources.jar` и `pekko-actor_3-1.6.0-sources.jar` в Maven Central — зачем: что `ask` к `EntityRef` уходит в регион без отправителя (`EntityRefImpl` в `ClusterShardingImpl.scala`), что регион и шард буферизуют по порядку (`ShardRegion.deliverMessage`, `Shard.deliverMessage`) и что локальная отправка синхронно кладёт сообщение в очередь (`Dispatcher.dispatch`).
+- [Pekko: Message Delivery Reliability](https://pekko.apache.org/docs/pekko/current/general/message-delivery-reliability.html) — зачем: что обещано про порядок для пары «отправитель — получатель» и чего не обещано вовсе.
+- [Дополнение ADR-047 от 2026-10-05](../../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-05-schedulelot-через-аукцион) — зачем: решение владельца провести `ScheduleLot` через аукцион и отвергнутые варианты.
 
 ## Проверь себя
 
@@ -374,3 +438,7 @@ sequenceDiagram
    Ответ: без пассивации любой `Inspect` по чужому id копил бы помнящиеся entity, а запланированный аукцион в окне между просьбой и остановкой мог бы войти в торги и забыться. Проверка: там же, тесты `asks its shard to passivate an auction that was never drafted` и `does not ask its shard to passivate a drafted, a scheduled or a trading auction`.
 11. Где хранилище `ddata` держит запомненные entity и прочтёт ли его узел Auction после рестарта?
    Ответ: в LMDB-каталоге рабочей директории, имя которого содержит порт remoting; у узла порт `0`, поэтому нет. Проверка: `unzip -p pekko-distributed-data_3-1.6.0.jar reference.conf` — ключ `lmdb.dir` и комментарий о порте; `grep -n "port" apps/auction/src/main/resources/application.conf` — `port = 0`.
+12. Что случится, если команда лоту из `PlanLot` уйдёт не в обработке сообщения, а с задержкой, уже после старта торгов?
+   Ответ: лот откроется раньше, чем получит условия, откажет в открытии, а условия лягут в него уже вне торгов. Проверка мутацией: обернуть `lots.schedule(...)` в `PlanLot` в `Future(Thread.sleep(500))(ExecutionContext.global).flatMap(...)` и из `apps/auction` выполнить `AUCTION_INTEGRATION_TESTS=1 sbt -batch "testOnly auction.entity.AuctionOpeningIntegrationSpec -- -z \"right before the start\""`. Тест `opens a lot whose conditions reached the auction right before the start` падает: активен один лот из двух. Без мутации тест зелёный.
+13. На чём держится порядок «`ScheduleLot` раньше `OpenLot`», если `ask` к `EntityRef` уходит без отправителя?
+   Ответ: не на гарантии для пары акторов, а на синхронной постановке в очередь региона и на том, что регион и шард пересылают и буферизуют по порядку. Проверка: `unzip -p pekko-cluster-sharding_3-1.6.0-sources.jar org/apache/pekko/cluster/sharding/ShardRegion.scala | grep -n "must be in right order"`.
