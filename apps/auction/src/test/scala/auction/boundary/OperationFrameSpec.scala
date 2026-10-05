@@ -143,6 +143,10 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
       grpc(Status.Code.UNIMPLEMENTED)("error_category") shouldBe "invariant"
     }
 
+    "classifies an op_id taken by another command as an invariant, not an unexpected failure" in {
+      grpc(Status.Code.ALREADY_EXISTS)("error_category") shouldBe "invariant"
+    }
+
     "writes the code with the service's own description as the error of an expected refusal" in {
       grpc(Status.Code.INVALID_ARGUMENT)("error") shouldBe "INVALID_ARGUMENT: described"
     }

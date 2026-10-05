@@ -83,6 +83,15 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         Status.Code.NOT_FOUND
     }
 
+    "answers an op_id taken by another command with ALREADY_EXISTS rather than a refusal or a bid_id" in {
+      ResponseMapping.placeBid(Left(PlaceBidRejected.OpIdTaken)).left.value.getCode shouldBe
+        Status.Code.ALREADY_EXISTS
+      ResponseMapping.setProxyLimit(Left(SetProxyLimitRejected.OpIdTaken)).left.value.getCode shouldBe
+        Status.Code.ALREADY_EXISTS
+      ResponseMapping.withdrawProxyLimit(Left(WithdrawProxyLimitRejected.OpIdTaken)).left.value.getCode shouldBe
+        Status.Code.ALREADY_EXISTS
+    }
+
     "answers catalog commands with the stored card or a named refusal" in {
       val card = LotCard(LotId(UUID.randomUUID()), LotTitle("Лот").value, "описание", None)
       ResponseMapping.createLotCard(Right(card)).getAccepted shouldBe wire.LotCard("Лот", "описание")

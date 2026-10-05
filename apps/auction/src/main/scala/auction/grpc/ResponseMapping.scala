@@ -30,7 +30,9 @@ import io.grpc.Status
  *
  * Именованный отказ торгов и каталога — значение ответа, а не статус (integration.md, «Auction gRPC»): он окончателен,
  * несёт данные, которые край показывает человеку, а статус край прочитал бы как сбой и завёл в ретрай. Статусом уходит
- * только то, что решением торгов не является: `LotNotFound` — это `NOT_FOUND` из таблицы статусов контракта.
+ * только то, что решением торгов не является: `LotNotFound` — это `NOT_FOUND` из таблицы статусов контракта, а
+ * `OpIdTaken` — `ALREADY_EXISTS`: `op_id` занят другой командой, и это сбой клиента, а не исход торгов, который
+ * показывают человеку.
  */
 object ResponseMapping {
 
@@ -38,6 +40,7 @@ object ResponseMapping {
     outcome match {
       case Right(envelope) => Right(accepted(envelope))
       case Left(PlaceBidRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
+      case Left(PlaceBidRejected.OpIdTaken) => Left(opIdTaken)
       case Left(rejected) => Right(wire.PlaceBidResponse().withRefused(wire.PlaceBidRefusal(refusal(rejected))))
     }
 
@@ -95,6 +98,7 @@ object ResponseMapping {
             throw new IllegalStateException(s"lot answered a proxy limit with ${other.getClass.getSimpleName}")
         }
       case Left(SetProxyLimitRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
+      case Left(SetProxyLimitRejected.OpIdTaken) => Left(opIdTaken)
       case Left(rejected) =>
         val reason = rejected match {
           case SetProxyLimitRejected.LotNotOpen => wire.SetProxyLimitRefusal.Reason.LotNotOpen(wire.LotNotOpen())
@@ -104,8 +108,8 @@ object ResponseMapping {
             wire.SetProxyLimitRefusal.Reason.ProxyDisabledForLot(wire.ProxyDisabledForLot())
           case SetProxyLimitRejected.CurrencyMismatch =>
             wire.SetProxyLimitRefusal.Reason.CurrencyMismatch(wire.CurrencyMismatch())
-          case SetProxyLimitRejected.LotNotFound =>
-            throw new IllegalStateException("LotNotFound is a status, not a refusal value")
+          case SetProxyLimitRejected.LotNotFound | SetProxyLimitRejected.OpIdTaken =>
+            throw new IllegalStateException(s"$rejected is a status, not a refusal value")
         }
         Right(wire.SetProxyLimitResponse().withRefused(wire.SetProxyLimitRefusal(reason)))
     }
@@ -122,6 +126,7 @@ object ResponseMapping {
             throw new IllegalStateException(s"lot answered a proxy withdrawal with ${other.getClass.getSimpleName}")
         }
       case Left(WithdrawProxyLimitRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
+      case Left(WithdrawProxyLimitRejected.OpIdTaken) => Left(opIdTaken)
       case Left(WithdrawProxyLimitRejected.NoActiveProxyLimit) =>
         Right(
           wire
@@ -191,9 +196,11 @@ object ResponseMapping {
         wire.PlaceBidRefusal.Reason.BidNotAtNextPrice(wire.BidNotAtNextPrice(Some(money(expected))))
       case PlaceBidRejected.BidBelowMinimum(minRequired) =>
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(money(minRequired))))
-      case PlaceBidRejected.LotNotFound =>
-        throw new IllegalStateException("LotNotFound is a status, not a refusal value")
+      case PlaceBidRejected.LotNotFound | PlaceBidRejected.OpIdTaken =>
+        throw new IllegalStateException(s"$rejected is a status, not a refusal value")
     }
+
+  private val opIdTaken: Status = Status.ALREADY_EXISTS.withDescription("op_id belongs to another command")
 
   /**
    * Отказ по праву — значение ответа, как отказ каталога: он окончателен, и экран администратора показывает его

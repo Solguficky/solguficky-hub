@@ -110,7 +110,7 @@ object OperationFrame {
       case Status.Code.DEADLINE_EXCEEDED => "timeout"
       case Status.Code.UNAVAILABLE => "dependency_unavailable"
       case Status.Code.INVALID_ARGUMENT | Status.Code.NOT_FOUND | Status.Code.FAILED_PRECONDITION |
-          Status.Code.UNIMPLEMENTED =>
+          Status.Code.ALREADY_EXISTS | Status.Code.UNIMPLEMENTED =>
         "invariant"
       case _ => "unexpected"
     }

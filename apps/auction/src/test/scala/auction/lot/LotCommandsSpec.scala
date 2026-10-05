@@ -14,9 +14,9 @@ import scala.util.Try
 /**
  * Последовательности команд ставки против независимой референсной модели (testing-strategy.md, L4).
  *
- * Порядок здесь и есть предмет проверки: залп равных сумм, повтор принятого и отклонённого `op_id`, смена лидера.
- * Модель держит цену, лидера и принятые `op_id` на примитивах и считает шаг своим способом, а не через
- * [[StepPolicy.step]], поэтому расхождение ядра с правилами RFC-011 не прячется за общей реализацией.
+ * Порядок здесь и есть предмет проверки: залп равных сумм, повтор принятого и отклонённого `op_id` — своим участником и
+ * чужим, — смена лидера. Модель держит цену, лидера и принятые `op_id` на примитивах и считает шаг своим способом, а не
+ * через [[StepPolicy.step]], поэтому расхождение ядра с правилами RFC-011 не прячется за общей реализацией.
  */
 final class LotCommandsSpec extends AnyWordSpec with Checkers {
 
@@ -108,7 +108,8 @@ object LotCommands extends Commands {
 
     private def expected(state: State): Expected =
       state.accepted.get(opN) match {
-        case Some(original) => Expected.Repeat(original)
+        case Some(original @ (owner, _)) =>
+          if (owner == who) Expected.Repeat(original) else Expected.Reject(PlaceBidRejected.OpIdTaken)
         case None =>
           val required = state.next
           if (foreign) Expected.Reject(PlaceBidRejected.CurrencyMismatch)
