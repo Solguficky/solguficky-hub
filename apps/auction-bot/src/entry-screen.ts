@@ -1,13 +1,16 @@
-import type {
-  AuctionBlock,
-  AuctionButton,
-  AuctionDenial,
-  AuctionScreenBody,
-  BidOriginView,
-  FeedItem,
-  HistoryItem,
-  LotStatusView,
-  Money,
+import {
+  type AnswerRefusal,
+  type AuctionBlock,
+  type AuctionButton,
+  type AuctionDenial,
+  type AuctionScreenBody,
+  type BidOriginView,
+  type CommandResult,
+  type FeedItem,
+  type HistoryItem,
+  type LotStatusView,
+  MAX_COMMAND_AMOUNT,
+  type Money,
 } from "@solguficky/auction-bot-ui";
 import type { Presentation } from "./config.js";
 import { defaultFaq, entryCallback, type FaqContent } from "./faq.js";
@@ -19,7 +22,8 @@ import type { ScreenId } from "./screen-catalog.js";
 // с хабом не делятся, даже когда совпадают.
 //
 // Общий FAQ и меню — оболочка. Лента и карточка лота — тело общего пакета
-// (PER-306), ставка — PER-317.
+// (PER-306), лист ставки — PER-317: подтверждение, вопросы и выбор имени
+// написаны по дизайн-коду сразу.
 export type AuctionEntryScreen =
   | { kind: "welcome" }
   | { kind: "faq" }
@@ -33,7 +37,7 @@ export type AuctionEntryScreen =
   | { kind: "unavailable" };
 
 export type TelegramButton =
-  | { text: string; callback_data: string }
+  | { text: string; callback_data: string; style?: "danger" }
   | { text: string; url: string };
 
 export type RenderedScreen = {
@@ -50,6 +54,9 @@ export type RenderedScreen = {
   // Изображение rich-карточки лота: адаптер ставит его последним блоком. Байты
   // и `file_id` достаёт адаптер Telegram, экрану достаточно ключа.
   photo?: { lotId: string; version: string };
+  // Вопрос: адаптер шлёт его новым сообщением с `force_reply` (дизайн-код,
+  // «Вопросы»).
+  asks?: true;
 };
 
 export type RenderOptions = {
@@ -170,9 +177,11 @@ export function renderEntryScreen(
       };
     case "auction": {
       const body = renderBody(screen.body, options);
-      // Хронология написана по дизайн-коду сразу: возврат тела и «Меню» —
-      // один последний ряд, боковой кнопки FAQ нет.
-      if (body.id === "history") {
+      // Подтверждение и вопрос несут только свои ряды: «Да» и «Нет», «Отмена».
+      if (body.asks === true || isConfirm(body.id)) return body;
+      // Хронология и выбор имени написаны по дизайн-коду сразу: возврат тела
+      // и «Меню» — один последний ряд, боковой кнопки FAQ нет.
+      if (body.id === "history" || body.id === "name-choice") {
         const back = body.keyboard.at(-1) ?? [];
         return {
           ...body,
@@ -220,14 +229,19 @@ function renderBody(
     }
   }
   const keyboard = body.keyboard.map((row) =>
-    row.map((button) => renderButton(button, items)),
+    row.map((button) => renderButton(button, items, body.blocks)),
   );
   const id = screenOf(body.blocks);
+  const leaf = renderLeaf(body.blocks);
+  if (leaf !== undefined) return { id, keyboard, ...leaf };
   const lot = body.blocks.find(
     (block): block is LotBlock => block.kind === "lot",
   );
   if (id === "lot" && lot !== undefined) {
-    return { id, keyboard, ...renderCard(lot, options) };
+    const result = body.blocks.find(
+      (block): block is ResultBlock => block.kind === "result",
+    );
+    return { id, keyboard, ...renderCard(lot, options, result?.result) };
   }
   const history = body.blocks.find(
     (block): block is HistoryBlock => block.kind === "history",
@@ -258,7 +272,14 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "history":
         screen = "history";
         break;
+      case "confirm":
+        return block.command === "bid" ? "bid-confirm" : "proxy-confirm";
+      case "question":
+        return `${block.question}-question`;
+      case "name-choice":
+        return "name-choice";
       case "feed":
+      case "result":
         break;
       default: {
         const _exhaustive: never = block;
@@ -270,6 +291,11 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
 }
 
 type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
+type ResultBlock = Extract<AuctionBlock, { kind: "result" }>;
+
+function isConfirm(id: ScreenId): boolean {
+  return id === "bid-confirm" || id === "proxy-confirm";
+}
 type HistoryBlock = Extract<AuctionBlock, { kind: "history" }>;
 
 // Строка ленты. Карточку лота собирает `renderCard`: у неё своя разметка.
@@ -281,9 +307,175 @@ function renderBlock(block: AuctionBlock): string {
         : `Лоты по возрастанию цены, страница ${block.page + 1} из ${block.pageCount}.`;
     case "lot":
     case "history":
+    case "result":
+    case "confirm":
+    case "question":
+    case "name-choice":
       return "";
     default: {
       const _exhaustive: never = block;
+      return _exhaustive;
+    }
+  }
+}
+
+// Экраны листа ставки (PER-317): подтверждение, вопрос и выбор имени. Тексты
+// принадлежат оболочке; слова — те же, что у бота хаба, словарь один.
+function renderLeaf(
+  blocks: readonly AuctionBlock[],
+): Pick<RenderedScreen, "text" | "format" | "asks"> | undefined {
+  for (const block of blocks) {
+    switch (block.kind) {
+      case "confirm":
+        return { format: "html", text: confirmText(block) };
+      case "question":
+        return { format: "html", text: questionText(block), asks: true };
+      case "name-choice":
+        return { format: "html", text: nameChoiceText(block) };
+      default:
+        break;
+    }
+  }
+  return undefined;
+}
+
+const lotLine = (title: string | undefined) =>
+  title === undefined
+    ? []
+    : [`Лот: ${escapeHtml(truncate(title, TITLE_LIMIT))}`];
+
+function confirmText(
+  block: Extract<AuctionBlock, { kind: "confirm" }>,
+): string {
+  return block.command === "bid"
+    ? [
+        "<b>Ставка</b>",
+        ...lotLine(block.title),
+        `Сумма: ${money(block.amount)}`,
+        "Отменить ставку нельзя.",
+      ].join("\n")
+    : [
+        "<b>Автоставка</b>",
+        ...lotLine(block.title),
+        `Лимит: ${money(block.amount)}`,
+        proxyGap(block.currentPrice, block.amount),
+        "Лимит видишь только ты.",
+      ].join("\n");
+}
+
+function questionText(
+  block: Extract<AuctionBlock, { kind: "question" }>,
+): string {
+  const reason =
+    block.refusal === undefined ? [] : [answerRefusalText(block.refusal)];
+  const current = (prefix: string) =>
+    block.current === undefined
+      ? []
+      : [`Сейчас: ${prefix}${money(block.current)}`];
+  switch (block.question) {
+    case "bid":
+      return [
+        ...reason,
+        "<b>Своя сумма</b>",
+        "Пришли сумму ставки в рублях.",
+        ...current("от "),
+        "Например: 1 500",
+      ].join("\n");
+    case "proxy":
+      return [
+        ...reason,
+        "<b>Автоставка</b>",
+        "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+        ...current(""),
+        "Например: 3 000",
+      ].join("\n");
+    case "alias":
+      return [
+        ...reason,
+        "<b>Псевдоним</b>",
+        "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
+        "Например: Сова",
+      ].join("\n");
+    default: {
+      const _exhaustive: never = block.question;
+      return _exhaustive;
+    }
+  }
+}
+
+function nameChoiceText(
+  block: Extract<AuctionBlock, { kind: "name-choice" }>,
+): string {
+  return [
+    ...(block.refusal === undefined ? [] : [answerRefusalText(block.refusal)]),
+    "<b>Имя в аукционе</b>",
+    "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
+    block.username === undefined
+      ? "Ника в Telegram у тебя нет: возьми псевдоним."
+      : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
+  ].join("\n");
+}
+
+// Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
+// может поднять цену за человека, перебивая чужие ставки по шагу.
+function proxyGap(currentPrice: Money, limit: Money): string {
+  const gap = limit.minorUnits - currentPrice.minorUnits;
+  return gap > 0
+    ? `Цена сейчас ${money(currentPrice)}: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на ${money({ minorUnits: gap, currency: limit.currency })}.`
+    : `Цена сейчас ${money(currentPrice)}: лимит не выше неё, и перебивать бот не будет.`;
+}
+
+const answerRefusals: Record<AnswerRefusal, string> = {
+  "not-text": "Нужен ответ текстом.",
+  "not-a-number": "Это не сумма.",
+  "other-currency": "Ставки принимаются только в рублях.",
+  "not-positive": "Сумма должна быть больше нуля.",
+  "too-precise": "Копеек — не больше двух знаков.",
+  "too-large": `Бот принимает суммы до ${money({ minorUnits: MAX_COMMAND_AMOUNT, currency: "RUB" })}.`,
+  "alias-invalid": "Такой псевдоним не подходит.",
+  "alias-taken": "Этот псевдоним уже занят.",
+  "name-frozen": "Имя уже не поменять: ты ставил в этом аукционе.",
+  "username-missing": "Ника в Telegram у тебя нет: возьми псевдоним.",
+};
+
+function answerRefusalText(refusal: AnswerRefusal): string {
+  return answerRefusals[refusal];
+}
+
+// Исход команды — первая строка карточки (дизайн-код, «Доставка»): после «Да»
+// человек видит и ответ Auction, и лот. Отказ называет цену сам.
+export function resultText(result: CommandResult): string {
+  if (result.kind === "unknown") {
+    return "Аукцион не ответил. Проверь цену на карточке: команда могла пройти.";
+  }
+  if (result.kind === "accepted") {
+    return result.command === "bid"
+      ? `Ставка ${money(result.amount)} принята.`
+      : `Автоставка до ${money(result.amount)} включена.`;
+  }
+  const { refusal } = result;
+  switch (refusal.kind) {
+    case "lot-not-open":
+      return "Торги по лоту не идут.";
+    case "lot-on-hold":
+      return `Лот ждёт финала, ставки сейчас не принимаются. Цена: ${money(refusal.currentPrice)}.`;
+    case "bid-below-minimum":
+      return `Ставка ниже порога. Сейчас можно от ${money(refusal.minRequired)}.`;
+    case "bid-not-at-next-price":
+      return `В финале ставят ровно ${money(refusal.expected)}.`;
+    case "bidder-is-leader":
+      return `Ты уже лидируешь: цена ${money(refusal.currentPrice)} — твоя.`;
+    case "currency-mismatch":
+      return "Лот торгуется в другой валюте.";
+    case "proxy-below-current-price":
+      return `Лимит ниже текущей цены. Нужно от ${money(refusal.minLimit)}.`;
+    case "proxy-disabled":
+      return "Автоставка на этом лоте выключена.";
+    // Выбор имени — свой экран, а не строка карточки: сюда отказ не доходит.
+    case "display-name-not-chosen":
+      return "Выбери имя в аукционе.";
+    default: {
+      const _exhaustive: never = refusal;
       return _exhaustive;
     }
   }
@@ -347,9 +539,11 @@ function originLabel(origin: BidOriginView): string {
 function renderCard(
   block: LotBlock,
   options: RenderOptions,
+  result?: CommandResult,
 ): Pick<RenderedScreen, "text" | "format" | "photo"> {
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
   const status = statusLines(block, options);
+  const note = result === undefined ? [] : [escapeHtml(resultText(result))];
   const rich = (options.presentation ?? "rich") === "rich";
   const description = fitDescription(
     title,
@@ -361,6 +555,7 @@ function renderCard(
     return {
       format: "html",
       text: [
+        ...note,
         `<b>${escapeHtml(title)}</b>`,
         escapeHtml(description),
         escapeHtml(status.join("\n")),
@@ -381,7 +576,7 @@ function renderCard(
   const image = block.card?.image;
   return {
     format: "rich",
-    text: `<h1>${escapeHtml(title)}</h1>${blocks
+    text: `${note.map((line) => `<p>${line}</p>`).join("")}<h1>${escapeHtml(title)}</h1>${blocks
       .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
       .join("")}`,
     ...(image === undefined
@@ -413,6 +608,7 @@ function statusLines(block: LotBlock, options: RenderOptions): string[] {
         ...(status.deadline === undefined
           ? []
           : [`Торги до ${moment(status.deadline, options.timeZone)}.`]),
+        ...proxyLine(block),
       ];
     case "held":
       return [
@@ -436,6 +632,16 @@ function statusLines(block: LotBlock, options: RenderOptions): string[] {
       return _exhaustive;
     }
   }
+}
+
+// Свой лимит смотрящего: чужих Auction не отдаёт, и строка говорит, что этот
+// виден только ему.
+function proxyLine(block: LotBlock): string[] {
+  return block.viewerProxyLimit === undefined
+    ? []
+    : [
+        `Твоя автоставка: до ${money(block.viewerProxyLimit)}. Её видишь только ты.`,
+      ];
 }
 
 // Имени нет, а лидер есть — Auction не отдал имя. Идентификатор вместо имени
@@ -491,6 +697,7 @@ export function truncate(text: string, limit: number): string {
 function renderButton(
   button: AuctionButton,
   items: ReadonlyMap<string, FeedItem>,
+  blocks: readonly AuctionBlock[],
 ): TelegramButton {
   const text = (label: string) => ({
     text: label,
@@ -521,11 +728,44 @@ function renderButton(
       return text("→");
     case "history.back":
       return text("‹ Лот");
+    case "lot.bid-step":
+      return text(`По шагу (${money(button.amount)})`);
+    case "lot.bid-custom":
+      return text("Своя сумма");
+    case "lot.proxy":
+      return text("Автоставка");
+    case "confirm.yes":
+      return { ...text(confirmLabel(blocks)), style: "danger" };
+    case "confirm.no":
+      return text("Нет");
+    case "question.cancel":
+      return text("Отмена");
+    case "name.username": {
+      const choice = blocks.find((block) => block.kind === "name-choice");
+      return text(
+        choice?.kind === "name-choice" && choice.username !== undefined
+          ? `Ник @${choice.username}`
+          : "Ник",
+      );
+    }
+    case "name.alias":
+      return text("Взять псевдоним");
+    case "name.back":
+      return text("‹ Лот");
     default: {
       const _exhaustive: never = button;
       return _exhaustive;
     }
   }
+}
+
+// «Да, …» называет действие и сумму (дизайн-код, «Клавиатура»).
+function confirmLabel(blocks: readonly AuctionBlock[]): string {
+  const confirm = blocks.find((block) => block.kind === "confirm");
+  if (confirm?.kind !== "confirm") return "Да, подтвердить";
+  return confirm.command === "bid"
+    ? `Да, поставить ${money(confirm.amount)}`
+    : "Да, включить автоставку";
 }
 
 function priceLabel(status: LotStatusView): string {

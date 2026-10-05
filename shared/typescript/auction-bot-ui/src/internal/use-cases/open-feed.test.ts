@@ -15,12 +15,14 @@ function lot(n: number, rubles?: number): LotView {
     lotId,
     auctionId: AUCTION_ID,
     version: 1,
+    proxyEnabled: false,
     status:
       rubles === undefined
         ? { kind: "unsold" }
         : {
             kind: "trading",
             currentPrice: { minorUnits: rubles * 100, currency: "RUB" },
+            phase: "online",
           },
   };
 }
@@ -34,6 +36,15 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
       throw new Error("not used");
     },
     listLotHistory: async () => {
+      throw new Error("not used");
+    },
+    placeBid: async () => {
+      throw new Error("not used");
+    },
+    setProxyLimit: async () => {
+      throw new Error("not used");
+    },
+    chooseDisplayName: async () => {
       throw new Error("not used");
     },
     async listAuctionLots({ pageToken }) {

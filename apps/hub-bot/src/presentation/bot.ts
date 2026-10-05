@@ -3,7 +3,9 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   type AuctionResult,
   type AuctionScreenBody,
+  type AuctionUpdate,
   encodeAuctionCallback,
+  isAuctionQuestion,
   type LotImagePort,
   parseAuctionCallback,
   type Viewer,
@@ -74,6 +76,7 @@ import type {
 } from "../notifications/port.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 import type { Tracing } from "../tracing.js";
+import { createUuidV7 } from "../uuid-v7.js";
 import {
   type AuctionParents,
   createAuctionParents,
@@ -457,7 +460,16 @@ type PendingLot = {
   telegramUserId: number;
   expiresAt: number;
 };
-type PendingInput =
+// Вопрос листа ставки (PER-317): шаг и адресат лежат в его «Отмене» и
+// разбираются общим пакетом. Запись в карте нужна только уборке брошенного
+// вопроса — ответ принимается и после рестарта.
+type PendingAuction = {
+  kind: "auction";
+  telegramUserId: number;
+  expiresAt: number;
+};
+type PendingInput = HubPendingInput | PendingAuction;
+type HubPendingInput =
   | PendingQuestion
   | PendingPublishMoment
   | PendingUsername
@@ -543,7 +555,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     handleCallback(ctx, runtime, questions, lotPhotos),
   );
   bot.on("message", (ctx) =>
-    handleMessage(ctx, runtime, questions, { files, albums }),
+    handleMessage(ctx, runtime, questions, { files, albums }, lotPhotos),
   );
   bot.catch((botError) => {
     writeBoundary(
@@ -560,6 +572,7 @@ async function handleMessage(
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
   photos: { files: TelegramFiles; albums: SeenAlbums },
+  lotPhotos: LotPhotos,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -609,6 +622,30 @@ async function handleMessage(
         ? undefined
         : questions.get(questionKey(ctx.chat?.id, replyId));
     const repliedMessage = ctx.message?.reply_to_message;
+    // Ответ на вопрос листа ставки: шаг — `auc`, его разбирает общий пакет.
+    const auctionStep =
+      replyId === undefined || repliedMessage?.from?.id !== ctx.me.id
+        ? undefined
+        : auctionQuestionOf(repliedMessage);
+    if (replyId !== undefined && auctionStep !== undefined) {
+      useCase = "view_auction";
+      outcome = await handleAuctionCallback(
+        ctx,
+        runtime,
+        auctionStep,
+        lotPhotos,
+        {
+          questions,
+          answer: {
+            replyId,
+            ...(ctx.message?.text === undefined
+              ? {}
+              : { text: ctx.message.text }),
+          },
+        },
+      );
+      return;
+    }
     // Шаг вопроса и тот, кому он задан, лежат в его кнопке «Отмена» и
     // возвращаются с ответом: так вопрос переживает рестарт и после него
     // принимает ответ только от спрашиваемого. Вопрос прошлого релиза — без id
@@ -1501,12 +1538,20 @@ async function handleCallback(
     const data = ctx.callbackQuery?.data ?? "";
     if (isAuctionCallback(data)) {
       useCase = "view_auction";
-      await dropOpenQuestions(
-        ctx,
+      const pressedId = ctx.callbackQuery?.message?.message_id;
+      // «Отмена» под вопросом листа ставки: вопрос удаляется, экран приходит
+      // новым сообщением; не дал Telegram удалить — правится на месте.
+      if (isAuctionQuestion(data)) {
+        if (pressedId !== undefined) {
+          questions.delete(questionKey(ctx.chat?.id, pressedId));
+        }
+        ctx.pressedGone = await deletePressed(ctx);
+        ctx.fresh = ctx.pressedGone;
+      }
+      await dropOpenQuestions(ctx, questions, pressedId);
+      outcome = await handleAuctionCallback(ctx, runtime, data, lotPhotos, {
         questions,
-        ctx.callbackQuery?.message?.message_id,
-      );
-      outcome = await handleAuctionCallback(ctx, runtime, data, lotPhotos);
+      });
       return;
     }
     const pressed = parseCallback(ctx.callbackQuery?.data);
@@ -1556,6 +1601,7 @@ async function handleCallback(
           page: 0,
         }),
         lotPhotos,
+        { questions },
       );
       return;
     }
@@ -4670,6 +4716,11 @@ async function handleAuctionCallback(
   runtime: BotRuntime,
   data: string,
   lotPhotos: LotPhotos,
+  delivery: {
+    questions: Map<string, PendingInput>;
+    // Ответ на вопрос листа ставки: на какое сообщение ответили и чем.
+    answer?: { replyId: number; text?: string };
+  },
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
   const identity = await resolvePerson(ctx, runtime, useCase, data);
@@ -4697,6 +4748,15 @@ async function handleAuctionCallback(
   }
   const resolved = packageIdentity(person, identity.blocked);
   const ports = runtime.auction.screenPorts(rpcCall(ctx, useCase));
+  const { answer } = delivery;
+  const input: AuctionUpdate["input"] =
+    answer === undefined
+      ? { kind: "callback", data }
+      : {
+          kind: "reply",
+          data,
+          ...(answer.text === undefined ? {} : { text: answer.text }),
+        };
   let result: AuctionResult;
   try {
     result = await hubTradeCallback({
@@ -4704,9 +4764,16 @@ async function handleAuctionCallback(
         // Личность уже разрешена этим update: шлюз её не перечитывает.
         identity: { resolveIdentity: () => Promise.resolve(resolved) },
         auction: ports.auction,
+        operations: ports.operations,
       },
       identity: resolved,
-      data,
+      user: {
+        telegramUserId: ctx.from?.id ?? 0,
+        ...(ctx.from?.username === undefined
+          ? {}
+          : { telegramUsername: ctx.from.username }),
+      },
+      input,
     });
   } catch (cause) {
     // Лот, которого Auction не знает или который смотрящему не виден, —
@@ -4719,10 +4786,12 @@ async function handleAuctionCallback(
       cause.code === Code.NotFound &&
       parsed.ok &&
       (parsed.intent.kind === "lot" || parsed.intent.kind === "history");
+    // Сбой на ответе вопроса оставляет вопрос открытым: повтор — тот же
+    // ответ ещё раз, а «Повторить» с шагом вопроса сработало бы как «Отмена».
     await showRefusal(
       ctx,
       notFound ? "Лот не найден или больше недоступен." : unavailableText,
-      notFound ? menuOnly() : exitRetry(data),
+      notFound || answer !== undefined ? menuOnly() : exitRetry(data),
     );
     return {
       level: notFound ? "warn" : "error",
@@ -4784,6 +4853,27 @@ async function handleAuctionCallback(
     // сходки и «Включить аукцион».
     canManage: isAdministrator(person),
   };
+  const shown = auctionScreen(view);
+  if (shown.asks === true) {
+    // Вопрос — новым сообщением с режимом ответа; отвергнутый ответ задаёт
+    // его заново, а прежний вопрос закрывается после нового.
+    await askAuctionQuestion(
+      ctx,
+      delivery.questions,
+      shown.screen,
+      answer?.replyId,
+    );
+    return {
+      level: "info",
+      message: "auction question asked",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Ответ принят: результат приходит одним новым сообщением, а «Отмена»
+  // вопроса снимается.
+  if (answer !== undefined) ctx.fresh = true;
   const photoNote = await deliverAuctionScreen(ctx, {
     view,
     lotPhotos,
@@ -4791,6 +4881,10 @@ async function handleAuctionCallback(
     viewer: viewerOf(person),
     logger: runtime.logger,
   });
+  if (answer !== undefined) {
+    delivery.questions.delete(questionKey(ctx.chat?.id, answer.replyId));
+    await closeQuestion(ctx, answer.replyId);
+  }
   return {
     level: "info",
     message:
@@ -5608,8 +5702,8 @@ function removeExpiredQuestions(
 }
 
 // Тело ожидаемого ответа без срока жизни: срок ставит `askQuestion`.
-type PendingBody = PendingInput extends infer Each
-  ? Each extends PendingInput
+type PendingBody = HubPendingInput extends infer Each
+  ? Each extends HubPendingInput
     ? Omit<Each, "expiresAt">
     : never
   : never;
@@ -5894,13 +5988,58 @@ async function askQuestion(
   evictOldestQuestions(questions);
 }
 
+/**
+ * Вопрос листа ставки (PER-317) по правилам вопросов: новое сообщение с
+ * режимом ответа, экран над ним теряет клавиатуру. Шаг и адресат — в «Отмене»
+ * из тела пакета; карта помнит вопрос только ради уборки брошенного.
+ */
+async function askAuctionQuestion(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  screen: ShownScreen,
+  replaces?: number,
+): Promise<void> {
+  if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
+    await clearCallbackKeyboard(ctx);
+  }
+  const prompt = await ctx.reply(screen.text, {
+    ...screenMark("question"),
+    parse_mode: "HTML",
+    reply_markup: {
+      force_reply: true,
+      inline_keyboard: screen.keyboard.inline_keyboard,
+    },
+  });
+  if (replaces !== undefined) {
+    questions.delete(questionKey(ctx.chat?.id, replaces));
+    await closeQuestion(ctx, replaces);
+  }
+  questions.set(questionKey(ctx.chat?.id, prompt.message_id), {
+    kind: "auction",
+    telegramUserId: ctx.from?.id ?? 0,
+    expiresAt: Date.now() + questionTtlMs,
+  });
+  evictOldestQuestions(questions);
+}
+
+// Шаг вопроса листа ставки из сообщения, на которое ответили: `callback_data`
+// его «Отмены», если это вопрос домена `auc`.
+function auctionQuestionOf(replied: unknown): string | undefined {
+  const parsed = RepliedKeyboardSchema.safeParse(replied);
+  if (!parsed.success) return undefined;
+  return parsed.data.reply_markup.inline_keyboard
+    .flat()
+    .map((button) => button.callback_data)
+    .find((data): data is string => isAuctionQuestion(data));
+}
+
 /** Момент публикации выбирают в режимах `p` и `d`; остальные — дата сходки. */
 function publishOriginOf(mode: WhenMode): PublishOrigin | undefined {
   return mode === "p" ? "status" : mode === "d" ? "draft" : undefined;
 }
 
 // Тело ожидаемого ответа из записи карты: срок жизни вопрос получит заново.
-function bodyOf(pending: PendingInput): PendingBody {
+function bodyOf(pending: HubPendingInput): PendingBody {
   const { expiresAt: _expiresAt, ...body } = pending;
   return body;
 }
@@ -5994,18 +6133,6 @@ function createSeenAlbums(): SeenAlbums {
 
 function communityToday(ctx: UpdateContext) {
   return (ctx.today ?? utcToday)();
-}
-
-function createUuidV7(): string {
-  const bytes = Buffer.from(randomUUID().replaceAll("-", ""), "hex");
-  let time = BigInt(Date.now());
-  for (let index = 5; index >= 0; index -= 1) {
-    bytes[index] = Number(time & 0xffn);
-    time >>= 8n;
-  }
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 // Метаданные вызова сервиса. Их собирают прямо перед вызовом, поэтому здесь

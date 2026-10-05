@@ -213,7 +213,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       val lot = trading(price = 110, leader = Some(participant(1)))
 
       Lot.decide(lot, placeBid(who = 1, amount = 150, opN = 1), bid(1), proxyBid(1)) shouldBe
-        Left(PlaceBidRejected.BidderIsLeader)
+        Left(PlaceBidRejected.BidderIsLeader(money(110)))
     }
 
     "reject a bid in another currency (Т-04)" in {
@@ -304,7 +304,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         bid(1),
         proxyBid(1)
       ) shouldBe
-        Left(PlaceBidRejected.LotOnHold)
+        Left(PlaceBidRejected.LotOnHold(money(300)))
     }
 
     "check the currency before the leadership" in {
@@ -318,7 +318,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       val lot = trading(price = 1000, phase = Phase.Live, leader = Some(participant(1)))
 
       Lot.decide(lot, placeBid(who = 1, amount = 1500, opN = 1), bid(1), proxyBid(1)) shouldBe
-        Left(PlaceBidRejected.BidderIsLeader)
+        Left(PlaceBidRejected.BidderIsLeader(money(1000)))
     }
 
     "answer a repeated command with the original response and write one event (Т-14)" in {
@@ -345,7 +345,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         .of(trading(price = 100))
         .submitAll(Seq(placeBid(1, 110, 1), refused, placeBid(2, 120, 3), refused))
 
-      results(1) shouldBe Left(PlaceBidRejected.BidderIsLeader)
+      results(1) shouldBe Left(PlaceBidRejected.BidderIsLeader(money(110)))
       accepted(results(3)).map(bid => (bid.participant, bid.amount)) shouldBe Some((participant(1), money(130)))
     }
 

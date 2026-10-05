@@ -11,6 +11,10 @@ describeAuctionContract(
       tradeCallback({
         ports,
         identity: await ports.identity.resolveIdentity(from),
+        user: from,
         data: input.data,
+        ...(input.kind === "reply"
+          ? { reply: input.text === undefined ? {} : { text: input.text } }
+          : {}),
       }),
 );

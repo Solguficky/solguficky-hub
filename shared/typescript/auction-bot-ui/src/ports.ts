@@ -108,11 +108,16 @@ export type LotStatusView =
       leaderId?: string;
       // Момент RFC 3339 в UTC. Нет — лот ведёт человек, а не время.
       deadline?: string;
+      // Онлайн-торги принимают любую сумму от порога, живой финал — ровно
+      // следующую цену. Ставку из бота пакет предлагает только онлайн.
+      phase: TradingPhase;
     }
   | { kind: "held"; currentPrice: Money; leaderId?: string }
   | { kind: "sold"; winnerId: string; price: Money }
   | { kind: "unsold" }
   | { kind: "withdrawn" };
+
+export type TradingPhase = "online" | "live";
 
 // Срез `auction.v1.LotSnapshot`, который нужен экранам. Поля добавляют листья,
 // которые их показывают.
@@ -127,6 +132,10 @@ export type LotView = {
   // Шаг, когда он один на все цены. Сетку шагов край не вычисляет: правило
   // шага принадлежит Auction, а `nextPrice` уже несёт его результат.
   fixedStep?: Money;
+  // Принимает ли лот прокси-лимиты. У лота без условий торгов — нет.
+  proxyEnabled: boolean;
+  // Свой лимит смотрящего. Чужих лимитов Auction не отдаёт вовсе.
+  viewerProxyLimit?: Money;
   status: LotStatusView;
 };
 
@@ -183,7 +192,74 @@ export interface AuctionPort {
     auctionId: string;
     participantIds: readonly string[];
   }): Promise<Readonly<Record<string, string>>>;
+  placeBid(request: {
+    viewer: Viewer;
+    lotId: string;
+    amount: Money;
+    opId: string;
+  }): Promise<CommandOutcome<BidRefusal>>;
+  setProxyLimit(request: {
+    viewer: Viewer;
+    lotId: string;
+    max: Money;
+    opId: string;
+  }): Promise<CommandOutcome<ProxyLimitRefusal>>;
+  chooseDisplayName(request: {
+    viewer: Viewer;
+    auctionId: string;
+    choice: DisplayNameChoice;
+  }): Promise<DisplayNameOutcome>;
 }
+
+// Источник `op_id`: канонический UUIDv7 в нижнем регистре с дефисами. Портом,
+// а не вызовом внутри пакета, чтобы contract suite видел ключ команды.
+export interface OperationIdPort {
+  newOperationId(): string;
+}
+
+// Именованные отказы команд участника (integration.md, «Auction gRPC»). Отказ
+// окончателен: повторять команду после него край не вправе (RFC-011, П-06),
+// поэтому он несёт цену, которую экран называет человеку.
+export type BidRefusal =
+  | { kind: "lot-not-open" }
+  | { kind: "lot-on-hold"; currentPrice: Money }
+  | { kind: "bid-below-minimum"; minRequired: Money }
+  | { kind: "bid-not-at-next-price"; expected: Money }
+  | { kind: "bidder-is-leader"; currentPrice: Money }
+  | { kind: "currency-mismatch" }
+  | { kind: "display-name-not-chosen" };
+
+export type ProxyLimitRefusal =
+  | { kind: "lot-not-open" }
+  | { kind: "proxy-below-current-price"; minLimit: Money }
+  | { kind: "proxy-disabled" }
+  | { kind: "currency-mismatch" }
+  | { kind: "display-name-not-chosen" };
+
+// Исход команды с `op_id`. `unanswered` — ответа не было вовсе: дедлайн вызова
+// истёк или связь оборвалась. Только его пакет повторяет, и тем же `op_id`:
+// принятую команду Auction узнаёт по нему и второй раз не исполняет. Прочие
+// сбои транспорта порт бросает.
+export type CommandOutcome<Refusal> =
+  | { kind: "accepted" }
+  | { kind: "refused"; refusal: Refusal }
+  | { kind: "unanswered" };
+
+// Как участник показан в аукционе (ADR-059): ник из update без «@» — пустая
+// строка значит, что ника нет, — или псевдоним, как его ввели.
+export type DisplayNameChoice =
+  | { kind: "username"; username: string }
+  | { kind: "alias"; alias: string };
+
+export type DisplayNameRefusal =
+  | "username-missing"
+  | "alias-invalid"
+  | "alias-taken"
+  | "name-frozen";
+
+export type DisplayNameOutcome =
+  | { kind: "accepted"; name: string }
+  | { kind: "refused"; refusal: DisplayNameRefusal };
 
 export type LotImage = {
   content: Uint8Array;
@@ -202,4 +278,5 @@ export interface LotImagePort {
 export type AuctionBotPorts = {
   identity: IdentityPort;
   auction: AuctionPort;
+  operations: OperationIdPort;
 };

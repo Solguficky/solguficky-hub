@@ -14,6 +14,13 @@ import {
   type RpcMetadata,
 } from "../rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../tracing.js";
+import { createUuidV7 } from "../uuid-v7.js";
+import {
+  bidOutcomeOf,
+  displayNameOutcomeOf,
+  limitOutcomeOf,
+  unansweredOn,
+} from "./commands.js";
 import { historyPageOf } from "./history.js";
 import {
   type AddLotResult,
@@ -45,6 +52,9 @@ type AuctionRpc = Pick<
   | "listAuctionLots"
   | "listLotHistory"
   | "getDisplayNames"
+  | "placeBid"
+  | "setProxyLimit"
+  | "chooseDisplayName"
   | "getLotImage"
 >;
 
@@ -58,6 +68,8 @@ export type AuctionAdapterOptions = {
   // Чтобы деградация не была молчаливой, порт сообщает о ней до того, как
   // бросить (бриф ботов, «Лента и карточка лота»).
   onNamesRefused?: (cause: unknown, meta: RpcMetadata | undefined) => void;
+  // Источник `op_id` команд участника; тесты подменяют его.
+  newOperationId?: () => string;
 };
 
 export function createAuctionClient(
@@ -88,7 +100,11 @@ export function createAuctionClient(
 
 export function createAuctionAdapter(
   rpc: AuctionRpc,
-  { timeoutMs = 3_000, onNamesRefused }: AuctionAdapterOptions = {},
+  {
+    timeoutMs = 3_000,
+    onNamesRefused,
+    newOperationId = createUuidV7,
+  }: AuctionAdapterOptions = {},
 ): MeetupAuctions & AuctionScreens & LotAdministration {
   // Дедлайн вызова — меньшее из своего и остатка бюджета действия: бюджет
   // один на Identity, чтение лота и изображение (дизайн-код, «Ожидание»).
@@ -257,7 +273,56 @@ export function createAuctionAdapter(
               throw cause;
             }
           },
+          // Команды участника (PER-317). Повтор тем же `op_id` решает пакет;
+          // порт лишь отличает «ответа не было» от прочих отказов транспорта.
+          placeBid(request) {
+            return unansweredOn(async () =>
+              bidOutcomeOf(
+                await rpc.placeBid(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    lotId: request.lotId,
+                    amount: wireMoney(request.amount),
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
+          setProxyLimit(request) {
+            return unansweredOn(async () =>
+              limitOutcomeOf(
+                await rpc.setProxyLimit(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    lotId: request.lotId,
+                    max: wireMoney(request.max),
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
+          async chooseDisplayName(request) {
+            const { choice } = request;
+            return displayNameOutcomeOf(
+              await rpc.chooseDisplayName(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                  choice:
+                    choice.kind === "username"
+                      ? { case: "telegramUsername", value: choice.username }
+                      : { case: "alias", value: choice.alias },
+                },
+                options(meta),
+              ),
+            );
+          },
         },
+        operations: { newOperationId },
         image: {
           async getLotImage(request) {
             const image = await rpc.getLotImage(

@@ -176,6 +176,7 @@ function portsWith(
         auctionId,
         version: 1,
         card: { title: "Кружка", description: "" },
+        proxyEnabled: false,
         status: { kind: "unsold" },
         ...overrides.lot,
       }),
@@ -185,6 +186,12 @@ function portsWith(
         nextPageToken: "",
       }),
       getDisplayNames: async () => overrides.names ?? {},
+      placeBid: async () => ({ kind: "accepted" }),
+      setProxyLimit: async () => ({ kind: "accepted" }),
+      chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+    },
+    operations: {
+      newOperationId: () => "01929b7e-5c1d-7a3f-8e4b-00000000c001",
     },
     faq: {
       acknowledged: async () => true,
@@ -380,6 +387,7 @@ describe("auction bot", () => {
         },
         entry: base.entry,
         auction: base.auction,
+        operations: base.operations,
         faq: base.faq,
         image: base.image,
       };
@@ -807,6 +815,7 @@ describe("auction bot", () => {
           kind: "trading",
           currentPrice: { minorUnits: 160_000, currency: "RUB" },
           leaderId: leader,
+          phase: "live",
         },
       },
       history: [
@@ -1123,3 +1132,154 @@ function lotPress(
     },
   } as Update;
 }
+
+// Лист ставки (PER-317): вопрос новым сообщением с режимом ответа, ответ
+// reply-сообщением и «Отмена» по правилам дизайн-кода, «Вопросы».
+describe("bid leaf delivery", () => {
+  const trading = portsWith({
+    lot: {
+      nextPrice: { minorUnits: 125_000, currency: "RUB" },
+      proxyEnabled: true,
+      status: {
+        kind: "trading",
+        currentPrice: { minorUnits: 120_000, currency: "RUB" },
+        phase: "online",
+      },
+    },
+  });
+  const step = encodeAuctionCallback({
+    kind: "question",
+    question: "bid",
+    lotId,
+    page: 0,
+    addressee: from.id,
+  });
+  const questionMessage = {
+    message_id: 9,
+    date: 0,
+    chat: privateChat,
+    from: { id: botInfo.id, is_bot: true, first_name: "stub" },
+    text: "Своя сумма",
+    reply_markup: {
+      inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+    },
+  };
+  const answer = (extra: Record<string, unknown>): Update =>
+    ({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: privateChat,
+        from,
+        reply_to_message: questionMessage,
+        ...extra,
+      },
+    }) as Update;
+
+  it("asks the amount in a new message and takes the keyboard off the card", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({
+          kind: "ask",
+          question: "bid",
+          lotId,
+          page: 0,
+        }),
+        message: { message_id: 7, date: 0, chat: privateChat, text: "card" },
+      },
+    } as Update);
+    expect(calls.map((call) => call.method)).toContain(
+      "editMessageReplyMarkup",
+    );
+    const sent = calls.find((call) => call.method === "sendMessage");
+    expect(sent?.payload).toMatchObject({
+      text: expect.stringContaining("<b>Своя сумма</b>"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+      },
+    });
+  });
+
+  it("confirms the typed amount and closes the question", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate(answer({ text: "1 300" }));
+    const sent = calls.find((call) => call.method === "sendMessage");
+    expect(sent?.payload).toMatchObject({
+      text: expect.stringMatching(/Сумма: 1\s300\s₽/),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: expect.stringMatching(/^Да, поставить 1\s300\s₽$/),
+              style: "danger",
+              callback_data: expect.stringMatching(/^v1:auc:b:/),
+            },
+          ],
+          [{ text: "Нет", callback_data: expect.any(String) }],
+        ],
+      },
+    });
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageReplyMarkup",
+      payload: { chat_id: 42, message_id: 9 },
+    });
+  });
+
+  it.each([
+    [{ text: "много" }, "Это не сумма."],
+    [{ text: "$20" }, "Ставки принимаются только в рублях."],
+    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом."],
+  ])("asks again with the reason for %j", async (extra, reason) => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate(answer(extra));
+    const sent = calls.find((call) => call.method === "sendMessage");
+    const text = (sent?.payload as { text?: string } | undefined)?.text ?? "";
+    expect(text.startsWith(reason)).toBe(true);
+    expect(sent?.payload).toMatchObject({
+      reply_markup: { force_reply: true },
+    });
+    expect(calls.at(-1)).toMatchObject({ method: "editMessageReplyMarkup" });
+  });
+
+  it("deletes the question on cancel and sends the card as a new message", async () => {
+    const { bot, calls } = makeBot(trading, { presentation: "plain" });
+    await bot.handleUpdate({
+      update_id: 4,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: step,
+        message: questionMessage,
+      },
+    } as Update);
+    const methods = calls.map((call) => call.method);
+    expect(methods.indexOf("deleteMessage")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("deleteMessage")).toBeLessThan(
+      methods.indexOf("sendMessage"),
+    );
+    expect(methods).not.toContain("editMessageText");
+  });
+
+  it("ignores a message that answers no question", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 6,
+      message: {
+        message_id: 11,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "1300",
+      },
+    } as Update);
+    expect(calls).toEqual([]);
+  });
+});

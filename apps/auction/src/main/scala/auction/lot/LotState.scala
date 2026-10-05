@@ -283,9 +283,9 @@ enum PlaceBidRejected {
   case LotNotFound
   case OpIdTaken
   case LotNotOpen
-  case LotOnHold
+  case LotOnHold(currentPrice: Money)
   case CurrencyMismatch
-  case BidderIsLeader
+  case BidderIsLeader(currentPrice: Money)
   case BidNotAtNextPrice(expected: Money)
   case BidBelowMinimum(minRequired: Money)
 }
@@ -301,7 +301,7 @@ enum SetProxyLimitRejected {
   case LotNotOpen
   case ProxyDisabledForLot
   case CurrencyMismatch
-  case ProxyBelowCurrentPrice
+  case ProxyBelowCurrentPrice(minLimit: Money)
 }
 
 /**
