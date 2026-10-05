@@ -4,7 +4,7 @@ import {
   type LotImagePort,
   type LotView,
 } from "@solguficky/auction-bot-ui";
-import type { Transformer } from "grammy";
+import { HttpError, InputFile, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
@@ -63,11 +63,17 @@ function makeBot(
     refuseOnce?: Record<string, string>;
     auctionId?: string;
     photos?: PhotoCache;
+    presentation?: "rich" | "plain";
+    // Обрыв соединения на первом вызове метода.
+    dropOnce?: string;
   } = {},
 ) {
   const bot = createBot({
     token: "111:test-token",
     environment: "prod",
+    ...(options.presentation === undefined
+      ? {}
+      : { presentation: options.presentation }),
     ports,
     logger: options.logger ?? silent,
     timeZone: "Europe/Moscow",
@@ -85,6 +91,12 @@ function makeBot(
     // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
     // найденное снимает хук набора (`testkit/lint-setup.ts`).
     reportViolations(inspectCall(method, payload));
+    if (options.dropOnce === method) {
+      delete options.dropOnce;
+      return Promise.reject(
+        new HttpError("Network request failed", new Error("socket hang up")),
+      );
+    }
     const once = options.refuseOnce?.[method];
     if (once !== undefined && options.refuseOnce !== undefined) {
       delete options.refuseOnce[method];
@@ -94,20 +106,22 @@ function makeBot(
     if (description !== undefined) {
       return Promise.resolve({ ok: false, error_code: 400, description });
     }
-    // Отправка фото отвечает сообщением с размерами: из него бот берёт
-    // `file_id` наибольшего размера. Тип результата зависит от метода, и
-    // фикстура его не знает — то же ослабление, что у ответа `true` ниже.
-    if (method === "sendPhoto" || method === "editMessageMedia") {
+    // Rich-сообщение и его правка отвечают сообщением: блок фото несёт
+    // размеры, из которых бот берёт `file_id` наибольшего. Тип результата
+    // зависит от метода, и фикстура его не знает — то же ослабление, что у
+    // ответа `true` ниже.
+    const rich = (payload as { rich_message?: { media?: unknown[] } })
+      .rich_message;
+    if (rich !== undefined) {
       return Promise.resolve({
         ok: true,
         result: {
           message_id: 8,
           date: 0,
           chat: privateChat,
-          photo: [
-            { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
-            { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
-          ],
+          rich_message: {
+            blocks: rich.media === undefined ? [] : [photoBlock],
+          },
         } as never,
       });
     }
@@ -118,6 +132,14 @@ function makeBot(
 }
 
 const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
+
+const photoBlock = {
+  type: "photo",
+  photo: [
+    { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
+    { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
+  ],
+};
 
 function portsWith(
   overrides: {
@@ -333,7 +355,7 @@ describe("auction bot", () => {
     );
     const edit = calls.find((call) => call.method === "editMessageText");
     expect(edit?.payload).toMatchObject({
-      text: expect.stringContaining("Кружка"),
+      rich_message: { html: expect.stringContaining("Кружка") },
       reply_markup: {
         inline_keyboard: [
           [{ text: "Обновить", callback_data: expect.any(String) }],
@@ -351,10 +373,10 @@ describe("auction bot", () => {
       refuse: { editMessageText: "Bad Request: message can't be edited" },
     });
     await bot.handleUpdate(lotPress());
-    const sent = calls.find((call) => call.method === "sendMessage");
+    const sent = calls.find((call) => call.method === "sendRichMessage");
     expect(sent?.payload).toMatchObject({
       chat_id: 42,
-      text: expect.stringContaining("Кружка"),
+      rich_message: { html: expect.stringContaining("Кружка") },
     });
   });
 
@@ -388,9 +410,58 @@ describe("auction bot", () => {
     });
   });
 
-  // Текст не превращается в фото: карточка с изображением уходит новым
-  // сообщением, а лента, с которой её открыли, удаляется.
-  it("replaces a text message with the photo card and caches its file", async () => {
+  // Лента и карточка делят одно сообщение: нажатие на лот правит ленту в
+  // rich-карточку с загруженным фото, «‹ Лоты» правит её обратно в текст.
+  it("edits the feed into the photo card and back without deleting", async () => {
+    const photos = createPhotoCache();
+    const description = "Роспись. ".repeat(250);
+    const getLotImage = vi.fn(async () => ({
+      content: new Uint8Array([1]),
+      mediaType: "image/jpeg",
+      version: "img-1",
+    }));
+    const { bot, calls } = makeBot(
+      portsWith({
+        lot: { card: { ...withImage.card, description } },
+        image: getLotImage,
+      }),
+      { photos },
+    );
+    await bot.handleUpdate(lotPress());
+    await bot.handleUpdate(
+      lotPress({
+        rich: true,
+        data: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
+      }),
+    );
+    // Загрузка доставляет карточку: ответ на нажатие уходит с её концом.
+    expect(calls.map((call) => call.method)).toEqual([
+      "editMessageText",
+      "answerCallbackQuery",
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    const card = calls[0]?.payload as {
+      rich_message: { html: string; media: { media: { media: unknown } }[] };
+    };
+    // Описание длиннее предела подписи к фото приходит целиком, фото — под ним.
+    expect(description.length).toBeGreaterThan(1024);
+    expect(card.rich_message.html).toContain(description.trim());
+    expect(card.rich_message.html).toMatch(
+      /<img src="tg:\/\/photo\?id=lot"\/>$/,
+    );
+    expect(card.rich_message.media[0]?.media.media).toBeInstanceOf(InputFile);
+    expect(photos.get({ lotId, version: "img-1" })).toEqual({
+      kind: "file",
+      fileId: "large",
+    });
+    expect(calls[3]?.payload).toMatchObject({
+      text: expect.stringContaining("Лотов пока нет."),
+    });
+    expect(calls[3]?.payload).not.toHaveProperty("rich_message");
+  });
+
+  it("shows the card again from the cached file without loading bytes", async () => {
     const photos = createPhotoCache();
     const getLotImage = vi.fn(async () => ({
       content: new Uint8Array([1]),
@@ -402,17 +473,12 @@ describe("auction bot", () => {
       { photos },
     );
     await bot.handleUpdate(lotPress());
-    // Загрузка доставляет карточку: ответ на нажатие уходит с её концом.
-    expect(calls.map((call) => call.method)).toEqual([
-      "sendPhoto",
-      "answerCallbackQuery",
-      "deleteMessage",
-    ]);
-    expect(calls[0]?.payload).toMatchObject({
-      caption: expect.stringContaining("Кружка"),
-    });
-    expect(photos.get({ lotId, version: "img-1" })).toBe("large");
+    await bot.handleUpdate(lotPress());
     expect(getLotImage).toHaveBeenCalledTimes(1);
+    const edits = calls.filter((call) => call.method === "editMessageText");
+    expect(edits[1]?.payload).toMatchObject({
+      rich_message: { media: [{ id: "lot", media: { media: "large" } }] },
+    });
   });
 
   // Кнопка «К лоту» под уведомлением (PER-328): карточка приходит новым
@@ -425,9 +491,9 @@ describe("auction bot", () => {
     // что карточка ушла новым сообщением, а уведомление не тронуто.
     expect(
       calls.map((call) => call.method).sort((a, b) => a.localeCompare(b)),
-    ).toEqual(["answerCallbackQuery", "sendMessage"]);
+    ).toEqual(["answerCallbackQuery", "sendRichMessage"]);
     expect(calls[1]?.payload).toMatchObject({
-      text: expect.stringContaining("Кружка"),
+      rich_message: { html: expect.stringContaining("Кружка") },
     });
   });
 
@@ -438,33 +504,17 @@ describe("auction bot", () => {
     await bot.handleUpdate(lotPress({ data: "v1:t:v0:auc:lot:gone:0" }));
     const methods = calls.map((call) => call.method);
     expect(methods).not.toContain("editMessageText");
+    expect(methods).not.toContain("editMessageReplyMarkup");
     expect(methods).not.toContain("deleteMessage");
     expect(methods).toContain("sendMessage");
   });
 
-  it("does not drop the notification when the lot card is a photo", async () => {
+  it("keeps the notification whole when the lot card carries a photo", async () => {
     const { bot, calls } = makeBot(portsWith({ lot: withImage }));
     await bot.handleUpdate(lotPress({ data: traceLotCallback(lotId) }));
     expect(
       calls.map((call) => call.method).sort((a, b) => a.localeCompare(b)),
-    ).toEqual(["answerCallbackQuery", "sendPhoto"]);
-  });
-
-  it("edits a photo card in place from the cache without loading bytes", async () => {
-    const photos = createPhotoCache();
-    photos.set({ lotId, version: "img-1" }, "cached-file");
-    const getLotImage = vi.fn();
-    const { bot, calls } = makeBot(
-      portsWith({ lot: withImage, image: getLotImage }),
-      { photos },
-    );
-    await bot.handleUpdate(lotPress({ photo: true }));
-    const edit = calls.find((call) => call.method === "editMessageMedia");
-    expect(edit?.payload).toMatchObject({
-      media: { type: "photo", media: "cached-file" },
-    });
-    expect(getLotImage).not.toHaveBeenCalled();
-    expect(calls.map((call) => call.method)).not.toContain("deleteMessage");
+    ).toEqual(["answerCallbackQuery", "sendRichMessage"]);
   });
 
   it("uploads again once when Telegram forgets a cached file", async () => {
@@ -472,40 +522,116 @@ describe("auction bot", () => {
     photos.set({ lotId, version: "img-1" }, "forgotten");
     const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
       photos,
-      refuseOnce: { editMessageMedia: "Bad Request: wrong file identifier" },
+      refuseOnce: { editMessageText: "Bad Request: wrong file identifier" },
     });
-    await bot.handleUpdate(lotPress({ photo: true }));
-    const edits = calls.filter((call) => call.method === "editMessageMedia");
+    await bot.handleUpdate(lotPress());
+    const edits = calls.filter((call) => call.method === "editMessageText");
     expect(edits).toHaveLength(2);
     // Второй раз уходят байты, и в кэш ложится свежий `file_id`.
     expect(edits[1]?.payload).not.toMatchObject({
-      media: { media: "forgotten" },
+      rich_message: { media: [{ media: { media: "forgotten" } }] },
     });
-    expect(photos.get({ lotId, version: "img-1" })).toBe("large");
+    expect(photos.get({ lotId, version: "img-1" })).toEqual({
+      kind: "file",
+      fileId: "large",
+    });
   });
 
-  // Telegram отверг сами байты: карточка уходит текстом, а не пропадает.
-  it("falls back to the text card when Telegram rejects the uploaded photo", async () => {
+  // Telegram отверг сами байты: сообщение прежнее, и та же правка уходит без
+  // фото. Эта версия изображения больше не загружается.
+  it("edits the card without the photo Telegram rejected and stops uploading it", async () => {
     const lines: string[] = [];
     const logger = createLogger("info", (line) => lines.push(line));
-    const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
-      logger,
-      refuse: { sendPhoto: "Bad Request: IMAGE_PROCESS_FAILED" },
-    });
+    const photos = createPhotoCache();
+    const getLotImage = vi.fn(async () => ({
+      content: new Uint8Array([1]),
+      mediaType: "image/jpeg",
+      version: "img-1",
+    }));
+    const { bot, calls } = makeBot(
+      portsWith({ lot: withImage, image: getLotImage }),
+      {
+        logger,
+        photos,
+        refuseOnce: { editMessageText: "Bad Request: IMAGE_PROCESS_FAILED" },
+      },
+    );
     await bot.handleUpdate(lotPress());
     expect(calls.map((call) => call.method)).toEqual([
-      "sendPhoto",
+      "editMessageText",
       "answerCallbackQuery",
       "editMessageText",
     ]);
+    expect(calls[2]?.payload).not.toMatchObject({
+      rich_message: { media: expect.anything() },
+    });
     expect(
       lines.some((line) => line.includes("lot image rejected by Telegram")),
     ).toBe(true);
+    await bot.handleUpdate(lotPress());
+    expect(getLotImage).toHaveBeenCalledTimes(1);
+    expect(calls.at(-1)?.payload).not.toMatchObject({
+      rich_message: { media: expect.anything() },
+    });
+  });
+
+  // Отказ, который повторился и без фото, — не про изображение: лимит,
+  // права или разметка. Версия не помечается, экран не подменяется.
+  it("does not mark the photo when the edit fails without it too", async () => {
+    const photos = createPhotoCache();
+    const { bot } = makeBot(portsWith({ lot: withImage }), {
+      photos,
+      refuse: { editMessageText: "Too Many Requests: retry after 5" },
+    });
+    await expect(bot.handleUpdate(lotPress())).rejects.toThrow(
+      "Too Many Requests",
+    );
+    expect(photos.get({ lotId, version: "img-1" })).toBeUndefined();
+  });
+
+  // Новое сообщение после обрыва не повторяется: Telegram мог его принять,
+  // и повтор прислал бы второе. Update при этом пишется отказом, а не успехом.
+  it("does not send the card twice when a new message upload drops", async () => {
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }), {
+      dropOnce: "sendRichMessage",
+    });
+    await expect(bot.handleUpdate(lotPress({ photo: true }))).rejects.toThrow(
+      "Network request failed",
+    );
+    expect(
+      calls.filter((call) => call.method === "sendRichMessage"),
+    ).toHaveLength(1);
+  });
+
+  // Обрыв соединения отметки не оставляет: следующее открытие грузит снова.
+  it("shows the card without the photo when the upload connection drops", async () => {
+    const photos = createPhotoCache();
+    const getLotImage = vi.fn(async () => ({
+      content: new Uint8Array([1]),
+      mediaType: "image/jpeg",
+      version: "img-1",
+    }));
+    const { bot, calls } = makeBot(
+      portsWith({ lot: withImage, image: getLotImage }),
+      { photos, dropOnce: "editMessageText" },
+    );
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.method)).toEqual([
+      "editMessageText",
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[2]?.payload).not.toMatchObject({
+      rich_message: { media: expect.anything() },
+    });
+    expect(photos.get({ lotId, version: "img-1" })).toBeUndefined();
+    await bot.handleUpdate(lotPress());
+    expect(getLotImage).toHaveBeenCalledTimes(2);
   });
 
   // Сейчас Auction отвечает на GetLotImage `UNIMPLEMENTED`: карточка остаётся
-  // текстом, а не превращается в «недоступно».
-  it("shows the card as text when the image cannot be loaded", async () => {
+  // без фото, а не превращается в «недоступно».
+  it("shows the card without a photo when the image cannot be loaded", async () => {
     const lines: string[] = [];
     const logger = createLogger("info", (line) => lines.push(line));
     const { bot, calls } = makeBot(
@@ -522,13 +648,48 @@ describe("auction bot", () => {
       "answerCallbackQuery",
       "editMessageText",
     ]);
+    expect(calls[1]?.payload).toMatchObject({
+      rich_message: { html: expect.stringContaining("<h1>Кружка</h1>") },
+    });
+    expect(calls[1]?.payload).not.toMatchObject({
+      rich_message: { media: expect.anything() },
+    });
     expect(lines.some((line) => line.includes("lot image unavailable"))).toBe(
       true,
     );
   });
 
-  it("replaces a photo card with the text feed and drops the photo", async () => {
-    const { bot, calls } = makeBot(publicPorts);
+  // Правка не прошла не из-за изображения: новое сообщение загрузку не
+  // повторяет и идёт без фото, раз в кэше его нет.
+  it("sends a new card without uploading again when the edit is refused", async () => {
+    const getLotImage = vi.fn(async () => ({
+      content: new Uint8Array([1]),
+      mediaType: "image/jpeg",
+      version: "img-1",
+    }));
+    const { bot, calls } = makeBot(
+      portsWith({ lot: withImage, image: getLotImage }),
+      { refuse: { editMessageText: "Bad Request: message can't be edited" } },
+    );
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.method)).toEqual([
+      "editMessageText",
+      "answerCallbackQuery",
+      "sendRichMessage",
+    ]);
+    expect(calls[2]?.payload).not.toMatchObject({
+      rich_message: { media: expect.anything() },
+    });
+    expect(getLotImage).toHaveBeenCalledTimes(1);
+  });
+
+  // Сообщение-фото от прежней версии бота в текст не правится: экран приходит
+  // новым сообщением, у фото снимается клавиатура, удаления нет.
+  it("answers under a legacy photo message with a new message", async () => {
+    const photos = createPhotoCache();
+    photos.set({ lotId, version: "img-1" }, "cached-file");
+    const { bot, calls } = makeBot(portsWith({ lot: withImage }), { photos });
+    await bot.handleUpdate(lotPress({ photo: true }));
     await bot.handleUpdate(
       lotPress({
         photo: true,
@@ -537,9 +698,31 @@ describe("auction bot", () => {
     );
     expect(calls.map((call) => call.method)).toEqual([
       "answerCallbackQuery",
+      "sendRichMessage",
+      "editMessageReplyMarkup",
+      "answerCallbackQuery",
       "sendMessage",
-      "deleteMessage",
+      "editMessageReplyMarkup",
     ]);
+    expect(calls[1]?.payload).toMatchObject({
+      rich_message: { media: [{ media: { media: "cached-file" } }] },
+    });
+  });
+
+  it("sends the plain card as an HTML message without a photo", async () => {
+    const getLotImage = vi.fn();
+    const { bot, calls } = makeBot(
+      portsWith({ lot: withImage, image: getLotImage }),
+      { presentation: "plain" },
+    );
+    await bot.handleUpdate(lotPress());
+    const edit = calls.find((call) => call.method === "editMessageText");
+    expect(edit?.payload).toMatchObject({
+      parse_mode: "HTML",
+      text: expect.stringMatching(/^<b>Кружка<\/b>/),
+    });
+    expect(edit?.payload).not.toHaveProperty("rich_message");
+    expect(getLotImage).not.toHaveBeenCalled();
   });
 
   it("logs the frame of the update without Telegram identifiers", async () => {
@@ -726,7 +909,7 @@ describe("waiting", () => {
   it("keeps waiting through a slow cold upload of the lot photo", async () => {
     const { bot, calls } = makeBot(portsWith({ lot: withImage }));
     const slowUpload: Transformer = async (prev, method, payload, signal) => {
-      if (method === "sendPhoto") {
+      if (method === "editMessageText") {
         await new Promise((resolve) => setTimeout(resolve, 10_000));
       }
       return prev(method, payload, signal);
@@ -743,8 +926,7 @@ describe("waiting", () => {
     await handled;
     expect(withoutTyping(calls)).toEqual([
       "answerCallbackQuery",
-      "sendPhoto",
-      "deleteMessage",
+      "editMessageText",
     ]);
     expect(methods(calls).filter((m) => m === "sendChatAction")).toHaveLength(
       3,
@@ -785,8 +967,11 @@ describe("waiting", () => {
   });
 });
 
-// Нажатие кнопки в сообщении бота: текстовом или с фото.
-function lotPress(options: { photo?: boolean; data?: string } = {}): Update {
+// Нажатие кнопки в сообщении бота: текстовом, rich-карточке или сообщении-фото
+// от прежней версии бота.
+function lotPress(
+  options: { photo?: boolean; rich?: boolean; data?: string } = {},
+): Update {
   const base = { message_id: 7, date: 0, chat: privateChat };
   return {
     update_id: 3,
@@ -802,7 +987,9 @@ function lotPress(options: { photo?: boolean; data?: string } = {}): Update {
             photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }],
             caption: "old",
           }
-        : { ...base, text: "old" },
+        : options.rich
+          ? { ...base, rich_message: { blocks: [photoBlock] } }
+          : { ...base, text: "old" },
     },
   } as Update;
 }

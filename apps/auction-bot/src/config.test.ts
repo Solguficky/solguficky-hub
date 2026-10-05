@@ -120,6 +120,19 @@ describe("readConfig", () => {
     expect(without.ok && "auctionId" in without.config).toBe(false);
   });
 
+  it("presents the lot card rich unless the operator rolls back to plain", () => {
+    const presentation = (value: string | undefined) => {
+      const result = readConfig({ ...base, AUCTION_BOT_PRESENTATION: value });
+      return result.ok ? result.config.presentation : result.error;
+    };
+    expect(presentation(undefined)).toBe("rich");
+    expect(presentation("")).toBe("rich");
+    expect(presentation("plain")).toBe("plain");
+    expect(presentation("text")).toBe(
+      "AUCTION_BOT_PRESENTATION must be rich or plain",
+    );
+  });
+
   it.each([
     ["missing", undefined],
     ["unknown", "Mars/Olympus"],

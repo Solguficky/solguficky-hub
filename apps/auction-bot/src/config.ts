@@ -2,10 +2,15 @@ import { type FaqContent, readFaqContent } from "./faq.js";
 
 export type TelegramEnvironment = "prod" | "test";
 
+// Форма карточки лота (ADR-034, дополнение): `rich` — rich-сообщение с фото,
+// `plain` — обычное сообщение с HTML, операторский откат без перевыпуска.
+export type Presentation = "rich" | "plain";
+
 export type Config = {
   token: string;
   serviceToken: string;
   environment: TelegramEnvironment;
+  presentation: Presentation;
   identityUrl: string;
   auctionUrl: string;
   // Шина: адресные факты Notifications, которые бот доставляет (PER-328).
@@ -59,6 +64,13 @@ export function readConfig(
   if (environment === undefined) {
     return { ok: false, error: "AUCTION_BOT_ENVIRONMENT must be prod or test" };
   }
+  const presentation = read("AUCTION_BOT_PRESENTATION") ?? "rich";
+  if (presentation !== "rich" && presentation !== "plain") {
+    return {
+      ok: false,
+      error: "AUCTION_BOT_PRESENTATION must be rich or plain",
+    };
+  }
   const faq = readFaqContent(env);
   if (!faq.ok) return faq;
   // Неизвестное имя — отказ, а не откат к UTC: опечатка сдвинула бы каждый
@@ -87,6 +99,7 @@ export function readConfig(
       token,
       serviceToken,
       environment,
+      presentation,
       identityUrl: read("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051",
       auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
       natsUrl: read("AUCTION_BOT_NATS_URL") ?? "nats://127.0.0.1:4222",

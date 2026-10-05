@@ -16,8 +16,9 @@
 ветки `oneof occasion`, и это соответствие проверяет `gate.subject_problems()`:
 до него оно держалось на слове в этом комментарии.
 
-У Meetups и Identity сообщение на всех поводах домена одно. У Auction их два —
-`LotEvent` у поводов лота и `AuctionEvent` у поводов аукциона — под одним
+У Meetups и Identity сообщение на всех поводах домена одно. У Auction их три —
+`LotEvent` у поводов лота, `AuctionEvent` у поводов аукциона и `InvoiceEvent`
+у поводов счёта — под одним
 префиксом `events.auction.`, поэтому там тип сообщения читается из этого реестра
 по subject'у до разбора ветки, а не после.
 """
@@ -73,6 +74,9 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.final_lot_activated': auction_events_pb2.AuctionEvent,
     'events.auction.final_lot_completed': auction_events_pb2.AuctionEvent,
     'events.auction.auction_finished': auction_events_pb2.AuctionEvent,
+    'events.auction.invoice_issued': auction_events_pb2.InvoiceEvent,
+    'events.auction.invoice_paid': auction_events_pb2.InvoiceEvent,
+    'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,
 }
 
 COMMAND_TYPES: dict[str, Type[Message]] = {}

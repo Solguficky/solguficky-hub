@@ -4,14 +4,16 @@ package auction.v1;
 
 import "auction/v1/auction.proto";
 
-// Outgoing facts of the lot journal and of the auction journal. They live apart
-// from auction_service.proto for the same reason the value types do: a consumer of
-// the events must not drag AuctionService and its requests into its codegen.
+// Outgoing facts of the lot journal, of the auction journal and of the invoice
+// journal. They live apart from auction_service.proto for the same reason the
+// value types do: a consumer of the events must not drag AuctionService and its
+// requests into its codegen.
 //
 // This is not the journal row. The row also carries the aggregate type, the
 // operation id, the transaction id, the actor and the schema version; none of them
 // leaves the service. The aggregate type in particular is told by the subject and
-// by the message: a lot fact is a LotEvent, an auction fact is an AuctionEvent.
+// by the message: a lot fact is a LotEvent, an auction fact is an AuctionEvent,
+// an invoice fact is an InvoiceEvent.
 // Subjects, delivery semantics and what is deliberately absent are documented in
 // docs/architecture/integration.md, section "Auction NATS".
 //
@@ -22,7 +24,9 @@ import "auction/v1/auction.proto";
 // limits nor the final mark. The auction records that choice too - a finalist
 // confirmed or dropped - so FinalistConfirmed and FinalistDropped have no
 // occasion here either, and the auction state names no finalist before the
-// lineup is frozen.
+// lineup is frozen. The fulfillment method the winner chooses for an invoice
+// has no subscriber on the bus, so FulfillmentChosen has no occasion here and
+// the invoice state does not carry the method: the reads of the service do.
 
 // A recorded public fact about one lot: why it changed and what is true about it now.
 message LotEvent {
@@ -362,3 +366,110 @@ message FinalLotCompleted {
 
 // Every lot of the lineup is completed. Terminal.
 message AuctionFinished {}
+
+// A recorded public fact about one invoice: why it changed and what is true about
+// it now. The envelope is the one of LotEvent, field for field; which of the
+// three messages arrived is told by the subject, not by the body.
+//
+// An invoice is the request for payment for one sold lot. Money does not pass
+// through the platform: the organizer confirms the payment by hand. How to pay
+// is not carried here: neither the means nor the payee details.
+message InvoiceEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the row of the journal and
+  // is the same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens, as state.id. The invoice this fact
+  // belongs to. It repeats state.id so that the envelope alone identifies the
+  // subject of the fact.
+  string invoice_id = 2;
+
+  // Position of the event in the journal of the invoice, starting at 1, so 0 is
+  // not a valid value. Monotonic within one invoice but not contiguous on the bus:
+  // private facts take positions too and are not published, so a gap is not a
+  // lost event. Delivery order is not promised: a redelivered event may arrive
+  // after a newer one.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the server time the fact was decided at. For
+  // invoice_issued it is the moment the invoice was raised. It is neither the
+  // moment of publication nor the moment of delivery, and it does not order
+  // events - version does.
+  string occurred_at = 4;
+
+  // The public state of the invoice after the event was applied. Always set: the
+  // body of every event is a whole snapshot, never a delta.
+  InvoiceState state = 5;
+
+  // Why the state changed - the occasion. Exactly one is set, and an empty oneof is
+  // not a value.
+  oneof occasion {
+    InvoiceIssued invoice_issued = 6;
+    InvoicePaid invoice_paid = 7;
+    InvoiceHandedOver invoice_handed_over = 8;
+  }
+}
+
+// The public state of an invoice after an event. Field numbers match
+// auction.v1.InvoiceSnapshot so that the two stay readable side by side.
+message InvoiceState {
+  // Number 7 is the fulfillment method, which InvoiceSnapshot carries and a fact
+  // on the bus does not: see the note at the top of this file.
+  reserved 7;
+  reserved "fulfillment";
+
+  // Canonical lowercase UUIDv5 with hyphens: the server derives it from the
+  // winning bid of the sale, LotSale.bid_id, so one sale has exactly one invoice
+  // and a sale to another bid has another. A consumer does not compute it.
+  string id = 1;
+
+  // Canonical lowercase UUID with hyphens, version 5 or 7: the auction of the
+  // sold lot, as LotState.auction_id.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the sold lot.
+  string lot_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the winner,
+  // LotSale.winner_id. The invoice is addressed to them.
+  string winner_id = 4;
+
+  // The amount to pay: the price of the sale, LotSale.price. It never changes.
+  Money amount = 5;
+
+  // RFC 3339 instant in UTC: the payment is due by this moment. Set when the
+  // invoice is raised and never changed after. An invoice is overdue when it
+  // still awaits payment after this moment; overdue is not a status.
+  string payment_due_at = 6;
+
+  // Where the invoice is. Exactly one is set. The path is one-way:
+  // awaiting_payment, then paid, then handed_over.
+  oneof status {
+    AwaitingPayment awaiting_payment = 10;
+    Paid paid = 11;
+    HandedOver handed_over = 12;
+  }
+
+  // The invoice is raised and not paid yet.
+  message AwaitingPayment {}
+
+  // The organizer confirmed the payment. The moment is occurred_at of
+  // invoice_paid.
+  message Paid {}
+
+  // The lot was handed over to the winner after the payment. Terminal. The
+  // moment is occurred_at of invoice_handed_over.
+  message HandedOver {}
+}
+
+// The invoice was raised for a sold lot: the status is awaiting_payment, and the
+// amount and the due moment are in the state. It is the first fact of the journal
+// of the invoice.
+message InvoiceIssued {}
+
+// The organizer confirmed the payment. Who confirmed it is not carried.
+message InvoicePaid {}
+
+// The organizer recorded that the lot was handed over. Who recorded it is not
+// carried.
+message InvoiceHandedOver {}

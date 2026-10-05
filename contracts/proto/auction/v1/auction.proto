@@ -256,3 +256,18 @@ enum BidSource {
   // A bid from the room, entered on behalf of a participant.
   BID_SOURCE_FLOOR = 2;
 }
+
+// How the winner receives a sold lot. The winner chooses it; until then the
+// method is unspecified, and that is a real state rather than a default.
+enum FulfillmentMethod {
+  FULFILLMENT_METHOD_UNSPECIFIED = 0;
+
+  // The winner collects the lot in person.
+  FULFILLMENT_METHOD_PICKUP = 1;
+
+  // The lot is sent to the winner.
+  FULFILLMENT_METHOD_DELIVERY = 2;
+
+  // The lot is digital and is handed over without a physical transfer.
+  FULFILLMENT_METHOD_DIGITAL = 3;
+}
