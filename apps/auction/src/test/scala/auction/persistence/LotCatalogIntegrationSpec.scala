@@ -107,7 +107,9 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       val restored = withNode(database)((store, _) => store.find(id).futureValue)
 
       restored shouldBe created.toOption
-      restored.flatMap(_.image) shouldBe Some(LotImage(TestImages.png(size = 4096)).toOption.get.version)
+      restored.flatMap(_.image) shouldBe Some(
+        LotImage(TestImages.png(size = 4096)).map(_.version).getOrElse(fail("the image was refused"))
+      )
       image(database, id) shouldBe Some(stored(TestImages.png(size = 4096), "image/png"))
     }
 

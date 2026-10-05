@@ -31,8 +31,7 @@ final class LotCatalogCommandsSpec
     Viewer(Set(GlobalRole.Maintainer, GlobalRole.Member, GlobalRole.Public))
   )
 
-  private val blankTitles = Gen.listOf(Gen.oneOf(' ', '	', '
-', '', '00A0', '2007', '202F')).map(_.mkString)
+  private val blankTitles = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\r', '\u00A0', '\u2007', '\u202F')).map(_.mkString)
 
   private val oversized = TestImages.jpeg(LotImage.MaxBytes + 1)
 

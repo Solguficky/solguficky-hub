@@ -274,7 +274,7 @@ message EditLotCardRequest {
   }
 }
 
-// Removes the image of the card; a card without an image stays without one.
+// Removes the image of the card.
 message LotImageRemoval {}
 
 message EditLotCardResponse {
@@ -310,7 +310,6 @@ message ImageTooLarge {
   int64 max_bytes = 1;
 }
 
-// The bytes are not an image of a type Auction stores.
 message UnsupportedImage {}
 
 message GetLotRequest {
