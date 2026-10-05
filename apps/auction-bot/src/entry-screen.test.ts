@@ -58,10 +58,46 @@ function lotScreen(
 }
 
 describe("renderEntryScreen", () => {
-  it("keeps the welcome shell free of trading buttons and hub promises", () => {
-    const screen = renderEntryScreen({ kind: "welcome" }, options);
-    expect(screen.keyboard).toEqual([]);
+  it("keeps the menu free of trading buttons and hub promises", () => {
+    const screen = renderEntryScreen({ kind: "menu" }, options);
+    expect(screen.text).toBe(
+      "<b>Меню</b>\n\nАукцион сообщества. Выбери раздел.",
+    );
+    expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      ["Аукционы"],
+      ["Прошедшие"],
+      ["Правила и FAQ"],
+    ]);
     expect(screen.text).not.toMatch(/хаб|сходк/i);
+  });
+
+  // Состояния FAQ возвращают в FAQ, а не в меню (дизайн-код, «Дерево бота
+  // аукциона»).
+  it.each(["details", "question"] as const)(
+    "returns from the FAQ state %s to FAQ",
+    (kind) => {
+      const screen = renderEntryScreen({ kind }, options);
+      expect(screen.text).toMatch(/^<b>Правила и FAQ<\/b>\n\nОрганизатор/);
+      expect(screen.keyboard).toEqual([
+        [
+          { text: "‹ FAQ", callback_data: entryCallback("faq") },
+          { text: "Меню", callback_data: entryCallback("menu") },
+        ],
+      ]);
+    },
+  );
+
+  // Ответ на вопрос в кнопку не помещается: повтора нет, ответ присылают
+  // ещё раз.
+  it("asks to send the answer again when a reply met a failure", () => {
+    const screen = renderEntryScreen(
+      { kind: "unavailable", exit: { kind: "answer" } },
+      options,
+    );
+    expect(screen.text).toContain("Пришли ответ ещё раз");
+    expect(screen.keyboard).toEqual([
+      [{ text: "Меню", callback_data: entryCallback("menu") }],
+    ]);
   });
 
   // Трём отказам — три разных ответа: заблокированный и получивший отказ не
@@ -112,12 +148,13 @@ describe("renderEntryScreen", () => {
       },
       options,
     );
-    expect(screen.text).toContain("страница 1 из 2");
+    expect(screen.format).toBe("html");
+    expect(screen.text).toBe("<b>Лоты · 1 из 2</b>\n\nПо возрастанию цены.");
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
       [
         ["Носки · старт 500 ₽"],
         ["Лот без названия · не продан"],
-        ["Следующие ›"],
+        ["→"],
         // Оболочка ставит возврат в список аукциона и «Меню» одним рядом.
         ["‹ Аукционы", "Меню"],
       ],
@@ -143,7 +180,8 @@ describe("renderEntryScreen", () => {
       },
       options,
     );
-    expect(screen.text).toContain("Лотов пока нет.");
+    // Пустая лента несёт заголовок так же, как заполненная.
+    expect(screen.text).toBe("<b>Лоты</b>\n\nЛотов пока нет.");
   });
 
   it("shows price, step, leader and deadline in the community zone", () => {
@@ -168,7 +206,7 @@ describe("renderEntryScreen", () => {
     expect(text).toContain("Следующая ставка — от 1 250 ₽.");
     expect(text).toContain("Шаг: 50 ₽.");
     // 18:00 UTC — 21:00 по Москве.
-    expect(text).toMatch(/Торги до 10 октября.*21:00\./);
+    expect(text).toContain("Торги до 10 октября, сб, 21:00.");
     expect(screen.photo).toBeUndefined();
   });
 
@@ -194,6 +232,16 @@ describe("renderEntryScreen", () => {
     );
     expect(text).toContain("Продан за 3 000 ₽.");
     expect(text).toContain("Победитель: Сыч*.");
+  });
+
+  // Критерий PER-463: последний ряд под лотом — возврат и «Меню».
+  it("puts the return to the feed and the menu into the last row of a lot", () => {
+    expect(lotScreen({}).keyboard).toEqual([
+      [
+        { text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" },
+        { text: "Меню", callback_data: entryCallback("menu") },
+      ],
+    ]);
   });
 
   it("shows an unsold lot as an outcome without a winner", () => {
@@ -389,7 +437,7 @@ describe("auction lists", () => {
       options,
     );
     expect(screen.text).toBe(
-      "<b>Прошедшие аукционы · 2 из 3</b>\n\nВыберите аукцион.",
+      "<b>Прошедшие аукционы · 2 из 3</b>\n\nВыбери аукцион.",
     );
     expect(screen.keyboard).toEqual([
       [

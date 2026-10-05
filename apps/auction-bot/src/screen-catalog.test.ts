@@ -55,6 +55,25 @@ const emptyFeed: AuctionScreenBody = {
   keyboard: [],
 };
 
+// Лот с итогом: «Обновить» и рядов ставки тело под ним не несёт.
+const soldLot: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "lot",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      version: 9,
+      card: { title: "Банка <солёных> грибов & рыжиков", description: "" },
+      status: { kind: "sold", winnerId: "p-1", price: rub(900) },
+      participantName: "@jay",
+    },
+  ],
+  keyboard: [
+    [{ action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" }],
+    [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
+  ],
+};
+
 const lot = (image: boolean): AuctionScreenBody => ({
   blocks: [
     {
@@ -106,7 +125,8 @@ const history = (entries: boolean): AuctionScreenBody => ({
               occurredAt: "2026-10-03T16:04:00Z",
               amount: rub(500),
               origin: { kind: "manual", source: "bot" },
-              participantName: "@jay",
+              // Псевдоним со знаками разметки: строка хронологии его экранирует.
+              participantName: "Сыч <&>*",
             },
             {
               kind: "bid",
@@ -221,8 +241,9 @@ const middlePage: AuctionListPage = {
   ],
 };
 
+// Тексты организатора со знаками разметки: в сообщение они уходят дословно.
 const urls = {
-  items: "Грибы и соленья.",
+  items: "Грибы & соленья <домашние>.",
   purpose: "На сходки.",
   simultaneousBids: "Побеждает первая.",
   connectionFailure: "Ставка либо принята, либо нет.",
@@ -237,7 +258,6 @@ const shown: readonly {
   faq?: typeof urls;
   presentation?: "plain";
 }[] = [
-  { screen: { kind: "welcome" } },
   { screen: { kind: "menu" } },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
@@ -253,6 +273,8 @@ const shown: readonly {
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
   { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },
+  { screen: { kind: "auction", body: soldLot } },
+  { screen: { kind: "auction", body: soldLot }, presentation: "plain" },
   { screen: { kind: "auction", body: history(true) } },
   { screen: { kind: "auction", body: history(false) } },
   { screen: { kind: "auction", body: confirm("bid") } },
@@ -265,8 +287,22 @@ const shown: readonly {
   { screen: { kind: "auction", body: nameChoice(false) } },
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
+  { screen: { kind: "denied", reason: "declined" } },
   { screen: { kind: "outdated" } },
-  { screen: { kind: "unavailable" } },
+  // Повтор несёт данные исходного нажатия — здесь у самого предела кнопки.
+  {
+    screen: {
+      kind: "unavailable",
+      exit: { kind: "retry", data: `v1:auc:${"x".repeat(57)}` },
+    },
+  },
+  {
+    screen: {
+      kind: "unavailable",
+      exit: { kind: "enter", data: "v1:entry:start" },
+    },
+  },
+  { screen: { kind: "unavailable", exit: { kind: "answer" } } },
 ];
 
 // Вызов в той форме, в какой его собирает адаптер (`bot.ts`): rich-карточка —
@@ -292,19 +328,22 @@ const bare = Object.fromEntries(
   entries.map(([id, { waive: _waive, ...entry }]) => [id, entry]),
 );
 
+const rendered = shown.map(({ screen, faq, presentation }) =>
+  renderEntryScreen(screen, {
+    timeZone: "Europe/Moscow",
+    ...(faq === undefined ? {} : { faq }),
+    ...(presentation === undefined ? {} : { presentation }),
+  }),
+);
+
 function brokenRules(): Map<ScreenId, Set<string>> {
   const broken = new Map<ScreenId, Set<string>>();
-  for (const { screen, faq, presentation } of shown) {
-    const rendered = renderEntryScreen(screen, {
-      timeZone: "Europe/Moscow",
-      ...(faq === undefined ? {} : { faq }),
-      ...(presentation === undefined ? {} : { presentation }),
-    });
-    const rules = broken.get(rendered.id) ?? new Set<string>();
-    for (const violation of inspectCall(...sent(rendered), bare)) {
+  for (const screen of rendered) {
+    const rules = broken.get(screen.id) ?? new Set<string>();
+    for (const violation of inspectCall(...sent(screen), bare)) {
       rules.add(violation.rule);
     }
-    broken.set(rendered.id, rules);
+    broken.set(screen.id, rules);
   }
   return broken;
 }
@@ -322,5 +361,85 @@ describe("auction screen catalog", () => {
     expect([...(broken.get(id) ?? [])].sort()).toEqual(
       Object.keys(entry.waive ?? {}).sort(),
     );
+  });
+});
+
+// Правила дизайн-кода, которых линтер не видит: он проверяет клавиатуру по
+// записи каталога, а эти — свойства всех экранов бота сразу.
+describe("auction screens beyond the linter", () => {
+  const buttons = rendered.flatMap((screen) =>
+    screen.keyboard.flat().map((button) => ({ screen: screen.id, button })),
+  );
+  // Видимый текст: теги сняты. Остаток `<` — неэкранированный знак.
+  const visible = (screen: RenderedScreen) =>
+    screen.text.replace(/<\/?(b|h1|p|br)>/g, "");
+
+  it("marks every link button, and only a link button, with the sign", () => {
+    expect(
+      buttons
+        .filter(({ button }) => "url" in button !== button.text.endsWith(" ↗"))
+        .map(({ screen, button }) => `${screen}: ${button.text}`),
+    ).toEqual([]);
+  });
+
+  it("keeps the FAQ button in the menu only", () => {
+    expect(
+      buttons
+        .filter(({ button }) => button.text === "Правила и FAQ")
+        .map(({ screen }) => screen),
+    ).toEqual(["menu"]);
+  });
+
+  it("uses the dictionary for the menu and paging", () => {
+    const labels = buttons.map(({ button }) => button.text);
+    for (const retired of ["В меню", "К лотам"]) {
+      expect(labels).not.toContain(retired);
+    }
+    expect(
+      labels.filter((label) => /Предыдущие|Следующие/.test(label)),
+    ).toEqual([]);
+  });
+
+  it("addresses the person informally in every text", () => {
+    // Местоимения и повелительные формы, которые стояли в текстах до
+    // перевёрстки; общий признак окончания дал бы ложные «лимите» и «ответе».
+    const formal =
+      /(^|[^а-яё])(вы|вас|вам|ваш[а-яё]*|выберите|отправьте|попробуйте|пришлите|откройте|проверьте)(?![а-яё])/i;
+    expect(
+      rendered
+        .filter((screen) => formal.test(visible(screen)))
+        .map((screen) => `${screen.id}: ${visible(screen)}`),
+    ).toEqual([]);
+  });
+
+  it("leaves no raw markup character of a lot title or organizer text", () => {
+    expect(
+      rendered
+        .filter((screen) => /<|&(?!(amp|lt|gt);)/.test(visible(screen)))
+        .map((screen) => `${screen.id}: ${visible(screen)}`),
+    ).toEqual([]);
+  });
+
+  // Линтер принимает жирную строку в любом месте текста: перед заголовком
+  // вправе стоять заметка. У экранов этого списка заметок нет, и заголовок
+  // обязан быть первым; вопрос с причиной отказа — класс «вопрос», не экран.
+  it("starts every screen with its bold title", () => {
+    expect(
+      rendered
+        .filter((screen) => screen.asks !== true)
+        .filter((screen) => !/^<(b|h1)>/.test(screen.text))
+        .map((screen) => `${screen.id}: ${screen.text.slice(0, 40)}`),
+    ).toEqual([]);
+  });
+
+  it("sends every screen with markup", () => {
+    for (const screen of rendered) {
+      const [, payload] = sent(screen);
+      // `sent` отдаёт параметры вызова без типа: он зависит от метода.
+      const call = payload as { parse_mode?: unknown; rich_message?: unknown };
+      expect(
+        call.parse_mode === "HTML" || call.rich_message !== undefined,
+      ).toBe(true);
+    }
   });
 });

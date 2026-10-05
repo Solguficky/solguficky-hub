@@ -70,6 +70,20 @@ export async function showLot(input: {
         ],
       ]
     : [];
+  const refresh: AuctionButton[][] = changesUnattended(lot.status)
+    ? [
+        [
+          {
+            action: "lot.refresh",
+            callbackData: encodeAuctionCallback({
+              kind: "lot",
+              lotId: lot.lotId,
+              page: input.page,
+            }),
+          },
+        ],
+      ]
+    : [];
   return {
     blocks: [
       ...(input.result === undefined
@@ -92,16 +106,7 @@ export async function showLot(input: {
     ],
     keyboard: [
       ...bidRows(lot, input.page),
-      [
-        {
-          action: "lot.refresh",
-          callbackData: encodeAuctionCallback({
-            kind: "lot",
-            lotId: lot.lotId,
-            page: input.page,
-          }),
-        },
-      ],
+      ...refresh,
       ...history,
       [
         {
@@ -132,6 +137,28 @@ function participantOf(status: LotStatusView): string | undefined {
     case "unsold":
     case "withdrawn":
       return undefined;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+// «Обновить» стоит, пока у лота нет итога (дизайн-код, «Навигация»): у
+// запланированного сами открываются торги, в торгах меняются цена и лидер,
+// отложенный уходит в финал и возвращается из него. У лота без условий
+// торгов, проданного, непроданного и снятого без человека ничего не меняется.
+function changesUnattended(status: LotStatusView): boolean {
+  switch (status.kind) {
+    case "scheduled":
+    case "trading":
+    case "held":
+      return true;
+    case "draft":
+    case "sold":
+    case "unsold":
+    case "withdrawn":
+      return false;
     default: {
       const _exhaustive: never = status;
       return _exhaustive;

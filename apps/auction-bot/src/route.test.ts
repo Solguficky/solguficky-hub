@@ -11,13 +11,22 @@ import {
   LIST_PAGE_SIZE,
 } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
-import { entryCallback, listCallback } from "./faq.js";
-import { routeAuctionCallback, routeAuctionStart } from "./route.js";
+import { entryCallback, listCallback, startCallback } from "./faq.js";
+import {
+  routeAuctionReply,
+  routeAuctionStart,
+  routeAuctionCallback as routeCallback,
+} from "./route.js";
 
 const lotId = "01926f3c-8b7a-7cde-8f00-0123456789ab";
 const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
 const user = { telegramUserId: 42 };
 const firstName = "Сова";
+
+// Имя нужно одной кнопке — повтору входа; остальным нажатиям оно безразлично.
+const routeAuctionCallback = (
+  input: Omit<Parameters<typeof routeCallback>[0], "firstName">,
+) => routeCallback({ ...input, firstName });
 
 function summary(index: number, stage: AuctionSummary["stage"]) {
   return {
@@ -111,6 +120,15 @@ const feedButton = encodeAuctionCallback({
   page: 0,
 });
 
+// Шаг вопроса суммы — данные «Отмены» под вопросом, заданным этому человеку.
+const QUESTION_STEP = encodeAuctionCallback({
+  kind: "question",
+  question: "bid",
+  lotId,
+  page: 0,
+  addressee: user.telegramUserId,
+});
+
 describe("FAQ entry", () => {
   it("shows no FAQ before admission and opens it on the first admitted start", async () => {
     const p = ports(identity({ globalRoles: [] }));
@@ -132,7 +150,16 @@ describe("FAQ entry", () => {
     });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
   });
-  it.each(["faq", "menu", "auctions", "past", "details", "question"] as const)(
+  it.each([
+    "faq",
+    "menu",
+    "read",
+    "start",
+    "auctions",
+    "past",
+    "details",
+    "question",
+  ] as const)(
     "refuses a blocked person even with a stale public role on %s",
     async (action) => {
       const p = ports(identity({ globalRoles: ["public"], blocked: true }));
@@ -207,7 +234,7 @@ describe("FAQ entry", () => {
     });
   });
 
-  it("records completion on the explicit menu action and allows its repetition", async () => {
+  it("records completion on the return from FAQ and allows its repetition", async () => {
     const p = ports(identity({ globalRoles: ["public"] }));
     for (let i = 0; i < 2; i++) {
       expect(
@@ -215,7 +242,7 @@ describe("FAQ entry", () => {
           await routeAuctionCallback({
             ports: p,
             user,
-            data: entryCallback("menu"),
+            data: entryCallback("read"),
           })
         ).screen,
       ).toEqual({ kind: "menu" });
@@ -225,6 +252,18 @@ describe("FAQ entry", () => {
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
       globalRoles: ["public"],
     });
+  });
+
+  // «Меню» под лотом, списком или кадром отказа отметку не ставит: человек,
+  // который FAQ не закрывал, видит FAQ, а не меню.
+  it("opens the menu without recording completion", async () => {
+    const p = ports(identity({ globalRoles: ["public"] }));
+    const menu = () =>
+      routeAuctionCallback({ ports: p, user, data: entryCallback("menu") });
+    expect((await menu()).screen).toEqual({ kind: "menu" });
+    vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
+    expect((await menu()).screen).toEqual({ kind: "faq" });
+    expect(p.faq.acknowledge).not.toHaveBeenCalled();
   });
 
   it("does not enter the menu when completion cannot be saved", async () => {
@@ -237,10 +276,13 @@ describe("FAQ entry", () => {
         await routeAuctionCallback({
           ports: p,
           user,
-          data: entryCallback("menu"),
+          data: entryCallback("read"),
         })
       ).screen,
-    ).toEqual({ kind: "unavailable" });
+    ).toEqual({
+      kind: "unavailable",
+      exit: { kind: "retry", data: entryCallback("read") },
+    });
   });
 
   it("allows a manual return to FAQ without storage or Auction reads", async () => {
@@ -272,7 +314,16 @@ describe("FAQ entry", () => {
     },
   );
 
-  it.each(["faq", "menu", "auctions", "past", "details", "question"] as const)(
+  it.each([
+    "faq",
+    "menu",
+    "read",
+    "start",
+    "auctions",
+    "past",
+    "details",
+    "question",
+  ] as const)(
     "rechecks access on the old %s button before reaching FAQ storage",
     async (action) => {
       const p = ports(identity({ globalRoles: [] }));
@@ -299,6 +350,7 @@ describe("FAQ entry", () => {
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
     ).toEqual({
       kind: "unavailable",
+      exit: { kind: "enter", data: startCallback() },
     });
   });
 });
@@ -413,7 +465,10 @@ describe("auction lists", () => {
       user,
       data: entryCallback("auctions"),
     });
-    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    expect(outcome.screen).toEqual({
+      kind: "unavailable",
+      exit: { kind: "retry", data: entryCallback("auctions") },
+    });
     expect(outcome.failure?.category).toBe("dependency_unavailable");
   });
 });
@@ -481,7 +536,10 @@ describe("routeAuctionCallback", () => {
       data: lotButton,
     });
     expect(outcome).toEqual({
-      screen: { kind: "unavailable" },
+      screen: {
+        kind: "unavailable",
+        exit: { kind: "retry", data: lotButton },
+      },
       failure: { category: "unexpected", message: "connect ECONNREFUSED" },
     });
     expect(p.auction.getLot).not.toHaveBeenCalled();
@@ -497,7 +555,11 @@ describe("routeAuctionCallback", () => {
       user,
       data: lotButton,
     });
-    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    // Повтор несёт данные нажатия, на котором случился отказ.
+    expect(outcome.screen).toEqual({
+      kind: "unavailable",
+      exit: { kind: "retry", data: lotButton },
+    });
     expect(outcome.identityId).toBeDefined();
     expect(outcome.failure).toMatchObject({
       category: "dependency_unavailable",
@@ -517,7 +579,10 @@ describe("routeAuctionCallback", () => {
       user,
       data: feedButton,
     });
-    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    expect(outcome.screen).toEqual({
+      kind: "unavailable",
+      exit: { kind: "retry", data: feedButton },
+    });
     expect(outcome.identityId).toBe("01926f3c-8b7a-7cde-8f00-00000000000a");
     expect(outcome.failure).toMatchObject({ grpcCode: "Unimplemented" });
   });
@@ -605,7 +670,10 @@ describe("routeAuctionStart", () => {
       outcome: "unspecified",
     });
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
-      screen: { kind: "unavailable" },
+      screen: {
+        kind: "unavailable",
+        exit: { kind: "enter", data: startCallback() },
+      },
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
       failure: {
         category: "invariant",
@@ -617,9 +685,103 @@ describe("routeAuctionStart", () => {
 
   it("fails closed when the entry is unavailable", async () => {
     const p = ports(new ConnectError("offline", Code.Unavailable));
-    const outcome = await routeAuctionStart({ ports: p, user, firstName });
-    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    const outcome = await routeAuctionStart({
+      ports: p,
+      user,
+      firstName,
+      sourceCode: "chat",
+    });
+    // Повтор входа несёт код канала прихода: заявка не теряет источник.
+    expect(outcome.screen).toEqual({
+      kind: "unavailable",
+      exit: { kind: "enter", data: startCallback("chat") },
+    });
     expect(outcome.failure?.category).toBe("dependency_unavailable");
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+});
+
+// «Повторить» под кадром «недоступно» после `/start` — тот же вход: без него
+// новичок после сбоя увидел бы «заявка на рассмотрении» без заявки.
+describe("entry retry", () => {
+  it("requests the role again with the channel code and the first name", async () => {
+    const p = ports(identity({ globalRoles: [] }));
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: startCallback("chat"),
+    });
+    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+      user,
+      requestedRole: "public",
+      sourceCode: "chat",
+      firstName,
+    });
+    expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
+    expect(outcome.screen).toEqual({ kind: "denied", reason: "not-admitted" });
+  });
+
+  it("opens the menu for an admitted person and FAQ before its completion", async () => {
+    const p = ports(identity({ globalRoles: ["public"] }));
+    const retry = () =>
+      routeAuctionCallback({ ports: p, user, data: startCallback() });
+    expect((await retry()).screen).toEqual({ kind: "menu" });
+    vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
+    expect((await retry()).screen).toEqual({ kind: "faq" });
+    expect(p.faq.acknowledge).not.toHaveBeenCalled();
+  });
+
+  // `/start s_` несёт канал с пустым кодом: повтор его не теряет и не
+  // становится нечитаемой кнопкой.
+  it("keeps an empty channel code through the retry", async () => {
+    const down = ports(new ConnectError("offline", Code.Unavailable));
+    const failed = await routeAuctionStart({
+      ports: down,
+      user,
+      firstName,
+      sourceCode: "",
+    });
+    if (
+      failed.screen.kind !== "unavailable" ||
+      failed.screen.exit.kind !== "enter"
+    )
+      throw new Error("expected the entry retry frame");
+    const p = ports(identity({ globalRoles: [] }));
+    await routeAuctionCallback({
+      ports: p,
+      user,
+      data: failed.screen.exit.data,
+    });
+    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+      user,
+      requestedRole: "public",
+      sourceCode: "",
+      firstName,
+    });
+  });
+
+  it("offers the same retry when the entry fails again", async () => {
+    const p = ports(new ConnectError("offline", Code.Unavailable));
+    const data = startCallback("chat");
+    expect(
+      (await routeAuctionCallback({ ports: p, user, data })).screen,
+    ).toEqual({ kind: "unavailable", exit: { kind: "enter", data } });
+  });
+});
+
+// Ответ на вопрос в кнопку не помещается: повтора у кадра нет, ответ
+// присылают ещё раз.
+describe("routeAuctionReply", () => {
+  it("asks to send the answer again when Identity is unavailable", async () => {
+    const outcome = await routeAuctionReply({
+      ports: ports(new ConnectError("offline", Code.Unavailable)),
+      user,
+      data: QUESTION_STEP,
+      text: "1 500",
+    });
+    expect(outcome.screen).toEqual({
+      kind: "unavailable",
+      exit: { kind: "answer" },
+    });
   });
 });

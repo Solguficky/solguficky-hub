@@ -31,13 +31,13 @@ const nbsp = " ";
 describe("renderNotification", () => {
   it("names the lot and the current price of an outbid", () => {
     expect(renderNotification(outbid, "Кружка").text).toBe(
-      `Вашу ставку на «Кружка» перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
+      `Твою ставку на «Кружка» перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
     );
   });
 
   it("names the lot and the sale price of a purchase", () => {
     expect(renderNotification(purchased, "Кружка").text).toBe(
-      `Лот «Кружка» ваш за 1${nbsp}500,50${nbsp}₽.`,
+      `Лот «Кружка» твой за 1${nbsp}500,50${nbsp}₽.`,
     );
   });
 
@@ -50,10 +50,10 @@ describe("renderNotification", () => {
 
   it("does without the title when it is unknown", () => {
     expect(renderNotification(outbid).text).toBe(
-      `Вашу ставку на лот перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
+      `Твою ставку на лот перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
     );
     expect(renderNotification(purchased, "").text).toBe(
-      `Лот ваш за 1${nbsp}500,50${nbsp}₽.`,
+      `Лот твой за 1${nbsp}500,50${nbsp}₽.`,
     );
   });
 
@@ -102,7 +102,7 @@ function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
 describe("access granted", () => {
   it("tells the applicant they are admitted and leads into the auction", () => {
     const message = renderNotification({ kind: "access-granted" });
-    expect(message.text).toBe("Вас допустили к аукциону.");
+    expect(message.text).toBe("Тебя допустили к аукциону.");
     expect(message.button).toEqual({
       text: "Открыть аукцион",
       callback_data: traceAuctionsCallback(),

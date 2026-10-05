@@ -4,8 +4,8 @@
 // с правилами. Форма записи и линтер — общий пакет `shared/typescript/screen-lint`;
 // сборка бота его не видит, поэтому форму каталога проверяет test kit.
 //
-// Экраны ещё не переверстаны: правило, которое экран нарушает сегодня, снято
-// именованным исключением `waive` с задачей перевёрстки. Тест каталога
+// Исключений `waive` в каталоге нет: экраны переверстаны (PER-463). Механизм
+// остаётся для экрана, который вводится раньше своих правил, и тест каталога
 // (`screen-catalog.test.ts`) требует, чтобы исключения совпадали с тем, что
 // экран нарушает на самом деле, — исключение не переживает свою причину.
 
@@ -23,52 +23,35 @@ export function screenMark(id: ScreenId): { [screenTag]: ScreenId } {
 export const auctionListParent = "auction-list";
 export const auctionLists = ["auctions", "past"] as const;
 
-const shellTitle =
-  "PER-463: оболочка шлёт текст без HTML и жирного заголовка (расхождения 12, 13)";
-
 export const screenCatalog = {
   menu: {
     class: "screen",
     nav: "root",
     title: "Меню",
     backName: "Меню",
-    waive: { title: shellTitle },
   },
-  // Короткого имени для возврата у FAQ нет: подпись возврата из его состояний
-  // выбирает перевёрстка. До неё `nav` у `details` и `question` не проходит ни
-  // при какой клавиатуре, и снимать его исключение можно только вместе с
-  // `backName` здесь.
+  // Отметку ознакомления ставит возврат «‹ Меню» под самим FAQ.
   faq: {
     class: "screen",
     nav: "tree",
     title: "Правила и FAQ",
     parent: "menu",
-    waive: {
-      title: shellTitle,
-      nav: "PER-463: вход в меню — «В меню» первым рядом (расхождение 6)",
-    },
+    backName: "FAQ",
   },
   // Состояния FAQ, а не узлы: ссылка на правила и адрес для вопросов не
   // указаны. Возврат из них ведёт в FAQ.
   details: {
     class: "screen",
     nav: "tree",
+    title: "Правила и FAQ",
     parent: "faq",
-    waive: {
-      title: shellTitle,
-      nav: "PER-463: вместо возврата в FAQ — «Правила и FAQ» и «В меню» (расхождения 6, 7)",
-    },
   },
   question: {
     class: "screen",
     nav: "tree",
+    title: "Правила и FAQ",
     parent: "faq",
-    waive: {
-      title: shellTitle,
-      nav: "PER-463: вместо возврата в FAQ — «Правила и FAQ» и «В меню» (расхождения 6, 7)",
-    },
   },
-  // Списки аукционов (PER-453) написаны по дизайн-коду сразу.
   auctions: {
     class: "screen",
     nav: "tree",
@@ -90,14 +73,10 @@ export const screenCatalog = {
     title: "Лоты",
     parent: auctionListParent,
     backName: "Лоты",
-    waive: {
-      title: shellTitle,
-      rows: "PER-463: листание «‹ Предыдущие» и «Следующие ›» вместо «←» и «→» — пара не короткая (расхождение 10)",
-    },
   },
   // «Обновить» разрешено, пока у лота нет итога (PER-462). Состояния лота
-  // каталог не знает, поэтому кнопку под лотом с итогом (расхождение 8)
-  // линтер не видит: её уводит из тела общий пакет (PER-463).
+  // каталог не знает: кнопку по состоянию ставит общий пакет, и держат это
+  // его contract cases.
   // Предел рядов под карточкой назвал лист ставки (PER-317): ставка по шагу,
   // своя сумма, автоставка, «Обновить», «Ставки» и навигация — с рядом
   // «Изменить лот» в хабе семь.
@@ -108,22 +87,15 @@ export const screenCatalog = {
     backName: "Лот",
     refresh: true,
     maxRows: 7,
-    waive: {
-      nav: "PER-463: возврат «К лотам», «Правила и FAQ» и «В меню» разными рядами (расхождения 5, 6, 7)",
-      rows: "PER-463: «Правила и FAQ» и «В меню» — лишние ряды под лотом (расхождения 6, 7)",
-      vocabulary:
-        "PER-463: возврат подписан «К лотам», а не «‹ Лоты» (расхождение 5)",
-    },
   },
-  // Хронология ставок лота (PER-309) написана по дизайн-коду сразу.
   history: {
     class: "screen",
     nav: "tree",
     title: "Ставки",
     parent: "lot",
   },
-  // Лист ставки (PER-317) написан по дизайн-коду сразу: подтверждение без
-  // ряда навигации, вопросы с `force_reply` и «Отменой», выбор имени под лотом.
+  // Лист ставки (PER-317): подтверждение без ряда навигации, вопросы с
+  // `force_reply` и «Отменой», выбор имени под лотом.
   "bid-confirm": { class: "screen", nav: "confirm", title: "Ставка" },
   "proxy-confirm": { class: "screen", nav: "confirm", title: "Автоставка" },
   "bid-question": { class: "question", nav: "question" },
@@ -135,33 +107,12 @@ export const screenCatalog = {
     title: "Имя в аукционе",
     parent: "lot",
   },
-  welcome: {
-    class: "screen",
-    nav: "none",
-    waive: { title: shellTitle },
-  },
   // Кадры ожидания допуска и блокировки: в дерево не входят, клавиатуры нет.
-  denied: {
-    class: "screen",
-    nav: "none",
-    waive: { title: shellTitle },
-  },
-  outdated: {
-    class: "screen",
-    nav: "exit",
-    waive: {
-      title: shellTitle,
-      nav: "PER-463: кадр отказа без «Повторить», возврата и «Меню» (расхождение 9)",
-    },
-  },
-  unavailable: {
-    class: "screen",
-    nav: "exit",
-    waive: {
-      title: shellTitle,
-      nav: "PER-463: кадр отказа без «Повторить», возврата и «Меню» (расхождение 9)",
-    },
-  },
+  denied: { class: "screen", nav: "none" },
+  // Кадры отказа несут выход: «Меню» у устаревшего экрана, «Повторить» и
+  // «Меню» у недоступного сервиса.
+  outdated: { class: "screen", nav: "exit" },
+  unavailable: { class: "screen", nav: "exit" },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;

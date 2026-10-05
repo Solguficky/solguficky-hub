@@ -13,8 +13,9 @@ import {
   type AuctionEntryScreen,
   type RenderedScreen,
   renderEntryScreen,
+  retryLabel,
 } from "./entry-screen.js";
-import type { FaqContent } from "./faq.js";
+import { entryCallback, type FaqContent } from "./faq.js";
 import type { LogFields, Logger } from "./logging.js";
 import {
   createPhotoCache,
@@ -82,32 +83,66 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   // Только личный чат: в группе бот аукциона молчит.
   const direct = bot.chatType("private");
 
-  // Бюджет действия у команды тот же, что у нажатия (дизайн-код, «Ожидание»).
-  direct.command("start", async (ctx) => {
+  // Команда отвечает новым сообщением с экраном (дизайн-код, «Доставка»).
+  // Бюджет действия у неё тот же, что у нажатия («Ожидание»).
+  const answerCommand = async (
+    ctx: UpdateContext,
+    input: {
+      operation: "start" | "faq";
+      route: (ports: ReturnType<PortsFactory>) => Promise<RouteOutcome>;
+    },
+  ) => {
+    const { operation } = input;
     const waiting = startWaiting(ctx);
     waiting.begin();
     try {
-      const sourceCode = sourceCodeOf(ctx.match);
-      const outcome = await routeAuctionStart({
-        ...(sourceCode === undefined ? {} : { sourceCode }),
-        ports: options.ports(ctx.requestId, waiting.deadlineAt),
-        user: {
-          telegramUserId: ctx.from.id,
-          ...(ctx.from.username === undefined
-            ? {}
-            : { telegramUsername: ctx.from.username }),
-        },
-        firstName: ctx.from.first_name,
-      });
-      const screen = render(outcome.screen);
+      const ports = options.ports(ctx.requestId, waiting.deadlineAt);
+      const outcome = await input.route(ports);
       // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
       await dropQuestions(ctx, questions);
-      await ctx.reply(screen.text, markupOf(screen));
-      log({ logger, ctx, outcome, operation: "start" });
+      await deliver(ctx, {
+        screen: render(outcome.screen),
+        photos,
+        image: ports.image,
+        viewer: outcome.viewer,
+        logger,
+      });
+      log({ logger, ctx, outcome, operation });
     } finally {
       await waiting.finish();
     }
+  };
+
+  direct.command("start", (ctx) => {
+    const sourceCode = sourceCodeOf(ctx.match);
+    return answerCommand(ctx, {
+      operation: "start",
+      route: (ports) =>
+        routeAuctionStart({
+          ...(sourceCode === undefined ? {} : { sourceCode }),
+          ports,
+          user: userOf(ctx.from),
+          firstName: ctx.from.first_name,
+        }),
+    });
   });
+
+  // FAQ с любого места бота, не возвращаясь по дереву (дизайн-код, «Дерево
+  // бота аукциона»). Доступ проверяется так же, как у кнопки «Правила и FAQ»:
+  // ожидающий допуска и заблокированный получают свой кадр. Заявку команда не
+  // ставит — вход остаётся за `/start`.
+  direct.command("faq", (ctx) =>
+    answerCommand(ctx, {
+      operation: "faq",
+      route: (ports) =>
+        routeAuctionCallback({
+          ports,
+          user: userOf(ctx.from),
+          firstName: ctx.from.first_name,
+          data: entryCallback("faq"),
+        }),
+    }),
+  );
 
   direct.on("callback_query:data", async (ctx) => {
     // Ответ на нажатие уходит вместе с результатом, а не до похода к
@@ -130,6 +165,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       outcome = await routeAuctionCallback({
         ports,
         user: userOf(ctx.from),
+        firstName: ctx.from.first_name,
         data,
       });
       const screen = render(outcome.screen);
@@ -149,8 +185,15 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       } else {
         await dropQuestions(ctx, questions);
         if (screen.asks === true) {
+          // Повтор под кадром отказа задал вопрос: кадр своё отслужил и
+          // удаляется, иначе он остался бы в чате без кнопок. Удалить не дали
+          // — с него, как с любого экрана над вопросом, снимается клавиатура.
+          const spent =
+            pressed !== undefined &&
+            pressedLabel(ctx) === retryLabel &&
+            (await deleteMessage(ctx, pressed));
           await ask(ctx, questions, screen, {
-            clearPressed: !isTraceCallback(ctx.callbackQuery.data),
+            clearPressed: !spent && !isTraceCallback(ctx.callbackQuery.data),
           });
         } else {
           await deliver(ctx, {
@@ -253,7 +296,7 @@ function log(input: {
   logger: Logger;
   ctx: UpdateContext;
   outcome: RouteOutcome;
-  operation: "start" | "callback" | "reply";
+  operation: "start" | "faq" | "callback" | "reply";
 }): void {
   const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {
@@ -307,6 +350,7 @@ export function markupOf(screen: RenderedScreen) {
   const inline_keyboard = screen.keyboard.map((r) => [...r]);
   return {
     ...screenMark(screen.id),
+    // Разметку rich-сообщения несёт его `html`, а не `parse_mode`.
     ...(screen.format === "html" ? { parse_mode: "HTML" as const } : {}),
     // Вопрос открывает режим ответа сам, а «Отмена» под ним даёт выход
     // (дизайн-код, «Вопросы»).
@@ -315,6 +359,19 @@ export function markupOf(screen: RenderedScreen) {
         ? { force_reply: true as const, inline_keyboard }
         : { inline_keyboard },
   };
+}
+
+// Подпись нажатой кнопки: клавиатура сообщения приходит в самом нажатии, и
+// хранить её боту не нужно.
+function pressedLabel(ctx: UpdateContext): string | undefined {
+  const message = ctx.callbackQuery?.message;
+  const data = ctx.callbackQuery?.data;
+  if (message === undefined || !("reply_markup" in message)) return undefined;
+  return message.reply_markup?.inline_keyboard
+    .flat()
+    .find(
+      (button) => "callback_data" in button && button.callback_data === data,
+    )?.text;
 }
 
 function userOf(from: { id: number; username?: string }) {
