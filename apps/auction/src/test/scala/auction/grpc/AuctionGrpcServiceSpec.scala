@@ -5,6 +5,7 @@ import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
+import auction.aggregate.Correlation
 import auction.aggregate.DraftAuction
 import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
@@ -22,6 +23,7 @@ import auction.lot.AuctionId
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.Envelope
+import auction.lot.LotEvent
 import auction.lot.OpId
 import auction.lot.LotFixtures
 import auction.lot.LotFixtures.*
@@ -46,6 +48,9 @@ import auction.projection.LotSnapshotView
 import auction.projection.LotViews
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
+import ch.qos.logback.classic.Logger as LogbackLogger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import io.grpc.Status
 import org.apache.pekko.grpc.GrpcServiceException
@@ -53,10 +58,13 @@ import org.apache.pekko.pattern.AskTimeoutException
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
+import org.slf4j.LoggerFactory
 
 import java.util.UUID
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.jdk.CollectionConverters.*
 
 final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaFutures {
 
@@ -121,10 +129,12 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] = {
       freezes += 1
+      // Как UPDATE базы: без строки выбора замораживать нечего.
       if (freezes <= failingFreezes) Future.failed(IllegalStateException("database is down"))
+      else if (!chosen.contains(participant)) Future.successful(false)
       else {
         frozen += participant
-        Future.successful(chosen.contains(participant))
+        Future.successful(true)
       }
     }
 
@@ -217,6 +227,20 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auctionViews,
       DisplayNameCommands(names)
     )
+
+  // Пока SLF4J инициализирует backend, он отдаёт SubstituteLogger, и приведение к logback падает (как в GrpcBoundarySpec).
+  private def serviceLogger: LogbackLogger = {
+    @tailrec
+    def resolve(attemptsLeft: Int): LogbackLogger =
+      LoggerFactory.getLogger(classOf[AuctionGrpcService].getName) match {
+        case logback: LogbackLogger => logback
+        case _ if attemptsLeft > 0 =>
+          Thread.sleep(50)
+          resolve(attemptsLeft - 1)
+        case other => fail(s"slf4j did not settle on logback: ${other.getClass.getName}")
+      }
+    resolve(attemptsLeft = 40)
+  }
 
   private def statusOf(call: Future[?]): Status.Code =
     call.failed.futureValue match {
@@ -391,6 +415,33 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       store.frozen shouldBe empty
     }
 
+    "writes exhausted freeze attempts as one event with the call's request_id and without the exception message" in {
+      val appender = new ListAppender[ILoggingEvent]()
+      val logger = serviceLogger
+      appender.start()
+      logger.addAppender(appender)
+      try {
+        val store = Names(named, failingFreezes = Int.MaxValue)
+        service(answering(Future.successful(Right(accepted))), names = store)
+          .within(Correlation(Some("req-7"), Some("place_bid")))
+          .placeBid(validBid)
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        val events = appender.list.asScala.toList
+        events should have size 1
+        val entry = events.head.getArgumentArray.head.toString
+        entry should include(s"operation=${AuctionGrpcService.FreezeOperation}")
+        entry should include("request_id=req-7")
+        entry should include("use_case=place_bid")
+        entry should include("error=java.lang.IllegalStateException")
+        entry should not include "database is down"
+      } finally {
+        logger.detachAppender(appender)
+        appender.stop()
+      }
+    }
+
     "answers a catalog command from a non-administrator with NotAdmin before touching the store" in {
       val request = wire.CreateLotCardRequest(Some(viewer), lot, "Лот", "")
       service(Unreachable).createLotCard(request).futureValue.getRefused.reason.isNotAdmin shouldBe true
@@ -413,7 +464,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "sends the viewer's proxy limit to the addressed lot as the participant's own limit" in {
       var seen = Option.empty[(UUID, SetProxyLimit, Initiator)]
-      val recording = new Gateway {
+      val recording = new Born {
         override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) = {
           seen = Some((lotId, command, initiator))
           Future.successful(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice))
@@ -433,11 +484,36 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           Future.successful(Left(WithdrawProxyLimitRejected.NoActiveProxyLimit))
       }
       service(none).withdrawProxyLimit(validWithdrawal).futureValue.getRefused.reason.isNoActiveProxyLimit shouldBe true
-      val missing = new Gateway {
+      val missing = new Born {
         override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) =
           Future.successful(Left(SetProxyLimitRejected.LotNotFound))
       }
       statusOf(service(missing).setProxyLimit(validLimit)) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "refuses a proxy limit of a participant without a chosen name with DisplayNameNotChosen before reaching the lot" in {
+      val response = service(new Born, names = Names()).setProxyLimit(validLimit).futureValue
+      response.getRefused.reason.isDisplayNameNotChosen shouldBe true
+    }
+
+    "freezes the name after an accepted proxy limit and leaves it free after a refused one" in {
+      def limiting(outcome: Either[SetProxyLimitRejected, Envelope]) = new Born {
+        override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) =
+          Future.successful(outcome)
+      }
+      val refusedNames = Names(named)
+      service(limiting(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)), names = refusedNames)
+        .setProxyLimit(validLimit)
+        .futureValue
+      refusedNames.freezes shouldBe 0
+      val set = Envelope(5, LotFixtures.op(2), LotEvent.ProxyLimitSet(participant(1), money(200)))
+      val acceptedNames = Names(named)
+      service(limiting(Right(set)), names = acceptedNames)
+        .setProxyLimit(validLimit)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      acceptedNames.frozen shouldBe Set(ViewerId)
     }
 
     "refuses a read from a viewer without the public role before touching the read model" in {

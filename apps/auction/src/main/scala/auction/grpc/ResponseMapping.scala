@@ -44,6 +44,14 @@ object ResponseMapping {
       .PlaceBidResponse()
       .withRefused(wire.PlaceBidRefusal(wire.PlaceBidRefusal.Reason.DisplayNameNotChosen(wire.DisplayNameNotChosen())))
 
+  /** То же для прокси-лимита: лимит без имени лот не получает. */
+  val proxyDisplayNameNotChosen: wire.SetProxyLimitResponse =
+    wire
+      .SetProxyLimitResponse()
+      .withRefused(
+        wire.SetProxyLimitRefusal(wire.SetProxyLimitRefusal.Reason.DisplayNameNotChosen(wire.DisplayNameNotChosen()))
+      )
+
   def chooseDisplayName(outcome: Either[NamingRefusal, DisplayName]): wire.ChooseDisplayNameResponse =
     outcome match {
       case Right(name) => wire.ChooseDisplayNameResponse().withAccepted(displayName(name))

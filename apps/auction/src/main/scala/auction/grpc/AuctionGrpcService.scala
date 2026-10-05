@@ -38,18 +38,18 @@ final class AuctionGrpcService(
     views: LotViews,
     auctions: AuctionCommands,
     auctionViews: AuctionViews,
-    names: DisplayNameCommands
+    names: DisplayNameCommands,
+    correlation: Correlation = Correlation.none
 )(using ExecutionContext)
     extends wire.AuctionService {
 
-  /** Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями. */
-  def within(correlation: Correlation): AuctionGrpcService =
-    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews, names)
-
   /**
-   * Имя участника проверяется до лота (ADR-059): аукцион лота граница спрашивает у entity, а не у read model, которая
-   * отстаёт на проекцию и не знала бы только что рождённый лот. После принятой ставки имя замораживается.
+   * Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями, а событие сбоя
+   * заморозки несёт их, чтобы его можно было связать с записью операции.
    */
+  def within(correlation: Correlation): AuctionGrpcService =
+    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews, names, correlation)
+
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
       case Left(error) => invalid(error)
@@ -57,28 +57,37 @@ final class AuctionGrpcService(
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
       case Right(command) =>
         val participant = command.acting.participant
-        lots.auctionOf(command.lotId).recoverWith(awaited).flatMap {
-          case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
-          case Some(auction) =>
-            names.requireChosen(auction, participant).flatMap {
-              case Left(NameNotChosen) => Future.successful(ResponseMapping.displayNameNotChosen)
-              case Right(_) =>
-                lots
-                  .placeBid(command.lotId, command.bid, Initiator.Participant(participant))
-                  .recoverWith(awaited)
-                  .flatMap { outcome =>
-                    val frozen = if (outcome.isRight) freeze(auction, command.lotId, participant) else Future.unit
-                    frozen.flatMap(_ => ResponseMapping.placeBid(outcome).fold(refuse, Future.successful))
-                  }
+        asNamed(command.lotId, participant, ResponseMapping.displayNameNotChosen)(
+          lots.placeBid(command.lotId, command.bid, Initiator.Participant(participant))
+        )(ResponseMapping.placeBid)
+    }
+
+  /**
+   * Команда участника лоту — ставка или прокси-лимит — с именем по ADR-059. Имя проверяется до лота: аукцион лота
+   * граница спрашивает у entity, а не у read model, которая отстаёт на проекцию и не знала бы только что рождённый лот.
+   * После принятой команды имя замораживается; отказ лота имя не трогает — обещание «до первой принятой».
+   */
+  private def asNamed[R, A, T](lotId: java.util.UUID, participant: ParticipantId, notChosen: T)(
+      command: => Future[Either[R, A]]
+  )(answer: Either[R, A] => Either[Status, T]): Future[T] =
+    lots.auctionOf(lotId).recoverWith(awaited).flatMap {
+      case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+      case Some(auction) =>
+        names.requireChosen(auction, participant).flatMap {
+          case Left(NameNotChosen) => Future.successful(notChosen)
+          case Right(_) =>
+            command.recoverWith(awaited).flatMap { outcome =>
+              val frozen = if (outcome.isRight) freeze(auction, lotId, participant) else Future.unit
+              frozen.flatMap(_ => answer(outcome).fold(refuse, Future.successful))
             }
         }
     }
 
   /**
-   * Заморозка после принятой ставки. Общей транзакции с лотом нет (ADR-059), поэтому сбой заморозки ставку не отменяет:
-   * она повторяется до `FreezeAttempts` раз, а исчерпанные попытки пишутся отдельным событием, и ответ остаётся
-   * принятым. Это событие — не вторая запись операции: для границы операция успешна. Сообщения исключения в нём нет,
-   * как и в записи операции.
+   * Заморозка после принятой команды. Общей транзакции с лотом нет (ADR-059), поэтому сбой заморозки ставку не
+   * отменяет: она повторяется до `FreezeAttempts` раз, а исчерпанные попытки пишутся отдельным событием, и ответ
+   * остаётся принятым. Это событие — не вторая запись операции: для границы операция успешна. Сообщения исключения в
+   * нём нет, как и в записи операции.
    */
   private def freeze(auction: AuctionId, lotId: java.util.UUID, participant: ParticipantId): Future[Unit] = {
     def attempt(left: Int): Future[Unit] =
@@ -89,7 +98,7 @@ final class AuctionGrpcService(
       AuctionGrpcService.logger.warn(
         "display name freeze failed",
         StructuredArguments.entries(
-          Map[String, Any](
+          (Map[String, Any](
             "operation" -> AuctionGrpcService.FreezeOperation,
             "result" -> "error",
             "error_category" -> "unexpected",
@@ -97,7 +106,8 @@ final class AuctionGrpcService(
             "auction_id" -> auction.value.toString,
             "lot_id" -> lotId.toString,
             "attempts" -> AuctionGrpcService.FreezeAttempts
-          ).asJava
+          ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+            correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
         )
       )
     }
@@ -123,10 +133,10 @@ final class AuctionGrpcService(
       case Right(command) if !command.acting.viewer.isParticipant =>
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
       case Right(command) =>
-        lots
-          .setProxyLimit(command.lotId, command.limit, Initiator.Participant(command.acting.participant))
-          .recoverWith(awaited)
-          .flatMap(outcome => ResponseMapping.setProxyLimit(outcome).fold(refuse, Future.successful))
+        val participant = command.acting.participant
+        asNamed(command.lotId, participant, ResponseMapping.proxyDisplayNameNotChosen)(
+          lots.setProxyLimit(command.lotId, command.limit, Initiator.Participant(participant))
+        )(ResponseMapping.setProxyLimit)
     }
 
   def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest): Future[wire.WithdrawProxyLimitResponse] =

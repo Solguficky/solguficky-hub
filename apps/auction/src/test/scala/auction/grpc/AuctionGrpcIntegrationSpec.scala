@@ -450,6 +450,20 @@ final class AuctionGrpcIntegrationSpec
         wire.DisplayName("Кот*", wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS)
     }
 
+    "refuses a proxy limit without a chosen name and freezes the name after an accepted one" in withNode { node =>
+      val auction = freshAuction()
+      val lotId = tradingLot(node, auction)
+      def limit(who: wire.Viewer) =
+        asHubBot(node.client.setProxyLimit())
+          .invoke(wire.SetProxyLimitRequest(Some(who), lotId.toString, Some(MoneyMessage(300, "RUB")), newId()))
+          .futureValue
+      limit(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)).getRefused.reason.isDisplayNameNotChosen shouldBe true
+      currentPrice(node, lotId) shouldBe money(100)
+      val bidder = named(node, auction, "Кот")
+      limit(bidder).outcome.isAccepted shouldBe true
+      choose(node, bidder, auction, "Пёс").getRefused.reason.isNameFrozen shouldBe true
+    }
+
     "answers every requested participant by name, and one without a choice by a placeholder" in withNode { node =>
       val auction = freshAuction()
       val chosen = named(node, auction, "Кот")
