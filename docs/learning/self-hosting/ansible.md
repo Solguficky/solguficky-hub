@@ -197,6 +197,105 @@ storage_disk_is_empty: >-
 - **sshd берёт первое значение директивы.** В `sshd_config` Debian первой строкой стоит `Include /etc/ssh/sshd_config.d/*.conf`, а файлы подключаются по алфавиту. Образ Timeweb кладёт `50-cloud-init.conf` с `PasswordAuthentication yes`. До playbook `sshd -T` показывал `passwordauthentication yes`, хотя основной файл говорил `no`: выигрывал drop-in, потому что он раньше. Наш файл называется `00-solguficky.conf` и раньше всех, поэтому его значения перекрывают и основной файл, и cloud-init. После применения сервер на вход без ключа отвечает `Permission denied (publickey)`, пароль даже не предлагается.
 - **apt складывает списки из файлов.** `50unattended-upgrades` Debian перечисляет три origin'а, включая обычные point-release. Свой файл `52solguficky-unattended-upgrades` с `Origins-Pattern` только добавил бы к ним свои. Директива `#clear Unattended-Upgrade::Origins-Pattern;` сначала очищает список. Проверено без root: `apt-config dump | grep Origins-Pattern` на хосте показывает пустую строку очистки и ровно два security-origin'а, а `Automatic-Reboot "false"` — отдельной строкой.
 
+### k3s: скачать по сумме, поставить скриптом, дождаться живого кластера
+
+Установка k3s ([k3s.md](k3s.md)) добавила в playbook четыре приёма.
+
+**Скачивание как идемпотентная задача.** `get_url` с `checksum:` сначала сверяет сумму уже лежащего файла. Совпала — модуль отвечает `ok` и ничего не качает. Не совпала или файла нет — качает, сверяет и только потом кладёт на место:
+
+```yaml
+- name: Download k3s binary
+  ansible.builtin.get_url:
+    url: https://github.com/k3s-io/k3s/releases/download/{{ k3s_version | urlencode }}/k3s
+    dest: /usr/local/bin/k3s
+    checksum: sha256:{{ k3s_sha256 }}
+  notify: Restart k3s
+```
+
+Фильтр `urlencode` превращает `+` в теге `v1.36.5+k3s1` в `%2B`, как в ссылках релизов самого GitHub; отдаст ли сервер файл и без кодирования, не проверялось. Аналог из .NET — `Uri.EscapeDataString`. Смена версии — новые `k3s_version` и обе суммы в одном коммите; старая сумма с новой версией не даст скачать подменённый файл.
+
+**Скрипт поставщика как шаг.** Установщик k3s пишет юнит systemd, симлинки `kubectl`, `crictl` и скрипты отката. Это `command`, а он идемпотентным не бывает: Ansible не знает, что скрипт делает. Поэтому задача сама говорит, когда её запускать и что она меняет:
+
+```yaml
+- name: Install k3s service
+  ansible.builtin.command: /usr/local/lib/solguficky/k3s-install.sh
+  environment:
+    INSTALL_K3S_SKIP_DOWNLOAD: "true"
+    INSTALL_K3S_SKIP_START: "true"
+  changed_when: true
+  when: not k3s_check_new and (k3s_installer.changed or not k3s_unit.stat.exists)
+```
+
+Сначала было `args: creates: /etc/systemd/system/k3s.service` — «не запускай, если файл есть». Ревью нашло изъян: при смене тега новый установщик скачивается, а юнит от старого так и остаётся. Условие теперь читает два зарегистрированных ответа: изменился ли файл установщика и есть ли юнит. `environment:` задаёт переменные окружения процесса, как `ProcessStartInfo.Environment`.
+
+**Старт через handler.** Конфиг, drop-in, бинарь и установщик уведомляют один handler `Restart k3s`. Сразу за ними стоит `meta: flush_handlers`, а потом задача `Enable k3s` с `state: started`. На свежем хосте первым срабатывает handler: `state: restarted` у остановленного юнита его просто запускает, и запускает уже с готовым конфигом. На настроенном хосте уведомлений нет, handler молчит, а `Enable k3s` отвечает `ok`. Так конфиг всегда ложится до первого старта, а повторный прогон ничего не перезапускает.
+
+**Ожидание с повтором.** Сразу после старта сервера ни kubeconfig, ни объекта узла ещё нет, и `kubectl wait node` падает с `no matching resources found`. `until` повторяет задачу, пока условие не станет истинным:
+
+```yaml
+- name: Wait for the node to be Ready
+  ansible.builtin.command: >-
+    /usr/local/bin/k3s kubectl --kubeconfig {{ k3s_kubeconfig }}
+    wait node --all --for=condition=Ready --timeout=10s
+  register: k3s_node_ready
+  until: k3s_node_ready.rc == 0
+  retries: 30
+  delay: 5
+```
+
+Это аналог политики повтора Polly: 30 попыток через 5 секунд, а внутри каждой — свой короткий таймаут. Длинный `--timeout=180s` без `until` падал бы сразу, пока узла нет вовсе. Тем же приёмом ждут CoreDNS (`rollout status deployment/coredns`): готовность узла не говорит, что живы поды.
+
+### Check mode на цепочке из пакета, каталога и юнита
+
+Правило из раздела про check mode — «шаг, который зависит от ещё не сделанного, пропускается явно» — в этом срезе понадобилось пять раз. Флаг вычисляется один раз и переиспользуется:
+
+```yaml
+- name: Check whether k3s is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary_before
+
+- name: Remember whether check mode previews a new install
+  ansible.builtin.set_fact:
+    k3s_check_new: "{{ ansible_check_mode and not k3s_binary_before.stat.exists }}"
+```
+
+`set_fact` — переменная, вычисленная во время прогона; дальше на неё ссылаются `when:` задач и handler'ов. Handler тоже может нести `when:`: `Restart k3s` в check mode на свежем хосте иначе искал бы юнит, которого ещё нет, и падал бы поверх полезного вывода.
+
+Новая слепая зона нашлась в лаборатории. `file` создаёт каталог `/usr/local/lib/solguficky`, следом `get_url` кладёт туда установщик. В check mode каталог не создаётся, и `get_url` падает: `Destination /usr/local/lib/solguficky does not exist`. Лечение — `register` у задачи каталога и `when: not (ansible_check_mode and k3s_installer_dir.changed)` у скачивания. Это ровно тот класс дефекта, на котором в первом срезе дважды падал прогон владельца: здесь его поймал лабораторный `--check` до передачи.
+
+### Kubernetes из Ansible: шаблон на control node, применение на хосте
+
+Объекты кластера собирает kustomize, а применяет коллекция `kubernetes.core`. Это две разные машины в одной строке:
+
+```yaml
+- name: Apply environment namespaces and their guards
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    definition: "{{ lookup('kubernetes.core.kustomize', dir=playbook_dir ~ '/cluster') | ansible.builtin.from_yaml_all | list }}"
+    apply: true
+    server_side_apply:
+      field_manager: ansible-ops
+```
+
+**Lookup** выполняется на control node: `kubernetes.core.kustomize` вызывает `kubectl kustomize` в WSL и возвращает собранный YAML строкой. `from_yaml_all | list` разбирает многодокументный YAML в список объектов. **Модуль** `kubernetes.core.k8s` выполняется на хосте, как любой модуль, и там ему нужна Python-библиотека `kubernetes` — отсюда задача `apt: python3-kubernetes` перед ним. `playbook_dir` — каталог плейбука: лабораторный плейбук лежал в другом месте, и туда пришлось положить симлинк `cluster`.
+
+Server-side apply отвечает `changed` только когда API-сервер действительно что-то поменял. На хосте второй прогон `--tags cluster` и полный повтор дали `changed=0`.
+
+Чтение токенов идёт `kubernetes.core.k8s_info` в цикле по средам с `until` на каждый элемент: токен в Secret дописывает контроллер k3s через мгновение. `no_log: true` скрывает ответ, в котором лежит токен. Следующая задача идёт по `cluster_tokens.results`: в зарегистрированном результате цикла у каждого элемента есть `item.item` — исходный элемент, здесь имя среды.
+
+В check mode apply ничего не создаёт, и Secret'ов на свежем кластере нет. Поэтому чтение токенов и запись kubeconfig в check mode пропускаются целиком (`when: not ansible_check_mode`). Ось корректности ревью нашла, что иначе `until` минуту крутился бы впустую и падал.
+
+### Два плейбука на одних переменных
+
+Проверки живут отдельным плейбуком `verify.yml`: он ничего не меняет на хосте, кроме временных подов, и запускается сколько угодно раз. Первая версия держала свои копии значений: `'v1.36.5+k3s1'` строкой и `zram_size_mb | default(1024)`. Плей видит только свои переменные, поэтому `default` срабатывал всегда, а смена версии в `site.yml` сделала бы проверку красной на правильном хосте. Переменные хоста переехали в `vars.yml`, и оба плейбука подключают его одной строкой `vars_files: [vars.yml]`.
+
+В самом `verify.yml` три приёма:
+
+- **`block` и `always`** — как `try`/`finally`: временные `verify-*` удаляются, даже если проверка упала. `--wait=true` у удаления, чтобы следующий прогон не застал под в `Terminating`.
+- **Проверка с контрольной парой.** `failed_when: verify_rbac_cross.rc == 0 or 'Forbidden' not in verify_rbac_cross.stderr` — отказ должен случиться и должен быть нужным отказом. Рядом всегда шаг, который в разрешённом месте проходит.
+- **Разбор вывода фильтрами.** Счётчик host guard — `nft list table … | regex_findall('packets ([0-9]+)') | map('int') | sum`; слушающие порты — `ss -Htln`, затем `map('split') | map(attribute=3) | select('match', '.*:6443$')`. Первая версия считала строки `wc -l` и прошла бы на двух строках с 6443 без 10250.
+
 ## Как playbook ложится на свежий хост
 
 Порядок строится по одному правилу из [vocabulary.md](vocabulary.md#урок): не убирай путь отхода, пока не проверил запасной. Образ панели пускает только root по ключу. Конечное состояние пускает только `ops`. Между ними нельзя оказаться без обоих входов.
@@ -225,6 +324,8 @@ storage_disk_is_empty: >-
 - **Разрушительный шаг сначала классифицирует цель.** Пустой, свой, чужой — три исхода, и только первые два ведут к действию. Отказ печатает, что увидел, чтобы человек решал по фактам.
 - **Приоритет конфигурации — часть её смысла.** Где задано значение, важно не меньше, чем какое оно: ключевое слово задачи проиграло переменной inventory, drop-in sshd выиграл у основного файла, список apt сложился, а не заменился. Перед правкой сначала выясни, кто побеждает.
 - **Проверка, которой нечего проверять, не должна выглядеть зелёной.** `readlink -f` на несуществующий путь отвечает кодом 0, и сравнение над его выводом проходит.
+- **Скрипт поставщика оборачивается условием, а не доверием.** `command` не знает, что делает скрипт: когда его запускать и что считать изменением, говорит задача. `creates:` отвечает только «запускался ли когда-то», а не «запускался ли для этой версии».
+- **Проверка и установка читают одни значения.** Два плейбука с копиями переменных расходятся молча, и проверка краснеет на правильном хосте или зеленеет на неправильном.
 
 ## Почему так, а не иначе
 
@@ -235,6 +336,9 @@ storage_disk_is_empty: >-
 - **`ansible-core` без коллекций и всё через `command`.** Тогда идемпотентность `ufw`, LVM и `mount` пришлось бы писать самим. Пакет `ansible` целиком везёт коллекции с собой и закрепляется одной версией.
 - **`sudo` без пароля (NOPASSWD).** Прогоны шли бы без `-K`, и агент мог бы запускать их сам. Но тогда украденный ключ `ops` — это сразу root, а «ограниченный sudo» из RFC-010 ничего не значит. Цена выбранного варианта: каждый боевой прогон требует пароля человека.
 - **ufw, а не nftables руками** — в [vocabulary.md](vocabulary.md#почему-так-а-не-иначе).
+- **`creates:` у установщика k3s.** Проще, но при смене тега скрипт не перезапускается; условие по `register` установщика и `stat` юнита это закрывает.
+- **`kubectl apply` через `command` вместо `kubernetes.core.k8s`.** Не нужен `python3-kubernetes` на хосте, но `changed` пришлось бы выводить разбором текста, и `changed=0` держался бы на регулярке.
+- **Переменные в `group_vars/`.** Стандартное место Ansible, его подхватывают все плейбуки сами. Выбран явный `vars_files: [vars.yml]`: в репозитории один хост и два плейбука, и явная строка видна при чтении плейбука.
 - **Разметка из панели при установке ОС.** Панель Timeweb её не выбирает, поэтому LVM на дополнительном диске создаёт playbook ([disks.md](disks.md#почему-так-а-не-иначе)).
 
 ## Схема
@@ -289,6 +393,10 @@ sequenceDiagram
 - [sshd_config(5)](https://man.openbsd.org/sshd_config) — «for each keyword, the first obtained value will be used», отсюда префикс `00-` у drop-in.
 - [unattended-upgrade(8)](https://manpages.debian.org/stable/unattended-upgrades/unattended-upgrade.8.en.html) — `Origins-Pattern` и `Automatic-Reboot`.
 - [RFC-010, «Host baseline»](../../rfcs/RFC-010-remote-development-and-self-hosting-platform.md#host-baseline) — почему один playbook без roles, control node в WSL2 и порядок «не потерять доступ».
+- [ansible.builtin.get_url](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/get_url_module.html) — `checksum` и почему совпавшая сумма даёт `ok` без скачивания.
+- [Retrying a task until a condition is met](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_loops.html#retrying-a-task-until-a-condition-is-met) — `until`, `retries`, `delay` и как они сочетаются с `loop`.
+- [kubernetes.core.k8s](https://docs.ansible.com/ansible/latest/collections/kubernetes/core/k8s_module.html) и [kubernetes.core.kustomize lookup](https://docs.ansible.com/ansible/latest/collections/kubernetes/core/kustomize_lookup.html) — `server_side_apply`, `definition` списком и где выполняется lookup.
+- [Blocks](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html) — `block`/`rescue`/`always` как обработка ошибок.
 - [docs/access.md в ops-репозитории](https://github.com/Solguficky/solguficky-ops/blob/main/docs/access.md) — процедура консоли, rescue и отката политики SSH.
 
 ## Проверь себя
@@ -300,4 +408,6 @@ sequenceDiagram
 5. **Что ответит `readlink -f` на несуществующий by-id?** `readlink -f /dev/disk/by-id/does-not-exist; echo $?` печатает тот же путь и `0`. Поэтому в preflight до сравнения стоит `stat`.
 6. **Переживёт ли открытая SSH-сессия reload sshd?** Во второй сессии `while sleep 2; do date; done`, в первой `sudo systemctl reload ssh`. Часы идут дальше.
 7. **Видны ли правила ufw для IPv6?** `sudo ufw status verbose` покажет строки с `(v6)`. Снаружи IPv6 из этой сети не проверялся: у ноутбука нет IPv6-маршрута. Проверь с машины, где он есть: `nc -6 -zv 2a03:6f02::1:758d 10050` должен отказать, а `… 22` — соединиться.
-8. **Растёт ли `ext4` вместе с томом?** На хосте не запускалось. Проверь, когда понадобится место: поднимите `state_lv_size_gb` в `site.yml`, прогоните playbook и сравните `df -h /srv/state` до и после.
+8. **Качает ли повторный прогон бинарь k3s заново?** `ansible-playbook site.yml -K --tags k3s` на настроенном хосте: `Download k3s binary` отвечает `ok`, в итоге `changed=0`.
+9. **Где выполняется kustomize, а где применение?** `kubectl kustomize ~/solguficky-ops/cluster | grep -c '^kind:'` в WSL печатает число объектов без всякого хоста; применение без `python3-kubernetes` на хосте упало бы с ошибкой импорта модуля — не воспроизводилось.
+10. **Растёт ли `ext4` вместе с томом?** На хосте не запускалось. Проверь, когда понадобится место: поднимите `state_lv_size_gb` в `vars.yml`, прогоните playbook и сравните `df -h /srv/state` до и после.

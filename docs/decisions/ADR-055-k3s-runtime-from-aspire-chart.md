@@ -118,6 +118,20 @@ Namespace'ы вместо второго кластера — из-за памя
 
 Порог «больше 1,2 GB» единицу и метод не называет, а простая сумма RSS ложится ровно между прочтениями: 1,2 GB — это 1144 MiB, 1,2 GiB — 1229 MiB. Корректные методы оставляют запас от 115 до 316 MiB. Почти девять десятых суммы — сам k3s, около 600 MiB у одного сервера; Flux, CNPG и Collector вместе меньше 120 MiB. Свежий кластер — нижняя оценка: кэши сервера растут со временем, поэтому замер [PER-371](https://linear.app/anticnvm/issue/per-371) после установки обязан назвать метод.
 
+### Замер 2026-10-05: кластер после установки playbook'ом
+
+Сигнал пересмотра не сработал и после установки. [PER-371](https://linear.app/anticnvm/issue/per-371) поставил k3s v1.36.5+k3s1 из приватного ops-репозитория: без Traefik, ServiceLB и metrics-server, с пустыми namespace'ами `test` и `prod`; Flux, CNPG и Collector ещё не стоят. Метод тот же: процессы — сумма `Pss` из `/proc/<pid>/smaps_rollup`, поды — `workingSetBytes` из `stats/summary` kubelet. Срез снят через несколько минут после `systemctl restart k3s`, поэтому сервер здесь моложе, чем в замере выше.
+
+| Компонент | Память |
+|---|---|
+| сервер k3s | 400 MiB |
+| containerd | 105 MiB |
+| шимы ×4 | 37 MiB |
+| поды coredns и local-path-provisioner | 30 MiB |
+| Сумма k3s | ≈570 MiB |
+
+Вместе с Flux, CNPG и Collector из замера выше (≈120 MiB) служебная часть — около 690 MiB, против порога 1144 MiB. Против 910 MiB у spike разница в трёх вещах: выключен metrics-server, шимов четыре вместо девяти, а сервер свежий. Порог сверяется заново, когда в кластер встанут Flux, CNPG и Collector. `MemAvailable` хоста в момент среза — 7125 MiB из 7948.
+
 ## Пересмотр 2026-10-03: Auction входит в чарт
 
 Решение в силе целиком, меняется только состав чарта. Фраза «Публикуется только состав MVP: Auction остаётся вне чарта» больше не действует: stage хаба поднимает аукцион как расширение сходки — решение владельца 2026-10-03 ([PER-449](https://linear.app/anticnvm/issue/per-449)). Бот аукциона в чарт по-прежнему не входит. Профиль публикации `cluster` теперь — профиль `hub` плюс `auction`: локальный `hub` JVM не тянет, и аукцион поднимают его собственные профили.
@@ -134,10 +148,20 @@ Namespace'ы вместо второго кластера — из-за памя
 
 **Сигнал пересмотра.** Если бот аукциона войдёт в чарт, параметр без вызывающего исчезнет сам. Если ops-репозиторию окажется дороже держать три значения базы, чем менять чтение настроек сервиса, база переходит на одну строку отдельным решением.
 
+## Дополнение 2026-10-05: установка на хост
+
+Решение в силе целиком. [PER-371](https://linear.app/anticnvm/issue/per-371) поставил k3s на хост из приватного ops-репозитория и закрепил три выбора владельца, которые «Правила кластера» и «Что становится сложнее» оставляли листу на хосте.
+
+**Логи подов хранятся 14 дней.** Число, которое [ADR-053](ADR-053-production-observability-otlp-better-stack.md) оставлял листу на хосте, назначено здесь, и [PER-378](https://linear.app/anticnvm/issue/per-378) его наследует. kubelet ротирует только по размеру: `container-log-max-size=10Mi` и `container-log-max-files=5` держат 14 дней при темпе до ~3,5 MiB в сутки на контейнер. Контейнер, который пишет быстрее, хранит меньше: срок — расчёт, а не гарантия.
+
+**Правило firewall хоста по владельцу процесса — отдельная таблица nftables со своим юнитом, не правка `ufw`.** Процессы хоста, кроме root, получают reject на CIDR подов и сервисов. Таблицу не трогают ни `ufw reload`, ни рестарт k3s, а k3s без неё не стартует. Пара проверок [ADR-056](ADR-056-service-calls-per-caller-token-and-closed-network.md) прогнана на хосте с HTTP-подом как заместителем gRPC и NATS: `nobody` получает отказ по pod IP и ClusterIP пода в `prod`, счётчик правила при этом растёт, а клиент изнутри `prod` по тем же адресам получает ответ. Под `test` по адресу того же пода не доходит. Пользователей `agent-*` на хосте ещё нет; правило не различает uid, кроме root, поэтому проверка от `nobody` переносится на них.
+
+**Каркас сред держит kustomize-дерево ops-репозитория.** Namespace'ы, квоты, LimitRange, NetworkPolicy и учётки выкатки применяет Ansible server-side apply с field manager `ansible-ops`, а Flux потом подхватит тот же путь. NetworkPolicy, квоту и LimitRange учётка выкатки среды только читает. Явные разрешения default-deny на сегодня — DNS кластера и TCP 443 в публичный интернет в обеих средах; остальные из «Правил кластера» добавляют листья CNPG, NATS и Collector.
+
 ## Связанные документы
 
 - RFC: [RFC-010](../rfcs/RFC-010-remote-development-and-self-hosting-platform.md) — runtime и deploy-контракт заменены этим решением
 - Architecture: [infrastructure.md](../architecture/infrastructure.md)
 - Standards: новые нормативы этим ADR не создаются
-- Другие ADR: заменяет раздел о рантайме [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md); [ADR-021](ADR-021-aspire-local-orchestration.md) — Aspire остаётся local inner loop; [ADR-053](ADR-053-production-observability-otlp-better-stack.md) не пересматривается
-- Linear: [PER-368](https://linear.app/anticnvm/issue/per-368), эпик [PER-80](https://linear.app/anticnvm/issue/per-80)
+- Другие ADR: заменяет раздел о рантайме [ADR-039](ADR-039-single-vps-for-initial-self-hosting.md); [ADR-021](ADR-021-aspire-local-orchestration.md) — Aspire остаётся local inner loop; [ADR-053](ADR-053-production-observability-otlp-better-stack.md) не пересматривается, срок хранения логов на хосте назначен дополнением 2026-10-05
+- Linear: [PER-368](https://linear.app/anticnvm/issue/per-368), установка — [PER-371](https://linear.app/anticnvm/issue/per-371), эпик [PER-80](https://linear.app/anticnvm/issue/per-80)
