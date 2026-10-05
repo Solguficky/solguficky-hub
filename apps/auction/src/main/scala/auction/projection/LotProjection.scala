@@ -21,6 +21,8 @@ import org.apache.pekko.persistence.query.Offset
 import slick.jdbc.JdbcBackend.Database
 import slick.jdbc.PostgresProfile.api.*
 
+import java.time.Clock
+import java.time.Duration
 import scala.concurrent.Await
 import scala.concurrent.duration.FiniteDuration
 
@@ -97,6 +99,23 @@ object LotProjection {
                 AND t.event_id > COALESCE(o.current_offset::bigint, 0)
               GROUP BY t.tag""".as[(String, Long)]
       ProjectionBacklog.behind(tags, Await.result(database.run(behind), timeout).toMap)
+    }
+  }
+
+  /**
+   * Лоты, просроченные, но не закрытые: в торгах по read model, с дедлайном раньше `now − grace`. Read model отстаёт от
+   * entity, поэтому лот, закрытый вовремя, может мелькнуть здесь на время отставания; допуск покрывает его, а
+   * застрявшую проекцию показывает её собственный `events_behind`.
+   */
+  def overdue(system: ActorSystem[?], clock: Clock, grace: Duration, timeout: FiniteDuration): () => Long = {
+    val database = journal(system)
+    () => {
+      val cutoff = clock.instant().minus(grace).toString
+      val count =
+        sql"""SELECT COUNT(*) FROM lot_view
+              WHERE state -> 'state' ->> 'kind' = 'Trading'
+                AND (state -> 'state' -> 'trading' ->> 'deadline')::timestamptz < $cutoff::timestamptz""".as[Long].head
+      Await.result(database.run(count), timeout)
     }
   }
 

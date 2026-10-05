@@ -10,6 +10,7 @@ import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.publication.PublicationSettings
+import auction.telemetry.DeadlineMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
 import auction.telemetry.Telemetry
@@ -49,6 +50,7 @@ object Main {
     val readinessTimeout: FiniteDuration = config.getDuration("auction.readiness-timeout").toScala
     val askTimeout: FiniteDuration = config.getDuration("auction.grpc.ask-timeout").toScala
     val backlogTimeout: FiniteDuration = config.getDuration("auction.projection.backlog-timeout").toScala
+    val overdueGrace = config.getDuration("auction.deadlines.overdue-grace")
     val publication = PublicationSettings.fromConfig(config)
 
     val database = DatabaseSettings.fromConfig(config) match {
@@ -95,13 +97,20 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-    AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock), askTimeout)
+    AuctionNode.registerAuctions(system, sharding, clock, UuidV7.generator(clock), askTimeout)
     if (meetups.url.isEmpty)
       logger.warn(
         "auction meetup authority is off: AUCTION_MEETUPS_GRPC_URL is not set, admin commands are unavailable"
       )
     val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
     AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
+    AuctionNode.watchDeadlines(
+      system,
+      DeadlineMetrics(telemetry.getMeter("auction")),
+      clock,
+      overdueGrace,
+      backlogTimeout
+    )
     AuctionNode.startPublication(
       system,
       projectionMetrics,

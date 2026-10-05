@@ -129,14 +129,17 @@ object Auction {
    * Аукцион сходки — UUIDv5 (RFC 9562) от канонической строки `meetup_id` в UTF-8. Две команды рождения одной сходки
    * поэтому приходят в одну entity, и вторая упирается в первую в журнале (ADR-047, И-21).
    */
-  def idOf(meetup: MeetupId): AuctionId = {
+  def idOf(meetup: MeetupId): AuctionId = AuctionId(nameBased(MeetupNamespace, meetup.value.toString))
+
+  /** UUIDv5 (RFC 9562): SHA-1 от пространства имён и имени в UTF-8, с битами версии и варианта. */
+  private[aggregate] def nameBased(namespace: UUID, name: String): UUID = {
     val digest = MessageDigest.getInstance("SHA-1")
-    digest.update(bytes(MeetupNamespace))
-    digest.update(meetup.value.toString.getBytes(StandardCharsets.UTF_8))
+    digest.update(bytes(namespace))
+    digest.update(name.getBytes(StandardCharsets.UTF_8))
     val hash = digest.digest()
     hash(6) = ((hash(6) & 0x0f) | 0x50).toByte
     hash(8) = ((hash(8) & 0x3f) | 0x80).toByte
-    AuctionId(new UUID(long(hash, 0), long(hash, 8)))
+    new UUID(long(hash, 0), long(hash, 8))
   }
 
   def inspect(auction: Auction, opId: OpId): Inspection =

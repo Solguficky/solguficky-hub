@@ -53,6 +53,8 @@
       }
     },
     "proxyLimitSet": null,
-    "proxyLimitWithdrawn": null
+    "proxyLimitWithdrawn": null,
+    "lotSold": null,
+    "lotUnsold": null
   }
 }

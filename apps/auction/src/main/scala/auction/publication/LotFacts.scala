@@ -61,6 +61,8 @@ object LotFacts {
           }
         )
         Some("bid_placed" -> bus.LotEvent.Occasion.BidPlaced(placed))
+      case LotEvent.LotSold(_, _, _, _) => Some("lot_sold" -> bus.LotEvent.Occasion.LotSold(bus.LotSold()))
+      case LotEvent.LotUnsold(_) => Some("lot_unsold" -> bus.LotEvent.Occasion.LotUnsold(bus.LotUnsold()))
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) => None
     }
 
@@ -79,6 +81,7 @@ object LotFacts {
         base.withConfig(LotValues.config(trading.config)).withTrading(LotValues.trading(trading))
       case LotState.Held(held) => base.withConfig(LotValues.config(held.config)).withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
+      case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))
     }
   }
 }

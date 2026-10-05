@@ -62,6 +62,8 @@ object LotFixtures {
 
   def openLot(opN: Int, deadline: Option[Instant] = Some(deadline)): OpenLot = OpenLot(deadline, op(opN))
 
+  def closeLot(opN: Int, reason: CloseReason = CloseReason.DeadlineReached): CloseLot = CloseLot(reason, op(opN))
+
   /** Лот аукциона `auctionId(1)` в данном состоянии с пустым окном дедупликации. */
   def lotIn(state: LotState): Lot = Lot(state, Some(auctionId(1)), Map.empty)
 
@@ -164,6 +166,9 @@ object LotFixtures {
 
     def withdraw(command: WithdrawProxyLimit): (Either[WithdrawProxyLimitRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command))
+
+    def close(command: CloseLot, now: Instant): (Either[CloseLotRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, now))
 
     def submitAll(commands: Seq[PlaceBid]): (Vector[Either[PlaceBidRejected, Decision]], Journal) =
       commands.zipWithIndex.foldLeft((Vector.empty[Either[PlaceBidRejected, Decision]], this)) {

@@ -4,26 +4,39 @@ import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
 import auction.entity.JournalFixtures.*
+import auction.lot.CloseLot
+import auction.lot.CloseLotRejected
 import auction.lot.Decision
 import auction.lot.Envelope
 import auction.lot.Lot
+import auction.lot.LotEvent
 import auction.lot.LotFixtures
 import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.participant
 import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.UnsoldReason
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
+import org.apache.pekko.actor.typed.ActorRef
+import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.persistence.testkit.scaladsl.EventSourcedBehaviorTestKit
 import org.apache.pekko.persistence.testkit.scaladsl.EventSourcedBehaviorTestKit.SerializationSettings
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.time.Seconds
+import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import scala.concurrent.Future
 import scala.concurrent.Promise
+import scala.concurrent.duration.*
 
 /**
  * Синхронная часть entity аукциона на in-memory журнале. Каждое записанное событие проходит настоящий `jackson-json`
@@ -47,18 +60,22 @@ final class AuctionEntitySpec
   /**
    * Лоты аукциона: состояние меняет настоящее [[Lot.decide]], поэтому отказ лота в тесте — настоящий. Лот, которого
    * тест не завёл, роняет вопрос. `silent` принимает `OpenLot`, но ответа не отдаёт; `lost` теряет команду целиком;
-   * `deaf` не отвечает на вопрос о состоянии.
+   * `deaf` не отвечает на вопрос о состоянии; `mute` не отвечает на `CloseLot`. Закрытие лот решает по тем же часам,
+   * что и аукцион.
    */
-  private final class Lots(initial: Map[LotId, Lot]) extends AuctionLots {
+  private final class Lots(initial: Map[LotId, Lot], now: () => Instant) extends AuctionLots {
     private var lots = initial
     private var questions = Vector.empty[LotId]
     private var commands = Vector.empty[(LotId, OpenLot)]
+    private var closings = Vector.empty[(LotId, CloseLot)]
     @volatile var silent: Set[LotId] = Set.empty
     @volatile var lost: Set[LotId] = Set.empty
     @volatile var deaf: Set[LotId] = Set.empty
+    @volatile var mute: Set[LotId] = Set.empty
 
     def asked: Vector[LotId] = synchronized(questions)
     def opens: Vector[(LotId, OpenLot)] = synchronized(commands)
+    def closes: Vector[(LotId, CloseLot)] = synchronized(closings)
     def stateNow(lot: LotId): LotState = synchronized(lots(lot).state)
 
     def stateOf(lot: LotId): Future[LotState] = synchronized {
@@ -71,18 +88,46 @@ final class AuctionEntitySpec
         }
     }
 
-    def open(lot: LotId, command: OpenLot): Future[Either[OpenLotRejected, Unit]] = synchronized {
+    def open(lot: LotId, command: OpenLot): Future[Either[OpenLotRejected, Option[Instant]]] = synchronized {
       commands :+= lot -> command
-      if (lost(lot)) Promise[Either[OpenLotRejected, Unit]]().future
+      if (lost(lot)) Promise[Either[OpenLotRejected, Option[Instant]]]().future
       else {
-        val answer = Lot.decide(lots(lot), command).map {
-          case Decision.Accepted(event, _) =>
-            lots = lots.updated(lot, Lot.apply(lots(lot), Envelope(1, command.opId, event)))
-          case Decision.Repeated(_) => ()
-        }
-        if (silent(lot)) Promise[Either[OpenLotRejected, Unit]]().future else Future.successful(answer)
+        val answer = Lot.decide(lots(lot), command).map(decision => opening(written(lot, command.opId, decision)))
+        if (silent(lot)) Promise[Either[OpenLotRejected, Option[Instant]]]().future else Future.successful(answer)
       }
     }
+
+    def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Unit]] = synchronized {
+      closings :+= lot -> command
+      val answer =
+        Lot.decide(lots(lot), command, now()).map(decision => written(lot, command.opId, decision)).map(_ => ())
+      if (mute(lot)) Future.failed(new java.util.concurrent.TimeoutException("the lot did not answer"))
+      else Future.successful(answer)
+    }
+
+    private def opening(event: LotEvent): Option[Instant] =
+      event match {
+        case opened: LotEvent.LotOpened => opened.deadline
+        case other => throw new AssertionError(s"the lot opened with $other")
+      }
+
+    /** Принятое событие ложится в лот следующим номером; повтор отдаёт исходное. */
+    private def written(lot: LotId, opId: auction.lot.OpId, decision: Decision): LotEvent =
+      decision match {
+        case Decision.Accepted(event, _) =>
+          val current = lots(lot)
+          val sequence = current.seen.size.toLong + 1
+          lots = lots.updated(lot, Lot.apply(current, Envelope(sequence, opId, event)))
+          event
+        case Decision.Repeated(original) => original.event
+      }
+  }
+
+  /** Часы, которые тест переставляет: аукцион и лот видят одно время. */
+  private final class MovableClock(var instant0: Instant) extends Clock {
+    override def instant(): Instant = instant0
+    override def getZone: ZoneId = ZoneOffset.UTC
+    override def withZone(zone: ZoneId): Clock = this
   }
 
   private val meetup = MeetupId(uuid(10))
@@ -92,17 +137,24 @@ final class AuctionEntitySpec
 
   private var lots: Lots = scala.compiletime.uninitialized
   private var entity: Kit = scala.compiletime.uninitialized
+  private var time: MovableClock = scala.compiletime.uninitialized
 
-  private def entityOf(lots: Lots, snapshotEvery: Int = AuctionEntity.DefaultSnapshotEvery): Kit =
+  private def entityOf(
+      lots: Lots,
+      snapshotEvery: Int = AuctionEntity.DefaultSnapshotEvery,
+      recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery,
+      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None
+  ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
-      AuctionEntity("auction-1", clock, sequentialIds(), lots, snapshotEvery),
+      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard),
       serialization
     )
 
   /** `lot` с условиями торгов, `other` — без них: первый откроется, второй отклонит открытие. */
   override protected def beforeEach(): Unit = {
-    lots = Lots(Map(lot -> LotFixtures.scheduled(), other -> LotFixtures.drafted))
+    time = MovableClock(decidedAt)
+    lots = Lots(Map(lot -> LotFixtures.scheduled(), other -> LotFixtures.drafted), () => time.instant())
     entity = entityOf(lots)
   }
 
@@ -274,6 +326,76 @@ final class AuctionEntitySpec
       restarted.sequence shouldBe 4
       restarted.auction.state shouldBe AuctionState.Prebidding(config(), op(opening))
       restarted.auction.lots shouldBe Set(lot)
+    }
+    "closes a lot by its deadline once it passed, with the op_id of the closing, and writes nothing itself" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = closesAt.plusSeconds(1)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Closed))
+      lots.stateNow(lot) shouldBe LotState.Unsold(UnsoldReason.NoBids)
+      lots.closes.map(_._2.opId) shouldBe Vector(LotRoster.closeOpId(op(opening), lot))
+      entity.getState().sequence shouldBe 4
+    }
+
+    "does not close a lot before its deadline" in {
+      val opening = scheduledWith(lot)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      lots.closes shouldBe empty
+      lots.stateNow(lot) shouldBe a[LotState.Trading]
+    }
+
+    "does not close a lot that a person closes, however late it is" in {
+      draft(1)
+      add(2)
+      schedule(3, byAuctioneer)
+      time.instant0 = closesAt.plusSeconds(86400)
+      start(4)
+      eventually(roster.active shouldBe Set(lot))
+      lots.closes shouldBe empty
+    }
+
+    "closes after a restart a lot whose deadline passed while the auction was down" in {
+      val opening = scheduledWith(lot)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      time.instant0 = closesAt.plusSeconds(3600)
+      entity.restart()
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Closed))
+      lots.stateNow(lot) shouldBe LotState.Unsold(UnsoldReason.NoBids)
+    }
+
+    "asks a lot that did not answer the closing again on its own and closes it with the same op_id" in {
+      entity = entityOf(lots, recheckEvery = 50.millis)
+      lots.mute = Set(lot)
+      val opening = scheduledWith(lot)
+      time.instant0 = closesAt.plusSeconds(1)
+      start(opening)
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Unanswered))
+      lots.mute = Set.empty
+      // Первое закрытие лот принял, но ответ потерялся: переспрос узнаёт, что лот уже закрыт, и второго не шлёт.
+      eventually(timeout(Span(3, Seconds)))(roster.lots shouldBe Map(lot -> LotStanding.Closed))
+      lots.closes.map(_._2.opId).distinct shouldBe Vector(LotRoster.closeOpId(op(opening), lot))
+    }
+    "asks its shard to passivate an auction that was never drafted, so that a stray auction_id is not remembered" in {
+      val shard = kit.createTestProbe[ClusterSharding.ShardCommand]()
+      entity = entityOf(lots, recheckEvery = 50.millis, shard = Some(shard.ref))
+      entity.runCommand[Inspection](AuctionEntity.Inspect(op(1), _)).reply shouldBe Inspection.Absent
+      shard.expectMessageType[ClusterSharding.Passivate[?]]
+    }
+
+    "does not ask its shard to passivate a drafted, a scheduled or a trading auction" in {
+      val shard = kit.createTestProbe[ClusterSharding.ShardCommand]()
+      entity = entityOf(lots, recheckEvery = 50.millis, shard = Some(shard.ref))
+      draft(1)
+      // До рождения аукцион был `Initial`, и ранний тик мог честно попросить пассивации; после рождения — нет.
+      Iterator.continually(scala.util.Try(shard.receiveMessage(100.millis))).takeWhile(_.isSuccess).foreach(_ => ())
+      shard.expectNoMessage(200.millis)
+      val opening = scheduledWith(lot)
+      shard.expectNoMessage(200.millis)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      shard.expectNoMessage(300.millis)
     }
   }
 }

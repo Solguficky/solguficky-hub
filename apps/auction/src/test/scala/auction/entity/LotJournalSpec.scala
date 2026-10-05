@@ -46,6 +46,10 @@ final class LotJournalSpec
       )
     )
 
+  private val lotSold = LotEvent.LotSold(participant(2), money(20000), bid(1), deadline)
+
+  private val lotUnsold = LotEvent.LotUnsold(UnsoldReason.NoBids)
+
   /** Тот же лот после лимита, который лидер поставил себе пятой строкой. */
   private val limitedLot: Lot = Lot.apply(tradingLot, Envelope(5, op(5), limitSet))
 
@@ -112,6 +116,17 @@ final class LotJournalSpec
       )
     }
 
+    "keep the stored form of a sold and an unsold lot equal to their golden files and read them back" in {
+      keepsGolden("lot-sold", storedEvent(lotSold, opN = 4))
+      keepsGolden("lot-unsold", storedEvent(lotUnsold, opN = 4))
+    }
+
+    "read an event written before the closing sections into the same event" in {
+      val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
+
+      read(kit.system, row).asInstanceOf[StoredLotEvent].event.lotSold shouldBe None
+    }
+
     "keep the stored form of a lot snapshot with its proxy limits equal to its golden file and read it back" in {
       val stored = LotJournal.storeLot(limitedLot, sequence = 5)
       val row = write(kit.system, stored)
@@ -143,10 +158,20 @@ final class LotJournalSpec
     }
 
     "restore every event and the whole lot with its deduplication window from what it stored" in {
-      List(lotDrafted, lotScheduled, opened, placed, placedByProxy, limitSet, limitWithdrawn).zipWithIndex.foreach {
-        (event, index) =>
+      List(
+        lotDrafted,
+        lotScheduled,
+        opened,
+        placed,
+        placedByProxy,
+        limitSet,
+        limitWithdrawn,
+        lotSold,
+        lotUnsold
+      ).zipWithIndex
+        .foreach { (event, index) =>
           LotJournal.envelope(index.toLong + 7, storedEvent(event)) shouldBe Envelope(index.toLong + 7, op(1), event)
-      }
+        }
       List(
         Lot.initial,
         drafted,
@@ -154,7 +179,8 @@ final class LotJournalSpec
         tradingLot,
         limitedLot,
         held(price = 700, leader = participant(3), limits = Map(participant(5) -> limit(900, setSeq = 8))),
-        sold(price = 900, winner = participant(4))
+        sold(price = 900, winner = participant(4)),
+        lotIn(LotState.Unsold(UnsoldReason.NoBids))
       ).foreach(lot => LotJournal.restoreLot(LotJournal.storeLot(lot, sequence = 5)) shouldBe lot)
     }
 

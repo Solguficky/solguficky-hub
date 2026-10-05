@@ -397,5 +397,79 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         results.drop(1).toSet shouldBe Set(Left(refusal))
       }
     }
+    "refuse to close a lot by its deadline before the deadline came (Т-11)" in {
+      Lot.decide(trading(price = 100), closeLot(opN = 9), deadline.minusSeconds(1)) shouldBe
+        Left(CloseLotRejected.DeadlineNotReached)
+    }
+
+    "refuse to close by deadline a lot that a person closes" in {
+      val ledByPerson = lotIn(LotState.Trading(tradingOf(trading(price = 100)).copy(deadline = None)))
+
+      Lot.decide(ledByPerson, closeLot(opN = 9), deadline.plusSeconds(3600)) shouldBe
+        Left(CloseLotRejected.DeadlineNotReached)
+    }
+
+    "sell the lot to the leader at the current price once the deadline came (Т-12)" in {
+      val leading = trading(price = 500, leader = Some(participant(2)))
+      val (result, journal) = Journal.of(leading).close(closeLot(opN = 9), deadline)
+
+      result shouldBe Right(Decision.Accepted(LotEvent.LotSold(participant(2), money(500), bid(0), deadline)))
+      journal.lot.state shouldBe LotState.Sold(Sale(participant(2), money(500), bid(0), deadline))
+    }
+
+    "close the lot without a sale once the deadline came and nobody bid (Т-13)" in {
+      val (result, journal) = Journal.of(trading(price = 100)).close(closeLot(opN = 9), deadline.plusSeconds(60))
+
+      result shouldBe Right(Decision.Accepted(LotEvent.LotUnsold(UnsoldReason.NoBids)))
+      journal.lot.state shouldBe LotState.Unsold(UnsoldReason.NoBids)
+    }
+
+    "decide whether the deadline came by the server time alone, whatever the closing time" in {
+      forAll(Gen.choose(-86400L, 86400L)) { offset =>
+        val now = deadline.plusSeconds(offset)
+        val result = Lot.decide(trading(price = 100), closeLot(opN = 9), now)
+        if (offset < 0) result shouldBe Left(CloseLotRejected.DeadlineNotReached)
+        else result shouldBe Right(Decision.Accepted(LotEvent.LotUnsold(UnsoldReason.NoBids)))
+      }
+    }
+
+    "keep a closed lot terminal and refuse every trading command after it (Т-17)" in {
+      val leading = trading(price = 500, leader = Some(participant(2)))
+      for (
+        closed <- List(Journal.of(leading), Journal.of(trading(price = 100)))
+          .map(_.close(closeLot(opN = 9), deadline)._2.lot)
+      ) {
+        Lot.decide(closed, placeBid(who = 3, amount = 600, opN = 10), bid(10), proxyBid(10)) shouldBe
+          Left(PlaceBidRejected.LotNotOpen)
+        Lot.decide(closed, setProxyLimit(who = 3, max = 900, opN = 10), 9, proxyBid(10)) shouldBe
+          Left(SetProxyLimitRejected.LotNotOpen)
+        Lot.decide(closed, openLot(opN = 10)) shouldBe Left(OpenLotRejected.LotNotScheduled)
+        Lot.decide(closed, closeLot(opN = 10), deadline) shouldBe Left(CloseLotRejected.LotNotOpen)
+      }
+    }
+
+    "answer a repeated closing with the original response after the lot closed" in {
+      val (_, journal) = Journal.of(trading(price = 100)).close(closeLot(opN = 9), deadline)
+
+      Lot.decide(journal.lot, closeLot(opN = 9), deadline.plusSeconds(60)) shouldBe
+        Right(Decision.Repeated(journal.entries.last))
+    }
+
+    "close a held lot only by the auctioneer, at the price it survived the deadline with" in {
+      val holding = held(price = 700, leader = participant(3))
+
+      Lot.decide(holding, closeLot(opN = 9), deadline.plusSeconds(60)) shouldBe
+        Left(CloseLotRejected.DeadlineNotReached)
+      Lot.decide(holding, closeLot(opN = 9, reason = CloseReason.ByAuctioneer), deadline) shouldBe
+        Right(Decision.Accepted(LotEvent.LotSold(participant(3), money(700), bid(0), deadline)))
+    }
+
+    "refuse to close a lot that never opened" in {
+      Lot.decide(Lot.initial, closeLot(opN = 9), deadline) shouldBe Left(CloseLotRejected.LotNotFound)
+      List(drafted, scheduled()).foreach { lot =>
+        Lot.decide(lot, closeLot(opN = 9, reason = CloseReason.ByAuctioneer), deadline) shouldBe
+          Left(CloseLotRejected.LotNotOpen)
+      }
+    }
   }
 }

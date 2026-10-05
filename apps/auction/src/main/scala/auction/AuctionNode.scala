@@ -24,6 +24,7 @@ import auction.publication.LotOutbox
 import auction.publication.LotPublicationHandler
 import auction.publication.OutboxRelay
 import auction.publication.PublicationSettings
+import auction.telemetry.DeadlineMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
 import auction.persistence.SlickDisplayNameStore
@@ -37,6 +38,7 @@ import org.apache.pekko.http.scaladsl.settings.ServerSettings
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.cluster.MemberStatus
+import org.apache.pekko.cluster.sharding.typed.ClusterShardingSettings
 import org.apache.pekko.cluster.sharding.typed.ShardingEnvelope
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.cluster.sharding.typed.scaladsl.Entity
@@ -82,16 +84,30 @@ object AuctionNode {
   /**
    * Регистрирует entity аукциона; идентификатор entity — идентификатор аукциона (ADR-047, дополнение 2026-10-03). К
    * лотам аукцион ходит через тот же шардинг, поэтому entity лота регистрируются раньше; `askTimeout` — срок ответа
-   * лота на вопрос о состоянии и на `OpenLot`.
+   * лота на вопрос о состоянии, `OpenLot` и `CloseLot`.
+   *
+   * Аукцион шардинг помнит (ADR-045, дополнение 2026-10-05): таймеры закрытия живут в entity, а помнящаяся entity
+   * поднимается сама после рестарта процесса и по простою не усыпляется. Хранилище запоминания — журнал
+   * (`eventsourced`): хранилище по умолчанию `ddata` пишет в LMDB-каталог с портом remoting в имени, а порт узла — `0`,
+   * и после рестарта процесса прошлое не читается.
    */
   def registerAuctions(
+      system: ActorSystem[?],
       sharding: ClusterSharding,
       clock: Clock,
       newId: () => UUID,
       askTimeout: FiniteDuration
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
-    sharding.init(Entity(AuctionEntity.TypeKey)(context => AuctionEntity(context.entityId, clock, newId, lots)))
+    val remembered = ClusterShardingSettings(system)
+      .withRememberEntities(true)
+      .withRememberEntitiesStoreMode(ClusterShardingSettings.RememberEntitiesStoreModeEventSourced)
+    sharding.init(
+      Entity(AuctionEntity.TypeKey) { context =>
+        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard))
+      }
+        .withSettings(remembered)
+    )
   }
 
   /**
@@ -104,6 +120,19 @@ object AuctionNode {
     AuctionProjection.init(system, metrics, () => AuctionViewHandler(system))
     metrics.watchBacklog(AuctionProjection.Name, AuctionProjection.backlog(system, backlogTimeout))
   }
+
+  /**
+   * Просроченные незакрытые лоты в метрике `auction.lots.overdue` (PER-292). Считается по read model лотов, поэтому
+   * видна, даже когда планировщик аукциона молчит; `timeout` ограничивает запрос к базе на сборе.
+   */
+  def watchDeadlines(
+      system: ActorSystem[?],
+      metrics: DeadlineMetrics,
+      clock: Clock,
+      grace: java.time.Duration,
+      timeout: FiniteDuration
+  ): AutoCloseable =
+    metrics.watchOverdue(LotProjection.overdue(system, clock, grace, timeout))
 
   /**
    * Публикация фактов лота в шину (integration.md, «Auction NATS»): своя проекция журнала со своим offset пишет outbox,

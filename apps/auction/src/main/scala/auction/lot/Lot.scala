@@ -1,5 +1,7 @@
 package auction.lot
 
+import java.time.Instant
+
 /**
  * Агрегат лота: состояние, аукцион и окно дедупликации, свёрнутые из журнала.
  *
@@ -37,7 +39,8 @@ object Lot {
       case None =>
         lot.state match {
           case LotState.Initial => Right(Decision.Accepted(LotEvent.LotDrafted(command.auction)))
-          case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) =>
+          case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) |
+              LotState.Unsold(_) =>
             Left(DraftLotRejected.LotAlreadyExists)
         }
     }
@@ -60,7 +63,8 @@ object Lot {
               .map(ScheduleLotRejected.StepPolicyInvalid(_))
               .flatMap(Schedule.of(command.startingPrice, _))
               .map(schedule => Decision.Accepted(LotEvent.LotScheduled(schedule)))
-          case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) => Left(ScheduleLotRejected.SchedulingClosed)
+          case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+            Left(ScheduleLotRejected.SchedulingClosed)
         }
     }
 
@@ -76,7 +80,7 @@ object Lot {
           case LotState.Initial => Left(OpenLotRejected.LotNotFound)
           case LotState.Scheduled(schedule) =>
             Right(Decision.Accepted(LotEvent.LotOpened(schedule.startingPrice, schedule.config, command.deadline)))
-          case LotState.Draft | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) =>
+          case LotState.Draft | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
             Left(OpenLotRejected.LotNotScheduled)
         }
     }
@@ -101,7 +105,7 @@ object Lot {
             Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList)
           }
         case LotState.Held(_) => Left(PlaceBidRejected.LotOnHold)
-        case LotState.Sold(_) => Left(PlaceBidRejected.LotNotOpen)
+        case LotState.Sold(_) | LotState.Unsold(_) => Left(PlaceBidRejected.LotNotOpen)
       }
     }
 
@@ -126,7 +130,8 @@ object Lot {
     }.getOrElse {
       lot.state match {
         case LotState.Initial => Left(SetProxyLimitRejected.LotNotFound)
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) => Left(SetProxyLimitRejected.LotNotOpen)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Left(SetProxyLimitRejected.LotNotOpen)
         case LotState.Trading(trading) =>
           proxyLimitSet(trading.config, floor(trading), command).map { set =>
             val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
@@ -149,7 +154,8 @@ object Lot {
     }.getOrElse {
       val limits = lot.state match {
         case LotState.Initial => None
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) => Some(Map.empty[ParticipantId, ProxyLimit])
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Some(Map.empty[ParticipantId, ProxyLimit])
         case LotState.Trading(trading) => Some(trading.proxyLimits)
         case LotState.Held(held) => Some(held.proxyLimits)
       }
@@ -171,6 +177,45 @@ object Lot {
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
+
+  /**
+   * Закрытие лота (RFC-011, П-05). Таймер внешний, а наступил ли дедлайн, решает лот по серверному `now`: команда,
+   * пришедшая раньше дедлайна или к лоту без дедлайна, получает `DeadlineNotReached` (Т-11), и досрочно закрыть лот
+   * планировщик не может. С лидером лот продаётся по текущей цене (Т-12), без лидера закрывается без продажи (Т-13). У
+   * удержанного лота дедлайна нет, поэтому закрыть его может только ведущий.
+   *
+   * Отметки финала в состоянии ещё нет, и ветки `LotHeldForFinal` здесь нет: её приносит PER-310.
+   */
+  def decide(lot: Lot, command: CloseLot, now: Instant): Either[CloseLotRejected, Decision] =
+    lot.seen.get(command.opId) match {
+      case Some(original) => Right(Decision.Repeated(original))
+      case None =>
+        lot.state match {
+          case LotState.Initial => Left(CloseLotRejected.LotNotFound)
+          case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+            Left(CloseLotRejected.LotNotOpen)
+          case LotState.Trading(trading) =>
+            val reached = trading.deadline.exists(deadline => !now.isBefore(deadline))
+            if (command.reason == CloseReason.DeadlineReached && !reached)
+              Left(CloseLotRejected.DeadlineNotReached)
+            else Right(Decision.Accepted(closed(trading.leader, trading.currentPrice, trading.leadingBidId, now)))
+          case LotState.Held(held) =>
+            if (command.reason == CloseReason.DeadlineReached) Left(CloseLotRejected.DeadlineNotReached)
+            else Right(Decision.Accepted(closed(held.leader, held.currentPrice, held.leadingBidId, now)))
+        }
+    }
+
+  /** Исход закрытия: продажа лидеру по текущей цене либо закрытие без продажи, если ставок не было (И-02, И-11). */
+  private def closed(
+      leader: Option[ParticipantId],
+      price: Money,
+      leadingBidId: Option[BidId],
+      now: Instant
+  ): LotEvent =
+    (leader, leadingBidId) match {
+      case (Some(winner), Some(bidId)) => LotEvent.LotSold(winner, price, bidId, now)
+      case _ => LotEvent.LotUnsold(UnsoldReason.NoBids)
+    }
 
   /**
    * Следующая цена: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03). До первой
@@ -328,6 +373,9 @@ object Lot {
         LotState.Trading(trading.copy(proxyLimits = trading.proxyLimits.removed(participant)))
       case (LotState.Held(held), LotEvent.ProxyLimitWithdrawn(participant)) =>
         LotState.Held(held.copy(proxyLimits = held.proxyLimits.removed(participant)))
+      case (LotState.Trading(_) | LotState.Held(_), sold: LotEvent.LotSold) =>
+        LotState.Sold(Sale(sold.winner, sold.price, sold.bidId, sold.at))
+      case (LotState.Trading(_) | LotState.Held(_), LotEvent.LotUnsold(reason)) => LotState.Unsold(reason)
       case (other, _) => other
     }
     val auction = (lot.state, envelope.event) match {

@@ -59,7 +59,8 @@
     },
     "held": null,
     "sold": null,
-    "scheduled": null
+    "scheduled": null,
+    "unsold": null
   },
   "auction": "00000000-0000-0004-0000-000000000001",
   "seen": [
@@ -73,7 +74,9 @@
         "bidPlaced": null,
         "lotScheduled": null,
         "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null
       }
     },
     {
@@ -125,7 +128,9 @@
           }
         },
         "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null
       }
     },
     {
@@ -178,7 +183,9 @@
         "bidPlaced": null,
         "lotScheduled": null,
         "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null
       }
     },
     {
@@ -201,7 +208,9 @@
         },
         "lotScheduled": null,
         "proxyLimitSet": null,
-        "proxyLimitWithdrawn": null
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null
       }
     },
     {
@@ -220,7 +229,9 @@
             "currency": "RUB"
           }
         },
-        "proxyLimitWithdrawn": null
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null
       }
     }
   ]
