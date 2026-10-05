@@ -40,6 +40,9 @@ public static class NotificationFacts
     public const string AccessRequestedType = "access_requested";
 
     /// <inheritdoc cref="MeetupPublishedType" />
+    public const string AccessGrantedType = "access_granted";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
 
     /// <inheritdoc cref="MeetupPublishedType" />
@@ -277,13 +280,6 @@ public static class NotificationFacts
             throw new ArgumentException($"occasion {fact.Occasion} is not an application", nameof(fact));
         }
 
-        var circle = fact.OccasionRole switch
-        {
-            "member" => Identity.V1.GlobalRole.Member,
-            "public" => Identity.V1.GlobalRole.Public,
-            _ => throw new ArgumentException($"circle {fact.OccasionRole} is not requestable", nameof(fact)),
-        };
-
         var notification = Envelope(
             notificationId,
             recipientId,
@@ -291,10 +287,47 @@ public static class NotificationFacts
             requestId: null,
             now,
             notAfter);
-        notification.AccessRequested = new V1.AccessRequested { Circle = circle };
+        notification.AccessRequested = new V1.AccessRequested { Circle = RequestableCircle(fact) };
 
         return notification;
     }
+
+    /// <summary>
+    /// Факт «вас допустили» самому заявителю (PER-442). Кто решил, в
+    /// сообщение не попадает; круг называет поверхность, бот которой его
+    /// доставит.
+    /// </summary>
+    /// <param name="fact">Событие Identity о допуске по заявке.</param>
+    public static Notification AccessGranted(
+        Guid notificationId,
+        IdentityFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        if (fact.Occasion != IdentityOccasion.ApplicationAdmitted)
+        {
+            throw new ArgumentException($"occasion {fact.Occasion} is not an admission", nameof(fact));
+        }
+
+        var notification = Envelope(
+            notificationId,
+            fact.IdentityId,
+            new Cause { IdentityEventId = fact.EventId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.AccessGranted = new V1.AccessGranted { Circle = RequestableCircle(fact) };
+
+        return notification;
+    }
+
+    // Круг заявки — только круги поверхностей; другой разбор реплики не пропускает.
+    private static Identity.V1.GlobalRole RequestableCircle(IdentityFact fact) => fact.OccasionRole switch
+    {
+        "member" => Identity.V1.GlobalRole.Member,
+        "public" => Identity.V1.GlobalRole.Public,
+        _ => throw new ArgumentException($"circle {fact.OccasionRole} is not requestable", nameof(fact)),
+    };
 
     /// <summary>RFC 3339 в UTC, как остальные моменты контрактов.</summary>
     public static string Instant(DateTimeOffset moment) =>

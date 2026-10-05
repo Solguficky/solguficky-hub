@@ -11,6 +11,7 @@ import {
 import { Api } from "grammy";
 import type { TelegramEnvironment } from "../config.js";
 import { money, truncate } from "../entry-screen.js";
+import { entryCallback, parseEntryCallback } from "../faq.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
 export type NotificationMessage = {
@@ -35,11 +36,18 @@ export function traceLotCallback(lotId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "lot", lotId, page: 0 })}`;
 }
 
-// Кнопка аукциона внутри следа. Не след или след без читаемой кнопки лота —
-// undefined: такую кнопку край разбирает как обычную.
+// Вход в аукцион из следа — тот же путь, что пункт меню «Аукционы»: FAQ, если
+// человек его ещё не прошёл, иначе лента (PER-442).
+export function traceAuctionsCallback(): string {
+  return `${tracePrefix}${entryCallback("auctions")}`;
+}
+
+// Кнопка внутри следа: лот или пункт входа. Не след или след без читаемой
+// кнопки — undefined: такую кнопку край разбирает как обычную.
 export function parseTraceCallback(data: string): string | undefined {
   if (!data.startsWith(tracePrefix)) return undefined;
   const inner = data.slice(tracePrefix.length);
+  if (parseEntryCallback(inner) !== undefined) return inner;
   const parsed = parseAuctionCallback(inner);
   return parsed.ok && parsed.intent.kind === "lot" ? inner : undefined;
 }
@@ -78,6 +86,9 @@ export function createRenderMessage(
         : { kind: "unavailable", cause };
     }
     if (!eligible) return { kind: "ineligible" };
+    if (content.kind === "access-granted") {
+      return { kind: "ready", message: renderNotification(content) };
+    }
     let title: string | undefined;
     try {
       title = await reads.lotTitle(recipientId, content.lotId, requestId);
@@ -97,6 +108,12 @@ export function renderNotification(
   content: AuctionNotificationContent,
   title?: string,
 ): NotificationMessage {
+  if (content.kind === "access-granted") {
+    return {
+      text: "Вас допустили к аукциону.",
+      button: { text: "Открыть аукцион", callback_data: traceAuctionsCallback() },
+    };
+  }
   const lot =
     title === undefined || title === ""
       ? undefined

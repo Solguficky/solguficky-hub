@@ -59,6 +59,7 @@ public class MigrationsTests
             "access_request",
             "auction_purchased",
             "notification_rejection",
+            "access_granted",
         ]);
 
         var main = names.IndexOf("orleans_main");

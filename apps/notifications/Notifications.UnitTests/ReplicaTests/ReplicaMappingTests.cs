@@ -249,6 +249,31 @@ public class ReplicaMappingTests
         ReplicaMapping.Identity(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
     }
 
+    [Theory]
+    [InlineData(GlobalRole.Member, "member")]
+    [InlineData(GlobalRole.Public, "public")]
+    public void Identity_ApplicationAdmitted_CarriesOccasionAndCircle(GlobalRole circle, string expected)
+    {
+        var message = EventFactory.Admission(IdentityId, version: 4, circle);
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.ApplicationAdmitted);
+        fact.OccasionRole.ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(GlobalRole.Admin)]
+    [InlineData(GlobalRole.Unspecified)]
+    public void Identity_AdmissionToCircleNobodyRequests_BecomesPoison(GlobalRole circle)
+    {
+        // Канал выбирается по кругу заявки: другой круг — испорченное событие,
+        // которое ни один бот не доставил бы.
+        var message = EventFactory.Admission(IdentityId, version: 4, circle);
+
+        ReplicaMapping.Identity(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
     [Fact]
     public void Identity_RoleGranted_CarriesGrantedRole()
     {

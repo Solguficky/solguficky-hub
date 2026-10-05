@@ -83,6 +83,14 @@ func (r Record) Message() (*identityv1.IdentityEvent, error) {
 		event.Occasion = &identityv1.IdentityEvent_ApplicationSubmitted{
 			ApplicationSubmitted: &identityv1.ApplicationSubmitted{Role: role},
 		}
+	case ApplicationAdmitted:
+		role, err := globalRole(r.Role)
+		if err != nil {
+			return nil, err
+		}
+		event.Occasion = &identityv1.IdentityEvent_ApplicationAdmitted{
+			ApplicationAdmitted: &identityv1.ApplicationAdmitted{Role: role},
+		}
 	default:
 		return nil, fmt.Errorf("outbox: unknown occasion %q", r.Occasion)
 	}

@@ -647,12 +647,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 520. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 531. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "380"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "140"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "386"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "145"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

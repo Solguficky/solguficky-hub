@@ -22,6 +22,7 @@ func TestRecordSubjectNamesTheOccasion(t *testing.T) {
 		outbox.ProfileBlocked:       "events.identity.profile_blocked",
 		outbox.ProfileUnblocked:     "events.identity.profile_unblocked",
 		outbox.ApplicationSubmitted: "events.identity.application_submitted",
+		outbox.ApplicationAdmitted:  "events.identity.application_admitted",
 	}
 	for occasion, want := range cases {
 		if got := (outbox.Record{Occasion: occasion}).Subject(); got != want {
@@ -89,6 +90,9 @@ func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 		{outbox.ProfileUnblocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
 		{outbox.ApplicationSubmitted, "public", func(e *identityv1.IdentityEvent) bool {
 			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC
+		}},
+		{outbox.ApplicationAdmitted, "member", func(e *identityv1.IdentityEvent) bool {
+			return e.GetApplicationAdmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MEMBER
 		}},
 	}
 	for _, tc := range cases {

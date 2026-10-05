@@ -2154,121 +2154,37 @@ describe("presentation adapter", () => {
     });
   });
 
-  // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не узнаёт
-  // (прогон PER-395). Пишем только о настоящей смене состояния.
-  describe("admitted member notice", () => {
+  // О допуске заявителю пишет канал Notifications по событию Identity
+  // (PER-442): экран состава сам ему не пишет, иначе сообщений было бы два.
+  it("leaves the admitted person's notice to the notification channel", async () => {
     const admittedId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
-    const admitButton = `v1:community:admit:${uuidToToken(admittedId)}`;
-
-    function admitting(changed: boolean) {
-      const community = vi
-        .fn<CommunityAdministrator["community"]>()
-        .mockResolvedValue({
-          kind: "ok",
-          value: { members: [], allowedUsernames: [] },
-        });
-      const admit = vi
-        .fn<CommunityAdministrator["admit"]>()
-        .mockResolvedValue({ kind: "ok", value: changed });
-      const resolveTelegramUserId = vi
-        .fn<TelegramRecipientResolver["resolveTelegramUserId"]>()
-        .mockResolvedValue({ kind: "resolved", telegramUserId: 5001n });
-      return {
-        ...resolvedIdentity(["admin"]),
-        community,
-        admit,
-        resolveTelegramUserId,
-      };
-    }
-
-    it("writes to the admitted person when the state changed", async () => {
-      const identity = admitting(true);
-      const { bot, calls } = createHarness(identity);
-      await bot.init();
-      await bot.handleUpdate(callbackUpdate(admitButton));
-
-      expect(identity.resolveTelegramUserId).toHaveBeenCalledWith(
-        admittedId,
-        expect.objectContaining({ useCase: "manage_community" }),
-      );
-      const notice = calls.find(
-        (call) =>
-          call.method === "sendMessage" &&
-          JSON.stringify(call.payload).includes("Доступ открыт"),
-      );
-      expect(notice?.payload).toMatchObject({ chat_id: 5001 });
-      // Кнопка следа: список придёт новым сообщением, а «Доступ открыт»
-      // останется в истории.
-      expect(JSON.stringify(notice?.payload)).toContain("v1:t:nav:hub");
-    });
-
-    it("stays silent when the person was already admitted", async () => {
-      const identity = admitting(false);
-      const { bot, calls } = createHarness(identity);
-      await bot.init();
-      await bot.handleUpdate(callbackUpdate(admitButton));
-
-      expect(identity.resolveTelegramUserId).not.toHaveBeenCalled();
-      expect(JSON.stringify(calls)).not.toContain("Доступ открыт");
-    });
-
-    it("sends the admin screen before writing to the admitted person", async () => {
-      const identity = admitting(true);
-      const { bot, calls } = createHarness(identity);
-      await bot.init();
-      await bot.handleUpdate(callbackUpdate(admitButton));
-
-      const screenAt = calls.findIndex(
-        (call) => call.method === "editMessageText",
-      );
-      const noticeAt = calls.findIndex((call) =>
-        JSON.stringify(call.payload).includes("Доступ открыт"),
-      );
-      expect(screenAt).toBeGreaterThanOrEqual(0);
-      expect(noticeAt).toBeGreaterThan(screenAt);
-    });
-
-    // Писать некуда — ожидаемый исход, как в доставке уведомлений: допуск
-    // записывается обычной записью границы, а не сбоем.
-    it("treats a blocked recipient as an expected outcome", async () => {
-      const identity = admitting(true);
-      identity.resolveTelegramUserId.mockResolvedValue({ kind: "blocked" });
-      const { bot, calls, records } = createHarness(identity);
-      await bot.init();
-      await bot.handleUpdate(callbackUpdate(admitButton));
-
-      expect(JSON.stringify(calls)).not.toContain("Доступ открыт");
-      expectBoundary(records[0], {
-        level: "info",
-        result: "ok",
-        operation: "callback_query",
-        use_case: "manage_community",
+    const community = vi
+      .fn<CommunityAdministrator["community"]>()
+      .mockResolvedValue({
+        kind: "ok",
+        value: { members: [], allowedUsernames: [] },
       });
-    });
+    const admit = vi
+      .fn<CommunityAdministrator["admit"]>()
+      .mockResolvedValue({ kind: "ok", value: true });
+    const resolveTelegramUserId =
+      vi.fn<TelegramRecipientResolver["resolveTelegramUserId"]>();
+    const identity = {
+      ...resolvedIdentity(["admin"]),
+      community,
+      admit,
+      resolveTelegramUserId,
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate(`v1:community:admit:${uuidToToken(admittedId)}`),
+    );
 
-    it("keeps the admission and the admin screen when Identity is unavailable", async () => {
-      const identity = admitting(true);
-      identity.resolveTelegramUserId.mockResolvedValue({
-        kind: "unavailable",
-        cause: new Error("deadline exceeded"),
-      });
-      const { bot, calls, records } = createHarness(identity);
-      await bot.init();
-      await bot.handleUpdate(callbackUpdate(admitButton));
-
-      expect(identity.admit).toHaveBeenCalled();
-      expect(JSON.stringify(calls)).toContain("Человек допущен.");
-      expect(calls.some((call) => call.method === "editMessageText")).toBe(
-        true,
-      );
-      expectBoundary(records[0], {
-        level: "warn",
-        result: "error",
-        operation: "callback_query",
-        use_case: "manage_community",
-        error_category: "dependency_unavailable",
-      });
-    });
+    expect(admit).toHaveBeenCalled();
+    expect(JSON.stringify(calls)).toContain("Человек допущен.");
+    expect(resolveTelegramUserId).not.toHaveBeenCalled();
+    expect(JSON.stringify(calls)).not.toContain("Доступ открыт");
   });
 
   it("lets Identity refuse community management for a non-admin", async () => {

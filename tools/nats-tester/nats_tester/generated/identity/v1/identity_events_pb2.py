@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from nats_tester.generated.identity.v1 import roles_pb2 as identity_dot_v1_dot_roles__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n!identity/v1/identity_events.proto\x12\x0bidentity.v1\x1a\x17identity/v1/roles.proto\"\xed\x03\n\rIdentityEvent\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x13\n\x0bidentity_id\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\x03\x12\x13\n\x0boccurred_at\x18\x04 \x01(\t\x12)\n\x05state\x18\x05 \x01(\x0b\x32\x1a.identity.v1.IdentityState\x12<\n\x12profile_registered\x18\x06 \x01(\x0b\x32\x1e.identity.v1.ProfileRegisteredH\x00\x12\x30\n\x0crole_granted\x18\x07 \x01(\x0b\x32\x18.identity.v1.RoleGrantedH\x00\x12\x30\n\x0crole_revoked\x18\x08 \x01(\x0b\x32\x18.identity.v1.RoleRevokedH\x00\x12\x36\n\x0fprofile_blocked\x18\t \x01(\x0b\x32\x1b.identity.v1.ProfileBlockedH\x00\x12:\n\x11profile_unblocked\x18\n \x01(\x0b\x32\x1d.identity.v1.ProfileUnblockedH\x00\x12\x42\n\x15\x61pplication_submitted\x18\x0b \x01(\x0b\x32!.identity.v1.ApplicationSubmittedH\x00\x42\n\n\x08occasion\"[\n\rIdentityState\x12\n\n\x02id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole\x12\x0f\n\x07\x62locked\x18\x03 \x01(\x08\"\x13\n\x11ProfileRegistered\"4\n\x0bRoleGranted\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRole\"4\n\x0bRoleRevoked\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRole\"\x10\n\x0eProfileBlocked\"\x12\n\x10ProfileUnblocked\"=\n\x14\x41pplicationSubmitted\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRoleb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n!identity/v1/identity_events.proto\x12\x0bidentity.v1\x1a\x17identity/v1/roles.proto\"\xaf\x04\n\rIdentityEvent\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x13\n\x0bidentity_id\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\x03\x12\x13\n\x0boccurred_at\x18\x04 \x01(\t\x12)\n\x05state\x18\x05 \x01(\x0b\x32\x1a.identity.v1.IdentityState\x12<\n\x12profile_registered\x18\x06 \x01(\x0b\x32\x1e.identity.v1.ProfileRegisteredH\x00\x12\x30\n\x0crole_granted\x18\x07 \x01(\x0b\x32\x18.identity.v1.RoleGrantedH\x00\x12\x30\n\x0crole_revoked\x18\x08 \x01(\x0b\x32\x18.identity.v1.RoleRevokedH\x00\x12\x36\n\x0fprofile_blocked\x18\t \x01(\x0b\x32\x1b.identity.v1.ProfileBlockedH\x00\x12:\n\x11profile_unblocked\x18\n \x01(\x0b\x32\x1d.identity.v1.ProfileUnblockedH\x00\x12\x42\n\x15\x61pplication_submitted\x18\x0b \x01(\x0b\x32!.identity.v1.ApplicationSubmittedH\x00\x12@\n\x14\x61pplication_admitted\x18\x0c \x01(\x0b\x32 .identity.v1.ApplicationAdmittedH\x00\x42\n\n\x08occasion\"[\n\rIdentityState\x12\n\n\x02id\x18\x01 \x01(\t\x12-\n\x0cglobal_roles\x18\x02 \x03(\x0e\x32\x17.identity.v1.GlobalRole\x12\x0f\n\x07\x62locked\x18\x03 \x01(\x08\"\x13\n\x11ProfileRegistered\"4\n\x0bRoleGranted\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRole\"4\n\x0bRoleRevoked\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRole\"\x10\n\x0eProfileBlocked\"\x12\n\x10ProfileUnblocked\"=\n\x14\x41pplicationSubmitted\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRole\"<\n\x13\x41pplicationAdmitted\x12%\n\x04role\x18\x01 \x01(\x0e\x32\x17.identity.v1.GlobalRoleb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,19 +33,21 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'identity.v1.identity_events
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_IDENTITYEVENT']._serialized_start=76
-  _globals['_IDENTITYEVENT']._serialized_end=569
-  _globals['_IDENTITYSTATE']._serialized_start=571
-  _globals['_IDENTITYSTATE']._serialized_end=662
-  _globals['_PROFILEREGISTERED']._serialized_start=664
-  _globals['_PROFILEREGISTERED']._serialized_end=683
-  _globals['_ROLEGRANTED']._serialized_start=685
-  _globals['_ROLEGRANTED']._serialized_end=737
-  _globals['_ROLEREVOKED']._serialized_start=739
-  _globals['_ROLEREVOKED']._serialized_end=791
-  _globals['_PROFILEBLOCKED']._serialized_start=793
-  _globals['_PROFILEBLOCKED']._serialized_end=809
-  _globals['_PROFILEUNBLOCKED']._serialized_start=811
-  _globals['_PROFILEUNBLOCKED']._serialized_end=829
-  _globals['_APPLICATIONSUBMITTED']._serialized_start=831
-  _globals['_APPLICATIONSUBMITTED']._serialized_end=892
+  _globals['_IDENTITYEVENT']._serialized_end=635
+  _globals['_IDENTITYSTATE']._serialized_start=637
+  _globals['_IDENTITYSTATE']._serialized_end=728
+  _globals['_PROFILEREGISTERED']._serialized_start=730
+  _globals['_PROFILEREGISTERED']._serialized_end=749
+  _globals['_ROLEGRANTED']._serialized_start=751
+  _globals['_ROLEGRANTED']._serialized_end=803
+  _globals['_ROLEREVOKED']._serialized_start=805
+  _globals['_ROLEREVOKED']._serialized_end=857
+  _globals['_PROFILEBLOCKED']._serialized_start=859
+  _globals['_PROFILEBLOCKED']._serialized_end=875
+  _globals['_PROFILEUNBLOCKED']._serialized_start=877
+  _globals['_PROFILEUNBLOCKED']._serialized_end=895
+  _globals['_APPLICATIONSUBMITTED']._serialized_start=897
+  _globals['_APPLICATIONSUBMITTED']._serialized_end=958
+  _globals['_APPLICATIONADMITTED']._serialized_start=960
+  _globals['_APPLICATIONADMITTED']._serialized_end=1020
 # @@protoc_insertion_point(module_scope)

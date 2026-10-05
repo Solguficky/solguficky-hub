@@ -2269,35 +2269,9 @@ async function handleCallback(
               : pendingView(action.token)
             : { kind: "usernames", page: action.page },
       );
+      // Сообщение допущенному идёт не отсюда: допуск по заявке Identity
+      // объявляет событием, и его доставляет канал Notifications (PER-442).
       outcome = adminOutcome(result, person.identityId);
-      // Допущенный ждёт на экране «заявка ждёт проверки» и сам о решении не
-      // узнает. Пишем ему только о настоящей смене состояния: повторное
-      // нажатие по уже допущенному второго сообщения не шлёт. Экран
-      // администратора уходит раньше: сообщение — побочный результат, и
-      // медленный Identity или Telegram не должны его задерживать.
-      if (
-        action.kind === "admit-member" &&
-        result.kind === "ok" &&
-        result.value
-      ) {
-        const failure = await notifyAdmitted(
-          ctx,
-          runtime,
-          tokenToUuid(action.token),
-          rpcCall(ctx, "manage_community"),
-        );
-        if (failure !== undefined) {
-          outcome = {
-            level: "warn",
-            message: "admitted member not notified",
-            result: "error",
-            use_case: "manage_community",
-            identity_id: person.identityId,
-            error_category: failure.category,
-            error: failure.error,
-          };
-        }
-      }
       return;
     }
     if (action.kind === "home") {
@@ -3844,64 +3818,6 @@ async function renderApplicationCard(
   }
   await showApplicationQueue(ctx, result.value, after !== undefined);
   return result;
-}
-
-// Сообщение о допуске — побочный результат действия администратора, а не его
-// часть: допуск уже сохранён, поэтому отказ Identity или Telegram его не
-// отменяет и возвращается причиной для записи границы. Получатель, которого
-// нет, который заблокирован или сам заблокировал бота, — ожидаемый исход, как
-// в доставке уведомлений: писать ему некуда, и сбоем это не считается.
-// Повтора нет: у бота нет хранилища под отложенное сообщение (ADR-030), а
-// человек и без него попадает в продукт следующим /start.
-async function notifyAdmitted(
-  ctx: UpdateContext,
-  runtime: BotRuntime,
-  identityId: string,
-  meta: RpcMetadata,
-): Promise<{ category: FailureCategory; error: string } | undefined> {
-  const resolver = runtime.identity.resolveTelegramUserId;
-  if (resolver === undefined) {
-    return {
-      category: "unexpected",
-      error: "telegram recipient resolution is not configured",
-    };
-  }
-  const recipient = await resolver(identityId, meta);
-  if (recipient.kind === "not-found" || recipient.kind === "blocked") {
-    return undefined;
-  }
-  if (recipient.kind === "unavailable") {
-    return {
-      category: "dependency_unavailable",
-      error: `recipient ${errorText(recipient.cause)}`,
-    };
-  }
-  if (recipient.kind === "rejected") {
-    return { category: "unexpected", error: `recipient ${recipient.code}` };
-  }
-  try {
-    // Личный чат с человеком имеет id самого человека, как в доставке.
-    await ctx.api.sendMessage(
-      Number(recipient.telegramUserId),
-      "Доступ открыт: теперь тебе видны сходки сообщества.",
-      {
-        ...screenMark("access-opened"),
-        reply_markup: new InlineKeyboard().text(
-          "Ближайшие сходки",
-          traceCallback("v1:nav:hub"),
-        ),
-      },
-    );
-    return undefined;
-  } catch (cause) {
-    const sent = classifySendFailure(cause);
-    if (sent.kind === "bot-blocked") return undefined;
-    return {
-      category:
-        sent.kind === "rejected" ? "unexpected" : "dependency_unavailable",
-      error: errorText(cause),
-    };
-  }
 }
 
 function adminOutcome(

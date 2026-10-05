@@ -344,6 +344,22 @@ describe("access request", () => {
   });
 });
 
+describe("access granted", () => {
+  // Прежнее сообщение экрана состава: тот же текст и кнопка следа в список.
+  it("opens access and leads to the upcoming meetups", () => {
+    const content: RenderableContent = { kind: "access-granted" };
+    expect(renderNotification(content).text).toBe(
+      "Доступ открыт: теперь тебе видны сходки сообщества.",
+    );
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({
+        text: "Ближайшие сходки",
+        callback_data: "v1:t:nav:hub",
+      }),
+    ]);
+  });
+});
+
 describe("community announcement", () => {
   const announcement = (body: string): RenderableContent => ({
     kind: "community-announcement",

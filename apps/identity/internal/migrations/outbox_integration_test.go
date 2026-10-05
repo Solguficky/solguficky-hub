@@ -126,6 +126,10 @@ func TestOutboxSnapshotMustMatchOccasion(t *testing.T) {
 		{"application for admin", applicationSubmitted, adminRole, "{}", false},
 		{"application while blocked", applicationSubmitted, publicRole, "{}", true},
 		{"application for held circle", applicationSubmitted, "member", "{member,public}", false},
+		{"admission without circle", applicationAdmitted, nil, "{public}", false},
+		{"admission for admin", applicationAdmitted, adminRole, "{admin}", false},
+		{"admission without granted circle", applicationAdmitted, publicRole, "{}", false},
+		{"admission of blocked", applicationAdmitted, publicRole, "{public}", true},
 	}
 	for _, tc := range cases {
 		tx := beginTx(t, db)
@@ -199,6 +203,7 @@ const (
 	adminRole            = "admin"
 	publicRole           = "public"
 	applicationSubmitted = "application_submitted"
+	applicationAdmitted  = "application_admitted"
 )
 
 const insertOutboxSQL = `

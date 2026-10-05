@@ -147,6 +147,34 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Допуск по заявке на круг. Снимок — после выдач той же транзакции:
+    /// незаблокирован и держит круг, а у хаба — вложенный аукцион.
+    /// </summary>
+    public static IdentityEvent Admission(
+        string identityId,
+        long version,
+        GlobalRole circle,
+        string? eventId = null)
+    {
+        var message = new IdentityEvent
+        {
+            EventId = eventId ?? NewId(),
+            IdentityId = identityId,
+            Version = version,
+            OccurredAt = Committed.AddMinutes(version).ToString("O"),
+            State = new IdentityState { Id = identityId },
+            ApplicationAdmitted = new ApplicationAdmitted { Role = circle },
+        };
+        message.State.GlobalRoles.Add(circle);
+        if (circle == GlobalRole.Member)
+        {
+            message.State.GlobalRoles.Add(GlobalRole.Public);
+        }
+
+        return message;
+    }
+
     public static ReadOnlyMemory<byte> Bytes(IMessage message) => message.ToByteArray();
 
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
