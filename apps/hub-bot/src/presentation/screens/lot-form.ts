@@ -1,5 +1,6 @@
 import { encodeAuctionCallback } from "@solguficky/auction-bot-ui";
 import { InlineKeyboard } from "grammy";
+import { lotCurrency } from "../../application/lot-form.js";
 import type {
   LotAskError,
   LotFormView,
@@ -97,13 +98,14 @@ export function lotFormScreen(lot: LotFormView, note?: string): ShownScreen {
 
 const lotAskErrorText: Record<LotAskError, string> = {
   "empty-title": "Название не может быть пустым.",
+  "empty-description": "Описание не может быть пустым.",
   "amount-format": "Нужно целое число рублей: только цифры, без копеек.",
   "amount-range": "Сумма — от 1 до 9 999 999 рублей.",
   "step-refused": "Такой шаг аукцион не принимает. Пришли другой.",
 };
 
 const rublesOf = (amount: number) =>
-  money({ minorUnits: amount * 100, currency: "RUB" });
+  money({ minorUnits: amount * 100, currency: lotCurrency });
 
 /** Что вопрос просит прислать, с образцом формата там, где формат есть. */
 function prompt(question: LotQuestion): string {

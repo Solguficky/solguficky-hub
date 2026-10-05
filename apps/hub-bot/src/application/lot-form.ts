@@ -172,10 +172,20 @@ export function createLotForm(lots: LotAdministration) {
     // Карточка с этим `lot_id` уже есть с другим названием: прошлый ответ на
     // этот же вопрос оборвался между карточкой и реестром. Новый ответ —
     // правка той карточки, а не отказ: человек отвечает на тот же вопрос.
+    // Оборваться мог только ответ боту: тогда лот уже в аукционе, и человек
+    // мог дозаполнить его с экрана правки. Описание и условия такого лота
+    // берутся из чтения, иначе правка названия стёрла бы описание.
+    let known: LotFormView | undefined;
     if (written.kind === "card-conflict") {
+      const stored = await lots.getLot(
+        request.identity,
+        request.lotId,
+        rpcMeta(request),
+      );
+      known = stored.kind === "ok" ? viewOf(stored.lot) : undefined;
       written = await lots.editLotCard(
         request.identity,
-        card,
+        { ...card, description: known?.description ?? "" },
         rpcMeta(request),
       );
     }
@@ -198,17 +208,20 @@ export function createLotForm(lots: LotAdministration) {
     switch (added.kind) {
       case "ok":
         // Экран собран из ответа команд: read model Auction лот ещё не знает.
-        return {
-          kind: "lot-form",
-          lot: {
-            lotId: request.lotId,
-            auctionId: request.auctionId,
-            title,
-            description: "",
-            terms: { kind: "unset" },
-          },
-          saved: "created",
-        };
+        // Лот, который она уже знает, заведён прошлым ответом: это правка.
+        return known === undefined
+          ? {
+              kind: "lot-form",
+              lot: {
+                lotId: request.lotId,
+                auctionId: request.auctionId,
+                title,
+                description: "",
+                terms: { kind: "unset" },
+              },
+              saved: "created",
+            }
+          : { kind: "lot-form", lot: { ...known, title }, saved: "text" };
       case "not-administrator":
       case "meetup-not-found":
         return {
@@ -250,6 +263,16 @@ export function createLotForm(lots: LotAdministration) {
       };
     }
     const value = request.value.trim();
+    // Пустое название отклоняет Auction, а пустое описание он принял бы и стёр
+    // заданное: стирать описание форма не умеет, поэтому вопрос задаётся заново.
+    if (request.field === "description" && value === "") {
+      return {
+        kind: "lot-ask",
+        question,
+        lot: current.lot,
+        error: "empty-description",
+      };
+    }
     const title = request.field === "title" ? value : stored.title;
     const description =
       request.field === "description" ? value : stored.description;

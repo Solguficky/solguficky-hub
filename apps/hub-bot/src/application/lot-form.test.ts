@@ -142,8 +142,9 @@ describe("lot form", () => {
   });
 
   it("renames the card left by an interrupted answer instead of refusing the new title", async () => {
-    const { dispatcher, methods } = fakeLots({
+    const { dispatcher, calls, methods } = fakeLots({
       create: { kind: "card-conflict" },
+      read: { kind: "not-found" },
     });
 
     const result = await dispatcher.execute({
@@ -155,8 +156,64 @@ describe("lot form", () => {
       opId,
     });
 
-    expect(methods()).toEqual(["createLotCard", "editLotCard", "addLot"]);
+    expect(methods()).toEqual([
+      "createLotCard",
+      "getLot",
+      "editLotCard",
+      "addLot",
+    ]);
+    expect(calls[2]?.args).toEqual({
+      lotId,
+      title: "Ваза синяя",
+      description: "",
+    });
     expect(result).toMatchObject({ kind: "lot-form", saved: "created" });
+  });
+
+  it("keeps the description and the terms of a lot the interrupted answer did add", async () => {
+    const { dispatcher, calls } = fakeLots({
+      create: { kind: "card-conflict" },
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          fixedStep: { minorUnits: 10_000, currency: "RUB" },
+          status: {
+            kind: "scheduled",
+            startingPrice: { minorUnits: 150_000, currency: "RUB" },
+          },
+        },
+      },
+    });
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "create-lot",
+      auctionId,
+      lotId: newLot,
+      title: "Ваза синяя",
+      opId,
+    });
+
+    expect(calls[2]).toEqual({
+      method: "editLotCard",
+      args: { lotId, title: "Ваза синяя", description: "Синяя." },
+    });
+    expect(result).toEqual({
+      kind: "lot-form",
+      lot: {
+        lotId,
+        auctionId,
+        title: "Ваза синяя",
+        description: "Синяя.",
+        terms: {
+          kind: "set",
+          startingPrice: { minorUnits: 150_000, currency: "RUB" },
+          step: { minorUnits: 10_000, currency: "RUB" },
+        },
+      },
+      saved: "text",
+    });
   });
 
   it("asks the title again when Auction calls it empty and adds no lot", async () => {
@@ -320,6 +377,26 @@ describe("lot form", () => {
       question: { kind: "text", field: "title", lotId },
       error: "empty-title",
     });
+  });
+
+  it("asks the description again when the answer is blank and leaves the stored one", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-text",
+        lotId,
+        field: "description",
+        value: " \n ",
+      }),
+    ).resolves.toMatchObject({
+      kind: "lot-ask",
+      question: { kind: "text", field: "description", lotId },
+      lot: { description: "Синяя." },
+      error: "empty-description",
+    });
+    expect(methods()).toEqual(["getLot"]);
   });
 
   it("does not edit the text of a lot without a catalog card", async () => {

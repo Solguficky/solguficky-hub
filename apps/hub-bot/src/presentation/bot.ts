@@ -4179,9 +4179,11 @@ async function handleLotFormCallback(
   });
   if (action.kind === "lot-new") {
     await askLotQuestion(ctx, questions, {
-      kind: "new",
-      auctionId: tokenToUuid(action.auction),
-      lotId: newLotId(createUuidV7()),
+      question: {
+        kind: "new",
+        auctionId: tokenToUuid(action.auction),
+        lotId: newLotId(createUuidV7()),
+      },
     });
     return sent("lot title requested");
   }
@@ -4211,37 +4213,41 @@ async function handleLotFormCallback(
       { person },
     );
   }
-  await askLotQuestion(
-    ctx,
-    questions,
-    action.field === "price"
-      ? { kind: "price", lotId }
-      : { kind: "text", field: action.field, lotId },
-    result.lot,
-  );
+  await askLotQuestion(ctx, questions, {
+    question:
+      action.field === "price"
+        ? { kind: "price", lotId }
+        : { kind: "text", field: action.field, lotId },
+    lot: result.lot,
+  });
   return sent("lot field requested");
 }
 
+// `replaces` — номер прежнего вопроса: его закрывает новый, когда уже ушёл.
 function askLotQuestion(
   ctx: UpdateContext,
   questions: Map<string, PendingInput>,
-  question: LotQuestion,
-  lot?: LotFormView,
-  error?: LotAskError,
-  replaces?: number,
+  ask: {
+    question: LotQuestion;
+    lot?: LotFormView | undefined;
+    error?: LotAskError | undefined;
+    replaces?: number | undefined;
+  },
 ): Promise<void> {
   return askQuestion(
     ctx,
     questions,
-    { kind: "lot", question, telegramUserId: ctx.from?.id ?? 0 },
-    lotQuestionText(question, lot, error),
-    replaces,
+    { kind: "lot", question: ask.question, telegramUserId: ctx.from?.id ?? 0 },
+    lotQuestionText(ask.question, ask.lot, ask.error),
+    ask.replaces,
   );
 }
 
-// Команда формы по шагу вопроса. Ключ команды рождается на каждый ответ:
-// идемпотентность создания держит идентификатор лота из кнопки, а условия
-// торгов Auction заменяет целиком, и повтор даёт тот же итог.
+// Команда формы по шагу вопроса. Ключ команды создания — идентификатор самого
+// лота: он один на вопрос, поэтому повторный ответ и ответ после рестарта
+// Auction узнаёт как повтор `AddLot`, а не как вторую команду. Ключ условий
+// торгов рождается на каждый ответ: в кнопку вопроса о шаге он не помещается,
+// а условия Auction заменяет целиком, и повтор даёт тот же итог.
 function lotAnswerRequest(
   question: LotQuestion,
   value: string,
@@ -4255,7 +4261,7 @@ function lotAnswerRequest(
         auctionId: question.auctionId,
         lotId: question.lotId,
         title: value,
-        opId: createUuidV7(),
+        opId: question.lotId,
       };
     case "text":
       return {
@@ -4315,14 +4321,12 @@ async function renderLotAnswer(
     return handled("lot form answer saved");
   }
   if (result.kind === "lot-ask") {
-    await askLotQuestion(
-      ctx,
-      questions,
-      result.question,
-      result.lot,
-      result.error,
-      answer.replyId,
-    );
+    await askLotQuestion(ctx, questions, {
+      question: result.question,
+      lot: result.lot,
+      error: result.error,
+      replaces: answer.replyId,
+    });
     return handled(
       result.error === undefined
         ? "lot form next step requested"
@@ -4352,14 +4356,19 @@ async function showLotFailure(
   if (result.kind === "lot-refused") {
     const exit =
       result.reason === "not-administrator" ||
-      result.reason === "lot-not-found" ||
       result.reason === "auction-not-found"
         ? menuOnly()
-        : result.lotId !== undefined
-          ? withNav(new InlineKeyboard(), toLot(result.lotId))
-          : result.auctionId !== undefined
-            ? withNav(new InlineKeyboard(), toLots(result.auctionId))
-            : menuOnly();
+        : result.reason === "lot-not-found"
+          ? // Чтения Auction отстают от команды: лот, который форма только что
+            // завела, они могут ещё не знать. Нажатие можно повторить.
+            context.retry === undefined
+            ? menuOnly()
+            : exitRetry(context.retry)
+          : result.lotId !== undefined
+            ? withNav(new InlineKeyboard(), toLot(result.lotId))
+            : result.auctionId !== undefined
+              ? withNav(new InlineKeyboard(), toLots(result.auctionId))
+              : menuOnly();
     await showRefusal(
       ctx,
       result.reason === "not-administrator"
@@ -5499,7 +5508,11 @@ function pendingOf(
 
 // Действие экрана: всё, что несёт кнопка, кроме самой «Отмены» под вопросом, —
 // она сводится к действию экрана, с которого вопрос задан.
-type ScreenAction = Exclude<CallbackAction, { kind: "question" }>;
+// Лента аукциона — не действие кнопки хаба: её рисует общий пакет под доменом
+// `auc`, а сюда ведёт только «Отмена» вопроса о новом лоте.
+type ScreenAction =
+  | Exclude<CallbackAction, { kind: "question" }>
+  | { kind: "lot-feed"; auction: string; trace?: never };
 
 // Куда возвращает «Отмена»: экран, с которого вопрос задан.
 function cancelTarget(step: QuestionStep): ScreenAction {

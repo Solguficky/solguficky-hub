@@ -164,9 +164,6 @@ type PlainAction =
   | { kind: "lot-new"; auction: string }
   | { kind: "lot-form"; lot: string }
   | { kind: "lot-ask"; lot: string; field: LotFormField }
-  // Лента аукциона. Кнопки у действия нет: ленту рисует общий пакет под
-  // доменом `auc`, а сюда ведёт только «Отмена» вопроса о новом лоте.
-  | { kind: "lot-feed"; auction: string }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string }

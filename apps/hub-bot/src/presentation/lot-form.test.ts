@@ -366,7 +366,8 @@ describe("lot form", () => {
       },
       {
         method: "addLot",
-        args: { auctionId, lotId, opId: expect.any(String) },
+        // Ключ команды — идентификатор лота: один на вопрос о названии.
+        args: { auctionId, lotId, opId: lotId },
       },
     ]);
     const form = last(calls);
@@ -613,6 +614,11 @@ describe("lot form", () => {
     expect(created).toHaveLength(4);
     expect(new Set(created).size).toBe(1);
     expect(auction.lots.size).toBe(1);
+    // И той же командой: Auction узнаёт повтор `AddLot` по ключу.
+    const keys = auction.commands
+      .filter((command) => command.method === "addLot")
+      .map((command) => (command.args as { opId: string }).opId);
+    expect(keys).toEqual([created[0], created[0]]);
   });
 
   it("returns to the feed of the auction when the title question is cancelled", async () => {
@@ -644,15 +650,18 @@ describe("lot form", () => {
     expect(last(calls).text).toContain("Название: Кружка с совой");
   });
 
-  it("answers a form button of a lot Auction does not know with a refusal and a way out", async () => {
+  it("answers a form button of a lot Auction does not know with a refusal and a way to press it again", async () => {
     const auction = fakeAuction();
     const { bot, calls, records } = harness(["admin", "public"], auction);
     await bot.init();
+    const pressed = `v1:lot:form:${uuidToToken(existingLot)}`;
 
-    await bot.handleUpdate(press(`v1:lot:form:${uuidToToken(existingLot)}`));
+    await bot.handleUpdate(press(pressed));
 
     expect(last(calls).text).toContain("Лот не найден или больше недоступен.");
-    expect(labels(last(calls))).toEqual([["Меню"]]);
+    // Чтения Auction отстают от команды: только что заведённый лот появится.
+    expect(labels(last(calls))).toEqual([["Повторить"], ["Меню"]]);
+    expect(dataOf(last(calls), "Повторить")).toBe(pressed);
     expect(records.at(-1)?.fields).toMatchObject({
       result: "error",
       error_category: "visibility",

@@ -59,6 +59,7 @@ export type LotQuestion =
 // Почему вопрос формы лота задан заново.
 export type LotAskError =
   | "empty-title"
+  | "empty-description"
   | "amount-format"
   | "amount-range"
   | "step-refused";
@@ -232,8 +233,8 @@ type LotFormCall = {
 // Значения приходят строкой, как их написал человек: разбор принадлежит
 // юзкейсу, чтобы отказ разбора и отказ Auction жили в одном месте.
 export type LotFormRequest =
-  // `lotId` и `opId` рождает край: первый — до вопроса о названии, второй —
-  // на каждый ответ.
+  // `lotId` и `opId` рождает край. У создания ключ команды один на вопрос о
+  // названии, как и идентификатор лота; у условий торгов — свой на каждый ответ.
   | (LotFormCall & {
       intent: "create-lot";
       auctionId: string;

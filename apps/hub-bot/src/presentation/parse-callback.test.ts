@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { maxLotRubles } from "../application/lot-form.js";
 import {
   cardCursorData,
   lotAskData,
@@ -825,7 +826,11 @@ describe("lot form callbacks", () => {
       [`v1:q:lt:${lot}`, { kind: "lot-text", lot, field: "title" }],
       [`v1:q:ld:${lot}`, { kind: "lot-text", lot, field: "description" }],
       [`v1:q:lp:${lot}`, { kind: "lot-price", lot }],
-      [`v1:q:ls:${lot}:9999999`, { kind: "lot-step", lot, price: 9_999_999 }],
+      // Наибольшая цена, которую принимает разбор ответа, помещается в кнопку.
+      [
+        `v1:q:ls:${lot}:${maxLotRubles}`,
+        { kind: "lot-step", lot, price: maxLotRubles },
+      ],
       [`v1:q:ls:${lot}:1`, { kind: "lot-step", lot, price: 1 }],
     ];
     // Самый длинный Telegram id — 16 цифр; с ним шаг обязан уложиться в кнопку.
@@ -856,7 +861,7 @@ describe("lot form callbacks", () => {
       `v1:q:ls:${lot}`,
       `v1:q:ls:${lot}:0`,
       `v1:q:ls:${lot}:015`,
-      `v1:q:ls:${lot}:10000000`,
+      `v1:q:ls:${lot}:${maxLotRubles + 1}`,
       `v1:q:ls:${lot}:1e3`,
       `v1:q:ls:${lot}:-5`,
     ]) {
