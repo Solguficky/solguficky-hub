@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { LotImagePort, Viewer } from "@solguficky/auction-bot-ui";
+import {
+  isAuctionQuestion,
+  type LotImagePort,
+  type Viewer,
+} from "@solguficky/auction-bot-ui";
 import { Bot, type Context, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
 import type { PortsFactory } from "./clients.js";
@@ -18,8 +22,13 @@ import {
   type PhotoCache,
 } from "./photo-cache.js";
 import {
+  createQuestionMemory,
+  type QuestionMemory,
+} from "./question-memory.js";
+import {
   type RouteOutcome,
   routeAuctionCallback,
+  routeAuctionReply,
   routeAuctionStart,
 } from "./route.js";
 import { screenMark } from "./screen-catalog.js";
@@ -39,6 +48,8 @@ export type BotOptions = {
   // Аукцион ленты: есть — пункт меню «Аукционы» открывает его лоты.
   auctionId?: string;
   photos?: PhotoCache;
+  // Открытые вопросы чатов; по умолчанию своя память процесса.
+  questions?: QuestionMemory;
   // Тесты передают его, чтобы не звать getMe.
   botInfo?: UserFromGetMe;
 };
@@ -62,6 +73,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       ...(options.faq === undefined ? {} : { faq: options.faq }),
     });
   const photos = options.photos ?? createPhotoCache();
+  const questions = options.questions ?? createQuestionMemory();
   const auction =
     options.auctionId === undefined ? {} : { auctionId: options.auctionId };
 
@@ -93,6 +105,8 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         firstName: ctx.from.first_name,
       });
       const screen = render(outcome.screen);
+      // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
+      await dropQuestions(ctx, questions);
       await ctx.reply(screen.text, markupOf(screen));
       log({ logger, ctx, outcome, operation: "start" });
     } finally {
@@ -111,28 +125,46 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     // новым сообщением, и уведомление остаётся в истории целым (дизайн-код,
     // «Доставка»).
     const traced = parseTraceCallback(ctx.callbackQuery.data);
+    const data = traced ?? ctx.callbackQuery.data;
+    // «Отмена» под вопросом: вопрос удаляется, экран приходит новым
+    // сообщением (дизайн-код, «Доставка»).
+    const cancelling = isAuctionQuestion(data);
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
       waiting.begin();
       outcome = await routeAuctionCallback({
         ...auction,
         ports,
-        user: {
-          telegramUserId: ctx.from.id,
-          ...(ctx.from.username === undefined
-            ? {}
-            : { telegramUsername: ctx.from.username }),
-        },
-        data: traced ?? ctx.callbackQuery.data,
+        user: userOf(ctx.from),
+        data,
       });
-      await deliver(ctx, {
-        screen: render(outcome.screen),
+      const screen = render(outcome.screen);
+      const delivery = {
+        screen,
         photos,
         image: ports.image,
         viewer: outcome.viewer,
         logger,
-        keepCurrent: isTraceCallback(ctx.callbackQuery.data),
-      });
+      };
+      const pressed = ctx.callbackQuery.message?.message_id;
+      if (cancelling && pressed !== undefined) {
+        questions.forget(ctx.chat.id, pressed);
+        const deleted = await deleteMessage(ctx, pressed);
+        // Удалить не дали — вопрос правится в экран на месте.
+        await deliver(ctx, { ...delivery, keepCurrent: deleted });
+      } else {
+        await dropQuestions(ctx, questions);
+        if (screen.asks === true) {
+          await ask(ctx, questions, screen, {
+            clearPressed: !isTraceCallback(ctx.callbackQuery.data),
+          });
+        } else {
+          await deliver(ctx, {
+            ...delivery,
+            keepCurrent: isTraceCallback(ctx.callbackQuery.data),
+          });
+        }
+      }
     } finally {
       await waiting.finish();
       // Отказ ответа на нажатие доставку не отменяет: он только пишется.
@@ -144,6 +176,56 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       }
       if (outcome !== undefined) {
         log({ logger, ctx, outcome, operation: "callback" });
+      }
+    }
+  });
+
+  // Ответ на вопрос листа ставки (PER-317): reply на сообщение бота, шаг —
+  // `callback_data` его «Отмены». Прочие сообщения бот оставляет без ответа.
+  direct.on("message", async (ctx) => {
+    const replied = ctx.message.reply_to_message;
+    if (replied === undefined || replied.from?.id !== ctx.me.id) return;
+    const data = replied.reply_markup?.inline_keyboard[0]?.[0];
+    if (
+      data === undefined ||
+      !("callback_data" in data) ||
+      !isAuctionQuestion(data.callback_data)
+    ) {
+      return;
+    }
+    const waiting = startWaiting(ctx);
+    waiting.begin();
+    let outcome: RouteOutcome | undefined;
+    try {
+      const ports = options.ports(ctx.requestId, waiting.deadlineAt);
+      const { text } = ctx.message;
+      outcome = await routeAuctionReply({
+        ports,
+        user: userOf(ctx.from),
+        data: data.callback_data,
+        ...(text === undefined ? {} : { text }),
+      });
+      const screen = render(outcome.screen);
+      if (screen.asks === true) {
+        // Отвергнутый ответ: новый вопрос с причиной, прежний — после него.
+        await ask(ctx, questions, screen, { replaces: replied.message_id });
+      } else {
+        // Результат — одним новым сообщением, вопрос закрывается.
+        await deliver(ctx, {
+          screen,
+          photos,
+          image: ports.image,
+          viewer: outcome.viewer,
+          logger,
+          keepCurrent: true,
+        });
+        questions.forget(ctx.chat.id, replied.message_id);
+        await deleteMessage(ctx, replied.message_id);
+      }
+    } finally {
+      await waiting.finish();
+      if (outcome !== undefined) {
+        log({ logger, ctx, outcome, operation: "reply" });
       }
     }
   });
@@ -173,7 +255,7 @@ function log(input: {
   logger: Logger;
   ctx: UpdateContext;
   outcome: RouteOutcome;
-  operation: "start" | "callback";
+  operation: "start" | "callback" | "reply";
 }): void {
   const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {
@@ -224,11 +306,75 @@ function refusalCategory(
 // сверяет экран с каталогом, а клавиатура без метки роняет тест. Тот же
 // параметр собирает тест каталога экранов, а не свою копию.
 export function markupOf(screen: RenderedScreen) {
+  const inline_keyboard = screen.keyboard.map((r) => [...r]);
   return {
     ...screenMark(screen.id),
     ...(screen.format === "html" ? { parse_mode: "HTML" as const } : {}),
-    reply_markup: { inline_keyboard: screen.keyboard.map((r) => [...r]) },
+    // Вопрос открывает режим ответа сам, а «Отмена» под ним даёт выход
+    // (дизайн-код, «Вопросы»).
+    reply_markup:
+      screen.asks === true
+        ? { force_reply: true as const, inline_keyboard }
+        : { inline_keyboard },
   };
+}
+
+function userOf(from: { id: number; username?: string }) {
+  return {
+    telegramUserId: from.id,
+    ...(from.username === undefined ? {} : { telegramUsername: from.username }),
+  };
+}
+
+// Вопрос приходит новым сообщением, экран над ним теряет клавиатуру: в чате
+// остаётся одно место, где действовать. Заданный заново вопрос сначала
+// уходит, и только потом закрывается прежний.
+async function ask(
+  ctx: UpdateContext,
+  questions: QuestionMemory,
+  screen: RenderedScreen,
+  how: { clearPressed?: boolean; replaces?: number },
+): Promise<void> {
+  if (how.clearPressed === true && ctx.callbackQuery?.message !== undefined) {
+    await clearKeyboard(ctx);
+  }
+  const chatId = ctx.chat?.id;
+  const sent = await ctx.reply(screen.text, markupOf(screen));
+  if (chatId === undefined) return;
+  questions.remember(chatId, sent.message_id);
+  if (how.replaces !== undefined) {
+    questions.forget(chatId, how.replaces);
+    await deleteMessage(ctx, how.replaces);
+  }
+}
+
+// Брошенный вопрос удаляется: человек нажал кнопку в другом сообщении или
+// отправил команду. Вопрос, заданный до рестарта, память не знает — он
+// остаётся в чате и по-прежнему принимает ответ.
+async function dropQuestions(
+  ctx: UpdateContext,
+  questions: QuestionMemory,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  for (const messageId of questions.takeAll(chatId)) {
+    await deleteMessage(ctx, messageId);
+  }
+}
+
+/** Удаляет сообщение бота; `false` — Telegram удалить не дал. */
+async function deleteMessage(
+  ctx: UpdateContext,
+  messageId: number,
+): Promise<boolean> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return false;
+  try {
+    await ctx.api.deleteMessage(chatId, messageId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Фото rich-карточки: из кэша `file_id` или байтами из Auction. Не удалось —

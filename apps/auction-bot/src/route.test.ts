@@ -56,11 +56,21 @@ function ports(resolved: ResolvedIdentity | Error): EntryPorts {
         lotId,
         auctionId,
         version: 3,
+        proxyEnabled: false,
         status: { kind: "unsold" as const },
       })),
       listAuctionLots: vi.fn(async () => ({ lots: [], nextPageToken: "" })),
       listLotHistory: vi.fn(async () => ({ entries: [], nextPageToken: "" })),
       getDisplayNames: vi.fn(async () => ({})),
+      placeBid: vi.fn(async () => ({ kind: "accepted" as const })),
+      setProxyLimit: vi.fn(async () => ({ kind: "accepted" as const })),
+      chooseDisplayName: vi.fn(async () => ({
+        kind: "accepted" as const,
+        name: "@owl",
+      })),
+    },
+    operations: {
+      newOperationId: vi.fn(() => "01929b7e-5c1d-7a3f-8e4b-00000000c001"),
     },
     faq: {
       acknowledged: vi.fn(async () => true),

@@ -7,6 +7,7 @@ import {
 import type {
   GlobalRole,
   LotImagePort,
+  Money,
   ResolvedIdentity,
   RoleRequest,
   RoleRequestAnswer,
@@ -25,6 +26,13 @@ import {
   RoleRequestOutcome as WireOutcome,
 } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole as WireRole } from "../gen/identity/v1/roles_pb.js";
+import {
+  bidOutcomeOf,
+  createUuidV7,
+  displayNameOutcomeOf,
+  limitOutcomeOf,
+  unansweredOn,
+} from "./commands.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
 import { historyPageOf } from "./history.js";
@@ -53,6 +61,9 @@ export type AuctionRpc = Pick<
   | "listAuctionLots"
   | "listLotHistory"
   | "getDisplayNames"
+  | "placeBid"
+  | "setProxyLimit"
+  | "chooseDisplayName"
   | "getLotImage"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
@@ -91,6 +102,8 @@ export function callTimeoutMs(
 
 export type PortsOptions = {
   timeoutMs?: number;
+  // Источник `op_id`; тесты подменяют его, чтобы ключ команды был виден.
+  newOperationId?: () => string;
   // Отказ `GetDisplayNames` пакет гасит: карточка остаётся без имени. Чтобы
   // деградация не была молчаливой, порт сообщает о ней до того, как бросить.
   onNamesRefused?: (cause: unknown, requestId: string) => void;
@@ -99,7 +112,11 @@ export type PortsOptions = {
 export function createPorts(
   identity: IdentityRpc,
   auction: AuctionRpc,
-  { timeoutMs = rpcTimeoutMs, onNamesRefused }: PortsOptions = {},
+  {
+    timeoutMs = rpcTimeoutMs,
+    newOperationId = createUuidV7,
+    onNamesRefused,
+  }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
     const headers = { [requestIdHeader]: requestId };
@@ -210,7 +227,56 @@ export function createPorts(
             throw cause;
           }
         },
+        // Команды участника (PER-317). Повтор тем же `op_id` решает пакет;
+        // порт лишь отличает «ответа не было» от прочих отказов транспорта.
+        placeBid(request) {
+          return unansweredOn(async () =>
+            bidOutcomeOf(
+              await auction.placeBid(
+                {
+                  viewer: viewerOf(request.viewer),
+                  lotId: request.lotId,
+                  amount: wireMoney(request.amount),
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
+        setProxyLimit(request) {
+          return unansweredOn(async () =>
+            limitOutcomeOf(
+              await auction.setProxyLimit(
+                {
+                  viewer: viewerOf(request.viewer),
+                  lotId: request.lotId,
+                  max: wireMoney(request.max),
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
+        async chooseDisplayName(request) {
+          const { choice } = request;
+          return displayNameOutcomeOf(
+            await auction.chooseDisplayName(
+              {
+                viewer: viewerOf(request.viewer),
+                auctionId: request.auctionId,
+                choice:
+                  choice.kind === "username"
+                    ? { case: "telegramUsername", value: choice.username }
+                    : { case: "alias", value: choice.alias },
+              },
+              callOptions(timeoutMs),
+            ),
+          );
+        },
       },
+      operations: { newOperationId },
       image: {
         async getLotImage(request) {
           const image = await auction.getLotImage(
@@ -426,6 +492,10 @@ function roleValue(role: GlobalRole): WireRole {
     case "public":
       return WireRole.PUBLIC;
   }
+}
+
+function wireMoney(money: Money) {
+  return { minorUnits: BigInt(money.minorUnits), currency: money.currency };
 }
 
 function viewerOf(viewer: Viewer) {

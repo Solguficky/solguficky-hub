@@ -1,5 +1,13 @@
-import type { LotStatusView, LotView, Money } from "@solguficky/auction-bot-ui";
-import type { Money as WireMoney } from "../gen/auction/v1/auction_pb.js";
+import type {
+  LotStatusView,
+  LotView,
+  Money,
+  TradingPhase,
+} from "@solguficky/auction-bot-ui";
+import {
+  LotPhase,
+  type Money as WireMoney,
+} from "../gen/auction/v1/auction_pb.js";
 import type { LotSnapshot } from "../gen/auction/v1/auction_service_pb.js";
 
 // Перевод `auction.v1.LotSnapshot` в срез общего пакета. Формат сообщения уже
@@ -28,6 +36,11 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
       ? {}
       : { nextPrice: moneyOf(snapshot.nextPrice) }),
     ...(step?.case === "fixed" ? { fixedStep: moneyOf(step.value) } : {}),
+    // Лот без условий торгов лимитов не принимает: принимать их нечему.
+    proxyEnabled: snapshot.config?.proxyEnabled ?? false,
+    ...(snapshot.viewerProxyLimit === undefined
+      ? {}
+      : { viewerProxyLimit: moneyOf(snapshot.viewerProxyLimit) }),
     status: statusOf(snapshot.status),
   };
 }
@@ -51,6 +64,7 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
         ...(status.value.deadline === undefined
           ? {}
           : { deadline: status.value.deadline }),
+        phase: phaseOf(status.value.phase),
       };
     case "held":
       return {
@@ -76,6 +90,19 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
       const _exhaustive: never = status;
       return _exhaustive;
     }
+  }
+}
+
+// Фаза, которой край не знает, — дефект соседа: предложить ставку не в той
+// фазе хуже, чем показать «недоступно».
+function phaseOf(phase: LotPhase): TradingPhase {
+  switch (phase) {
+    case LotPhase.ONLINE:
+      return "online";
+    case LotPhase.LIVE:
+      return "live";
+    default:
+      throw new Error("lot snapshot with an unknown trading phase");
   }
 }
 

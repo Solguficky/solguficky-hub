@@ -36,14 +36,31 @@ export type RouteOutcome = {
 // Торговое нажатие через шлюз пакета поверхности `auction` с уже
 // разрешённой личностью (ADR-044, «Доступ как обязательный шлюз»). Над этой
 // функцией идёт contract suite пакета.
+//
+// `reply` — ответ на вопрос: шаг пришёл из `reply_to_message`, `text` нет —
+// ответили не текстом.
 export function tradeCallback(input: {
   ports: AuctionBotPorts;
   identity: ResolvedIdentity;
+  user: TelegramUser;
   data: string;
+  reply?: { text?: string };
 }): Promise<AuctionResult> {
+  const { reply } = input;
   return handleAuctionUpdate(
     { kind: "auction", ports: input.ports },
-    { identity: input.identity, input: { kind: "callback", data: input.data } },
+    {
+      identity: input.identity,
+      user: input.user,
+      input:
+        reply === undefined
+          ? { kind: "callback", data: input.data }
+          : {
+              kind: "reply",
+              data: input.data,
+              ...(reply.text === undefined ? {} : { text: reply.text }),
+            },
+    },
   );
 }
 
@@ -65,6 +82,26 @@ export async function routeAuctionCallback(input: {
   return routeEntry({
     ...input,
     action: { kind: "callback", data: input.data },
+  });
+}
+
+// Ответ на вопрос листа ставки (PER-317): шаг — `callback_data` кнопки
+// «Отмена» под вопросом, на который ответили. Проверка доступа та же, что у
+// нажатия: роль перепроверяется на каждом действии.
+export function routeAuctionReply(input: {
+  ports: EntryPorts;
+  user: TelegramUser;
+  data: string;
+  text?: string;
+}): Promise<RouteOutcome> {
+  return routeEntry({
+    ports: input.ports,
+    user: input.user,
+    action: {
+      kind: "reply",
+      data: input.data,
+      ...(input.text === undefined ? {} : { text: input.text }),
+    },
   });
 }
 
@@ -98,7 +135,8 @@ async function routeEntry(input: {
   user: TelegramUser;
   action:
     | { kind: "start"; firstName: string; sourceCode?: string }
-    | { kind: "callback"; data: string };
+    | { kind: "callback"; data: string }
+    | { kind: "reply"; data: string; text?: string };
   // Аукцион ленты из конфигурации. Нет — «Аукционы» отвечают, что каталог
   // ещё не открыт: чтения текущего аукциона в контракте нет.
   auctionId?: string;
@@ -108,7 +146,7 @@ async function routeEntry(input: {
       ? parseEntryCallback(input.action.data)
       : undefined;
   if (
-    input.action.kind === "callback" &&
+    input.action.kind !== "start" &&
     local === undefined &&
     !parseAuctionCallback(input.action.data).ok
   ) {
@@ -196,7 +234,16 @@ async function routeEntry(input: {
             page: 0,
           })
         : input.action.data;
-    const result = await tradeCallback({ ports: input.ports, identity, data });
+    const { action } = input;
+    const result = await tradeCallback({
+      ports: input.ports,
+      identity,
+      user: input.user,
+      data,
+      ...(action.kind === "reply"
+        ? { reply: action.text === undefined ? {} : { text: action.text } }
+        : {}),
+    });
     switch (result.kind) {
       case "screen":
         return {

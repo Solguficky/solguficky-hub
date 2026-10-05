@@ -150,6 +150,7 @@ describe("renderEntryScreen", () => {
         currentPrice: rub(1200),
         leaderId: "p-1",
         deadline: "2026-10-10T18:00:00Z",
+        phase: "online",
       },
       participantName: "@owl",
     });
@@ -167,7 +168,12 @@ describe("renderEntryScreen", () => {
 
   it("does not show an identifier when the leader's name is missing", () => {
     const text = lotScreen({
-      status: { kind: "trading", currentPrice: rub(1), leaderId: "p-1" },
+      status: {
+        kind: "trading",
+        currentPrice: rub(1),
+        leaderId: "p-1",
+        phase: "online",
+      },
     }).text;
     expect(text).toContain("Лидер есть.");
     expect(text).not.toContain("p-1");

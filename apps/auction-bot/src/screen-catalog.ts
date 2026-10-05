@@ -109,6 +109,19 @@ export const screenCatalog = {
     title: "Ставки",
     parent: "lot",
   },
+  // Лист ставки (PER-317) написан по дизайн-коду сразу: подтверждение без
+  // ряда навигации, вопросы с `force_reply` и «Отменой», выбор имени под лотом.
+  "bid-confirm": { class: "screen", nav: "confirm", title: "Ставка" },
+  "proxy-confirm": { class: "screen", nav: "confirm", title: "Автоставка" },
+  "bid-question": { class: "question", nav: "question" },
+  "proxy-question": { class: "question", nav: "question" },
+  "alias-question": { class: "question", nav: "question" },
+  "name-choice": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
+    parent: "lot",
+  },
   welcome: {
     class: "screen",
     nav: "none",

@@ -27,7 +27,7 @@ const feed: AuctionScreenBody = {
         {
           lotId: "lot-1",
           title: "Банка солёных грибов",
-          status: { kind: "trading", currentPrice: rub(500) },
+          status: { kind: "trading", currentPrice: rub(500), phase: "online" },
         },
       ],
     },
@@ -66,7 +66,7 @@ const lot = (image: boolean): AuctionScreenBody => ({
         description: "Грузди, урожай этого года.",
         ...(image ? { image: { version: "img-1" } } : {}),
       },
-      status: { kind: "trading", currentPrice: rub(500) },
+      status: { kind: "trading", currentPrice: rub(500), phase: "online" },
     },
   ],
   keyboard: [
@@ -126,6 +126,68 @@ const history = (entries: boolean): AuctionScreenBody => ({
   ],
 });
 
+// Лист ставки (PER-317): подтверждения, вопросы и выбор имени.
+const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "confirm",
+      command,
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Банка солёных грибов",
+      amount: rub(550),
+    },
+  ],
+  keyboard: [
+    [{ action: "confirm.yes", callbackData: "v1:auc:b:lot-1:op:fa:1" }],
+    [{ action: "confirm.no", callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
+});
+
+const question = (
+  kind: "bid" | "proxy" | "alias",
+  refused: boolean,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "question",
+      question: kind,
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      ...(kind === "alias" ? {} : { current: rub(550) }),
+      ...(refused ? { refusal: "not-a-number" as const } : {}),
+    },
+  ],
+  keyboard: [
+    [{ action: "question.cancel", callbackData: "v1:auc:qb:lot-1:1:42" }],
+  ],
+});
+
+const nameChoice = (username: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "name-choice",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      ...(username ? { username: "owl_fan" } : {}),
+    },
+  ],
+  keyboard: [
+    ...(username
+      ? [
+          [
+            {
+              action: "name.username" as const,
+              callbackData: "v1:auc:nu:lot-1:1:bfa",
+            },
+          ],
+        ]
+      : []),
+    [{ action: "name.alias", callbackData: "v1:auc:aa:lot-1:1:bfa" }],
+    [{ action: "name.back", callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
+});
+
 const urls = {
   items: "Грибы и соленья.",
   purpose: "На сходки.",
@@ -156,6 +218,14 @@ const shown: readonly {
   { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },
   { screen: { kind: "auction", body: history(true) } },
   { screen: { kind: "auction", body: history(false) } },
+  { screen: { kind: "auction", body: confirm("bid") } },
+  { screen: { kind: "auction", body: confirm("proxy") } },
+  { screen: { kind: "auction", body: question("bid", false) } },
+  { screen: { kind: "auction", body: question("bid", true) } },
+  { screen: { kind: "auction", body: question("proxy", false) } },
+  { screen: { kind: "auction", body: question("alias", true) } },
+  { screen: { kind: "auction", body: nameChoice(true) } },
+  { screen: { kind: "auction", body: nameChoice(false) } },
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
   { screen: { kind: "outdated" } },
