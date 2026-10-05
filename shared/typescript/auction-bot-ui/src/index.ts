@@ -27,10 +27,13 @@ export {
 export type {
   AuctionBotPorts,
   AuctionPort,
+  BidOriginView,
   EntryPort,
   GlobalRole,
   IdentityPort,
   LotCardView,
+  LotHistoryEntryView,
+  LotHistoryPage,
   LotImage,
   LotImagePort,
   LotPage,
@@ -50,4 +53,5 @@ export type {
   AuctionButton,
   AuctionScreenBody,
   FeedItem,
+  HistoryItem,
 } from "./screen.js";

@@ -53,6 +53,10 @@ function surfaceFor(
           calls.auction += 1;
           return { lots: [LOT], nextPageToken: "" };
         },
+        async listLotHistory() {
+          calls.auction += 1;
+          return { entries: [], nextPageToken: "" };
+        },
         async getDisplayNames() {
           calls.auction += 1;
           return {};

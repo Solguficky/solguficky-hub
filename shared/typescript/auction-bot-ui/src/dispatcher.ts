@@ -1,5 +1,6 @@
 import type { AuctionIntent } from "./callback-data.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
+import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import type { AuctionPort, Viewer } from "./ports.js";
 import type { AuctionScreenBody } from "./screen.js";
@@ -26,6 +27,14 @@ export function dispatchAuctionIntent(input: {
         viewer: input.viewer,
         lotId: intent.lotId,
         page: intent.page,
+      });
+    case "history":
+      return openHistory({
+        auction: input.auction,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+        historyPage: intent.historyPage,
       });
     default: {
       const _exhaustive: never = intent;

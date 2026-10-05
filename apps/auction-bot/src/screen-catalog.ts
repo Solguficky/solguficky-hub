@@ -94,12 +94,20 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     parent: "feed",
+    backName: "Лот",
     refresh: true,
     waive: {
       nav: "PER-463: возврат «К лотам», «Правила и FAQ» и «В меню» разными рядами (расхождения 5, 6, 7)",
       vocabulary:
         "PER-463: возврат подписан «К лотам», а не «‹ Лоты» (расхождение 5)",
     },
+  },
+  // Хронология ставок лота (PER-309) написана по дизайн-коду сразу.
+  history: {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки",
+    parent: "lot",
   },
   welcome: {
     class: "screen",

@@ -2,6 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   type EntryPort,
   encodeAuctionCallback,
+  type LotHistoryEntryView,
   type LotImagePort,
   type LotView,
 } from "@solguficky/auction-bot-ui";
@@ -148,6 +149,8 @@ function portsWith(
     lot?: Partial<LotView>;
     image?: LotImagePort["getLotImage"];
     entry?: EntryPort["requestRole"];
+    history?: readonly LotHistoryEntryView[];
+    names?: Readonly<Record<string, string>>;
   } = {},
 ): PortsFactory {
   return () => ({
@@ -177,7 +180,11 @@ function portsWith(
         ...overrides.lot,
       }),
       listAuctionLots: async () => ({ lots: [], nextPageToken: "" }),
-      getDisplayNames: async () => ({}),
+      listLotHistory: async () => ({
+        entries: overrides.history ?? [],
+        nextPageToken: "",
+      }),
+      getDisplayNames: async () => overrides.names ?? {},
     },
     faq: {
       acknowledged: async () => true,
@@ -410,6 +417,7 @@ describe("auction bot", () => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "Обновить", callback_data: expect.any(String) }],
+          [{ text: "Ставки", callback_data: expect.any(String) }],
           [{ text: "К лотам", callback_data: expect.any(String) }],
           [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
           [{ text: "В меню", callback_data: expect.any(String) }],
@@ -774,6 +782,80 @@ describe("auction bot", () => {
     });
     expect(edit?.payload).not.toHaveProperty("rich_message");
     expect(getLotImage).not.toHaveBeenCalled();
+  });
+
+  it("shows the bids of a lot in journal order with the menu in the last row", async () => {
+    const bidder = "01926f3c-8b7a-7cde-8f00-00000000000b";
+    const leader = "01926f3c-8b7a-7cde-8f00-00000000000c";
+    const bid = (
+      sequence: number,
+      participantId: string,
+      rubles: number,
+      origin: LotHistoryEntryView["origin"],
+    ): LotHistoryEntryView => ({
+      kind: "bid",
+      sequence,
+      occurredAt: "2026-10-03T16:04:00Z",
+      bidId: `01926f3c-8b7a-7cde-8f00-0000000001${String(sequence).padStart(2, "0")}`,
+      participantId,
+      amount: { minorUnits: rubles * 100, currency: "RUB" },
+      origin,
+    });
+    const ports = portsWith({
+      lot: {
+        status: {
+          kind: "trading",
+          currentPrice: { minorUnits: 160_000, currency: "RUB" },
+          leaderId: leader,
+        },
+      },
+      history: [
+        bid(4, bidder, 1500, { kind: "manual", source: "bot" }),
+        bid(6, leader, 1600, { kind: "proxy" }),
+        bid(7, bidder, 1700, { kind: "manual", source: "floor" }),
+      ],
+      names: { [bidder]: "@jay" },
+    });
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({
+          kind: "history",
+          lotId,
+          page: 0,
+          historyPage: 999,
+        }),
+      }),
+    );
+    const edit = calls.find((call) => call.method === "editMessageText");
+    if (edit === undefined) throw new Error("the history was not shown");
+    const payload = edit.payload as { text?: unknown; parse_mode?: unknown };
+    expect(payload.parse_mode).toBe("HTML");
+    const text = String(payload.text);
+    expect(text.startsWith("<b>Ставки</b>")).toBe(true);
+    expect(text).toContain("Кружка");
+    // Время — в поясе сообщества из конфигурации теста, Москве; имени лидера
+    // Auction не отдал — строка без имени.
+    const lines = text.split("\n").filter((line) => line.includes("₽"));
+    expect(lines).toEqual([
+      expect.stringMatching(
+        /^3 октября, сб, 19:04 · @jay · 1\s500\s₽ · вручную$/,
+      ),
+      expect.stringMatching(/^3 октября, сб, 19:04 · 1\s600\s₽ · авто$/),
+      expect.stringMatching(
+        /^3 октября, сб, 19:04 · @jay · 1\s700\s₽ · в зале$/,
+      ),
+    ]);
+    expect(edit.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "‹ Лот", callback_data: expect.any(String) },
+            { text: "Меню", callback_data: entryCallback("menu") },
+          ],
+        ],
+      },
+    });
   });
 
   it("logs the frame of the update without Telegram identifiers", async () => {

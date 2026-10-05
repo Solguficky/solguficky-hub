@@ -1,8 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
-import { encodeAuctionCallback } from "../callback-data.js";
+import { encodeAuctionCallback, MAX_FEED_PAGE } from "../callback-data.js";
 import type { AuctionResult, AuctionUpdate } from "../gateway.js";
 import type {
   AuctionBotPorts,
+  LotHistoryEntryView,
+  LotHistoryPage,
   LotPage,
   LotView,
   Money,
@@ -47,6 +49,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "listLotHistory";
+      request: Parameters<AuctionMethods["listLotHistory"]>[0];
+    }
+  | {
+      port: "auction";
       method: "getDisplayNames";
       request: Parameters<AuctionMethods["getDisplayNames"]>[0];
     };
@@ -58,6 +65,9 @@ export type ContractAuction = {
   lots: readonly LotView[];
   // Страницы `ListAuctionLots` по токену; первая — под пустым.
   pages: Readonly<Record<string, LotPage>>;
+  // Страницы `ListLotHistory` по лоту и токену; первая — под пустым. Лота
+  // здесь нет — хронологию у него не спрашивают.
+  history?: Readonly<Record<string, Readonly<Record<string, LotHistoryPage>>>>;
   // Нет — `GetDisplayNames` отказывает, как Auction отвечает до PER-434.
   names?: Readonly<Record<string, string>>;
 };
@@ -104,6 +114,7 @@ export const CONTRACT_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 const EMPTY_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a2";
 const LEADER_ID = "01929b7e-5c1d-7a3f-8e4b-000000000002";
 const WINNER_ID = "01929b7e-5c1d-7a3f-8e4b-000000000003";
+const RIVAL_ID = "01929b7e-5c1d-7a3f-8e4b-000000000004";
 
 const rub = (rubles: number): Money => ({
   minorUnits: rubles * 100,
@@ -162,6 +173,33 @@ const SCHEDULED_LOT: LotView = {
   status: { kind: "scheduled", startingPrice: rub(500) },
 };
 
+// Десять ставок лота в торгах двумя серверными страницами: две страницы
+// экрана по восемь строк. Время у пар ставок одно — порядок задаёт журнал, а
+// прокси-ставка лидера стоит после ручной соперника той же команды.
+const HISTORY_ENTRIES: readonly LotHistoryEntryView[] = Array.from(
+  { length: 10 },
+  (_, index): LotHistoryEntryView => {
+    const byLeader = index % 2 === 1;
+    return {
+      kind: "bid",
+      sequence: 4 + index * 2,
+      occurredAt: `2026-10-04T12:0${Math.floor(index / 2)}:00Z`,
+      bidId: `01929b7e-5c1d-7a3f-8e4b-0000000001${String(index).padStart(2, "0")}`,
+      participantId: byLeader ? LEADER_ID : RIVAL_ID,
+      amount: rub(750 + index * 50),
+      origin: byLeader
+        ? { kind: "proxy" }
+        : { kind: "manual", source: index === 4 ? "floor" : "bot" },
+    };
+  },
+);
+
+const NAMES: Readonly<Record<string, string>> = {
+  [LEADER_ID]: "@owl",
+  [WINNER_ID]: "Сыч*",
+  [RIVAL_ID]: "@jay",
+};
+
 // Лента приходит двумя серверными страницами и не по цене: порядок, которого
 // ждут тела ниже, может дать только край.
 export const AUCTION: ContractAuction = {
@@ -173,7 +211,14 @@ export const AUCTION: ContractAuction = {
     },
     p2: { lots: [UNSOLD_LOT, SCHEDULED_LOT], nextPageToken: "" },
   },
-  names: { [LEADER_ID]: "@owl", [WINNER_ID]: "Сыч*" },
+  history: {
+    [CONTRACT_LOT.lotId]: {
+      "": { entries: HISTORY_ENTRIES.slice(0, 6), nextPageToken: "h2" },
+      h2: { entries: HISTORY_ENTRIES.slice(6), nextPageToken: "" },
+    },
+    [UNSOLD_LOT.lotId]: { "": { entries: [], nextPageToken: "" } },
+  },
+  names: NAMES,
 };
 
 const EMPTY_AUCTION: ContractAuction = {
@@ -194,21 +239,31 @@ const getLotCall = (lotId: string): PortCall => ({
   request: { viewer: VIEWER, lotId },
 });
 
-const namesCall = (participantId: string): PortCall => ({
+const namesCall = (...participantIds: string[]): PortCall => ({
   port: "auction",
   method: "getDisplayNames",
   request: {
     viewer: VIEWER,
     auctionId: CONTRACT_AUCTION_ID,
-    participantIds: [participantId],
+    participantIds,
   },
 });
+
+const historyCalls = (lotId: string, tokens: readonly string[]): PortCall[] =>
+  tokens.map((pageToken) => ({
+    port: "auction",
+    method: "listLotHistory",
+    request: { viewer: VIEWER, lotId, pageToken },
+  }));
 
 const feedCallback = (auctionId: string, page: number) =>
   encodeAuctionCallback({ kind: "feed", auctionId, page });
 
 const lotCallback = (lotId: string, page: number) =>
   encodeAuctionCallback({ kind: "lot", lotId, page });
+
+const historyCallback = (lotId: string, page: number, historyPage: number) =>
+  encodeAuctionCallback({ kind: "history", lotId, page, historyPage });
 
 // По цене: стартовая 500, текущая 1200, продажа 3000; без цены — в конце по
 // `lotId`.
@@ -243,14 +298,93 @@ const FEED_BODY: AuctionScreenBody = {
   ]),
 };
 
+const refreshRow = (lotId: string, page: number) => [
+  { action: "lot.refresh" as const, callbackData: lotCallback(lotId, page) },
+];
+
+const backRow = (page: number) => [
+  {
+    action: "lot.back" as const,
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, page),
+  },
+];
+
 const lotKeyboard = (lotId: string, page: number) => [
   [{ action: "lot.refresh" as const, callbackData: lotCallback(lotId, page) }],
+  [
+    {
+      action: "lot.history" as const,
+      callbackData: historyCallback(lotId, page, MAX_FEED_PAGE),
+    },
+  ],
   [
     {
       action: "lot.back" as const,
       callbackData: feedCallback(CONTRACT_AUCTION_ID, page),
     },
   ],
+];
+
+// Строки хронологии, как их показывает экран: имя — из `names`, если отдано.
+const historyItems = (
+  entries: readonly LotHistoryEntryView[],
+  names?: Readonly<Record<string, string>>,
+) =>
+  entries.map((entry) => {
+    const participantName = names?.[entry.participantId];
+    return {
+      kind: "bid" as const,
+      sequence: entry.sequence,
+      occurredAt: entry.occurredAt,
+      amount: entry.amount,
+      origin: entry.origin,
+      ...(participantName === undefined ? {} : { participantName }),
+    };
+  });
+
+const historyBody = (input: {
+  historyPage: number;
+  entries: readonly LotHistoryEntryView[];
+  names?: Readonly<Record<string, string>>;
+  paging: "history.prev" | "history.next";
+}): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "history",
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      title: "Кружка с совой",
+      page: input.historyPage,
+      pageCount: 2,
+      entries: historyItems(input.entries, input.names),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: input.paging,
+        callbackData: historyCallback(
+          CONTRACT_LOT.lotId,
+          2,
+          input.paging === "history.prev"
+            ? input.historyPage - 1
+            : input.historyPage + 1,
+        ),
+      },
+    ],
+    [
+      {
+        action: "history.back",
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+      },
+    ],
+  ],
+});
+
+const HISTORY_CALLS: readonly PortCall[] = [
+  getLotCall(CONTRACT_LOT.lotId),
+  ...historyCalls(CONTRACT_LOT.lotId, ["", "h2"]),
+  namesCall(RIVAL_ID, LEADER_ID),
 ];
 
 // Таблица аукционных намерений. Строку добавляет лист, который вводит
@@ -393,6 +527,99 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       keyboard: lotKeyboard(SOLD_LOT.lotId, 0),
     },
   },
+  // Запланированный лот ставок не знает: кнопки хронологии под ним нет.
+  {
+    intent: "lot: scheduled",
+    callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
+    auction: AUCTION,
+    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId)],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: SCHEDULED_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 2,
+          card: { title: "Носки", description: "" },
+          status: { kind: "scheduled", startingPrice: rub(500) },
+        },
+      ],
+      keyboard: [refreshRow(SCHEDULED_LOT.lotId, 0), backRow(0)],
+    },
+  },
+  // Кнопка с карточки просит последнюю страницу: восемь свежих ставок в
+  // порядке журнала, а неполная — самая ранняя страница. Имена — одним вызовом на участников страницы.
+  {
+    intent: "history: newest page",
+    callbackData: historyCallback(CONTRACT_LOT.lotId, 2, MAX_FEED_PAGE),
+    auction: AUCTION,
+    auctionCalls: HISTORY_CALLS,
+    body: historyBody({
+      historyPage: 1,
+      entries: HISTORY_ENTRIES.slice(2),
+      names: NAMES,
+      paging: "history.prev",
+    }),
+  },
+  {
+    intent: "history: earlier page",
+    callbackData: historyCallback(CONTRACT_LOT.lotId, 2, 0),
+    auction: AUCTION,
+    auctionCalls: HISTORY_CALLS,
+    body: historyBody({
+      historyPage: 0,
+      entries: HISTORY_ENTRIES.slice(0, 2),
+      names: NAMES,
+      paging: "history.next",
+    }),
+  },
+  // Имена не отдали — строки с ценой и способом ставки остаются, без имён.
+  {
+    intent: "history: names unavailable",
+    callbackData: historyCallback(CONTRACT_LOT.lotId, 2, MAX_FEED_PAGE),
+    auction: {
+      lots: AUCTION.lots,
+      pages: AUCTION.pages,
+      ...(AUCTION.history === undefined ? {} : { history: AUCTION.history }),
+    },
+    auctionCalls: HISTORY_CALLS,
+    body: historyBody({
+      historyPage: 1,
+      entries: HISTORY_ENTRIES.slice(2),
+      paging: "history.prev",
+    }),
+  },
+  // Без ставок — одна пустая страница, и за именами Auction не зовут.
+  {
+    intent: "history: empty",
+    callbackData: historyCallback(UNSOLD_LOT.lotId, 0, MAX_FEED_PAGE),
+    auction: AUCTION,
+    auctionCalls: [
+      getLotCall(UNSOLD_LOT.lotId),
+      ...historyCalls(UNSOLD_LOT.lotId, [""]),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "history",
+          lotId: UNSOLD_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          title: "Значок",
+          page: 0,
+          pageCount: 1,
+          entries: [],
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "history.back",
+            callbackData: lotCallback(UNSOLD_LOT.lotId, 0),
+          },
+        ],
+      ],
+    },
+  },
 ];
 
 export function spyPorts(
@@ -417,6 +644,14 @@ export function spyPorts(
         calls.push({ port: "auction", method: "listAuctionLots", request });
         const page = snapshot.pages[request.pageToken];
         if (page === undefined) throw new Error("page is not in the snapshot");
+        return page;
+      },
+      async listLotHistory(request) {
+        calls.push({ port: "auction", method: "listLotHistory", request });
+        const page = snapshot.history?.[request.lotId]?.[request.pageToken];
+        if (page === undefined) {
+          throw new Error("history is not in the snapshot");
+        }
         return page;
       },
       async getDisplayNames(request) {

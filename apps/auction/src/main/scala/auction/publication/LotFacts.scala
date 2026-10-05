@@ -3,7 +3,6 @@ package auction.publication
 import auction.contract.LotValues
 import auction.entity.LotJournal
 import auction.lot.BidOrigin
-import auction.lot.BidSource
 import auction.lot.LotEvent
 import auction.lot.LotState
 import auction.projection.AppliedEvent
@@ -57,7 +56,7 @@ object LotFacts {
         val placed = bus.BidPlaced(
           previousLeaderId = previousLeader.map(_.value.toString),
           origin = origin match {
-            case BidOrigin.Manual(source) => bus.BidPlaced.Origin.Manual(bus.ManualBid(bidSource(source)))
+            case BidOrigin.Manual(source) => bus.BidPlaced.Origin.Manual(bus.ManualBid(LotValues.bidSource(source)))
             case BidOrigin.Proxy => bus.BidPlaced.Origin.Proxy(bus.ProxyBid())
           }
         )
@@ -82,10 +81,4 @@ object LotFacts {
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
     }
   }
-
-  private def bidSource(source: BidSource): model.BidSource =
-    source match {
-      case BidSource.Bot => model.BidSource.BID_SOURCE_BOT
-      case BidSource.Floor => model.BidSource.BID_SOURCE_FLOOR
-    }
 }

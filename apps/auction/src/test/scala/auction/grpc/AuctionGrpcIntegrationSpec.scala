@@ -391,6 +391,58 @@ final class AuctionGrpcIntegrationSpec
       listed.nextPageToken shouldBe ""
     }
 
+    "answers the history of a lot in journal order with a proxy war folded into one entry and no limit" in withNode {
+      node =>
+        val lotId = tradingLot(node)
+        val rival = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val holder = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        def limit(who: wire.Viewer, max: Long) =
+          asHubBot(node.client.setProxyLimit())
+            .invoke(wire.SetProxyLimitRequest(Some(who), lotId.toString, Some(MoneyMessage(max, "RUB")), newId()))
+            .futureValue
+            .outcome
+            .isAccepted shouldBe true
+        def history() =
+          asHubBot(node.client.listLotHistory())
+            .invoke(wire.ListLotHistoryRequest(Some(rival), lotId.toString, "", 2))
+            .futureValue
+        asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, rival)).futureValue.outcome.isAccepted shouldBe true
+        limit(holder, 300)
+        // Лимит 250 против 300: война лимитов — одна команда и одно событие с итоговой ценой.
+        limit(rival, 250)
+        val entries = eventually {
+          val first = history()
+          first.nextPageToken should not be empty
+          val rest = asHubBot(node.client.listLotHistory())
+            .invoke(wire.ListLotHistoryRequest(Some(rival), lotId.toString, first.nextPageToken, 2))
+            .futureValue
+          rest.nextPageToken shouldBe ""
+          val all = first.entries ++ rest.entries
+          all should have size 3
+          all
+        }
+        val bids = entries.map(_.getBid)
+        bids.map(_.participantId) shouldBe Seq(rival.identityId, holder.identityId, holder.identityId)
+        bids.map(_.origin.isProxy) shouldBe Seq(false, true, true)
+        bids.head.getManual.source shouldBe auction.v1.auction.BidSource.BID_SOURCE_BOT
+        val sequences = entries.map(_.sequence)
+        sequences shouldBe sequences.sorted
+        sequences.distinct should have size 3
+        val amounts = bids.flatMap(_.amount).map(_.minorUnits)
+        amounts.head shouldBe 150
+        amounts(2) should (be > 250L and be <= 300L)
+        amounts should not contain 300L
+        amounts should not contain 250L
+    }
+
+    "answers NOT_FOUND through ListLotHistory for a lot that was never drafted" in withNode { node =>
+      statusOf(
+        asHubBot(node.client.listLotHistory()).invoke(
+          wire.ListLotHistoryRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), newId())
+        )
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
     "answers NOT_FOUND through GetLot for a lot that was never drafted" in withNode { node =>
       val unknown = UuidV7.generator(Clock.systemUTC())().toString
       statusOf(

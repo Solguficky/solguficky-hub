@@ -27,6 +27,7 @@ import {
 import { GlobalRole as WireRole } from "../gen/identity/v1/roles_pb.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
+import { historyPageOf } from "./history.js";
 import { lotViewOf } from "./snapshot.js";
 
 export const rpcTimeoutMs = 3_000;
@@ -50,6 +51,7 @@ export type AuctionRpc = Pick<
   Client<typeof AuctionService>,
   | "getLot"
   | "listAuctionLots"
+  | "listLotHistory"
   | "getDisplayNames"
   | "getLotImage"
   | "getFaqAcknowledgement"
@@ -175,6 +177,17 @@ export function createPorts(
             lots: page.lots.map(lotViewOf),
             nextPageToken: page.nextPageToken,
           };
+        },
+        async listLotHistory(request) {
+          const page = await auction.listLotHistory(
+            {
+              viewer: viewerOf(request.viewer),
+              lotId: request.lotId,
+              pageToken: request.pageToken,
+            },
+            callOptions(timeoutMs),
+          );
+          return historyPageOf(page);
         },
         async getDisplayNames(request) {
           try {

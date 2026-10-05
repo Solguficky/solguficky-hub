@@ -76,6 +76,7 @@ final class GrpcBoundarySpec
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused
+    def listLotHistory(in: wire.ListLotHistoryRequest) = unused
     def chooseDisplayName(in: wire.ChooseDisplayNameRequest) = unused
     def getDisplayNames(in: wire.GetDisplayNamesRequest) = unused
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest) = unused
