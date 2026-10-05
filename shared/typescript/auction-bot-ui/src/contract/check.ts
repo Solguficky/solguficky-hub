@@ -274,6 +274,30 @@ export const AUCTION: ContractAuction = {
   names: NAMES,
 };
 
+const HELD_LOT: LotView = {
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b41",
+  auctionId: CONTRACT_AUCTION_ID,
+  version: 4,
+  card: { title: "Шарф", description: "" },
+  proxyEnabled: false,
+  status: { kind: "held", currentPrice: rub(900) },
+};
+
+const DRAFT_LOT: LotView = {
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b42",
+  auctionId: CONTRACT_AUCTION_ID,
+  version: 1,
+  card: { title: "Брелок", description: "" },
+  proxyEnabled: false,
+  status: { kind: "draft" },
+};
+
+// Лоты, которых нет в страницах ленты: тела ленты выше от них не зависят.
+const OFF_FEED_AUCTION: ContractAuction = {
+  ...AUCTION,
+  lots: [...AUCTION.lots, HELD_LOT, DRAFT_LOT],
+};
+
 const EMPTY_AUCTION: ContractAuction = {
   lots: [],
   pages: { "": { lots: [], nextPageToken: "" } },
@@ -404,7 +428,12 @@ const bidRows = (lot: LotView, page: number) => [
 ];
 
 const lotKeyboard = (lotId: string, page: number) => [
-  [{ action: "lot.refresh" as const, callbackData: lotCallback(lotId, page) }],
+  refreshRow(lotId, page),
+  ...settledKeyboard(lotId, page),
+];
+
+// Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
+const settledKeyboard = (lotId: string, page: number) => [
   [
     {
       action: "lot.history" as const,
@@ -1140,7 +1169,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           participantName: "Сыч*",
         },
       ],
-      keyboard: lotKeyboard(SOLD_LOT.lotId, 0),
+      keyboard: settledKeyboard(SOLD_LOT.lotId, 0),
     },
   },
   // Непроданный лот — исход без победителя, и за именем Auction не зовут.
@@ -1160,7 +1189,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           status: { kind: "unsold" },
         },
       ],
-      keyboard: lotKeyboard(UNSOLD_LOT.lotId, 0),
+      keyboard: settledKeyboard(UNSOLD_LOT.lotId, 0),
     },
   },
   {
@@ -1178,7 +1207,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           status: { kind: "withdrawn" },
         },
       ],
-      keyboard: lotKeyboard(WITHDRAWN_LOT.lotId, 0),
+      keyboard: settledKeyboard(WITHDRAWN_LOT.lotId, 0),
     },
   },
   // Имя не отдали — карточка с ценой и исходом остаётся, без имени.
@@ -1198,7 +1227,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           status: { kind: "sold", winnerId: WINNER_ID, price: rub(3000) },
         },
       ],
-      keyboard: lotKeyboard(SOLD_LOT.lotId, 0),
+      keyboard: settledKeyboard(SOLD_LOT.lotId, 0),
     },
   },
   // Запланированный лот ставок не знает: кнопки хронологии под ним нет.
@@ -1219,6 +1248,46 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [refreshRow(SCHEDULED_LOT.lotId, 0), backRow(0)],
+    },
+  },
+  // Отложенный в финал лот итога ещё не имеет: «Обновить» под ним стоит.
+  {
+    intent: "lot: held",
+    callbackData: lotCallback(HELD_LOT.lotId, 0),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_LOT.lotId)],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: HELD_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 4,
+          card: { title: "Шарф", description: "" },
+          status: { kind: "held", currentPrice: rub(900) },
+        },
+      ],
+      keyboard: lotKeyboard(HELD_LOT.lotId, 0),
+    },
+  },
+  // Лот без условий торгов сам не меняется: ни «Обновить», ни хронологии.
+  {
+    intent: "lot: draft",
+    callbackData: lotCallback(DRAFT_LOT.lotId, 0),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(DRAFT_LOT.lotId)],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: DRAFT_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 1,
+          card: { title: "Брелок", description: "" },
+          status: { kind: "draft" },
+        },
+      ],
+      keyboard: [backRow(0)],
     },
   },
   // Кнопка с карточки просит последнюю страницу: восемь свежих ставок в

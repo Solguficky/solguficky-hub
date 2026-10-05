@@ -34,10 +34,10 @@ import type { ScreenId } from "./screen-catalog.js";
 // с хабом не делятся, даже когда совпадают.
 //
 // Общий FAQ, меню и списки аукционов (PER-453) — оболочка. Лента и карточка
-// лота — тело общего пакета (PER-306), лист ставки — PER-317: подтверждение,
-// вопросы и выбор имени написаны по дизайн-коду сразу.
+// лота — тело общего пакета (PER-306), лист ставки — PER-317. Правила экрана
+// — дизайн-код (docs/design/bot/design-code.md): жирный заголовок, HTML,
+// последний ряд `[‹ Родитель] [Меню]`, кадр отказа с выходом.
 export type AuctionEntryScreen =
-  | { kind: "welcome" }
   | { kind: "faq" }
   | { kind: "menu" }
   | { kind: "auctions"; list: AuctionListPage }
@@ -49,7 +49,15 @@ export type AuctionEntryScreen =
   | { kind: "auction"; body: AuctionScreenBody; parent?: ListAction }
   | { kind: "denied"; reason: AuctionDenial }
   | { kind: "outdated" }
-  | { kind: "unavailable" };
+  | { kind: "unavailable"; exit: UnavailableExit };
+
+// Выход кадра «недоступно». `retry` — «Повторить» с данными действия, на
+// котором случился отказ: хранилища у экранов нет, и повтор едет в кнопке.
+// `answer` — отказ на ответе на вопрос: ответ в кнопку не помещается, его
+// присылают ещё раз, а вопрос остаётся открытым.
+export type UnavailableExit =
+  | { kind: "retry"; data: string }
+  | { kind: "answer" };
 
 export type TelegramButton =
   | { text: string; callback_data: string; style?: "danger" }
@@ -62,10 +70,10 @@ export type RenderedScreen = {
   keyboard: readonly (readonly TelegramButton[])[];
   /**
    * Разметка текста: `html` — обычное сообщение с `parse_mode: HTML`, `rich` —
-   * rich-сообщение, текст которого — его `html` (ADR-034). Без неё текст
-   * уходит как есть.
+   * rich-сообщение, текст которого — его `html` (ADR-034). Текста без
+   * разметки у бота нет.
    */
-  format?: "html" | "rich";
+  format: "html" | "rich";
   // Изображение rich-карточки лота: адаптер ставит его последним блоком. Байты
   // и `file_id` достаёт адаптер Telegram, экрану достаточно ключа.
   photo?: { lotId: string; version: string };
@@ -103,21 +111,22 @@ const untitled = "Лот без названия";
 
 // Тексты отказов принадлежат этой оболочке (ADR-044). Отказ в `public` —
 // блокировка (ADR-060, пункт 12), поэтому `declined` Identity этому боту не
-// отдаёт; текст держит ответ на случай, если отдаст.
+// отдаёт; текст держит ответ на случай, если отдаст. Первое предложение —
+// жирное: оно кадру отказа вместо заголовка.
 export const deniedTexts: Record<AuctionDenial, string> = {
-  "not-admitted": "Заявка на рассмотрении. Участие в аукционе пока не открыто.",
-  declined: "Заявка на участие в аукционе отклонена.",
-  blocked: "Доступ к аукциону закрыт.",
+  "not-admitted":
+    "<b>Заявка на рассмотрении.</b> Участие в аукционе пока не открыто.",
+  declined: "<b>Заявка на участие в аукционе отклонена.</b>",
+  blocked: "<b>Доступ к аукциону закрыт.</b>",
 };
 
-const faqButton = {
-  text: "Правила и FAQ",
-  callback_data: entryCallback("faq"),
-};
-const menuButton = { text: "В меню", callback_data: entryCallback("menu") };
-// Вход в меню по словарю дизайн-кода. Экраны, написанные по нему сразу, ставят
-// эту кнопку; «В меню» остаётся у остальных до перевёрстки (PER-463).
-const menuNavButton = { text: "Меню", callback_data: entryCallback("menu") };
+const faqTitle = "Правила и FAQ";
+// Вход в меню с любого экрана. Отметку ознакомления с FAQ ставит не он, а
+// возврат под самим FAQ.
+const menuButton = { text: "Меню", callback_data: entryCallback("menu") };
+const linkSign = " ↗";
+
+const heading = (text: string) => `<b>${escapeHtml(text)}</b>`;
 
 export function renderEntryScreen(
   screen: AuctionEntryScreen,
@@ -125,27 +134,33 @@ export function renderEntryScreen(
 ): RenderedScreen {
   const faq = options.faq ?? defaultFaq;
   switch (screen.kind) {
-    case "faq":
+    case "faq": {
+      // Тексты организатора показываются дословно: разметки в них нет.
+      const section = (name: string, text: string) =>
+        `${heading(name)}\n${escapeHtml(text)}`;
       return {
         id: "faq",
+        format: "html",
         text: [
-          "Правила и FAQ",
-          `Что продаём\n${faq.items}`,
-          `Куда идут средства\n${faq.purpose}`,
-          "Правила ставок\nОтменить сделанную ставку нельзя.",
-          `Почти одновременные ставки\n${faq.simultaneousBids}`,
-          `Сбой и потеря связи\n${faq.connectionFailure}`,
-          `Доставка победителю\n${faq.delivery}`,
+          heading(faqTitle),
+          section("Что продаём", faq.items),
+          section("Куда идут средства", faq.purpose),
+          section("Правила ставок", "Отменить сделанную ставку нельзя."),
+          section("Почти одновременные ставки", faq.simultaneousBids),
+          section("Сбой и потеря связи", faq.connectionFailure),
+          section("Доставка победителю", faq.delivery),
         ].join("\n\n"),
         keyboard: [
-          [menuButton],
           [
             faq.detailsUrl === undefined
               ? {
                   text: "Прочитать подробнее",
                   callback_data: entryCallback("details"),
                 }
-              : { text: "Прочитать подробнее", url: faq.detailsUrl },
+              : {
+                  text: `Прочитать подробнее${linkSign}`,
+                  url: faq.detailsUrl,
+                },
           ],
           [
             faq.questionUrl === undefined
@@ -153,47 +168,44 @@ export function renderEntryScreen(
                   text: "Задать вопрос",
                   callback_data: entryCallback("question"),
                 }
-              : { text: "Задать вопрос", url: faq.questionUrl },
+              : { text: `Задать вопрос${linkSign}`, url: faq.questionUrl },
           ],
+          // Возврат под FAQ — единственная кнопка, которая ставит отметку
+          // ознакомления.
+          [{ text: "‹ Меню", callback_data: entryCallback("read") }],
         ],
       };
+    }
     case "menu":
       return {
         id: "menu",
-        text: `${context}\nВыберите раздел.`,
+        format: "html",
+        text: `${heading("Меню")}\n\n${context} Выбери раздел.`,
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
           [{ text: "Прошедшие", callback_data: entryCallback("past") }],
-          [faqButton],
+          [{ text: faqTitle, callback_data: entryCallback("faq") }],
         ],
       };
     case "auctions":
     case "past":
       return renderList(screen.kind, screen.list, options);
+    // Состояния FAQ, а не узлы: возврат из них ведёт в FAQ.
     case "details":
-      return {
-        id: "details",
-        text: "Организатор ещё не указал ссылку на подробные правила.",
-        keyboard: [[faqButton], [menuButton]],
-      };
+      return faqState(
+        "details",
+        "Организатор ещё не указал ссылку на подробные правила.",
+      );
     case "question":
-      return {
-        id: "question",
-        text: "Организатор ещё не указал, куда направлять вопросы.",
-        keyboard: [[faqButton], [menuButton]],
-      };
-    case "welcome":
-      return {
-        id: "welcome",
-        text: `${context}\nЛоты появятся здесь, когда начнутся торги.`,
-        keyboard: [],
-      };
+      return faqState(
+        "question",
+        "Организатор ещё не указал, куда направлять вопросы.",
+      );
     case "auction": {
       const body = renderBody(screen.body, options);
       // Подтверждение и вопрос несут только свои ряды: «Да» и «Нет», «Отмена».
       if (body.asks === true || isConfirm(body.id)) return body;
-      // Лента возвращает в свой список: возврат и «Меню» — один последний
-      // ряд, боковой кнопки FAQ нет (дизайн-код, «Навигация»).
+      // Родителя ленты тело не знает: возврат в её список ставит оболочка.
       if (body.id === "feed") {
         const parent = screen.parent ?? "auctions";
         return {
@@ -205,48 +217,70 @@ export function renderEntryScreen(
                 text: `‹ ${listTexts[parent].backName}`,
                 callback_data: entryCallback(parent),
               },
-              menuNavButton,
+              menuButton,
             ],
           ],
         };
       }
-      // Хронология и выбор имени написаны по дизайн-коду сразу: возврат тела
-      // и «Меню» — один последний ряд, боковой кнопки FAQ нет.
-      if (body.id === "history" || body.id === "name-choice") {
-        const back = body.keyboard.at(-1) ?? [];
-        return {
-          ...body,
-          keyboard: [...body.keyboard.slice(0, -1), [...back, menuNavButton]],
-        };
-      }
+      // Лот, хронология и выбор имени: возврат — последняя кнопка тела, и в
+      // один ряд с «Меню» её ставит оболочка.
+      const back = body.keyboard.at(-1) ?? [];
       return {
         ...body,
-        keyboard: [...body.keyboard, [faqButton], [menuButton]],
+        keyboard: [...body.keyboard.slice(0, -1), [...back, menuButton]],
       };
     }
+    // Кадры ожидания допуска и блокировки в дерево не входят: экранов за ними
+    // у человека нет, и клавиатуры тоже.
     case "denied":
       return {
         id: "denied",
+        format: "html",
         text: deniedTexts[screen.reason],
         keyboard: [],
       };
     case "outdated":
       return {
         id: "outdated",
-        text: "Этот экран устарел. Отправьте /start, чтобы открыть аукцион заново.",
-        keyboard: [[faqButton]],
+        format: "html",
+        text: "<b>Этот экран устарел.</b> Открой меню и повтори действие.",
+        keyboard: [[menuButton]],
       };
     case "unavailable":
-      return {
-        id: "unavailable",
-        text: "Аукцион сейчас недоступен. Попробуйте позже.",
-        keyboard: [[faqButton]],
-      };
+      return screen.exit.kind === "retry"
+        ? {
+            id: "unavailable",
+            format: "html",
+            text: "<b>Аукцион сейчас недоступен.</b> Попробуй ещё раз через минуту.",
+            keyboard: [
+              [
+                { text: "Повторить", callback_data: screen.exit.data },
+                menuButton,
+              ],
+            ],
+          }
+        : {
+            id: "unavailable",
+            format: "html",
+            text: "<b>Аукцион сейчас недоступен.</b> Пришли ответ ещё раз через минуту.",
+            keyboard: [[menuButton]],
+          };
     default: {
       const _exhaustive: never = screen;
       return _exhaustive;
     }
   }
+}
+
+function faqState(id: "details" | "question", text: string): RenderedScreen {
+  return {
+    id,
+    format: "html",
+    text: `${heading(faqTitle)}\n\n${text}`,
+    keyboard: [
+      [{ text: "‹ FAQ", callback_data: entryCallback("faq") }, menuButton],
+    ],
+  };
 }
 
 const listTexts: Record<
@@ -274,10 +308,6 @@ function renderList(
   options: RenderOptions,
 ): RenderedScreen {
   const { title, empty } = listTexts[kind];
-  const heading =
-    list.pageCount === 1
-      ? title
-      : `${title} · ${list.page + 1} из ${list.pageCount}`;
   const paging = [
     ...(list.page > 0
       ? [{ text: "←", callback_data: listCallback(kind, list.page - 1) }]
@@ -290,8 +320,8 @@ function renderList(
     id: kind,
     format: "html",
     text: [
-      `<b>${escapeHtml(heading)}</b>`,
-      list.auctions.length === 0 ? empty : "Выберите аукцион.",
+      heading(paged(title, list)),
+      list.auctions.length === 0 ? empty : "Выбери аукцион.",
     ].join("\n\n"),
     keyboard: [
       ...list.auctions.map((auction) => [
@@ -308,6 +338,14 @@ function renderList(
       [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ],
   };
+}
+
+// Номер страницы стоит в заголовке (дизайн-код, «Клавиатура»); у единственной
+// страницы его нет.
+function paged(title: string, at: { page: number; pageCount: number }): string {
+  return at.pageCount === 1
+    ? title
+    : `${title} · ${at.page + 1} из ${at.pageCount}`;
 }
 
 // Строка аукциона: день начала онлайн-фазы, этап и число лотов.
@@ -392,14 +430,21 @@ function renderBody(
   if (id === "history" && history !== undefined) {
     return { id, keyboard, ...renderHistory(history, options) };
   }
-  // Лента — текст без разметки до перевёрстки оболочки (PER-463).
+  const feed = body.blocks.find(
+    (block): block is FeedBlock => block.kind === "feed",
+  );
+  if (feed === undefined) {
+    throw new Error("auction body without a feed, a lot or a history block");
+  }
+  // Пустая лента несёт заголовок так же, как заполненная.
   return {
     id,
     keyboard,
-    text: truncate(
-      [context, ...body.blocks.map((block) => renderBlock(block))].join("\n\n"),
-      TEXT_LIMIT,
-    ),
+    format: "html",
+    text: [
+      heading(paged("Лоты", feed)),
+      feed.lots.length === 0 ? "Лотов пока нет." : "По возрастанию цены.",
+    ].join("\n\n"),
   };
 }
 
@@ -440,27 +485,7 @@ function isConfirm(id: ScreenId): boolean {
   return id === "bid-confirm" || id === "proxy-confirm";
 }
 type HistoryBlock = Extract<AuctionBlock, { kind: "history" }>;
-
-// Строка ленты. Карточку лота собирает `renderCard`: у неё своя разметка.
-function renderBlock(block: AuctionBlock): string {
-  switch (block.kind) {
-    case "feed":
-      return block.lots.length === 0
-        ? "Лотов пока нет."
-        : `Лоты по возрастанию цены, страница ${block.page + 1} из ${block.pageCount}.`;
-    case "lot":
-    case "history":
-    case "result":
-    case "confirm":
-    case "question":
-    case "name-choice":
-      return "";
-    default: {
-      const _exhaustive: never = block;
-      return _exhaustive;
-    }
-  }
-}
+type FeedBlock = Extract<AuctionBlock, { kind: "feed" }>;
 
 // Экраны листа ставки (PER-317): подтверждение, вопрос и выбор имени. Тексты
 // принадлежат оболочке; слова — те же, что у бота хаба, словарь один.
@@ -631,14 +656,10 @@ function renderHistory(
   block: HistoryBlock,
   options: RenderOptions,
 ): Pick<RenderedScreen, "text" | "format"> {
-  const title =
-    block.pageCount === 1
-      ? "Ставки"
-      : `Ставки · ${block.page + 1} из ${block.pageCount}`;
   return {
     format: "html",
     text: [
-      `<b>${escapeHtml(title)}</b>`,
+      heading(paged("Ставки", block)),
       escapeHtml(truncate(block.title ?? untitled, TITLE_LIMIT)),
       block.entries.length === 0
         ? "Ставок пока нет."
@@ -750,7 +771,7 @@ function statusLines(block: LotBlock, options: RenderOptions): string[] {
           : [`Шаг: ${money(block.fixedStep)}.`]),
         ...(status.deadline === undefined
           ? []
-          : [`Торги до ${moment(status.deadline, options.timeZone)}.`]),
+          : [`Торги до ${readableMoment(status.deadline, options.timeZone)}.`]),
         ...proxyLine(block),
       ];
     case "held":
@@ -856,15 +877,15 @@ function renderButton(
       );
     }
     case "feed.prev":
-      return text("‹ Предыдущие");
+      return text("←");
     case "feed.next":
-      return text("Следующие ›");
+      return text("→");
     case "lot.refresh":
       return text("Обновить");
     case "lot.history":
       return text("Ставки");
     case "lot.back":
-      return text("К лотам");
+      return text("‹ Лоты");
     case "history.prev":
       return text("←");
     case "history.next":
@@ -963,14 +984,4 @@ export function readableMoment(instant: string, timeZone: string): string {
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((each) => each.type === type)?.value ?? "";
   return `${part("day")} ${part("month")}, ${part("weekday")}, ${part("hour")}:${part("minute")}`;
-}
-
-function moment(instant: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    timeZone,
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(instant));
 }

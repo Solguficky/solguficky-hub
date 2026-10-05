@@ -8,6 +8,7 @@ import {
   MAX_LIST_PAGE,
   parseEntryCallback,
   readFaqContent,
+  startCallback,
 } from "./faq.js";
 
 describe("FAQ content", () => {
@@ -20,14 +21,15 @@ describe("FAQ content", () => {
     expect(screen.text).toContain("Отменить сделанную ставку нельзя");
     for (const text of Object.values(defaultFaq))
       expect(screen.text).toContain(text);
-    expect(screen.keyboard.flat().map((b) => b.text)).toEqual([
-      "В меню",
-      "Прочитать подробнее",
-      "Задать вопрос",
+    // Возврат — последний ряд, и только он ставит отметку ознакомления.
+    expect(screen.keyboard).toEqual([
+      [{ text: "Прочитать подробнее", callback_data: "v1:entry:details" }],
+      [{ text: "Задать вопрос", callback_data: "v1:entry:question" }],
+      [{ text: "‹ Меню", callback_data: "v1:entry:read" }],
     ]);
   });
 
-  it("renders the organizer's rules verbatim as plain text and external buttons", () => {
+  it("renders the organizer's rules verbatim, escaped, and marks external buttons", () => {
     const result = readFaqContent({
       AUCTION_FAQ_SIMULTANEOUS_BIDS: "  Порядок организатора  ",
       AUCTION_FAQ_CONNECTION_FAILURE: "После сбоя: <текст>",
@@ -41,13 +43,14 @@ describe("FAQ content", () => {
       { faq: result.content, timeZone: "Europe/Moscow" },
     );
     expect(screen.text).toContain("Порядок организатора");
-    expect(screen.text).toContain("После сбоя: <текст>");
+    // Текст организатора разметкой не становится: `<` уходит сущностью.
+    expect(screen.text).toContain("После сбоя: &lt;текст&gt;");
     expect(screen.text).toContain("Условия доставки");
-    expect(screen.keyboard[1]).toEqual([
-      { text: "Прочитать подробнее", url: "https://example.org/rules" },
+    expect(screen.keyboard[0]).toEqual([
+      { text: "Прочитать подробнее ↗", url: "https://example.org/rules" },
     ]);
-    expect(screen.keyboard[2]).toEqual([
-      { text: "Задать вопрос", url: "https://t.me/organizer" },
+    expect(screen.keyboard[1]).toEqual([
+      { text: "Задать вопрос ↗", url: "https://t.me/organizer" },
     ]);
   });
 
@@ -117,6 +120,25 @@ describe("entry callbacks", () => {
     expect(parseEntryCallback(data)).toEqual({ action, page });
     expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
   });
+  // Повтор входа несёт код канала, пока тот помещается в 64 байта кнопки.
+  it.each(["chat", "a-b_C9", "a".repeat(49)])(
+    "round trips the entry retry with the channel code %s",
+    (sourceCode) => {
+      const data = startCallback(sourceCode);
+      expect(parseEntryCallback(data)).toEqual({
+        action: "start",
+        page: 0,
+        sourceCode,
+      });
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+    },
+  );
+  it.each([undefined, "a".repeat(50), "a".repeat(62)])(
+    "retries the entry without a channel code that does not fit: %s",
+    (sourceCode) => {
+      expect(startCallback(sourceCode)).toBe(entryCallback("start"));
+    },
+  );
   it("keeps the first list page equal to the menu button", () => {
     expect(listCallback("past", 0)).toBe(entryCallback("past"));
   });
@@ -134,6 +156,10 @@ describe("entry callbacks", () => {
     "v1:entry:past:-1",
     "v1:entry:faq:1",
     "v1:entry:auctions:1:2",
+    "v1:entry:start:",
+    "v1:entry:start:a b",
+    `v1:entry:start:${"a".repeat(50)}`,
+    "v1:entry:read:chat",
   ])("does not accept malformed or foreign callback %j", (data) => {
     expect(parseEntryCallback(data)).toBeUndefined();
   });

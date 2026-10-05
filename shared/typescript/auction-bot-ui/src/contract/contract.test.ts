@@ -169,6 +169,8 @@ describe("auction contract self-check", () => {
       "lot: withdrawn",
       "lot: names unavailable",
       "lot: scheduled",
+      "lot: held",
+      "lot: draft",
       "history: newest page",
       "history: earlier page",
       "history: names unavailable",

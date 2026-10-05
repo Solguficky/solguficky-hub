@@ -111,7 +111,7 @@ export function renderNotification(
 ): NotificationMessage {
   if (content.kind === "access-granted") {
     return {
-      text: "Вас допустили к аукциону.",
+      text: "Тебя допустили к аукциону.",
       button: {
         text: "Открыть аукцион",
         callback_data: traceAuctionsCallback(),
@@ -124,8 +124,8 @@ export function renderNotification(
       : `«${truncate(title, TITLE_LIMIT)}»`;
   const text =
     content.kind === "lot-outbid"
-      ? `Вашу ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`
-      : `Лот ${lot === undefined ? "" : `${lot} `}ваш за ${money(content.price)}.`;
+      ? `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`
+      : `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(content.price)}.`;
   return {
     text,
     button: { text: "К лоту", callback_data: traceLotCallback(content.lotId) },

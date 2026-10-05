@@ -12,8 +12,8 @@ import {
 } from "@solguficky/auction-bot-ui";
 import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
-import type { AuctionEntryScreen } from "./entry-screen.js";
-import { type ListAction, parseEntryCallback } from "./faq.js";
+import type { AuctionEntryScreen, UnavailableExit } from "./entry-screen.js";
+import { type ListAction, parseEntryCallback, startCallback } from "./faq.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
@@ -73,14 +73,23 @@ export function tradeCallback(input: {
 // готовой (ADR-044, «Доступ как обязательный шлюз»). Identity или Auction
 // недоступны — fail-closed: человек получает «недоступно», а не экран без
 // проверки.
+//
+// `firstName` нужен одной кнопке — повтору входа под кадром «недоступно»
+// после `/start`: она зовёт тот же `RequestRole`, что и команда.
 export async function routeAuctionCallback(input: {
   ports: EntryPorts;
   user: TelegramUser;
+  firstName: string;
   data: string;
 }): Promise<RouteOutcome> {
   return routeEntry({
-    ...input,
-    action: { kind: "callback", data: input.data },
+    ports: input.ports,
+    user: input.user,
+    action: {
+      kind: "callback",
+      data: input.data,
+      firstName: input.firstName,
+    },
   });
 }
 
@@ -132,13 +141,35 @@ async function routeEntry(input: {
   user: TelegramUser;
   action:
     | { kind: "start"; firstName: string; sourceCode?: string }
-    | { kind: "callback"; data: string }
+    | { kind: "callback"; data: string; firstName: string }
     | { kind: "reply"; data: string; text?: string };
 }): Promise<RouteOutcome> {
   const local =
     input.action.kind === "callback"
       ? parseEntryCallback(input.action.data)
       : undefined;
+  // Вход — команда `/start` либо её повтор кнопкой после сбоя: оба зовут
+  // `RequestRole`, остальные действия разрешают личность и заявок не ставят.
+  const entering =
+    input.action.kind === "start"
+      ? input.action
+      : input.action.kind === "callback" && local?.action === "start"
+        ? {
+            firstName: input.action.firstName,
+            ...(local.sourceCode === undefined
+              ? {}
+              : { sourceCode: local.sourceCode }),
+          }
+        : undefined;
+  // Выход кадра «недоступно»: повтор несёт данные того же действия. Ответ на
+  // вопрос в кнопку не помещается — его присылают ещё раз.
+  const exit: UnavailableExit =
+    entering !== undefined
+      ? { kind: "retry", data: startCallback(entering.sourceCode) }
+      : input.action.kind === "callback"
+        ? { kind: "retry", data: input.action.data }
+        : { kind: "answer" };
+  const unavailable = { kind: "unavailable", exit } as const;
   if (
     input.action.kind !== "start" &&
     local === undefined &&
@@ -148,16 +179,16 @@ async function routeEntry(input: {
   }
   let identity: ResolvedIdentity;
   try {
-    if (input.action.kind === "start") {
+    if (entering !== undefined) {
       const entry = decideEntry(
         "auction",
         await input.ports.entry.requestRole({
           user: input.user,
           requestedRole: requestedRole("auction"),
-          ...(input.action.sourceCode === undefined
+          ...(entering.sourceCode === undefined
             ? {}
-            : { sourceCode: input.action.sourceCode }),
-          firstName: input.action.firstName,
+            : { sourceCode: entering.sourceCode }),
+          firstName: entering.firstName,
         }),
       );
       switch (entry.kind) {
@@ -171,7 +202,7 @@ async function routeEntry(input: {
           };
         case "unknown-outcome":
           return {
-            screen: { kind: "unavailable" },
+            screen: unavailable,
             identityId: entry.identityId,
             failure: {
               category: "invariant",
@@ -187,7 +218,7 @@ async function routeEntry(input: {
       identity = await input.ports.identity.resolveIdentity(input.user);
     }
   } catch (cause) {
-    return { screen: { kind: "unavailable" }, failure: classify(cause) };
+    return { screen: unavailable, failure: classify(cause) };
   }
   const identityId = identity.identityId;
   // Роль перепроверяется на каждом действии. Старая клавиатура и отметка FAQ
@@ -207,17 +238,25 @@ async function routeEntry(input: {
     if (action === "faq" || action === "details" || action === "question") {
       return { screen: { kind: action }, identityId };
     }
-    if (action === "menu") {
-      // Фиксируется действие, не доставка Telegram и не факт прочтения.
-      // Запись идемпотентна: таймаут безопасно повторить тем же действием.
+    if (action === "read") {
+      // Отметку ставит только возврат из FAQ: фиксируется действие, не
+      // доставка Telegram и не факт прочтения. Запись идемпотентна: таймаут
+      // безопасно повторить тем же действием.
       await input.ports.faq.acknowledge(viewer);
       return { screen: { kind: "menu" }, identityId };
     }
+    // «Меню» с любого другого экрана отметки не ставит: без неё человек
+    // видит FAQ, а не меню.
     if (!(await input.ports.faq.acknowledged(viewer))) {
       return { screen: { kind: "faq" }, identityId };
     }
-    if (input.action.kind === "start")
+    if (
+      input.action.kind === "start" ||
+      action === "start" ||
+      action === "menu"
+    ) {
       return { screen: { kind: "menu" }, identityId };
+    }
     if (action === "auctions" || action === "past") {
       const auctions = await readAuctions({
         catalog: input.ports.catalog,
@@ -282,11 +321,7 @@ async function routeEntry(input: {
       }
     }
   } catch (cause) {
-    return {
-      screen: { kind: "unavailable" },
-      identityId,
-      failure: classify(cause),
-    };
+    return { screen: unavailable, identityId, failure: classify(cause) };
   }
 }
 

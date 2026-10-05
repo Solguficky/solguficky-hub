@@ -14,7 +14,7 @@ import {
   type RenderedScreen,
   renderEntryScreen,
 } from "./entry-screen.js";
-import type { FaqContent } from "./faq.js";
+import { entryCallback, type FaqContent } from "./faq.js";
 import type { LogFields, Logger } from "./logging.js";
 import {
   createPhotoCache,
@@ -82,32 +82,59 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   // Только личный чат: в группе бот аукциона молчит.
   const direct = bot.chatType("private");
 
-  // Бюджет действия у команды тот же, что у нажатия (дизайн-код, «Ожидание»).
-  direct.command("start", async (ctx) => {
+  // Команда отвечает новым сообщением с экраном (дизайн-код, «Доставка»).
+  // Бюджет действия у неё тот же, что у нажатия («Ожидание»).
+  const command = async (
+    ctx: UpdateContext,
+    operation: "start" | "faq",
+    route: (ports: ReturnType<PortsFactory>) => Promise<RouteOutcome>,
+  ) => {
     const waiting = startWaiting(ctx);
     waiting.begin();
     try {
-      const sourceCode = sourceCodeOf(ctx.match);
-      const outcome = await routeAuctionStart({
-        ...(sourceCode === undefined ? {} : { sourceCode }),
-        ports: options.ports(ctx.requestId, waiting.deadlineAt),
-        user: {
-          telegramUserId: ctx.from.id,
-          ...(ctx.from.username === undefined
-            ? {}
-            : { telegramUsername: ctx.from.username }),
-        },
-        firstName: ctx.from.first_name,
-      });
-      const screen = render(outcome.screen);
+      const ports = options.ports(ctx.requestId, waiting.deadlineAt);
+      const outcome = await route(ports);
       // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
       await dropQuestions(ctx, questions);
-      await ctx.reply(screen.text, markupOf(screen));
-      log({ logger, ctx, outcome, operation: "start" });
+      await deliver(ctx, {
+        screen: render(outcome.screen),
+        photos,
+        image: ports.image,
+        viewer: outcome.viewer,
+        logger,
+      });
+      log({ logger, ctx, outcome, operation });
     } finally {
       await waiting.finish();
     }
+  };
+
+  direct.command("start", (ctx) => {
+    const sourceCode = sourceCodeOf(ctx.match);
+    return command(ctx, "start", (ports) =>
+      routeAuctionStart({
+        ...(sourceCode === undefined ? {} : { sourceCode }),
+        ports,
+        user: userOf(ctx.from),
+        firstName: ctx.from.first_name,
+      }),
+    );
   });
+
+  // FAQ с любого места бота, не возвращаясь по дереву (дизайн-код, «Дерево
+  // бота аукциона»). Доступ проверяется так же, как у кнопки «Правила и FAQ»:
+  // ожидающий допуска и заблокированный получают свой кадр. Заявку команда не
+  // ставит — вход остаётся за `/start`.
+  direct.command("faq", (ctx) =>
+    command(ctx, "faq", (ports) =>
+      routeAuctionCallback({
+        ports,
+        user: userOf(ctx.from),
+        firstName: ctx.from.first_name,
+        data: entryCallback("faq"),
+      }),
+    ),
+  );
 
   direct.on("callback_query:data", async (ctx) => {
     // Ответ на нажатие уходит вместе с результатом, а не до похода к
@@ -130,6 +157,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       outcome = await routeAuctionCallback({
         ports,
         user: userOf(ctx.from),
+        firstName: ctx.from.first_name,
         data,
       });
       const screen = render(outcome.screen);
@@ -253,7 +281,7 @@ function log(input: {
   logger: Logger;
   ctx: UpdateContext;
   outcome: RouteOutcome;
-  operation: "start" | "callback" | "reply";
+  operation: "start" | "faq" | "callback" | "reply";
 }): void {
   const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {
@@ -307,6 +335,7 @@ export function markupOf(screen: RenderedScreen) {
   const inline_keyboard = screen.keyboard.map((r) => [...r]);
   return {
     ...screenMark(screen.id),
+    // Разметку rich-сообщения несёт его `html`, а не `parse_mode`.
     ...(screen.format === "html" ? { parse_mode: "HTML" as const } : {}),
     // Вопрос открывает режим ответа сам, а «Отмена» под ним даёт выход
     // (дизайн-код, «Вопросы»).

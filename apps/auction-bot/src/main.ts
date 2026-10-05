@@ -12,6 +12,7 @@ import {
 } from "./delivery/message.js";
 import { decodeNotification } from "./delivery/notification.js";
 import { createLogger, serviceName } from "./logging.js";
+import { registerCommands } from "./menu-commands.js";
 import { createShutdown } from "./shutdown.js";
 
 const shutdownTimeoutMs = 15_000;
@@ -118,6 +119,7 @@ async function main(): Promise<number> {
     logger.info("auction-bot starting", {
       telegram_environment: config.environment,
     });
+    await registerCommands(bot.api, logger);
     try {
       await bot.start({
         onStart: () => {

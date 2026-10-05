@@ -21,7 +21,7 @@ import {
 } from "./clients.js";
 import { traceLotCallback } from "./delivery/message.js";
 import { deniedTexts } from "./entry-screen.js";
-import { entryCallback } from "./faq.js";
+import { entryCallback, startCallback } from "./faq.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
 import {
@@ -232,6 +232,26 @@ function startUpdate(message: NonNullable<Update["message"]>): Update {
   return { update_id: 1, message };
 }
 
+function faqUpdate(): Update {
+  return startUpdate({
+    message_id: 1,
+    date: 0,
+    chat: privateChat,
+    from,
+    text: "/faq",
+    entities: [{ type: "bot_command", offset: 0, length: 4 }],
+  });
+}
+
+type SentButton = { text: string; callback_data?: string };
+
+function keyboardOf(payload: unknown): SentButton[][] {
+  return (
+    (payload as { reply_markup?: { inline_keyboard?: SentButton[][] } })
+      .reply_markup?.inline_keyboard ?? []
+  );
+}
+
 describe("auction bot", () => {
   it("keeps completion across bot instances and permits reopening FAQ", async () => {
     let acknowledged = false;
@@ -258,7 +278,7 @@ describe("auction bot", () => {
       text: expect.stringContaining("Что продаём"),
     });
     expect(acknowledged).toBe(false);
-    const press = (action: "menu" | "faq"): Update => ({
+    const press = (action: "read" | "faq"): Update => ({
       update_id: 2,
       callback_query: {
         id: "entry-cb",
@@ -268,12 +288,13 @@ describe("auction bot", () => {
         message: { message_id: 7, date: 0, chat: privateChat, text: "old" },
       },
     });
-    await first.bot.handleUpdate(press("menu"));
+    // Отметку ставит возврат «‹ Меню» под самим FAQ.
+    await first.bot.handleUpdate(press("read"));
     expect(acknowledged).toBe(true);
     const restarted = makeBot(ports);
     await restarted.bot.handleUpdate(start);
     expect(restarted.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("Выберите раздел"),
+      text: expect.stringContaining("Выбери раздел"),
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
@@ -297,7 +318,8 @@ describe("auction bot", () => {
     expect(calls[0]?.method).toBe("sendMessage");
     expect(calls[0]?.payload).toMatchObject({
       chat_id: 42,
-      text: expect.stringContaining("Аукцион"),
+      text: expect.stringMatching(/^<b>Меню<\/b>/),
+      parse_mode: "HTML",
     });
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
@@ -440,11 +462,13 @@ describe("auction bot", () => {
       rich_message: { html: expect.stringContaining("Кружка") },
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Обновить", callback_data: expect.any(String) }],
           [{ text: "Ставки", callback_data: expect.any(String) }],
-          [{ text: "К лотам", callback_data: expect.any(String) }],
-          [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
-          [{ text: "В меню", callback_data: expect.any(String) }],
+          // Возврат тела и «Меню» — один последний ряд; у лота с итогом
+          // «Обновить» нет.
+          [
+            { text: "‹ Лоты", callback_data: expect.any(String) },
+            { text: "Меню", callback_data: entryCallback("menu") },
+          ],
         ],
       },
     });
@@ -577,7 +601,190 @@ describe("auction bot", () => {
     const { bot, calls } = makeBot(ports);
     await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
     expect(calls.at(-1)?.payload).toMatchObject({
-      text: "Аукцион сейчас недоступен. Попробуйте позже.",
+      text: "<b>Аукцион сейчас недоступен.</b> Попробуй ещё раз через минуту.",
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Повторить", callback_data: entryCallback("auctions") },
+            { text: "Меню", callback_data: entryCallback("menu") },
+          ],
+        ],
+      },
+    });
+  });
+
+  // Критерий PER-463: повтор открывает экран, с которого пришёл отказ.
+  it("reopens the lot by the retry button once Auction answers again", async () => {
+    const base = publicPorts("r");
+    const getLot = vi
+      .fn(base.auction.getLot)
+      .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
+    const { bot, calls } = makeBot(() => ({
+      ...base,
+      auction: { ...base.auction, getLot },
+    }));
+    await bot.handleUpdate(lotPress());
+    const retry = keyboardOf(calls.at(-1)?.payload)[0]?.[0];
+    expect(retry).toEqual({
+      text: "Повторить",
+      callback_data: encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
+    });
+    // Данные повтора — та же кнопка лота, что нажимает `lotPress`.
+    await bot.handleUpdate(lotPress());
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { rich_message: { html: expect.stringContaining("Кружка") } },
+    });
+  });
+
+  // Под следом кадр отказа приходит новым сообщением, а повтор несёт кнопку
+  // лота без префикса следа: он правит сам кадр и сообщений не плодит.
+  it("retries a trace press by editing the refusal frame", async () => {
+    const base = publicPorts("r");
+    const getLot = vi
+      .fn(base.auction.getLot)
+      .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
+    const { bot, calls } = makeBot(() => ({
+      ...base,
+      auction: { ...base.auction, getLot },
+    }));
+    await bot.handleUpdate(lotPress({ data: traceLotCallback(lotId) }));
+    expect(calls.at(-1)?.method).toBe("sendMessage");
+    const retry = keyboardOf(calls.at(-1)?.payload)[0]?.[0];
+    expect(retry?.callback_data).toBe(
+      encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
+    );
+    await bot.handleUpdate(lotPress());
+    expect(calls.at(-1)?.method).toBe("editMessageText");
+  });
+
+  // `/start` при недоступном Identity: заявка не подана, и «Повторить»
+  // повторяет вход с тем же кодом канала, а не открывает меню без заявки.
+  it("retries the entry with the channel code after a failed /start", async () => {
+    const requestRole = vi
+      .fn<EntryPort["requestRole"]>(async () => ({
+        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+        globalRoles: [],
+        outcome: "pending",
+      }))
+      .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
+    const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
+    await bot.handleUpdate(
+      startUpdate({
+        message_id: 1,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "/start s_tg_ads",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "Повторить", callback_data: startCallback("tg_ads") },
+              { text: "Меню", callback_data: entryCallback("menu") },
+            ],
+          ],
+        },
+      },
+    });
+    await bot.handleUpdate(lotPress({ data: startCallback("tg_ads") }));
+    expect(requestRole).toHaveBeenLastCalledWith({
+      user: { telegramUserId: 42 },
+      requestedRole: "public",
+      sourceCode: "tg_ads",
+      firstName: "Person",
+    });
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: deniedTexts["not-admitted"] },
+    });
+  });
+
+  it("answers an unreadable button with a frame that leads to the menu", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(lotPress({ data: "v9:auc:lot:x" }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Этот экран устарел\.<\/b>/),
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Меню", callback_data: entryCallback("menu") }],
+        ],
+      },
+    });
+  });
+
+  // `/faq` открывает FAQ новым сообщением с любого места и заявок не ставит.
+  it("answers /faq with the FAQ screen without requesting a role", async () => {
+    const requestRole = vi.fn<EntryPort["requestRole"]>();
+    const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
+    await bot.handleUpdate(faqUpdate());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringMatching(/^<b>Правила и FAQ<\/b>/),
+        parse_mode: "HTML",
+      },
+    });
+    expect(keyboardOf(calls[0]?.payload).at(-1)).toEqual([
+      { text: "‹ Меню", callback_data: entryCallback("read") },
+    ]);
+    expect(requestRole).not.toHaveBeenCalled();
+  });
+
+  // Та же проверка доступа, что у `/start`: недопущенный получает свой кадр.
+  it.each([
+    [{ globalRoles: [], blocked: false }, "not-admitted"],
+    [{ globalRoles: ["public"], blocked: true }, "blocked"],
+  ] as const)(
+    "refuses /faq to %j with the %s frame",
+    async (person, reason) => {
+      const base = publicPorts("r");
+      const { bot, calls } = makeBot(() => ({
+        ...base,
+        identity: {
+          resolveIdentity: async () => ({
+            identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+            globalRoles: [...person.globalRoles],
+            blocked: person.blocked,
+          }),
+        },
+      }));
+      await bot.handleUpdate(faqUpdate());
+      expect(calls.map((call) => call.payload)).toMatchObject([
+        { text: deniedTexts[reason] },
+      ]);
+    },
+  );
+
+  // Название лота — недоверенный текст: в ленте оно в подписи кнопки, в
+  // хронологии — в HTML-тексте, и разметкой не становится.
+  it("escapes a lot title with markup characters in the history", async () => {
+    const { bot, calls } = makeBot(
+      portsWith({
+        lot: { card: { title: "Кружка <XL> & блюдце", description: "" } },
+      }),
+    );
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({
+          kind: "history",
+          lotId,
+          page: 0,
+          historyPage: 0,
+        }),
+      }),
+    );
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Кружка &lt;XL&gt; &amp; блюдце"),
+      parse_mode: "HTML",
     });
   });
 
