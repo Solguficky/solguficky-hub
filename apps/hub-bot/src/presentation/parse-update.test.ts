@@ -26,6 +26,7 @@ describe("parseUpdate", () => {
     );
     expect(parsed).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
       telegramUsername: "alice",
     });
@@ -47,6 +48,7 @@ describe("parseUpdate", () => {
     );
     expect(parsed).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
       deepLink: {
         kind: "meetup",
@@ -58,6 +60,7 @@ describe("parseUpdate", () => {
   it("keeps a valid non-meetup payload unclassified", () => {
     expect(messageText("/start invite_token_1")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
       deepLink: { kind: "unclassified", payload: "invite_token_1" },
     });
@@ -66,6 +69,7 @@ describe("parseUpdate", () => {
   it("reads a source channel payload as its code without the prefix", () => {
     expect(messageText("/start s_tg_ads")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
       deepLink: { kind: "source", code: "tg_ads" },
     });
@@ -74,6 +78,7 @@ describe("parseUpdate", () => {
   it("passes an empty source code as received", () => {
     expect(messageText("/start s_")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
       deepLink: { kind: "source", code: "" },
     });
@@ -89,6 +94,7 @@ describe("parseUpdate", () => {
     expect(messageText("/START@Stub_Bot").kind).toBe("start");
     expect(messageText("/start@stub_bot m_AZLzpLXGfY6fChssPU5fYA")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
       deepLink: {
         kind: "meetup",
@@ -104,10 +110,12 @@ describe("parseUpdate", () => {
   it("treats invalid payload as a bare start", () => {
     expect(messageText("/start payload with spaces")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
     });
     expect(messageText(`/start ${"a".repeat(65)}`)).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
     });
   });
@@ -164,10 +172,12 @@ describe("parseUpdate", () => {
   it("reads /menu as /start without a payload", () => {
     expect(messageText("/menu")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
     });
     expect(messageText("/MENU@Stub_Bot")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
     });
   });
@@ -175,6 +185,7 @@ describe("parseUpdate", () => {
   it("does not turn a tail after /menu into a deep link", () => {
     expect(messageText("/menu m_AZLzpLXGfY6fChssPU5fYA")).toEqual({
       kind: "start",
+      firstName: "tester",
       telegramUserId: 42n,
     });
   });

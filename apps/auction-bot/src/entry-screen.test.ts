@@ -57,16 +57,18 @@ describe("renderEntryScreen", () => {
     expect(screen.text).not.toMatch(/хаб|сходк/i);
   });
 
-  it("gives the blocked person a text different from the not-admitted one", () => {
-    const blocked = renderEntryScreen(
-      { kind: "denied", reason: "blocked" },
-      options,
+  // Трём отказам — три разных ответа: заблокированный и получивший отказ не
+  // читают «заявка на рассмотрении» (ADR-060, пункты 13 и 15).
+  it("gives every refusal a text of its own and no keyboard", () => {
+    const screens = (["not-admitted", "declined", "blocked"] as const).map(
+      (reason) => renderEntryScreen({ kind: "denied", reason }, options),
     );
-    const notAdmitted = renderEntryScreen(
-      { kind: "denied", reason: "not-admitted" },
-      options,
-    );
-    expect(blocked.text).not.toBe(notAdmitted.text);
+    expect(new Set(screens.map((screen) => screen.text)).size).toBe(3);
+    expect(screens[0]?.text).toContain("на рассмотрении");
+    for (const screen of screens) {
+      expect(screen.id).toBe("denied");
+      expect(screen.keyboard).toEqual([]);
+    }
   });
 
   it("labels feed buttons with the title and the price that orders them", () => {

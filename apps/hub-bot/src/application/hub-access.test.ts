@@ -3,6 +3,7 @@ import {
   applicationCode,
   blockedHubAccessText,
   decideHubAccess,
+  declinedHubAccessText,
   hubAccessErrors,
   hubAccessText,
   pendingHubAccessText,
@@ -39,6 +40,19 @@ describe("decideHubAccess", () => {
 
   it("names pending and blocked refusals differently", () => {
     expect(hubAccessErrors.pending).toBe("hub_access_pending");
+    expect(hubAccessErrors.declined).toBe("hub_access_declined");
+    expect(hubAccessText("declined", identityId, undefined)).toBe(
+      declinedHubAccessText,
+    );
+    // Три отказа — три разных ответа: получивший отказ и заблокированный не
+    // читают «заявка ждёт проверки» (ADR-060, пункты 13 и 15).
+    expect(
+      new Set(
+        (["pending", "declined", "blocked"] as const).map((access) =>
+          hubAccessText(access, identityId, undefined),
+        ),
+      ).size,
+    ).toBe(3);
     expect(hubAccessErrors.blocked).toBe("hub_access_blocked");
     expect(hubAccessText("pending", identityId, undefined)).toContain(
       "ждёт проверки",

@@ -12,7 +12,9 @@ import {
 import { sourceDeepLinkPrefix } from "./source-deep-link.js";
 
 export type ParsedUpdate =
-  | ({ kind: "start" } & ResolveIdentityInput &
+  // `firstName` — имя из того же update: вход на `/start` несёт его в заявку
+  // для карточки модератора (ADR-060, пункт 23).
+  | ({ kind: "start"; firstName: string } & ResolveIdentityInput &
       ({ deepLink: DeepLink } | Record<never, never>))
   | ({ kind: "screen"; screen: NavScreen } & ResolveIdentityInput)
   | { kind: "ignored" }
@@ -46,12 +48,13 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
     return { kind: "ignored" };
   }
   const identity = toResolveIdentityInput(BigInt(from.id), from.username);
+  const person = { ...identity, firstName: from.first_name };
   if (command.name === "start") {
-    return parsedStart(identity, startDeepLink(command.argument));
+    return parsedStart(person, startDeepLink(command.argument));
   }
   // `/menu` — это `/start` без payload: хвост в deep link не превращается.
   if (command.name === "menu") {
-    return parsedStart(identity, undefined);
+    return parsedStart(person, undefined);
   }
   // Хвост после команды меню не значит ничего: экран открывается тот же.
   const screen = screenCommands.get(command.name);
@@ -105,7 +108,7 @@ function classifyDeepLink(payload: string): DeepLink {
 }
 
 function parsedStart(
-  identity: ResolveIdentityInput,
+  identity: ResolveIdentityInput & { firstName: string },
   deepLink: DeepLink | undefined,
 ): ParsedUpdate {
   if (deepLink === undefined) {

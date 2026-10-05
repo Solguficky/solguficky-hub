@@ -31,6 +31,48 @@ export interface IdentityPort {
   resolveIdentity(user: TelegramUser): Promise<ResolvedIdentity>;
 }
 
+// Круг, который поверхность запрашивает на `/start`: `admin` и `maintainer`
+// через вход не просят (`identity.v1.RequestRoleRequest`).
+export type SurfaceCircle = Extract<GlobalRole, "member" | "public">;
+
+// Вход на `/start` (ADR-060, пункты 1–7 и 17–19).
+export type RoleRequest = {
+  user: TelegramUser;
+  requestedRole: SurfaceCircle;
+  // Код канала из payload `s_<код>` без префикса, как пришёл: известен ли
+  // канал, решает Identity. Нет — payload префикса не нёс; пустая строка —
+  // пустой код после `s_`.
+  sourceCode?: string;
+  // `first_name` того же update — для карточки модератора.
+  firstName: string;
+};
+
+export const ROLE_REQUEST_OUTCOMES = [
+  "already-held",
+  "granted-by-allowlist",
+  "pending",
+  "declined",
+  "blocked",
+  // Значение, которого край не знает. По контракту читается как отказ.
+  "unspecified",
+] as const;
+
+// `identity.v1.RoleRequestOutcome` в словаре пакета.
+export type RoleRequestOutcome = (typeof ROLE_REQUEST_OUTCOMES)[number];
+
+// Отметки блокировки в ответе входа нет: её несёт исход `blocked`.
+export type RoleRequestAnswer = {
+  identityId: string;
+  globalRoles: readonly GlobalRole[];
+  outcome: RoleRequestOutcome;
+};
+
+// Порт входа отдельный от `IdentityPort`: шлюзу нажатия он не нужен, а вход
+// зовёт приложение — один раз на `/start`, вместо разрешения личности.
+export interface EntryPort {
+  requestRole(request: RoleRequest): Promise<RoleRequestAnswer>;
+}
+
 // Смотрящий в запросах Auction. Отметки блокировки здесь нет, как и в
 // `auction.v1.Viewer`: решение по ресурсу принимает Auction.
 export type Viewer = {

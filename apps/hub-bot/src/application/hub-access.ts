@@ -1,4 +1,6 @@
-export type HubAccess = "admitted" | "pending" | "blocked";
+// `declined` виден только на `/start`: его несёт исход входа, а разрешение
+// личности на остальных действиях его не знает (ADR-060, пункт 13).
+export type HubAccess = "admitted" | "pending" | "declined" | "blocked";
 
 // Код заявки — хвост UUIDv7, а не голова: голова несёт время создания и у
 // профилей, заведённых в одну минуту, совпадает, а хвост случаен.
@@ -26,18 +28,34 @@ export const blockedHubAccessText = `Доступ к Solguficky Hub закрыт
 
 Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.`;
 
+// Отказ в `member` — не блокировка: аукцион он не отнимает, а новую заявку на
+// хаб человек не подаёт, пока администратор не пересмотрит решение.
+export const declinedHubAccessText = `Заявка на доступ отклонена.
+
+Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.`;
+
 export function hubAccessText(
   access: Exclude<HubAccess, "admitted">,
   identityId: string,
   telegramUsername: string | undefined,
 ): string {
-  return access === "pending"
-    ? pendingHubAccessText(identityId, telegramUsername)
-    : blockedHubAccessText;
+  switch (access) {
+    case "pending":
+      return pendingHubAccessText(identityId, telegramUsername);
+    case "declined":
+      return declinedHubAccessText;
+    case "blocked":
+      return blockedHubAccessText;
+    default: {
+      const _exhaustive: never = access;
+      return _exhaustive;
+    }
+  }
 }
 
 export const hubAccessErrors = {
   pending: "hub_access_pending",
+  declined: "hub_access_declined",
   blocked: "hub_access_blocked",
 } as const;
 

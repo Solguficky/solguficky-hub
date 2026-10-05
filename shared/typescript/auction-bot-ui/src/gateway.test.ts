@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { encodeAuctionCallback } from "./callback-data.js";
-import { type AuctionSurface, handleAuctionUpdate } from "./gateway.js";
-import type { GlobalRole, LotView, ResolvedIdentity } from "./ports.js";
+import {
+  type AuctionDenial,
+  type AuctionSurface,
+  decideEntry,
+  handleAuctionUpdate,
+  requestedRole,
+} from "./gateway.js";
+import type {
+  GlobalRole,
+  LotView,
+  ResolvedIdentity,
+  RoleRequestOutcome,
+} from "./ports.js";
 
 const LOT: LotView = {
   lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c",
@@ -149,5 +160,67 @@ describe("handleAuctionUpdate gateway", () => {
     expect(result.error.name).toBe("AuctionCallbackError");
     expect(result.error.reason).toBe("foreign");
     expect(calls.auction).toBe(0);
+  });
+});
+
+describe("surface entry on /start", () => {
+  const IDENTITY_ID = "01929b7e-0000-7000-8000-000000000001";
+
+  it("requests the circle of the surface", () => {
+    expect(requestedRole("hub")).toBe("member");
+    expect(requestedRole("auction")).toBe("public");
+  });
+
+  it.each<[AuctionSurface["kind"], GlobalRole[], RoleRequestOutcome]>([
+    ["hub", ["member", "public"], "already-held"],
+    ["hub", ["admin"], "already-held"],
+    ["hub", ["member", "public"], "granted-by-allowlist"],
+    ["auction", ["public"], "already-held"],
+    ["auction", ["public"], "granted-by-allowlist"],
+  ])("enters %s with %j on %s", (kind, globalRoles, outcome) => {
+    expect(
+      decideEntry(kind, { identityId: IDENTITY_ID, globalRoles, outcome }),
+    ).toEqual({
+      kind: "entered",
+      identity: { identityId: IDENTITY_ID, globalRoles, blocked: false },
+    });
+  });
+
+  it.each<[RoleRequestOutcome, GlobalRole[], AuctionDenial]>([
+    ["pending", [], "not-admitted"],
+    // Заявка в хаб не отнимает аукцион: `public` при ней остаётся.
+    ["pending", ["public"], "not-admitted"],
+    ["declined", ["public"], "declined"],
+    ["blocked", [], "blocked"],
+  ])("denies on %s with %j as %s", (outcome, globalRoles, reason) => {
+    expect(
+      decideEntry("hub", { identityId: IDENTITY_ID, globalRoles, outcome }),
+    ).toEqual({ kind: "denied", reason, identityId: IDENTITY_ID });
+  });
+
+  // Identity считает круг по вложенности, поверхность — по плоскому набору:
+  // вход не пускает того, кому отказало бы следующее нажатие.
+  it("denies a held circle the surface table does not admit", () => {
+    expect(
+      decideEntry("auction", {
+        identityId: IDENTITY_ID,
+        globalRoles: ["admin"],
+        outcome: "already-held",
+      }),
+    ).toEqual({
+      kind: "denied",
+      reason: "not-admitted",
+      identityId: IDENTITY_ID,
+    });
+  });
+
+  it("does not enter on an outcome it does not know, whatever the roles", () => {
+    expect(
+      decideEntry("hub", {
+        identityId: IDENTITY_ID,
+        globalRoles: ["member", "public"],
+        outcome: "unspecified",
+      }),
+    ).toEqual({ kind: "unknown-outcome", identityId: IDENTITY_ID });
   });
 });

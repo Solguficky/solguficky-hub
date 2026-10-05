@@ -2,6 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   encodeAuctionCallback,
   type ResolvedIdentity,
+  type RoleRequestAnswer,
 } from "@solguficky/auction-bot-ui";
 import { describe, expect, it, vi } from "vitest";
 import type { EntryPorts } from "./entry-ports.js";
@@ -11,6 +12,7 @@ import { routeAuctionCallback, routeAuctionStart } from "./route.js";
 const lotId = "01926f3c-8b7a-7cde-8f00-0123456789ab";
 const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
 const user = { telegramUserId: 42 };
+const firstName = "Сова";
 
 function identity(overrides: Partial<ResolvedIdentity>): ResolvedIdentity {
   return {
@@ -21,12 +23,32 @@ function identity(overrides: Partial<ResolvedIdentity>): ResolvedIdentity {
   };
 }
 
+// Что вход ответил бы человеку с такой личностью: заблокированному —
+// `blocked`, с ролью `public` — что она уже есть, остальным — заявку.
+function entered(resolved: ResolvedIdentity): RoleRequestAnswer {
+  return {
+    identityId: resolved.identityId,
+    globalRoles: resolved.blocked ? [] : resolved.globalRoles,
+    outcome: resolved.blocked
+      ? "blocked"
+      : resolved.globalRoles.includes("public")
+        ? "already-held"
+        : "pending",
+  };
+}
+
 function ports(resolved: ResolvedIdentity | Error): EntryPorts {
   return {
     identity: {
       resolveIdentity: vi.fn(async () => {
         if (resolved instanceof Error) throw resolved;
         return resolved;
+      }),
+    },
+    entry: {
+      requestRole: vi.fn(async () => {
+        if (resolved instanceof Error) throw resolved;
+        return entered(resolved);
       }),
     },
     auction: {
@@ -56,16 +78,20 @@ const feedButton = encodeAuctionCallback({
 describe("FAQ entry", () => {
   it("shows no FAQ before admission and opens it on the first admitted start", async () => {
     const p = ports(identity({ globalRoles: [] }));
-    expect((await routeAuctionStart({ ports: p, user })).screen).toEqual({
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({
       kind: "denied",
       reason: "not-admitted",
     });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
-    vi.mocked(p.identity.resolveIdentity).mockResolvedValue(
-      identity({ globalRoles: ["public"] }),
+    vi.mocked(p.entry.requestRole).mockResolvedValue(
+      entered(identity({ globalRoles: ["public"] })),
     );
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
-    expect((await routeAuctionStart({ ports: p, user })).screen).toEqual({
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({
       kind: "faq",
     });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
@@ -83,7 +109,9 @@ describe("FAQ entry", () => {
           })
         ).screen,
       ).toEqual({ kind: "denied", reason: "blocked" });
-      expect((await routeAuctionStart({ ports: p, user })).screen).toEqual({
+      expect(
+        (await routeAuctionStart({ ports: p, user, firstName })).screen,
+      ).toEqual({
         kind: "denied",
         reason: "blocked",
       });
@@ -121,17 +149,23 @@ describe("FAQ entry", () => {
   it("shows FAQ on the first admitted start and leaves completion untouched", async () => {
     const p = ports(identity({ globalRoles: ["public"] }));
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
-    expect((await routeAuctionStart({ ports: p, user })).screen).toEqual({
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({
       kind: "faq",
     });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
     expect(p.auction.getLot).not.toHaveBeenCalled();
-    expect(p.identity.resolveIdentity).toHaveBeenCalledTimes(1);
+    // Вход заменяет разрешение личности: Identity спрошен один раз.
+    expect(p.entry.requestRole).toHaveBeenCalledTimes(1);
+    expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
   });
 
   it("shows the menu to a returning participant without an auction id", async () => {
     const p = ports(identity({ globalRoles: ["public"] }));
-    expect((await routeAuctionStart({ ports: p, user })).screen).toEqual({
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({
       kind: "menu",
     });
   });
@@ -223,7 +257,9 @@ describe("FAQ entry", () => {
     vi.mocked(p.faq.acknowledged).mockRejectedValue(
       new ConnectError("offline", Code.Unavailable),
     );
-    expect((await routeAuctionStart({ ports: p, user })).screen).toEqual({
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({
       kind: "unavailable",
     });
   });
@@ -340,5 +376,97 @@ describe("routeAuctionCallback", () => {
       data: lotButton,
     });
     expect(outcome.failure?.category).toBe("timeout");
+  });
+});
+
+describe("routeAuctionStart entry", () => {
+  it("requests the public circle with the channel code and the first name", async () => {
+    const p = ports(identity({ globalRoles: [] }));
+    const outcome = await routeAuctionStart({
+      ports: p,
+      user: { telegramUserId: 42, telegramUsername: "owl" },
+      firstName,
+      sourceCode: "chat",
+    });
+    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+      user: { telegramUserId: 42, telegramUsername: "owl" },
+      requestedRole: "public",
+      sourceCode: "chat",
+      firstName,
+    });
+    expect(outcome).toEqual({
+      screen: { kind: "denied", reason: "not-admitted" },
+      identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+    });
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+
+  // Присутствие кода значимо: пустой код после `s_` едет пустой строкой, а
+  // payload без префикса поля не несёт.
+  it.each([
+    ["", { sourceCode: "" }],
+    [undefined, {}],
+  ])("passes the channel code %j as received", async (sourceCode, expected) => {
+    const p = ports(identity({ globalRoles: [] }));
+    await routeAuctionStart({
+      ports: p,
+      user,
+      firstName,
+      ...(sourceCode === undefined ? {} : { sourceCode }),
+    });
+    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+      user,
+      requestedRole: "public",
+      firstName,
+      ...expected,
+    });
+  });
+
+  it("opens the entry for a person the allowlist has just admitted", async () => {
+    const p = ports(identity({ globalRoles: [] }));
+    vi.mocked(p.entry.requestRole).mockResolvedValue({
+      ...entered(identity({ globalRoles: ["public"] })),
+      outcome: "granted-by-allowlist",
+    });
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({ kind: "menu" });
+  });
+
+  it("answers a declined application with a refusal of its own", async () => {
+    const p = ports(identity({ globalRoles: [] }));
+    vi.mocked(p.entry.requestRole).mockResolvedValue({
+      ...entered(identity({ globalRoles: [] })),
+      outcome: "declined",
+    });
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({ kind: "denied", reason: "declined" });
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on an outcome it does not know, whatever the roles", async () => {
+    const p = ports(identity({ globalRoles: ["public"] }));
+    vi.mocked(p.entry.requestRole).mockResolvedValue({
+      ...entered(identity({ globalRoles: ["public"] })),
+      outcome: "unspecified",
+    });
+    expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
+      screen: { kind: "unavailable" },
+      identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+      failure: {
+        category: "invariant",
+        message: "identity answered an unknown role request outcome",
+      },
+    });
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the entry is unavailable", async () => {
+    const p = ports(new ConnectError("offline", Code.Unavailable));
+    const outcome = await routeAuctionStart({ ports: p, user, firstName });
+    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    expect(outcome.failure?.category).toBe("dependency_unavailable");
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
   });
 });

@@ -49,6 +49,7 @@ import {
   type OrganizerResolver,
   type ReconsiderResult,
   type RefusedApplication,
+  type RoleRequester,
   type SourceChannel,
   type SourceChannelAdministrator,
   type TelegramRecipientResolver,
@@ -83,6 +84,7 @@ import {
   parseEditQuestion,
   parsePublishMomentQuestion,
 } from "./edit-question.js";
+import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
@@ -201,6 +203,7 @@ export type BotRuntime = {
   token: string;
   dispatcher: Dispatcher;
   identity: IdentityResolver &
+    RoleRequester &
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
@@ -1148,29 +1151,59 @@ async function handleMessage(
         : deepLink?.kind === "meetup"
           ? "view_meetup"
           : "find_meetup";
-    const resolved = await runtime.identity.resolve(
-      toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
-      rpcCall(ctx, useCase),
-    );
-    if (resolved.kind !== "resolved") {
-      outcome = await replyFailClosed(
-        ctx,
-        identityFailureOutcome(resolved, useCase),
+    // `/start` и `/menu` — вход на поверхность (ADR-060): вместо разрешения
+    // личности бот зовёт `RequestRole` с кругом хаба, и Identity гасит белый
+    // список или ставит заявку. Личность по-прежнему разрешается один раз на
+    // update. Команда экрана — обычное действие: на ней только проверка роли.
+    let identity: Person;
+    let access: HubAccess;
+    if (parsed.kind === "start") {
+      const answered = await runtime.identity.requestRole(
+        hubRoleRequest(parsed, deepLink),
+        rpcCall(ctx, useCase),
       );
-      return;
+      if (answered.kind !== "answered") {
+        outcome = await replyFailClosed(
+          ctx,
+          identityFailureOutcome(answered, useCase),
+        );
+        return;
+      }
+      const entry = decideHubEntry(answered);
+      if (entry.kind === "unknown-outcome") {
+        outcome = await replyFailClosed(ctx, {
+          level: "error",
+          message: "identity answered an unknown role request outcome",
+          result: "error",
+          use_case: useCase,
+          identity_id: entry.identityId,
+          error_category: "invariant",
+          error: "role_request_outcome_unspecified",
+        });
+        return;
+      }
+      identity = entry.person;
+      access = entry.access;
+    } else {
+      const resolved = await runtime.identity.resolve(
+        toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
+        rpcCall(ctx, useCase),
+      );
+      if (resolved.kind !== "resolved") {
+        outcome = await replyFailClosed(
+          ctx,
+          identityFailureOutcome(resolved, useCase),
+        );
+        return;
+      }
+      identity = {
+        identityId: resolved.identityId,
+        globalRoles: resolved.globalRoles,
+      };
+      access = decideHubAccess(resolved.globalRoles, resolved.blocked);
     }
-    const identity = {
-      identityId: resolved.identityId,
-      globalRoles: resolved.globalRoles,
-    };
-    const denied = await denyHubAccessIfNeeded(
-      ctx,
-      { person: identity, blocked: resolved.blocked },
-      useCase,
-      false,
-    );
-    if (denied !== undefined) {
-      outcome = denied;
+    if (access !== "admitted") {
+      outcome = await denyHubAccess(ctx, access, identity, useCase, false);
       return;
     }
     // Команда меню проходит тот же путь, что /start, — Identity и политику
@@ -4555,11 +4588,17 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  const text = hubAccessText(
-    access,
-    identity.person.identityId,
-    ctx.from?.username,
-  );
+  return denyHubAccess(ctx, access, identity.person, useCase, edit);
+}
+
+async function denyHubAccess(
+  ctx: UpdateContext,
+  access: Exclude<HubAccess, "admitted">,
+  person: Person,
+  useCase: ProductUseCase | undefined,
+  edit: boolean,
+): Promise<BoundaryOutcome> {
+  const text = hubAccessText(access, person.identityId, ctx.from?.username);
   await showFrame(
     ctx,
     "no-access",
@@ -4567,7 +4606,7 @@ async function denyHubAccessIfNeeded(
     new InlineKeyboard(),
     edit ? undefined : "new",
   );
-  return hubAccessOutcome(access, identity.person.identityId, useCase);
+  return hubAccessOutcome(access, person.identityId, useCase);
 }
 
 function hubAccessOutcome(
