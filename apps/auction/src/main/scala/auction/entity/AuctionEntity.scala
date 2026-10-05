@@ -193,7 +193,7 @@ object AuctionEntity {
         timers.startTimerWithFixedDelay(RecheckKey, Recheck, recheckEvery)
 
         // Ожидаемый отказ зависимости: лот не ответил в срок. Сообщение исключения в запись не идёт — только его класс.
-        def silent(lot: LotId, failure: Throwable): Unit =
+        def logUnanswered(lot: LotId, failure: Throwable): Unit =
           context.log.warn(
             "lot did not answer the auction",
             StructuredArguments.keyValue("auction_id", auctionId),
@@ -203,7 +203,7 @@ object AuctionEntity {
           )
 
         def unanswered(lot: LotId, failure: Throwable): Unit = {
-          silent(lot, failure)
+          logUnanswered(lot, failure)
           roster = LotRoster.unanswered(roster, lot)
         }
 
@@ -251,7 +251,7 @@ object AuctionEntity {
             case LotPlanned(_, replyTo, Success(answer)) =>
               Effect.reply(replyTo)(answer.left.map(ScheduleAuctionLotRejected.ByLot(_)))
             // Знание об открытии это не меняет: молчащий лот остаётся с прежними условиями либо с принятыми.
-            case LotPlanned(lot, _, Failure(failure)) => Effect.none.thenRun(_ => silent(lot, failure))
+            case LotPlanned(lot, _, Failure(failure)) => Effect.none.thenRun(_ => logUnanswered(lot, failure))
             case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
             case Draft(draft, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, draft)
