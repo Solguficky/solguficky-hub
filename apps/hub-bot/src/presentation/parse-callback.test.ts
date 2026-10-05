@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { maxLotRubles } from "../application/lot-form.js";
 import {
   cardCursorData,
+  lotAskData,
+  lotFormData,
+  lotNewData,
   parseCallback,
   type QuestionStep,
   questionData,
@@ -784,6 +788,82 @@ describe("notification callbacks", () => {
       "v1:bc:ms:AZLzpLXGfY6fChssPU5fYA:short",
       "v1:bc:cs:AZLzpLXGfY6fChssPU5fYA:extra",
       "v1:bc:send",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+});
+
+// Форма лота (PER-319): кнопки домена `lot` и шаги её вопросов.
+describe("lot form callbacks", () => {
+  // Худший случай длины: все символы токена занимают по байту, а цена — семь
+  // цифр.
+  const auction = "2u8Fx81oUEiwPctIYOjccw";
+  const lot = "AZKbflwdej-OSy1snwobPA";
+  // Ключ создания лота — первые двенадцать символов токена.
+  const key = "AZKbflwdej-O";
+
+  it("parses the entries into the form and the rows of its screen within the byte budget", () => {
+    const cases = [
+      [lotNewData(auction), { kind: "lot-new", auction }],
+      [lotFormData(lot), { kind: "lot-form", lot }],
+      [lotAskData(lot, "title"), { kind: "lot-ask", lot, field: "title" }],
+      [
+        lotAskData(lot, "description"),
+        { kind: "lot-ask", lot, field: "description" },
+      ],
+      [lotAskData(lot, "price"), { kind: "lot-ask", lot, field: "price" }],
+    ] as const;
+    for (const [data, expected] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(expected);
+    }
+  });
+
+  it("carries the step of every lot question in its cancel button and reads it back", () => {
+    const steps: readonly (readonly [string, QuestionStep])[] = [
+      [`v1:q:ln:${auction}:${key}`, { kind: "lot-new", auction, key }],
+      [`v1:q:lt:${lot}`, { kind: "lot-text", lot, field: "title" }],
+      [`v1:q:ld:${lot}`, { kind: "lot-text", lot, field: "description" }],
+      [`v1:q:lp:${lot}`, { kind: "lot-price", lot }],
+      // Наибольшая цена, которую принимает разбор ответа, помещается в кнопку.
+      [
+        `v1:q:ls:${lot}:${maxLotRubles}`,
+        { kind: "lot-step", lot, price: maxLotRubles },
+      ],
+      [`v1:q:ls:${lot}:1`, { kind: "lot-step", lot, price: 1 }],
+    ];
+    // Самый длинный Telegram id — 16 цифр; с ним шаг обязан уложиться в кнопку.
+    const askedBy = 9007199254740991;
+    for (const [data, step] of steps) {
+      const asked = `${data}:${askedBy}`;
+      expect(questionData(step, askedBy)).toBe(asked);
+      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+      expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+    }
+  });
+
+  it("rejects a lot callback with a broken token, field, price or shape", () => {
+    for (const data of [
+      "v1:lot",
+      "v1:lot:new",
+      "v1:lot:new:short",
+      `v1:lot:new:${auction}:extra`,
+      `v1:lot:form:${lot}:extra`,
+      `v1:lot:ask:${lot}`,
+      `v1:lot:ask:${lot}:step`,
+      `v1:lot:drop:${lot}`,
+      `v1:q:ln:${auction}`,
+      `v1:q:ln:${auction}:short`,
+      `v1:q:ln:${auction}:${lot}`,
+      `v1:q:lt:${lot}:extra`,
+      `v1:q:lp:${lot}:extra`,
+      `v1:q:ls:${lot}`,
+      `v1:q:ls:${lot}:0`,
+      `v1:q:ls:${lot}:015`,
+      `v1:q:ls:${lot}:${maxLotRubles + 1}`,
+      `v1:q:ls:${lot}:1e3`,
+      `v1:q:ls:${lot}:-5`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }

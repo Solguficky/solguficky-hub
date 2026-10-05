@@ -9,6 +9,7 @@ import auction.lot.CloseLotRejected
 import auction.lot.Decision
 import auction.lot.Envelope
 import auction.lot.Lot
+import auction.lot.LotConfigInput
 import auction.lot.LotEvent
 import auction.lot.LotFixtures
 import auction.lot.LotFixtures.op
@@ -16,6 +17,10 @@ import auction.lot.LotFixtures.participant
 import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.ScheduleLot
+import auction.lot.ScheduleLotRejected
+import auction.lot.StepPolicyInput
+import auction.lot.StepPolicyInvalid
 import auction.lot.UnsoldReason
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorRef
@@ -105,6 +110,20 @@ final class AuctionEntitySpec
       else Future.successful(answer)
     }
 
+    private var conditions = Vector.empty[(LotId, ScheduleLot, Initiator)]
+
+    def plans: Vector[(LotId, ScheduleLot, Initiator)] = synchronized(conditions)
+
+    def schedule(lot: LotId, command: ScheduleLot, initiator: Initiator): Future[Either[ScheduleLotRejected, Unit]] =
+      synchronized {
+        conditions :+= (lot, command, initiator)
+        if (lost(lot)) Promise[Either[ScheduleLotRejected, Unit]]().future
+        else
+          Future.successful(
+            Lot.decide(lots(lot), command).map(decision => written(lot, command.opId, decision)).map(_ => ())
+          )
+      }
+
     private def opening(event: LotEvent): Option[Instant] =
       event match {
         case opened: LotEvent.LotOpened => opened.deadline
@@ -179,6 +198,18 @@ final class AuctionEntitySpec
     )
 
   private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Roster(_)).reply
+
+  private val step = StepPolicyInput.Fixed(LotFixtures.money(250))
+
+  /**
+   * Ответ на условия торгов приходит после ответа лота, вторым сообщением entity, поэтому его ждёт проба, а не
+   * `runCommand` с ответом. Возвращает события, записанные самой командой, и пробу.
+   */
+  private def plan(opN: Int, planned: LotId = other, policy: StepPolicyInput = step) = {
+    val answer = kit.createTestProbe[Either[ScheduleAuctionLotRejected, Unit]]()
+    val command = ScheduleAuctionLot(planned, LotFixtures.money(5000), policy, op(opN))
+    (entity.runCommand(AuctionEntity.PlanLot(command, administrator, answer.ref)).events, answer)
+  }
 
   /** Аукцион с реестром `registry`, запланированный на неделю Ф-4: события 1…N+2, старт — следующим `op_id`. */
   private def scheduledWith(registry: LotId*): Int = {
@@ -316,6 +347,74 @@ final class AuctionEntitySpec
       entity.restart()
       roster shouldBe LotRoster.empty
       lots.asked shouldBe empty
+    }
+
+    "sends the conditions to a lot of its registry in the name of the administrator and writes nothing itself" in {
+      draft(1)
+      add(2, other)
+      val (events, answer) = plan(3)
+      answer.expectMessage(Right(()))
+      events shouldBe empty
+      entity.getState().sequence shouldBe 2
+      lots.plans shouldBe Vector(
+        (
+          other,
+          ScheduleLot(
+            LotFixtures.money(5000),
+            LotConfigInput(LotFixtures.rub, step, LotFixtures.antiSnipe, proxyEnabled = true),
+            op(3)
+          ),
+          administrator
+        )
+      )
+      lots.stateNow(other) shouldBe a[LotState.Scheduled]
+    }
+
+    "passes the refusal of the lot through and leaves the lot as it was" in {
+      draft(1)
+      add(2, other)
+      val (_, answer) = plan(3, policy = StepPolicyInput.Fixed(LotFixtures.money(0)))
+      answer.expectMessage(
+        Left(
+          ScheduleAuctionLotRejected.ByLot(ScheduleLotRejected.StepPolicyInvalid(StepPolicyInvalid.StepNotPositive))
+        )
+      )
+      lots.stateNow(other) shouldBe LotState.Draft
+    }
+
+    "refuses the conditions of a lot outside its registry without reaching the lot" in {
+      draft(1)
+      val (_, answer) = plan(2)
+      answer.expectMessage(Left(ScheduleAuctionLotRejected.LotNotInAuction))
+      lots.plans shouldBe empty
+    }
+
+    "refuses new conditions once prebidding started and does not reach the lot" in {
+      val opening = scheduledWith(lot, other)
+      start(opening).reply.isRight shouldBe true
+      val (events, answer) = plan(opening + 1)
+      answer.expectMessage(Left(ScheduleAuctionLotRejected.LotsFrozen))
+      events shouldBe empty
+      lots.plans shouldBe empty
+      lots.stateNow(other) shouldBe LotState.Draft
+    }
+
+    "opens a lot that got its conditions right before the start" in {
+      val opening = scheduledWith(other)
+      val (_, answer) = plan(opening)
+      start(opening + 1).reply.isRight shouldBe true
+      answer.expectMessage(Right(()))
+      eventually(roster.active shouldBe Set(other))
+    }
+
+    "stays silent and keeps answering when the lot does not answer the conditions" in {
+      lots.lost = Set(other)
+      draft(1)
+      add(2, other)
+      val (_, answer) = plan(3)
+      answer.expectNoMessage()
+      entity.runCommand[Inspection](AuctionEntity.Inspect(op(4), _)).reply shouldBe
+        Inspection.Present(meetup, registryOpen = true)
     }
 
     "keeps the config and the start of prebidding over a restart from a snapshot" in {

@@ -124,6 +124,15 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         Right(Decision.Repeated(journal.entries.head))
     }
 
+    "refuse a schedule under the op_id of another command instead of answering with its envelope" in {
+      val (_, born) = Journal.of(Lot.initial).draft(draftLot(opN = 1))
+
+      val (result, after) = born.schedule(scheduleLot(opN = 1))
+
+      result shouldBe Left(ScheduleLotRejected.OpIdTaken)
+      after shouldBe born
+    }
+
     "open trading from the schedule at its starting price with no leader, the online phase and the given deadline" in {
       val (result, journal) = Journal.of(scheduled(startingPrice = 500)).open(openLot(opN = 1))
 

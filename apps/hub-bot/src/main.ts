@@ -149,7 +149,15 @@ async function main(): Promise<number> {
   if (auction === undefined) {
     logger.info("AUCTION_GRPC_URL is not set: meetup auctions are off");
   }
-  const dispatcher = createDispatcher(meetups, notifications, today, auction);
+  // Клиент Auction один в двух ролях диспетчера: оболочка сходки и форма
+  // лота администратора.
+  const dispatcher = createDispatcher(
+    meetups,
+    notifications,
+    today,
+    auction,
+    auction,
+  );
   const identity = createIdentityClient(identityUrl, {
     communityTimeZone,
     tracing,

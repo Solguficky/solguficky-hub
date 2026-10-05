@@ -3,6 +3,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   type AuctionResult,
   type AuctionScreenBody,
+  encodeAuctionCallback,
   type LotImagePort,
   parseAuctionCallback,
   type Viewer,
@@ -27,8 +28,12 @@ import {
 } from "../application/meetup-form.js";
 import type {
   BroadcastAudience,
+  ExecuteRequest,
   ExecuteResult,
   FormField,
+  LotAskError,
+  LotFormView,
+  LotQuestion,
   MeetupAuthor,
   MeetupStateAction,
   Person,
@@ -94,6 +99,7 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
+import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
 import {
   classifySendFailure,
   telegramTextLimit,
@@ -146,6 +152,14 @@ import {
   toUpcoming,
   withNav,
 } from "./screens/kit.js";
+import {
+  lotFormScreen,
+  lotQuestionText,
+  lotRefusalText,
+  lotSavedNote,
+  toLot,
+  toLots,
+} from "./screens/lot-form.js";
 import {
   archiveScreen,
   cardScreen,
@@ -317,7 +331,12 @@ type ProductUseCase =
   | "manage_notifications"
   | "send_broadcast"
   | "view_auction"
-  | "enable_auction";
+  | "enable_auction"
+  | "manage_lot";
+// Сбой Auction на ответе формы лота: вопрос остаётся открытым, и тот же ответ
+// можно прислать ещё раз.
+const lotSaveRetryText =
+  "Не получилось сохранить. Это на моей стороне. Пришли ответ ещё раз через минуту.";
 const questionTtlMs = 60 * 60 * 1_000;
 const questionLimit = 1_000;
 const publishMomentPrompt =
@@ -420,6 +439,14 @@ type PendingChannelLabel = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос формы лота (PER-319). Шаг целиком лежит в кнопке вопроса, поэтому
+// запись в карте — только ускорение: ответ после рестарта принимается так же.
+type PendingLot = {
+  kind: "lot";
+  question: LotQuestion;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput =
   | PendingQuestion
   | PendingPublishMoment
@@ -428,7 +455,8 @@ type PendingInput =
   | PendingChannelLabel
   | PendingMaterialInput
   | PendingMaterialTitle
-  | PendingBroadcastBody;
+  | PendingBroadcastBody
+  | PendingLot;
 
 type UpdateContext = TracedContext & {
   requestId?: string;
@@ -908,6 +936,56 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
+      pending?.kind === "lot" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_lot";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign lot form answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      // Вопрос формы задаётся только администратору, но старый вопрос остаётся
+      // в чате, и шаг его кнопки можно прислать и чужой. Отказ приходит до
+      // Auction: иначе цена прошла бы разбор и человек получил бы второй
+      // вопрос вместо отказа.
+      if (!isAdministrator(identity.person)) {
+        await answered();
+        outcome = await refuseLotForm(ctx, identity.person);
+        return;
+      }
+      const result = await runtime.dispatcher.execute(
+        lotAnswerRequest(pending.question, ctx.message.text, {
+          identity: identity.person,
+          ...rpcCall(ctx, useCase),
+        }),
+      );
+      // Новый вопрос сам снимает прежний после того, как ушёл; остальные
+      // исходы, кроме сбоя Auction, вопрос закрывают.
+      outcome = await renderLotAnswer(ctx, questions, result, {
+        person: identity.person,
+        answered: pending.question,
+        replyId,
+      });
+      if (result.kind !== "lot-ask") await answered(result);
+      return;
+    }
+    if (
+      replyId !== undefined &&
       pending !== undefined &&
       (pending.kind === "allowed-username" || pending.kind === "meetup") &&
       ctx.message?.text !== undefined
@@ -1028,7 +1106,8 @@ async function handleMessage(
         pending.kind === "allowed-username" ||
         pending.kind === "channel-code" ||
         pending.kind === "channel-label" ||
-        pending.kind === "publish-moment") &&
+        pending.kind === "publish-moment" ||
+        pending.kind === "lot") &&
       ctx.message?.text === undefined
     ) {
       useCase =
@@ -1036,9 +1115,11 @@ async function handleMessage(
         pending.kind === "channel-code" ||
         pending.kind === "channel-label"
           ? "manage_community"
-          : pending.kind === "meetup" && pending.mode === "create"
-            ? "create_meetup"
-            : "update_meetup";
+          : pending.kind === "lot"
+            ? "manage_lot"
+            : pending.kind === "meetup" && pending.mode === "create"
+              ? "create_meetup"
+              : "update_meetup";
       if (ctx.from?.id === pending.telegramUserId) {
         const asked =
           repliedMessage !== undefined && "text" in repliedMessage
@@ -1249,6 +1330,9 @@ async function handleMessage(
       case "archived-meetup-list":
       case "auction-enabled":
       case "auction-refused":
+      case "lot-form":
+      case "lot-ask":
+      case "lot-refused":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -1342,6 +1426,23 @@ async function handleCallback(
       return;
     }
     ctx.fresh = action.trace === true || ctx.pressedGone === true;
+    // «Отмена» под вопросом о названии нового лота возвращает в ленту
+    // аукциона, а её рисует общий пакет: дальше нажатие идёт как кнопка ленты,
+    // с той же политикой хаба и тем же шлюзом.
+    if (action.kind === "lot-feed") {
+      useCase = "view_auction";
+      outcome = await handleAuctionCallback(
+        ctx,
+        runtime,
+        encodeAuctionCallback({
+          kind: "feed",
+          auctionId: tokenToUuid(action.auction),
+          page: 0,
+        }),
+        lotPhotos,
+      );
+      return;
+    }
     useCase = callbackUseCase(action.kind);
     // Вопрос о прошедшей дате задают и в форме создания, и в правке: сценарий
     // тот же, что у ответа текстом, который его породил.
@@ -1401,6 +1502,20 @@ async function handleCallback(
         error_category: "authorization",
         error: "management_forbidden",
       };
+      return;
+    }
+    // Форма лота (PER-319): входы в неё видит только администратор, но старая
+    // кнопка остаётся в чате. Вопрос отказал бы лишь после набора ответа, а
+    // экран правки без права ничего сделать не даёт, поэтому отказ приходит
+    // здесь. Право на сами команды решают Auction и Meetups.
+    if (
+      action.kind === "lot-new" ||
+      action.kind === "lot-form" ||
+      action.kind === "lot-ask"
+    ) {
+      outcome = isAdministrator(person)
+        ? await handleLotFormCallback(ctx, runtime, questions, person, action)
+        : await refuseLotForm(ctx, person);
       return;
     }
     if (action.kind === "open-material-file") {
@@ -4043,6 +4158,281 @@ async function enableAuction(
   });
 }
 
+// Форма лота администратора (PER-319): кнопки «Добавить лот», «Изменить лот»
+// и ряды экрана правки. Сюда доходит только администратор. Идентификатор
+// нового лота рождается на нажатии и едет в кнопке вопроса ключом создания,
+// поэтому ответ после рестарта и повторный ответ создают тот же лот.
+async function handleLotFormCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<CallbackAction, { kind: "lot-new" | "lot-form" | "lot-ask" }>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_lot";
+  const sent = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  if (action.kind === "lot-new") {
+    await askLotQuestion(ctx, questions, {
+      question: {
+        kind: "new",
+        auctionId: tokenToUuid(action.auction),
+        lotId: newLotId(createUuidV7()),
+      },
+    });
+    return sent("lot title requested");
+  }
+  const lotId = tokenToUuid(action.lot);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-lot-form",
+    lotId,
+    ...rpcCall(ctx, useCase),
+  });
+  if (result.kind !== "lot-form") {
+    return showLotFailure(ctx, result, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
+  if (action.kind === "lot-form") {
+    await showScreen(ctx, lotFormScreen(result.lot));
+    return sent("lot form sent");
+  }
+  // Ряд цены на экране правки стоит, пока условия открыты; старая кнопка под
+  // лотом в торгах получает отказ до вопроса, а не после двух ответов.
+  if (action.field === "price" && result.lot.terms.kind === "closed") {
+    return showLotFailure(
+      ctx,
+      { kind: "lot-refused", reason: "terms-closed", lotId },
+      { person },
+    );
+  }
+  await askLotQuestion(ctx, questions, {
+    question:
+      action.field === "price"
+        ? { kind: "price", lotId }
+        : { kind: "text", field: action.field, lotId },
+    lot: result.lot,
+  });
+  return sent("lot field requested");
+}
+
+// `replaces` — номер прежнего вопроса: его закрывает новый, когда уже ушёл.
+function askLotQuestion(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    question: LotQuestion;
+    lot?: LotFormView | undefined;
+    error?: LotAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  return askQuestion(
+    ctx,
+    questions,
+    { kind: "lot", question: ask.question, telegramUserId: ctx.from?.id ?? 0 },
+    lotQuestionText(ask.question, ask.lot, ask.error),
+    ask.replaces,
+  );
+}
+
+// Команда формы по шагу вопроса. Ключ команды создания — идентификатор самого
+// лота: он один на вопрос, поэтому повторный ответ и ответ после рестарта
+// Auction узнаёт как повтор `AddLot`, а не как вторую команду. Ключ условий
+// торгов рождается на каждый ответ: в кнопку вопроса о шаге он не помещается,
+// а условия Auction заменяет целиком, и повтор даёт тот же итог.
+function lotAnswerRequest(
+  question: LotQuestion,
+  value: string,
+  call: { identity: Person } & RpcMetadata,
+): ExecuteRequest {
+  switch (question.kind) {
+    case "new":
+      return {
+        ...call,
+        intent: "create-lot",
+        auctionId: question.auctionId,
+        lotId: question.lotId,
+        title: value,
+        opId: question.lotId,
+      };
+    case "text":
+      return {
+        ...call,
+        intent: "set-lot-text",
+        lotId: question.lotId,
+        field: question.field,
+        value,
+      };
+    case "price":
+      return {
+        ...call,
+        intent: "check-lot-price",
+        lotId: question.lotId,
+        value,
+      };
+    case "step":
+      return {
+        ...call,
+        intent: "set-lot-terms",
+        lotId: question.lotId,
+        priceRubles: question.priceRubles,
+        value,
+        opId: createUuidV7(),
+      };
+    default: {
+      const _exhaustive: never = question;
+      return _exhaustive;
+    }
+  }
+}
+
+// Итог ответа на вопрос формы лота (дизайн-код, «Доставка»): экран правки с
+// заметкой одним новым сообщением, следующий вопрос либо тот же заново.
+async function renderLotAnswer(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  result: ExecuteResult,
+  answer: { person: Person; answered: LotQuestion; replyId: number },
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_lot";
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: answer.person.identityId,
+  });
+  if (result.kind === "lot-form") {
+    await showScreen(
+      ctx,
+      lotFormScreen(
+        result.lot,
+        result.saved === undefined ? undefined : lotSavedNote[result.saved],
+      ),
+    );
+    return handled("lot form answer saved");
+  }
+  if (result.kind === "lot-ask") {
+    await askLotQuestion(ctx, questions, {
+      question: result.question,
+      lot: result.lot,
+      error: result.error,
+      replaces: answer.replyId,
+    });
+    return handled(
+      result.error === undefined
+        ? "lot form next step requested"
+        : "lot form answer asked again",
+    );
+  }
+  return showLotFailure(ctx, result, {
+    person: answer.person,
+    answered: answer.answered,
+  });
+}
+
+// Отказ формы лота: кадр с выходом туда, где видно текущее состояние. Сбой
+// Auction на ответе оставляет вопрос открытым и просит прислать ответ ещё раз;
+// на нажатии — предлагает повторить его.
+async function showLotFailure(
+  ctx: UpdateContext,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    retry?: string | undefined;
+    answered?: LotQuestion;
+  },
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_lot";
+  const identity = { identity_id: context.person.identityId };
+  if (result.kind === "lot-refused") {
+    const exit =
+      result.reason === "not-administrator" ||
+      result.reason === "auction-not-found"
+        ? menuOnly()
+        : result.reason === "lot-not-found"
+          ? // Чтения Auction отстают от команды: лот, который форма только что
+            // завела, они могут ещё не знать. Нажатие можно повторить.
+            context.retry === undefined
+            ? menuOnly()
+            : exitRetry(context.retry)
+          : result.lotId !== undefined
+            ? withNav(new InlineKeyboard(), toLot(result.lotId))
+            : result.auctionId !== undefined
+              ? withNav(new InlineKeyboard(), toLots(result.auctionId))
+              : menuOnly();
+    await showRefusal(
+      ctx,
+      result.reason === "not-administrator"
+        ? forbiddenText
+        : lotRefusalText[result.reason],
+      exit,
+    );
+    return {
+      level: "warn",
+      message: "lot form rejected",
+      result: "error",
+      use_case: useCase,
+      ...identity,
+      error_category:
+        result.reason === "not-administrator"
+          ? "authorization"
+          : result.reason === "lot-not-found" ||
+              result.reason === "auction-not-found"
+            ? "visibility"
+            : "invariant",
+      error: result.reason.replaceAll("-", "_"),
+    };
+  }
+  const forbidden =
+    result.kind === "dependency-rejected" && result.reason === "forbidden";
+  await showRefusal(
+    ctx,
+    forbidden
+      ? forbiddenText
+      : context.answered !== undefined && retryable(result)
+        ? lotSaveRetryText
+        : unavailableText,
+    forbidden || context.retry === undefined
+      ? menuOnly()
+      : exitRetry(context.retry),
+  );
+  return {
+    ...screenBoundary(result, {
+      ok: [],
+      okMessage: "lot form handled",
+      rejectedMessage: "lot form rejected",
+      useCase,
+    }),
+    ...identity,
+  };
+}
+
+// Кнопка или ответ формы лота от человека без роли администратора.
+async function refuseLotForm(
+  ctx: UpdateContext,
+  person: Person,
+): Promise<BoundaryOutcome> {
+  await showRefusal(ctx, forbiddenText, menuOnly());
+  return {
+    level: "warn",
+    message: "lot form rejected",
+    result: "error",
+    use_case: "manage_lot",
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "lot_form_forbidden",
+  };
+}
+
 // Кнопка аукциона сходки (PER-307). Политика хаба идёт первой — кадры P-14 и
 // P-17, как у любой кнопки, — затем шлюз пакета с поверхностью `hub`. Отказ
 // Auction — кадр недоступности с повтором: экран не показывается без чтения.
@@ -4155,6 +4545,9 @@ async function handleAuctionCallback(
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
+    // Входы в форму лота видит администратор — по той же роли, что правку
+    // сходки и «Включить аукцион».
+    canManage: isAdministrator(person),
   };
   const photoNote = await deliverAuctionScreen(ctx, {
     view,
@@ -4985,8 +5378,58 @@ function stepOf(pending: PendingBody): QuestionStep {
       return { kind: "channel-code" };
     case "channel-label":
       return { kind: "channel-label" };
+    case "lot":
+      return lotStepOf(pending.question);
     default: {
       const _exhaustive: never = pending;
+      return _exhaustive;
+    }
+  }
+}
+
+function lotStepOf(question: LotQuestion): QuestionStep {
+  if (question.kind === "new") {
+    return {
+      kind: "lot-new",
+      auction: uuidToToken(question.auctionId),
+      key: newLotKey(question.lotId),
+    };
+  }
+  const lot = uuidToToken(question.lotId);
+  switch (question.kind) {
+    case "text":
+      return { kind: "lot-text", lot, field: question.field };
+    case "price":
+      return { kind: "lot-price", lot };
+    case "step":
+      return { kind: "lot-step", lot, price: question.priceRubles };
+    default: {
+      const _exhaustive: never = question;
+      return _exhaustive;
+    }
+  }
+}
+
+function lotQuestionOf(
+  step: Extract<QuestionStep, { kind: `lot-${string}` }>,
+): LotQuestion {
+  if (step.kind === "lot-new") {
+    return {
+      kind: "new",
+      auctionId: tokenToUuid(step.auction),
+      lotId: newLotIdOf(step.key),
+    };
+  }
+  const lotId = tokenToUuid(step.lot);
+  switch (step.kind) {
+    case "lot-text":
+      return { kind: "text", field: step.field, lotId };
+    case "lot-price":
+      return { kind: "price", lotId };
+    case "lot-step":
+      return { kind: "step", lotId, priceRubles: step.price };
+    default: {
+      const _exhaustive: never = step;
       return _exhaustive;
     }
   }
@@ -5046,6 +5489,16 @@ function pendingOf(
       return { kind: "channel-code", telegramUserId, expiresAt };
     case "channel-label":
       return undefined;
+    case "lot-new":
+    case "lot-text":
+    case "lot-price":
+    case "lot-step":
+      return {
+        kind: "lot",
+        question: lotQuestionOf(step),
+        telegramUserId,
+        expiresAt,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -5055,7 +5508,11 @@ function pendingOf(
 
 // Действие экрана: всё, что несёт кнопка, кроме самой «Отмены» под вопросом, —
 // она сводится к действию экрана, с которого вопрос задан.
-type ScreenAction = Exclude<CallbackAction, { kind: "question" }>;
+// Лента аукциона — не действие кнопки хаба: её рисует общий пакет под доменом
+// `auc`, а сюда ведёт только «Отмена» вопроса о новом лоте.
+type ScreenAction =
+  | Exclude<CallbackAction, { kind: "question" }>
+  | { kind: "lot-feed"; auction: string; trace?: never };
 
 // Куда возвращает «Отмена»: экран, с которого вопрос задан.
 function cancelTarget(step: QuestionStep): ScreenAction {
@@ -5082,6 +5539,13 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "channel-code":
     case "channel-label":
       return { kind: "source-channels", page: 0 };
+    case "lot-new":
+      // Вопрос о названии задан из ленты аукциона: лота ещё нет.
+      return { kind: "lot-feed", auction: step.auction };
+    case "lot-text":
+    case "lot-price":
+    case "lot-step":
+      return { kind: "lot-form", lot: step.lot };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -5290,6 +5754,9 @@ function callbackUseCase(
     | "manage-draft"
     | "manage-status"
     | "manage-auction"
+    | "lot-new"
+    | "lot-form"
+    | "lot-ask"
     | "manage-publish"
     | "manage-unpublish"
     | "manage-confirm-unpublish"
@@ -5397,6 +5864,10 @@ function callbackUseCase(
       return "manage_notifications";
     case "manage-auction":
       return "enable_auction";
+    case "lot-new":
+    case "lot-form":
+    case "lot-ask":
+      return "manage_lot";
     case "home":
     case "hub":
     case "archive":

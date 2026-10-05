@@ -301,6 +301,27 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Условия торгов лоту идут через аукцион (ADR-047): право — у Meetups, заморозку и реестр решает аукцион, И-15 и
+   * валюту — лот. Один срок ожидания накрывает оба перехода.
+   */
+  def scheduleLot(in: wire.ScheduleLotRequest): Future[wire.ScheduleLotResponse] =
+    RequestMapping.scheduleLot(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .scheduleLot(
+            command.auctionId,
+            command.lotId,
+            command.startingPrice,
+            command.stepPolicy,
+            command.opId,
+            command.acting.participant
+          )
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.scheduleLot(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Чтения аукционов идут из read model и видимость сходки не проверяют (ADR-047): путь «сходка → аукцион» есть только
    * у бота хаба после ответа Meetups, а списки сходку не называют. Аукциона у сходки нет — пустой ответ, а не ошибка.
    */

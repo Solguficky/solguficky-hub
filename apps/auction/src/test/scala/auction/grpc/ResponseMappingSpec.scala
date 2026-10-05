@@ -1,5 +1,7 @@
 package auction.grpc
 
+import auction.aggregate.Denial
+import auction.aggregate.LotSchedulingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.ImageVersion
 import auction.catalog.LotCard
@@ -11,7 +13,9 @@ import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.LotFixtures.*
 import auction.lot.PlaceBidRejected
+import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimitRejected
+import auction.lot.StepPolicyInvalid
 import auction.lot.WithdrawProxyLimitRejected
 import auction.projection.LotImageView
 import auction.v1.auction.Money as MoneyMessage
@@ -117,6 +121,29 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         .isUnsupportedImage shouldBe true
       ResponseMapping.editLotCard(Left(CatalogRefusal.UnsupportedImage)).getRefused.reason.isUnsupportedImage shouldBe
         true
+    }
+
+    "answers accepted conditions of a lot without data and every refusal of the right, the auction and the lot as a value" in {
+      def reason(refusal: LotSchedulingRefusal): wire.ScheduleLotRefusal.Reason =
+        ResponseMapping.scheduleLot(Left(refusal)).value.getRefused.reason
+      ResponseMapping.scheduleLot(Right(())).value.outcome.isAccepted shouldBe true
+      reason(LotSchedulingRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
+      reason(LotSchedulingRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
+      reason(LotSchedulingRefusal.Denied(Denial.LotsFrozen)).isLotsFrozen shouldBe true
+      reason(LotSchedulingRefusal.LotNotInAuction).isLotNotInAuction shouldBe true
+      reason(LotSchedulingRefusal.ByLot(ScheduleLotRejected.SchedulingClosed)).isSchedulingClosed shouldBe true
+      reason(
+        LotSchedulingRefusal.ByLot(ScheduleLotRejected.StepPolicyInvalid(StepPolicyInvalid.StepNotPositive))
+      ).isStepPolicyInvalid shouldBe true
+      reason(LotSchedulingRefusal.ByLot(ScheduleLotRejected.CurrencyMismatch)).isCurrencyMismatch shouldBe true
+    }
+
+    "answers conditions of a lot with a status when the refusal is not a decision to show" in {
+      def code(refusal: LotSchedulingRefusal): Status.Code =
+        ResponseMapping.scheduleLot(Left(refusal)).left.value.getCode
+      code(LotSchedulingRefusal.Denied(Denial.Unavailable)) shouldBe Status.Code.UNAVAILABLE
+      code(LotSchedulingRefusal.Denied(Denial.AuctionNotFound)) shouldBe Status.Code.NOT_FOUND
+      code(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken)) shouldBe Status.Code.ALREADY_EXISTS
     }
 
     "answers an image read with the stored bytes, their type and their own version" in {

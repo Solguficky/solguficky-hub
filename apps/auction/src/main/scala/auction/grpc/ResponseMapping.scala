@@ -3,6 +3,7 @@ package auction.grpc
 import auction.aggregate.AuctionState
 import auction.aggregate.Denial
 import auction.aggregate.Drafted
+import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.RemovalRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
@@ -12,6 +13,7 @@ import auction.lot.LotEvent
 import auction.lot.Money
 import auction.lot.ParticipantId
 import auction.lot.PlaceBidRejected
+import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimitRejected
 import auction.naming.DisplayKind
@@ -283,6 +285,39 @@ object ResponseMapping {
       case Left(RemovalRefusal.Denied(Denial.LotOfAnotherAuction)) =>
         throw new IllegalStateException("lot removal answered LotOfAnotherAuction")
     }
+
+  /**
+   * Отказы `ScheduleLot` трёх источников — право, аукцион и лот — одним `oneof`. `OpIdTaken` — статус, как у команд
+   * участника. Лот реестра без журнала невозможен: `AddLot` рождает лот раньше, чем пишет его в реестр.
+   */
+  def scheduleLot(outcome: Either[LotSchedulingRefusal, Unit]): Either[Status, wire.ScheduleLotResponse] =
+    outcome match {
+      case Right(()) => Right(wire.ScheduleLotResponse().withAccepted(wire.LotSchedulingAccepted()))
+      case Left(LotSchedulingRefusal.LotNotInAuction) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.LotNotInAuction(wire.LotNotInAuction())))
+      case Left(LotSchedulingRefusal.Denied(Denial.NotAdministrator)) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
+      case Left(LotSchedulingRefusal.Denied(Denial.MeetupNotFound)) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(LotSchedulingRefusal.Denied(Denial.LotsFrozen)) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.LotsFrozen(wire.LotsFrozen())))
+      case Left(LotSchedulingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(LotSchedulingRefusal.Denied(Denial.LotOfAnotherAuction)) =>
+        throw new IllegalStateException("lot scheduling answered LotOfAnotherAuction")
+      case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.SchedulingClosed)) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.SchedulingClosed(wire.SchedulingClosed())))
+      case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.StepPolicyInvalid(_))) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.StepPolicyInvalid(wire.StepPolicyInvalid())))
+      case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.CurrencyMismatch)) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.CurrencyMismatch(wire.CurrencyMismatch())))
+      case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken)) => Left(opIdTaken)
+      case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.LotNotFound)) =>
+        throw new IllegalStateException("a lot of the registry has no journal")
+    }
+
+  private def schedulingRefused(reason: wire.ScheduleLotRefusal.Reason): wire.ScheduleLotResponse =
+    wire.ScheduleLotResponse().withRefused(wire.ScheduleLotRefusal(reason))
 
   /**
    * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у

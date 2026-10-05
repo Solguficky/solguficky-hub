@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { FormField } from "../application/types.js";
+import type { FormField, LotTextField } from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
 import type {
   MeetupCategory,
@@ -159,6 +159,11 @@ type PlainAction =
   // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
   // здесь нет: она домена `auc`, и её пишет и разбирает общий пакет.
   | { kind: "manage-auction"; token: string }
+  // Форма лота администратора (PER-319). Кнопки несут лот, а новый лот —
+  // аукцион: сходку форма не называет, её знает Auction.
+  | { kind: "lot-new"; auction: string }
+  | { kind: "lot-form"; lot: string }
+  | { kind: "lot-ask"; lot: string; field: LotFormField }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string }
@@ -277,12 +282,49 @@ export type QuestionStep =
   // Код канала в 64 байта рядом с префиксом не помещается, поэтому подпись,
   // как название материала, принимается только по карте вопросов в памяти.
   | { kind: "channel-code" }
-  | { kind: "channel-label" };
+  | { kind: "channel-label" }
+  // Вопросы формы лота (PER-319). Идентификатор нового лота рождён до вопроса
+  // и едет в нём: ответ после рестарта создаёт тот же лот, а не второй. Вопрос
+  // о шаге несёт цену из предыдущего ответа в целых рублях — в Auction они
+  // уходят одной командой. Самая длинная строка — `ln`, 53 байта.
+  // `key` — ключ создания, а не токен лота: см. `new-lot-id.ts`.
+  | { kind: "lot-new"; auction: string; key: string }
+  | { kind: "lot-text"; lot: string; field: LotTextField }
+  | { kind: "lot-price"; lot: string }
+  | { kind: "lot-step"; lot: string; price: number };
+
+/** Ряд экрана правки лота: текст карточки либо цена с шагом, парой. */
+export type LotFormField = LotTextField | "price";
+
+const LotFormFieldSchema = z.enum(["title", "description", "price"]);
+// Ключ создания лота: двенадцать символов вместо двадцати двух у токена.
+const LotKeySchema = z.string().regex(/^[A-Za-z0-9_-]{12}$/);
+// Цена в рублях в кнопке вопроса о шаге: от 1 до 9 999 999, без ведущих нулей,
+// — та же граница, что у разбора ответа (`parseRubles`).
+const RublesSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,6}$/)
+  .transform(Number);
+
+/** Данные кнопки «Добавить лот» в ленте аукциона; аргумент — токен аукциона. */
+export function lotNewData(auction: string): string {
+  return `v1:lot:new:${auction}`;
+}
+
+/** Данные кнопки входа на экран правки лота; аргумент — токен лота. */
+export function lotFormData(lot: string): string {
+  return `v1:lot:form:${lot}`;
+}
+
+/** Данные кнопки ряда на экране правки лота. */
+export function lotAskData(lot: string, field: LotFormField): string {
+  return `v1:lot:ask:${lot}:${field}`;
+}
 
 /**
  * Данные кнопки «Отмена» для вопроса с этим шагом, заданного человеку
- * `askedBy`. Id идёт последней частью: самый длинный шаг — `ms` с девятью
- * цифрами версии — занимает с ним 57 байт из 64.
+ * `askedBy`. Id идёт последней частью: самый длинный шаг — `ln` с токеном
+ * аукциона и ключом создания лота — занимает с ним 60 байт из 64.
  */
 export function questionData(step: QuestionStep, askedBy: number): string {
   return `${stepData(step)}:${askedBy}`;
@@ -290,6 +332,14 @@ export function questionData(step: QuestionStep, askedBy: number): string {
 
 function stepData(step: QuestionStep): string {
   switch (step.kind) {
+    case "lot-new":
+      return `v1:q:ln:${step.auction}:${step.key}`;
+    case "lot-text":
+      return `v1:q:${step.field === "title" ? "lt" : "ld"}:${step.lot}`;
+    case "lot-price":
+      return `v1:q:lp:${step.lot}`;
+    case "lot-step":
+      return `v1:q:ls:${step.lot}:${step.price}`;
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
@@ -464,6 +514,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts[1] === "bc") {
     return parseBroadcast(parts);
   }
+  if (parts[1] === "lot") {
+    return parseLot(parts);
+  }
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success || parts[1] !== "manage") {
     return { kind: "malformed" };
@@ -583,6 +636,26 @@ export function parseCallback(raw: unknown): CallbackAction {
   return { kind: "malformed" };
 }
 
+// Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>` и
+// `v1:lot:ask:<лот>:<поле>`.
+function parseLot(parts: readonly string[]): CallbackAction {
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "new") {
+    return { kind: "lot-new", auction: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "form") {
+    return { kind: "lot-form", lot: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "ask") {
+    const field = LotFormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? { kind: "lot-ask", lot: token.data, field: field.data }
+      : { kind: "malformed" };
+  }
+  return { kind: "malformed" };
+}
+
 // Telegram id пользователя: целое до 52 бит, не больше 16 цифр. Ноль — запасное
 // значение бота для update без `from`: «Отмена» под таким вопросом работает, а
 // ответ ни от кого не совпадёт с ним и будет отброшен.
@@ -612,6 +685,12 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (!token.success) return undefined;
   if (parts.length === 4) {
     switch (parts[2]) {
+      case "lt":
+        return { kind: "lot-text", lot: token.data, field: "title" };
+      case "ld":
+        return { kind: "lot-text", lot: token.data, field: "description" };
+      case "lp":
+        return { kind: "lot-price", lot: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":
@@ -625,6 +704,18 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
     }
   }
   if (parts.length !== 5) return undefined;
+  if (parts[2] === "ln") {
+    const key = LotKeySchema.safeParse(parts[4]);
+    return key.success
+      ? { kind: "lot-new", auction: token.data, key: key.data }
+      : undefined;
+  }
+  if (parts[2] === "ls") {
+    const price = RublesSchema.safeParse(parts[4]);
+    return price.success
+      ? { kind: "lot-step", lot: token.data, price: price.data }
+      : undefined;
+  }
   if (parts[2] === "ms") {
     const version = VersionSchema.safeParse(parts[4]);
     return version.success

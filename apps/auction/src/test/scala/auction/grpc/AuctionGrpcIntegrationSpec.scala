@@ -20,6 +20,7 @@ import auction.testkit.PostgresFixture
 import auction.catalog.LotImage
 import auction.catalog.TestImages
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service as wire
 import com.google.protobuf.ByteString
 import com.typesafe.config.ConfigFactory
@@ -238,6 +239,26 @@ final class AuctionGrpcIntegrationSpec
   private def auctionState(node: Node, auction: String): Auction =
     node.sharding.entityRefFor(AuctionEntity.TypeKey, auction).ask[Auction](AuctionEntity.Get(_)).futureValue
 
+  /** Условия лота, как их шлёт форма бота хаба: стартовая цена и фиксированный шаг в копейках. */
+  private def schedule(
+      auction: String,
+      lot: String,
+      price: Long = 500000,
+      step: Long = 25000
+  ): wire.ScheduleLotRequest =
+    wire.ScheduleLotRequest(
+      Some(administrator),
+      auction,
+      lot,
+      newId(),
+      Some(MoneyMessage(price, "RUB")),
+      Some(StepPolicyMessage().withFixed(MoneyMessage(step, "RUB")))
+    )
+
+  /** Сколько событий в журнале лота: окно `seen` entity хранит по записи на каждый `op_id`. */
+  private def lotJournal(node: Node, lot: String): Int =
+    node.sharding.entityRefFor(LotEntity.TypeKey, lot).ask[Lot](LotEntity.Get(_)).futureValue.seen.size
+
   "auction at a meetup grpc" should {
 
     "enables one auction per meetup: a repeated op_id answers as the first call and a new one finds it" in withNode {
@@ -329,6 +350,94 @@ final class AuctionGrpcIntegrationSpec
           .invoke(wire.AddLotRequest(Some(administrator), auction, foreign.toString, newId()))
       ) shouldBe Status.Code.FAILED_PRECONDITION
       auctionState(node, auction).lots shouldBe empty
+    }
+
+    "gives a lot of the registry its price and step through the wire and shows them in the feed with the platform terms" in withNode {
+      node =>
+        val auction = enable(node, newId()).getAccepted.auctionId
+        val lot = newId()
+        asHubBot(node.client.createLotCard())
+          .invoke(wire.CreateLotCardRequest(Some(administrator), lot, "Ваза", ""))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        asHubBot(node.client.addLot())
+          .invoke(wire.AddLotRequest(Some(administrator), auction, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        val conditions = schedule(auction, lot)
+        asHubBot(node.client.scheduleLot()).invoke(conditions).futureValue.outcome.isAccepted shouldBe true
+        // Повтор того же op_id лот узнаёт сам и второй раз условия не пишет.
+        asHubBot(node.client.scheduleLot()).invoke(conditions).futureValue.outcome.isAccepted shouldBe true
+        lotJournal(node, lot) shouldBe 2
+
+        val reader = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        eventually {
+          val listed = asHubBot(node.client.listAuctionLots())
+            .invoke(wire.ListAuctionLotsRequest(Some(reader), auction))
+            .futureValue
+            .lots
+          listed.map(_.id) shouldBe Seq(lot)
+          val snapshot = listed.head
+          snapshot.getScheduled.startingPrice shouldBe Some(MoneyMessage(500000, "RUB"))
+          snapshot.getCard.title shouldBe "Ваза"
+          val config = snapshot.getConfig
+          config.currency shouldBe "RUB"
+          config.getStepPolicy.getFixed shouldBe MoneyMessage(25000, "RUB")
+          config.getAntiSnipe.windowSeconds shouldBe 120
+          config.getAntiSnipe.extensionSeconds shouldBe 120
+          config.getAntiSnipe.maxExtensions shouldBe 3
+          config.proxyEnabled shouldBe true
+        }
+
+        // Новая правка заменяет условия целиком.
+        asHubBot(node.client.scheduleLot())
+          .invoke(schedule(auction, lot, price = 700000, step = 50000))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        eventually {
+          asHubBot(node.client.getLot())
+            .invoke(wire.GetLotRequest(Some(reader), lot))
+            .futureValue
+            .getScheduled
+            .startingPrice shouldBe Some(MoneyMessage(700000, "RUB"))
+        }
+    }
+
+    "refuses the conditions of a lot as values and leaves the lot a draft" in withNode { node =>
+      val auction = enable(node, newId()).getAccepted.auctionId
+      val lot = newId()
+      asHubBot(node.client.addLot())
+        .invoke(wire.AddLotRequest(Some(administrator), auction, lot, newId()))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      def refusal(request: wire.ScheduleLotRequest) =
+        asHubBot(node.client.scheduleLot()).invoke(request).futureValue.getRefused.reason
+
+      refusal(schedule(auction, newId())).isLotNotInAuction shouldBe true
+      refusal(schedule(auction, lot, step = 0)).isStepPolicyInvalid shouldBe true
+      refusal(schedule(auction, lot).withStartingPrice(MoneyMessage(500000, "EUR"))).isCurrencyMismatch shouldBe true
+      node.authority.answer = Authority.NotAdministrator
+      refusal(schedule(auction, lot)).isNotMeetupAdministrator shouldBe true
+      node.authority.answer = Authority.Granted
+
+      // Бот аукциона у метода не объявлен: условия лоту задаёт только форма бота хаба.
+      statusOf(
+        node.client.scheduleLot().addHeader("authorization", "Bearer auction").invoke(schedule(auction, lot))
+      ) shouldBe Status.Code.UNAUTHENTICATED
+      // `op_id`, под которым аукцион записал добавление лота, условиями не становится.
+      val added = newId()
+      asHubBot(node.client.addLot())
+        .invoke(wire.AddLotRequest(Some(administrator), auction, newId(), added))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      statusOf(asHubBot(node.client.scheduleLot()).invoke(schedule(auction, lot).withOpId(added))) shouldBe
+        Status.Code.ALREADY_EXISTS
+      lotJournal(node, lot) shouldBe 1
     }
 
     "keeps the auction, its meetup and its registry over a service restart" in {

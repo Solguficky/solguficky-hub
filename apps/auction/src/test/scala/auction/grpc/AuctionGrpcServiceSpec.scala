@@ -14,6 +14,8 @@ import auction.aggregate.MeetupId
 import auction.aggregate.RemoveLot
 import auction.aggregate.RemoveLotRejected
 import auction.aggregate.ScheduleAuction
+import auction.aggregate.ScheduleAuctionLot
+import auction.aggregate.ScheduleAuctionLotRejected
 import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
 import auction.catalog.LotCard
@@ -37,8 +39,12 @@ import auction.lot.LotFixtures.*
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
+import auction.lot.CurrencyCode
+import auction.lot.Money
+import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimit
 import auction.lot.SetProxyLimitRejected
+import auction.lot.StepPolicyInput
 import auction.lot.WithdrawProxyLimit
 import auction.lot.WithdrawProxyLimitRejected
 import auction.naming.Alias
@@ -57,6 +63,7 @@ import auction.projection.LotSnapshotView
 import auction.projection.LotViews
 import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service as wire
 import ch.qos.logback.classic.Logger as LogbackLogger
 import ch.qos.logback.classic.spi.ILoggingEvent
@@ -219,6 +226,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       fail("the auction was reached")
     def startPrebidding(auctionId: AuctionId, command: StartPrebidding, initiator: Initiator) =
       fail("the auction was reached")
+    def scheduleLot(
+        auctionId: AuctionId,
+        command: ScheduleAuctionLot,
+        initiator: Initiator
+    ): Future[Either[ScheduleAuctionLotRejected, Unit]] = fail("the auction was reached")
   }
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
@@ -802,6 +814,90 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getRefused
         .reason
         .isLotsFrozen shouldBe true
+    }
+
+    "sends the conditions of a lot through the auction and answers its refusals as values" in {
+      val meetup = MeetupId(UUID.fromString(meetupId))
+      val auctionId = Auction.idOf(meetup).value.toString
+      var received = List.empty[ScheduleAuctionLot]
+      var answer: Either[ScheduleAuctionLotRejected, Unit] = Right(())
+      val present = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = true))
+        override def scheduleLot(auctionId: AuctionId, command: ScheduleAuctionLot, initiator: Initiator) = {
+          received :+= command
+          Future.successful(answer)
+        }
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val auction = service(Unreachable, auctions = AuctionCommands(present, Unreachable, granted))
+      val request = wire.ScheduleLotRequest(
+        Some(viewer),
+        auctionId,
+        lot,
+        op,
+        Some(MoneyMessage(500000, "RUB")),
+        Some(StepPolicyMessage(StepPolicyMessage.Policy.Fixed(MoneyMessage(25000, "RUB"))))
+      )
+
+      auction.scheduleLot(request).futureValue.outcome.isAccepted shouldBe true
+      received shouldBe List(
+        ScheduleAuctionLot(
+          LotId(UUID.fromString(lot)),
+          Money(500000, CurrencyCode("RUB")),
+          StepPolicyInput.Fixed(Money(25000, CurrencyCode("RUB"))),
+          OpId(UUID.fromString(op))
+        )
+      )
+      answer = Left(ScheduleAuctionLotRejected.LotsFrozen)
+      auction.scheduleLot(request).futureValue.getRefused.reason.isLotsFrozen shouldBe true
+      answer = Left(ScheduleAuctionLotRejected.LotNotInAuction)
+      auction.scheduleLot(request).futureValue.getRefused.reason.isLotNotInAuction shouldBe true
+      answer = Left(ScheduleAuctionLotRejected.ByLot(ScheduleLotRejected.SchedulingClosed))
+      auction.scheduleLot(request).futureValue.getRefused.reason.isSchedulingClosed shouldBe true
+      answer = Left(ScheduleAuctionLotRejected.ByLot(ScheduleLotRejected.OpIdTaken))
+      statusOf(auction.scheduleLot(request)) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "refuses the conditions of a lot by a viewer meetups does not confirm, as a value and without the auction" in {
+      val meetup = MeetupId(UUID.fromString(meetupId))
+      val present = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = true))
+      }
+      val denied: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(present, Unreachable, denied))
+        .scheduleLot(
+          wire.ScheduleLotRequest(
+            Some(viewer),
+            Auction.idOf(meetup).value.toString,
+            lot,
+            op,
+            Some(MoneyMessage(500000, "RUB")),
+            Some(StepPolicyMessage(StepPolicyMessage.Policy.Fixed(MoneyMessage(25000, "RUB"))))
+          )
+        )
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+    }
+
+    "refuses the conditions of a lot without a price or a step before asking the auction" in {
+      val auctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
+      val auction = service(Unreachable)
+      val price = Some(MoneyMessage(500000, "RUB"))
+      val step = Some(StepPolicyMessage(StepPolicyMessage.Policy.Fixed(MoneyMessage(25000, "RUB"))))
+      statusOf(auction.scheduleLot(wire.ScheduleLotRequest(Some(viewer), auctionId, lot, op, None, step))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(auction.scheduleLot(wire.ScheduleLotRequest(Some(viewer), auctionId, lot, op, price, None))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(
+        auction.scheduleLot(wire.ScheduleLotRequest(Some(viewer), auctionId, lot, op, price, Some(StepPolicyMessage())))
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+      // Условия задаются только лоту аукциона сходки, UUIDv5.
+      statusOf(auction.scheduleLot(wire.ScheduleLotRequest(Some(viewer), lot, lot, op, price, step))) shouldBe
+        Status.Code.INVALID_ARGUMENT
     }
 
     "answers a scheduled auction and an auction in prebidding with their config and status" in {

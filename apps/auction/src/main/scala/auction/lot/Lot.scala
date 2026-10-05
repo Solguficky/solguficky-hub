@@ -49,23 +49,28 @@ object Lot {
    * Планирование условий торгов. Порядок проверок: состояние, затем И-15, затем валюта стартовой цены — отказ по
    * состоянию не зависит от того, что прислали, и после `LotOpened` лот отвечает `SchedulingClosed` на любой вход
    * (Т-20, Т-52). Каждая правка пишет `Schedule` целиком.
+   *
+   * `op_id` команды приходит от администратора снаружи, поэтому повтор отвечает исходным конвертом только своей команде
+   * — событию `LotScheduled`. `op_id`, записанный под другим событием лота, получает `OpIdTaken`: исходный конверт
+   * выдал бы чужое событие за принятые условия (ADR-047, дополнение 2026-10-05).
    */
   def decide(lot: Lot, command: ScheduleLot): Either[ScheduleLotRejected, Decision] =
-    lot.seen.get(command.opId) match {
-      case Some(original) => Right(Decision.Repeated(original))
-      case None =>
-        lot.state match {
-          case LotState.Initial => Left(ScheduleLotRejected.LotNotFound)
-          case LotState.Draft | LotState.Scheduled(_) =>
-            LotConfig
-              .parse(command.config)
-              .left
-              .map(ScheduleLotRejected.StepPolicyInvalid(_))
-              .flatMap(Schedule.of(command.startingPrice, _))
-              .map(schedule => Decision.Accepted(LotEvent.LotScheduled(schedule)))
-          case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
-            Left(ScheduleLotRejected.SchedulingClosed)
-        }
+    repeatOf(lot, command.opId, ScheduleLotRejected.OpIdTaken) {
+      case _: LotEvent.LotScheduled => true
+      case _ => false
+    }.getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(ScheduleLotRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) =>
+          LotConfig
+            .parse(command.config)
+            .left
+            .map(ScheduleLotRejected.StepPolicyInvalid(_))
+            .flatMap(Schedule.of(command.startingPrice, _))
+            .map(schedule => Decision.Accepted(LotEvent.LotScheduled(schedule)))
+        case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Left(ScheduleLotRejected.SchedulingClosed)
+      }
     }
 
   /**
@@ -173,7 +178,8 @@ object Lot {
    * транзакции — всегда событие самой команды, не производная ставка прокси, и участник в нём — инициатор. Чужой
    * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
    * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
-   * snapshot прежней формы читаются тем же состоянием.
+   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot` участника в событии нет, и своя команда —
+   * событие того же вида.
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))

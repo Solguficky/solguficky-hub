@@ -29,6 +29,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
   private val auctionOfMeetup = Auction.idOf(meetup)
   private val lot = LotId(new UUID(5L, 1L))
   private val person = participant(1)
+  private val step = StepPolicyInput.Fixed(money(250))
 
   private final class Auctions(inspection: Inspection) extends AuctionGateway {
     var commands: List[Any] = Nil
@@ -63,6 +64,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     def startPrebidding(auctionId: AuctionId, command: StartPrebidding, initiator: Initiator) = {
       commands :+= command
       Future.successful(startAnswer)
+    }
+
+    var planAnswer: Either[ScheduleAuctionLotRejected, Unit] = Right(())
+
+    def scheduleLot(auctionId: AuctionId, command: ScheduleAuctionLot, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(planAnswer)
     }
   }
 
@@ -296,6 +304,68 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       AuctionCommands(auctions, noLots, Meetups(Authority.NotAdministrator))
         .startPrebidding(auctionOfMeetup, op(2), person)
         .futureValue shouldBe Right(())
+      auctions.commands shouldBe empty
+    }
+
+    "sends the conditions of a lot to the auction once meetups confirms the administrator" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      AuctionCommands(auctions, noLots, granted)
+        .scheduleLot(auctionOfMeetup, lot, money(5000), step, op(4), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(ScheduleAuctionLot(lot, money(5000), step, op(4)))
+    }
+
+    "answers the conditions of a lot of an auction without a journal with AuctionNotFound before meetups" in {
+      val meetups = Meetups(Authority.Granted)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .scheduleLot(auctionOfMeetup, lot, money(5000), step, op(4), person)
+        .futureValue shouldBe Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound))
+      meetups.asked shouldBe 0
+    }
+
+    "refuses the conditions of a lot that meetups does not confirm and does not reach the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Unavailable -> Denial.Unavailable
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+        AuctionCommands(auctions, noLots, Meetups(answer))
+          .scheduleLot(auctionOfMeetup, lot, money(5000), step, op(4), person)
+          .futureValue shouldBe Left(LotSchedulingRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "passes the refusals of the auction and of the lot through as refusals of the conditions" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      for (
+        (answer, refusal) <- List(
+          ScheduleAuctionLotRejected.LotsFrozen -> LotSchedulingRefusal.Denied(Denial.LotsFrozen),
+          ScheduleAuctionLotRejected.AuctionNotFound -> LotSchedulingRefusal.Denied(Denial.AuctionNotFound),
+          ScheduleAuctionLotRejected.LotNotInAuction -> LotSchedulingRefusal.LotNotInAuction,
+          ScheduleAuctionLotRejected.ByLot(ScheduleLotRejected.SchedulingClosed) ->
+            LotSchedulingRefusal.ByLot(ScheduleLotRejected.SchedulingClosed)
+        )
+      ) {
+        auctions.planAnswer = Left(answer)
+        commands.scheduleLot(auctionOfMeetup, lot, money(5000), step, op(4), person).futureValue shouldBe
+          Left(refusal)
+      }
+    }
+
+    // Аукцион `ScheduleLot` не записывает, поэтому его окно знает такой `op_id` только под другой командой.
+    "refuses the conditions of a lot under the op_id of another auction command without asking meetups or the auction" in {
+      val added = AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
+      val auctions = Auctions(Inspection.Repeated(added))
+      val meetups = Meetups(Authority.Granted)
+      AuctionCommands(auctions, noLots, meetups)
+        .scheduleLot(auctionOfMeetup, lot, money(5000), step, op(2), person)
+        .futureValue shouldBe Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken))
+      meetups.asked shouldBe 0
       auctions.commands shouldBe empty
     }
   }

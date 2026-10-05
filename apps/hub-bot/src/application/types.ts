@@ -32,6 +32,69 @@ export type DeepLink =
   | { kind: "source"; code: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
+
+// Форма лота администратора (PER-319). Текст лота — карточка каталога, и она
+// правится в любом состоянии лота. Цена и шаг — условия торгов: Auction
+// принимает их только парой и только до старта торгов.
+export type LotTextField = "title" | "description";
+
+/**
+ * Идентификатор лота, которого ещё нет. Его рождает край до вопроса о названии
+ * и возит в кнопке вопроса ключом создания — короче самого идентификатора.
+ * Бренд не даёт подставить сюда идентификатор существующего лота: тот в ключ не
+ * сворачивается, и кнопка назвала бы другой лот.
+ */
+export type NewLotId = string & { readonly __newLot: true };
+
+// Что спросил вопрос формы лота. Этого хватает, чтобы принять ответ: шаг
+// переживает рестарт в кнопке вопроса. У нового лота идентификатор рождён до
+// вопроса, поэтому повторный ответ создаёт тот же лот, а не второй. Вопрос о
+// шаге несёт цену из предыдущего ответа, в целых рублях.
+export type LotQuestion =
+  | { kind: "new"; auctionId: string; lotId: NewLotId }
+  | { kind: "text"; field: LotTextField; lotId: string }
+  | { kind: "price"; lotId: string }
+  | { kind: "step"; lotId: string; priceRubles: number };
+
+// Почему вопрос формы лота задан заново.
+export type LotAskError =
+  | "empty-title"
+  | "empty-description"
+  | "amount-format"
+  | "amount-range"
+  | "step-refused";
+
+// `unset` — лот без условий торгов. `closed` — торги по лоту начались или
+// закончились: условия заморожены. Шага у `set` нет, когда он не один на все
+// цены: сетку форма не показывает и не задаёт.
+export type LotTermsView =
+  | { kind: "unset" }
+  | { kind: "set"; startingPrice: LotAmount; step?: LotAmount }
+  | { kind: "closed" };
+
+// Сумма в минимальных единицах валюты, как в `auction.v1.Money`.
+export type LotAmount = { minorUnits: number; currency: string };
+
+// Лот на экране правки. Названия нет, когда у лота нет карточки каталога.
+export type LotFormView = {
+  lotId: string;
+  auctionId: string;
+  title?: string;
+  description: string;
+  terms: LotTermsView;
+};
+
+export type LotRefusal =
+  // Auction или Meetups не подтвердили администратора сходки.
+  | "not-administrator"
+  // Торги начались: в аукцион нельзя добавить лот.
+  | "lots-frozen"
+  // Торги начались: цену и шаг лота изменить нельзя.
+  | "terms-closed"
+  | "lot-not-found"
+  | "auction-not-found"
+  // Лот сняли с аукциона, пока форма была открыта.
+  | "lot-not-in-auction";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
 // механика та же — отдельное действие с подтверждением и повтором по версии.
 export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
@@ -157,7 +220,45 @@ export type ExecuteRequest =
       deadlineAt?: number;
     }
   | NotificationRequest
-  | BroadcastRequest;
+  | BroadcastRequest
+  | LotFormRequest;
+
+type LotFormCall = {
+  identity: Person;
+  requestId?: string;
+  useCase?: string;
+  deadlineAt?: number;
+};
+
+// Значения приходят строкой, как их написал человек: разбор принадлежит
+// юзкейсу, чтобы отказ разбора и отказ Auction жили в одном месте.
+export type LotFormRequest =
+  // `lotId` и `opId` рождает край. У создания ключ команды один на вопрос о
+  // названии, как и идентификатор лота; у условий торгов — свой на каждый ответ.
+  | (LotFormCall & {
+      intent: "create-lot";
+      auctionId: string;
+      lotId: NewLotId;
+      title: string;
+      opId: string;
+    })
+  | (LotFormCall & { intent: "view-lot-form"; lotId: string })
+  | (LotFormCall & {
+      intent: "set-lot-text";
+      lotId: string;
+      field: LotTextField;
+      value: string;
+    })
+  // Цена проверяется до вопроса о шаге: иначе отказ пришёл бы после второго
+  // ответа. В Auction она уходит вместе с шагом.
+  | (LotFormCall & { intent: "check-lot-price"; lotId: string; value: string })
+  | (LotFormCall & {
+      intent: "set-lot-terms";
+      lotId: string;
+      priceRubles: number;
+      value: string;
+      opId: string;
+    });
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
 // кругу сообщества, который разворачивает Notifications. Списка получателей
@@ -278,6 +379,24 @@ export type ExecuteResult =
   // Auction отказал по праву администратора сходки — отказ окончательный, и
   // бот его не повторяет.
   | { kind: "auction-refused"; reason: "not-administrator" }
+  // Экран правки лота (PER-319). `saved` — что только что записано: лот собран
+  // из ответа команды, потому что чтение Auction её ещё могло не увидеть.
+  | { kind: "lot-form"; lot: LotFormView; saved?: "created" | "text" | "terms" }
+  // Вопрос формы лота: следующий шаг либо тот же заново, с причиной отказа.
+  // Лота нет у нового лота и там, где его не читали.
+  | {
+      kind: "lot-ask";
+      question: LotQuestion;
+      lot?: LotFormView;
+      error?: LotAskError;
+    }
+  // Отказ Auction, который человеку показывают, а не повторяют.
+  | {
+      kind: "lot-refused";
+      reason: LotRefusal;
+      lotId?: string;
+      auctionId?: string;
+    }
   | {
       kind: "meetup-notification-settings";
       meetup: MeetupSnapshot;
