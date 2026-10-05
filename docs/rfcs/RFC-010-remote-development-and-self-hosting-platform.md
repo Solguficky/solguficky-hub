@@ -326,7 +326,7 @@ Backup отделяется от переносимой конфигурации
 | Незаменимые application files | named volumes | restic hourly/daily по RPO |
 | Dev/agent workspaces | Git branches/worktrees | hourly restic, исключая caches/build outputs/token caches |
 | SOPS ciphertext | private Git | repository mirror |
-| age recovery identities | root-owned storage общего хоста | password manager/offline encrypted escrow, отдельно от ciphertext |
+| age recovery identities | root-owned storage общего хоста | escrow из двух мест — password manager и офлайн-копия, отдельно от ciphertext |
 | Recovery manifest | signed metadata рядом с off-provider backup | Ansible commit, OS, PostgreSQL major, pgBackRest version/config, application digest, schema version и связанные restic snapshots |
 | Metrics/logs | local bounded retention | не блокируют restore; нужная incident retention решается отдельно |
 
@@ -438,6 +438,7 @@ PER-80 должен дать владельцу практику безопас�
 - отдельный production VPS не входит в обязательную последовательность и появляется только по сигналу необходимости из ADR-039;
 - production backup остаётся у другого provider/account, чтобы отказ текущего VPS не уничтожил обе копии; объектное хранилище того же регистратора, что VPS, этим условием не является;
 - object storage, как и регистратор, выбирается операционно и в платформу не входит. Годится провайдер, который принимает доступный владельцу способ оплаты и даёт: отдельные writer и maintenance credentials, где writer не удаляет данные; versioning и Object Lock в governance mode; lifecycle для noncurrent versions. Delete для writer только на префиксе `locks/`, выраженный bucket policy, требуется, если restic останется в контуре: при декларативном ops-репозитории нужен ли файловый бэкап, решает инвентаризация состояния (PER-382). Хранилище, выбранное без этого критерия, при появлении restic перепроверяется или получает отдельный bucket под restic. Срез сравнения кандидатов — в приложении «Кандидаты object storage» в конце документа; выбор делает владелец, и в документ он не записывается;
+- каждая age identity и каждый пароль restic repository лежат в recovery escrow из двух мест с независимыми причинами отказа: одно — облачный password manager под отдельным аккаунтом с MFA, другое — офлайн-копия на бумаге, для чтения которой не нужен пароль, хранимый только в первом месте. Ни одно из мест не VPS, не аккаунт его провайдера, не Git и не среда coding agents. Конкретные места, как и провайдер object storage, выбирает владелец, и в документ они не записываются. Проверяет escrow владелец: раз в квартал и после каждой новой или перевыпущенной identity он расшифровывает тестовый файл копией из одного места на машине, где копии из другого места нет, и в следующий раз берёт другое место; дата проверки без значений ключей отмечается в трекере. Утрачена одна копия, но её не могли прочитать — в тот же день из уцелевшей делается новая и проверяется расшифровкой, а до этого новые секреты под эту identity не шифруются. Копию могли прочитать (украдена бумага, взломан аккаунт) — identity считается скомпрометированной и ротируется вместе с перешифровкой всего, что на неё зашифровано;
 - алерты этого RFC и внешний dead-man's switch исполняет облачный бэкенд наблюдаемости, а на хосте работает только Collector: сервисы шлют OTLP в него, бэкенд — Better Stack ([ADR-053](../decisions/ADR-053-production-observability-otlp-better-stack.md)). Журнал хоста хранит логи прод-контура дольше трёх дней окна бэкенда; сам срок остаётся открытым в строке Metrics/logs таблицы хранения и фиксируется при подключении на хосте.
 
 ### Решения владельца до реализации
@@ -449,7 +450,7 @@ PER-80 должен дать владельцу практику безопас�
 5. Достаточны ли RPO 5 минут, file RPO 1 час, disaster RTO 2 часа и planned downtime 15 минут?
 6. Нужен ли offline OCI export для redeploy при недоступности GHCR, или достаточно предыдущих images в local storage и registry availability?
 7. Какой срок хранения dev/agent histories допустим с точки зрения приватности и стоимости?
-8. Где хранится recovery escrow для age/restic и кто проверяет его доступность?
+8. Закрыт: требования к recovery escrow и процедура его проверки перенесены в «Принято владельцем», конкретные места выбирает владелец.
 
 ### Вопросы, которые закрываются spike/измерением
 
