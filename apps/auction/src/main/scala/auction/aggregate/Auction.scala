@@ -12,13 +12,16 @@ import java.util.UUID
 final case class MeetupId(value: UUID)
 
 /**
- * Где аукцион (ADR-047, дополнение 2026-10-03). `Initial` — аукцион без журнала: под шардингом entity поднимается на
- * любой `auction_id`, и из `Initial` выводит только `AuctionDrafted`. `Draft` — после рождения. Следующие состояния
- * приносит планирование и открытие торгов (PER-325).
+ * Где аукцион (ADR-047). `Initial` — аукцион без журнала: под шардингом entity поднимается на любой `auction_id`, и из
+ * `Initial` выводит только `AuctionDrafted`. `Draft` — после рождения. `Scheduled` несёт проверенную конфигурацию,
+ * которую повторное планирование заменяет целиком. `Prebidding` — онлайн-торги: конфигурация и реестр заморожены, а
+ * `startedBy` — `op_id` команды открытия, с которым аукцион шлёт лотам `OpenLot`. Перерыв и финал приносит PER-334.
  */
 enum AuctionState {
   case Initial
   case Draft
+  case Scheduled(config: AuctionConfig)
+  case Prebidding(config: AuctionConfig, startedBy: OpId)
 }
 
 /** Команды аукциона. Каждая несёт `op_id`; инициатор едет в конверте, а не в команде. */
@@ -28,25 +31,51 @@ final case class AddLot(lot: LotId, opId: OpId)
 
 final case class RemoveLot(lot: LotId, opId: OpId)
 
-/** События аукциона: payload рождения — `meetup_id`, реестра — `lot_id` (ADR-047). */
+/** Планирование: конфигурация приходит непроверенной и повторяется до старта торгов, каждый раз целиком. */
+final case class ScheduleAuction(config: AuctionConfigInput, opId: OpId)
+
+/** Открытие онлайн-торгов. Лоты открывает не сама команда, а протокол подтверждения после неё ([[LotRoster]]). */
+final case class StartPrebidding(opId: OpId)
+
+/**
+ * События аукциона: payload рождения — `meetup_id`, реестра — `lot_id`, планирования — конфигурация целиком, у старта
+ * торгов payload нет (ADR-047).
+ */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId)
   case LotAdded(lot: LotId)
   case LotRemoved(lot: LotId)
+  case AuctionScheduled(config: AuctionConfig)
+  case PrebiddingStarted
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
 final case class AuctionEnvelope(sequence: Long, opId: OpId, event: AuctionEvent)
 
-/** Отказ `AddLot`: аукциона нет. `LotsFrozen` появится вместе с `PrebiddingStarted` (PER-325). */
+/** Отказы `AddLot`: аукциона нет или реестр заморожен стартом торгов (И-20). */
 enum AddLotRejected {
   case AuctionNotFound
+  case LotsFrozen
 }
 
-/** Отказы `RemoveLot`: аукциона нет или лота нет в его реестре. */
+/** Отказы `RemoveLot`: аукциона нет, реестр заморожен или лота нет в реестре. */
 enum RemoveLotRejected {
   case AuctionNotFound
+  case LotsFrozen
   case LotNotInAuction
+}
+
+/** Отказы `ScheduleAuction`: аукциона нет, конфигурация противоречива (Т-19, Т-44) или торги уже идут. */
+enum ScheduleAuctionRejected {
+  case AuctionNotFound
+  case ConfigInvalid(reason: auction.aggregate.ConfigInvalid)
+  case AuctionAlreadyStarted
+}
+
+/** Отказы `StartPrebidding`: аукциона нет либо он не в `Scheduled` — не запланирован или уже открыт. */
+enum StartPrebiddingRejected {
+  case AuctionNotFound
+  case AuctionNotScheduled
 }
 
 /**
@@ -63,19 +92,21 @@ enum AuctionDecision {
 
 /**
  * Что знает аукцион до проверки права (ADR-047, «Порядок»): повтор уже принятого `op_id`, аукциона нет или аукцион
- * сходки `meetup`. Первые два ответа отдаются без обращения к Meetups.
+ * сходки `meetup`. Первые два ответа отдаются без обращения к Meetups. `registryOpen` — открыт ли реестр (И-20): по
+ * нему `AddLot` отказывает раньше, чем лот родится.
  */
 enum Inspection {
   case Repeated(original: AuctionEnvelope)
   case Absent
-  case Present(meetup: MeetupId)
+  case Present(meetup: MeetupId, registryOpen: Boolean)
 }
 
 /**
  * Агрегат аукциона: состояние, сходка, реестр лотов и окно дедупликации, свёрнутые из журнала.
  *
- * `meetup` пуста ровно в `Initial` и после рождения не меняется. `seen` — то же окно, что у лота: `seen(op_id) ⟺ в
- * журнале есть событие с этим op_id`, и пишет его только [[Auction.apply]].
+ * `meetup` пуста ровно в `Initial` и после рождения не меняется. Реестр `lots` меняется только в `Draft` и `Scheduled`
+ * (И-20). `seen` — то же окно, что у лота: `seen(op_id) ⟺ в журнале есть событие с этим op_id`, и пишет его только
+ * [[Auction.apply]].
  */
 final case class Auction(
     state: AuctionState,
@@ -111,7 +142,14 @@ object Auction {
   def inspect(auction: Auction, opId: OpId): Inspection =
     auction.seen.get(opId) match {
       case Some(original) => Inspection.Repeated(original)
-      case None => auction.meetup.fold(Inspection.Absent)(Inspection.Present(_))
+      case None => auction.meetup.fold(Inspection.Absent)(Inspection.Present(_, registryOpen(auction.state)))
+    }
+
+  /** Реестр открыт в `Draft` и `Scheduled` и заморожен стартом торгов (И-20). */
+  private def registryOpen(state: AuctionState): Boolean =
+    state match {
+      case AuctionState.Draft | AuctionState.Scheduled(_) => true
+      case AuctionState.Initial | AuctionState.Prebidding(_, _) => false
     }
 
   /** Рождение у сходки. Аукцион, который уже есть, не отказывает и события не пишет: включение идемпотентно. */
@@ -121,7 +159,8 @@ object Auction {
       case None =>
         auction.state match {
           case AuctionState.Initial => AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(command.meetup))
-          case AuctionState.Draft => AuctionDecision.Unchanged
+          case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) =>
+            AuctionDecision.Unchanged
         }
     }
 
@@ -136,8 +175,9 @@ object Auction {
       case None =>
         auction.state match {
           case AuctionState.Initial => Left(AddLotRejected.AuctionNotFound)
-          case AuctionState.Draft =>
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
             Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(command.lot)))
+          case AuctionState.Prebidding(_, _) => Left(AddLotRejected.LotsFrozen)
         }
     }
 
@@ -148,10 +188,46 @@ object Auction {
       case None =>
         auction.state match {
           case AuctionState.Initial => Left(RemoveLotRejected.AuctionNotFound)
-          case AuctionState.Draft =>
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
             if (auction.lots.contains(command.lot))
               Right(AuctionDecision.Accepted(AuctionEvent.LotRemoved(command.lot)))
             else Left(RemoveLotRejected.LotNotInAuction)
+          case AuctionState.Prebidding(_, _) => Left(RemoveLotRejected.LotsFrozen)
+        }
+    }
+
+  /**
+   * Планирование. Состояние проверяется раньше конфигурации: после старта торгов ответ — `AuctionAlreadyStarted`, какой
+   * бы ни была конфигурация. В `Scheduled` команда пишет событие всегда и заменяет конфигурацию целиком (RFC-011).
+   */
+  def decide(auction: Auction, command: ScheduleAuction): Either[ScheduleAuctionRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(ScheduleAuctionRejected.AuctionNotFound)
+          case AuctionState.Prebidding(_, _) => Left(ScheduleAuctionRejected.AuctionAlreadyStarted)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            AuctionConfig
+              .parse(command.config)
+              .left
+              .map(ScheduleAuctionRejected.ConfigInvalid(_))
+              .map(config => AuctionDecision.Accepted(AuctionEvent.AuctionScheduled(config)))
+        }
+    }
+
+  /**
+   * Открытие онлайн-торгов — только из `Scheduled`. Повтор того же `op_id` получает исходный ответ и второй раз аукцион
+   * не открывает; новый `op_id` на уже открытом — `AuctionNotScheduled`.
+   */
+  def decide(auction: Auction, command: StartPrebidding): Either[StartPrebiddingRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(StartPrebiddingRejected.AuctionNotFound)
+          case AuctionState.Scheduled(_) => Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingStarted))
+          case AuctionState.Draft | AuctionState.Prebidding(_, _) => Left(StartPrebiddingRejected.AuctionNotScheduled)
         }
     }
 
@@ -163,8 +239,14 @@ object Auction {
     val next = (auction.state, envelope.event) match {
       case (AuctionState.Initial, AuctionEvent.AuctionDrafted(meetup)) =>
         auction.copy(state = AuctionState.Draft, meetup = Some(meetup))
-      case (AuctionState.Draft, AuctionEvent.LotAdded(lot)) => auction.copy(lots = auction.lots + lot)
-      case (AuctionState.Draft, AuctionEvent.LotRemoved(lot)) => auction.copy(lots = auction.lots - lot)
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotAdded(lot)) =>
+        auction.copy(lots = auction.lots + lot)
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotRemoved(lot)) =>
+        auction.copy(lots = auction.lots - lot)
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionScheduled(config)) =>
+        auction.copy(state = AuctionState.Scheduled(config))
+      case (AuctionState.Scheduled(config), AuctionEvent.PrebiddingStarted) =>
+        auction.copy(state = AuctionState.Prebidding(config, envelope.opId))
       case _ => auction
     }
     val seen = if (auction.seen.contains(envelope.opId)) auction.seen else auction.seen.updated(envelope.opId, envelope)

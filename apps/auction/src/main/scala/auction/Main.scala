@@ -95,7 +95,7 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-    AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock))
+    AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock), askTimeout)
     if (meetups.url.isEmpty)
       logger.warn(
         "auction meetup authority is off: AUCTION_MEETUPS_GRPC_URL is not set, admin commands are unavailable"

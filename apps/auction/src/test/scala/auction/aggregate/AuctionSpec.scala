@@ -1,7 +1,8 @@
 package auction.aggregate
 
+import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
-import auction.lot.LotFixtures.*
+import auction.lot.LotFixtures.op
 import org.scalacheck.Gen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -19,6 +20,12 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
 
   private def born: Auction =
     Auction.apply(Auction.initial, AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)))
+
+  private def scheduled: Auction =
+    Auction.apply(born, AuctionEnvelope(2, op(2), AuctionEvent.AuctionScheduled(config())))
+
+  private def started: Auction =
+    Auction.apply(scheduled, AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted))
 
   private def applied(auction: Auction, decision: AuctionDecision, sequence: Long, opN: Int): Auction =
     decision match {
@@ -72,7 +79,7 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.inspect(withLot, op(2)) shouldBe Inspection.Repeated(
         AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
       )
-      Auction.inspect(withLot, op(3)) shouldBe Inspection.Present(meetup)
+      Auction.inspect(withLot, op(3)) shouldBe Inspection.Present(meetup, registryOpen = true)
       val without = applied(withLot, Auction.decide(withLot, RemoveLot(lot, op(3))).toOption.get, 3, 3)
       // Запоздавший повтор добавления, записанного событием, лот после снятия не возвращает.
       val twice = applied(withLot, Auction.decide(withLot, AddLot(lot, op(5))).toOption.get, 3, 5)
@@ -81,6 +88,59 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Right(AuctionDecision.Repeated(AuctionEnvelope(3, op(5), AuctionEvent.LotAdded(lot))))
       without.lots shouldBe empty
       Auction.decide(without, RemoveLot(lot, op(4))) shouldBe Left(RemoveLotRejected.LotNotInAuction)
+    }
+
+    // Т-44
+    "stays a draft when the config closes lots without closesAt" in {
+      val invalid = configInput(Some(week.copy(closesAt = None)))
+      Auction.decide(born, ScheduleAuction(invalid, op(2))) shouldBe
+        Left(ScheduleAuctionRejected.ConfigInvalid(ConfigInvalid.ClosesAtMissing))
+      Auction.inspect(born, op(2)) shouldBe Inspection.Present(meetup, registryOpen = true)
+    }
+
+    // Т-19
+    "does not become scheduled on a deadline policy without closesAt and keeps the config it had" in {
+      val invalid =
+        configInput(Some(OnlinePhase(opensAt, None, closesLots = false)), closingPolicy = ClosingPolicy.ByDeadline)
+      Auction.decide(born, ScheduleAuction(invalid, op(2))) shouldBe
+        Left(ScheduleAuctionRejected.ConfigInvalid(ConfigInvalid.ClosesAtMissing))
+      Auction.decide(scheduled, ScheduleAuction(invalid, op(3))) shouldBe
+        Left(ScheduleAuctionRejected.ConfigInvalid(ConfigInvalid.ClosesAtMissing))
+      scheduled.state shouldBe AuctionState.Scheduled(config())
+    }
+
+    "replaces the whole config on a repeated scheduling and keeps its registry open" in {
+      val again = applied(scheduled, Auction.decide(scheduled, ScheduleAuction(byAuctioneer, op(3))).toOption.get, 3, 3)
+      again.state shouldBe AuctionState.Scheduled(config(byAuctioneer))
+      val withLot = applied(again, Auction.decide(again, AddLot(lot, op(4))).toOption.get, 4, 4)
+      withLot.lots shouldBe Set(lot)
+      applied(withLot, Auction.decide(withLot, RemoveLot(lot, op(5))).toOption.get, 5, 5).lots shouldBe empty
+    }
+
+    "starts prebidding only once it is scheduled" in {
+      Auction.decide(Auction.initial, StartPrebidding(op(3))) shouldBe Left(StartPrebiddingRejected.AuctionNotFound)
+      Auction.decide(born, StartPrebidding(op(3))) shouldBe Left(StartPrebiddingRejected.AuctionNotScheduled)
+      started.state shouldBe AuctionState.Prebidding(config(), op(3))
+    }
+
+    "answers a repeated start with the original envelope and a new one with a refusal, opening once" in {
+      Auction.decide(started, StartPrebidding(op(3))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted)))
+      Auction.decide(started, StartPrebidding(op(4))) shouldBe Left(StartPrebiddingRejected.AuctionNotScheduled)
+    }
+
+    "freezes its config and its registry once prebidding started" in {
+      Auction.decide(started, ScheduleAuction(byAuctioneer, op(4))) shouldBe
+        Left(ScheduleAuctionRejected.AuctionAlreadyStarted)
+      Auction.decide(started, AddLot(lot, op(4))) shouldBe Left(AddLotRejected.LotsFrozen)
+      Auction.decide(started, RemoveLot(lot, op(4))) shouldBe Left(RemoveLotRejected.LotsFrozen)
+      Auction.inspect(started, op(4)) shouldBe Inspection.Present(meetup, registryOpen = false)
+      Auction.decide(started, DraftAuction(meetup, op(4))) shouldBe AuctionDecision.Unchanged
+    }
+
+    "refuses scheduling before it is born" in {
+      Auction.decide(Auction.initial, ScheduleAuction(configInput(), op(2))) shouldBe
+        Left(ScheduleAuctionRejected.AuctionNotFound)
     }
 
     "folds the same journal into the same auction whatever order its rows arrive in" in {

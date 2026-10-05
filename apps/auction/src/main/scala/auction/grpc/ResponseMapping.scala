@@ -6,6 +6,7 @@ import auction.aggregate.Drafted
 import auction.aggregate.RemovalRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
+import auction.contract.AuctionValues
 import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.Money
@@ -181,7 +182,7 @@ object ResponseMapping {
             )
         )
       case Left(Denial.Unavailable) => Left(unavailable)
-      case Left(Denial.AuctionNotFound | Denial.LotOfAnotherAuction) =>
+      case Left(Denial.AuctionNotFound | Denial.LotsFrozen | Denial.LotOfAnotherAuction) =>
         throw new IllegalStateException("auction draft answered a registry denial")
     }
 
@@ -202,6 +203,12 @@ object ResponseMapping {
             .AddLotResponse()
             .withRefused(wire.AddLotRefusal(wire.AddLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
         )
+      case Left(Denial.LotsFrozen) =>
+        Right(
+          wire
+            .AddLotResponse()
+            .withRefused(wire.AddLotRefusal(wire.AddLotRefusal.Reason.LotsFrozen(wire.LotsFrozen())))
+        )
       case Left(Denial.Unavailable) => Left(unavailable)
       case Left(Denial.AuctionNotFound) => Left(auctionNotFound)
       case Left(Denial.LotOfAnotherAuction) =>
@@ -217,6 +224,8 @@ object ResponseMapping {
         Right(removalRefused(wire.RemoveLotRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
       case Left(RemovalRefusal.Denied(Denial.MeetupNotFound)) =>
         Right(removalRefused(wire.RemoveLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(RemovalRefusal.Denied(Denial.LotsFrozen)) =>
+        Right(removalRefused(wire.RemoveLotRefusal.Reason.LotsFrozen(wire.LotsFrozen())))
       case Left(RemovalRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(RemovalRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
       case Left(RemovalRefusal.Denied(Denial.LotOfAnotherAuction)) =>
@@ -225,17 +234,22 @@ object ResponseMapping {
 
   /**
    * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у
-   * черновика нет; реестр — по возрастанию `lot_id`, порядок смысла не несёт.
+   * черновика нет, с `Scheduled` она есть всегда; реестр — по возрастанию `lot_id`, порядок смысла не несёт. Какие лоты
+   * подтвердили открытие, снимок не несёт: это знание entity, а не журнала.
    */
   def auctionSnapshot(view: AuctionSnapshotView): wire.AuctionSnapshot = {
-    val status = view.auction.state match {
-      case AuctionState.Draft => wire.AuctionSnapshot.Status.Draft(AuctionStateMessage.Draft())
+    val (status, config) = view.auction.state match {
+      case AuctionState.Draft => (wire.AuctionSnapshot.Status.Draft(AuctionStateMessage.Draft()), None)
+      case AuctionState.Scheduled(config) =>
+        (wire.AuctionSnapshot.Status.Scheduled(AuctionStateMessage.Scheduled()), Some(config))
+      case AuctionState.Prebidding(config, _) =>
+        (wire.AuctionSnapshot.Status.Prebidding(AuctionStateMessage.Prebidding()), Some(config))
       case AuctionState.Initial =>
         throw new IllegalStateException(s"auction view ${view.auctionId} holds an unborn auction")
     }
     wire.AuctionSnapshot(
       id = view.auctionId.toString,
-      config = None,
+      config = config.map(AuctionValues.config),
       lotIds = view.auction.lots.toList.map(_.value).sorted.map(_.toString),
       status = status
     )

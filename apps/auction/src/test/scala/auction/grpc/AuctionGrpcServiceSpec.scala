@@ -3,6 +3,7 @@ package auction.grpc
 import auction.aggregate.AddLot
 import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
+import auction.aggregate.AuctionFixtures
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.DraftAuction
@@ -10,6 +11,9 @@ import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
 import auction.aggregate.RemoveLot
+import auction.aggregate.RemoveLotRejected
+import auction.aggregate.ScheduleAuction
+import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
 import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
@@ -127,6 +131,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       fail("the auction was reached")
     def addLot(auctionId: AuctionId, command: AddLot, initiator: Initiator) = fail("the auction was reached")
     def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) = fail("the auction was reached")
+    def schedule(auctionId: AuctionId, command: ScheduleAuction, initiator: Initiator) =
+      fail("the auction was reached")
+    def startPrebidding(auctionId: AuctionId, command: StartPrebidding, initiator: Initiator) =
+      fail("the auction was reached")
   }
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
@@ -409,7 +417,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     "answers a draft to an existing meetup auction with its derived id and the already-existed mark" in {
       val existing = new Auctions {
         override def inspect(auctionId: AuctionId, opId: OpId) =
-          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId))))
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = true))
         override def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator) =
           Future.successful(AuctionAnswer.Unchanged)
       }
@@ -483,6 +491,62 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         auction.listAuctions(wire.ListAuctionsRequest(Some(viewer), active, first.nextPageToken, 2)).futureValue
       rest.auctions.map(_.id) shouldBe sorted.drop(2).map(_.toString)
       rest.nextPageToken shouldBe ""
+    }
+
+    "answers a registry command to an auction in prebidding with LotsFrozen as a value, without drafting the lot" in {
+      val auctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
+      val frozen = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) =
+          Future.successful(Left(RemoveLotRejected.LotsFrozen))
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val auction = service(Unreachable, auctions = AuctionCommands(frozen, Unreachable, granted))
+      auction
+        .addLot(wire.AddLotRequest(Some(viewer), auctionId, lot, op))
+        .futureValue
+        .getRefused
+        .reason
+        .isLotsFrozen shouldBe true
+      auction
+        .removeLot(wire.RemoveLotRequest(Some(viewer), auctionId, lot, op))
+        .futureValue
+        .getRefused
+        .reason
+        .isLotsFrozen shouldBe true
+    }
+
+    "answers a scheduled auction and an auction in prebidding with their config and status" in {
+      val meetup = MeetupId(UUID.fromString(meetupId))
+      val id = Auction.idOf(meetup).value
+      def read(state: AuctionState): wire.AuctionSnapshot = {
+        val views = new AuctionViews {
+          def byMeetup(meetup: MeetupId) =
+            Future.successful(Some(AuctionSnapshotView(id, Auction(state, Some(meetup), Set.empty, Map.empty))))
+          def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")
+        }
+        service(Unreachable, auctionViews = views)
+          .getMeetupAuction(wire.GetMeetupAuctionRequest(Some(viewer), meetupId))
+          .futureValue
+          .getAuction
+      }
+      val scheduled = read(AuctionState.Scheduled(AuctionFixtures.config()))
+      scheduled.status.isScheduled shouldBe true
+      val config = scheduled.getConfig
+      config.getOnlinePhase.opensAt shouldBe "2026-10-01T18:00:00Z"
+      config.getOnlinePhase.closesAt shouldBe Some("2026-10-08T21:00:00Z")
+      config.getOnlinePhase.closesLots shouldBe true
+      config.finalBlocks shouldBe 1
+      config.getClosingPolicy.getMixed.onlineByDeadline shouldBe true
+      config.getLotDefaults.currency shouldBe "RUB"
+      config.getLotDefaults.getStepPolicy.getFixed.minorUnits shouldBe 10
+      val started = read(AuctionState.Prebidding(AuctionFixtures.config(), OpId(UUID.fromString(op))))
+      started.status.isPrebidding shouldBe true
+      started.config shouldBe scheduled.config
+      val ledByPerson = read(AuctionState.Scheduled(AuctionFixtures.config(AuctionFixtures.byAuctioneer))).getConfig
+      ledByPerson.getOnlinePhase.closesAt shouldBe None
+      ledByPerson.getClosingPolicy.policy.isByAuctioneer shouldBe true
     }
 
     "answers UNIMPLEMENTED on display names that belong to a later slice" in {
