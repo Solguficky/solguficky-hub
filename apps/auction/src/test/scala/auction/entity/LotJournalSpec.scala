@@ -130,6 +130,18 @@ final class LotJournalSpec
       LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe tradingLot
     }
 
+    "tell the owner's repeat from another participant's in a snapshot written before the rule (ADR-047, 2026-10-05)" in {
+      val row =
+        write(kit.system, LotJournal.storeLot(tradingLot, sequence = 4)).copy(bytes = golden("legacy/lot-snapshot"))
+      val lot = LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot])
+      val original = lot.seen(op(4))
+
+      Lot.decide(lot, placeBid(who = 2, amount = 10500, opN = 4), bid(9), proxyBid(9)) shouldBe
+        Right(Decision.Repeated(original))
+      Lot.decide(lot, placeBid(who = 1, amount = 11000, opN = 4), bid(9), proxyBid(9)) shouldBe
+        Left(PlaceBidRejected.OpIdTaken)
+    }
+
     "restore every event and the whole lot with its deduplication window from what it stored" in {
       List(lotDrafted, lotScheduled, opened, placed, placedByProxy, limitSet, limitWithdrawn).zipWithIndex.foreach {
         (event, index) =>

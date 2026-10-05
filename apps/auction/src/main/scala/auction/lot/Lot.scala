@@ -89,19 +89,20 @@ object Lot {
    * их само. Второй нужен производной ставке и пропадает, если её нет.
    */
   def decide(lot: Lot, command: PlaceBid, bidId: BidId, proxyBidId: BidId): Either[PlaceBidRejected, Decision] =
-    lot.seen.get(command.opId) match {
-      case Some(original) => Right(Decision.Repeated(original))
-      case None =>
-        lot.state match {
-          case LotState.Initial => Left(PlaceBidRejected.LotNotFound)
-          case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
-          case LotState.Trading(trading) =>
-            placeBid(trading, command, bidId).map { placed =>
-              Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList)
-            }
-          case LotState.Held(_) => Left(PlaceBidRejected.LotOnHold)
-          case LotState.Sold(_) => Left(PlaceBidRejected.LotNotOpen)
-        }
+    repeatOf(lot, command.opId, PlaceBidRejected.OpIdTaken) {
+      case LotEvent.BidPlaced(_, participant, _, _, BidOrigin.Manual(_)) => participant == command.participant
+      case _ => false
+    }.getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(PlaceBidRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
+        case LotState.Trading(trading) =>
+          placeBid(trading, command, bidId).map { placed =>
+            Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList)
+          }
+        case LotState.Held(_) => Left(PlaceBidRejected.LotOnHold)
+        case LotState.Sold(_) => Left(PlaceBidRejected.LotNotOpen)
+      }
     }
 
   /**
@@ -119,20 +120,21 @@ object Lot {
       sequence: Long,
       proxyBidId: BidId
   ): Either[SetProxyLimitRejected, Decision] =
-    lot.seen.get(command.opId) match {
-      case Some(original) => Right(Decision.Repeated(original))
-      case None =>
-        lot.state match {
-          case LotState.Initial => Left(SetProxyLimitRejected.LotNotFound)
-          case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) => Left(SetProxyLimitRejected.LotNotOpen)
-          case LotState.Trading(trading) =>
-            proxyLimitSet(trading.config, floor(trading), command).map { set =>
-              val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
-              Decision.Accepted(set, resolve(after, proxyBidId).toList)
-            }
-          case LotState.Held(held) =>
-            proxyLimitSet(held.config, held.currentPrice, command).map(Decision.Accepted(_))
-        }
+    repeatOf(lot, command.opId, SetProxyLimitRejected.OpIdTaken) {
+      case LotEvent.ProxyLimitSet(participant, _) => participant == command.participant
+      case _ => false
+    }.getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(SetProxyLimitRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) => Left(SetProxyLimitRejected.LotNotOpen)
+        case LotState.Trading(trading) =>
+          proxyLimitSet(trading.config, floor(trading), command).map { set =>
+            val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
+            Decision.Accepted(set, resolve(after, proxyBidId).toList)
+          }
+        case LotState.Held(held) =>
+          proxyLimitSet(held.config, held.currentPrice, command).map(Decision.Accepted(_))
+      }
     }
 
   /**
@@ -141,22 +143,34 @@ object Lot {
    * действующего лимита нет — `NoActiveProxyLimit`.
    */
   def decide(lot: Lot, command: WithdrawProxyLimit): Either[WithdrawProxyLimitRejected, Decision] =
-    lot.seen.get(command.opId) match {
-      case Some(original) => Right(Decision.Repeated(original))
-      case None =>
-        val limits = lot.state match {
-          case LotState.Initial => None
-          case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) => Some(Map.empty[ParticipantId, ProxyLimit])
-          case LotState.Trading(trading) => Some(trading.proxyLimits)
-          case LotState.Held(held) => Some(held.proxyLimits)
-        }
-        limits match {
-          case None => Left(WithdrawProxyLimitRejected.LotNotFound)
-          case Some(active) if active.contains(command.participant) =>
-            Right(Decision.Accepted(LotEvent.ProxyLimitWithdrawn(command.participant)))
-          case Some(_) => Left(WithdrawProxyLimitRejected.NoActiveProxyLimit)
-        }
+    repeatOf(lot, command.opId, WithdrawProxyLimitRejected.OpIdTaken) {
+      case LotEvent.ProxyLimitWithdrawn(participant) => participant == command.participant
+      case _ => false
+    }.getOrElse {
+      val limits = lot.state match {
+        case LotState.Initial => None
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) => Some(Map.empty[ParticipantId, ProxyLimit])
+        case LotState.Trading(trading) => Some(trading.proxyLimits)
+        case LotState.Held(held) => Some(held.proxyLimits)
+      }
+      limits match {
+        case None => Left(WithdrawProxyLimitRejected.LotNotFound)
+        case Some(active) if active.contains(command.participant) =>
+          Right(Decision.Accepted(LotEvent.ProxyLimitWithdrawn(command.participant)))
+        case Some(_) => Left(WithdrawProxyLimitRejected.NoActiveProxyLimit)
+      }
     }
+
+  /**
+   * Повтор команды участника (ADR-047, раздел 6, дополнение 2026-10-05). `op_id` присылает внешний клиент, поэтому окно
+   * отвечает исходным конвертом только своей команде: событие того же вида от того же участника. Первый конверт
+   * транзакции — всегда событие самой команды, не производная ставка прокси, и участник в нём — инициатор. Чужой
+   * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
+   * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
+   * snapshot прежней формы читаются тем же состоянием.
+   */
+  private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
+    lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
 
   /**
    * Следующая цена: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03). До первой

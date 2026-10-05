@@ -253,9 +253,13 @@ enum OpenLotRejected {
 
 /**
  * Именованные отказы `PlaceBid` (RFC-011, «Команды и события»). Отказ событий не пишет и повтором не защищён (П-06).
+ *
+ * `OpIdTaken` у трёх команд участника — `op_id` уже записан под другой командой: чужого участника или другого вида
+ * (ADR-047, дополнение 2026-10-05). Как и `LotNotFound`, на границе это статус, а не значение ответа.
  */
 enum PlaceBidRejected {
   case LotNotFound
+  case OpIdTaken
   case LotNotOpen
   case LotOnHold
   case CurrencyMismatch
@@ -271,6 +275,7 @@ enum PlaceBidRejected {
  */
 enum SetProxyLimitRejected {
   case LotNotFound
+  case OpIdTaken
   case LotNotOpen
   case ProxyDisabledForLot
   case CurrencyMismatch
@@ -280,5 +285,6 @@ enum SetProxyLimitRejected {
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */
 enum WithdrawProxyLimitRejected {
   case LotNotFound
+  case OpIdTaken
   case NoActiveProxyLimit
 }
