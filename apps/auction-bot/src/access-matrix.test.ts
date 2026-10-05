@@ -97,6 +97,11 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
     ports: () => ({
       ...ports,
       faq: { acknowledged: async () => true, acknowledge: async () => {} },
+      // Списков матрица не открывает: лента без активных возвращает в
+      // прошедшие, и доступ от этого не зависит.
+      catalog: {
+        listAuctions: async () => ({ auctions: [], nextPageToken: "" }),
+      },
       // Байты фото доступу не нужны: карточка уходит без изображения.
       image: {
         getLotImage: () => Promise.reject(new Error("no image here")),

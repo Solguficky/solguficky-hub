@@ -82,16 +82,39 @@ export const ENTRY_ACTIONS = [
   "faq",
   "menu",
   "auctions",
+  "past",
   "details",
   "question",
 ] as const;
 export type EntryAction = (typeof ENTRY_ACTIONS)[number];
 
+// Списки аукционов листаются: номер страницы едет хвостом `:<N>`. Первая
+// страница хвоста не несёт, поэтому кнопка меню — та же строка, что и до
+// листания.
+export type ListAction = Extract<EntryAction, "auctions" | "past">;
+export const MAX_LIST_PAGE = 999;
+
+export type EntryIntent = { action: EntryAction; page: number };
+
 export function entryCallback(action: EntryAction): string {
   return `v1:entry:${action}`;
 }
 
-export function parseEntryCallback(raw: unknown): EntryAction | undefined {
+export function listCallback(action: ListAction, page: number): string {
+  return page === 0
+    ? entryCallback(action)
+    : `${entryCallback(action)}:${page}`;
+}
+
+const LIST_PAGE = /^v1:entry:(auctions|past):([1-9][0-9]{0,2})$/;
+
+// Строка — недоверенный вход. Страница принимается только в канонической
+// записи: без ведущих нулей и без `:0`, у которого есть короткая форма.
+export function parseEntryCallback(raw: unknown): EntryIntent | undefined {
   if (typeof raw !== "string") return undefined;
-  return ENTRY_ACTIONS.find((action) => raw === entryCallback(action));
+  const action = ENTRY_ACTIONS.find((each) => raw === entryCallback(each));
+  if (action !== undefined) return { action, page: 0 };
+  const paged = LIST_PAGE.exec(raw);
+  if (paged === null) return undefined;
+  return { action: paged[1] as ListAction, page: Number(paged[2]) };
 }

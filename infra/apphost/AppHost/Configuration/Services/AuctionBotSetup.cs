@@ -12,15 +12,6 @@ namespace AppHost.Configuration.Services;
 /// </summary>
 internal static class AuctionBotSetup
 {
-    /// <summary>
-    /// Аукцион, ленту которого бот открывает пунктом меню «Аукционы»
-    /// (PER-306). Не секрет и не параметр Aspire: без значения пункт отвечает,
-    /// что каталог ещё не открыт, а пустой параметр Aspire спросил бы значение
-    /// в дашборде. Задаётся user-secrets AppHost или переменной
-    /// <c>AuctionBot__AuctionId</c>.
-    /// </summary>
-    internal const string AuctionIdKey = "AuctionBot:AuctionId";
-
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context)
     {
         var configuration = context.Builder.Configuration;
@@ -29,7 +20,7 @@ internal static class AuctionBotSetup
 
         var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
 
-        var bot = context.Builder
+        return context.Builder
             .AddJavaScriptApp(
                 AppHostNames.Resources.AuctionBot,
                 RepositoryPaths.App(context.Builder, "auction-bot"),
@@ -50,12 +41,6 @@ internal static class AuctionBotSetup
                 AppHostNames.Resources.Nats,
                 "AUCTION_BOT_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
-
-        // Форму значения проверяет сам бот на старте: AppHost передаёт его как есть.
-        var auctionId = configuration[AuctionIdKey]?.Trim();
-        return string.IsNullOrEmpty(auctionId)
-            ? bot
-            : bot.WithEnvironment("AUCTION_BOT_AUCTION_ID", auctionId);
     }
 
     /// <summary>

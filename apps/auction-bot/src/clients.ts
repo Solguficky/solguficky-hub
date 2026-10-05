@@ -20,7 +20,10 @@ import {
   classifyRecipientFailure,
   type TelegramRecipientResolver,
 } from "@solguficky/telegram-delivery";
-import { AuctionService } from "../gen/auction/v1/auction_service_pb.js";
+import {
+  AuctionService,
+  AuctionListing as WireListing,
+} from "../gen/auction/v1/auction_service_pb.js";
 import {
   IdentityService,
   RoleRequestOutcome as WireOutcome,
@@ -36,7 +39,7 @@ import {
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
 import { historyPageOf } from "./history.js";
-import { lotViewOf } from "./snapshot.js";
+import { auctionSummaryOf, lotViewOf } from "./snapshot.js";
 
 export const rpcTimeoutMs = 3_000;
 // Байты изображения — до нескольких мегабайт, им нужно больше времени, чем
@@ -65,6 +68,7 @@ export type AuctionRpc = Pick<
   | "setProxyLimit"
   | "chooseDisplayName"
   | "getLotImage"
+  | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
 >;
@@ -277,6 +281,25 @@ export function createPorts(
         },
       },
       operations: { newOperationId },
+      catalog: {
+        async listAuctions(request) {
+          const page = await auction.listAuctions(
+            {
+              viewer: viewerOf(request.viewer),
+              listing:
+                request.listing === "active"
+                  ? WireListing.ACTIVE
+                  : WireListing.FINISHED,
+              pageToken: request.pageToken,
+            },
+            callOptions(timeoutMs),
+          );
+          return {
+            auctions: page.auctions.map(auctionSummaryOf),
+            nextPageToken: page.nextPageToken,
+          };
+        },
+      },
       image: {
         async getLotImage(request) {
           const image = await auction.getLotImage(

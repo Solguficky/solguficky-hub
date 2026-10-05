@@ -103,21 +103,18 @@ describe("readConfig", () => {
     expect(JSON.stringify(result)).not.toContain("123:auction");
   });
 
-  it("reads the community time zone and an optional auction", () => {
-    const auctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
-    const withAuction = readConfig({
+  // Аукцион ленты бот больше не берёт из конфигурации: списки читаются из
+  // Auction (PER-453), и забытая переменная старого развёртывания не мешает.
+  it("reads the community time zone and ignores a stale auction id", () => {
+    const result = readConfig({
       ...base,
-      AUCTION_BOT_AUCTION_ID: auctionId,
+      AUCTION_BOT_AUCTION_ID: "lot-1",
     });
-    expect(withAuction).toEqual({
+    expect(result).toEqual({
       ok: true,
-      config: expect.objectContaining({
-        communityTimeZone: "Europe/Moscow",
-        auctionId,
-      }),
+      config: expect.objectContaining({ communityTimeZone: "Europe/Moscow" }),
     });
-    const without = readConfig(base);
-    expect(without.ok && "auctionId" in without.config).toBe(false);
+    expect(result.ok && "auctionId" in result.config).toBe(false);
   });
 
   it("presents the lot card rich unless the operator rolls back to plain", () => {
@@ -142,17 +139,6 @@ describe("readConfig", () => {
     ).toEqual({
       ok: false,
       error: "AUCTION_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
-    });
-  });
-
-  it.each([
-    "01929B7E-5C1D-7A3F-8E4B-0000000000A1",
-    "01929b7e5c1d7a3f8e4b0000000000a1",
-    "lot-1",
-  ])("refuses a non-canonical auction id %s", (auctionId) => {
-    expect(readConfig({ ...base, AUCTION_BOT_AUCTION_ID: auctionId })).toEqual({
-      ok: false,
-      error: "AUCTION_BOT_AUCTION_ID must be a canonical lowercase UUID",
     });
   });
 });

@@ -1,6 +1,7 @@
 import type { AuctionScreenBody } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
 import { inspectCall, type ScreenEntry } from "../testkit/screen-lint.js";
+import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
 import {
   type AuctionEntryScreen,
@@ -199,6 +200,26 @@ const nameChoice = (username: boolean): AuctionScreenBody => ({
     [{ action: "name.back", callbackData: "v1:auc:lot:lot-1:1" }],
   ],
 });
+const emptyList: AuctionListPage = { page: 0, pageCount: 1, auctions: [] };
+
+// Страница посередине: строки аукционов, обе стрелки листания и возврат.
+const middlePage: AuctionListPage = {
+  page: 1,
+  pageCount: 3,
+  auctions: [
+    {
+      auctionId: "01926f3c-8b7a-5cde-8f00-000000000001",
+      stage: "prebidding",
+      opensAt: "2026-10-10T16:00:00Z",
+      lotCount: 12,
+    },
+    {
+      auctionId: "01926f3c-8b7a-5cde-8f00-000000000002",
+      stage: "scheduled",
+      lotCount: 1,
+    },
+  ],
+};
 
 const urls = {
   items: "Грибы и соленья.",
@@ -222,9 +243,13 @@ const shown: readonly {
   { screen: { kind: "faq" }, faq: urls },
   { screen: { kind: "details" } },
   { screen: { kind: "question" } },
-  { screen: { kind: "auctions" } },
-  { screen: { kind: "auction", body: feed } },
-  { screen: { kind: "auction", body: emptyFeed } },
+  { screen: { kind: "auctions", list: emptyList } },
+  { screen: { kind: "auctions", list: middlePage } },
+  { screen: { kind: "past", list: emptyList } },
+  { screen: { kind: "past", list: middlePage } },
+  { screen: { kind: "auction", body: feed, parent: "auctions" } },
+  { screen: { kind: "auction", body: feed, parent: "past" } },
+  { screen: { kind: "auction", body: emptyFeed, parent: "auctions" } },
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
   { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },

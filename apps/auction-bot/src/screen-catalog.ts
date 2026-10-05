@@ -19,6 +19,10 @@ export function screenMark(id: ScreenId): { [screenTag]: ScreenId } {
   return { [screenTag]: id };
 }
 
+/** Родитель ленты: список аукционов, в котором аукцион стоит сейчас. */
+export const auctionListParent = "auction-list";
+export const auctionLists = ["auctions", "past"] as const;
+
 const shellTitle =
   "PER-463: оболочка шлёт текст без HTML и жирного заголовка (расхождения 12, 13)";
 
@@ -64,26 +68,30 @@ export const screenCatalog = {
       nav: "PER-463: вместо возврата в FAQ — «Правила и FAQ» и «В меню» (расхождения 6, 7)",
     },
   },
-  // Узел «Лоты», пока аукцион не назван: кадр «каталог пока не открыт».
+  // Списки аукционов (PER-453) написаны по дизайн-коду сразу.
   auctions: {
     class: "screen",
     nav: "tree",
-    title: "Лоты",
+    title: "Аукционы",
     parent: "menu",
-    waive: {
-      title: shellTitle,
-      nav: "PER-463: «Правила и FAQ» боковой ссылкой и «В меню» вместо «‹ Меню» (расхождения 6, 7)",
-    },
+    backName: "Аукционы",
   },
+  past: {
+    class: "screen",
+    nav: "tree",
+    title: "Прошедшие аукционы",
+    parent: "menu",
+    backName: "Прошедшие",
+  },
+  // Лента возвращает в тот список, где аукцион стоит сейчас.
   feed: {
     class: "screen",
     nav: "tree",
     title: "Лоты",
-    parent: "menu",
+    parent: auctionListParent,
     backName: "Лоты",
     waive: {
       title: shellTitle,
-      nav: "PER-463: «Правила и FAQ» боковой ссылкой и «В меню» вместо «‹ Меню» (расхождения 6, 7)",
       rows: "PER-463: листание «‹ Предыдущие» и «Следующие ›» вместо «←» и «→» — пара не короткая (расхождение 10)",
     },
   },

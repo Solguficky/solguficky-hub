@@ -5,12 +5,18 @@ import {
   type ScreenViolation,
   type UnknownEntryKeys,
 } from "../../../shared/typescript/screen-lint/src/index.js";
-import { screenCatalog, screenTag } from "../src/screen-catalog.js";
+import {
+  auctionListParent,
+  auctionLists,
+  screenCatalog,
+  screenTag,
+} from "../src/screen-catalog.js";
 
 // Линтер экрана бота аукциона: общий линтер дизайн-кода
-// (`shared/typescript/screen-lint`) с каталогом этого бота. Именованных пар и
-// групп родителей у его дерева нет. Его зовёт записывающий трансформер
-// `bot.test.ts`, а найденное снимает `lint-setup.ts`.
+// (`shared/typescript/screen-lint`) с каталогом этого бота. Именованных пар у
+// его дерева нет, группа родителей одна — списки аукционов, в которые
+// возвращает лента. Его зовёт записывающий трансформер `bot.test.ts`, а
+// найденное снимает `lint-setup.ts`.
 
 export {
   reportViolations,
@@ -27,7 +33,11 @@ const catalogShape: [UnknownEntryKeys<typeof screenCatalog>] extends [never]
 void catalogShape;
 
 function configFor(catalog: Readonly<Record<string, ScreenEntry>>): LintConfig {
-  return { tag: screenTag, catalog };
+  return {
+    tag: screenTag,
+    catalog,
+    parentGroups: { [auctionListParent]: auctionLists },
+  };
 }
 
 const auction = configFor(screenCatalog);

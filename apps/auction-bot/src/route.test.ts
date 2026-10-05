@@ -5,14 +5,28 @@ import {
   type RoleRequestAnswer,
 } from "@solguficky/auction-bot-ui";
 import { describe, expect, it, vi } from "vitest";
+import {
+  type AuctionCatalogPort,
+  type AuctionSummary,
+  LIST_PAGE_SIZE,
+} from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
-import { entryCallback } from "./faq.js";
+import { entryCallback, listCallback } from "./faq.js";
 import { routeAuctionCallback, routeAuctionStart } from "./route.js";
 
 const lotId = "01926f3c-8b7a-7cde-8f00-0123456789ab";
 const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
 const user = { telegramUserId: 42 };
 const firstName = "Сова";
+
+function summary(index: number, stage: AuctionSummary["stage"]) {
+  return {
+    auctionId: `01926f3c-8b7a-5cde-8f00-${String(index).padStart(12, "0")}`,
+    stage,
+    opensAt: `2026-10-${String(10 + index).padStart(2, "0")}T16:00:00Z`,
+    lotCount: index,
+  };
+}
 
 function identity(overrides: Partial<ResolvedIdentity>): ResolvedIdentity {
   return {
@@ -37,7 +51,10 @@ function entered(resolved: ResolvedIdentity): RoleRequestAnswer {
   };
 }
 
-function ports(resolved: ResolvedIdentity | Error): EntryPorts {
+function ports(
+  resolved: ResolvedIdentity | Error,
+  auctions: { active?: AuctionSummary[]; finished?: AuctionSummary[] } = {},
+): EntryPorts {
   return {
     identity: {
       resolveIdentity: vi.fn(async () => {
@@ -71,6 +88,14 @@ function ports(resolved: ResolvedIdentity | Error): EntryPorts {
     },
     operations: {
       newOperationId: vi.fn(() => "01929b7e-5c1d-7a3f-8e4b-00000000c001"),
+    },
+    catalog: {
+      listAuctions: vi.fn<AuctionCatalogPort["listAuctions"]>(
+        async ({ listing }) => ({
+          auctions: auctions[listing] ?? [],
+          nextPageToken: "",
+        }),
+      ),
     },
     faq: {
       acknowledged: vi.fn(async () => true),
@@ -107,7 +132,7 @@ describe("FAQ entry", () => {
     });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
   });
-  it.each(["faq", "menu", "auctions", "details", "question"] as const)(
+  it.each(["faq", "menu", "auctions", "past", "details", "question"] as const)(
     "refuses a blocked person even with a stale public role on %s",
     async (action) => {
       const p = ports(identity({ globalRoles: ["public"], blocked: true }));
@@ -129,10 +154,11 @@ describe("FAQ entry", () => {
       expect(p.faq.acknowledged).not.toHaveBeenCalled();
       expect(p.faq.acknowledge).not.toHaveBeenCalled();
       expect(p.auction.getLot).not.toHaveBeenCalled();
+      expect(p.catalog.listAuctions).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["auctions", "details", "question"] as const)(
+  it.each(["details", "question"] as const)(
     "opens the local %s destination and returns to FAQ",
     async (action) => {
       const p = ports(identity({ globalRoles: ["public"] }));
@@ -233,7 +259,7 @@ describe("FAQ entry", () => {
     expect(p.auction.getLot).not.toHaveBeenCalled();
   });
 
-  it.each([entryCallback("auctions"), lotButton])(
+  it.each([entryCallback("auctions"), entryCallback("past"), lotButton])(
     "shows FAQ before an unacknowledged participant follows %s",
     async (data) => {
       const p = ports(identity({ globalRoles: ["public"] }));
@@ -242,10 +268,11 @@ describe("FAQ entry", () => {
         (await routeAuctionCallback({ ports: p, user, data })).screen,
       ).toEqual({ kind: "faq" });
       expect(p.auction.getLot).not.toHaveBeenCalled();
+      expect(p.catalog.listAuctions).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["faq", "menu", "auctions", "details", "question"] as const)(
+  it.each(["faq", "menu", "auctions", "past", "details", "question"] as const)(
     "rechecks access on the old %s button before reaching FAQ storage",
     async (action) => {
       const p = ports(identity({ globalRoles: [] }));
@@ -273,6 +300,121 @@ describe("FAQ entry", () => {
     ).toEqual({
       kind: "unavailable",
     });
+  });
+});
+
+describe("auction lists", () => {
+  const admitted = identity({ globalRoles: ["public"] });
+
+  it("lists one active auction as a one-row list, not as its feed", async () => {
+    const only = summary(1, "prebidding");
+    const p = ports(admitted, { active: [only] });
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: entryCallback("auctions"),
+    });
+    expect(outcome.screen).toEqual({
+      kind: "auctions",
+      list: { page: 0, pageCount: 1, auctions: [only] },
+    });
+    expect(p.catalog.listAuctions).toHaveBeenCalledWith({
+      viewer: { identityId: admitted.identityId, globalRoles: ["public"] },
+      listing: "active",
+      pageToken: "",
+    });
+    expect(p.auction.listAuctionLots).not.toHaveBeenCalled();
+  });
+
+  it("reads finished auctions for the past list, freshest first", async () => {
+    const older = summary(1, "finished");
+    const newer = summary(2, "finished");
+    const p = ports(admitted, { finished: [older, newer] });
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: entryCallback("past"),
+    });
+    expect(outcome.screen).toEqual({
+      kind: "past",
+      list: { page: 0, pageCount: 1, auctions: [newer, older] },
+    });
+    expect(p.catalog.listAuctions).toHaveBeenCalledWith(
+      expect.objectContaining({ listing: "finished" }),
+    );
+  });
+
+  it("follows every server page before cutting the list into pages", async () => {
+    const all = Array.from({ length: LIST_PAGE_SIZE + 2 }, (_, index) =>
+      summary(index + 1, "finished"),
+    );
+    const p = ports(admitted);
+    vi.mocked(p.catalog.listAuctions).mockImplementation(
+      async ({ pageToken }) =>
+        pageToken === ""
+          ? { auctions: all.slice(0, 5), nextPageToken: "next" }
+          : { auctions: all.slice(5), nextPageToken: "" },
+    );
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: listCallback("past", 1),
+    });
+    expect(outcome.screen).toEqual({
+      kind: "past",
+      list: { page: 1, pageCount: 2, auctions: [all[1], all[0]] },
+    });
+  });
+
+  it("shows the last page when the list shrank under an old button", async () => {
+    const p = ports(admitted, { active: [summary(1, "scheduled")] });
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: listCallback("auctions", 3),
+    });
+    expect(outcome.screen).toMatchObject({
+      kind: "auctions",
+      list: { page: 0, pageCount: 1 },
+    });
+  });
+
+  it("returns the feed to the list where its auction stands now", async () => {
+    const live = summary(0, "prebidding");
+    const feedOf = (id: string) =>
+      encodeAuctionCallback({ kind: "feed", auctionId: id, page: 0 });
+    expect(
+      (
+        await routeAuctionCallback({
+          ports: ports(admitted, { active: [live] }),
+          user,
+          data: feedOf(live.auctionId),
+        })
+      ).screen,
+    ).toMatchObject({ kind: "auction", parent: "auctions" });
+    expect(
+      (
+        await routeAuctionCallback({
+          ports: ports(admitted),
+          user,
+          data: feedButton,
+        })
+      ).screen,
+    ).toMatchObject({ kind: "auction", parent: "past" });
+  });
+
+  it("fails closed when the list cannot be read", async () => {
+    const p = ports(admitted);
+    vi.mocked(p.catalog.listAuctions).mockRejectedValue(
+      new ConnectError("offline", Code.Unavailable),
+    );
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: entryCallback("auctions"),
+    });
+    expect(outcome.screen).toEqual({ kind: "unavailable" });
+    expect(outcome.failure?.category).toBe("dependency_unavailable");
   });
 });
 
