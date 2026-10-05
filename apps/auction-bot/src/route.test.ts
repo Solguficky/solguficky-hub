@@ -59,6 +59,7 @@ function ports(resolved: ResolvedIdentity | Error): EntryPorts {
         status: { kind: "unsold" as const },
       })),
       listAuctionLots: vi.fn(async () => ({ lots: [], nextPageToken: "" })),
+      listLotHistory: vi.fn(async () => ({ entries: [], nextPageToken: "" })),
       getDisplayNames: vi.fn(async () => ({})),
     },
     faq: {

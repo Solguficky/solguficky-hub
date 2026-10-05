@@ -4114,14 +4114,15 @@ async function handleAuctionCallback(
     });
   } catch (cause) {
     // Лот, которого Auction не знает или который смотрящему не виден, —
-    // NOT_FOUND у `GetLot`. Лента на аукцион, которого нет, отвечает пустой
-    // страницей, так что её отказ — всегда сбой.
+    // NOT_FOUND у `GetLot`, им начинаются и карточка, и хронология. Лента на
+    // аукцион, которого нет, отвечает пустой страницей, так что её отказ —
+    // всегда сбой.
     const parsed = parseAuctionCallback(data);
     const notFound =
       cause instanceof ConnectError &&
       cause.code === Code.NotFound &&
       parsed.ok &&
-      parsed.intent.kind === "lot";
+      (parsed.intent.kind === "lot" || parsed.intent.kind === "history");
     await showRefusal(
       ctx,
       notFound ? "Лот не найден или больше недоступен." : unavailableText,

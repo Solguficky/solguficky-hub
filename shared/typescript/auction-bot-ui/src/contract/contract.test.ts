@@ -163,6 +163,11 @@ describe("auction contract self-check", () => {
       "lot: unsold",
       "lot: withdrawn",
       "lot: names unavailable",
+      "lot: scheduled",
+      "history: newest page",
+      "history: earlier page",
+      "history: names unavailable",
+      "history: empty",
     ]);
   });
 });

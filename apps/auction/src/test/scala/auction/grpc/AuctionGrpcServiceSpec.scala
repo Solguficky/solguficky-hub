@@ -52,8 +52,10 @@ import auction.projection.AuctionListing
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.LotImageView
+import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
+import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import ch.qos.logback.classic.Logger as LogbackLogger
@@ -69,6 +71,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.slf4j.LoggerFactory
 
+import java.time.Instant
 import java.util.UUID
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
@@ -199,6 +202,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
       fail("the registry was touched")
     def image(lotId: UUID): Future[Option[LotImageView]] = fail("the image was read")
+    def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]] =
+      fail("the history was touched")
   }
 
   private object UntouchableViews extends Views
@@ -636,6 +641,66 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot)).futureValue.lots should have size 1
     }
 
+    "refuses a history read without the public role or with a forged token before touching the read model" in {
+      val member = Some(viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER)))
+      val auction = service(Unreachable)
+      statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(member, lot))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), "lot"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, "forged"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, "", -1))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers NOT_FOUND to the history of a lot the read model does not hold" in {
+      val empty = new Views {
+        override def history(lotId: UUID, after: Option[Long], limit: Int) = Future.successful(None)
+      }
+      statusOf(
+        service(Unreachable, views = empty).listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot))
+      ) shouldBe
+        Status.Code.NOT_FOUND
+    }
+
+    "pages the history of a lot by journal position and continues after the last entry it answered" in {
+      val at = Instant.parse("2026-10-04T12:00:00Z")
+      // Позиции с пропусками, как у журнала с приватными событиями, и одно время на всех.
+      val bids = List(3L, 4L, 7L, 9L, 12L).map(seq => bidRecord(seq, 100 + seq, "Manual", Some("Bot"), at))
+      val journal = new Views {
+        override def history(lotId: UUID, after: Option[Long], limit: Int) =
+          Future.successful(Some(bids.filter(bid => after.forall(bid.sequence > _)).take(limit)))
+      }
+      val auction = service(Unreachable, views = journal)
+      val first = auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, "", 2)).futureValue
+      first.entries.map(_.sequence) shouldBe Seq(3L, 4L)
+      val second =
+        auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, first.nextPageToken, 2)).futureValue
+      second.entries.map(_.sequence) shouldBe Seq(7L, 9L)
+      val last =
+        auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, second.nextPageToken, 2)).futureValue
+      last.entries.map(_.sequence) shouldBe Seq(12L)
+      last.nextPageToken shouldBe ""
+    }
+
+    "answers a manual bid with its channel and a proxy bid without one" in {
+      val at = Instant.parse("2026-10-04T12:00:00Z")
+      val journal = new Views {
+        override def history(lotId: UUID, after: Option[Long], limit: Int) =
+          Future.successful(
+            Some(List(bidRecord(2, 150, "Manual", Some("Floor"), at), bidRecord(5, 260, "Proxy", None, at)))
+          )
+      }
+      val entries = service(Unreachable, views = journal)
+        .listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot))
+        .futureValue
+        .entries
+      entries.map(_.occurredAt) shouldBe Seq("2026-10-04T12:00:00Z", "2026-10-04T12:00:00Z")
+      entries.map(_.getBid.amount) shouldBe Seq(Some(MoneyMessage(150, "RUB")), Some(MoneyMessage(260, "RUB")))
+      entries.head.getBid.getManual.source shouldBe BidSourceMessage.BID_SOURCE_FLOOR
+      entries(1).getBid.origin.isProxy shouldBe true
+    }
+
     "answers a draft to an existing meetup auction with its derived id and the already-existed mark" in {
       val existing = new Auctions {
         override def inspect(auctionId: AuctionId, opId: OpId) =
@@ -836,4 +901,17 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
   }
+
+  private def bidRecord(sequence: Long, amount: Long, origin: String, source: Option[String], at: Instant) =
+    BidRecord(
+      lotId = UUID.fromString(lot),
+      sequence = sequence,
+      bidId = new UUID(0x01926f3c8b7a7cdeL, 0x8f00000000000000L | sequence),
+      participant = UUID.fromString(identity),
+      minorUnits = amount,
+      currency = "RUB",
+      origin = origin,
+      source = source,
+      occurredAt = at
+    )
 }

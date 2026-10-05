@@ -35,4 +35,10 @@ trait LotViews {
    * ровно тогда, когда его отдаёт `find`.
    */
   def image(lotId: UUID): Future[Option[LotImageView]]
+
+  /**
+   * Ставки лота по возрастанию номера события в журнале, строго после `after`, не больше `limit`. Порядок — журнала, а
+   * не часов: события одной команды делят время. `None` — read model лота не знает; лот без ставок — пустой список.
+   */
+  def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]]
 }

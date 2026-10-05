@@ -75,6 +75,57 @@ const lot = (image: boolean): AuctionScreenBody => ({
   ],
 });
 
+// Хронология с обеими кнопками листания и пустая — первая и единственная
+// страница. Возврат тела оболочка ставит в один ряд с «Меню».
+const history = (entries: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "history",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Банка солёных грибов",
+      page: entries ? 1 : 0,
+      pageCount: entries ? 3 : 1,
+      entries: entries
+        ? [
+            {
+              kind: "bid",
+              sequence: 4,
+              occurredAt: "2026-10-03T16:04:00Z",
+              amount: rub(500),
+              origin: { kind: "manual", source: "bot" },
+              participantName: "@jay",
+            },
+            {
+              kind: "bid",
+              sequence: 6,
+              occurredAt: "2026-10-03T16:04:00Z",
+              amount: rub(550),
+              origin: { kind: "proxy" },
+            },
+          ]
+        : [],
+    },
+  ],
+  keyboard: [
+    ...(entries
+      ? [
+          [
+            {
+              action: "history.prev" as const,
+              callbackData: "v1:auc:hist:lot-1:1:0",
+            },
+            {
+              action: "history.next" as const,
+              callbackData: "v1:auc:hist:lot-1:1:2",
+            },
+          ],
+        ]
+      : []),
+    [{ action: "history.back" as const, callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
+});
+
 const urls = {
   items: "Грибы и соленья.",
   purpose: "На сходки.",
@@ -103,6 +154,8 @@ const shown: readonly {
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
   { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },
+  { screen: { kind: "auction", body: history(true) } },
+  { screen: { kind: "auction", body: history(false) } },
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
   { screen: { kind: "outdated" } },

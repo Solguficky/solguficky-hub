@@ -88,7 +88,7 @@ function required(money: WireMoney | undefined): Money {
   return moneyOf(money);
 }
 
-function moneyOf(money: WireMoney): Money {
+export function moneyOf(money: WireMoney): Money {
   const minorUnits = Number(money.minorUnits);
   if (!Number.isSafeInteger(minorUnits)) {
     throw new Error("lot amount out of the safe integer range");

@@ -7,9 +7,9 @@ import "auction/v1/auction_events.proto";
 import "identity/v1/roles.proto";
 
 // Commands of a participant, commands of the lot catalog, the birth of an auction
-// at a meetup and the registry of its lots, reads of a lot, of its image, of the
-// display names of participants and of auctions, and the invoices of sold lots:
-// the commands of the organizer and of the winner and their reads.
+// at a meetup and the registry of its lots, reads of a lot, of its history, of its
+// image, of the display names of participants and of auctions, and the invoices of
+// sold lots: the commands of the organizer and of the winner and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -27,6 +27,7 @@ service AuctionService {
   rpc EditLotCard(EditLotCardRequest) returns (EditLotCardResponse);
   rpc GetLot(GetLotRequest) returns (LotSnapshot);
   rpc ListAuctionLots(ListAuctionLotsRequest) returns (ListAuctionLotsResponse);
+  rpc ListLotHistory(ListLotHistoryRequest) returns (ListLotHistoryResponse);
   rpc ChooseDisplayName(ChooseDisplayNameRequest) returns (ChooseDisplayNameResponse);
   rpc GetDisplayNames(GetDisplayNamesRequest) returns (GetDisplayNamesResponse);
   rpc GetFaqAcknowledgement(GetFaqAcknowledgementRequest) returns (FaqAcknowledgement);
@@ -379,6 +380,64 @@ message LotSnapshot {
     LotSale sold = 12;
     UnsoldReason unsold = 13;
     WithdrawnReason withdrawn = 14;
+  }
+}
+
+message ListLotHistoryRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+
+  // Opaque token returned as next_page_token. Empty starts an enumeration.
+  string page_token = 3;
+
+  // 0 selects the server default.
+  int32 page_size = 4;
+}
+
+message ListLotHistoryResponse {
+  // Ascending by sequence.
+  repeated LotHistoryEntry entries = 1;
+
+  // Opaque continuation token. Empty means that the enumeration is complete.
+  string next_page_token = 2;
+}
+
+// One public fact of the journal of a lot. The order of the history is the order
+// of the journal, sequence, and never the order of occurred_at: facts of one
+// command share the same instant.
+message LotHistoryEntry {
+  // Position of the fact in the journal of the lot, as LotSnapshot.version counts
+  // it. Monotonic, not contiguous: private facts take positions too.
+  int64 sequence = 1;
+
+  // RFC 3339 instant in UTC: the server time the fact was recorded.
+  string occurred_at = 2;
+
+  // What happened. Exactly one is set. A reader skips an entry whose kind it does
+  // not know: new kinds may be added.
+  oneof kind {
+    HistoryBid bid = 3;
+  }
+}
+
+// An accepted bid as BidPlaced recorded it. A folded chain of proxy bids is one
+// entry with the final amount. The proxy limit is never carried.
+message HistoryBid {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string bid_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the bidder, the same id leader_id
+  // carries. The display name is read with GetDisplayNames.
+  string participant_id = 2;
+
+  Money amount = 3;
+
+  // How the bid was placed. Exactly one is set.
+  oneof origin {
+    ManualBid manual = 4;
+    ProxyBid proxy = 5;
   }
 }
 

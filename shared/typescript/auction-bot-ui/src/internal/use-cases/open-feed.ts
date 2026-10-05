@@ -7,19 +7,12 @@ import type {
   Viewer,
 } from "../../ports.js";
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
+import { collectPages } from "./collect-pages.js";
 
 // Лотов на странице ленты. Восемь — как у списка материалов в хабе: кнопки
 // лотов и строка листания помещаются в один экран телефона.
 export const FEED_PAGE_SIZE = 8;
 
-// Предохранители обхода серверных страниц. Ленту сортирует край, а не сервер,
-// поэтому её выкачивают целиком на каждое нажатие; повтор токена или лента
-// длиннее, чем помещается в кнопки, — дефект соседа, а не повод крутиться.
-//
-// Страниц с запасом на всю ленту при умолчании сервера в 50 лотов на страницу:
-// 200 × 50 покрывают 8000 лотов, иначе предел страниц срабатывал бы раньше
-// предела лотов.
-const MAX_SERVER_PAGES = 200;
 const MAX_FEED_LOTS = FEED_PAGE_SIZE * (MAX_FEED_PAGE + 1);
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
@@ -81,32 +74,23 @@ export async function openFeed(input: {
   };
 }
 
-async function loadFeed(input: {
+function loadFeed(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;
 }): Promise<LotView[]> {
-  const lots: LotView[] = [];
-  const seen = new Set<string>();
-  let pageToken = "";
-  for (let pages = 0; pages < MAX_SERVER_PAGES; pages += 1) {
-    const page = await input.auction.listAuctionLots({
-      viewer: input.viewer,
-      auctionId: input.auctionId,
-      pageToken,
-    });
-    lots.push(...page.lots);
-    if (lots.length > MAX_FEED_LOTS) {
-      throw new Error(`auction feed exceeds ${MAX_FEED_LOTS} lots`);
-    }
-    if (page.nextPageToken === "") return lots;
-    if (seen.has(page.nextPageToken)) {
-      throw new Error("auction feed repeated a page token");
-    }
-    seen.add(page.nextPageToken);
-    pageToken = page.nextPageToken;
-  }
-  throw new Error(`auction feed exceeds ${MAX_SERVER_PAGES} server pages`);
+  return collectPages({
+    what: "auction feed",
+    maxItems: MAX_FEED_LOTS,
+    fetch: async (pageToken) => {
+      const page = await input.auction.listAuctionLots({
+        viewer: input.viewer,
+        auctionId: input.auctionId,
+        pageToken,
+      });
+      return { items: page.lots, nextPageToken: page.nextPageToken };
+    },
+  });
 }
 
 // Цена, по которой лот стоит в ленте: текущая в торгах, стартовая до них,

@@ -31,6 +31,7 @@ import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.ListAuctionsRequest
+import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.SetProxyLimitRequest
@@ -65,6 +66,9 @@ final case class LotQuery(lotId: UUID, acting: Acting)
 
 /** Страница лотов аукциона: после `after` по возрастанию `lot_id`, не больше `limit`. */
 final case class LotsQuery(auctionId: UUID, after: Option[UUID], limit: Int, acting: Acting)
+
+/** Страница хронологии лота: события после номера `after` по возрастанию, не больше `limit`. */
+final case class LotHistoryQuery(lotId: UUID, after: Option[Long], limit: Int, acting: Acting)
 
 /** Рождение аукциона у сходки. Роли смотрящего права не дают: право спрашивается у Meetups (ADR-047). */
 final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
@@ -177,6 +181,14 @@ object RequestMapping {
       after <- PageToken.decode(request.pageToken).toRight(FormError("page_token"))
       limit <- pageSize(request.pageSize)
     } yield LotsQuery(auctionId, after, limit, acting)
+
+  def listLotHistory(request: ListLotHistoryRequest): Either[FormError, LotHistoryQuery] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      after <- SequenceToken.decode(request.pageToken).toRight(FormError("page_token"))
+      limit <- pageSize(request.pageSize)
+    } yield LotHistoryQuery(lotId, after, limit, acting)
 
   def chooseDisplayName(request: ChooseDisplayNameRequest): Either[FormError, ChooseCommand] =
     for {
@@ -335,4 +347,26 @@ object PageToken {
         canonical(new String(Base64.getUrlDecoder.decode(token), StandardCharsets.US_ASCII))
           .map(Some(_))
       catch { case _: IllegalArgumentException => None }
+}
+
+/**
+ * Токен продолжения `ListLotHistory`: номер последнего отданного события журнала лота десятичной строкой в base64url.
+ * Непрозрачен по контракту, но не секрет: подделанный токен даёт хронологию того же лота с другого места, а читать её
+ * смотрящий и так вправе.
+ */
+object SequenceToken {
+
+  private val Canonical = "^[1-9][0-9]{0,18}$".r
+
+  def encode(sequence: Long): String =
+    Base64.getUrlEncoder.withoutPadding.encodeToString(sequence.toString.getBytes(StandardCharsets.US_ASCII))
+
+  /** Пустой токен — начало перечисления, `Some(None)`; токен, который не выдавал сервис, — `None`. */
+  def decode(token: String): Option[Option[Long]] =
+    if (token.isEmpty) Some(None)
+    else
+      try {
+        val text = new String(Base64.getUrlDecoder.decode(token), StandardCharsets.US_ASCII)
+        Option.when(Canonical.matches(text) && encode(text.toLong) == token)(Some(text.toLong))
+      } catch { case _: IllegalArgumentException => None }
 }

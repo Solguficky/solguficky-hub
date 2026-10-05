@@ -136,6 +136,34 @@ export type LotPage = {
   nextPageToken: string;
 };
 
+// Как поставлена ставка. Канал есть только у ручной: прокси-ставку ставит
+// система в пределах лимита, а сам лимит в хронологию не попадает.
+export type BidOriginView =
+  | { kind: "manual"; source: "bot" | "floor" }
+  | { kind: "proxy" };
+
+// Запись хронологии лота — публичный факт его журнала. Сегодня это только
+// ставка: серия автоставок уже свёрнута Auction в одну запись с итоговой
+// ценой. Запись вида, которого пакет не знает, адаптер пропускает.
+export type LotHistoryEntryView = {
+  kind: "bid";
+  // Позиция факта в журнале лота: монотонна, но не непрерывна.
+  sequence: number;
+  // Момент RFC 3339 в UTC.
+  occurredAt: string;
+  bidId: string;
+  participantId: string;
+  amount: Money;
+  origin: BidOriginView;
+};
+
+// Одна страница `ListLotHistory` по возрастанию `sequence`. Пустой
+// `nextPageToken` — хронология кончилась.
+export type LotHistoryPage = {
+  entries: readonly LotHistoryEntryView[];
+  nextPageToken: string;
+};
+
 export interface AuctionPort {
   getLot(request: { viewer: Viewer; lotId: string }): Promise<LotView>;
   listAuctionLots(request: {
@@ -143,6 +171,11 @@ export interface AuctionPort {
     auctionId: string;
     pageToken: string;
   }): Promise<LotPage>;
+  listLotHistory(request: {
+    viewer: Viewer;
+    lotId: string;
+    pageToken: string;
+  }): Promise<LotHistoryPage>;
   // Готовые к показу имена по идентификаторам участников (ADR-059): метки
   // ставит Auction, край их не добавляет.
   getDisplayNames(request: {

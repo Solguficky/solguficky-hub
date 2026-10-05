@@ -14,6 +14,7 @@ import {
   type RpcMetadata,
 } from "../rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../tracing.js";
+import { historyPageOf } from "./history.js";
 import {
   type AuctionFailure,
   type AuctionScreenPorts,
@@ -34,6 +35,7 @@ type AuctionRpc = Pick<
   | "getMeetupAuction"
   | "getLot"
   | "listAuctionLots"
+  | "listLotHistory"
   | "getDisplayNames"
   | "getLotImage"
 >;
@@ -132,6 +134,17 @@ export function createAuctionAdapter(
               lots: page.lots.map(lotViewOf),
               nextPageToken: page.nextPageToken,
             };
+          },
+          async listLotHistory(request) {
+            const page = await rpc.listLotHistory(
+              {
+                viewer: wireViewer(request.viewer),
+                lotId: request.lotId,
+                pageToken: request.pageToken,
+              },
+              options(meta),
+            );
+            return historyPageOf(page);
           },
           async getDisplayNames(request) {
             try {

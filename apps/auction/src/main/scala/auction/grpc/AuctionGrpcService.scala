@@ -194,6 +194,27 @@ final class AuctionGrpcService(
         }
     }
 
+  /**
+   * Хронология лота страницами по возрастанию номера события в журнале (RFC-007, «Спор»). Читает read model, как
+   * `getLot`, и так же отвечает `NOT_FOUND` на лот, которого она не знает; лот без ставок — пустая страница.
+   */
+  def listLotHistory(in: wire.ListLotHistoryRequest): Future[wire.ListLotHistoryResponse] =
+    RequestMapping.listLotHistory(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(query) =>
+        // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
+        views.history(query.lotId, query.after, query.limit + 1).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+          case Some(found) =>
+            val page = found.take(query.limit)
+            val next =
+              if (found.sizeIs > query.limit) page.lastOption.map(bid => SequenceToken.encode(bid.sequence)) else None
+            Future.successful(wire.ListLotHistoryResponse(page.map(HistoryMapping.entry), next.getOrElse("")))
+        }
+    }
+
   /** Выбор имени в аукционе (ADR-059). Отказ выбора — значение ответа, как отказ торгов. */
   def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] =
     RequestMapping.chooseDisplayName(in) match {

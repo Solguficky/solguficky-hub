@@ -154,6 +154,30 @@ function fakeAuction(
         auction: {
           getLot,
           listAuctionLots,
+          // Ставка соперника и ответ прокси лидера одной командой: момент один.
+          listLotHistory: async () => ({
+            entries: [
+              {
+                kind: "bid" as const,
+                sequence: 4,
+                occurredAt: "2026-10-03T16:04:00Z",
+                bidId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+                participantId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402",
+                amount: { minorUnits: 150_000, currency: "RUB" },
+                origin: { kind: "manual" as const, source: "bot" as const },
+              },
+              {
+                kind: "bid" as const,
+                sequence: 6,
+                occurredAt: "2026-10-03T16:04:00Z",
+                bidId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3403",
+                participantId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3404",
+                amount: { minorUnits: 160_000, currency: "RUB" },
+                origin: { kind: "proxy" as const },
+              },
+            ],
+            nextPageToken: "",
+          }),
           getDisplayNames: async () => ({}),
         },
         image: {
@@ -430,6 +454,34 @@ describe("auction feed shell", () => {
     if (back === undefined) throw new Error("no way back from the lot");
     await bot.handleUpdate(press(back));
     expect(data(lastScreen(calls), "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+  });
+
+  it("shows the bids of a lot in journal order and returns to the lot", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness(["member"], auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "history",
+          lotId,
+          page: 0,
+          historyPage: 999,
+        }),
+      ),
+    );
+    const history = lastScreen(calls);
+    expect(history.text).toMatch(/^<b>Ставки<\/b>/);
+    const lines = (history.text ?? "")
+      .split("\n")
+      .filter((line) => line.includes("₽"));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/1\s500\s₽ · вручную$/);
+    expect(lines[1]).toMatch(/1\s600\s₽ · авто$/);
+    expect(labels(history).at(-1)).toEqual(["‹ Лот", "Меню"]);
+    expect(data(history, "‹ Лот")).toBe(lotData);
   });
 
   it("returns to the upcoming list when the process no longer knows the meetup", async () => {

@@ -144,7 +144,15 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     parent: "lots",
+    backName: "Лот",
     refresh: true,
+  },
+  // Хронология ставок лота (PER-309): тело — общий пакет, оболочка — хаб.
+  bids: {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки",
+    parent: "lot",
   },
   "notify-meetup": {
     class: "screen",

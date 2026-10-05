@@ -1,4 +1,9 @@
-import type { LotCardView, LotStatusView, Money } from "./ports.js";
+import type {
+  BidOriginView,
+  LotCardView,
+  LotStatusView,
+  Money,
+} from "./ports.js";
 
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
 // Одинаково в обоих ботах: приложение оборачивает его в свою оболочку —
@@ -11,6 +16,19 @@ export type FeedItem = {
   lotId: string;
   title?: string;
   status: LotStatusView;
+};
+
+// Строка хронологии: ставка, как её показывает экран. Лимита прокси здесь
+// нет — его нет и в порту.
+export type HistoryItem = {
+  kind: "bid";
+  sequence: number;
+  occurredAt: string;
+  amount: Money;
+  origin: BidOriginView;
+  // Имя ставившего — тем же путём, что имя лидера на карточке. Нет — Auction
+  // имя не отдал; идентификатор вместо имени на экран не выходит.
+  participantName?: string;
 };
 
 export type AuctionBlock =
@@ -35,6 +53,18 @@ export type AuctionBlock =
       // лота. Нет — участника нет либо Auction имя не отдал; идентификатор
       // вместо имени на экран не выходит.
       participantName?: string;
+    }
+  | {
+      kind: "history";
+      lotId: string;
+      auctionId: string;
+      // Название лота для заголовка. Нет — у лота нет строки каталога.
+      title?: string;
+      // Нумерация с нуля; хронология без ставок — одна пустая страница.
+      page: number;
+      pageCount: number;
+      // По возрастанию `sequence`: порядок журнала, а не часов.
+      entries: readonly HistoryItem[];
     };
 
 // Действие кнопки. Подпись выбирает рендерер по нему же, поэтому поля с
@@ -42,7 +72,15 @@ export type AuctionBlock =
 export type AuctionButton =
   | { action: "feed.open-lot"; lotId: string; callbackData: string }
   | {
-      action: "feed.prev" | "feed.next" | "lot.refresh" | "lot.back";
+      action:
+        | "feed.prev"
+        | "feed.next"
+        | "lot.refresh"
+        | "lot.history"
+        | "lot.back"
+        | "history.prev"
+        | "history.next"
+        | "history.back";
       callbackData: string;
     };
 
