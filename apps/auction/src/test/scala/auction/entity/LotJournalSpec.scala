@@ -50,6 +50,8 @@ final class LotJournalSpec
 
   private val lotUnsold = LotEvent.LotUnsold(UnsoldReason.NoBids)
 
+  private val extension = LotEvent.DeadlineExtended(deadline.plus(Duration.ofMinutes(2)), 1)
+
   /** Тот же лот после лимита, который лидер поставил себе пятой строкой. */
   private val limitedLot: Lot = Lot.apply(tradingLot, Envelope(5, op(5), limitSet))
 
@@ -121,10 +123,26 @@ final class LotJournalSpec
       keepsGolden("lot-unsold", storedEvent(lotUnsold, opN = 4))
     }
 
+    "keep the stored form of a deadline extension equal to its golden file and read the golden file back" in {
+      keepsGolden(
+        "deadline-extended",
+        LotJournal.store(uuid(1), transaction(4, Initiator.Participant(participant(2))), extension)
+      )
+    }
+
     "read an event written before the closing sections into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 
       read(kit.system, row).asInstanceOf[StoredLotEvent].event.lotSold shouldBe None
+    }
+
+    "restore the extended deadline and the extension count from a snapshot" in {
+      val extended = Lot.apply(tradingLot, Envelope(5, op(4), extension))
+      val row = write(kit.system, LotJournal.storeLot(extended, sequence = 5))
+
+      LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe extended
+      (tradingOf(extended).deadline, tradingOf(extended).extensionsUsed) shouldBe
+        (Some(deadline.plus(Duration.ofMinutes(2))), 1)
     }
 
     "keep the stored form of a lot snapshot with its proxy limits equal to its golden file and read it back" in {
@@ -138,7 +156,7 @@ final class LotJournalSpec
       tradingOf(limitedLot).proxyLimits shouldBe Map(participant(2) -> limit(20000, setSeq = 5))
     }
 
-    "read a snapshot written before proxy limits as trading without limits" in {
+    "read a snapshot written before proxy limits and anti-sniping as trading without limits or extensions" in {
       val row =
         write(kit.system, LotJournal.storeLot(tradingLot, sequence = 4)).copy(bytes = golden("legacy/lot-snapshot"))
 
@@ -151,9 +169,9 @@ final class LotJournalSpec
       val lot = LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot])
       val original = lot.seen(op(4))
 
-      Lot.decide(lot, placeBid(who = 2, amount = 10500, opN = 4), bid(9), proxyBid(9)) shouldBe
+      Lot.decide(lot, placeBid(who = 2, amount = 10500, opN = 4), bid(9), proxyBid(9), calm) shouldBe
         Right(Decision.Repeated(original))
-      Lot.decide(lot, placeBid(who = 1, amount = 11000, opN = 4), bid(9), proxyBid(9)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 11000, opN = 4), bid(9), proxyBid(9), calm) shouldBe
         Left(PlaceBidRejected.OpIdTaken)
     }
 
@@ -166,6 +184,7 @@ final class LotJournalSpec
         placedByProxy,
         limitSet,
         limitWithdrawn,
+        extension,
         lotSold,
         lotUnsold
       ).zipWithIndex

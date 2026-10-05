@@ -184,7 +184,9 @@ final class AuctionGrpcIntegrationSpec
       .futureValue
       .isRight shouldBe true
     lot
-      .ask[Either[OpenLotRejected, Envelope]](LotEntity.Open(openLot(opN = 3), Initiator.Scheduler, _))
+      .ask[Either[OpenLotRejected, Envelope]](
+        LotEntity.Open(openLot(opN = 3, deadline = Some(distantDeadline)), Initiator.Scheduler, _)
+      )
       .futureValue
       .isRight shouldBe true
     id

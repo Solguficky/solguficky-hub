@@ -48,8 +48,7 @@ object LotValues {
       leaderId = trading.leader.map(_.value.toString),
       leadingBidId = trading.leadingBidId.map(_.value.toString),
       deadline = trading.deadline.map(instant),
-      // Счётчик продлений появится с правилом анти-снайпа; до него продлений не было.
-      extensionsUsed = 0,
+      extensionsUsed = trading.extensionsUsed,
       phase = phase(trading.phase)
     )
 
@@ -58,6 +57,7 @@ object LotValues {
       currentPrice = Some(money(held.currentPrice)),
       leaderId = held.leader.map(_.value.toString),
       leadingBidId = held.leadingBidId.map(_.value.toString),
+      // Удержания ещё нет (PER-310): переход в него принесёт счётчик продлений из торгов.
       extensionsUsed = 0
     )
 

@@ -128,9 +128,9 @@ object LotEntity {
       case Open(open, initiator, replyTo) =>
         record(lot, Lot.decide(lot, open), open.opId, initiator, replyTo, now, newId)
       case Bid(bid, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, bid, BidId(newId()), BidId(newId())), bid.opId, initiator, replyTo, now, newId)
+        record(lot, Lot.decide(lot, bid, BidId(newId()), BidId(newId()), now), bid.opId, initiator, replyTo, now, newId)
       case SetLimit(limit, initiator, replyTo) =>
-        val decision = Lot.decide(lot, limit, state.sequence + 1, BidId(newId()))
+        val decision = Lot.decide(lot, limit, state.sequence + 1, BidId(newId()), now)
         record(lot, decision, limit.opId, initiator, replyTo, now, newId)
       case WithdrawLimit(withdrawal, initiator, replyTo) =>
         record(lot, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)

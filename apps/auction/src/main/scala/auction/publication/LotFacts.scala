@@ -61,6 +61,8 @@ object LotFacts {
           }
         )
         Some("bid_placed" -> bus.LotEvent.Occasion.BidPlaced(placed))
+      case LotEvent.DeadlineExtended(_, _) =>
+        Some("deadline_extended" -> bus.LotEvent.Occasion.DeadlineExtended(bus.DeadlineExtended()))
       case LotEvent.LotSold(_, _, _, _) => Some("lot_sold" -> bus.LotEvent.Occasion.LotSold(bus.LotSold()))
       case LotEvent.LotUnsold(_) => Some("lot_unsold" -> bus.LotEvent.Occasion.LotUnsold(bus.LotUnsold()))
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) => None

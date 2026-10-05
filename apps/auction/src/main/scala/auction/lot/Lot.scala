@@ -19,8 +19,8 @@ final case class Lot(state: LotState, auction: Option[AuctionId], seen: Map[OpId
  * Исход принятой команды: события её транзакции либо исходный ответ на повтор того же `op_id`.
  *
  * Транзакция непуста по построению: `event` — событие самой команды, по нему строится ответ, а `derived` — производные
- * события, которые команда вызвала, в порядке записи. Сейчас это производная ставка прокси (П-02); все события
- * транзакции пишутся одной записью с одним `op_id` (RFC-011, П-06).
+ * события, которые команда вызвала, в порядке записи: производная ставка прокси (П-02), за ней продление дедлайна
+ * (П-04). Все события транзакции пишутся одной записью с одним `op_id` (RFC-011, П-06).
  */
 enum Decision {
   case Accepted(event: LotEvent, derived: List[LotEvent] = Nil)
@@ -91,13 +91,20 @@ object Lot {
     }
 
   /**
-   * Приём ставки (П-01) и ответ прокси на неё (П-02).
+   * Приём ставки (П-01), ответ прокси на неё (П-02) и продление дедлайна (П-04).
    *
    * `seen` проверяется до разбора состояния: повтор ставки, принятой до удержания, получает исходный ответ, а не
    * `LotOnHold` (RFC-011, П-09). `bidId` и `proxyBidId` приходят снаружи, как и любой идентификатор: решение не рождает
-   * их само. Второй нужен производной ставке и пропадает, если её нет.
+   * их само. Второй нужен производной ставке и пропадает, если её нет. `now` — серверное время команды, оно же
+   * `occurred_at` её строк: им П-04 решает, попала ли ставка в окно.
    */
-  def decide(lot: Lot, command: PlaceBid, bidId: BidId, proxyBidId: BidId): Either[PlaceBidRejected, Decision] =
+  def decide(
+      lot: Lot,
+      command: PlaceBid,
+      bidId: BidId,
+      proxyBidId: BidId,
+      now: Instant
+  ): Either[PlaceBidRejected, Decision] =
     repeatOf(lot, command.opId, PlaceBidRejected.OpIdTaken) {
       case LotEvent.BidPlaced(_, participant, _, _, BidOrigin.Manual(_)) => participant == command.participant
       case _ => false
@@ -107,7 +114,7 @@ object Lot {
         case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
         case LotState.Trading(trading) =>
           placeBid(trading, command, bidId).map { placed =>
-            Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList)
+            Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList ++ extended(trading, now))
           }
         case LotState.Held(held) => Left(PlaceBidRejected.LotOnHold(held.currentPrice))
         case LotState.Sold(_) | LotState.Unsold(_) => Left(PlaceBidRejected.LotNotOpen)
@@ -116,8 +123,9 @@ object Lot {
 
   /**
    * Прокси-лимит (ADR-047). В торгах за `ProxyLimitSet` идёт пересчёт П-02 на состоянии после него, и производная
-   * ставка, если она есть, пишется той же транзакцией — одним событием с итоговой ценой. В удержании лимит записывается
-   * без пересчёта и ждёт финала (RFC-011, П-09).
+   * ставка, если она есть, пишется той же транзакцией — одним событием с итоговой ценой, а за ней продление П-04 на
+   * время `now`. Лимит без производной ставки ставкой не является и дедлайн не продлевает. В удержании лимит
+   * записывается без пересчёта и ждёт финала (RFC-011, П-09); дедлайна там нет.
    *
    * `sequence` — номер, который получит `ProxyLimitSet` в журнале. Его назначает тот, кто пишет журнал, и передаёт сюда
    * так же, как идентификаторы: пересчёт идёт на том же состоянии, что даст [[apply]] с этим номером из конверта, и
@@ -127,7 +135,8 @@ object Lot {
       lot: Lot,
       command: SetProxyLimit,
       sequence: Long,
-      proxyBidId: BidId
+      proxyBidId: BidId,
+      now: Instant
   ): Either[SetProxyLimitRejected, Decision] =
     repeatOf(lot, command.opId, SetProxyLimitRejected.OpIdTaken) {
       case LotEvent.ProxyLimitSet(participant, _) => participant == command.participant
@@ -140,7 +149,8 @@ object Lot {
         case LotState.Trading(trading) =>
           proxyLimitSet(trading.config, floor(trading), command).map { set =>
             val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
-            Decision.Accepted(set, resolve(after, proxyBidId).toList)
+            val derived = resolve(after, proxyBidId).toList
+            Decision.Accepted(set, if (derived.isEmpty) Nil else derived ++ extended(trading, now))
           }
         case LotState.Held(held) =>
           proxyLimitSet(held.config, held.currentPrice, command).map(Decision.Accepted(_))
@@ -317,6 +327,20 @@ object Lot {
       }
     }
 
+  /**
+   * Анти-снайп (П-04): одно продление на команду, сколько бы ставок она ни записала. Ставки команды несут одно время
+   * `now`, поэтому окно проверяется один раз — по дедлайну до команды, — а продление идёт последним событием транзакции
+   * (ADR-047). Ставка ровно в `deadline − window` в окно не попадает. Лот без дедлайна ведёт человек, и правило молчит;
+   * исчерпанный лимит продлений — тоже.
+   */
+  private[lot] def extended(trading: TradingState, now: Instant): Option[LotEvent.DeadlineExtended] = {
+    val antiSnipe = trading.config.antiSnipe
+    trading.deadline
+      .filter(deadline => now.isAfter(deadline.minus(antiSnipe.window)))
+      .filter(_ => trading.extensionsUsed < antiSnipe.maxExtensions)
+      .map(deadline => LotEvent.DeadlineExtended(deadline.plus(antiSnipe.extension), trading.extensionsUsed + 1))
+  }
+
   private def proxyBid(
       bidId: BidId,
       participant: ParticipantId,
@@ -352,6 +376,7 @@ object Lot {
    * `LotOpened` строит торги только из самого события: стартовая цена становится текущей, лидера и лимитов нет, фаза
    * `Online` выводится из факта открытия (RFC-011). Применяется он только к `Scheduled`: журнал, который начинается с
    * `LotOpened` без `LotDrafted`, лота не рождает. `ProxyLimitSet` получает `setSeq` из `sequence` своего конверта.
+   * `DeadlineExtended` ставит дедлайн и счётчик из события, а не прибавляет к ним.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
     val state = (lot.state, envelope.event) match {
@@ -367,10 +392,13 @@ object Lot {
             leadingBidId = None,
             phase = Phase.Online,
             deadline = opened.deadline,
+            extensionsUsed = 0,
             proxyLimits = Map.empty
           )
         )
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) => LotState.Trading(bidden(trading, placed))
+      case (LotState.Trading(trading), LotEvent.DeadlineExtended(deadline, extensionsUsed)) =>
+        LotState.Trading(trading.copy(deadline = Some(deadline), extensionsUsed = extensionsUsed))
       case (LotState.Trading(trading), set: LotEvent.ProxyLimitSet) =>
         LotState.Trading(trading.copy(proxyLimits = limited(trading.proxyLimits, set, envelope.sequence)))
       case (LotState.Held(held), set: LotEvent.ProxyLimitSet) =>

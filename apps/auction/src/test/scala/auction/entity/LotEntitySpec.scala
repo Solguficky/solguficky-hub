@@ -11,6 +11,8 @@ import org.scalatest.BeforeAndAfterEach
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Duration
+
 /**
  * Синхронная часть entity лота на in-memory журнале: команда → событие → состояние → ответ и `restart()`.
  *
@@ -206,6 +208,32 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
 
       List(repeated.events, repeatedAfterRestart.events) shouldBe List(Nil, Nil)
       List(repeated.reply, repeatedAfterRestart.reply) shouldBe List(first.reply, first.reply)
+    }
+
+    "write a bid in the window and its extension as one transaction and keep both over a restart" in {
+      List(LotEntity.DefaultSnapshotEvery, 2).foreach { snapshotEvery =>
+        entity = EventSourcedBehaviorTestKit(
+          kit.system,
+          LotEntity(s"lot-extended-$snapshotEvery", clock, sequentialIds(), snapshotEvery),
+          serialization
+        )
+        val closesAt = decidedAt.plus(Duration.ofMinutes(1))
+        draft(opN = 1)
+        plan(scheduleLot(opN = 2))
+        entity.runCommand[Either[OpenLotRejected, Envelope]](
+          LotEntity.Open(openLot(opN = 3, deadline = Some(closesAt)), Initiator.Scheduler, _)
+        )
+        val placed = bidOf(who = 1, amount = 110, opN = 4)
+
+        placed.events.map(row => (row.event.kind, row.opId, row.transactionId, row.occurredAt)) shouldBe List(
+          ("BidPlaced", op(4).value, placed.events.head.transactionId, decidedAt),
+          ("DeadlineExtended", op(4).value, placed.events.head.transactionId, decidedAt)
+        )
+        val restarted = entity.restart().state
+        restarted shouldBe placed.state
+        (tradingOf(restarted.lot).deadline, tradingOf(restarted.lot).extensionsUsed) shouldBe
+          (Some(closesAt.plus(Duration.ofMinutes(2))), 1)
+      }
     }
 
     "restore proxy limits with their sequence after a restart from the journal alone (Т-16)" in {

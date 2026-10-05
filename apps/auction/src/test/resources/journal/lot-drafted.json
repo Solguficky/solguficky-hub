@@ -16,6 +16,7 @@
     "proxyLimitSet": null,
     "proxyLimitWithdrawn": null,
     "lotSold": null,
-    "lotUnsold": null
+    "lotUnsold": null,
+    "deadlineExtended": null
   }
 }

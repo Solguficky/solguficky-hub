@@ -50,7 +50,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "answer every command but the draft to a lot that was never drafted with LotNotFound" in {
       Lot.decide(Lot.initial, scheduleLot(opN = 1)) shouldBe Left(ScheduleLotRejected.LotNotFound)
       Lot.decide(Lot.initial, openLot(opN = 1)) shouldBe Left(OpenLotRejected.LotNotFound)
-      Lot.decide(Lot.initial, placeBid(who = 1, amount = 110, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(Lot.initial, placeBid(who = 1, amount = 110, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.LotNotFound)
     }
 
@@ -145,6 +145,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         leadingBidId = None,
         phase = Phase.Online,
         deadline = Some(deadline),
+        extensionsUsed = 0,
         proxyLimits = Map.empty
       )
     }
@@ -167,7 +168,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
     "refuse a bid on a lot that is not open yet" in {
       List(drafted, scheduled()).foreach { lot =>
-        Lot.decide(lot, placeBid(who = 1, amount = 110, opN = 1), bid(1), proxyBid(1)) shouldBe Left(
+        Lot.decide(lot, placeBid(who = 1, amount = 110, opN = 1), bid(1), proxyBid(1), calm) shouldBe Left(
           PlaceBidRejected.LotNotOpen
         )
       }
@@ -212,7 +213,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "reject a leader bidding over their own bid (Т-03)" in {
       val lot = trading(price = 110, leader = Some(participant(1)))
 
-      Lot.decide(lot, placeBid(who = 1, amount = 150, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 150, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidderIsLeader(money(110)))
     }
 
@@ -221,7 +222,8 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         trading(price = 100),
         placeBid(who = 1, amount = 110, opN = 1, currency = eur),
         bid(1),
-        proxyBid(1)
+        proxyBid(1),
+        calm
       ) shouldBe
         Left(PlaceBidRejected.CurrencyMismatch)
     }
@@ -244,23 +246,25 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "answer a bid above the last tier bound with the step of that tier (Т-32)" in {
       val lot = trading(price = 300, policy = tiered(0L -> 10L, 200L -> 20L))
 
-      Lot.decide(lot, placeBid(who = 1, amount = 310, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 310, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidBelowMinimum(money(320)))
-      accepted(Lot.decide(lot, placeBid(who = 1, amount = 320, opN = 1), bid(1), proxyBid(1))).map(_.amount) shouldBe
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = 320, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe
         Some(money(320))
     }
 
     "accept a floor bid equal to the announced ask (Т-30)" in {
       val lot = trading(price = 200, ask = Some(500))
 
-      accepted(Lot.decide(lot, placeBid(who = 1, amount = 500, opN = 1), bid(1), proxyBid(1))).map(_.amount) shouldBe
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = 500, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe
         Some(money(500))
-      Lot.decide(lot, placeBid(who = 1, amount = 490, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 490, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidBelowMinimum(money(500)))
     }
 
     "accept any amount above the next price while online (Т-43)" in {
-      accepted(Lot.decide(trading(price = 100), placeBid(who = 1, amount = 137, opN = 1), bid(1), proxyBid(1)))
+      accepted(Lot.decide(trading(price = 100), placeBid(who = 1, amount = 137, opN = 1), bid(1), proxyBid(1), calm))
         .map(_.amount) shouldBe
         Some(money(137))
     }
@@ -268,14 +272,14 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "reject a live bid above the next price and name that price (Т-40)" in {
       val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
 
-      Lot.decide(lot, placeBid(who = 1, amount = 1150, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 1150, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
     "reject a live bid below the next price with the same refusal" in {
       val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
 
-      Lot.decide(lot, placeBid(who = 1, amount = 1050, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 1050, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
@@ -302,7 +306,8 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         held(price = 300, leader = participant(1)),
         placeBid(who = 2, amount = 310, opN = 1),
         bid(1),
-        proxyBid(1)
+        proxyBid(1),
+        calm
       ) shouldBe
         Left(PlaceBidRejected.LotOnHold(money(300)))
     }
@@ -310,14 +315,14 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "check the currency before the leadership" in {
       val lot = trading(price = 110, leader = Some(participant(1)))
 
-      Lot.decide(lot, placeBid(who = 1, amount = 120, opN = 1, currency = eur), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 120, opN = 1, currency = eur), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.CurrencyMismatch)
     }
 
     "refuse a live bid from the leader as a leader, not as an off-grid price" in {
       val lot = trading(price = 1000, phase = Phase.Live, leader = Some(participant(1)))
 
-      Lot.decide(lot, placeBid(who = 1, amount = 1500, opN = 1), bid(1), proxyBid(1)) shouldBe
+      Lot.decide(lot, placeBid(who = 1, amount = 1500, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidderIsLeader(money(1000)))
     }
 
@@ -336,7 +341,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       val (_, journal) = Journal.of(trading(price = 100)).submit(command, bid(1))
       val heldLot = journal.lot.copy(state = held(price = 110, leader = participant(1)).state)
 
-      Lot.decide(heldLot, command, bid(2), proxyBid(2)) shouldBe Right(Decision.Repeated(journal.entries.head))
+      Lot.decide(heldLot, command, bid(2), proxyBid(2), calm) shouldBe Right(Decision.Repeated(journal.entries.head))
     }
 
     "evaluate a repeat of a refused command afresh (Т-31)" in {
@@ -357,7 +362,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       val recovered = Lot.replay(start, journal.entries)
 
       recovered shouldBe journal.lot
-      Lot.decide(recovered, command, bid(2), proxyBid(2)) shouldBe Right(Decision.Repeated(journal.entries.head))
+      Lot.decide(recovered, command, bid(2), proxyBid(2), calm) shouldBe Right(Decision.Repeated(journal.entries.head))
     }
 
     "refuse another participant's bid under a taken op_id with OpIdTaken, write nothing and leak no bid_id" in {
@@ -376,8 +381,8 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
 
       val recovered = Lot.replay(start, journal.entries)
 
-      Lot.decide(recovered, command, bid(2), proxyBid(2)) shouldBe Right(Decision.Repeated(journal.entries.head))
-      Lot.decide(recovered, placeBid(who = 2, amount = 120, opN = 1), bid(2), proxyBid(2)) shouldBe
+      Lot.decide(recovered, command, bid(2), proxyBid(2), calm) shouldBe Right(Decision.Repeated(journal.entries.head))
+      Lot.decide(recovered, placeBid(who = 2, amount = 120, opN = 1), bid(2), proxyBid(2), calm) shouldBe
         Left(PlaceBidRejected.OpIdTaken)
     }
 
@@ -448,9 +453,9 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         closed <- List(Journal.of(leading), Journal.of(trading(price = 100)))
           .map(_.close(closeLot(opN = 9), deadline)._2.lot)
       ) {
-        Lot.decide(closed, placeBid(who = 3, amount = 600, opN = 10), bid(10), proxyBid(10)) shouldBe
+        Lot.decide(closed, placeBid(who = 3, amount = 600, opN = 10), bid(10), proxyBid(10), calm) shouldBe
           Left(PlaceBidRejected.LotNotOpen)
-        Lot.decide(closed, setProxyLimit(who = 3, max = 900, opN = 10), 9, proxyBid(10)) shouldBe
+        Lot.decide(closed, setProxyLimit(who = 3, max = 900, opN = 10), 9, proxyBid(10), calm) shouldBe
           Left(SetProxyLimitRejected.LotNotOpen)
         Lot.decide(closed, openLot(opN = 10)) shouldBe Left(OpenLotRejected.LotNotScheduled)
         Lot.decide(closed, closeLot(opN = 10), deadline) shouldBe Left(CloseLotRejected.LotNotOpen)

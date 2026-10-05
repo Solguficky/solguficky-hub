@@ -70,7 +70,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
     "measure the limit against the announced ask when it is above the price" in {
       val lot = trading(price = 150, ask = Some(200))
 
-      Lot.decide(lot, setProxyLimit(who = 1, max = 190, opN = 1), 1, proxyBid(1)) shouldBe
+      Lot.decide(lot, setProxyLimit(who = 1, max = 190, opN = 1), 1, proxyBid(1), calm) shouldBe
         Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(200)))
     }
 
@@ -149,15 +149,15 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
     "refuse a limit on a lot whose configuration disables proxies before any other check" in {
       val lot = trading(price = 100, proxyEnabled = false)
 
-      Lot.decide(lot, setProxyLimit(who = 1, max = 50, opN = 1, currency = eur), 1, proxyBid(1)) shouldBe
+      Lot.decide(lot, setProxyLimit(who = 1, max = 50, opN = 1, currency = eur), 1, proxyBid(1), calm) shouldBe
         Left(SetProxyLimitRejected.ProxyDisabledForLot)
     }
 
     "refuse a limit on a lot that is not trading" in {
-      Lot.decide(Lot.initial, setProxyLimit(who = 1, max = 200, opN = 1), 1, proxyBid(1)) shouldBe
+      Lot.decide(Lot.initial, setProxyLimit(who = 1, max = 200, opN = 1), 1, proxyBid(1), calm) shouldBe
         Left(SetProxyLimitRejected.LotNotFound)
       List(drafted, scheduled(), sold(price = 100, winner = participant(2))).foreach { lot =>
-        Lot.decide(lot, setProxyLimit(who = 1, max = 200, opN = 1), 1, proxyBid(1)) shouldBe
+        Lot.decide(lot, setProxyLimit(who = 1, max = 200, opN = 1), 1, proxyBid(1), calm) shouldBe
           Left(SetProxyLimitRejected.LotNotOpen)
       }
     }
@@ -177,7 +177,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
     "place no derived bid in the live phase, where rounding to the grid belongs to a later slice" in {
       val lot = trading(price = 110, phase = Phase.Live, leader = Some(participant(1)))
 
-      Lot.decide(lot, setProxyLimit(who = 2, max = 200, opN = 1), 1, proxyBid(1)) shouldBe
+      Lot.decide(lot, setProxyLimit(who = 2, max = 200, opN = 1), 1, proxyBid(1), calm) shouldBe
         Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(2), money(200))))
     }
 

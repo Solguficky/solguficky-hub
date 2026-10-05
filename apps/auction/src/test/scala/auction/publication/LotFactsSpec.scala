@@ -51,6 +51,15 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       }
     }
 
+    "publish a deadline extension with the new deadline and the count in the state" in {
+      val extended = LotEvent.DeadlineExtended(deadline.plusSeconds(120), 1)
+      val (_, fact) = facts(lotDrafted, lotScheduled, opened, placed, extended).last
+
+      fact.map(_.subject) shouldBe Some("events.auction.deadline_extended")
+      val trading = message(fact).getState.getTrading
+      (trading.deadline, trading.extensionsUsed) shouldBe (Some(deadline.plusSeconds(120).toString), 1)
+    }
+
     "keep proxy limits off the bus while they still take a version" in {
       val steps = facts(lotDrafted, lotScheduled, opened, limitSet, limitWithdrawn, placed)
       steps.map((step, fact) => step.sequence -> fact.isDefined) shouldBe List(

@@ -18,16 +18,15 @@ final case class AuctionId(value: UUID)
 
 /**
  * Параметры анти-снайпа (П-04): ставка за `window` до дедлайна продлевает его на `extension`, не больше `maxExtensions`
- * раз. Правило, которое их читает, — лист анти-снайпа; здесь они уже лежат в конфигурации, потому что `LotOpened` несёт
- * её целиком (ADR-047), и журнал не должен меняться, когда правило появится.
+ * раз. Лежат в конфигурации, потому что `LotOpened` несёт её целиком (ADR-047): правило не читает настроек снаружи.
  */
 final case class AntiSnipe(window: Duration, extension: Duration, maxExtensions: Int)
 
 /**
  * Конфигурация торгов, замороженная на входе в `Trading` (И-10) и пришедшая целиком из `LotOpened` (RFC-011, И-07).
  *
- * Анти-снайп приём ставки пока не читает: его правило — соседний лист. Признак прокси читает `SetProxyLimit`. Валюта
- * политики шага совпадает с валютой лота по построению: иначе шаг складывался бы с ценой другой валюты (И-04).
+ * Анти-снайп читают ставка и прокси-лимит, признак прокси — `SetProxyLimit`. Валюта политики шага совпадает с валютой
+ * лота по построению: иначе шаг складывался бы с ценой другой валюты (И-04).
  */
 final case class LotConfig private[lot] (
     currency: CurrencyCode,
@@ -107,8 +106,9 @@ final case class ProxyLimit(max: Money, setSeq: Long)
  * Состояние лота в торгах (RFC-011, «Состояние лота»).
  *
  * До первой ставки `currentPrice` — стартовая цена, а `leader` пуст (И-02). `deadline` пуст, если лот ведёт человек.
- * `proxyLimits` держит И-03 по построению: ключ — участник, и новый лимит заменяет прежний. Счётчик продлений и отметка
- * финала не представлены: их читают соседние правила, и они появятся вместе с ними.
+ * `proxyLimits` держит И-03 по построению: ключ — участник, и новый лимит заменяет прежний. `extensionsUsed` — сколько
+ * раз анти-снайп уже продлил дедлайн (П-04); он лежит рядом с дедлайном, чтобы лимит продлений восстанавливался из
+ * журнала вместе с ним (ПП-2). Отметка финала не представлена: её читает соседнее правило, и она появится вместе с ним.
  */
 final case class TradingState(
     config: LotConfig,
@@ -118,6 +118,7 @@ final case class TradingState(
     leadingBidId: Option[BidId],
     phase: Phase,
     deadline: Option[Instant],
+    extensionsUsed: Int,
     proxyLimits: Map[ParticipantId, ProxyLimit]
 )
 
@@ -215,6 +216,10 @@ final case class CloseLot(reason: CloseReason, opId: OpId)
  * У `LotDrafted` payload нет (ADR-047): аукцион лежит в конверте строки. В доменном событии он полем, потому что
  * принадлежность лота аукциону восстанавливает `apply`, а конверт ядро не читает. `LotScheduled` несёт `Schedule`
  * снимком.
+ *
+ * `DeadlineExtended` собственной команды не имеет (ADR-047): его пишет ставка или прокси-лимит последним событием своей
+ * транзакции. Он несёт итог — новый дедлайн и счётчик, а не приращение, поэтому свёртка не зависит от того, с какого
+ * snapshot она началась.
  */
 enum LotEvent {
   case LotDrafted(auction: AuctionId)
@@ -229,6 +234,7 @@ enum LotEvent {
   )
   case ProxyLimitSet(participant: ParticipantId, max: Money)
   case ProxyLimitWithdrawn(participant: ParticipantId)
+  case DeadlineExtended(newDeadline: Instant, extensionsUsed: Int)
   case LotSold(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
   case LotUnsold(reason: UnsoldReason)
 }
