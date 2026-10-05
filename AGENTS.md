@@ -149,6 +149,10 @@ Agent tooling — скиллы, роли подагентов, MCP-сервер�
 
 ## Agent skills
 
+### Контракт проекта для флоу
+
+Скиллы флоу читают обвязку проекта из пяти файлов `docs/agents/` — трекер, гейт, ветвление и pull request, решения, наблюдения — и называют их путём и заголовком раздела. Имя файла и заголовок раздела там — адрес: переименование ломает скилл молча. Состав и обязательные разделы — [docs/agents/README.md](docs/agents/README.md).
+
 ### Issue tracker
 
 Задачи живут в Linear; GitHub несёт только код и review. См. [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
