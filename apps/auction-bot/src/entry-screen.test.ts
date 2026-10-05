@@ -356,29 +356,28 @@ describe("auction lists", () => {
     [21, "21 лот"],
     [0, "0 лотов"],
   ])("counts %i lots as %s", (lotCount, label) => {
-    expect(
-      auctionLabel(auction({ lotCount }), "auctions", "Europe/Moscow"),
-    ).toBe(`10 октября, сб · идут ставки · ${label}`);
+    expect(auctionLabel(auction({ lotCount }), "Europe/Moscow")).toBe(
+      `10 октября, сб · идут ставки · ${label}`,
+    );
   });
 
   it("names the day in the community zone and a format without an online phase", () => {
     expect(
       auctionLabel(
         auction({ opensAt: "2026-10-10T22:30:00Z", stage: "scheduled" }),
-        "auctions",
         "Europe/Moscow",
       ),
     ).toBe("11 октября, вс · скоро старт · 5 лотов");
     const { opensAt: _opensAt, ...without } = auction({});
-    expect(auctionLabel(without, "auctions", "Europe/Moscow")).toBe(
+    expect(auctionLabel(without, "Europe/Moscow")).toBe(
       "Без онлайн-торгов · идут ставки · 5 лотов",
     );
   });
 
-  it("leaves the stage out of the past list where every auction is finished", () => {
-    expect(
-      auctionLabel(auction({ stage: "finished" }), "past", "Europe/Moscow"),
-    ).toBe("10 октября, сб · 5 лотов");
+  it("names the finished stage in a past row", () => {
+    expect(auctionLabel(auction({ stage: "finished" }), "Europe/Moscow")).toBe(
+      "10 октября, сб · завершён · 5 лотов",
+    );
   });
 
   it("opens the feed from the row and pages the list with arrows", () => {
@@ -395,7 +394,7 @@ describe("auction lists", () => {
     expect(screen.keyboard).toEqual([
       [
         {
-          text: "10 октября, сб · 5 лотов",
+          text: "10 октября, сб · идут ставки · 5 лотов",
           callback_data: encodeAuctionCallback({
             kind: "feed",
             auctionId: "01926f3c-8b7a-5cde-8f00-000000000001",

@@ -296,7 +296,7 @@ function renderList(
     keyboard: [
       ...list.auctions.map((auction) => [
         {
-          text: auctionLabel(auction, kind, options.timeZone),
+          text: auctionLabel(auction, options.timeZone),
           callback_data: encodeAuctionCallback({
             kind: "feed",
             auctionId: auction.auctionId,
@@ -310,18 +310,16 @@ function renderList(
   };
 }
 
-// Строка аукциона: день начала онлайн-фазы, этап и число лотов. У прошедших
-// этап один и тот же, строки он не различает и в их списке не пишется.
+// Строка аукциона: день начала онлайн-фазы, этап и число лотов.
 export function auctionLabel(
   auction: AuctionSummary,
-  kind: ListAction,
   timeZone: string,
 ): string {
   return [
     auction.opensAt === undefined
       ? "Без онлайн-торгов"
       : readableDay(auction.opensAt, timeZone),
-    ...(kind === "auctions" ? [stageLabels[auction.stage]] : []),
+    stageLabels[auction.stage],
     lotCount(auction.lotCount),
   ].join(" · ");
 }

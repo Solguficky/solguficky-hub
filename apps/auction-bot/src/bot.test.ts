@@ -524,7 +524,7 @@ describe("auction bot", () => {
         inline_keyboard: [
           [
             {
-              text: "10 октября, сб · 3 лота",
+              text: "10 октября, сб · завершён · 3 лота",
               callback_data: encodeAuctionCallback({
                 kind: "feed",
                 auctionId,

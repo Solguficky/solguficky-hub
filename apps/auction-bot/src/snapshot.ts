@@ -133,6 +133,15 @@ export function auctionSummaryOf(snapshot: AuctionSnapshot): AuctionSummary {
     throw new Error("auction id is not a canonical UUID");
   }
   const opensAt = snapshot.config?.onlinePhase?.opensAt;
+  // День начала строка показывает и по нему сортирует: битая дата уронила бы
+  // отрисовку уже после маршрута, и человек остался бы без ответа.
+  if (
+    opensAt !== undefined &&
+    opensAt !== "" &&
+    Number.isNaN(Date.parse(opensAt))
+  ) {
+    throw new Error("auction online phase start is not an instant");
+  }
   return {
     auctionId: snapshot.id,
     stage: stageOf(snapshot.status),
