@@ -1216,6 +1216,100 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.error).toBe("hub_access_blocked");
   });
 
+  // Человек с `public` уходит из кадра отказа в бот аукциона (ADR-044;
+  // PER-455): текст тот же, сходок нет, ссылка — единственная кнопка.
+  describe("link to the auction bot", () => {
+    const auctionBotUsername = "solguficky_auction_bot";
+    const link = [
+      [
+        {
+          text: "Бот аукциона ↗",
+          url: `https://t.me/${auctionBotUsername}`,
+        },
+      ],
+    ];
+    const withLink = (
+      identity: Parameters<typeof createHarness>[0],
+      dispatcher?: Dispatcher,
+      username = auctionBotUsername,
+    ) =>
+      createHarness(identity, dispatcher, [], undefined, undefined, undefined, {
+        auctionBotUsername: username,
+      });
+
+    it("leads a person with public only out on /start and on a press", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const { bot, calls } = withLink(resolvedIdentity(["public"]), {
+        execute,
+      });
+      await bot.init();
+      await bot.handleUpdate(messageUpdate());
+      await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+      expect(execute).not.toHaveBeenCalled();
+      expect(calls[0]).toMatchObject({
+        method: "sendMessage",
+        payload: {
+          text: refusalText(pendingHubAccessText(resolvedId, undefined)),
+          reply_markup: { inline_keyboard: link },
+        },
+      });
+      expect(calls[2]).toMatchObject({
+        method: "editMessageText",
+        payload: { reply_markup: { inline_keyboard: link } },
+      });
+    });
+
+    it("keeps the link after a member decline", async () => {
+      const { bot, calls } = withLink(
+        entering(answered("declined", ["public"])),
+      );
+      await bot.init();
+      await bot.handleUpdate(messageUpdate());
+      expect(sendMessageText(calls[0])).toBe(
+        refusalText(declinedHubAccessText),
+      );
+      expect(calls[0]?.payload).toMatchObject({
+        reply_markup: { inline_keyboard: link },
+      });
+    });
+
+    it.each([
+      ["a person without roles", resolvedIdentity([])],
+      ["a blocked person with public", resolvedIdentity(["public"], true)],
+    ])("gives no link to %s", async (_name, identity) => {
+      const { bot, calls } = withLink(identity);
+      await bot.init();
+      await bot.handleUpdate(messageUpdate());
+      expect(JSON.stringify(calls[0]?.payload)).not.toContain("t.me");
+    });
+
+    it("shows the frame without a link when the name is not configured", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity(["public"]));
+      await bot.init();
+      await bot.handleUpdate(messageUpdate());
+      expect(sendMessageText(calls[0])).toBe(
+        refusalText(pendingHubAccessText(resolvedId, undefined)),
+      );
+      expect(JSON.stringify(calls[0]?.payload)).not.toContain("t.me");
+    });
+
+    // Имя хаба в настройке бота аукциона увело бы человека по кругу в этот же
+    // кадр.
+    it("gives no link that leads back into the hub bot itself", async () => {
+      const { bot, calls } = withLink(
+        resolvedIdentity(["public"]),
+        undefined,
+        "Stub_Bot",
+      );
+      await bot.init();
+      await bot.handleUpdate(messageUpdate());
+      expect(sendMessageText(calls[0])).toBe(
+        refusalText(pendingHubAccessText(resolvedId, undefined)),
+      );
+      expect(JSON.stringify(calls[0]?.payload)).not.toContain("t.me");
+    });
+  });
+
   // Незнакомый исход по контракту — отказ, но не ответ о заявке: человек
   // получает кадр недоступности, какие бы роли ни пришли рядом.
   it("fails closed on /start when Identity answers an unknown outcome", async () => {
