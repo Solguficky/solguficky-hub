@@ -42,8 +42,9 @@ import scala.util.Using
 /**
  * Открытие онлайн-торгов на узле, собранном так же, как в `Main`: настоящие entity аукциона и лотов под шардингом,
  * журнал и read model на PostgreSQL. Команды идут через [[AuctionCommands]] — gRPC-метода у них нет (integration.md,
- * «Auction gRPC»). Рестарт здесь — рестарт `ActorSystem` на той же базе: L0 entity доказывает протокол на подмене
- * лотов, а этот сьют — что после рестарта сервиса аукцион приходит к фактическому состоянию настоящих лотов.
+ * «Auction gRPC»). Рестарт здесь — рестарт `ActorSystem` на той же базе: L0 entity доказывает протокол на подмене лотов
+ * и то, что открытый лот не получает второго `OpenLot`, а этот сьют — что после рестарта сервиса аукцион приходит к
+ * фактическому состоянию настоящих лотов.
  */
 final class AuctionOpeningIntegrationSpec
     extends AnyWordSpec
@@ -105,7 +106,7 @@ final class AuctionOpeningIntegrationSpec
   private def roster(node: Node, auction: AuctionId): LotRoster =
     node.sharding
       .entityRefFor(AuctionEntity.TypeKey, auction.value.toString)
-      .ask[LotRoster](AuctionEntity.Lots(_))
+      .ask[LotRoster](AuctionEntity.Roster(_))
       .futureValue
 
   /** Аукцион сходки с двумя лотами в реестре: `planned` получил условия торгов, `bare` — нет. */
@@ -175,7 +176,7 @@ final class AuctionOpeningIntegrationSpec
           case other => fail(s"the planned lot is not trading: $other")
         }
         lotState(node, auction.bare) shouldBe LotState.Draft
-        // Повтор того же op_id аукцион второй раз не открывает и лоту второй строки не пишет.
+        // Повтор того же op_id аукцион второй раз не открывает; новый op_id получает отказ.
         node.commands.startPrebidding(auction.auction, op, person).futureValue shouldBe Right(())
         node.commands.startPrebidding(auction.auction, newOp(), person).futureValue shouldBe
           Left(OpeningRefusal.AuctionNotScheduled)
@@ -192,7 +193,7 @@ final class AuctionOpeningIntegrationSpec
       }
     }
 
-    "comes to the actual state of its lots after a service restart without opening an open lot again" in {
+    "comes to the actual state of its lots after a service restart" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
       val auction = onDatabase(database) { node =>
@@ -209,7 +210,8 @@ final class AuctionOpeningIntegrationSpec
           )
         }
         lotState(node, auction.planned) shouldBe a[LotState.Trading]
-        // Рождение, условия и одно открытие: опрос после рестарта второго `LotOpened` не написал.
+        // Журнал лота не вырос. Что открытый лот не получает второго `OpenLot`, доказывает L0 entity: здесь повтор
+        // с тем же `op_id` строки бы тоже не написал.
         journalRows(database, auction.planned) shouldBe 3
       }
     }

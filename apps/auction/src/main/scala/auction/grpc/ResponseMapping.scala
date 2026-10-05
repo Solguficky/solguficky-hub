@@ -5,8 +5,8 @@ import auction.aggregate.Denial
 import auction.aggregate.Drafted
 import auction.aggregate.RemovalRefusal
 import auction.catalog.CatalogRefusal
-import auction.contract.AuctionValues
 import auction.catalog.LotCard
+import auction.contract.AuctionValues
 import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.Money

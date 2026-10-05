@@ -3,13 +3,13 @@ package auction.grpc
 import auction.aggregate.AddLot
 import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
+import auction.aggregate.AuctionFixtures
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.DraftAuction
 import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
-import auction.aggregate.AuctionFixtures
 import auction.aggregate.RemoveLot
 import auction.aggregate.RemoveLotRejected
 import auction.aggregate.ScheduleAuction
@@ -504,9 +504,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val started = read(AuctionState.Prebidding(AuctionFixtures.config(), OpId(UUID.fromString(op))))
       started.status.isPrebidding shouldBe true
       started.config shouldBe scheduled.config
-      val led = read(AuctionState.Scheduled(AuctionFixtures.config(AuctionFixtures.byAuctioneer))).getConfig
-      led.getOnlinePhase.closesAt shouldBe None
-      led.getClosingPolicy.policy.isByAuctioneer shouldBe true
+      val ledByPerson = read(AuctionState.Scheduled(AuctionFixtures.config(AuctionFixtures.byAuctioneer))).getConfig
+      ledByPerson.getOnlinePhase.closesAt shouldBe None
+      ledByPerson.getClosingPolicy.policy.isByAuctioneer shouldBe true
     }
 
     "answers UNIMPLEMENTED on display names and images that belong to later slices" in {

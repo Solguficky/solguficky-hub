@@ -5,6 +5,7 @@ import auction.catalog.LotId
 import auction.lot.LotState
 import auction.lot.OpId
 import auction.lot.OpenLotRejected
+import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -84,7 +85,7 @@ object AuctionEntity {
   final case class Get(replyTo: ActorRef[Auction]) extends Command
 
   /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
-  final case class Lots(replyTo: ActorRef[LotRoster]) extends Command
+  final case class Roster(replyTo: ActorRef[LotRoster]) extends Command
 
   /** Ответ лота на вопрос о состоянии; неудача — ответа нет. */
   private[entity] final case class LotObserved(lot: LotId, state: Try[LotState]) extends Command
@@ -122,8 +123,15 @@ object AuctionEntity {
         }
       }
 
-      def silent(lot: LotId, failure: Throwable): Unit = {
-        context.log.warn("auction {} got no answer from lot {}: {}", auctionId, lot.value, failure.getClass.getName)
+      // Ожидаемый отказ зависимости: лот не ответил в срок. Сообщение исключения в запись не идёт — только его класс.
+      def unanswered(lot: LotId, failure: Throwable): Unit = {
+        context.log.warn(
+          "lot did not answer the auction",
+          StructuredArguments.keyValue("auction_id", auctionId),
+          StructuredArguments.keyValue("lot_id", lot.value.toString),
+          StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+          StructuredArguments.keyValue("error", failure.getClass.getName)
+        )
         roster = LotRoster.unanswered(roster, lot)
       }
 
@@ -135,20 +143,16 @@ object AuctionEntity {
               case Right(decision) =>
                 record(state.auction, decision, start.opId, initiator, clock, newId) { (auction, answer) =>
                   replyTo ! Right(answer)
-                  decision match {
-                    case AuctionDecision.Accepted(_) => follow(LotRoster.survey(auction))
-                    case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged =>
-                      follow(LotRoster.resume(auction, roster))
-                  }
+                  follow(LotRoster.started(auction, roster, decision))
                 }
             }
-          case Lots(replyTo) => Effect.reply(replyTo)(roster)
+          case Roster(replyTo) => Effect.reply(replyTo)(roster)
           case LotObserved(lot, Success(lotState)) =>
             Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
-          case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => silent(lot, failure))
+          case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
           case LotAnswered(lot, Success(answer)) =>
             Effect.none.thenRun(_ => roster = LotRoster.opened(roster, lot, answer))
-          case LotAnswered(lot, Failure(failure)) => Effect.none.thenRun(_ => silent(lot, failure))
+          case LotAnswered(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
           case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
           case Draft(draft, initiator, replyTo) =>
             val decision = Auction.decide(state.auction, draft)

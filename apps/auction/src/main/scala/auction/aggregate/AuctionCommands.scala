@@ -130,7 +130,9 @@ final class AuctionCommands(
       case Inspection.Absent => Future.successful(Left(Denial.AuctionNotFound))
       case Inspection.Present(meetup, registryOpen) =>
         authorized(meetup, person, (denial: Denial) => denial) {
-          // Замороженный реестр отказывает до рождения лота: иначе лот остался бы с журналом, но вне реестра.
+          // Замороженный реестр отказывает до рождения лота: иначе лот остался бы с журналом, но вне реестра. Старт
+          // торгов между `Inspect` и командой это не закрывает: лот успевает родиться, а реестр уже отвечает
+          // `LotsFrozen`. Такой лот вне реестра модель терпит так же, как лот после оборванного `AddLot`.
           if (!registryOpen) Future.successful(Left(Denial.LotsFrozen))
           else
             born(auctionId, lot, opId, person).flatMap {
@@ -188,7 +190,13 @@ final class AuctionCommands(
 
   def startPrebidding(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[OpeningRefusal, Unit]] =
     auctions.inspect(auctionId, opId).flatMap {
-      case Inspection.Repeated(_) => start(auctionId, opId, person)
+      // Мимо Meetups в entity идёт только повтор самой команды открытия; `op_id` другой команды отвечает, как у
+      // остальных команд, и до entity не доходит.
+      case Inspection.Repeated(original) =>
+        original.event match {
+          case AuctionEvent.PrebiddingStarted => start(auctionId, opId, person)
+          case _ => Future.successful(Right(()))
+        }
       case Inspection.Absent => Future.successful(Left(OpeningRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
         authorized(meetup, person, OpeningRefusal.Denied(_))(start(auctionId, opId, person))

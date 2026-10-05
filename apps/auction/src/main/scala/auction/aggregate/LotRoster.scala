@@ -74,6 +74,18 @@ object LotRoster {
     }
 
   /**
+   * Шаг протокола после команды открытия: записанное событие начинает опрос заново, повтор самой команды открытия
+   * доспрашивает неответившие лоты. `op_id`, под которым записано другое событие, лотов не трогает: окно `seen` вид
+   * события не различает, и чужой `op_id` иначе стал бы способом открыть лоты.
+   */
+  def started(auction: Auction, roster: LotRoster, decision: AuctionDecision): (LotRoster, List[LotInstruction]) =
+    decision match {
+      case AuctionDecision.Accepted(_) => survey(auction)
+      case AuctionDecision.Repeated(AuctionEnvelope(_, _, AuctionEvent.PrebiddingStarted)) => resume(auction, roster)
+      case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged => (roster, Nil)
+    }
+
+  /**
    * Лот ответил на вопрос о состоянии. Ответ, которого аукцион не ждёт, — опоздавший или повторный — знания не меняет.
    */
   def observed(auction: Auction, roster: LotRoster, lot: LotId, state: LotState): (LotRoster, List[LotInstruction]) =

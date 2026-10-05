@@ -53,8 +53,8 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
     }
 
     "opens a lot without a deadline when the config does not close lots" in {
-      val led = auctionIn(AuctionState.Prebidding(config(byAuctioneer), op(3)))
-      LotRoster.observed(led, asked, first, LotFixtures.scheduled().state)._2 shouldBe
+      val ledByPerson = auctionIn(AuctionState.Prebidding(config(byAuctioneer), op(3)))
+      LotRoster.observed(ledByPerson, asked, first, LotFixtures.scheduled().state)._2 shouldBe
         List(LotInstruction.Open(first, OpenLot(None, op(3))))
     }
 
@@ -97,6 +97,15 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
       val refused = LotRoster.opened(opening(first), first, Left(OpenLotRejected.LotNotScheduled))
       val active = LotRoster.observed(prebidding, refused, second, LotFixtures.trading(price = 100).state)._1
       LotRoster.resume(prebidding, active) shouldBe (active, Nil)
+    }
+
+    "asks lots again only on a repeat of the start itself, not of another accepted command" in {
+      val silent = LotRoster.unanswered(opening(first), first)
+      val start = AuctionDecision.Repeated(AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted))
+      LotRoster.started(prebidding, silent, start)._2 shouldBe List(LotInstruction.Ask(first))
+      val another = AuctionDecision.Repeated(AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(first)))
+      LotRoster.started(prebidding, silent, another) shouldBe (silent, Nil)
+      LotRoster.started(prebidding, silent, AuctionDecision.Accepted(AuctionEvent.PrebiddingStarted))._1 shouldBe asked
     }
 
     "ignores an answer it is not waiting for" in {

@@ -289,5 +289,14 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       meetups.asked shouldBe 0
       auctions.commands shouldBe List(StartPrebidding(op(3)))
     }
+
+    "does not reach the auction when an opening repeats the op_id of another command" in {
+      val added = AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
+      val auctions = Auctions(Inspection.Repeated(added))
+      AuctionCommands(auctions, noLots, Meetups(Authority.NotAdministrator))
+        .startPrebidding(auctionOfMeetup, op(2), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe empty
+    }
   }
 }

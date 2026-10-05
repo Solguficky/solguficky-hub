@@ -3,6 +3,7 @@ package auction.entity
 import auction.catalog.LotId
 import auction.lot.Envelope
 import auction.lot.Lot
+import auction.lot.LotEvent
 import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
@@ -12,6 +13,9 @@ import org.apache.pekko.util.Timeout
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 /**
  * Лоты, какими их видит entity аукциона: вопрос о состоянии и команда открытия. Это не [[LotGateway]]: тот — порт
@@ -46,6 +50,19 @@ object AuctionLots {
       def open(lot: LotId, command: OpenLot): Future[Either[OpenLotRejected, Unit]] =
         entity(lot)
           .ask[Either[OpenLotRejected, Envelope]](LotEntity.Open(command, Initiator.Scheduler, _))
-          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+          .flatMap(answer => Future.fromTry(confirmation(answer)))(using ExecutionContext.parasitic)
+    }
+
+  /**
+   * Подтверждение открытия — только конверт `LotOpened`. Лот отвечает на повтор `op_id` исходным конвертом, каким бы
+   * событием он ни был: если под `op_id` команды открытия у лота уже записано другое событие, такой ответ — не
+   * открытие, и лот остаётся без ответа, а не становится активным. Истину даст следующий вопрос о состоянии.
+   */
+  def confirmation(answer: Either[OpenLotRejected, Envelope]): Try[Either[OpenLotRejected, Unit]] =
+    answer match {
+      case Left(rejected) => Success(Left(rejected))
+      case Right(Envelope(_, _, _: LotEvent.LotOpened)) => Success(Right(()))
+      case Right(other) =>
+        Failure(new IllegalStateException(s"lot answered OpenLot with ${other.event.getClass.getSimpleName}"))
     }
 }

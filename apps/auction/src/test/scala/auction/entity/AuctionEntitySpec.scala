@@ -126,7 +126,7 @@ final class AuctionEntitySpec
       AuctionEntity.Start(StartPrebidding(op(opN)), administrator, _)
     )
 
-  private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Lots(_)).reply
+  private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Roster(_)).reply
 
   /** Аукцион с реестром `registry`, запланированный на неделю Ф-4: события 1…N+2, старт — следующим `op_id`. */
   private def scheduledWith(registry: LotId*): Int = {
