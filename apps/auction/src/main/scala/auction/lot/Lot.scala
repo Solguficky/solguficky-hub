@@ -109,7 +109,7 @@ object Lot {
           placeBid(trading, command, bidId).map { placed =>
             Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList)
           }
-        case LotState.Held(_) => Left(PlaceBidRejected.LotOnHold)
+        case LotState.Held(held) => Left(PlaceBidRejected.LotOnHold(held.currentPrice))
         case LotState.Sold(_) | LotState.Unsold(_) => Left(PlaceBidRejected.LotNotOpen)
       }
     }
@@ -248,7 +248,7 @@ object Lot {
   ): Either[PlaceBidRejected, LotEvent.BidPlaced] = {
     val required = minRequired(trading)
     if (command.amount.currency != trading.config.currency) Left(PlaceBidRejected.CurrencyMismatch)
-    else if (trading.leader.contains(command.participant)) Left(PlaceBidRejected.BidderIsLeader)
+    else if (trading.leader.contains(command.participant)) Left(PlaceBidRejected.BidderIsLeader(trading.currentPrice))
     else if (trading.phase == Phase.Live && command.amount != required)
       Left(PlaceBidRejected.BidNotAtNextPrice(required))
     else if (command.amount < required) Left(PlaceBidRejected.BidBelowMinimum(required))
@@ -272,7 +272,7 @@ object Lot {
   ): Either[SetProxyLimitRejected, LotEvent.ProxyLimitSet] =
     if (!config.proxyEnabled) Left(SetProxyLimitRejected.ProxyDisabledForLot)
     else if (command.max.currency != config.currency) Left(SetProxyLimitRejected.CurrencyMismatch)
-    else if (command.max < floor) Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)
+    else if (command.max < floor) Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(floor))
     else Right(LotEvent.ProxyLimitSet(command.participant, command.max))
 
   /**

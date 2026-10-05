@@ -52,9 +52,23 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
 
     "answers every named refusal of a bid as a value of the response" in {
       refused(PlaceBidRejected.LotNotOpen).isLotNotOpen shouldBe true
-      refused(PlaceBidRejected.LotOnHold).isLotOnHold shouldBe true
+      refused(PlaceBidRejected.LotOnHold(money(300))).isLotOnHold shouldBe true
       refused(PlaceBidRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
-      refused(PlaceBidRejected.BidderIsLeader).isBidderIsLeader shouldBe true
+      refused(PlaceBidRejected.BidderIsLeader(money(110))).isBidderIsLeader shouldBe true
+    }
+
+    "carries the current price in on-hold and leader refusals and the lowest limit in a low-limit refusal" in {
+      refused(PlaceBidRejected.LotOnHold(money(300))).lotOnHold.flatMap(_.currentPrice) shouldBe
+        Some(MoneyMessage(300, "RUB"))
+      refused(PlaceBidRejected.BidderIsLeader(money(110))).bidderIsLeader.flatMap(_.currentPrice) shouldBe
+        Some(MoneyMessage(110, "RUB"))
+      ResponseMapping
+        .setProxyLimit(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150))))
+        .value
+        .getRefused
+        .reason
+        .proxyBelowCurrentPrice
+        .flatMap(_.minLimit) shouldBe Some(MoneyMessage(150, "RUB"))
     }
 
     "answers a bid to a lot that does not exist with NOT_FOUND rather than a refusal" in {
@@ -69,7 +83,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       def limitRefused(rejected: SetProxyLimitRejected) =
         ResponseMapping.setProxyLimit(Left(rejected)).value.getRefused.reason
       limitRefused(SetProxyLimitRejected.LotNotOpen).isLotNotOpen shouldBe true
-      limitRefused(SetProxyLimitRejected.ProxyBelowCurrentPrice).isProxyBelowCurrentPrice shouldBe true
+      limitRefused(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150))).isProxyBelowCurrentPrice shouldBe true
       limitRefused(SetProxyLimitRejected.ProxyDisabledForLot).isProxyDisabledForLot shouldBe true
       limitRefused(SetProxyLimitRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
       ResponseMapping

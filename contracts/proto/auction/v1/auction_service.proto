@@ -166,7 +166,10 @@ message WithdrawProxyLimitRefusal {
 message LotNotOpen {}
 
 // The lot is held for the live final and accepts no bids until it is resumed.
-message LotOnHold {}
+message LotOnHold {
+  // The price of the lot at the moment the bid was decided.
+  Money current_price = 1;
+}
 
 message BidBelowMinimum {
   // The lowest amount the lot accepts now.
@@ -180,7 +183,10 @@ message BidNotAtNextPrice {
 }
 
 // The bidder already leads the lot.
-message BidderIsLeader {}
+message BidderIsLeader {
+  // The price of the lot at the moment the bid was decided: the bidder's own.
+  Money current_price = 1;
+}
 
 // The currency of the amount differs from the currency of the lot.
 message CurrencyMismatch {}
@@ -188,7 +194,10 @@ message CurrencyMismatch {}
 // The limit is below the current price of the lot, or below the announced ask
 // when it is higher. A limit equal to that price is accepted: the leader may
 // lower its own limit down to it.
-message ProxyBelowCurrentPrice {}
+message ProxyBelowCurrentPrice {
+  // The lowest limit the lot accepted at the moment the limit was decided.
+  Money min_limit = 1;
+}
 
 message ProxyDisabledForLot {}
 

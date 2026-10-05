@@ -532,7 +532,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val recording = new Born {
         override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) = {
           seen = Some((lotId, command, initiator))
-          Future.successful(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice))
+          Future.successful(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150))))
         }
       }
       service(recording).setProxyLimit(validLimit).futureValue.getRefused.reason.isProxyBelowCurrentPrice shouldBe true
@@ -567,7 +567,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           Future.successful(outcome)
       }
       val refusedNames = Names(named)
-      service(limiting(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice)), names = refusedNames)
+      service(limiting(Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150)))), names = refusedNames)
         .setProxyLimit(validLimit)
         .futureValue
       refusedNames.freezes shouldBe 0
