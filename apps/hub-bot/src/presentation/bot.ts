@@ -1005,7 +1005,13 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
       if (denied !== undefined) {
         outcome = denied;
         return;
