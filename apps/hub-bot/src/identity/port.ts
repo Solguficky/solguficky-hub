@@ -1,3 +1,7 @@
+import type {
+  RoleRequestOutcome,
+  SurfaceCircle,
+} from "@solguficky/auction-bot-ui";
 import type { RpcMetadata } from "../rpc-metadata.js";
 
 export type ResolveIdentityInput = {
@@ -22,6 +26,10 @@ export function toResolveIdentityInput(
 // Отметка блокировки идёт отдельным полем, а не выводится из пустого набора
 // ролей: блокировка отзывает роли, и заблокированный иначе неотличим от
 // человека, который ни разу не начинал.
+export type IdentityFailure =
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; code: string; cause: unknown };
+
 export type ResolveIdentityResult =
   | {
       kind: "resolved";
@@ -29,14 +37,42 @@ export type ResolveIdentityResult =
       globalRoles: readonly string[];
       blocked: boolean;
     }
-  | { kind: "unavailable"; cause: unknown }
-  | { kind: "rejected"; code: string; cause: unknown };
+  | IdentityFailure;
 
 export type IdentityResolver = {
   resolve(
     input: ResolveIdentityInput,
     meta?: RpcMetadata,
   ): Promise<ResolveIdentityResult>;
+};
+
+// Вход на `/start` (ADR-060, пункты 1–7 и 17–19): человек тот же, что у
+// разрешения личности, плюс круг поверхности, код канала и имя для карточки
+// модератора.
+export type RequestRoleInput = ResolveIdentityInput & {
+  requestedRole: SurfaceCircle;
+  // Код канала из payload `s_<код>` без префикса, как пришёл. Нет — payload
+  // префикса не нёс; пустая строка — пустой код после `s_`.
+  sourceCode?: string;
+  firstName: string;
+};
+
+// Отметки блокировки в ответе входа нет: её несёт исход `blocked`. Словарь
+// исходов — общего пакета: по нему политика пакета решает вход.
+export type RequestRoleResult =
+  | {
+      kind: "answered";
+      identityId: string;
+      globalRoles: readonly string[];
+      outcome: RoleRequestOutcome;
+    }
+  | IdentityFailure;
+
+export type RoleRequester = {
+  requestRole(
+    input: RequestRoleInput,
+    meta?: RpcMetadata,
+  ): Promise<RequestRoleResult>;
 };
 
 // Обратный путь для канала доставки: уведомление несёт внутренний идентификатор,

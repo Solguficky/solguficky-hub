@@ -164,7 +164,7 @@ const SCHEDULED_LOT: LotView = {
 
 // Лента приходит двумя серверными страницами и не по цене: порядок, которого
 // ждут тела ниже, может дать только край.
-const AUCTION: ContractAuction = {
+export const AUCTION: ContractAuction = {
   lots: [CONTRACT_LOT, SOLD_LOT, UNSOLD_LOT, WITHDRAWN_LOT, SCHEDULED_LOT],
   pages: {
     "": {
@@ -395,7 +395,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
-function spyPorts(
+export function spyPorts(
   calls: PortCall[],
   snapshot: ContractAuction,
 ): AuctionBotPorts {

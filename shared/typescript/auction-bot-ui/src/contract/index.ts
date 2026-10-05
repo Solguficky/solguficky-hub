@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { AuctionSurface } from "../gateway.js";
+import {
+  ACCESS_MATRIX_CASES,
+  type AccessMatrixApp,
+  type AccessMatrixCase,
+  checkAccessMatrixCase,
+} from "./access.js";
 import {
   AUCTION_CONTRACT_CASES,
   type AuctionContractApp,
@@ -6,6 +13,18 @@ import {
   checkAuctionContractCase,
 } from "./check.js";
 
+export {
+  ACCESS_MATRIX_CASES,
+  type AccessAction,
+  type AccessAnswer,
+  type AccessMatrixApp,
+  type AccessMatrixCase,
+  type AccessMatrixInput,
+  type AccessMatrixPorts,
+  type AccessViolation,
+  checkAccessMatrix,
+  checkAccessMatrixCase,
+} from "./access.js";
 export {
   AUCTION_CONTRACT_CASES,
   type AuctionContractApp,
@@ -39,6 +58,29 @@ export function describeAuctionContract(
         expect(await checkAuctionContractCase(createApp, contractCase)).toEqual(
           [],
         );
+      });
+    }
+  });
+}
+
+// Матрица доступа для приложения: тест на каждую строку его поверхности над
+// его фабрикой. Вход приложения здесь целый — от действия человека до ответа
+// ему, — поэтому матрица ловит и забытый вход на `/start`, и вызов Auction
+// для человека, которого поверхность не пускает (ADR-044, ADR-060).
+export function describeAccessMatrix(
+  name: string,
+  surface: AuctionSurface["kind"],
+  createApp: AccessMatrixApp,
+  cases: readonly AccessMatrixCase[] = ACCESS_MATRIX_CASES,
+): void {
+  const own = cases.filter((each) => each.surface === surface);
+  describe(`access matrix: ${name}`, () => {
+    it("has cases to check", () => {
+      expect(own.length).toBeGreaterThan(0);
+    });
+    for (const matrixCase of own) {
+      it(`${matrixCase.name}: ${matrixCase.answer}`, async () => {
+        expect(await checkAccessMatrixCase(createApp, matrixCase)).toEqual([]);
       });
     }
   });

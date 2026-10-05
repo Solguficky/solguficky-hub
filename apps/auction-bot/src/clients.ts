@@ -8,6 +8,10 @@ import type {
   GlobalRole,
   LotImagePort,
   ResolvedIdentity,
+  RoleRequest,
+  RoleRequestAnswer,
+  RoleRequestOutcome,
+  SurfaceCircle,
   TelegramUser,
   Viewer,
 } from "@solguficky/auction-bot-ui";
@@ -16,7 +20,10 @@ import {
   type TelegramRecipientResolver,
 } from "@solguficky/telegram-delivery";
 import { AuctionService } from "../gen/auction/v1/auction_service_pb.js";
-import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
+import {
+  IdentityService,
+  RoleRequestOutcome as WireOutcome,
+} from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole as WireRole } from "../gen/identity/v1/roles_pb.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
@@ -34,7 +41,10 @@ export const requestIdHeader = "x-request-id";
 // сгенерированному Client роняет typecheck на первом расхождении с contracts/proto.
 export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
-  "resolveIdentity" | "resolveTelegramUserId" | "checkGlobalRole"
+  | "resolveIdentity"
+  | "requestRole"
+  | "resolveTelegramUserId"
+  | "checkGlobalRole"
 >;
 export type AuctionRpc = Pick<
   Client<typeof AuctionService>,
@@ -114,6 +124,33 @@ export function createPorts(
               (role) => roleName(role) ?? [],
             ),
             blocked: response.blocked,
+          };
+        },
+      },
+      entry: {
+        async requestRole(request: RoleRequest): Promise<RoleRequestAnswer> {
+          const response = await identity.requestRole(
+            {
+              telegramUserId: BigInt(request.user.telegramUserId),
+              ...(request.user.telegramUsername === undefined
+                ? {}
+                : { telegramUsername: request.user.telegramUsername }),
+              requestedRole: wireCircle(request.requestedRole),
+              // Присутствие кода значимо: пустой код после `s_` — «неизвестный
+              // источник», а не его отсутствие.
+              ...(request.sourceCode === undefined
+                ? {}
+                : { sourceCode: request.sourceCode }),
+              firstName: request.firstName,
+            },
+            callOptions(timeoutMs),
+          );
+          return {
+            identityId: response.identityId,
+            globalRoles: response.globalRoles.flatMap(
+              (role) => roleName(role) ?? [],
+            ),
+            outcome: outcomeName(response.outcome),
           };
         },
       },
@@ -308,6 +345,38 @@ export function createClients(options: {
       auctionSession.abort();
     },
   };
+}
+
+function wireCircle(circle: SurfaceCircle): WireRole {
+  switch (circle) {
+    case "member":
+      return WireRole.MEMBER;
+    case "public":
+      return WireRole.PUBLIC;
+    default: {
+      const _exhaustive: never = circle;
+      return _exhaustive;
+    }
+  }
+}
+
+// Число, которого словарь ещё не знает, читается как `UNSPECIFIED`: по
+// контракту незнакомый исход — отказ, а не допуск.
+function outcomeName(outcome: WireOutcome): RoleRequestOutcome {
+  switch (outcome) {
+    case WireOutcome.ALREADY_HELD:
+      return "already-held";
+    case WireOutcome.GRANTED_BY_ALLOWLIST:
+      return "granted-by-allowlist";
+    case WireOutcome.PENDING:
+      return "pending";
+    case WireOutcome.DECLINED:
+      return "declined";
+    case WireOutcome.BLOCKED:
+      return "blocked";
+    default:
+      return "unspecified";
+  }
 }
 
 function roleName(role: WireRole): GlobalRole | undefined {

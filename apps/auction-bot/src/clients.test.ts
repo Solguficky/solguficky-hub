@@ -1,5 +1,6 @@
 import { Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { RoleRequestOutcome } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import {
   type AuctionRpc,
@@ -20,6 +21,11 @@ function rpcs() {
         GlobalRole.MEMBER,
       ],
       blocked: false,
+    })),
+    requestRole: vi.fn(async () => ({
+      identityId: "id-1",
+      globalRoles: [GlobalRole.PUBLIC, GlobalRole.UNSPECIFIED],
+      outcome: RoleRequestOutcome.GRANTED_BY_ALLOWLIST,
     })),
   };
   const snapshot = {
@@ -102,6 +108,79 @@ describe("createPorts", () => {
       { telegramUserId: 42n, telegramUsername: "nick" },
       { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
     );
+  });
+
+  it("requests the circle on /start and maps the answer", async () => {
+    const { identity, ports } = rpcs();
+    const answer = await ports.entry.requestRole({
+      user: { telegramUserId: 42, telegramUsername: "nick" },
+      requestedRole: "public",
+      sourceCode: "tg_ads",
+      firstName: "Сова",
+    });
+    expect(answer).toEqual({
+      identityId: "id-1",
+      globalRoles: ["public"],
+      outcome: "granted-by-allowlist",
+    });
+    expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
+      {
+        telegramUserId: 42n,
+        telegramUsername: "nick",
+        requestedRole: GlobalRole.PUBLIC,
+        sourceCode: "tg_ads",
+        firstName: "Сова",
+      },
+      callOptions,
+    );
+  });
+
+  // Присутствие кода значимо: пустой код едет пустой строкой, отсутствующий
+  // поля в запросе не оставляет.
+  it.each([
+    ["", { sourceCode: "" }],
+    [undefined, {}],
+  ])("sends the channel code %j as received", async (sourceCode, expected) => {
+    const { identity, ports } = rpcs();
+    await ports.entry.requestRole({
+      user: { telegramUserId: 42 },
+      requestedRole: "public",
+      ...(sourceCode === undefined ? {} : { sourceCode }),
+      firstName: "Сова",
+    });
+    expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
+      {
+        telegramUserId: 42n,
+        requestedRole: GlobalRole.PUBLIC,
+        firstName: "Сова",
+        ...expected,
+      },
+      callOptions,
+    );
+  });
+
+  it.each([
+    [RoleRequestOutcome.ALREADY_HELD, "already-held"],
+    [RoleRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
+    [RoleRequestOutcome.PENDING, "pending"],
+    [RoleRequestOutcome.DECLINED, "declined"],
+    [RoleRequestOutcome.BLOCKED, "blocked"],
+    [RoleRequestOutcome.UNSPECIFIED, "unspecified"],
+    // Число, которого словарь ещё не знает, — отказ, а не допуск.
+    [99 as RoleRequestOutcome, "unspecified"],
+  ])("reads the outcome %s as %s", async (wire, outcome) => {
+    const { identity, ports } = rpcs();
+    identity.requestRole.mockResolvedValue({
+      identityId: "id-1",
+      globalRoles: [],
+      outcome: wire,
+    });
+    const answer = await ports.entry.requestRole({
+      user: { telegramUserId: 42 },
+      requestedRole: "public",
+      firstName: "Сова",
+    });
+    expect(answer.outcome).toBe(outcome);
   });
 
   it("sends the viewer to Auction and maps the snapshot", async () => {

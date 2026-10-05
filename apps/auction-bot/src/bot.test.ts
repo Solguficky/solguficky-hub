@@ -1,5 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  type EntryPort,
   encodeAuctionCallback,
   type LotImagePort,
   type LotView,
@@ -17,6 +18,7 @@ import {
   type PortsFactory,
 } from "./clients.js";
 import { traceLotCallback } from "./delivery/message.js";
+import { deniedTexts } from "./entry-screen.js";
 import { entryCallback } from "./faq.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
@@ -145,6 +147,7 @@ function portsWith(
   overrides: {
     lot?: Partial<LotView>;
     image?: LotImagePort["getLotImage"];
+    entry?: EntryPort["requestRole"];
   } = {},
 ): PortsFactory {
   return () => ({
@@ -154,6 +157,15 @@ function portsWith(
         globalRoles: ["public"],
         blocked: false,
       }),
+    },
+    entry: {
+      requestRole:
+        overrides.entry ??
+        (async () => ({
+          identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+          globalRoles: ["public"],
+          outcome: "already-held",
+        })),
     },
     auction: {
       getLot: async () => ({
@@ -295,6 +307,44 @@ describe("auction bot", () => {
     }
   });
 
+  // Код канала — недоверенный хвост `s_<код>`: до Identity он едет как пришёл,
+  // а payload без префикса кода не несёт (ADR-060, пункты 17–18).
+  it.each([
+    ["/start s_tg_ads", { sourceCode: "tg_ads" }],
+    ["/start s_", { sourceCode: "" }],
+    ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
+    ["/start", {}],
+  ])(
+    "enters on %s with the public circle and the first name",
+    async (text, code) => {
+      const requestRole = vi.fn<EntryPort["requestRole"]>(async () => ({
+        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+        globalRoles: [],
+        outcome: "pending",
+      }));
+      const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
+      await bot.handleUpdate(
+        startUpdate({
+          message_id: 1,
+          date: 0,
+          chat: privateChat,
+          from,
+          text,
+          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+        }),
+      );
+      expect(requestRole).toHaveBeenCalledExactlyOnceWith({
+        user: { telegramUserId: 42 },
+        requestedRole: "public",
+        firstName: "Person",
+        ...code,
+      });
+      expect(calls.map((call) => call.payload)).toMatchObject([
+        { text: deniedTexts["not-admitted"] },
+      ]);
+    },
+  );
+
   it("stays silent in a group", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(
@@ -321,6 +371,7 @@ describe("auction bot", () => {
             return base.identity.resolveIdentity(user);
           },
         },
+        entry: base.entry,
         auction: base.auction,
         faq: base.faq,
         image: base.image,
@@ -938,13 +989,10 @@ describe("waiting", () => {
       const base = publicPorts(requestId, deadlineAt);
       return {
         ...base,
-        identity: {
-          resolveIdentity: (user) =>
+        entry: {
+          requestRole: (request) =>
             new Promise((resolve) => {
-              setTimeout(
-                () => resolve(base.identity.resolveIdentity(user)),
-                1_500,
-              );
+              setTimeout(() => resolve(base.entry.requestRole(request)), 1_500);
             }),
         },
       };

@@ -90,6 +90,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
             ? {}
             : { telegramUsername: ctx.from.username }),
         },
+        firstName: ctx.from.first_name,
       });
       const screen = render(outcome.screen);
       await ctx.reply(screen.text, markupOf(screen));
