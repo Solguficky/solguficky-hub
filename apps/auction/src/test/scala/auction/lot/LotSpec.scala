@@ -146,7 +146,8 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         phase = Phase.Online,
         deadline = Some(deadline),
         extensionsUsed = 0,
-        proxyLimits = Map.empty
+        proxyLimits = Map.empty,
+        markedForFinal = false
       )
     }
 

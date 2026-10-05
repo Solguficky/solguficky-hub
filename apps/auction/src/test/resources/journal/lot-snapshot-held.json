@@ -1,8 +1,9 @@
 {
-  "sequence": 5,
+  "sequence": 7,
   "state": {
-    "kind": "Trading",
-    "trading": {
+    "kind": "Held",
+    "trading": null,
+    "held": {
       "config": {
         "currency": "RUB",
         "stepPolicy": {
@@ -41,11 +42,8 @@
         "minorUnits": 10500,
         "currency": "RUB"
       },
-      "ask": null,
       "leader": "00000000-0000-0001-0000-000000000002",
       "leadingBidId": "00000000-0000-0002-0000-000000000001",
-      "phase": "Online",
-      "deadline": "2026-10-07T18:00:00Z",
       "proxyLimits": [
         {
           "participant": "00000000-0000-0001-0000-000000000002",
@@ -56,10 +54,8 @@
           "setSeq": 5
         }
       ],
-      "extensionsUsed": 0,
-      "markedForFinal": false
+      "extensionsUsed": 0
     },
-    "held": null,
     "sold": null,
     "scheduled": null,
     "unsold": null
@@ -244,6 +240,42 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null
+      }
+    },
+    {
+      "sequence": 6,
+      "opId": "00000000-0000-0003-0000-000000000006",
+      "auctionId": null,
+      "event": {
+        "kind": "LotMarkedForFinal",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": null,
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": null
+      }
+    },
+    {
+      "sequence": 7,
+      "opId": "00000000-0000-0003-0000-000000000007",
+      "auctionId": null,
+      "event": {
+        "kind": "LotHeldForFinal",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": null,
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": {
+          "at": "2026-10-07T18:00:00Z"
+        }
       }
     }
   ]

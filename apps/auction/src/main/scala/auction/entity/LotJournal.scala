@@ -73,9 +73,13 @@ final case class StoredDeadlineExtended(newDeadline: Instant, extensionsUsed: In
 /** Секция `LotUnsold`: причина именем варианта `UnsoldReason`. */
 final case class StoredLotUnsold(reason: String)
 
+/** Секция `LotHeldForFinal`: время удержания, остальное лот свернул из журнала до него (ADR-047). */
+final case class StoredLotHeldForFinal(at: Instant)
+
 /**
- * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки.
- * Секции добавлялись в конец: строка, записанная до них, читает недостающую как пустую.
+ * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки. Так
+ * же без секции `LotMarkedForFinal` и `LotResumed`. Секции добавлялись в конец: строка, записанная до них, читает
+ * недостающую как пустую.
  */
 final case class StoredEvent(
     kind: String,
@@ -86,13 +90,14 @@ final case class StoredEvent(
     proxyLimitWithdrawn: Option[StoredProxyLimitWithdrawn],
     lotSold: Option[StoredSale],
     lotUnsold: Option[StoredLotUnsold],
-    deadlineExtended: Option[StoredDeadlineExtended]
+    deadlineExtended: Option[StoredDeadlineExtended],
+    lotHeldForFinal: Option[StoredLotHeldForFinal]
 )
 
 object StoredEvent {
 
   /** Событие данного вида без единой секции; заполненную секцию добавляет `copy`. */
-  def of(kind: String): StoredEvent = StoredEvent(kind, None, None, None, None, None, None, None, None)
+  def of(kind: String): StoredEvent = StoredEvent(kind, None, None, None, None, None, None, None, None, None)
 }
 
 /** Поле `actor` конверта ADR-047; в коде его значение — [[Initiator]], чтобы не спорить с актором Pekko. */
@@ -120,7 +125,8 @@ final case class StoredProxyLimit(participant: UUID, max: StoredMoney, setSeq: L
 /**
  * `proxyLimits` необязателен по форме: snapshot, записанный до прокси-лимитов, его не несёт и читается как торги без
  * лимитов. Новый snapshot пишет его всегда, в порядке `setSeq`. `extensionsUsed` так же: snapshot, записанный до
- * анти-снайпа, читается как торги без продлений — других тогда и не было.
+ * анти-снайпа, читается как торги без продлений — других тогда и не было. `markedForFinal` так же: до отметки финала
+ * отмеченных лотов не было.
  */
 final case class StoredTrading(
     config: StoredConfig,
@@ -131,15 +137,20 @@ final case class StoredTrading(
     phase: String,
     deadline: Option[Instant],
     proxyLimits: Option[List[StoredProxyLimit]],
-    extensionsUsed: Option[Int]
+    extensionsUsed: Option[Int],
+    markedForFinal: Option[Boolean]
 )
 
+/**
+ * `extensionsUsed` необязателен по форме: удержанный лот до PER-310 не встречался, и snapshot без него читается нулём.
+ */
 final case class StoredHeld(
     config: StoredConfig,
     currentPrice: StoredMoney,
     leader: Option[UUID],
     leadingBidId: Option[UUID],
-    proxyLimits: Option[List[StoredProxyLimit]]
+    proxyLimits: Option[List[StoredProxyLimit]],
+    extensionsUsed: Option[Int]
 )
 
 /** Продажа: секция события `LotSold` и состояния `Sold` — одни и те же поля (ADR-047). */
@@ -312,9 +323,16 @@ object LotJournal {
         StoredEvent
           .of("DeadlineExtended")
           .copy(deadlineExtended = Some(StoredDeadlineExtended(newDeadline, extensionsUsed)))
+      case LotEvent.LotMarkedForFinal => StoredEvent.of("LotMarkedForFinal")
+      case LotEvent.LotHeldForFinal(at) =>
+        StoredEvent.of("LotHeldForFinal").copy(lotHeldForFinal = Some(StoredLotHeldForFinal(at)))
+      case LotEvent.LotResumed => StoredEvent.of("LotResumed")
     }
 
-  /** Ровно одна секция, и та, что названа `kind`; у `LotDrafted` — ни одной. Иначе строка испорчена. */
+  /**
+   * Ровно одна секция, и та, что названа `kind`; у `LotDrafted`, `LotMarkedForFinal` и `LotResumed` — ни одной. Иначе
+   * строка испорчена.
+   */
   private def restoreEvent(stored: StoredEvent, auction: Option[UUID]): LotEvent = {
     val sections = List(
       stored.lotOpened,
@@ -324,7 +342,8 @@ object LotJournal {
       stored.proxyLimitWithdrawn,
       stored.lotSold,
       stored.lotUnsold,
-      stored.deadlineExtended
+      stored.deadlineExtended,
+      stored.lotHeldForFinal
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -369,6 +388,9 @@ object LotJournal {
         stored.deadlineExtended.fold(mismatch) { extended =>
           LotEvent.DeadlineExtended(extended.newDeadline, extended.extensionsUsed)
         }
+      case ("LotMarkedForFinal", 0) => LotEvent.LotMarkedForFinal
+      case ("LotHeldForFinal", 1) => stored.lotHeldForFinal.fold(mismatch)(held => LotEvent.LotHeldForFinal(held.at))
+      case ("LotResumed", 0) => LotEvent.LotResumed
       case _ => mismatch
     }
   }
@@ -421,7 +443,8 @@ object LotJournal {
               phase = trading.phase.toString,
               deadline = trading.deadline,
               proxyLimits = storeLimits(trading.proxyLimits),
-              extensionsUsed = Some(trading.extensionsUsed)
+              extensionsUsed = Some(trading.extensionsUsed),
+              markedForFinal = Some(trading.markedForFinal)
             )
           ),
           held = None,
@@ -439,7 +462,8 @@ object LotJournal {
               currentPrice = storeMoney(held.currentPrice),
               leader = held.leader.map(_.value),
               leadingBidId = held.leadingBidId.map(_.value),
-              proxyLimits = storeLimits(held.proxyLimits)
+              proxyLimits = storeLimits(held.proxyLimits),
+              extensionsUsed = Some(held.extensionsUsed)
             )
           ),
           sold = None,
@@ -476,7 +500,8 @@ object LotJournal {
             phase = restoreEnum("phase", trading.phase)(Phase.valueOf),
             deadline = trading.deadline,
             extensionsUsed = trading.extensionsUsed.getOrElse(0),
-            proxyLimits = restoreLimits(trading.proxyLimits, config)
+            proxyLimits = restoreLimits(trading.proxyLimits, config),
+            markedForFinal = trading.markedForFinal.getOrElse(false)
           )
         )
       case ("Held", None, Some(held), None, None, None) =>
@@ -487,7 +512,8 @@ object LotJournal {
             currentPrice = restoreMoney(held.currentPrice),
             leader = held.leader.map(ParticipantId(_)),
             leadingBidId = held.leadingBidId.map(BidId(_)),
-            proxyLimits = restoreLimits(held.proxyLimits, config)
+            proxyLimits = restoreLimits(held.proxyLimits, config),
+            extensionsUsed = held.extensionsUsed.getOrElse(0)
           )
         )
       case ("Sold", None, None, Some(sale), None, None) =>
