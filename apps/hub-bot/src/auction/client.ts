@@ -4,7 +4,7 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import type { Viewer } from "@solguficky/auction-bot-ui";
+import type { Money, Viewer } from "@solguficky/auction-bot-ui";
 import { AuctionService } from "../../gen/auction/v1/auction_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
@@ -16,11 +16,15 @@ import {
 import { type RpcClientOptions, traceRpc } from "../tracing.js";
 import { historyPageOf } from "./history.js";
 import {
+  type AddLotResult,
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
   type EnableAuctionResult,
+  type LotAdministration,
+  type LotCardResult,
   type MeetupAuctions,
+  type ScheduleLotResult,
   viewerOf,
 } from "./port.js";
 import { lotViewOf } from "./snapshot.js";
@@ -33,6 +37,10 @@ type AuctionRpc = Pick<
   Client<typeof AuctionService>,
   | "draftAuction"
   | "getMeetupAuction"
+  | "createLotCard"
+  | "editLotCard"
+  | "addLot"
+  | "scheduleLot"
   | "getLot"
   | "listAuctionLots"
   | "listLotHistory"
@@ -40,7 +48,9 @@ type AuctionRpc = Pick<
   | "getLotImage"
 >;
 
-export type AuctionClient = MeetupAuctions & AuctionScreens & { close(): void };
+export type AuctionClient = MeetupAuctions &
+  AuctionScreens &
+  LotAdministration & { close(): void };
 
 export type AuctionAdapterOptions = {
   timeoutMs?: number;
@@ -79,7 +89,7 @@ export function createAuctionClient(
 export function createAuctionAdapter(
   rpc: AuctionRpc,
   { timeoutMs = 3_000, onNamesRefused }: AuctionAdapterOptions = {},
-): MeetupAuctions & AuctionScreens {
+): MeetupAuctions & AuctionScreens & LotAdministration {
   // Дедлайн вызова — меньшее из своего и остатка бюджета действия: бюджет
   // один на Identity, чтение лота и изображение (дизайн-код, «Ожидание»).
   const options = (meta?: RpcMetadata) => ({
@@ -108,6 +118,74 @@ export function createAuctionAdapter(
         );
         return enableResult(response.outcome);
       } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async createLotCard(person, card, meta) {
+      try {
+        const response = await rpc.createLotCard(
+          { viewer: wireViewer(viewerOf(person)), ...card },
+          options(meta),
+        );
+        return cardResult(response.outcome);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async editLotCard(person, card, meta) {
+      try {
+        const response = await rpc.editLotCard(
+          { viewer: wireViewer(viewerOf(person)), ...card },
+          options(meta),
+        );
+        return cardResult(response.outcome);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async addLot(person, lot, meta) {
+      try {
+        const response = await rpc.addLot(
+          { viewer: wireViewer(viewerOf(person)), ...lot },
+          options(meta),
+        );
+        return addLotResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async scheduleLot(person, terms, meta) {
+      try {
+        const response = await rpc.scheduleLot(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            lotId: terms.lotId,
+            opId: terms.opId,
+            startingPrice: wireMoney(terms.startingPrice),
+            stepPolicy: {
+              policy: { case: "fixed", value: wireMoney(terms.step) },
+            },
+          },
+          options(meta),
+        );
+        return scheduleLotResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async getLot(person, lotId, meta) {
+      try {
+        const snapshot = await rpc.getLot(
+          { viewer: wireViewer(viewerOf(person)), lotId },
+          options(meta),
+        );
+        return { kind: "ok", lot: lotViewOf(snapshot) };
+      } catch (cause) {
+        // Лот, которого read model не знает или который смотрящему не виден.
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
         return toFailure(cause);
       }
     },
@@ -226,8 +304,137 @@ function enableResult(
   }
 }
 
+// Пустой `oneof` и отказ, которого у команды без изображения быть не может, —
+// дефект соседа, а не решение: экран отвечает как на сбой, а причина уходит в
+// запись границы.
+function defect(what: string): AuctionFailure {
+  return { kind: "invalid", cause: new Error(what) };
+}
+
+type CardOutcome =
+  | Awaited<ReturnType<AuctionRpc["createLotCard"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["editLotCard"]>>["outcome"];
+
+// Форма изображения не шлёт, поэтому его отказы здесь — тоже дефект.
+function cardResult(outcome: CardOutcome): LotCardResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notAdmin":
+          return { kind: "not-admin" };
+        case "emptyTitle":
+          return { kind: "empty-title" };
+        case "cardConflict":
+          return { kind: "card-conflict" };
+        case "cardNotFound":
+          return { kind: "card-not-found" };
+        case "imageTooLarge":
+        case "unsupportedImage":
+          return defect("lot card refused an image that was not sent");
+        case undefined:
+          return defect("lot card refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("lot card response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function addLotResult(
+  outcome: Awaited<ReturnType<AuctionRpc["addLot"]>>["outcome"],
+): AddLotResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case undefined:
+          return defect("add lot refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("add lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function scheduleLotResult(
+  outcome: Awaited<ReturnType<AuctionRpc["scheduleLot"]>>["outcome"],
+): ScheduleLotResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction" };
+        case "schedulingClosed":
+          return { kind: "scheduling-closed" };
+        case "stepPolicyInvalid":
+          return { kind: "step-policy-invalid" };
+        case "currencyMismatch":
+          return { kind: "currency-mismatch" };
+        case undefined:
+          return defect("schedule lot refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("schedule lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// У команд реестра и условий `NOT_FOUND` — аукцион без журнала: кнопка
+// устарела или подделана, и повтор его не найдёт.
+function auctionMissing(
+  cause: unknown,
+): { kind: "auction-not-found" } | undefined {
+  return cause instanceof ConnectError && cause.code === Code.NotFound
+    ? { kind: "auction-not-found" }
+    : undefined;
+}
+
+function wireMoney(amount: Money) {
+  return { minorUnits: BigInt(amount.minorUnits), currency: amount.currency };
+}
+
 // Статусы gRPC остаются для того, что не решение аукциона (integration.md,
 // «Auction gRPC»): форма запроса, роль, недоступный Meetups за спиной Auction.
+// `ALREADY_EXISTS` — `op_id` занят другой командой: ключ рождается на каждый
+// вызов, поэтому это дефект, а не сбой, который лечит повтор.
 function toFailure(cause: unknown): AuctionFailure {
   if (cause instanceof ConnectError && cause.code === Code.DeadlineExceeded) {
     return { kind: "timeout", cause };
@@ -238,7 +445,8 @@ function toFailure(cause: unknown): AuctionFailure {
   if (
     cause instanceof ConnectError &&
     (cause.code === Code.InvalidArgument ||
-      cause.code === Code.FailedPrecondition)
+      cause.code === Code.FailedPrecondition ||
+      cause.code === Code.AlreadyExists)
   ) {
     return { kind: "invalid", cause };
   }

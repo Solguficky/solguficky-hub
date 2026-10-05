@@ -11,6 +11,8 @@ import type {
 import { InlineKeyboard } from "grammy";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
+import { uuidToToken } from "../meetup-deep-link.js";
+import { lotFormData, lotNewData } from "../parse-callback.js";
 import {
   buttonText,
   escapeHtml,
@@ -38,7 +40,17 @@ export type AuctionView = {
   today: CommunityDay;
   /** Фото карточки лота, уже готовое к отправке; нет — карточка без фото. */
   photo?: ScreenPhoto;
+  /**
+   * Смотрящий — администратор: оболочка добавляет входы в форму лота (PER-319).
+   * Право это не решает — его проверяют Auction и Meetups на каждой команде.
+   */
+  canManage?: boolean;
 };
+
+// Входы в форму лота — ряды оболочки хаба, а не тела: у бота аукциона формы
+// нет, и тело у двух ботов остаётся одним.
+const addLotLabel = "Добавить лот";
+const editLotLabel = "Изменить лот";
 
 /** Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает ключа. */
 export type AuctionShown = { screen: ShownScreen; image?: ImageKey };
@@ -86,6 +98,10 @@ function feedScreen(
     feed.lots.map((item) => [item.lotId, item]),
   );
   const keyboard = new InlineKeyboard();
+  // Действие экрана стоит первым рядом, над лотами и листанием.
+  if (view.canManage === true) {
+    keyboard.text(addLotLabel, lotNewData(uuidToToken(feed.auctionId)));
+  }
   for (const row of view.body.keyboard) {
     nextRow(keyboard);
     for (const button of row) {
@@ -153,6 +169,9 @@ function lotScreen(
   }
   if (back === undefined) {
     throw new Error("lot body without a way back to the feed");
+  }
+  if (view.canManage === true) {
+    nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
   }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);
   const description =
@@ -419,7 +438,7 @@ export function money(amount: Money): string {
 }
 
 // Обрезка по кодовым точкам: срез по UTF-16 разрезал бы суррогатную пару.
-function truncate(text: string, limit: number): string {
+export function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
   let kept = "";
   for (const point of text) {

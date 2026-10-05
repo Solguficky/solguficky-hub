@@ -1,8 +1,9 @@
-import type { MeetupAuctions } from "../auction/port.js";
+import type { LotAdministration, MeetupAuctions } from "../auction/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { createBroadcasts } from "./broadcasts.js";
+import { createLotForm } from "./lot-form.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
@@ -19,7 +20,9 @@ export function createDispatcher(
   notifications?: Notifications,
   today?: CommunityToday,
   auctions?: MeetupAuctions,
+  lots?: LotAdministration,
 ): Dispatcher {
+  const lotForm = lots === undefined ? undefined : createLotForm(lots);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -173,6 +176,14 @@ export function createDispatcher(
           return materials === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : materials(request);
+        case "create-lot":
+        case "view-lot-form":
+        case "set-lot-text":
+        case "check-lot-price":
+        case "set-lot-terms":
+          return lotForm === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotForm(request);
         case "send-broadcast":
           return broadcasts === undefined
             ? { kind: "rejected", reason: "notifications-not-configured" }

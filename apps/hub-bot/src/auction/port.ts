@@ -2,6 +2,8 @@ import type {
   AuctionPort,
   GlobalRole,
   LotImagePort,
+  LotView,
+  Money,
   Viewer,
 } from "@solguficky/auction-bot-ui";
 import type { Person } from "../application/types.js";
@@ -46,6 +48,86 @@ export type MeetupAuctions = {
     opId: string,
     meta?: RpcMetadata,
   ): Promise<EnableAuctionResult>;
+};
+
+// Форма лота администратора (PER-319; ADR-057, дополнение 2026-10-05): команды
+// каталога, реестра и условий торгов и чтение лота для экрана правки. Третья
+// роль бота хаба перед Auction, и только его: общий пакет формы не несёт.
+// Именованный отказ Auction — значение ответа, и бот его не повторяет.
+
+// `card-conflict` бывает только у создания: карточка с этим `lot_id` уже есть
+// с другим текстом. `card-not-found` — только у правки.
+export type LotCardResult =
+  | { kind: "ok" }
+  | { kind: "not-admin" }
+  | { kind: "empty-title" }
+  | { kind: "card-conflict" }
+  | { kind: "card-not-found" }
+  | AuctionFailure;
+
+export type AddLotResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "lots-frozen" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// `lots-frozen` — аукцион в торгах, `scheduling-closed` — лот уже открыт: для
+// человека это один ответ, но называет их Auction раздельно.
+export type ScheduleLotResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "lots-frozen" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "scheduling-closed" }
+  | { kind: "step-policy-invalid" }
+  | { kind: "currency-mismatch" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type LotReadResult =
+  | { kind: "ok"; lot: LotView }
+  | { kind: "not-found" }
+  | AuctionFailure;
+
+export type LotCardText = { lotId: string; title: string; description: string };
+
+export type LotAdministration = {
+  createLotCard(
+    person: Person,
+    card: LotCardText,
+    meta?: RpcMetadata,
+  ): Promise<LotCardResult>;
+  // Изображение правка не трогает: `image_change` не выставляется.
+  editLotCard(
+    person: Person,
+    card: LotCardText,
+    meta?: RpcMetadata,
+  ): Promise<LotCardResult>;
+  addLot(
+    person: Person,
+    lot: { auctionId: string; lotId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<AddLotResult>;
+  // Условия целиком: Auction заменяет прежние, поэтому цена и шаг идут парой.
+  scheduleLot(
+    person: Person,
+    terms: {
+      auctionId: string;
+      lotId: string;
+      opId: string;
+      startingPrice: Money;
+      step: Money;
+    },
+    meta?: RpcMetadata,
+  ): Promise<ScheduleLotResult>;
+  getLot(
+    person: Person,
+    lotId: string,
+    meta?: RpcMetadata,
+  ): Promise<LotReadResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый
