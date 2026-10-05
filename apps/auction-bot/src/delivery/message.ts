@@ -111,7 +111,10 @@ export function renderNotification(
   if (content.kind === "access-granted") {
     return {
       text: "Вас допустили к аукциону.",
-      button: { text: "Открыть аукцион", callback_data: traceAuctionsCallback() },
+      button: {
+        text: "Открыть аукцион",
+        callback_data: traceAuctionsCallback(),
+      },
     };
   }
   const lot =
