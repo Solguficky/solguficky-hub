@@ -104,17 +104,19 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	if blocked {
 		return false, errProfileBlocked
 	}
-	admitted, err := admitOpenApplication(ctx, tx, identityID, performedBy)
-	if err != nil {
+	if err := admitOpenApplication(ctx, tx, identityID, performedBy); err != nil {
 		return false, internal("admit open application", err)
 	}
 	anyChanged, err := grantHubAdmissionTx(ctx, tx, identityID, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
-	// Допуск по заявке заявитель узнаёт сообщением (PER-442), как и решение
-	// с карточки: повод пишется после выдач, и его снимок держит круг.
-	if admitted {
+	// Ручной допуск администратором — решение по заявке на member (пункт 11),
+	// даже если строки заявки нет: экран «Ожидают допуска» показывает любого
+	// без member. Допущенный узнаёт о нём сообщением (PER-442), как и после
+	// решения с карточки; повод пишется после выдач, и его снимок держит круг.
+	// Холостая выдача и допуск без актора повода не дают.
+	if performedBy.Valid && anyChanged {
 		if err := outbox.Append(ctx, tx, identityID, outbox.ApplicationAdmitted, roleMember); err != nil {
 			return false, internal("announce admission", err)
 		}

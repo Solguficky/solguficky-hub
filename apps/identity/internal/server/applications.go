@@ -172,17 +172,13 @@ func closeApplicationsOnBlock(ctx context.Context, tx *sql.Tx, identityID string
 
 // admitOpenApplication делает ручной допуск хаба решением по заявке на member
 // (пункт 11). Допуск без актора решением администратора не является, и заявку
-// тогда закрывает сама выдача. Отвечает, была ли открытая заявка: только
-// тогда допуск — решение по ней, о котором узнаёт заявитель.
-func admitOpenApplication(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
+// тогда закрывает сама выдача.
+func admitOpenApplication(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) error {
 	if !performedBy.Valid {
-		return false, nil
+		return nil
 	}
-	result, err := tx.ExecContext(ctx, admitOpenApplicationSQL, identityID, roleMember, performedBy.UUID.String())
-	if err != nil {
-		return false, err
-	}
-	return changed(result)
+	_, err := tx.ExecContext(ctx, admitOpenApplicationSQL, identityID, roleMember, performedBy.UUID.String())
+	return err
 }
 
 func (s identityService) ReadApplicationQueue(ctx context.Context, req *identityv1.ReadApplicationQueueRequest) (*identityv1.ReadApplicationQueueResponse, error) {
