@@ -277,7 +277,7 @@ function lotLabel(button: AuctionButton): string {
     case "lot.history":
       return "Ставки";
     case "lot.bid-step":
-      return `По шагу · ${money(button.amount)}`;
+      return `По шагу (${money(button.amount)})`;
     case "lot.bid-custom":
       return "Своя сумма";
     case "lot.proxy":

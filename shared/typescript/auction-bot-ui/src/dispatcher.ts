@@ -3,9 +3,9 @@ import {
   answerQuestion,
   askQuestion,
   cancelQuestion,
+  chooseUsername,
   commitCommand,
   confirmCommand,
-  useUsername,
 } from "./internal/use-cases/commands.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
@@ -72,7 +72,7 @@ export function dispatchAuctionIntent(input: {
         ? cancelQuestion(context, intent)
         : answerQuestion(context, intent, input.answer.text);
     case "username":
-      return useUsername(context, intent);
+      return chooseUsername(context, intent);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

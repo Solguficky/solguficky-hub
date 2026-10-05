@@ -58,7 +58,8 @@ export function confirmScreen(
           "Автоставка",
           lotLine(block.title),
           `Лимит: ${money(block.amount)}`,
-          "Бот будет перебивать чужие ставки по шагу, пока цена не дойдёт до лимита. Лимит видишь только ты.",
+          proxyGap(block.currentPrice, block.amount, money),
+          "Лимит видишь только ты.",
         ),
     keyboard: confirmKeyboard({
       yes: bid
@@ -70,6 +71,19 @@ export function confirmScreen(
     }),
     format: "HTML",
   };
+}
+
+// Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
+// может поднять цену за человека, перебивая чужие ставки по шагу.
+function proxyGap(
+  currentPrice: Money,
+  limit: Money,
+  money: (amount: Money) => string,
+): string {
+  const gap = limit.minorUnits - currentPrice.minorUnits;
+  return gap > 0
+    ? `Цена сейчас ${money(currentPrice)}: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на ${money({ minorUnits: gap, currency: limit.currency })}.`
+    : `Цена сейчас ${money(currentPrice)}: лимит не выше неё, и перебивать бот не будет.`;
 }
 
 // Вопрос уходит новым сообщением с `force_reply`: режим ответа ставит

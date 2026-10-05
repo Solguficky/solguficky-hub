@@ -4786,10 +4786,12 @@ async function handleAuctionCallback(
       cause.code === Code.NotFound &&
       parsed.ok &&
       (parsed.intent.kind === "lot" || parsed.intent.kind === "history");
+    // Сбой на ответе вопроса оставляет вопрос открытым: повтор — тот же
+    // ответ ещё раз, а «Повторить» с шагом вопроса сработало бы как «Отмена».
     await showRefusal(
       ctx,
       notFound ? "Лот не найден или больше недоступен." : unavailableText,
-      notFound ? menuOnly() : exitRetry(data),
+      notFound || answer !== undefined ? menuOnly() : exitRetry(data),
     );
     return {
       level: notFound ? "warn" : "error",

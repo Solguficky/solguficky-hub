@@ -33,7 +33,10 @@ const NUMBER = /^(\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,](\d+))?$/;
 // человека, отказ — значение, исключения нет (критерий приёмки PER-317).
 export function parseAmount(text: string, currency: string): ParsedAmount {
   const trimmed = text.trim().toLowerCase();
-  const markers = MARKERS[currency] ?? [currency.toLowerCase()];
+  // Длинный знак раньше короткого: «руб 500» иначе срезался бы по «р».
+  const markers = [...(MARKERS[currency] ?? [currency.toLowerCase()])].sort(
+    (a, b) => b.length - a.length,
+  );
   const marker = markers.find(
     (each) => trimmed.endsWith(each) || trimmed.startsWith(each),
   );
@@ -49,7 +52,8 @@ export function parseAmount(text: string, currency: string): ParsedAmount {
   if (match === null) {
     return {
       ok: false,
-      refusal: FOREIGN.test(trimmed) ? "other-currency" : "not-a-number",
+      // Знак своей валюты уже срезан: чужим остаётся только чужой.
+      refusal: FOREIGN.test(bare) ? "other-currency" : "not-a-number",
     };
   }
   const whole = (match[1] ?? "").replace(/[ \u00a0\u202f]/g, "");

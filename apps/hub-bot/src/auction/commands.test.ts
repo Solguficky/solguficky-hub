@@ -53,7 +53,7 @@ describe("participant command answers", () => {
     ).toMatchObject({ refusal: { kind: "bid-below-minimum" } });
   });
 
-  // РћС‚РєР°Р· СЃ С†РµРЅРѕР№ Р±РµР· С†РµРЅС‹ вЂ” РґРµС„РµРєС‚ СЃРѕСЃРµРґР°, Р° РЅРµ РѕС‚РєР°Р· Р±РµР· СЃСѓРјРјС‹.
+  // Отказ с ценой без цены — дефект соседа, а не отказ без суммы.
   it("refuses a priced refusal that carries no price", () => {
     expect(() =>
       bidOutcomeOf(
@@ -102,10 +102,10 @@ describe("participant command answers", () => {
     expect(
       displayNameOutcomeOf(
         create(ChooseDisplayNameResponseSchema, {
-          outcome: { case: "accepted", value: { text: "РЎС‹С‡*" } },
+          outcome: { case: "accepted", value: { text: "Сыч*" } },
         }),
       ),
-    ).toEqual({ kind: "accepted", name: "РЎС‹С‡*" });
+    ).toEqual({ kind: "accepted", name: "Сыч*" });
     expect(
       displayNameOutcomeOf(
         create(ChooseDisplayNameResponseSchema, {
@@ -118,7 +118,7 @@ describe("participant command answers", () => {
     ).toEqual({ kind: "refused", refusal: "alias-taken" });
   });
 
-  // РџРѕРІС‚РѕСЂСЏРµРјРѕ С‚РѕР»СЊРєРѕ В«РѕС‚РІРµС‚Р° РЅРµ Р±С‹Р»РѕВ»: РґРµРґР»Р°Р№РЅ РёР»Рё РѕР±СЂС‹РІ.
+  // Повторяемо только «ответа не было»: дедлайн или обрыв.
   it.each([Code.DeadlineExceeded, Code.Unavailable])(
     "turns code %i into unanswered",
     async (code) => {

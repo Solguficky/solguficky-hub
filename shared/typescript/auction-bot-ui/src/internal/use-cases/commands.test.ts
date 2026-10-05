@@ -101,6 +101,74 @@ describe("bid leaf commands", () => {
     expect(commandCalls(calls)).toHaveLength(1);
   });
 
+  // Устаревшее «Да»: лот ушёл в живой финал, и ставка финала — не этот лист.
+  // Команда не уходит, карточка называет отказ.
+  it("does not send a stale confirmation once the lot left online trading", async () => {
+    const calls: PortCall[] = [];
+    const live = {
+      ...CONTRACT_LOT,
+      status: {
+        kind: "trading" as const,
+        currentPrice: { minorUnits: 120_000, currency: "RUB" },
+        phase: "live" as const,
+      },
+    };
+    const result = await press(
+      spyPorts(calls, { ...AUCTION, lots: [live] }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: CONTRACT_LOT.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 125000,
+        page: 0,
+      }),
+    );
+    expect(commandCalls(calls)).toEqual([]);
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toEqual({
+      kind: "result",
+      result: {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "lot-not-open" },
+      },
+    });
+  });
+
+  // Ответа не было, и бюджет ушёл весь: перечитать лот нечем, а исход
+  // «неизвестен» всё равно доходит — по снимку до команды.
+  it("shows the unknown outcome when the lot cannot be read again", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(calls, {
+      ...AUCTION,
+      bids: [{ kind: "unanswered" }, { kind: "unanswered" }],
+    });
+    let reads = 0;
+    const getLot = ports.auction.getLot;
+    ports.auction.getLot = async (request) => {
+      reads += 1;
+      if (reads > 1) throw new Error("budget spent");
+      return getLot(request);
+    };
+    const result = await press(
+      ports,
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: CONTRACT_LOT.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 130000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toEqual({
+      kind: "result",
+      result: { command: "bid", kind: "unknown" },
+    });
+  });
+
   // Ответ на вопрос принимается только от того, кому вопрос задан.
   it("does not take an answer from someone else", async () => {
     const calls: PortCall[] = [];

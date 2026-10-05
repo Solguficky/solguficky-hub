@@ -70,6 +70,8 @@ export type AuctionBlock =
       auctionId: string;
       title?: string;
       amount: Money;
+      // Цена лота сейчас: автоставка объясняется разницей цены и лимита.
+      currentPrice: Money;
     }
   | {
       // Вопрос с `force_reply`: сумма ставки, лимит или псевдоним. `current` —

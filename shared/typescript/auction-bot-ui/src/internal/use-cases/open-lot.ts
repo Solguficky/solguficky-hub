@@ -162,35 +162,36 @@ function hasTraded(status: LotStatusView): boolean {
 
 // Ставка из бота — только в онлайн-торгах: в живом финале ставят по шагу в
 // зале, а кнопку финала добавит его лист. Ряд «по шагу» несёт порог, который
-// видел человек; порог выше потолка кнопки ряда не получает — своя сумма его
-// тоже не примет. Лимит предлагается лоту, который его принимает.
+// видел человек. Порог выше потолка кнопки не принимает ни одна команда бота —
+// ни ставка, ни лимит не меньше порога, — поэтому рядов ставки у такого лота
+// нет вовсе, а не вопрос, на который любой ответ отказ. Лимит предлагается
+// лоту, который его принимает.
 function bidRows(lot: LotView, page: number): AuctionButton[][] {
-  if (lot.status.kind !== "trading" || lot.status.phase !== "online") {
+  const { nextPrice } = lot;
+  if (
+    lot.status.kind !== "trading" ||
+    lot.status.phase !== "online" ||
+    nextPrice === undefined ||
+    nextPrice.minorUnits > MAX_COMMAND_AMOUNT
+  ) {
     return [];
   }
-  const step =
-    lot.nextPrice !== undefined &&
-    lot.nextPrice.minorUnits <= MAX_COMMAND_AMOUNT
-      ? [
-          [
-            {
-              action: "lot.bid-step" as const,
-              amount: lot.nextPrice,
-              callbackData: encodeAuctionCallback({
-                kind: "confirm",
-                command: "bid",
-                lotId: lot.lotId,
-                amount: lot.nextPrice.minorUnits,
-                page,
-              }),
-            },
-          ],
-        ]
-      : [];
   const ask = (question: "bid" | "proxy") =>
     encodeAuctionCallback({ kind: "ask", question, lotId: lot.lotId, page });
   return [
-    ...step,
+    [
+      {
+        action: "lot.bid-step",
+        amount: nextPrice,
+        callbackData: encodeAuctionCallback({
+          kind: "confirm",
+          command: "bid",
+          lotId: lot.lotId,
+          amount: nextPrice.minorUnits,
+          page,
+        }),
+      },
+    ],
     [{ action: "lot.bid-custom", callbackData: ask("bid") }],
     ...(lot.proxyEnabled
       ? [[{ action: "lot.proxy" as const, callbackData: ask("proxy") }]]

@@ -88,10 +88,36 @@ function surfaceFor(
       user: { telegramUserId: 424242 },
       input: { kind: "callback", data },
     });
-  return { press, calls };
+  return { press, calls, surface, identity };
 }
 
 describe("handleAuctionUpdate gateway", () => {
+  // Ответ на вопрос — такое же действие аукциона, как нажатие: человек, которого
+  // поверхность не пускает, до Auction не доходит и с ответом.
+  it("denies an answer to a question to a person the surface does not admit", async () => {
+    const { surface, calls, identity } = surfaceFor("auction", {
+      globalRoles: ["member"],
+      blocked: false,
+    });
+    const result = await handleAuctionUpdate(surface, {
+      identity,
+      user: { telegramUserId: 424242 },
+      input: {
+        kind: "reply",
+        data: encodeAuctionCallback({
+          kind: "question",
+          question: "bid",
+          lotId: LOT.lotId,
+          page: 0,
+          addressee: 424242,
+        }),
+        text: "1300",
+      },
+    });
+    expect(result).toEqual({ kind: "denied", reason: "not-admitted" });
+    expect(calls.auction).toBe(0);
+  });
+
   it.each<[AuctionSurface["kind"], GlobalRole[]]>([
     ["hub", ["member", "public"]],
     ["hub", ["admin"]],

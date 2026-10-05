@@ -147,6 +147,7 @@ const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
       auctionId: "auc-1",
       title: "Банка солёных грибов",
       amount: rub(550),
+      currentPrice: rub(500),
     },
   ],
   keyboard: [

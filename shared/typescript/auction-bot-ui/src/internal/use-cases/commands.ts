@@ -38,28 +38,6 @@ function readLot(context: CommandContext, lotId: string): Promise<LotView> {
   return context.auction.getLot({ viewer: context.viewer, lotId });
 }
 
-// Валюта лота — та, в которой он торгуется. У черновика и снятого лота цены
-// нет, а значит нет и команды, которую можно подтвердить.
-function currencyOf(lot: LotView): string | undefined {
-  switch (lot.status.kind) {
-    case "trading":
-    case "held":
-      return lot.status.currentPrice.currency;
-    case "scheduled":
-      return lot.status.startingPrice.currency;
-    case "sold":
-      return lot.status.price.currency;
-    case "draft":
-    case "unsold":
-    case "withdrawn":
-      return undefined;
-    default: {
-      const _exhaustive: never = lot.status;
-      return _exhaustive;
-    }
-  }
-}
-
 const lotCallback = (lotId: string, page: number) =>
   encodeAuctionCallback({ kind: "lot", lotId, page });
 
@@ -72,7 +50,7 @@ function confirmBody(
   context: CommandContext,
   lot: LotView,
   pending: PendingCommand,
-  currency: string,
+  currentPrice: Money,
   page: number,
 ): AuctionScreenBody {
   return {
@@ -83,7 +61,8 @@ function confirmBody(
         lotId: lot.lotId,
         auctionId: lot.auctionId,
         ...titled(lot),
-        amount: { minorUnits: pending.amount, currency },
+        amount: { minorUnits: pending.amount, currency: currentPrice.currency },
+        currentPrice,
       },
     ],
     keyboard: [
@@ -105,30 +84,46 @@ function confirmBody(
   };
 }
 
-// Подтвердить можно только лот с валютой; остальным карточка отвечает
-// отказом «торги не идут» без похода в Auction с заведомо мёртвой командой.
+// Подтверждают только то, что предлагает карточка: ставку и лимит в
+// онлайн-торгах. Устаревшая кнопка или ответ на вопрос после смены состояния
+// получают карточку с отказом без похода в Auction с заведомо мёртвой
+// командой: удержанный лот называет цену, остальные — «торги не идут».
 function confirmOrRefuse(
   context: CommandContext,
   lot: LotView,
   pending: PendingCommand,
   page: number,
 ): Promise<AuctionScreenBody> {
-  const currency = currencyOf(lot);
-  if (currency === undefined) {
+  const { status } = lot;
+  if (status.kind !== "trading" || status.phase !== "online") {
     return showLot({
       ...context,
       lot,
       page,
-      result: notOpen(pending.command),
+      result: notOffered(pending.command, lot),
     });
   }
-  return Promise.resolve(confirmBody(context, lot, pending, currency, page));
+  return Promise.resolve(
+    confirmBody(context, lot, pending, status.currentPrice, page),
+  );
 }
 
-function notOpen(command: AuctionCommand): CommandResult {
-  return command === "bid"
-    ? { command, kind: "refused", refusal: { kind: "lot-not-open" } }
-    : { command, kind: "refused", refusal: { kind: "lot-not-open" } };
+// Ветки одинаковы по форме, но разные по типу: `CommandResult` сужает отказ
+// по команде, и TypeScript собирает его только из литерала команды.
+function notOffered(command: AuctionCommand, lot: LotView): CommandResult {
+  if (command === "bid") {
+    return lot.status.kind === "held"
+      ? {
+          command,
+          kind: "refused",
+          refusal: {
+            kind: "lot-on-hold",
+            currentPrice: lot.status.currentPrice,
+          },
+        }
+      : { command, kind: "refused", refusal: { kind: "lot-not-open" } };
+  }
+  return { command, kind: "refused", refusal: { kind: "lot-not-open" } };
 }
 
 export async function confirmCommand(
@@ -159,16 +154,22 @@ export async function commitCommand(
   },
 ): Promise<AuctionScreenBody> {
   const lot = await readLot(context, intent.lotId);
-  const currency = currencyOf(lot);
-  if (currency === undefined) {
+  // «Да» из устаревшего подтверждения: лот ушёл из онлайн-торгов — в финал,
+  // в удержание или к итогу. Ставка финала — лист карточки финала, поэтому
+  // команда не уходит, а карточка называет отказ по снимку.
+  const { status } = lot;
+  if (status.kind !== "trading" || status.phase !== "online") {
     return showLot({
       ...context,
       lot,
       page: intent.page,
-      result: notOpen(intent.command),
+      result: notOffered(intent.command, lot),
     });
   }
-  const amount: Money = { minorUnits: intent.amount, currency };
+  const amount: Money = {
+    minorUnits: intent.amount,
+    currency: status.currentPrice.currency,
+  };
   const request = {
     viewer: context.viewer,
     lotId: intent.lotId,
@@ -220,9 +221,12 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
         result: { command: intent.command, kind: "accepted", amount },
       });
     case "unanswered":
+      // Бюджет действия мог уйти весь на команду: тогда перечитать лот нечем,
+      // и карточка идёт по снимку до команды — исход «неизвестен» важнее
+      // свежей цены.
       return showLot({
         ...context,
-        lot: await readLot(context, intent.lotId),
+        lot: await readLot(context, intent.lotId).catch(() => lot),
         page: intent.page,
         result: { command: intent.command, kind: "unknown" },
       });
@@ -398,27 +402,28 @@ export async function answerQuestion(
       (refusal) => questionBody(context, lot, intent, refusal),
     );
   }
-  const currency = currencyOf(lot);
-  if (currency === undefined) {
+  const command = intent.question;
+  const { status } = lot;
+  if (status.kind !== "trading" || status.phase !== "online") {
     return showLot({
       ...context,
       lot,
       page: intent.page,
-      result: notOpen(intent.question),
+      result: notOffered(command, lot),
     });
   }
-  const amount = parseAmount(text, currency);
+  const amount = parseAmount(text, status.currentPrice.currency);
   if (!amount.ok) return questionBody(context, lot, intent, amount.refusal);
   return confirmBody(
     context,
     lot,
-    { command: intent.question, amount: amount.minorUnits },
-    currency,
+    { command, amount: amount.minorUnits },
+    status.currentPrice,
     intent.page,
   );
 }
 
-export async function useUsername(
+export async function chooseUsername(
   context: CommandContext,
   intent: { lotId: string; page: number; pending: PendingCommand },
 ): Promise<AuctionScreenBody> {

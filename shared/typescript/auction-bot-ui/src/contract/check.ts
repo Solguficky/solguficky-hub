@@ -554,6 +554,7 @@ const confirmBody = (
       auctionId: CONTRACT_AUCTION_ID,
       title: "Кружка с совой",
       amount: { minorUnits: amount, currency: "RUB" },
+      currentPrice: rub(1200),
     },
   ],
   keyboard: [

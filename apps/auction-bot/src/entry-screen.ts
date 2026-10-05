@@ -358,7 +358,8 @@ function confirmText(
         "<b>Автоставка</b>",
         ...lotLine(block.title),
         `Лимит: ${money(block.amount)}`,
-        "Бот будет перебивать чужие ставки по шагу, пока цена не дойдёт до лимита. Лимит видишь только ты.",
+        proxyGap(block.currentPrice, block.amount),
+        "Лимит видишь только ты.",
       ].join("\n");
 }
 
@@ -413,6 +414,15 @@ function nameChoiceText(
       ? "Ника в Telegram у тебя нет: возьми псевдоним."
       : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
   ].join("\n");
+}
+
+// Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
+// может поднять цену за человека, перебивая чужие ставки по шагу.
+function proxyGap(currentPrice: Money, limit: Money): string {
+  const gap = limit.minorUnits - currentPrice.minorUnits;
+  return gap > 0
+    ? `Цена сейчас ${money(currentPrice)}: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на ${money({ minorUnits: gap, currency: limit.currency })}.`
+    : `Цена сейчас ${money(currentPrice)}: лимит не выше неё, и перебивать бот не будет.`;
 }
 
 const answerRefusals: Record<AnswerRefusal, string> = {
@@ -719,7 +729,7 @@ function renderButton(
     case "history.back":
       return text("‹ Лот");
     case "lot.bid-step":
-      return text(`По шагу · ${money(button.amount)}`);
+      return text(`По шагу (${money(button.amount)})`);
     case "lot.bid-custom":
       return text("Своя сумма");
     case "lot.proxy":

@@ -211,6 +211,8 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         await ask(ctx, questions, screen, { replaces: replied.message_id });
       } else {
         // Результат — одним новым сообщением, у вопроса снимается «Отмена».
+        // После сбоя сервиса вопрос остаётся открытым: тот же ответ можно
+        // прислать ещё раз.
         await deliver(ctx, {
           screen,
           photos,
@@ -219,8 +221,10 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
           logger,
           keepCurrent: true,
         });
-        questions.forget(ctx.chat.id, replied.message_id);
-        await closeQuestion(ctx, replied.message_id);
+        if (outcome.failure === undefined) {
+          questions.forget(ctx.chat.id, replied.message_id);
+          await closeQuestion(ctx, replied.message_id);
+        }
       }
     } finally {
       await waiting.finish();

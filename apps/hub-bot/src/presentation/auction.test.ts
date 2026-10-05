@@ -806,7 +806,7 @@ describe("bid leaf in the hub", () => {
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
     expect(labels(card).slice(0, 3)).toEqual([
-      [expect.stringMatching(/^По шагу · 1\s250\s₽$/)],
+      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма"],
       ["Автоставка"],
     ]);

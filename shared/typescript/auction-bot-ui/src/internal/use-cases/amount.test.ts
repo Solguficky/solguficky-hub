@@ -16,12 +16,18 @@ describe("parseAmount", () => {
     ["1250,5", 125050],
     ["1250.05", 125005],
     ["  1300  ", 130000],
+    ["руб 500", 50000],
+    ["руб. 500", 50000],
+    ["500 рублей", 50000],
   ])("reads %j as %i kopecks", (text, minorUnits) => {
     expect(parseAmount(text, "RUB")).toEqual({ ok: true, minorUnits });
   });
 
   it.each([
     ["много", "not-a-number"],
+    // Знак своей валюты без числа — не сумма, а не чужая валюта.
+    ["₽", "not-a-number"],
+    ["сто руб", "not-a-number"],
     ["", "not-a-number"],
     ["12 50", "not-a-number"],
     ["1e3", "not-a-number"],
