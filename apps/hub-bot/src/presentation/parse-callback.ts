@@ -583,10 +583,12 @@ export function parseCallback(raw: unknown): CallbackAction {
   return { kind: "malformed" };
 }
 
-// Telegram id пользователя: положительное целое до 52 бит, не больше 16 цифр.
+// Telegram id пользователя: целое до 52 бит, не больше 16 цифр. Ноль — запасное
+// значение бота для update без `from`: «Отмена» под таким вопросом работает, а
+// ответ ни от кого не совпадёт с ним и будет отброшен.
 const TelegramIdSchema = z
   .string()
-  .regex(/^[1-9]\d{0,15}$/)
+  .regex(/^(0|[1-9]\d{0,15})$/)
   .transform(Number);
 
 // Кнопка с id спрашиваемого последней частью. Токен — 22 символа, поэтому за

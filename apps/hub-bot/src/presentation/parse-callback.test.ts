@@ -659,6 +659,11 @@ describe("notification callbacks", () => {
       askedBy: 42,
     });
     expect(parseCallback(`v1:q:fe:${token}:venue:0`)).toEqual({
+      kind: "question",
+      step: { kind: "field", mode: "edit", token, field: "venue" },
+      askedBy: 0,
+    });
+    expect(parseCallback(`v1:q:fe:${token}:venue:01`)).toEqual({
       kind: "malformed",
     });
   });
