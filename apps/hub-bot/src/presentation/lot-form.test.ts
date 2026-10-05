@@ -975,7 +975,11 @@ describe("lot form photo question", () => {
       lots: [
         {
           ...scheduled,
-          status: { kind: "trading", currentPrice: rub(50_000) },
+          status: {
+            kind: "trading",
+            currentPrice: rub(50_000),
+            phase: "online",
+          },
         },
       ],
     });
