@@ -119,7 +119,8 @@ async function main(): Promise<number> {
     logger.info("auction-bot starting", {
       telegram_environment: config.environment,
     });
-    await registerCommands(bot.api, logger);
+    // Запись меню поллер не задерживает: она не бросает, а отказ пишет сама.
+    void registerCommands(bot.api, logger);
     try {
       await bot.start({
         onStart: () => {

@@ -245,6 +245,8 @@ function faqUpdate(): Update {
 
 type SentButton = { text: string; callback_data?: string };
 
+// Запись трансформера — объект параметров вызова Bot API; его тип зависит от
+// метода, и тест читает из него только клавиатуру.
 function keyboardOf(payload: unknown): SentButton[][] {
   return (
     (payload as { reply_markup?: { inline_keyboard?: SentButton[][] } })
@@ -685,10 +687,8 @@ describe("auction bot", () => {
       payload: {
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: "Повторить", callback_data: startCallback("tg_ads") },
-              { text: "Меню", callback_data: entryCallback("menu") },
-            ],
+            // «Меню» здесь нет: оно разрешило бы личность без заявки.
+            [{ text: "Повторить", callback_data: startCallback("tg_ads") }],
           ],
         },
       },
@@ -1515,6 +1515,51 @@ describe("bid leaf delivery", () => {
         force_reply: true,
         inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
       },
+    });
+  });
+
+  // «Своя сумма» упала на сбое, и карточка стала кадром отказа. Повтор
+  // задаёт вопрос, а кадр удаляется: без кнопок он остался бы в чате мёртвым.
+  it("deletes the refusal frame when the retried action asks a question", async () => {
+    const { bot, calls } = makeBot(trading);
+    const data = encodeAuctionCallback({
+      kind: "ask",
+      question: "bid",
+      lotId,
+      page: 0,
+    });
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data,
+        message: {
+          message_id: 7,
+          date: 0,
+          chat: privateChat,
+          text: "Аукцион сейчас недоступен.",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "Повторить", callback_data: data },
+                { text: "Меню", callback_data: entryCallback("menu") },
+              ],
+            ],
+          },
+        },
+      },
+    } as Update);
+    expect(calls.map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
+      { payload: { chat_id: 42, message_id: 7 } },
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: { text: expect.stringContaining("<b>Своя сумма</b>") },
     });
   });
 

@@ -53,11 +53,18 @@ export type AuctionEntryScreen =
 
 // Выход кадра «недоступно». `retry` — «Повторить» с данными действия, на
 // котором случился отказ: хранилища у экранов нет, и повтор едет в кнопке.
-// `answer` — отказ на ответе на вопрос: ответ в кнопку не помещается, его
-// присылают ещё раз, а вопрос остаётся открытым.
+// `enter` — отказ на входе: повтор зовёт тот же `RequestRole`, и «Меню» рядом
+// с ним нет — оно разрешило бы личность без заявки и показало бы человеку
+// «заявка на рассмотрении», которой нет. `answer` — отказ на ответе на вопрос:
+// ответ в кнопку не помещается, его присылают ещё раз, а вопрос остаётся
+// открытым.
 export type UnavailableExit =
   | { kind: "retry"; data: string }
+  | { kind: "enter"; data: string }
   | { kind: "answer" };
+
+/** Подпись повтора после сбоя: по ней адаптер узнаёт нажатие под кадром отказа. */
+export const retryLabel = "Повторить";
 
 export type TelegramButton =
   | { text: string; callback_data: string; style?: "danger" }
@@ -246,25 +253,29 @@ export function renderEntryScreen(
         text: "<b>Этот экран устарел.</b> Открой меню и повтори действие.",
         keyboard: [[menuButton]],
       };
-    case "unavailable":
-      return screen.exit.kind === "retry"
-        ? {
-            id: "unavailable",
-            format: "html",
-            text: "<b>Аукцион сейчас недоступен.</b> Попробуй ещё раз через минуту.",
-            keyboard: [
-              [
-                { text: "Повторить", callback_data: screen.exit.data },
-                menuButton,
-              ],
-            ],
-          }
-        : {
-            id: "unavailable",
-            format: "html",
-            text: "<b>Аукцион сейчас недоступен.</b> Пришли ответ ещё раз через минуту.",
-            keyboard: [[menuButton]],
-          };
+    case "unavailable": {
+      const { exit } = screen;
+      const retry = (data: string) => ({
+        text: retryLabel,
+        callback_data: data,
+      });
+      return {
+        id: "unavailable",
+        format: "html",
+        text: `<b>Аукцион сейчас недоступен.</b> ${
+          exit.kind === "answer"
+            ? "Пришли ответ ещё раз через минуту."
+            : "Попробуй ещё раз через минуту."
+        }`,
+        keyboard: [
+          exit.kind === "retry"
+            ? [retry(exit.data), menuButton]
+            : exit.kind === "enter"
+              ? [retry(exit.data)]
+              : [menuButton],
+        ],
+      };
+    }
     default: {
       const _exhaustive: never = screen;
       return _exhaustive;

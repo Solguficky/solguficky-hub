@@ -121,8 +121,8 @@ describe("entry callbacks", () => {
     expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
   });
   // Повтор входа несёт код канала, пока тот помещается в 64 байта кнопки.
-  it.each(["chat", "a-b_C9", "a".repeat(49)])(
-    "round trips the entry retry with the channel code %s",
+  it.each(["chat", "a-b_C9", "", "a".repeat(49)])(
+    "round trips the entry retry with the channel code %j",
     (sourceCode) => {
       const data = startCallback(sourceCode);
       expect(parseEntryCallback(data)).toEqual({
@@ -156,7 +156,6 @@ describe("entry callbacks", () => {
     "v1:entry:past:-1",
     "v1:entry:faq:1",
     "v1:entry:auctions:1:2",
-    "v1:entry:start:",
     "v1:entry:start:a b",
     `v1:entry:start:${"a".repeat(50)}`,
     "v1:entry:read:chat",

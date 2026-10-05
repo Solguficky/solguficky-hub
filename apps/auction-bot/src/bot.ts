@@ -13,6 +13,7 @@ import {
   type AuctionEntryScreen,
   type RenderedScreen,
   renderEntryScreen,
+  retryLabel,
 } from "./entry-screen.js";
 import { entryCallback, type FaqContent } from "./faq.js";
 import type { LogFields, Logger } from "./logging.js";
@@ -84,16 +85,19 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
 
   // Команда отвечает новым сообщением с экраном (дизайн-код, «Доставка»).
   // Бюджет действия у неё тот же, что у нажатия («Ожидание»).
-  const command = async (
+  const answerCommand = async (
     ctx: UpdateContext,
-    operation: "start" | "faq",
-    route: (ports: ReturnType<PortsFactory>) => Promise<RouteOutcome>,
+    input: {
+      operation: "start" | "faq";
+      route: (ports: ReturnType<PortsFactory>) => Promise<RouteOutcome>;
+    },
   ) => {
+    const { operation } = input;
     const waiting = startWaiting(ctx);
     waiting.begin();
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
-      const outcome = await route(ports);
+      const outcome = await input.route(ports);
       // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
       await dropQuestions(ctx, questions);
       await deliver(ctx, {
@@ -111,14 +115,16 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
 
   direct.command("start", (ctx) => {
     const sourceCode = sourceCodeOf(ctx.match);
-    return command(ctx, "start", (ports) =>
-      routeAuctionStart({
-        ...(sourceCode === undefined ? {} : { sourceCode }),
-        ports,
-        user: userOf(ctx.from),
-        firstName: ctx.from.first_name,
-      }),
-    );
+    return answerCommand(ctx, {
+      operation: "start",
+      route: (ports) =>
+        routeAuctionStart({
+          ...(sourceCode === undefined ? {} : { sourceCode }),
+          ports,
+          user: userOf(ctx.from),
+          firstName: ctx.from.first_name,
+        }),
+    });
   });
 
   // FAQ с любого места бота, не возвращаясь по дереву (дизайн-код, «Дерево
@@ -126,14 +132,16 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   // ожидающий допуска и заблокированный получают свой кадр. Заявку команда не
   // ставит — вход остаётся за `/start`.
   direct.command("faq", (ctx) =>
-    command(ctx, "faq", (ports) =>
-      routeAuctionCallback({
-        ports,
-        user: userOf(ctx.from),
-        firstName: ctx.from.first_name,
-        data: entryCallback("faq"),
-      }),
-    ),
+    answerCommand(ctx, {
+      operation: "faq",
+      route: (ports) =>
+        routeAuctionCallback({
+          ports,
+          user: userOf(ctx.from),
+          firstName: ctx.from.first_name,
+          data: entryCallback("faq"),
+        }),
+    }),
   );
 
   direct.on("callback_query:data", async (ctx) => {
@@ -177,8 +185,15 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       } else {
         await dropQuestions(ctx, questions);
         if (screen.asks === true) {
+          // Повтор под кадром отказа задал вопрос: кадр своё отслужил и
+          // удаляется, иначе он остался бы в чате без кнопок. Удалить не дали
+          // — с него, как с любого экрана над вопросом, снимается клавиатура.
+          const spent =
+            pressed !== undefined &&
+            pressedLabel(ctx) === retryLabel &&
+            (await deleteMessage(ctx, pressed));
           await ask(ctx, questions, screen, {
-            clearPressed: !isTraceCallback(ctx.callbackQuery.data),
+            clearPressed: !spent && !isTraceCallback(ctx.callbackQuery.data),
           });
         } else {
           await deliver(ctx, {
@@ -344,6 +359,19 @@ export function markupOf(screen: RenderedScreen) {
         ? { force_reply: true as const, inline_keyboard }
         : { inline_keyboard },
   };
+}
+
+// Подпись нажатой кнопки: клавиатура сообщения приходит в самом нажатии, и
+// хранить её боту не нужно.
+function pressedLabel(ctx: UpdateContext): string | undefined {
+  const message = ctx.callbackQuery?.message;
+  const data = ctx.callbackQuery?.data;
+  if (message === undefined || !("reply_markup" in message)) return undefined;
+  return message.reply_markup?.inline_keyboard
+    .flat()
+    .find(
+      (button) => "callback_data" in button && button.callback_data === data,
+    )?.text;
 }
 
 function userOf(from: { id: number; username?: string }) {

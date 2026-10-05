@@ -125,7 +125,8 @@ const history = (entries: boolean): AuctionScreenBody => ({
               occurredAt: "2026-10-03T16:04:00Z",
               amount: rub(500),
               origin: { kind: "manual", source: "bot" },
-              participantName: "@jay",
+              // Псевдоним со знаками разметки: строка хронологии его экранирует.
+              participantName: "Сыч <&>*",
             },
             {
               kind: "bid",
@@ -295,6 +296,12 @@ const shown: readonly {
       exit: { kind: "retry", data: `v1:auc:${"x".repeat(57)}` },
     },
   },
+  {
+    screen: {
+      kind: "unavailable",
+      exit: { kind: "enter", data: "v1:entry:start" },
+    },
+  },
   { screen: { kind: "unavailable", exit: { kind: "answer" } } },
 ];
 
@@ -413,9 +420,22 @@ describe("auction screens beyond the linter", () => {
     ).toEqual([]);
   });
 
+  // Линтер принимает жирную строку в любом месте текста: перед заголовком
+  // вправе стоять заметка. У экранов этого списка заметок нет, и заголовок
+  // обязан быть первым; вопрос с причиной отказа — класс «вопрос», не экран.
+  it("starts every screen with its bold title", () => {
+    expect(
+      rendered
+        .filter((screen) => screen.asks !== true)
+        .filter((screen) => !/^<(b|h1)>/.test(screen.text))
+        .map((screen) => `${screen.id}: ${screen.text.slice(0, 40)}`),
+    ).toEqual([]);
+  });
+
   it("sends every screen with markup", () => {
     for (const screen of rendered) {
       const [, payload] = sent(screen);
+      // `sent` отдаёт параметры вызова без типа: он зависит от метода.
       const call = payload as { parse_mode?: unknown; rich_message?: unknown };
       expect(
         call.parse_mode === "HTML" || call.rich_message !== undefined,

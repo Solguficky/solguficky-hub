@@ -165,7 +165,7 @@ async function routeEntry(input: {
   // вопрос в кнопку не помещается — его присылают ещё раз.
   const exit: UnavailableExit =
     entering !== undefined
-      ? { kind: "retry", data: startCallback(entering.sourceCode) }
+      ? { kind: "enter", data: startCallback(entering.sourceCode) }
       : input.action.kind === "callback"
         ? { kind: "retry", data: input.action.data }
         : { kind: "answer" };

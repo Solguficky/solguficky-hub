@@ -350,7 +350,7 @@ describe("FAQ entry", () => {
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
     ).toEqual({
       kind: "unavailable",
-      exit: { kind: "retry", data: startCallback() },
+      exit: { kind: "enter", data: startCallback() },
     });
   });
 });
@@ -672,7 +672,7 @@ describe("routeAuctionStart", () => {
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
       screen: {
         kind: "unavailable",
-        exit: { kind: "retry", data: startCallback() },
+        exit: { kind: "enter", data: startCallback() },
       },
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
       failure: {
@@ -694,7 +694,7 @@ describe("routeAuctionStart", () => {
     // Повтор входа несёт код канала прихода: заявка не теряет источник.
     expect(outcome.screen).toEqual({
       kind: "unavailable",
-      exit: { kind: "retry", data: startCallback("chat") },
+      exit: { kind: "enter", data: startCallback("chat") },
     });
     expect(outcome.failure?.category).toBe("dependency_unavailable");
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
@@ -731,12 +731,41 @@ describe("entry retry", () => {
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
   });
 
+  // `/start s_` несёт канал с пустым кодом: повтор его не теряет и не
+  // становится нечитаемой кнопкой.
+  it("keeps an empty channel code through the retry", async () => {
+    const down = ports(new ConnectError("offline", Code.Unavailable));
+    const failed = await routeAuctionStart({
+      ports: down,
+      user,
+      firstName,
+      sourceCode: "",
+    });
+    if (
+      failed.screen.kind !== "unavailable" ||
+      failed.screen.exit.kind !== "enter"
+    )
+      throw new Error("expected the entry retry frame");
+    const p = ports(identity({ globalRoles: [] }));
+    await routeAuctionCallback({
+      ports: p,
+      user,
+      data: failed.screen.exit.data,
+    });
+    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+      user,
+      requestedRole: "public",
+      sourceCode: "",
+      firstName,
+    });
+  });
+
   it("offers the same retry when the entry fails again", async () => {
     const p = ports(new ConnectError("offline", Code.Unavailable));
     const data = startCallback("chat");
     expect(
       (await routeAuctionCallback({ ports: p, user, data })).screen,
-    ).toEqual({ kind: "unavailable", exit: { kind: "retry", data } });
+    ).toEqual({ kind: "unavailable", exit: { kind: "enter", data } });
   });
 });
 
