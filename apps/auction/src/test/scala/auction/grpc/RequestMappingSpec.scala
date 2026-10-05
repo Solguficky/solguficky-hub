@@ -1,14 +1,21 @@
 package auction.grpc
 
 import auction.access.GlobalRole
+import auction.catalog.ImageChange
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
 import auction.lot.Money
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction_service.CreateLotCardRequest
+import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.GetLotImageRequest
+import auction.v1.auction_service.LotImageRemoval
+import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
+import com.google.protobuf.ByteString
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import org.scalatest.EitherValues
 import org.scalatest.matchers.should.Matchers
@@ -91,10 +98,39 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
     }
 
     "maps a catalog command with its text as entered" in {
-      val card = RequestMapping.card(Some(viewer), lot, "  Лот  ", "").value
+      val card = RequestMapping.createCard(CreateLotCardRequest(Some(viewer), lot, "  Лот  ", "")).value
       card.lotId.value shouldBe UUID.fromString(lot)
       card.title shouldBe "  Лот  "
       card.description shouldBe ""
+      card.image shouldBe None
+    }
+
+    "passes the bytes of a created image on unchecked" in {
+      val bytes = Array[Byte](1, 2, 3)
+      val request = CreateLotCardRequest(Some(viewer), lot, "Лот", "", Some(LotImageUpload(ByteString.copyFrom(bytes))))
+      RequestMapping.createCard(request).value.image.map(_.toSeq) shouldBe Some(bytes.toSeq)
+    }
+
+    "keeps the stored image when an edit names no image change" in {
+      RequestMapping.editCard(EditLotCardRequest(Some(viewer), lot, "Лот", "")).value.image shouldBe ImageChange.Keep
+    }
+
+    "maps a replaced and a removed image of an edit" in {
+      val edit = EditLotCardRequest(Some(viewer), lot, "Лот", "")
+      val bytes = Array[Byte](1, 2, 3)
+      RequestMapping.editCard(edit.withReplaceImage(LotImageUpload(ByteString.copyFrom(bytes)))).value.image match {
+        case ImageChange.Replace(replacement) => replacement.toSeq shouldBe bytes.toSeq
+        case other => fail(s"expected a replaced image, got $other")
+      }
+      RequestMapping.editCard(edit.withRemoveImage(LotImageRemoval())).value.image shouldBe ImageChange.Remove
+    }
+
+    "names the invalid field of a catalog command and of an image read" in {
+      RequestMapping.editCard(EditLotCardRequest(None, lot, "Лот", "")).left.value shouldBe FormError("viewer")
+      RequestMapping.createCard(CreateLotCardRequest(Some(viewer), "", "Лот", "")).left.value shouldBe
+        FormError("lot_id")
+      RequestMapping.getLotImage(GetLotImageRequest(Some(viewer), "")).left.value shouldBe FormError("lot_id")
+      RequestMapping.getLotImage(GetLotImageRequest(Some(viewer), lot)).value.lotId shouldBe UUID.fromString(lot)
     }
   }
 }

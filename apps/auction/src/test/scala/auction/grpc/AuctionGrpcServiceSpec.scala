@@ -10,10 +10,13 @@ import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
 import auction.aggregate.RemoveLot
+import auction.catalog.CardEdit
 import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotCatalogStore
 import auction.catalog.LotId
+import auction.catalog.LotImage
+import auction.catalog.NewCard
 import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
@@ -35,10 +38,12 @@ import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionListing
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
+import auction.projection.LotImageView
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
+import com.google.protobuf.ByteString
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import io.grpc.Status
 import org.apache.pekko.grpc.GrpcServiceException
@@ -84,8 +89,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private object UntouchableStore extends LotCatalogStore {
     private def touched = fail("the catalog store was touched")
-    def insertIfAbsent(card: LotCard): Future[Option[LotCard]] = touched
-    def update(card: LotCard): Future[Boolean] = touched
+    def insertIfAbsent(card: NewCard): Future[Option[LotCard]] = touched
+    def update(edit: CardEdit): Future[Option[LotCard]] = touched
     def find(lotId: LotId): Future[Option[LotCard]] = touched
   }
 
@@ -110,6 +115,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       fail("the read model was touched")
     def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
       fail("the registry was touched")
+    def image(lotId: UUID): Future[Option[LotImageView]] = fail("the image was read")
   }
 
   private object UntouchableViews extends Views
@@ -246,10 +252,44 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
     "answers a catalog command from a non-administrator with NotAdmin before touching the store" in {
-      val request = wire.CreateLotCardRequest(Some(viewer), lot, "Лот", "")
+      val upload = wire.LotImageUpload(ByteString.copyFrom(Array[Byte](0xff.toByte, 0xd8.toByte, 0xff.toByte)))
+      val request = wire.CreateLotCardRequest(Some(viewer), lot, "Лот", "", Some(upload))
       service(Unreachable).createLotCard(request).futureValue.getRefused.reason.isNotAdmin shouldBe true
-      val edit = wire.EditLotCardRequest(Some(viewer), lot, "Лот", "")
+      val edit = wire.EditLotCardRequest(Some(viewer), lot, "Лот", "").withReplaceImage(upload)
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.isNotAdmin shouldBe true
+    }
+
+    "answers an oversized image from an administrator with the limit before touching the store" in {
+      val admin = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
+      val oversized = wire.LotImageUpload(ByteString.copyFrom(Array.fill[Byte](LotImage.MaxBytes + 1)(0)))
+      val edit = wire.EditLotCardRequest(Some(admin), lot, "Лот", "").withReplaceImage(oversized)
+      service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.imageTooLarge shouldBe
+        Some(wire.ImageTooLarge(LotImage.MaxBytes.toLong))
+    }
+
+    "refuses an image read from a viewer without the public role or of a wrong form before the read model" in {
+      val member = Some(viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER)))
+      statusOf(service(Unreachable).getLotImage(wire.GetLotImageRequest(member, lot))) shouldBe
+        Status.Code.PERMISSION_DENIED
+      statusOf(service(Unreachable).getLotImage(wire.GetLotImageRequest(Some(viewer), "lot"))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers an image read with the stored bytes and NOT_FOUND when the read model holds none" in {
+      val bytes = Array[Byte](0xff.toByte, 0xd8.toByte, 0xff.toByte, 7)
+      val stored = new Views {
+        override def image(lotId: UUID) =
+          Future.successful(
+            Option.when(lotId == UUID.fromString(lot))(LotImageView(IArray.from(bytes), "image/jpeg", "v1"))
+          )
+      }
+      val auction = service(Unreachable, views = stored)
+      val read = auction.getLotImage(wire.GetLotImageRequest(Some(viewer), lot)).futureValue
+      read.content.toByteArray shouldBe bytes
+      read.mediaType shouldBe "image/jpeg"
+      read.version shouldBe "v1"
+      val other = "01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e60"
+      statusOf(auction.getLotImage(wire.GetLotImageRequest(Some(viewer), other))) shouldBe Status.Code.NOT_FOUND
     }
 
     "refuses a proxy limit and its withdrawal from a viewer without the public role before reaching the lot" in {
@@ -445,11 +485,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       rest.nextPageToken shouldBe ""
     }
 
-    "answers UNIMPLEMENTED on display names and images that belong to later slices" in {
+    "answers UNIMPLEMENTED on display names that belong to a later slice" in {
       val auction = service(Unreachable)
       statusOf(auction.chooseDisplayName(wire.ChooseDisplayNameRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.getDisplayNames(wire.GetDisplayNamesRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.getLotImage(wire.GetLotImageRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
 
     "answers UNIMPLEMENTED on invoices until the invoice slice" in {

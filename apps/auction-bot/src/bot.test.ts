@@ -680,7 +680,7 @@ describe("auction bot", () => {
     expect(getLotImage).toHaveBeenCalledTimes(2);
   });
 
-  // Сейчас Auction отвечает на GetLotImage `UNIMPLEMENTED`: карточка остаётся
+  // Изображение может не загрузиться — сбой GetLotImage: карточка остаётся
   // без фото, а не превращается в «недоступно».
   it("shows the card without a photo when the image cannot be loaded", async () => {
     const lines: string[] = [];

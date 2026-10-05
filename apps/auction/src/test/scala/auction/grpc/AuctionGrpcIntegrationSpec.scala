@@ -17,8 +17,11 @@ import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
+import auction.catalog.LotImage
+import auction.catalog.TestImages
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
+import com.google.protobuf.ByteString
 import com.typesafe.config.ConfigFactory
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import io.opentelemetry.api.OpenTelemetry
@@ -152,6 +155,7 @@ final class AuctionGrpcIntegrationSpec
       )
       val binding = Http()
         .newServerAt("127.0.0.1", 0)
+        .withSettings(AuctionNode.grpcServerSettings(kit.system))
         .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, authority))
         .futureValue
       val client = wire.AuctionServiceClient(
@@ -439,5 +443,86 @@ final class AuctionGrpcIntegrationSpec
         .futureValue
       conflict.getRefused.reason.isCardConflict shouldBe true
     }
+
+    "writes a lot image at the limit through the wire and reads the same bytes back with their version" in withNode {
+      node =>
+        val admin = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val lotId = tradingLot(node)
+        val atLimit = IArray.genericWrapArray(TestImages.jpeg(LotImage.MaxBytes)).toArray
+        val created = asHubBot(node.client.createLotCard())
+          .invoke(
+            wire.CreateLotCardRequest(Some(admin), lotId.toString, "Лот", "", Some(upload(atLimit)))
+          )
+          .futureValue
+        val version = created.getAccepted.image.map(_.version).getOrElse(fail("the card has no image"))
+
+        // Лот виден изображению тогда же, когда GetLot: после того как проекция записала его в read model.
+        val read = eventually {
+          asHubBot(node.client.getLotImage()).invoke(wire.GetLotImageRequest(Some(admin), lotId.toString)).futureValue
+        }
+        read.content.toByteArray shouldBe atLimit
+        read.mediaType shouldBe "image/jpeg"
+        read.version shouldBe version
+        asHubBot(node.client.getLot())
+          .invoke(wire.GetLotRequest(Some(admin), lotId.toString))
+          .futureValue
+          .card
+          .flatMap(_.image) shouldBe Some(wire.LotImageRef(version))
+
+        // Сразу за пределом и крупнее умолчания pekko-http в 8 MiB: оба получают именованный отказ, а не сбой транспорта.
+        for (size <- Seq(LotImage.MaxBytes + 1, 12 * 1024 * 1024)) {
+          val oversized = IArray.genericWrapArray(TestImages.jpeg(size)).toArray
+          val refused = asHubBot(node.client.editLotCard())
+            .invoke(wire.EditLotCardRequest(Some(admin), lotId.toString, "Лот", "").withReplaceImage(upload(oversized)))
+            .futureValue
+          refused.getRefused.reason.imageTooLarge shouldBe Some(wire.ImageTooLarge(LotImage.MaxBytes.toLong))
+        }
+
+        val replaced = asHubBot(node.client.editLotCard())
+          .invoke(
+            wire
+              .EditLotCardRequest(Some(admin), lotId.toString, "Лот", "")
+              .withReplaceImage(upload(IArray.genericWrapArray(TestImages.png()).toArray))
+          )
+          .futureValue
+        val reread =
+          asHubBot(node.client.getLotImage()).invoke(wire.GetLotImageRequest(Some(admin), lotId.toString)).futureValue
+        reread.mediaType shouldBe "image/png"
+        reread.version should not be version
+        Some(reread.version) shouldBe replaced.getAccepted.image.map(_.version)
+    }
+
+    "answers NOT_FOUND through GetLotImage for a lot without an image and for one the read model does not hold" in
+      withNode { node =>
+        val reader = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val bare = tradingLot(node)
+        eventually {
+          asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(reader), bare.toString)).futureValue
+        }
+        statusOf(
+          asHubBot(node.client.getLotImage()).invoke(wire.GetLotImageRequest(Some(reader), bare.toString))
+        ) shouldBe Status.Code.NOT_FOUND
+        // Карточка с изображением есть, а лота в read model нет: изображение не видно, как и лот.
+        val cardOnly = UuidV7.generator(Clock.systemUTC())().toString
+        val admin = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        asHubBot(node.client.createLotCard())
+          .invoke(
+            wire.CreateLotCardRequest(
+              Some(admin),
+              cardOnly,
+              "Лот",
+              "",
+              Some(upload(IArray.genericWrapArray(TestImages.jpeg()).toArray))
+            )
+          )
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        statusOf(
+          asHubBot(node.client.getLotImage()).invoke(wire.GetLotImageRequest(Some(reader), cardOnly))
+        ) shouldBe Status.Code.NOT_FOUND
+      }
   }
+
+  private def upload(bytes: Array[Byte]): wire.LotImageUpload = wire.LotImageUpload(ByteString.copyFrom(bytes))
 }

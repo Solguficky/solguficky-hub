@@ -5,6 +5,7 @@ import auction.aggregate.MeetupId
 import auction.lot.AuctionId
 import auction.projection.AuctionListing
 import auction.access.Viewer
+import auction.catalog.ImageChange
 import auction.catalog.LotId
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
@@ -17,8 +18,12 @@ import auction.lot.WithdrawProxyLimit
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
+import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DraftAuctionRequest
+import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.GetLotRequest
+import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.ListAuctionsRequest
@@ -69,8 +74,11 @@ final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
 /** Страница аукционов выборки: после `after` по возрастанию `auction_id`, не больше `limit`. */
 final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], limit: Int, acting: Acting)
 
-/** Команда каталога в домене: создание и правка несут одно и то же. */
-final case class CardCommand(lotId: LotId, title: String, description: String, viewer: Viewer)
+/**
+ * Команда каталога в домене. Создание и правка различаются только изображением: создание несёт файл или ничего, правка
+ * — что сделать с хранимым. Байты здесь ещё не проверены: предел и тип — решение домена, а не форма запроса.
+ */
+final case class CardCommand[I](lotId: LotId, title: String, description: String, image: I, viewer: Viewer)
 
 /**
  * Отображение сгенерированных сообщений в доменные типы — trusted boundary.
@@ -113,16 +121,38 @@ object RequestMapping {
       opId <- uuidV7("op_id", request.opId)
     } yield WithdrawalCommand(lotId, WithdrawProxyLimit(acting.participant, OpId(opId)), acting)
 
-  def card(
+  def createCard(request: CreateLotCardRequest): Either[FormError, CardCommand[Option[IArray[Byte]]]] =
+    card(request.viewer, request.lotId, request.title, request.description, request.image.map(bytes))
+
+  def editCard(request: EditLotCardRequest): Either[FormError, CardCommand[ImageChange[IArray[Byte]]]] = {
+    val change = request.imageChange match {
+      case EditLotCardRequest.ImageChange.ReplaceImage(upload) => ImageChange.Replace(bytes(upload))
+      case EditLotCardRequest.ImageChange.RemoveImage(_) => ImageChange.Remove
+      case EditLotCardRequest.ImageChange.Empty => ImageChange.Keep
+    }
+    card(request.viewer, request.lotId, request.title, request.description, change)
+  }
+
+  private def card[I](
       viewer: Option[ViewerMessage],
       lotId: String,
       title: String,
-      description: String
-  ): Either[FormError, CardCommand] =
+      description: String,
+      image: I
+  ): Either[FormError, CardCommand[I]] =
     for {
       acting <- acting(viewer)
       id <- uuidV7("lot_id", lotId)
-    } yield CardCommand(LotId(id), title, description, acting.viewer)
+    } yield CardCommand(LotId(id), title, description, image, acting.viewer)
+
+  // `toByteArray` отдаёт свежую копию, поэтому обернуть её без второй копии безопасно: другой ссылки на массив нет.
+  private def bytes(upload: LotImageUpload): IArray[Byte] = IArray.unsafeFromArray(upload.content.toByteArray)
+
+  def getLotImage(request: GetLotImageRequest): Either[FormError, LotQuery] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+    } yield LotQuery(lotId, acting)
 
   def getLot(request: GetLotRequest): Either[FormError, LotQuery] =
     for {
