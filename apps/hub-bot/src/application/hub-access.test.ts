@@ -6,6 +6,7 @@ import {
   declinedHubAccessText,
   hubAccessErrors,
   hubAccessText,
+  offersAuctionBot,
   pendingHubAccessText,
 } from "./hub-access.js";
 
@@ -81,5 +82,27 @@ describe("applicationCode", () => {
     const text = pendingHubAccessText(identityId, "vasya");
     expect(text).not.toContain(applicationCode(identityId));
     expect(text).toContain("по твоему нику");
+  });
+});
+
+describe("offersAuctionBot", () => {
+  it("offers the auction bot to a person with public only", () => {
+    expect(offersAuctionBot("pending", ["public"])).toBe(true);
+  });
+
+  it("keeps the offer after a member decline: it does not take the auction", () => {
+    expect(offersAuctionBot("declined", ["public"])).toBe(true);
+  });
+
+  it("offers nothing to a person without roles or blocked", () => {
+    expect(offersAuctionBot("pending", [])).toBe(false);
+    expect(offersAuctionBot("declined", [])).toBe(false);
+    expect(offersAuctionBot("blocked", ["public"])).toBe(false);
+  });
+
+  it("offers nothing inside the member circle, whatever the refusal", () => {
+    // Расхождение кругов: хаб такого человека не отказывает, но ссылка его из
+    // хаба не уводит.
+    expect(offersAuctionBot("pending", ["member", "public"])).toBe(false);
   });
 });

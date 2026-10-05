@@ -67,6 +67,7 @@ const carryingMethods: ReadonlySet<string> = new Set([
 const menuLabel = "Меню";
 const backSign = "‹ ";
 const confirmPrefix = "Да, ";
+const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
 
@@ -233,6 +234,22 @@ function checkRules(
         ]);
       }
       break;
+    case "links": {
+      // Кадр без доступа, которому есть куда уйти вне бота: ссылка не ведёт
+      // по дереву, поэтому возврат и «Меню» здесь нарушение, как у `none`.
+      // Пустая клавиатура — тоже нарушение: кадр без выхода — это `none`, и
+      // потерянная ссылка иначе прошла бы молча.
+      const stray = buttons.filter(
+        (button) => button.url === undefined || !button.text.endsWith(linkSign),
+      );
+      if (buttons.length === 0 || stray.length > 0) {
+        found.push([
+          "nav",
+          `здесь хотя бы одна кнопка и только ссылки со знаком «↗», а пришло ${describeRows(rows)}`,
+        ]);
+      }
+      break;
+    }
     case "none":
       if (buttons.length > 0) {
         found.push(["nav", `клавиатуры быть не должно: ${describeRows(rows)}`]);

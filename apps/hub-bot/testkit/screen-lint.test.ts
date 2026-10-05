@@ -55,6 +55,7 @@ const catalog: Record<string, ScreenEntry> = {
   "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
+  "no-access-link": { class: "screen", nav: "links" },
   notification: { class: "trace", nav: "free" },
   old: {
     class: "screen",
@@ -358,6 +359,28 @@ describe("inspectCall", () => {
       rulesOf(
         "sendMessage",
         screen("no-access", "<b>Заявка ждёт проверки</b>", [[key("Меню")]]),
+      ),
+    ).toEqual(["nav"]);
+  });
+
+  it("requires links marked with ↗ and only them under a no-access frame with a way out", () => {
+    const link = (text: string): Key => ({ text, url: "https://t.me/x_bot" });
+    const linked = (rows: Key[][]) =>
+      rulesOf(
+        "sendMessage",
+        screen("no-access-link", "<b>Заявка ждёт проверки</b>", rows),
+      );
+
+    expect(linked([[link("Бот аукциона ↗")]])).toEqual([]);
+    // Кадр со ссылкой, потерявший её, не проходит за кадр без выхода.
+    expect(linked([])).toEqual(["nav"]);
+    expect(linked([[link("Бот аукциона")]])).toEqual(["nav"]);
+    expect(linked([[link("Бот аукциона ↗")], [key("Меню")]])).toEqual(["nav"]);
+    // Под кадром без выхода ссылка по-прежнему нарушение.
+    expect(
+      rulesOf(
+        "sendMessage",
+        screen("no-access", "<b>Доступ закрыт</b>", [[link("Бот аукциона ↗")]]),
       ),
     ).toEqual(["nav"]);
   });

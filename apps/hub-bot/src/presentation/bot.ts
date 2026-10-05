@@ -19,6 +19,7 @@ import {
   type HubAccess,
   hubAccessErrors,
   hubAccessText,
+  offersAuctionBot,
 } from "../application/hub-access.js";
 import {
   type CommunityToday,
@@ -611,7 +612,13 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
       if (denied !== undefined) {
         outcome = denied;
         return;
@@ -666,7 +673,13 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
       if (denied !== undefined) {
         outcome = denied;
         return;
@@ -776,7 +789,13 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
       if (denied !== undefined) {
         outcome = denied;
         return;
@@ -954,7 +973,13 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
       if (denied !== undefined) {
         outcome = denied;
         return;
@@ -1058,7 +1083,13 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
       if (denied !== undefined) {
         outcome = denied;
         return;
@@ -1252,7 +1283,14 @@ async function handleMessage(
       access = decideHubAccess(resolved.globalRoles, resolved.blocked);
     }
     if (access !== "admitted") {
-      outcome = await denyHubAccess(ctx, access, identity, useCase, false);
+      outcome = await denyHubAccess(
+        ctx,
+        runtime,
+        access,
+        identity,
+        useCase,
+        false,
+      );
       return;
     }
     // Команда меню проходит тот же путь, что /start, — Identity и политику
@@ -1466,7 +1504,13 @@ async function handleCallback(
       outcome = identity.outcome;
       return;
     }
-    const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, true);
+    const denied = await denyHubAccessIfNeeded(
+      ctx,
+      runtime,
+      identity,
+      useCase,
+      true,
+    );
     if (denied !== undefined) {
       outcome = denied;
       return;
@@ -3892,7 +3936,7 @@ async function renderArchiveList(
 // и выход последним рядом. Тексты кадров ошибок по смыслу не меняются.
 async function showFrame(
   ctx: UpdateContext,
-  id: "refusal" | "broadcast-result" | "no-access",
+  id: "refusal" | "broadcast-result" | "no-access" | "no-access-link",
   text: string,
   keyboard: InlineKeyboard,
   delivery?: "new",
@@ -4445,7 +4489,13 @@ async function handleAuctionCallback(
   const useCase: ProductUseCase = "view_auction";
   const identity = await resolvePerson(ctx, runtime, useCase, data);
   if (identity.kind === "failed") return identity.outcome;
-  const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, true);
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    true,
+  );
   if (denied !== undefined) return denied;
   const person = identity.person;
   if (runtime.auction === undefined) {
@@ -4945,6 +4995,7 @@ async function renderStateResult(
 
 async function denyHubAccessIfNeeded(
   ctx: UpdateContext,
+  runtime: BotRuntime,
   identity: { person: Person; blocked: boolean },
   useCase: ProductUseCase | undefined,
   edit: boolean,
@@ -4953,25 +5004,58 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  return denyHubAccess(ctx, access, identity.person, useCase, edit);
+  return denyHubAccess(ctx, runtime, access, identity.person, useCase, edit);
 }
 
+// Человек с `public` уходит из кадра ссылкой в бот аукциона (ADR-044; PER-455):
+// хаб его не повышает, а аукцион у него есть. Без настроенного имени кадр тот
+// же, но без выхода.
 async function denyHubAccess(
   ctx: UpdateContext,
+  runtime: BotRuntime,
   access: Exclude<HubAccess, "admitted">,
   person: Person,
   useCase: ProductUseCase | undefined,
   edit: boolean,
 ): Promise<BoundaryOutcome> {
   const text = hubAccessText(access, person.identityId, ctx.from?.username);
+  const frame = noAccessFrame(
+    offersAuctionBot(access, person.globalRoles)
+      ? runtime.auctionBotUsername
+      : undefined,
+    ctx.me.username,
+  );
   await showFrame(
     ctx,
-    "no-access",
+    frame.id,
     text,
-    new InlineKeyboard(),
+    frame.keyboard,
     edit ? undefined : "new",
   );
   return hubAccessOutcome(access, person.identityId, useCase);
+}
+
+// Запись каталога и клавиатура выбираются вместе: кадр `no-access-link` без
+// кнопки или кнопка под `no-access` разошлись бы с правилом линтера. Имя,
+// совпавшее со своим, — ошибка настройки: ссылка вела бы по кругу в этот же
+// кадр, поэтому её нет.
+function noAccessFrame(
+  auctionBot: string | undefined,
+  ownUsername: string,
+): { id: "no-access" | "no-access-link"; keyboard: InlineKeyboard } {
+  if (
+    auctionBot === undefined ||
+    auctionBot.toLowerCase() === ownUsername.toLowerCase()
+  ) {
+    return { id: "no-access", keyboard: new InlineKeyboard() };
+  }
+  return {
+    id: "no-access-link",
+    keyboard: new InlineKeyboard().url(
+      "Бот аукциона ↗",
+      `https://t.me/${auctionBot}`,
+    ),
+  };
 }
 
 function hubAccessOutcome(

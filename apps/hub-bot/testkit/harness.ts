@@ -85,7 +85,11 @@ export function createCapturingLogger(): {
 export type HarnessOptions = Partial<
   Pick<
     BotRuntime,
-    "auction" | "auctionParents" | "lotPhotos" | "communityTimeZone"
+    | "auction"
+    | "auctionParents"
+    | "lotPhotos"
+    | "communityTimeZone"
+    | "auctionBotUsername"
   >
 > & {
   respond?: (method: ApiMethod, payload: ApiPayload) => unknown;

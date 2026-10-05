@@ -78,3 +78,19 @@ export function decideHubAccess(
   }
   return "pending";
 }
+
+/**
+ * Ссылка в бот аукциона под кадром отказа хаба (ADR-044; PER-455): только у
+ * человека с `public` вне круга `member`. Отказ в `member` аукцион не отнимает,
+ * поэтому `declined` ссылку получает; блокировка отнимает всё.
+ */
+export function offersAuctionBot(
+  access: Exclude<HubAccess, "admitted">,
+  globalRoles: readonly string[],
+): boolean {
+  return (
+    access !== "blocked" &&
+    globalRoles.includes("public") &&
+    !inMemberCircle(globalRoles)
+  );
+}
