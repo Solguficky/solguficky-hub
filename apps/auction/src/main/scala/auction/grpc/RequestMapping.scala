@@ -1,14 +1,19 @@
 package auction.grpc
 
 import auction.access.GlobalRole
+import auction.aggregate.AuctionConfigInput
+import auction.aggregate.ClosingPolicy
 import auction.aggregate.MeetupId
+import auction.aggregate.OnlinePhase
 import auction.lot.AuctionId
 import auction.projection.AuctionListing
 import auction.access.Viewer
 import auction.catalog.ImageChange
 import auction.catalog.LotId
+import auction.lot.AntiSnipe
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
+import auction.lot.LotConfigInput
 import auction.lot.Money
 import auction.lot.OpId
 import auction.lot.ParticipantId
@@ -19,6 +24,9 @@ import auction.lot.StepPolicyInput
 import auction.lot.WithdrawProxyLimit
 import auction.naming.NameChoice
 import auction.naming.TelegramUsername
+import auction.v1.auction.AuctionConfig as AuctionConfigMessage
+import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
+import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotRequest
@@ -37,13 +45,18 @@ import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 
 import java.nio.charset.StandardCharsets
+import java.time.Duration
+import java.time.Instant
+import java.time.format.DateTimeParseException
 import java.util.Base64
 import java.util.UUID
 
@@ -91,6 +104,14 @@ final case class LotScheduleCommand(
     opId: OpId,
     acting: Acting
 )
+
+/**
+ * Планирование аукциона. Конфигурация здесь ещё не проверена: `ConfigInvalid` — решение домена, а не форма запроса.
+ */
+final case class AuctionScheduleCommand(auctionId: AuctionId, config: AuctionConfigInput, opId: OpId, acting: Acting)
+
+/** Открытие онлайн-торгов аукциона. */
+final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
@@ -279,6 +300,84 @@ object RequestMapping {
           .map(tiers => StepPolicyInput.Tiered(tiers.reverse))
       case Some(StepPolicyMessage.Policy.Empty) | None => Left(FormError("step_policy"))
     }
+
+  def scheduleAuction(request: ScheduleAuctionRequest): Either[FormError, AuctionScheduleCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      config <- request.config.toRight(FormError("config")).flatMap(auctionConfig)
+    } yield AuctionScheduleCommand(auction, config, OpId(opId), acting)
+
+  def startPrebidding(request: StartPrebiddingRequest): Either[FormError, PrebiddingCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield PrebiddingCommand(auction, OpId(opId), acting)
+
+  /**
+   * Конфигурация без проверки ADR-047: форма требует заданных `oneof` и сообщений, моментов в RFC 3339 и
+   * неотрицательных секунд анти-снайпа. Противоречие значений между собой — `closesAt` не после `opensAt`, дедлайн без
+   * `closesAt`, число блоков финала — отказ домена `ConfigInvalid`, а не нарушение формы.
+   */
+  private def auctionConfig(config: AuctionConfigMessage): Either[FormError, AuctionConfigInput] =
+    for {
+      phase <- config.onlinePhase match {
+        case None => Right(None)
+        case Some(phase) =>
+          for {
+            opensAt <- instant("config.online_phase.opens_at", phase.opensAt)
+            closesAt <- phase.closesAt match {
+              case None => Right(None)
+              case Some(raw) => instant("config.online_phase.closes_at", raw).map(Some(_))
+            }
+          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots))
+      }
+      closing <- config.closingPolicy.map(_.policy) match {
+        case Some(ClosingPolicyMessage.Policy.ByAuctioneer(_)) => Right(ClosingPolicy.ByAuctioneer)
+        case Some(ClosingPolicyMessage.Policy.ByDeadline(_)) => Right(ClosingPolicy.ByDeadline)
+        case Some(ClosingPolicyMessage.Policy.Mixed(mixed)) => Right(ClosingPolicy.Mixed(mixed.onlineByDeadline))
+        case Some(ClosingPolicyMessage.Policy.Empty) | None => Left(FormError("config.closing_policy"))
+      }
+      defaults <- config.lotDefaults.toRight(FormError("config.lot_defaults")).flatMap(lotDefaults)
+    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults)
+
+  private def lotDefaults(defaults: LotDefaultsMessage): Either[FormError, LotConfigInput] =
+    for {
+      currency <- Option
+        .when(CurrencyAlpha.matches(defaults.currency))(CurrencyCode(defaults.currency))
+        .toRight(FormError("config.lot_defaults.currency"))
+      policy <- stepPolicy(defaults.stepPolicy)
+      antiSnipe <- defaults.antiSnipe match {
+        case Some(value)
+            if seconds(value.windowSeconds) && seconds(value.extensionSeconds) && value.maxExtensions >= 0 =>
+          Right(
+            AntiSnipe(
+              Duration.ofSeconds(value.windowSeconds),
+              Duration.ofSeconds(value.extensionSeconds),
+              value.maxExtensions
+            )
+          )
+        case _ => Left(FormError("config.lot_defaults.anti_snipe"))
+      }
+    } yield LotConfigInput(currency, policy, antiSnipe, defaults.proxyEnabled)
+
+  /**
+   * Секунды анти-снайпа — от нуля до года. Верхний предел — не правило торгов, а защита дедлайна: лот сдвигает его на
+   * эти длительности, и `int64` секунд у `Instant` переполнился бы на каждой ставке, заклинив лот.
+   */
+  val MaxAntiSnipeSeconds: Long = 366L * 24 * 60 * 60
+
+  private def seconds(value: Long): Boolean = value >= 0 && value <= MaxAntiSnipeSeconds
+
+  private def instant(field: String, value: String): Either[FormError, Instant] =
+    try Right(Instant.parse(value))
+    catch { case _: DateTimeParseException => Left(FormError(field)) }
+
+  /** Аукцион сходки — только UUIDv5: у тестового аукциона из настройки бота журнала аукциона нет. */
+  private def meetupAuction(value: String): Either[FormError, AuctionId] =
+    canonicalUuidV5(value).map(AuctionId(_)).toRight(FormError("auction_id"))
 
   def getMeetupAuction(request: GetMeetupAuctionRequest): Either[FormError, MeetupAuctionQuery] =
     for {

@@ -1,7 +1,10 @@
 package auction.grpc
 
+import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.LotSchedulingRefusal
+import auction.aggregate.OpeningRefusal
+import auction.aggregate.SchedulingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.ImageVersion
 import auction.catalog.LotCard
@@ -158,6 +161,50 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       code(LotSchedulingRefusal.Denied(Denial.Unavailable)) shouldBe Status.Code.UNAVAILABLE
       code(LotSchedulingRefusal.Denied(Denial.AuctionNotFound)) shouldBe Status.Code.NOT_FOUND
       code(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken)) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "answers a scheduled auction without data and every refusal of the right and of the configuration as a value" in {
+      def reason(refusal: SchedulingRefusal): wire.ScheduleAuctionRefusal.Reason =
+        ResponseMapping.scheduleAuction(Left(refusal)).value.getRefused.reason
+      def invalid(reason: ConfigInvalid): wire.ConfigInvalid.Reason =
+        ResponseMapping
+          .scheduleAuction(Left(SchedulingRefusal.ConfigInvalid(reason)))
+          .value
+          .getRefused
+          .getConfigInvalid
+          .reason
+      ResponseMapping.scheduleAuction(Right(())).value.outcome.isAccepted shouldBe true
+      reason(SchedulingRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
+      reason(SchedulingRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
+      reason(SchedulingRefusal.AuctionAlreadyStarted).isAuctionAlreadyStarted shouldBe true
+      invalid(ConfigInvalid.ClosesAtMissing).isClosesAtMissing shouldBe true
+      invalid(ConfigInvalid.ClosesAtNotAfterOpensAt).isClosesAtNotAfterOpensAt shouldBe true
+      invalid(ConfigInvalid.FinalBlocksOutOfRange).isFinalBlocksOutOfRange shouldBe true
+      invalid(ConfigInvalid.LotDefaults(StepPolicyInvalid.StepNotPositive)).isLotDefaultsStepPolicyInvalid shouldBe true
+    }
+
+    "answers a started prebidding without data and every refusal of the right and of the state as a value" in {
+      def reason(refusal: OpeningRefusal): wire.StartPrebiddingRefusal.Reason =
+        ResponseMapping.startPrebidding(Left(refusal)).value.getRefused.reason
+      ResponseMapping.startPrebidding(Right(())).value.outcome.isAccepted shouldBe true
+      reason(OpeningRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
+      reason(OpeningRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
+      reason(OpeningRefusal.AuctionNotScheduled).isAuctionNotScheduled shouldBe true
+    }
+
+    "answers auction commands with a status when the authority is unavailable or the auction does not exist" in {
+      ResponseMapping.scheduleAuction(Left(SchedulingRefusal.Denied(Denial.Unavailable))).left.value.getCode shouldBe
+        Status.Code.UNAVAILABLE
+      ResponseMapping
+        .scheduleAuction(Left(SchedulingRefusal.Denied(Denial.AuctionNotFound)))
+        .left
+        .value
+        .getCode shouldBe
+        Status.Code.NOT_FOUND
+      ResponseMapping.startPrebidding(Left(OpeningRefusal.Denied(Denial.Unavailable))).left.value.getCode shouldBe
+        Status.Code.UNAVAILABLE
+      ResponseMapping.startPrebidding(Left(OpeningRefusal.Denied(Denial.AuctionNotFound))).left.value.getCode shouldBe
+        Status.Code.NOT_FOUND
     }
 
     "answers an image read with the stored bytes, their type and their own version" in {

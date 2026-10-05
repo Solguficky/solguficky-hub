@@ -1,13 +1,24 @@
 package auction.grpc
 
 import auction.access.GlobalRole
+import auction.aggregate.AuctionConfigInput
+import auction.aggregate.ClosingPolicy
+import auction.aggregate.OnlinePhase
 import auction.catalog.ImageChange
+import auction.lot.AntiSnipe
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
+import auction.lot.LotConfigInput
 import auction.lot.Money
 import auction.lot.StepPolicy
 import auction.lot.StepPolicyInput
+import auction.v1.auction.AntiSnipe as AntiSnipeMessage
+import auction.v1.auction.AuctionConfig as AuctionConfigMessage
+import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
+import auction.v1.auction.LotDefaults as LotDefaultsMessage
+import auction.v1.auction.MixedClosing
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction.OnlinePhase as OnlinePhaseMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction.StepTier
 import auction.v1.auction.TieredSteps
@@ -17,8 +28,10 @@ import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.LotImageRemoval
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import com.google.protobuf.ByteString
@@ -27,6 +40,8 @@ import org.scalatest.EitherValues
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
 final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValues {
@@ -189,6 +204,76 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         .left
         .value shouldBe FormError("step_policy.tiered.lower_bound")
     }
+
+    "maps the configuration of an auction as sent, without checking its values against each other" in {
+      val command = RequestMapping.scheduleAuction(validAuctionSchedule).value
+      command.auctionId.value shouldBe UUID.fromString(meetupAuction)
+      command.opId.value shouldBe UUID.fromString(op)
+      command.config shouldBe AuctionConfigInput(
+        Some(OnlinePhase(Instant.parse("2026-10-20T00:00:00Z"), Some(Instant.parse("2026-10-27T00:00:00Z")), true)),
+        1,
+        ClosingPolicy.Mixed(onlineByDeadline = true),
+        LotConfigInput(
+          CurrencyCode("RUB"),
+          StepPolicyInput.Fixed(Money(10000, CurrencyCode("RUB"))),
+          AntiSnipe(Duration.ofSeconds(120), Duration.ofSeconds(300), 3),
+          proxyEnabled = true
+        )
+      )
+      // ConfigInvalid решает ядро: `closes_at` раньше `opens_at` и пять блоков финала форма пропускает.
+      val contradictory = validConfig
+        .withOnlinePhase(OnlinePhaseMessage("2026-10-27T00:00:00Z", Some("2026-10-20T00:00:00Z"), closesLots = true))
+        .withFinalBlocks(5)
+      RequestMapping.scheduleAuction(validAuctionSchedule.withConfig(contradictory)).isRight shouldBe true
+      RequestMapping
+        .scheduleAuction(validAuctionSchedule.withConfig(validConfig.clearOnlinePhase))
+        .value
+        .config
+        .onlinePhase shouldBe
+        None
+    }
+
+    "names the invalid field of the configuration of an auction" in {
+      def field(config: AuctionConfigMessage): FormError =
+        RequestMapping.scheduleAuction(validAuctionSchedule.withConfig(config)).left.value
+      RequestMapping.scheduleAuction(validAuctionSchedule.clearConfig).left.value shouldBe FormError("config")
+      RequestMapping.scheduleAuction(validAuctionSchedule.withAuctionId(lot)).left.value shouldBe FormError(
+        "auction_id"
+      )
+      field(validConfig.withOnlinePhase(OnlinePhaseMessage("20.10.2026", None, closesLots = false))) shouldBe
+        FormError("config.online_phase.opens_at")
+      field(
+        validConfig.withOnlinePhase(OnlinePhaseMessage("2026-10-20T00:00:00Z", Some(""), closesLots = false))
+      ) shouldBe
+        FormError("config.online_phase.closes_at")
+      field(validConfig.clearClosingPolicy) shouldBe FormError("config.closing_policy")
+      field(validConfig.withClosingPolicy(ClosingPolicyMessage())) shouldBe FormError("config.closing_policy")
+      field(validConfig.clearLotDefaults) shouldBe FormError("config.lot_defaults")
+      field(validConfig.withLotDefaults(validDefaults.withCurrency("rub"))) shouldBe
+        FormError("config.lot_defaults.currency")
+      field(validConfig.withLotDefaults(validDefaults.clearStepPolicy)) shouldBe FormError("step_policy")
+      field(validConfig.withLotDefaults(validDefaults.clearAntiSnipe)) shouldBe FormError(
+        "config.lot_defaults.anti_snipe"
+      )
+      field(validConfig.withLotDefaults(validDefaults.withAntiSnipe(AntiSnipeMessage(-1, 300, 3)))) shouldBe
+        FormError("config.lot_defaults.anti_snipe")
+      // Длительность, на которой `Instant` дедлайна переполнился бы, — тоже форма, а не отказ лота на ставке.
+      val beyond = RequestMapping.MaxAntiSnipeSeconds + 1
+      field(validConfig.withLotDefaults(validDefaults.withAntiSnipe(AntiSnipeMessage(120, beyond, 3)))) shouldBe
+        FormError("config.lot_defaults.anti_snipe")
+      field(validConfig.withLotDefaults(validDefaults.withAntiSnipe(AntiSnipeMessage(Long.MaxValue, 120, 3)))) shouldBe
+        FormError("config.lot_defaults.anti_snipe")
+    }
+
+    "maps the start of prebidding of a meetup auction only" in {
+      val command = RequestMapping.startPrebidding(StartPrebiddingRequest(Some(viewer), meetupAuction, op)).value
+      command.auctionId.value shouldBe UUID.fromString(meetupAuction)
+      command.opId.value shouldBe UUID.fromString(op)
+      RequestMapping.startPrebidding(StartPrebiddingRequest(Some(viewer), lot, op)).left.value shouldBe
+        FormError("auction_id")
+      RequestMapping.startPrebidding(StartPrebiddingRequest(None, meetupAuction, op)).left.value shouldBe
+        FormError("viewer")
+    }
   }
 }
 
@@ -218,4 +303,21 @@ object RequestMappingSpec {
     Some(MoneyMessage(500000, "RUB")),
     Some(StepPolicyMessage().withFixed(MoneyMessage(25000, "RUB")))
   )
+
+  val validDefaults: LotDefaultsMessage = LotDefaultsMessage(
+    "RUB",
+    Some(StepPolicyMessage().withFixed(MoneyMessage(10000, "RUB"))),
+    Some(AntiSnipeMessage(120, 300, 3)),
+    proxyEnabled = true
+  )
+
+  val validConfig: AuctionConfigMessage = AuctionConfigMessage(
+    Some(OnlinePhaseMessage("2026-10-20T00:00:00Z", Some("2026-10-27T00:00:00Z"), closesLots = true)),
+    1,
+    Some(ClosingPolicyMessage().withMixed(MixedClosing(onlineByDeadline = true))),
+    Some(validDefaults)
+  )
+
+  val validAuctionSchedule: ScheduleAuctionRequest =
+    ScheduleAuctionRequest(Some(viewer), meetupAuction, op, Some(validConfig))
 }

@@ -30,6 +30,19 @@ type MeetupBoundaryTests() =
 
     let newId () = Guid.CreateVersion7()
 
+    /// Момент публикации через месяц от часов теста: 19:00 по Москве на проводе и то же
+    /// мгновение в UTC. Живой хост сверяет момент с настоящими часами, и жёсткая дата
+    /// однажды проходит сама — тогда назначение отказывает «момент в прошлом».
+    let futureMoment () =
+        let day = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours 3.0).Date.AddDays 30.0
+
+        LocalDateTime(
+            Date = CalendarDate(Year = day.Year, Month = day.Month, Day = day.Day),
+            Time = LocalTime(Hours = 19, Minutes = 0)
+        ),
+        // 19:00 в Москве — 16:00 UTC.
+        DateTimeOffset(day.Year, day.Month, day.Day, 16, 0, 0, TimeSpan.Zero)
+
     let createPublished
         (client: MeetupsService.MeetupsServiceClient)
         (admin: Viewer)
@@ -462,22 +475,17 @@ type MeetupBoundaryTests() =
                 )
             )
 
+        let moment, expected = futureMoment ()
+
         let scheduled =
             client.ScheduleMeetupPublication(
                 ScheduleMeetupPublicationRequest(
                     Viewer = admin,
                     Id = key,
-                    Moment =
-                        LocalDateTime(
-                            Date = CalendarDate(Year = 2026, Month = 10, Day = 5),
-                            Time = LocalTime(Hours = 19, Minutes = 0)
-                        ),
+                    Moment = moment,
                     ExpectedVersion = draft.Version
                 )
             )
-
-        // 19:00 в Москве — 16:00 UTC.
-        let expected = DateTimeOffset(2026, 10, 5, 16, 0, 0, TimeSpan.Zero)
 
         test
             <@
@@ -560,11 +568,8 @@ type MeetupBoundaryTests() =
                     ScheduleMeetupPublicationRequest(
                         Viewer = admin,
                         Id = publishedId.ToString "D",
-                        Moment =
-                            LocalDateTime(
-                                Date = CalendarDate(Year = 2026, Month = 10, Day = 5),
-                                Time = LocalTime(Hours = 19, Minutes = 0)
-                            ),
+                        // Будущий момент: иначе отказ «в прошлом» спрятал бы отказ по состоянию.
+                        Moment = fst (futureMoment ()),
                         ExpectedVersion = published'.Version
                     )
                 )
