@@ -37,7 +37,8 @@ export function traceLotCallback(lotId: string): string {
 }
 
 // Вход в аукцион из следа — тот же путь, что пункт меню «Аукционы»: FAQ, если
-// человек его ещё не прошёл, иначе лента (PER-442).
+// человек его ещё не прошёл, иначе список активных аукционов (PER-442,
+// PER-453).
 export function traceAuctionsCallback(): string {
   return `${tracePrefix}${entryCallback("auctions")}`;
 }

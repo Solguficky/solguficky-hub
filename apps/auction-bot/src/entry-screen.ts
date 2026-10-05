@@ -6,14 +6,26 @@ import {
   type AuctionScreenBody,
   type BidOriginView,
   type CommandResult,
+  encodeAuctionCallback,
   type FeedItem,
   type HistoryItem,
   type LotStatusView,
   MAX_COMMAND_AMOUNT,
   type Money,
 } from "@solguficky/auction-bot-ui";
+import type {
+  AuctionListPage,
+  AuctionStage,
+  AuctionSummary,
+} from "./auctions.js";
 import type { Presentation } from "./config.js";
-import { defaultFaq, entryCallback, type FaqContent } from "./faq.js";
+import {
+  defaultFaq,
+  entryCallback,
+  type FaqContent,
+  type ListAction,
+  listCallback,
+} from "./faq.js";
 import type { ScreenId } from "./screen-catalog.js";
 
 // Оболочка бота аукциона (ADR-044, «Один аукцион, две оболочки»). Экран здесь
@@ -21,17 +33,20 @@ import type { ScreenId } from "./screen-catalog.js";
 // общего пакета. Доступа к хабу он не обещает. Тексты принадлежат этому боту и
 // с хабом не делятся, даже когда совпадают.
 //
-// Общий FAQ и меню — оболочка. Лента и карточка лота — тело общего пакета
-// (PER-306), лист ставки — PER-317: подтверждение, вопросы и выбор имени
-// написаны по дизайн-коду сразу.
+// Общий FAQ, меню и списки аукционов (PER-453) — оболочка. Лента и карточка
+// лота — тело общего пакета (PER-306), лист ставки — PER-317: подтверждение,
+// вопросы и выбор имени написаны по дизайн-коду сразу.
 export type AuctionEntryScreen =
   | { kind: "welcome" }
   | { kind: "faq" }
   | { kind: "menu" }
-  | { kind: "auctions" }
+  | { kind: "auctions"; list: AuctionListPage }
+  | { kind: "past"; list: AuctionListPage }
   | { kind: "details" }
   | { kind: "question" }
-  | { kind: "auction"; body: AuctionScreenBody }
+  // `parent` — список, в котором аукцион ленты стоит сейчас: туда ведёт
+  // возврат ленты. Карточке и хронологии он не нужен.
+  | { kind: "auction"; body: AuctionScreenBody; parent?: ListAction }
   | { kind: "denied"; reason: AuctionDenial }
   | { kind: "outdated" }
   | { kind: "unavailable" };
@@ -148,15 +163,13 @@ export function renderEntryScreen(
         text: `${context}\nВыберите раздел.`,
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
+          [{ text: "Прошедшие", callback_data: entryCallback("past") }],
           [faqButton],
         ],
       };
     case "auctions":
-      return {
-        id: "auctions",
-        text: "Аукционы\nКаталог пока не открыт. Он появится здесь, когда будет готов.",
-        keyboard: [[faqButton], [menuButton]],
-      };
+    case "past":
+      return renderList(screen.kind, screen.list, options);
     case "details":
       return {
         id: "details",
@@ -179,6 +192,24 @@ export function renderEntryScreen(
       const body = renderBody(screen.body, options);
       // Подтверждение и вопрос несут только свои ряды: «Да» и «Нет», «Отмена».
       if (body.asks === true || isConfirm(body.id)) return body;
+      // Лента возвращает в свой список: возврат и «Меню» — один последний
+      // ряд, боковой кнопки FAQ нет (дизайн-код, «Навигация»).
+      if (body.id === "feed") {
+        const parent = screen.parent ?? "auctions";
+        return {
+          ...body,
+          keyboard: [
+            ...body.keyboard,
+            [
+              {
+                text: `‹ ${listTexts[parent].backName}`,
+                callback_data: entryCallback(parent),
+              },
+              menuNavButton,
+            ],
+          ],
+        };
+      }
       // Хронология и выбор имени написаны по дизайн-коду сразу: возврат тела
       // и «Меню» — один последний ряд, боковой кнопки FAQ нет.
       if (body.id === "history" || body.id === "name-choice") {
@@ -216,6 +247,118 @@ export function renderEntryScreen(
       return _exhaustive;
     }
   }
+}
+
+const listTexts: Record<
+  ListAction,
+  { title: string; backName: string; empty: string }
+> = {
+  auctions: {
+    title: "Аукционы",
+    backName: "Аукционы",
+    empty: "Активных аукционов сейчас нет.",
+  },
+  past: {
+    title: "Прошедшие аукционы",
+    backName: "Прошедшие",
+    empty: "Прошедших аукционов пока нет.",
+  },
+};
+
+// Список аукционов по дизайн-коду: жирный заголовок с номером страницы, ряд на
+// аукцион, листание стрелками и возврат в меню. Пустой список говорит об этом
+// текстом, а не пустой клавиатурой.
+function renderList(
+  kind: ListAction,
+  list: AuctionListPage,
+  options: RenderOptions,
+): RenderedScreen {
+  const { title, empty } = listTexts[kind];
+  const heading =
+    list.pageCount === 1
+      ? title
+      : `${title} · ${list.page + 1} из ${list.pageCount}`;
+  const paging = [
+    ...(list.page > 0
+      ? [{ text: "←", callback_data: listCallback(kind, list.page - 1) }]
+      : []),
+    ...(list.page < list.pageCount - 1
+      ? [{ text: "→", callback_data: listCallback(kind, list.page + 1) }]
+      : []),
+  ];
+  return {
+    id: kind,
+    format: "html",
+    text: [
+      `<b>${escapeHtml(heading)}</b>`,
+      list.auctions.length === 0 ? empty : "Выберите аукцион.",
+    ].join("\n\n"),
+    keyboard: [
+      ...list.auctions.map((auction) => [
+        {
+          text: auctionLabel(auction, options.timeZone),
+          callback_data: encodeAuctionCallback({
+            kind: "feed",
+            auctionId: auction.auctionId,
+            page: 0,
+          }),
+        },
+      ]),
+      ...(paging.length === 0 ? [] : [paging]),
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+    ],
+  };
+}
+
+// Строка аукциона: день начала онлайн-фазы, этап и число лотов.
+export function auctionLabel(
+  auction: AuctionSummary,
+  timeZone: string,
+): string {
+  return [
+    auction.opensAt === undefined
+      ? "Без онлайн-торгов"
+      : readableDay(auction.opensAt, timeZone),
+    stageLabels[auction.stage],
+    lotCount(auction.lotCount),
+  ].join(" · ");
+}
+
+const stageLabels: Record<AuctionStage, string> = {
+  scheduled: "скоро старт",
+  prebidding: "идут ставки",
+  settling: "подводим итоги",
+  "on-break": "перерыв",
+  "lineup-frozen": "готовим финал",
+  "in-final": "идёт финал",
+  finished: "завершён",
+};
+
+function lotCount(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  const word =
+    tens >= 11 && tens <= 14
+      ? "лотов"
+      : ones === 1
+        ? "лот"
+        : ones >= 2 && ones <= 4
+          ? "лота"
+          : "лотов";
+  return `${count} ${word}`;
+}
+
+// День для чтения по дизайн-коду, без времени: «12 октября, сб».
+function readableDay(instant: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    timeZone,
+    day: "numeric",
+    month: "long",
+    weekday: "short",
+  }).formatToParts(new Date(instant));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((each) => each.type === type)?.value ?? "";
+  return `${part("day")} ${part("month")}, ${part("weekday")}`;
 }
 
 function renderBody(

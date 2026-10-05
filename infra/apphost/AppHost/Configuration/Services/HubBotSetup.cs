@@ -9,9 +9,9 @@ internal static class HubBotSetup
     /// <summary>
     /// Имя бота аукциона без «@» (PER-441): экран каналов прихода собирает по
     /// нему вторую ссылку <c>s_&lt;код&gt;</c>. Бот хаба не знает его сам — getMe
-    /// по чужому токену дал бы ему чужой секрет. Не секрет и не параметр Aspire,
-    /// как <see cref="AuctionBotSetup.AuctionIdKey"/>: без значения экран отдаёт
-    /// только ссылку в бот хаба. Задаётся user-secrets AppHost или переменной
+    /// по чужому токену дал бы ему чужой секрет. Не секрет и не параметр Aspire:
+    /// пустой параметр дашборд спросил бы после старта, а без значения экран
+    /// отдаёт только ссылку в бот хаба. Задаётся user-secrets AppHost или переменной
     /// <c>HubBot__AuctionBotUsername</c>.
     /// </summary>
     internal const string AuctionBotUsernameKey = "HubBot:AuctionBotUsername";

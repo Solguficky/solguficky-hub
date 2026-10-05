@@ -46,7 +46,6 @@ async function main(): Promise<number> {
     faq: config.faq,
     logger,
     timeZone: config.communityTimeZone,
-    ...(config.auctionId === undefined ? {} : { auctionId: config.auctionId }),
   });
   // Второй вход: адресные факты Notifications. Он стартует до поллера, чтобы
   // отказ шины остановил процесс сразу, а не после того, как бот начал

@@ -11,6 +11,7 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import { inspectCall, reportViolations } from "../testkit/screen-lint.js";
+import type { AuctionListing, AuctionSummary } from "./auctions.js";
 import { createBot } from "./bot.js";
 import {
   type AuctionRpc,
@@ -64,7 +65,6 @@ function makeBot(
     refuse?: Record<string, string>;
     // Отказ только на первом вызове метода: повтор проходит.
     refuseOnce?: Record<string, string>;
-    auctionId?: string;
     photos?: PhotoCache;
     presentation?: "rich" | "plain";
     // Обрыв соединения на первом вызове метода.
@@ -80,9 +80,6 @@ function makeBot(
     ports,
     logger: options.logger ?? silent,
     timeZone: "Europe/Moscow",
-    ...(options.auctionId === undefined
-      ? {}
-      : { auctionId: options.auctionId }),
     ...(options.photos === undefined ? {} : { photos: options.photos }),
     botInfo,
   });
@@ -136,6 +133,13 @@ function makeBot(
 
 const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
 
+const activeAuction: AuctionSummary = {
+  auctionId,
+  stage: "prebidding",
+  opensAt: "2026-10-10T16:00:00Z",
+  lotCount: 3,
+};
+
 const photoBlock = {
   type: "photo",
   photo: [
@@ -151,6 +155,8 @@ function portsWith(
     entry?: EntryPort["requestRole"];
     history?: readonly LotHistoryEntryView[];
     names?: Readonly<Record<string, string>>;
+    // Аукционы по выборкам; по умолчанию аукцион ленты активен.
+    auctions?: Partial<Record<AuctionListing, AuctionSummary[]>>;
   } = {},
 ): PortsFactory {
   return () => ({
@@ -192,6 +198,14 @@ function portsWith(
     },
     operations: {
       newOperationId: () => "01929b7e-5c1d-7a3f-8e4b-00000000c001",
+    },
+    catalog: {
+      listAuctions: async ({ listing }) => ({
+        auctions:
+          overrides.auctions?.[listing] ??
+          (listing === "active" ? [activeAuction] : []),
+        nextPageToken: "",
+      }),
     },
     faq: {
       acknowledged: async () => true,
@@ -289,6 +303,7 @@ describe("auction bot", () => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "Аукционы", callback_data: expect.any(String) }],
+          [{ text: "Прошедшие", callback_data: expect.any(String) }],
           [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
         ],
       },
@@ -388,6 +403,7 @@ describe("auction bot", () => {
         entry: base.entry,
         auction: base.auction,
         operations: base.operations,
+        catalog: base.catalog,
         faq: base.faq,
         image: base.image,
       };
@@ -447,33 +463,121 @@ describe("auction bot", () => {
     });
   });
 
-  // Пункт меню «Аукционы» при названном аукционе открывает его ленту.
-  it("opens the feed from the menu when the auction is configured", async () => {
-    const listAuctionLots = vi.fn(async () => ({
-      lots: [],
-      nextPageToken: "",
-    }));
-    const ports: PortsFactory = (requestId) => {
-      const base = portsWith()(requestId);
-      return { ...base, auction: { ...base.auction, listAuctionLots } };
-    };
-    const { bot, calls } = makeBot(ports, { auctionId });
+  // Один активный аукцион — всё равно список из одной строки, а не сразу
+  // лента (PER-453); строка открывает ленту, лента возвращает в список.
+  it("lists a single active auction and opens its feed from the row", async () => {
+    const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
-    expect(listAuctionLots).toHaveBeenCalledWith(
-      expect.objectContaining({ auctionId, pageToken: "" }),
-    );
-    const edit = calls.find((call) => call.method === "editMessageText");
-    expect(edit?.payload).toMatchObject({
-      text: expect.stringContaining("Лотов пока нет."),
+    const feedButton = encodeAuctionCallback({
+      kind: "feed",
+      auctionId,
+      page: 0,
+    });
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("<b>Аукционы</b>"),
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "10 октября, сб · идут ставки · 3 лота",
+              callback_data: feedButton,
+            },
+          ],
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+        ],
+      },
+    });
+    await bot.handleUpdate(lotPress({ data: feedButton }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: expect.arrayContaining([
+          [
+            { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
+            { text: "Меню", callback_data: entryCallback("menu") },
+          ],
+        ]),
+      },
     });
   });
 
-  it("keeps the catalog closed in the menu without a configured auction", async () => {
-    const { bot, calls } = makeBot(publicPorts);
+  // Завершённый аукцион уходит из активных в прошедшие, и его лента
+  // возвращает туда, где он стоит сейчас.
+  it("moves a finished auction to the past list and returns its feed there", async () => {
+    const finished = { ...activeAuction, stage: "finished" as const };
+    const { bot, calls } = makeBot(
+      portsWith({ auctions: { active: [], finished: [finished] } }),
+    );
     await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
-    const edit = calls.find((call) => call.method === "editMessageText");
-    expect(edit?.payload).toMatchObject({
-      text: expect.stringContaining("Каталог пока не открыт"),
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Активных аукционов сейчас нет."),
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+        ],
+      },
+    });
+    await bot.handleUpdate(lotPress({ data: entryCallback("past") }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("<b>Прошедшие аукционы</b>"),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "10 октября, сб · завершён · 3 лота",
+              callback_data: encodeAuctionCallback({
+                kind: "feed",
+                auctionId,
+                page: 0,
+              }),
+            },
+          ],
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+        ],
+      },
+    });
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
+      }),
+    );
+    expect(calls.at(-1)?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: expect.arrayContaining([
+          [
+            { text: "‹ Прошедшие", callback_data: entryCallback("past") },
+            { text: "Меню", callback_data: entryCallback("menu") },
+          ],
+        ]),
+      },
+    });
+  });
+
+  it("says in text that there are no past auctions", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(lotPress({ data: entryCallback("past") }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Прошедших аукционов пока нет."),
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+        ],
+      },
+    });
+  });
+
+  it("answers unavailable when the auction list cannot be read", async () => {
+    const ports: PortsFactory = (requestId) => ({
+      ...publicPorts(requestId),
+      catalog: {
+        listAuctions: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      },
+    });
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: "Аукцион сейчас недоступен. Попробуйте позже.",
     });
   });
 

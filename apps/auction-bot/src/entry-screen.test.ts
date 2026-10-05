@@ -1,11 +1,18 @@
-import type { AuctionBlock, Money } from "@solguficky/auction-bot-ui";
-import { describe, expect, it } from "vitest";
 import {
+  type AuctionBlock,
+  encodeAuctionCallback,
+  type Money,
+} from "@solguficky/auction-bot-ui";
+import { describe, expect, it } from "vitest";
+import type { AuctionSummary } from "./auctions.js";
+import {
+  auctionLabel,
   money,
   type RenderOptions,
   renderEntryScreen,
   TEXT_LIMIT,
 } from "./entry-screen.js";
+import { entryCallback, listCallback } from "./faq.js";
 
 const options = { timeZone: "Europe/Moscow" };
 const plainCard = { ...options, presentation: "plain" as const };
@@ -111,9 +118,8 @@ describe("renderEntryScreen", () => {
         ["Носки · старт 500 ₽"],
         ["Лот без названия · не продан"],
         ["Следующие ›"],
-        // Оболочка добавляет выход в FAQ и меню под торговым телом.
-        ["Правила и FAQ"],
-        ["В меню"],
+        // Оболочка ставит возврат в список аукциона и «Меню» одним рядом.
+        ["‹ Аукционы", "Меню"],
       ],
     );
   });
@@ -330,5 +336,90 @@ describe("proxy limit confirmation", () => {
 
   it("says the bot will not outbid when the limit is not above the price", () => {
     expect(confirm(1200).text).toContain("перебивать бот не будет");
+  });
+});
+
+describe("auction lists", () => {
+  const auction = (overrides: Partial<AuctionSummary>): AuctionSummary => ({
+    auctionId: "01926f3c-8b7a-5cde-8f00-000000000001",
+    stage: "prebidding",
+    opensAt: "2026-10-10T16:00:00Z",
+    lotCount: 5,
+    ...overrides,
+  });
+
+  it.each([
+    [1, "1 лот"],
+    [3, "3 лота"],
+    [5, "5 лотов"],
+    [11, "11 лотов"],
+    [21, "21 лот"],
+    [0, "0 лотов"],
+  ])("counts %i lots as %s", (lotCount, label) => {
+    expect(auctionLabel(auction({ lotCount }), "Europe/Moscow")).toBe(
+      `10 октября, сб · идут ставки · ${label}`,
+    );
+  });
+
+  it("names the day in the community zone and a format without an online phase", () => {
+    expect(
+      auctionLabel(
+        auction({ opensAt: "2026-10-10T22:30:00Z", stage: "scheduled" }),
+        "Europe/Moscow",
+      ),
+    ).toBe("11 октября, вс · скоро старт · 5 лотов");
+    const { opensAt: _opensAt, ...without } = auction({});
+    expect(auctionLabel(without, "Europe/Moscow")).toBe(
+      "Без онлайн-торгов · идут ставки · 5 лотов",
+    );
+  });
+
+  it("names the finished stage in a past row", () => {
+    expect(auctionLabel(auction({ stage: "finished" }), "Europe/Moscow")).toBe(
+      "10 октября, сб · завершён · 5 лотов",
+    );
+  });
+
+  it("opens the feed from the row and pages the list with arrows", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "past",
+        list: { page: 1, pageCount: 3, auctions: [auction({})] },
+      },
+      options,
+    );
+    expect(screen.text).toBe(
+      "<b>Прошедшие аукционы · 2 из 3</b>\n\nВыберите аукцион.",
+    );
+    expect(screen.keyboard).toEqual([
+      [
+        {
+          text: "10 октября, сб · идут ставки · 5 лотов",
+          callback_data: encodeAuctionCallback({
+            kind: "feed",
+            auctionId: "01926f3c-8b7a-5cde-8f00-000000000001",
+            page: 0,
+          }),
+        },
+      ],
+      [
+        { text: "←", callback_data: entryCallback("past") },
+        { text: "→", callback_data: listCallback("past", 2) },
+      ],
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+    ]);
+  });
+
+  it("says in text that there are no active auctions", () => {
+    const screen = renderEntryScreen(
+      { kind: "auctions", list: { page: 0, pageCount: 1, auctions: [] } },
+      options,
+    );
+    expect(screen.text).toBe(
+      "<b>Аукционы</b>\n\nАктивных аукционов сейчас нет.",
+    );
+    expect(screen.keyboard).toEqual([
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+    ]);
   });
 });

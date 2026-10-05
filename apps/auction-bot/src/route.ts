@@ -3,7 +3,6 @@ import {
   type AuctionBotPorts,
   type AuctionResult,
   decideEntry,
-  encodeAuctionCallback,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
@@ -11,9 +10,10 @@ import {
   type TelegramUser,
   type Viewer,
 } from "@solguficky/auction-bot-ui";
+import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
 import type { AuctionEntryScreen } from "./entry-screen.js";
-import { parseEntryCallback } from "./faq.js";
+import { type ListAction, parseEntryCallback } from "./faq.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
@@ -77,7 +77,6 @@ export async function routeAuctionCallback(input: {
   ports: EntryPorts;
   user: TelegramUser;
   data: string;
-  auctionId?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({
     ...input,
@@ -113,13 +112,11 @@ export function routeAuctionStart(input: {
   ports: EntryPorts;
   user: TelegramUser;
   firstName: string;
-  auctionId?: string;
   sourceCode?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({
     ports: input.ports,
     user: input.user,
-    ...(input.auctionId === undefined ? {} : { auctionId: input.auctionId }),
     action: {
       kind: "start",
       firstName: input.firstName,
@@ -137,9 +134,6 @@ async function routeEntry(input: {
     | { kind: "start"; firstName: string; sourceCode?: string }
     | { kind: "callback"; data: string }
     | { kind: "reply"; data: string; text?: string };
-  // Аукцион ленты из конфигурации. Нет — «Аукционы» отвечают, что каталог
-  // ещё не открыт: чтения текущего аукциона в контракте нет.
-  auctionId?: string;
 }): Promise<RouteOutcome> {
   const local =
     input.action.kind === "callback"
@@ -209,10 +203,11 @@ async function routeEntry(input: {
   }
   const viewer = { identityId, globalRoles: identity.globalRoles };
   try {
-    if (local === "faq" || local === "details" || local === "question") {
-      return { screen: { kind: local }, identityId };
+    const action = local?.action;
+    if (action === "faq" || action === "details" || action === "question") {
+      return { screen: { kind: action }, identityId };
     }
-    if (local === "menu") {
+    if (action === "menu") {
       // Фиксируется действие, не доставка Telegram и не факт прочтения.
       // Запись идемпотентна: таймаут безопасно повторить тем же действием.
       await input.ports.faq.acknowledge(viewer);
@@ -223,34 +218,57 @@ async function routeEntry(input: {
     }
     if (input.action.kind === "start")
       return { screen: { kind: "menu" }, identityId };
-    if (local === "auctions" && input.auctionId === undefined)
-      return { screen: { kind: "auctions" }, identityId };
-    // «Аукционы» при названном аукционе — первая страница его ленты.
-    const data =
-      local === "auctions" && input.auctionId !== undefined
-        ? encodeAuctionCallback({
-            kind: "feed",
-            auctionId: input.auctionId,
-            page: 0,
-          })
-        : input.action.data;
-    const { action } = input;
+    if (action === "auctions" || action === "past") {
+      const auctions = await readAuctions({
+        catalog: input.ports.catalog,
+        viewer,
+        listing: listingOf[action],
+      });
+      return {
+        screen: { kind: action, list: listPage(auctions, local?.page ?? 0) },
+        identityId,
+      };
+    }
+    const { action: update } = input;
     const result = await tradeCallback({
       ports: input.ports,
       identity,
       user: input.user,
-      data,
-      ...(action.kind === "reply"
-        ? { reply: action.text === undefined ? {} : { text: action.text } }
+      data: update.data,
+      ...(update.kind === "reply"
+        ? { reply: update.text === undefined ? {} : { text: update.text } }
         : {}),
     });
     switch (result.kind) {
-      case "screen":
+      case "screen": {
+        const feed = result.body.blocks.find((block) => block.kind === "feed");
+        // Родитель ленты — список, в котором аукцион стоит сейчас, а не путь,
+        // которым человек пришёл (дизайн-код, «Дерево бота аукциона»): лента,
+        // открытая из прошедших или из карточки по кнопке уведомления,
+        // возвращает туда же, куда и открытая из активных. Не активный
+        // аукцион — прошедший: черновика бот аукциона не показывает.
+        const parent: ListAction | undefined =
+          feed === undefined
+            ? undefined
+            : (
+                  await readAuctions({
+                    catalog: input.ports.catalog,
+                    viewer,
+                    listing: "active",
+                  })
+                ).some((auction) => auction.auctionId === feed.auctionId)
+              ? "auctions"
+              : "past";
         return {
-          screen: { kind: "auction", body: result.body },
+          screen: {
+            kind: "auction",
+            body: result.body,
+            ...(parent === undefined ? {} : { parent }),
+          },
           identityId,
           viewer,
         };
+      }
       case "denied":
         return {
           screen: { kind: "denied", reason: result.reason },
@@ -271,6 +289,11 @@ async function routeEntry(input: {
     };
   }
 }
+
+const listingOf: Record<ListAction, AuctionListing> = {
+  auctions: "active",
+  past: "finished",
+};
 
 function classify(cause: unknown): RouteFailure {
   if (cause instanceof ConnectError) {

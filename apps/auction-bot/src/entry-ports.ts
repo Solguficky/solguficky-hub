@@ -3,11 +3,14 @@ import type {
   EntryPort,
   Viewer,
 } from "@solguficky/auction-bot-ui";
+import type { AuctionCatalogPort } from "./auctions.js";
 
-// FAQ — локальное намерение оболочки: общий пакет торгов о нём не знает. Вход
-// `entry` зовёт `/start` вместо разрешения личности (ADR-060).
+// FAQ и списки аукционов — локальные намерения оболочки: общий пакет торгов о
+// них не знает. Вход `entry` зовёт `/start` вместо разрешения личности
+// (ADR-060).
 export type EntryPorts = AuctionBotPorts & {
   entry: EntryPort;
+  catalog: AuctionCatalogPort;
   faq: {
     acknowledged(viewer: Viewer): Promise<boolean>;
     acknowledge(viewer: Viewer): Promise<void>;

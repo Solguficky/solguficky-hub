@@ -104,16 +104,16 @@ public class AuctionBotWiringTests
     }
 
     /// <summary>
-    /// Аукцион ленты — необязательная настройка: заданная доезжает до бота,
-    /// незаданная не появляется вовсе (тест выше).
+    /// Аукцион ленты из настройки снят (PER-453): бот читает списки аукционов
+    /// из Auction, и оставшееся в user-secrets значение до него не доезжает.
     /// </summary>
     [Fact]
-    public async Task AuctionBot_GetsTheConfiguredAuction()
+    public async Task AuctionBot_IgnoresAStaleAuctionSetting()
     {
-        var (bot, _) = Materialize("prod", auctionId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1");
+        var (bot, _) = Materialize("prod", staleAuctionId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1");
         var environment = await EnvironmentAsync(bot);
 
-        environment["AUCTION_BOT_AUCTION_ID"].ShouldBe("01929b7e-5c1d-7a3f-8e4b-0000000000a1");
+        environment.ShouldNotContainKey("AUCTION_BOT_AUCTION_ID");
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public class AuctionBotWiringTests
     }
 
     private static (IResource Bot, ServiceGraphContext Context) Materialize(
-        string telegramEnvironment, string? auctionId = null)
+        string telegramEnvironment, string? staleAuctionId = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -145,7 +145,7 @@ public class AuctionBotWiringTests
             ["Parameters:auction-bot-test-token"] = "444:auction-test",
             ["Parameters:hub-bot-token"] = "222:hub",
             ["Parameters:hub-bot-test-token"] = "333:hub-test",
-            [AuctionBotSetup.AuctionIdKey] = auctionId,
+            ["AuctionBot:AuctionId"] = staleAuctionId,
         });
 
         var profile = new ProfileConfig { Name = "auction-bot", Services = [Identity, Auction, AuctionBot], Infrastructure = [Nats] };

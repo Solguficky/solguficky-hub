@@ -4,6 +4,8 @@ import {
   defaultFaq,
   ENTRY_ACTIONS,
   entryCallback,
+  listCallback,
+  MAX_LIST_PAGE,
   parseEntryCallback,
   readFaqContent,
 } from "./faq.js";
@@ -98,10 +100,26 @@ describe("entry callbacks", () => {
   it.each(ENTRY_ACTIONS)(
     "round trips %s within the 64-byte budget",
     (action) => {
-      expect(parseEntryCallback(entryCallback(action))).toBe(action);
+      expect(parseEntryCallback(entryCallback(action))).toEqual({
+        action,
+        page: 0,
+      });
       expect(Buffer.byteLength(entryCallback(action))).toBeLessThanOrEqual(64);
     },
   );
+  it.each([
+    ["auctions", 0],
+    ["auctions", 1],
+    ["past", 12],
+    ["past", MAX_LIST_PAGE],
+  ] as const)("round trips the %s list page %i", (action, page) => {
+    const data = listCallback(action, page);
+    expect(parseEntryCallback(data)).toEqual({ action, page });
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+  });
+  it("keeps the first list page equal to the menu button", () => {
+    expect(listCallback("past", 0)).toBe(entryCallback("past"));
+  });
   it.each([
     undefined,
     {},
@@ -110,6 +128,12 @@ describe("entry callbacks", () => {
     "v1:entry:menu:extra",
     "v1:auc:faq",
     "v1:entry:faq ",
+    "v1:entry:past:0",
+    "v1:entry:past:01",
+    "v1:entry:past:1000",
+    "v1:entry:past:-1",
+    "v1:entry:faq:1",
+    "v1:entry:auctions:1:2",
   ])("does not accept malformed or foreign callback %j", (data) => {
     expect(parseEntryCallback(data)).toBeUndefined();
   });

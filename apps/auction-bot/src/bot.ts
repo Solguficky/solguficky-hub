@@ -45,8 +45,6 @@ export type BotOptions = {
   faq?: FaqContent;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
-  // Аукцион ленты: есть — пункт меню «Аукционы» открывает его лоты.
-  auctionId?: string;
   photos?: PhotoCache;
   // Открытые вопросы чатов; по умолчанию своя память процесса.
   questions?: QuestionMemory;
@@ -74,8 +72,6 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     });
   const photos = options.photos ?? createPhotoCache();
   const questions = options.questions ?? createQuestionMemory();
-  const auction =
-    options.auctionId === undefined ? {} : { auctionId: options.auctionId };
 
   bot.use((ctx, next) => {
     ctx.requestId = randomUUID();
@@ -93,7 +89,6 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     try {
       const sourceCode = sourceCodeOf(ctx.match);
       const outcome = await routeAuctionStart({
-        ...auction,
         ...(sourceCode === undefined ? {} : { sourceCode }),
         ports: options.ports(ctx.requestId, waiting.deadlineAt),
         user: {
@@ -133,7 +128,6 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
       waiting.begin();
       outcome = await routeAuctionCallback({
-        ...auction,
         ports,
         user: userOf(ctx.from),
         data,
