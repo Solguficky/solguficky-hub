@@ -272,6 +272,33 @@ public class NotificationFactsTests
         Should.Throw<ArgumentException>(() => NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter));
     }
 
+    [Fact]
+    public void AccessGranted_Admission_AddressesTheApplicantWithCircle()
+    {
+        var applicant = EventFactory.NewId();
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(applicant, version: 4, Identity.V1.GlobalRole.Public)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        var notification = NotificationFacts.AccessGranted(NotificationId, fact, Now, NotAfter);
+
+        notification.RecipientId.ShouldBe(applicant);
+        notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessGranted);
+        notification.AccessGranted.Circle.ShouldBe(Identity.V1.GlobalRole.Public);
+        notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
+        notification.HasRequestId.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AccessGranted_OtherOccasion_Throws()
+    {
+        // Выдача роли допуском по заявке не является: её даёт и белый список.
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Identity(EventFactory.NewId(), version: 2)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        Should.Throw<ArgumentException>(() => NotificationFacts.AccessGranted(NotificationId, fact, Now, NotAfter));
+    }
+
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>
         ReplicaMapping.Meetup(EventFactory.Bytes(message))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<MeetupFact>();

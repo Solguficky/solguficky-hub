@@ -1,5 +1,6 @@
 import { create, type MessageInitShape, toBinary } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { NotificationSchema } from "../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -71,6 +72,37 @@ describe("decodeNotification", () => {
         content: { kind: "foreign", type: "communityAnnouncement" },
       },
     });
+  });
+
+  it("decodes an admission to the auction as its own branch", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "accessGranted", value: { circle: GlobalRole.PUBLIC } }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "access-granted" } },
+    });
+  });
+
+  // Допуск в хаб доставляет бот хаба: здесь это чужая ветка, а не отказ.
+  it("leaves an admission to the hub to the hub bot", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "accessGranted", value: { circle: GlobalRole.MEMBER } }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "foreign", type: "accessGranted" } },
+    });
+  });
+
+  it("rejects an admission to a circle no surface asks for", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "accessGranted", value: { circle: GlobalRole.ADMIN } }),
+      ).kind,
+    ).toBe("malformed");
   });
 
   it("keeps a branch it does not know as an explicit variant", () => {

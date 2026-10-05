@@ -6,6 +6,7 @@ import {
   MeetupVisibility,
 } from "../../gen/meetups/v1/meetups_pb.js";
 import {
+  AccessGrantedSchema,
   AccessRequestedSchema,
   CommunityAnnouncementSchema,
   MeetupAspect,
@@ -439,6 +440,39 @@ describe("decodeNotification", () => {
       "rejects a request for circle %s",
       (circle) => {
         expect(decodeNotification(requested(circle)).kind).toBe("malformed");
+      },
+    );
+  });
+
+  describe("access grants", () => {
+    const granted = (circle: GlobalRole): Uint8Array =>
+      published((message) => {
+        message.type = {
+          case: "accessGranted",
+          value: create(AccessGrantedSchema, { circle }),
+        };
+      });
+
+    it("decodes an admission to the hub as its own branch", () => {
+      expect(decodeNotification(granted(GlobalRole.MEMBER))).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "access-granted" } },
+      });
+    });
+
+    // Допуск в аукцион доставляет бот аукциона: для хаба это чужая ветка,
+    // которую он подтверждает без журнала и без отказа.
+    it("leaves an admission to the auction to the auction bot", () => {
+      expect(decodeNotification(granted(GlobalRole.PUBLIC))).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "foreign", type: "accessGranted" } },
+      });
+    });
+
+    it.each([GlobalRole.ADMIN, GlobalRole.UNSPECIFIED])(
+      "rejects an admission to circle %s",
+      (circle) => {
+        expect(decodeNotification(granted(circle)).kind).toBe("malformed");
       },
     );
   });

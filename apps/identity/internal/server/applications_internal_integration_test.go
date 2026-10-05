@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -93,6 +94,7 @@ func TestRepeatedDecisionAnswersAlreadyDecidedWithTheSameActor(t *testing.T) {
 		already.GetDecidedBy().GetIdentityId() != adminID || already.GetDecidedAt() != first.GetDecided().GetDecidedAt() {
 		t.Fatalf("repeated decision = %v, want already_decided by %s", again, adminID)
 	}
+	assertAdmissions(t, db, applicantID, roleMember)
 }
 
 func TestDeclineMemberKeepsPublicAndDoesNotBlock(t *testing.T) {
@@ -113,6 +115,7 @@ func TestDeclineMemberKeepsPublicAndDoesNotBlock(t *testing.T) {
 	}
 	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertRefused(t, svc, adminID, applicationID)
+	assertAdmissions(t, db, applicantID)
 }
 
 func TestDeclineMemberWithoutRolesDoesNotBlock(t *testing.T) {
@@ -147,6 +150,7 @@ func TestDeclinePublicBlocksAndClosesOtherApplicationsByBlock(t *testing.T) {
 	}
 	assertApplicationOutcome(t, db, memberID, outcomeClosedByBlock, adminID)
 	assertRefused(t, svc, adminID, publicID)
+	assertAdmissions(t, db, applicantID)
 }
 
 func TestAdmitMemberClosesPublicApplicationByGrant(t *testing.T) {
@@ -163,6 +167,7 @@ func TestAdmitMemberClosesPublicApplicationByGrant(t *testing.T) {
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9662, "").GetGlobalRoles(),
 		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertApplicationOutcome(t, db, publicID, outcomeClosedByGrant, adminID)
+	assertAdmissions(t, db, applicantID, roleMember)
 }
 
 func TestAdmitPublicKeepsMemberApplicationOpen(t *testing.T) {
@@ -176,6 +181,7 @@ func TestAdmitPublicKeepsMemberApplicationOpen(t *testing.T) {
 	decide(t, svc.AdmitApplication, adminID, publicID)
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9672, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertApplicationOutcome(t, db, memberID, "", "")
+	assertAdmissions(t, db, applicantID, rolePublic)
 }
 
 func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
@@ -192,6 +198,7 @@ func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
 	}
 	assertApplicationOutcome(t, db, memberID, outcomeAdmitted, adminID)
 	assertApplicationOutcome(t, db, publicID, outcomeClosedByGrant, adminID)
+	assertAdmissions(t, db, applicantID, roleMember)
 }
 
 func TestRosterBlockClosesApplicationsWithoutRefusal(t *testing.T) {
@@ -233,7 +240,8 @@ func TestReconsiderBlockedUnblocksAndGrantsPublicInOneOperation(t *testing.T) {
 		"v1 profile_registered() {} blocked=false",
 		"v2 profile_blocked() {} blocked=true",
 		"v3 profile_unblocked() {} blocked=false",
-		"v4 role_granted(public) {public} blocked=false")
+		"v4 role_granted(public) {public} blocked=false",
+		"v5 application_admitted(public) {public} blocked=false")
 	assertUnblockAndGrantShareTransaction(t, db, applicantID)
 	assertRefused(t, svc, adminID)
 
@@ -305,6 +313,7 @@ func TestReconsiderDeclinedAdmitsToHub(t *testing.T) {
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9712, "").GetGlobalRoles(),
 		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
 	assertRefused(t, svc, adminID)
+	assertAdmissions(t, db, applicantID, roleMember)
 }
 
 func TestReconsiderDeclinedOfBlockedProfileFailsPrecondition(t *testing.T) {
@@ -372,6 +381,7 @@ func TestAllowedUsernameClosesApplicationWithoutDecider(t *testing.T) {
 	if already.GetOutcome() != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_CLOSED_BY_GRANT || already.GetDecidedBy() != nil {
 		t.Fatalf("decision = %v, want CLOSED_BY_GRANT without decider", already)
 	}
+	assertAdmissions(t, db, applicantID)
 }
 
 func TestDecisionErasesSourceAndName(t *testing.T) {
@@ -615,6 +625,25 @@ func assertRefused(t *testing.T, svc identityService, adminID string, want ...st
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("refused = %v, want %v", got, want)
+	}
+}
+
+// assertAdmissions проверяет круги поводов application_admitted человека по
+// порядку версий: допуск по заявке объявляется ровно раз, а белый список,
+// вложенность и отказ его не дают (PER-442).
+func assertAdmissions(t *testing.T, db *sql.DB, identityID string, want ...string) {
+	t.Helper()
+	got := []string{}
+	for _, event := range outboxEvents(t, db, identityID) {
+		if event.occasion == "application_admitted" {
+			got = append(got, event.role)
+		}
+	}
+	if want == nil {
+		want = []string{}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("admissions = %q, want %q", got, want)
 	}
 }
 

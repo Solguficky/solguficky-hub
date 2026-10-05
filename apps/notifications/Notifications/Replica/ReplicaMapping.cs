@@ -329,6 +329,19 @@ public static class ReplicaMapping
                 occasion = IdentityOccasion.ApplicationSubmitted;
                 break;
 
+            case IdentityEvent.OccasionOneofCase.ApplicationAdmitted:
+                // Допускают по заявке тоже только в круги поверхностей: по
+                // кругу канал выбирает бот, которым придёт сообщение.
+                occasionRole = RoleName(message.ApplicationAdmitted.Role);
+
+                if (occasionRole is not ("member" or "public"))
+                {
+                    return new Decoded.Poison($"application_admitted.role {message.ApplicationAdmitted.Role} is not a requestable circle");
+                }
+
+                occasion = IdentityOccasion.ApplicationAdmitted;
+                break;
+
             case IdentityEvent.OccasionOneofCase.RoleGranted:
                 if (RoleName(message.RoleGranted.Role) is not { } granted)
                 {

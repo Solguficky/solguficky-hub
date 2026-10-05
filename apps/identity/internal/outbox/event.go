@@ -35,13 +35,9 @@ func (r Record) Subject() string {
 // Message собирает сообщение контракта из строки очереди. Отказ означает строку,
 // которую схема пропустить не должна была: неизвестный повод или роль.
 func (r Record) Message() (*identityv1.IdentityEvent, error) {
-	roles := make([]identityv1.GlobalRole, 0, len(r.GlobalRoles))
-	for _, name := range r.GlobalRoles {
-		role, err := globalRole(name)
-		if err != nil {
-			return nil, err
-		}
-		roles = append(roles, role)
+	roles, err := snapshotRoles(r.GlobalRoles)
+	if err != nil {
+		return nil, err
 	}
 
 	event := &identityv1.IdentityEvent{
@@ -83,10 +79,31 @@ func (r Record) Message() (*identityv1.IdentityEvent, error) {
 		event.Occasion = &identityv1.IdentityEvent_ApplicationSubmitted{
 			ApplicationSubmitted: &identityv1.ApplicationSubmitted{Role: role},
 		}
+	case ApplicationAdmitted:
+		role, err := globalRole(r.Role)
+		if err != nil {
+			return nil, err
+		}
+		event.Occasion = &identityv1.IdentityEvent_ApplicationAdmitted{
+			ApplicationAdmitted: &identityv1.ApplicationAdmitted{Role: role},
+		}
 	default:
 		return nil, fmt.Errorf("outbox: unknown occasion %q", r.Occasion)
 	}
 	return event, nil
+}
+
+// snapshotRoles переводит активные роли снимка в значения контракта.
+func snapshotRoles(names []string) ([]identityv1.GlobalRole, error) {
+	roles := make([]identityv1.GlobalRole, 0, len(names))
+	for _, name := range names {
+		role, err := globalRole(name)
+		if err != nil {
+			return nil, err
+		}
+		roles = append(roles, role)
+	}
+	return roles, nil
 }
 
 // globalRole переводит строку словаря identity_roles в значение контракта. В

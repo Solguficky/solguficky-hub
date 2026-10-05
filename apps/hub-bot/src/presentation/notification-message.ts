@@ -110,6 +110,17 @@ export function renderNotification(
       ),
     };
   }
+  if (content.kind === "access-granted") {
+    // Тот же текст и та же кнопка, что слал экран состава до PER-442: сменился
+    // носитель, а не обещание. Кнопка следа — список придёт новым сообщением.
+    return {
+      text: "Доступ открыт: теперь тебе видны сходки сообщества.",
+      keyboard: new InlineKeyboard().text(
+        "Ближайшие сходки",
+        traceCallback("v1:nav:hub"),
+      ),
+    };
+  }
   if (content.kind === "community-announcement") {
     return {
       text: withHeadline("Объявление сообщества", content.body),

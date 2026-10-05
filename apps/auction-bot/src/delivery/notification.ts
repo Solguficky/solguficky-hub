@@ -7,6 +7,7 @@ import {
   toDeliveryNotification,
 } from "@solguficky/telegram-delivery";
 import type { Money as WireMoney } from "../../gen/auction/v1/auction_pb.js";
+import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   type Notification,
   NotificationSchema,
@@ -17,7 +18,10 @@ import {
 // лота не входит в домен торгов, и канал читает его у Auction сам.
 export type AuctionNotificationContent =
   | { kind: "lot-outbid"; lotId: string; currentPrice: Money }
-  | { kind: "lot-purchased"; lotId: string; price: Money };
+  | { kind: "lot-purchased"; lotId: string; price: Money }
+  // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
+  // public: допуск в хаб доставляет бот хаба.
+  | { kind: "access-granted" };
 
 export type DeliveryNotification =
   ChannelNotification<AuctionNotificationContent>;
@@ -58,6 +62,16 @@ function toContent(
       return lotId === undefined || price === undefined
         ? undefined
         : { kind: "lot-purchased", lotId, price };
+    }
+    // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
+    // заявку в public, а допуск в хаб для аукциона чужой.
+    case "accessGranted": {
+      const circle = type.value.circle;
+      if (circle === GlobalRole.PUBLIC) return { kind: "access-granted" };
+      if (circle === GlobalRole.MEMBER) {
+        return { kind: "foreign", type: type.case };
+      }
+      return undefined;
     }
     // Ветки сходок, ручных рассылок и заявок доставляет бот хаба: общий поток
     // несёт их и сюда, и это не отказ.

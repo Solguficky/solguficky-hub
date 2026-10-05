@@ -111,6 +111,16 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
+	// Ручной допуск администратором — решение по заявке на member (пункт 11),
+	// даже если строки заявки нет: экран «Ожидают допуска» показывает любого
+	// без member. Допущенный узнаёт о нём сообщением (PER-442), как и после
+	// решения с карточки; повод пишется после выдач, и его снимок держит круг.
+	// Холостая выдача и допуск без актора повода не дают.
+	if performedBy.Valid && anyChanged {
+		if err := outbox.Append(ctx, tx, identityID, outbox.ApplicationAdmitted, roleMember); err != nil {
+			return false, internal("announce admission", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, internal("commit", err)
 	}

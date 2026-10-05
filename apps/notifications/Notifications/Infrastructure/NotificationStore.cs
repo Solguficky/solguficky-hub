@@ -99,6 +99,15 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             WHERE identity_id = @IdentityId AND NOT blocked AND NOT (global_roles && @Holding));
         """;
 
+    // Допущенный всё ещё держит круг заявки по последнему слову реплики.
+    // Запоздавший допуск — вернувшийся после Nak, когда человека уже
+    // заблокировали или понизили, — не сообщает о доступе, которого нет.
+    private const string StillAdmittedSql = """
+        SELECT EXISTS (
+            SELECT 1 FROM identity_replica
+            WHERE identity_id = @IdentityId AND NOT blocked AND global_roles && @Holding);
+        """;
+
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
@@ -318,8 +327,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// <summary>
     /// Разворачивает повод события Identity и пишет факты в транзакции
     /// <paramref name="work" /> — той же, где ключ события и снимок реплики.
-    /// Новая заявка оповещает администраторов, допуск и блокировка снимают
-    /// неотправленное о закрытых заявках. Возвращает <c>null</c>, если событие
+    /// Новая заявка оповещает администраторов, допуск по заявке — самого
+    /// заявителя, выдача и блокировка снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если событие
     /// поводом не является или снимать было нечего.
     /// </summary>
     /// <remarks>
@@ -340,6 +349,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 return new ProducedFacts(
                     NotificationFacts.AccessRequestedType,
                     await AddAccessRequested(work, fact, now, now + staleAfter, cancellationToken));
+
+            case IdentityOccasion.ApplicationAdmitted:
+                return new ProducedFacts(
+                    NotificationFacts.AccessGrantedType,
+                    await AddAccessGranted(work, fact, now, now + staleAfter, cancellationToken));
 
             case IdentityOccasion.RoleGranted:
             case IdentityOccasion.ProfileBlocked:
@@ -415,6 +429,35 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             now,
             notAfter,
             cancellationToken);
+    }
+
+    // Адресат — сам заявитель, поэтому ни аудитории, ни категории нет: это ответ
+    // на его же заявку, а не рассылка, от которой отказываются. Повтор события
+    // упирается в ключ повода notification_cause_once_per_recipient, и второго
+    // сообщения о том же допуске не бывает.
+    private static async Task<FactCount> AddAccessGranted(
+        UnitOfWork work,
+        IdentityFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Holding = Holding(fact.OccasionRole!) }, cancellationToken))
+        {
+            return FactCount.None;
+        }
+
+        var created = await AddAddressed(
+            work,
+            NotificationFacts.AccessGranted(Guid.CreateVersion7(now), fact, now, notAfter),
+            NotificationFacts.AccessGrantedType,
+            NotificationFacts.IdentityEventCause,
+            fact.EventId.ToString(),
+            now,
+            notAfter,
+            cancellationToken);
+
+        return new FactCount(created, 0);
     }
 
     private static async Task<IReadOnlyList<WithdrawnFacts>> WithdrawOnApplicationClosed(

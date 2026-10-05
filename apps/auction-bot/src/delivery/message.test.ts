@@ -7,6 +7,7 @@ import {
   type NotificationReads,
   parseTraceCallback,
   renderNotification,
+  traceAuctionsCallback,
   traceLotCallback,
 } from "./message.js";
 import type { AuctionNotificationContent } from "./notification.js";
@@ -75,8 +76,15 @@ describe("parseTraceCallback", () => {
     expect(parseTraceCallback("v1:entry:menu")).toBeUndefined();
   });
 
-  it("refuses a trace that does not carry a lot button", () => {
-    expect(parseTraceCallback("v1:t:v1:entry:menu")).toBeUndefined();
+  // Вход в аукцион из сообщения о допуске — тоже след (PER-442).
+  it("carries an entry button inside a trace", () => {
+    expect(parseTraceCallback(traceAuctionsCallback())).toBe(
+      "v1:entry:auctions",
+    );
+  });
+
+  it("refuses a trace that carries neither a lot nor an entry button", () => {
+    expect(parseTraceCallback("v1:t:v1:entry:nowhere")).toBeUndefined();
     expect(parseTraceCallback(traceLotCallback(lotId).slice(0, -3))).toBe(
       undefined,
     );
@@ -90,6 +98,38 @@ function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
     ...overrides,
   };
 }
+
+describe("access granted", () => {
+  it("tells the applicant they are admitted and leads into the auction", () => {
+    const message = renderNotification({ kind: "access-granted" });
+    expect(message.text).toBe("Вас допустили к аукциону.");
+    expect(message.button).toEqual({
+      text: "Открыть аукцион",
+      callback_data: traceAuctionsCallback(),
+    });
+  });
+
+  // Лота у допуска нет: название не читается, а роль проверяется, как у торгов.
+  it("checks the role and reads no lot", async () => {
+    const source = reads();
+    const render = createRenderMessage(source, () => {});
+    await expect(
+      render({ kind: "access-granted" }, { recipientId }),
+    ).resolves.toMatchObject({ kind: "ready" });
+    expect(source.hasPublicRole).toHaveBeenCalledWith(recipientId, undefined);
+    expect(source.lotTitle).not.toHaveBeenCalled();
+  });
+
+  it("finds a recipient who lost the role ineligible", async () => {
+    const render = createRenderMessage(
+      reads({ hasPublicRole: vi.fn(async () => false) }),
+      () => {},
+    );
+    await expect(
+      render({ kind: "access-granted" }, { recipientId }),
+    ).resolves.toEqual({ kind: "ineligible" });
+  });
+});
 
 describe("createRenderMessage", () => {
   it("reads the title as the recipient with the public role", async () => {

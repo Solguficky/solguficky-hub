@@ -54,6 +54,7 @@ message IdentityEvent {
     ProfileBlocked profile_blocked = 9;
     ProfileUnblocked profile_unblocked = 10;
     ApplicationSubmitted application_submitted = 11;
+    ApplicationAdmitted application_admitted = 12;
   }
 }
 
@@ -133,5 +134,19 @@ message ProfileUnblocked {}
 // they are data for the moderator and stay in IdentityService.
 message ApplicationSubmitted {
   // The circle asked for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  GlobalRole role = 1;
+}
+
+// An administrator admitted the person by an application: they decided an open
+// one, or reconsidered a refused one. It is reported apart from role_granted
+// because role_granted does not say why a role became active, and an admission
+// is the one cause the applicant is told about. The grants it made come as
+// their own role_granted occasions earlier in the same transaction, so the
+// snapshot already holds the circle.
+//
+// An allowed-username grant and a grant through a stronger circle are not
+// admissions and never produce this occasion; neither does a refusal.
+message ApplicationAdmitted {
+  // The circle of the application: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
   GlobalRole role = 1;
 }

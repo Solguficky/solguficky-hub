@@ -7,6 +7,7 @@ import (
 	"time"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -333,8 +334,8 @@ func decideApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, 
 
 	switch outcome {
 	case outcomeAdmitted:
-		if err := grantCircleTx(ctx, tx, identityID, circle, actor); err != nil {
-			return nil, roleStatus(roleStorageError("admit application", err))
+		if err := admitCircleTx(ctx, tx, identityID, circle, actor, "admit application"); err != nil {
+			return nil, err
 		}
 	case outcomeBlocked:
 		if _, err := blockTx(ctx, tx, identityID, actor); err != nil {
@@ -358,6 +359,20 @@ func refusalOutcome(circle string) string {
 		return outcomeBlocked
 	}
 	return outcomeDeclined
+}
+
+// admitCircleTx — допуск по заявке: выдача круга и повод application_admitted
+// той же транзакцией (PER-442). Повод пишется после выдач, поэтому его снимок
+// уже держит круг. Выдача, которая ничего не меняет, повод всё равно даёт:
+// решение администратора принято, а заявитель о нём ещё не знает.
+func admitCircleTx(ctx context.Context, tx *sql.Tx, identityID, circle string, actor uuid.NullUUID, operation string) error {
+	if err := grantCircleTx(ctx, tx, identityID, circle, actor); err != nil {
+		return roleStatus(roleStorageError(operation, err))
+	}
+	if err := outbox.Append(ctx, tx, identityID, outbox.ApplicationAdmitted, circle); err != nil {
+		return internal("announce admission", err)
+	}
+	return nil
 }
 
 // grantCircleTx выдаёт круг заявки. member выдаётся вместе с public: круги
@@ -475,8 +490,8 @@ func reconsiderApplicationTx(ctx context.Context, tx *sql.Tx, applicationID stri
 		// которая этим отказом не была, пересмотр не вправе.
 		return false, roleStatus(errProfileBlocked)
 	}
-	if err := grantCircleTx(ctx, tx, identityID, circle, actor); err != nil {
-		return false, roleStatus(roleStorageError("reconsider application", err))
+	if err := admitCircleTx(ctx, tx, identityID, circle, actor, "reconsider application"); err != nil {
+		return false, err
 	}
 	return true, nil
 }

@@ -104,7 +104,7 @@ public sealed record ScheduleColumns(
 
 /// <summary>Факт о допуске человека из Identity.</summary>
 /// <param name="OccasionRole">
-/// Роль повода: запрошенный круг у заявки, выданная роль у выдачи. У
+/// Роль повода: круг заявки у заявки и допуска, выданная роль у выдачи. У
 /// остальных поводов пусто.
 /// </param>
 public sealed record IdentityFact(
@@ -124,7 +124,7 @@ public sealed record IdentityFact(
 /// Повод события Identity, сведённый к тому, что различает адресные факты.
 /// </summary>
 /// <remarks>
-/// Своего типа факта удостоена только заявка. Выдача и блокировка различаются
+/// Своего типа факта удостоены заявка и допуск по ней. Выдача и блокировка различаются
 /// потому, что закрывают заявку и снимают неотправленный факт о ней. Остальные
 /// поводы, включая неизвестные этому потребителю, только двигают реплику.
 /// </remarks>
@@ -134,6 +134,9 @@ public enum IdentityOccasion
 
     /// <summary><c>application_submitted</c>: открыта новая заявка на круг.</summary>
     ApplicationSubmitted,
+
+    /// <summary><c>application_admitted</c>: администратор допустил по заявке.</summary>
+    ApplicationAdmitted,
 
     /// <summary><c>role_granted</c>: роль стала активной.</summary>
     RoleGranted,

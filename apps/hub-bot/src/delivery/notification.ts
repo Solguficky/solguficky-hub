@@ -85,7 +85,10 @@ export type RenderableContent =
   | { kind: "community-announcement"; body: string }
   // Заявку на доступ получает администратор. Заявителя контракт не несёт: кто
   // просит, модератор видит в очереди, куда ведёт сообщение.
-  | { kind: "access-requested"; circle: AccessCircle };
+  | { kind: "access-requested"; circle: AccessCircle }
+  // Допуск в хаб получает сам заявитель (PER-442). Круг здесь всегда member:
+  // допуск в аукцион доставляет бот аукциона.
+  | { kind: "access-granted" };
 
 // Круги, на которые ставят заявку: хаб и аукцион.
 export type AccessCircle = "member" | "public";
@@ -183,6 +186,15 @@ function toContent(message: Notification): NotificationContent | undefined {
       return circle === undefined
         ? undefined
         : { kind: "access-requested", circle };
+    }
+    // Допуск доставляет бот той поверхности, куда подана заявка: хаб — заявку
+    // в member, а допуск в аукцион для него чужой, как ветки торгов.
+    case "accessGranted": {
+      const circle = toAccessCircle(type.value.circle);
+      if (circle === undefined) return undefined;
+      return circle === "member"
+        ? { kind: "access-granted" }
+        : { kind: "foreign", type: type.case };
     }
     // Ветки аукциона доставляет бот аукциона (PER-328): общий поток несёт их
     // и сюда, и хаб подтверждает их без журнала и без отказа.
