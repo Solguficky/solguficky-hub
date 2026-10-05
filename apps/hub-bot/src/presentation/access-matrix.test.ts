@@ -88,6 +88,7 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
       auction: {
         screenPorts: () => ({
           auction: ports.auction,
+          operations: ports.operations,
           // Байты фото доступу не нужны: карточка уходит без изображения.
           image: {
             getLotImage: () => Promise.reject(new Error("no image here")),

@@ -118,6 +118,7 @@ function fakeAuction(
         auctionId: added.auctionId,
         version: 1,
         ...(card === undefined ? {} : { card }),
+        proxyEnabled: false,
         status: { kind: "draft" },
       });
       return { kind: "ok" };
@@ -153,6 +154,12 @@ function fakeAuction(
           }),
           listLotHistory: async () => ({ entries: [], nextPageToken: "" }),
           getDisplayNames: async () => ({}),
+          placeBid: async () => ({ kind: "accepted" }),
+          setProxyLimit: async () => ({ kind: "accepted" }),
+          chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+        },
+        operations: {
+          newOperationId: () => "0198f2a4-7c1e-7d3a-9b21-00000000c001",
         },
         image: {
           async getLotImage({ lotId }) {
@@ -356,6 +363,7 @@ const scheduled: LotView = {
   auctionId,
   version: 2,
   card: { title: "Кружка с совой", description: "Ручная роспись." },
+  proxyEnabled: false,
   fixedStep: rub(10_000),
   status: { kind: "scheduled", startingPrice: rub(50_000) },
 };
@@ -616,7 +624,11 @@ describe("lot form", () => {
       lots: [
         {
           ...scheduled,
-          status: { kind: "trading", currentPrice: rub(50_000) },
+          status: {
+            kind: "trading",
+            currentPrice: rub(50_000),
+            phase: "online",
+          },
         },
       ],
     });

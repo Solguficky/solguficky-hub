@@ -210,7 +210,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         // Отвергнутый ответ: новый вопрос с причиной, прежний — после него.
         await ask(ctx, questions, screen, { replaces: replied.message_id });
       } else {
-        // Результат — одним новым сообщением, вопрос закрывается.
+        // Результат — одним новым сообщением, у вопроса снимается «Отмена».
         await deliver(ctx, {
           screen,
           photos,
@@ -220,7 +220,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
           keepCurrent: true,
         });
         questions.forget(ctx.chat.id, replied.message_id);
-        await deleteMessage(ctx, replied.message_id);
+        await closeQuestion(ctx, replied.message_id);
       }
     } finally {
       await waiting.finish();
@@ -344,7 +344,7 @@ async function ask(
   questions.remember(chatId, sent.message_id);
   if (how.replaces !== undefined) {
     questions.forget(chatId, how.replaces);
-    await deleteMessage(ctx, how.replaces);
+    await closeQuestion(ctx, how.replaces);
   }
 }
 
@@ -360,6 +360,21 @@ async function dropQuestions(
   for (const messageId of questions.takeAll(chatId)) {
     await deleteMessage(ctx, messageId);
   }
+}
+
+// Вопрос, на который ответили, больше не ждёт: «Отмена» под ним снимается,
+// как в боте хаба (дизайн-код, «Вопросы»).
+async function closeQuestion(
+  ctx: UpdateContext,
+  messageId: number,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  await ctx.api
+    .editMessageReplyMarkup(chatId, messageId, {
+      reply_markup: { inline_keyboard: [] },
+    })
+    .catch(() => undefined);
 }
 
 /** Удаляет сообщение бота; `false` — Telegram удалить не дал. */

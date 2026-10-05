@@ -162,6 +162,16 @@ export const screenCatalog = {
     title: "Ставки",
     parent: "lot",
   },
+  // Лист ставки (PER-317): тело — общий пакет, тексты — оболочка хаба.
+  // Подтверждение — без ряда навигации, выбор имени — под карточкой лота.
+  "bid-confirm": { class: "screen", nav: "confirm", title: "Ставка" },
+  "proxy-confirm": { class: "screen", nav: "confirm", title: "Автоставка" },
+  "name-choice": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
+    parent: "lot",
+  },
   "notify-meetup": {
     class: "screen",
     nav: "tree",

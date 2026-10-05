@@ -49,6 +49,9 @@ function adapter(rpc: {
     listAuctionLots: notUsed,
     listLotHistory: notUsed,
     getDisplayNames: notUsed,
+    placeBid: notUsed,
+    setProxyLimit: notUsed,
+    chooseDisplayName: notUsed,
     getLotImage: notUsed,
   });
 }
@@ -392,6 +395,7 @@ describe("auction adapter of the lot form", () => {
         auctionId,
         version: 1,
         card: { title: "Ваза", description: "" },
+        proxyEnabled: false,
         status: { kind: "draft" },
       },
     });

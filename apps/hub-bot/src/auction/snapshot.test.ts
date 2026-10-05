@@ -2,6 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
   LotConfigSchema,
+  LotPhase,
   type Money,
   MoneySchema,
   StepPolicySchema,
@@ -33,6 +34,7 @@ describe("lotViewOf", () => {
           currentPrice: rub(1200n),
           leaderId: "p-1",
           deadline: "2026-10-10T18:00:00Z",
+          phase: LotPhase.ONLINE,
         },
       },
       {
@@ -40,13 +42,18 @@ describe("lotViewOf", () => {
         currentPrice: { minorUnits: 120_000, currency: "RUB" },
         leaderId: "p-1",
         deadline: "2026-10-10T18:00:00Z",
+        phase: "online",
       },
     ],
     [
-      { case: "trading", value: { currentPrice: rub(100n) } },
+      {
+        case: "trading",
+        value: { currentPrice: rub(100n), phase: LotPhase.LIVE },
+      },
       {
         kind: "trading",
         currentPrice: { minorUnits: 10_000, currency: "RUB" },
+        phase: "live",
       },
     ],
     [

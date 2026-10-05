@@ -14,6 +14,12 @@ import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { lotFormData, lotNewData } from "../parse-callback.js";
 import {
+  confirmScreen,
+  nameChoiceScreen,
+  questionScreen,
+  resultText,
+} from "./auction-bid.js";
+import {
   buttonText,
   escapeHtml,
   nextRow,
@@ -52,8 +58,16 @@ export type AuctionView = {
 const addLotLabel = "Добавить лот";
 const editLotLabel = "Изменить лот";
 
-/** Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает ключа. */
-export type AuctionShown = { screen: ShownScreen; image?: ImageKey };
+/**
+ * Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает
+ * ключа. `asks` — экран вопроса: адаптер шлёт его новым сообщением с
+ * `force_reply` (дизайн-код, «Вопросы»).
+ */
+export type AuctionShown = {
+  screen: ShownScreen;
+  image?: ImageKey;
+  asks?: true;
+};
 
 // Идентификатор фото в rich-сообщении: на него ссылается `tg://photo?id=`.
 export const lotPhotoId = "lot";
@@ -68,6 +82,22 @@ const titleLimit = 256;
 const plainTextLimit = 4096;
 
 export function auctionScreen(view: AuctionView): AuctionShown {
+  // Лист ставки (PER-317): подтверждение, вопрос и выбор имени — свои экраны.
+  for (const block of view.body.blocks) {
+    switch (block.kind) {
+      case "confirm":
+        return { screen: confirmScreen(block, view.body.keyboard, money) };
+      case "question":
+        return {
+          screen: questionScreen(block, view.body.keyboard, money),
+          asks: true,
+        };
+      case "name-choice":
+        return { screen: nameChoiceScreen(block, view.body.keyboard, money) };
+      default:
+        break;
+    }
+  }
   const lot = view.body.blocks.find(
     (block): block is Extract<AuctionBlock, { kind: "lot" }> =>
       block.kind === "lot",
@@ -135,11 +165,20 @@ function feedLabel(
     case "feed.next":
       return "→";
     case "lot.refresh":
+    case "lot.bid-step":
+    case "lot.bid-custom":
+    case "lot.proxy":
     case "lot.history":
     case "lot.back":
     case "history.prev":
     case "history.next":
     case "history.back":
+    case "confirm.yes":
+    case "confirm.no":
+    case "question.cancel":
+    case "name.username":
+    case "name.alias":
+    case "name.back":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -179,6 +218,13 @@ function lotScreen(
       ? undefined
       : lot.card.description;
   const status = statusLines(lot, view);
+  // Исход команды участника — первая строка экрана после «Да».
+  const result = view.body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "result" }> =>
+      block.kind === "result",
+  );
+  const note =
+    result === undefined ? undefined : resultText(result.result, money);
   const rich = view.presentation === "rich";
   const photo = rich ? view.photo : undefined;
   const image =
@@ -187,12 +233,13 @@ function lotScreen(
       : { lotId: lot.lotId, version: lot.card.image.version };
   const text = rich
     ? [
+        note === undefined ? "" : `<p>${escapeHtml(note)}</p>`,
         `<h1>${escapeHtml(title)}</h1>`,
         description === undefined ? "" : `<p>${escapeHtml(description)}</p>`,
         `<p>${status.map(escapeHtml).join("<br>")}</p>`,
         photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
       ].join("")
-    : plainLot(title, description, status);
+    : `${note === undefined ? "" : `${escapeHtml(note)}\n`}${plainLot(title, description, status)}`;
   return {
     screen: {
       id: "lot",
@@ -229,6 +276,12 @@ function lotLabel(button: AuctionButton): string {
       return "Обновить";
     case "lot.history":
       return "Ставки";
+    case "lot.bid-step":
+      return `По шагу · ${money(button.amount)}`;
+    case "lot.bid-custom":
+      return "Своя сумма";
+    case "lot.proxy":
+      return "Автоставка";
     case "feed.open-lot":
     case "feed.prev":
     case "feed.next":
@@ -236,6 +289,12 @@ function lotLabel(button: AuctionButton): string {
     case "history.prev":
     case "history.next":
     case "history.back":
+    case "confirm.yes":
+    case "confirm.no":
+    case "question.cancel":
+    case "name.username":
+    case "name.alias":
+    case "name.back":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -297,9 +356,18 @@ function historyLabel(button: AuctionButton): string {
     case "feed.prev":
     case "feed.next":
     case "lot.refresh":
+    case "lot.bid-step":
+    case "lot.bid-custom":
+    case "lot.proxy":
     case "lot.history":
     case "lot.back":
     case "history.back":
+    case "confirm.yes":
+    case "confirm.no":
+    case "question.cancel":
+    case "name.username":
+    case "name.alias":
+    case "name.back":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;
@@ -365,6 +433,12 @@ function statusLines(
                 communityLocalTime(status.deadline, view.timeZone),
                 view.today,
               )}.`,
+            ]),
+        // Свой лимит смотрящего: чужих Auction не отдаёт.
+        ...(block.viewerProxyLimit === undefined
+          ? []
+          : [
+              `Твоя автоставка: до ${money(block.viewerProxyLimit)}. Её видишь только ты.`,
             ]),
       ];
     case "held":

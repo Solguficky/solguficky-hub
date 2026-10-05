@@ -1227,7 +1227,7 @@ describe("bid leaf delivery", () => {
       },
     });
     expect(calls.at(-1)).toMatchObject({
-      method: "deleteMessage",
+      method: "editMessageReplyMarkup",
       payload: { chat_id: 42, message_id: 9 },
     });
   });
@@ -1245,7 +1245,7 @@ describe("bid leaf delivery", () => {
     expect(sent?.payload).toMatchObject({
       reply_markup: { force_reply: true },
     });
-    expect(calls.at(-1)).toMatchObject({ method: "deleteMessage" });
+    expect(calls.at(-1)).toMatchObject({ method: "editMessageReplyMarkup" });
   });
 
   it("deletes the question on cancel and sends the card as a new message", async () => {

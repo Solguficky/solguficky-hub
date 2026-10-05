@@ -4,6 +4,7 @@ import type {
   LotImagePort,
   LotView,
   Money,
+  OperationIdPort,
   Viewer,
 } from "@solguficky/auction-bot-ui";
 import type { Person } from "../application/types.js";
@@ -142,6 +143,7 @@ export type LotAdministration = {
 export type AuctionScreenPorts = {
   auction: AuctionPort;
   image: LotImagePort;
+  operations: OperationIdPort;
 };
 
 export type AuctionScreens = {
