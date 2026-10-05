@@ -102,7 +102,9 @@ object AuctionNode {
       .withRememberEntities(true)
       .withRememberEntitiesStoreMode(ClusterShardingSettings.RememberEntitiesStoreModeEventSourced)
     sharding.init(
-      Entity(AuctionEntity.TypeKey)(context => AuctionEntity(context.entityId, clock, newId, lots))
+      Entity(AuctionEntity.TypeKey) { context =>
+        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard))
+      }
         .withSettings(remembered)
     )
   }

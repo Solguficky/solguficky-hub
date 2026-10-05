@@ -18,6 +18,8 @@ import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.UnsoldReason
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
+import org.apache.pekko.actor.typed.ActorRef
+import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.persistence.testkit.scaladsl.EventSourcedBehaviorTestKit
 import org.apache.pekko.persistence.testkit.scaladsl.EventSourcedBehaviorTestKit.SerializationSettings
 import org.scalatest.BeforeAndAfterAll
@@ -140,11 +142,12 @@ final class AuctionEntitySpec
   private def entityOf(
       lots: Lots,
       snapshotEvery: Int = AuctionEntity.DefaultSnapshotEvery,
-      recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery
+      recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery,
+      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None
   ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
-      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery),
+      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard),
       serialization
     )
 
@@ -373,6 +376,26 @@ final class AuctionEntitySpec
       // Первое закрытие лот принял, но ответ потерялся: переспрос узнаёт, что лот уже закрыт, и второго не шлёт.
       eventually(timeout(Span(3, Seconds)))(roster.lots shouldBe Map(lot -> LotStanding.Closed))
       lots.closes.map(_._2.opId).distinct shouldBe Vector(LotRoster.closeOpId(op(opening), lot))
+    }
+    "asks its shard to passivate an auction that was never drafted, so that a stray auction_id is not remembered" in {
+      val shard = kit.createTestProbe[ClusterSharding.ShardCommand]()
+      entity = entityOf(lots, recheckEvery = 50.millis, shard = Some(shard.ref))
+      entity.runCommand[Inspection](AuctionEntity.Inspect(op(1), _)).reply shouldBe Inspection.Absent
+      shard.expectMessageType[ClusterSharding.Passivate[?]]
+    }
+
+    "does not ask its shard to passivate a drafted, a scheduled or a trading auction" in {
+      val shard = kit.createTestProbe[ClusterSharding.ShardCommand]()
+      entity = entityOf(lots, recheckEvery = 50.millis, shard = Some(shard.ref))
+      draft(1)
+      // До рождения аукцион был `Initial`, и ранний тик мог честно попросить пассивации; после рождения — нет.
+      Iterator.continually(scala.util.Try(shard.receiveMessage(100.millis))).takeWhile(_.isSuccess).foreach(_ => ())
+      shard.expectNoMessage(200.millis)
+      val opening = scheduledWith(lot)
+      shard.expectNoMessage(200.millis)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      shard.expectNoMessage(300.millis)
     }
   }
 }

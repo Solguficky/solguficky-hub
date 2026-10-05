@@ -10,6 +10,7 @@ import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
 import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
@@ -52,6 +53,13 @@ enum AuctionAnswer {
  * вместе с entity. Поэтому entity аукциона шардинг помнит и по простою не усыпляет (ADR-045, дополнение 2026-10-05), а
  * после рестарта таймеры взводятся заново тем же опросом. Лот, не ответивший на вопрос или команду, переспрашивается
  * таймером `recheckEvery`: следующего пробуждения, которое переспросило бы его, у помнящейся entity нет.
+ *
+ * Аукцион без журнала на тике переспроса просит шард себя пассивировать, и пассивированная entity из запоминания
+ * уходит. Иначе шардинг помнил бы вечно каждый `auction_id`, по которому пришло сообщение, — в том числе вопрос
+ * `Inspect` к аукциону, которого нет. Только `Initial`, а не всё, что вне торгов: команда, принятая между запросом
+ * пассивации и остановкой, проходит без шарда, и запланированный аукцион мог бы войти в торги и тут же забыться вместе
+ * с таймерами. Из `Initial` до торгов — рождение, реестр, планирование и старт, каждое с ответом, в одно такое окно они
+ * не помещаются, а `Draft` и `Scheduled` — настоящие аукционы сходок, и их число ограничено сходками.
  */
 object AuctionEntity {
 
@@ -134,7 +142,8 @@ object AuctionEntity {
       newId: () => UUID,
       lots: AuctionLots,
       snapshotEvery: Int = DefaultSnapshotEvery,
-      recheckEvery: FiniteDuration = DefaultRecheckEvery
+      recheckEvery: FiniteDuration = DefaultRecheckEvery,
+      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None
   ): Behavior[Command] =
     Behaviors.withTimers[Command] { timers =>
       Behaviors.setup { context =>
@@ -195,7 +204,14 @@ object AuctionEntity {
             case LotClosed(lot, Success(answer)) =>
               Effect.none.thenRun(_ => follow(LotRoster.closed(roster, lot, answer)))
             case LotClosed(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
-            case Recheck => Effect.none.thenRun(after => follow(LotRoster.recheck(after.auction, roster)))
+            case Recheck =>
+              Effect.none.thenRun { after =>
+                after.auction.state match {
+                  case AuctionState.Initial => shard.foreach(_ ! ClusterSharding.Passivate(context.self))
+                  case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) =>
+                    follow(LotRoster.recheck(after.auction, roster))
+                }
+              }
             case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
             case Draft(draft, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, draft)
