@@ -9,16 +9,14 @@
     "id": null
   },
   "event": {
-    "kind": "LotUnsold",
+    "kind": "LotResumed",
     "lotOpened": null,
     "bidPlaced": null,
     "lotScheduled": null,
     "proxyLimitSet": null,
     "proxyLimitWithdrawn": null,
     "lotSold": null,
-    "lotUnsold": {
-      "reason": "NoBids"
-    },
+    "lotUnsold": null,
     "deadlineExtended": null,
     "lotHeldForFinal": null
   }

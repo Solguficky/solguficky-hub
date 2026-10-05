@@ -108,7 +108,9 @@ final case class ProxyLimit(max: Money, setSeq: Long)
  * До первой ставки `currentPrice` — стартовая цена, а `leader` пуст (И-02). `deadline` пуст, если лот ведёт человек.
  * `proxyLimits` держит И-03 по построению: ключ — участник, и новый лимит заменяет прежний. `extensionsUsed` — сколько
  * раз анти-снайп уже продлил дедлайн (П-04); он лежит рядом с дедлайном, чтобы лимит продлений восстанавливался из
- * журнала вместе с ним (ПП-2). Отметка финала не представлена: её читает соседнее правило, и она появится вместе с ним.
+ * журнала вместе с ним (ПП-2). `markedForFinal` — лот отмечен для финала (П-09): торги идут как обычно, а закрытие по
+ * дедлайну удержит его вместо продажи. Это состояние, а не настройка: `false` из `LotOpened` и `LotResumed`, `true` из
+ * `LotMarkedForFinal` (И-10).
  */
 final case class TradingState(
     config: LotConfig,
@@ -119,19 +121,21 @@ final case class TradingState(
     phase: Phase,
     deadline: Option[Instant],
     extensionsUsed: Int,
-    proxyLimits: Map[ParticipantId, ProxyLimit]
+    proxyLimits: Map[ParticipantId, ProxyLimit],
+    markedForFinal: Boolean
 )
 
 /**
- * Лот удержан для живого финала: те же цена, лидер и лимиты, дедлайна и ask нет (П-09). Лимит, записанный в удержании,
- * ждёт финала: пересчёт П-02 здесь не запускается.
+ * Лот удержан для живого финала: те же цена, лидер, лимиты и счётчик продлений, что были в торгах на момент дедлайна,
+ * дедлайна и ask нет (П-09). Лимит, записанный в удержании, ждёт финала: пересчёт П-02 здесь не запускается.
  */
 final case class HeldState(
     config: LotConfig,
     currentPrice: Money,
     leader: Option[ParticipantId],
     leadingBidId: Option[BidId],
-    proxyLimits: Map[ParticipantId, ProxyLimit]
+    proxyLimits: Map[ParticipantId, ProxyLimit],
+    extensionsUsed: Int
 )
 
 final case class Sale(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
@@ -210,6 +214,15 @@ enum CloseReason {
 final case class CloseLot(reason: CloseReason, opId: OpId)
 
 /**
+ * Отметка лота для финала (RFC-011, П-09). Шлёт аукцион по выбору организатора (PER-334); отметка торгов не
+ * останавливает, а меняет исход закрытия по дедлайну.
+ */
+final case class MarkForFinal(opId: OpId)
+
+/** Возврат удержанного лота в торги живого финала (П-09): без дедлайна и ask, в фазе `Live`. */
+final case class ResumeLot(opId: OpId)
+
+/**
  * События лота. `LotOpened` несёт всю конфигурацию торгов, чтобы состояние восстанавливалось из журнала без обращения
  * наружу (И-07). `previousLeader` при первой ставке отсутствует, а не равен нулю (RFC-011, П-01).
  *
@@ -220,6 +233,9 @@ final case class CloseLot(reason: CloseReason, opId: OpId)
  * `DeadlineExtended` собственной команды не имеет (ADR-047): его пишет ставка или прокси-лимит последним событием своей
  * транзакции. Он несёт итог — новый дедлайн и счётчик, а не приращение, поэтому свёртка не зависит от того, с какого
  * snapshot она началась.
+ *
+ * `LotMarkedForFinal` и `LotResumed` payload не несут, `LotHeldForFinal` — только время удержания (ADR-047, дополнение
+ * 2026-09-24): цена, лидер и лимиты удержанного лота — те, что свёрнуты из журнала до него.
  */
 enum LotEvent {
   case LotDrafted(auction: AuctionId)
@@ -237,6 +253,9 @@ enum LotEvent {
   case DeadlineExtended(newDeadline: Instant, extensionsUsed: Int)
   case LotSold(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
   case LotUnsold(reason: UnsoldReason)
+  case LotMarkedForFinal
+  case LotHeldForFinal(at: Instant)
+  case LotResumed
 }
 
 /**
@@ -319,6 +338,27 @@ enum CloseLotRejected {
   case LotNotFound
   case LotNotOpen
   case DeadlineNotReached
+}
+
+/**
+ * Отказы `MarkForFinal` (RFC-011, П-09). `LotNotOpen` — лот не в торгах, в том числе удержанный или закрытый.
+ * `NotInOnlinePhase` — лот уже в живом финале. `DeadlinePassed` — дедлайн наступил, даже если закрытие ещё не пришло:
+ * гонку отметки и закрытия судит лот, а не планировщик. `OpIdTaken` — `op_id` уже записан под другим событием лота.
+ */
+enum MarkForFinalRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotOpen
+  case NotInOnlinePhase
+  case AlreadyMarkedForFinal
+  case DeadlinePassed
+}
+
+/** Отказы `ResumeLot`: вернуть в торги можно только удержанный лот; `OpIdTaken` — как у отметки. */
+enum ResumeLotRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotHeld
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */

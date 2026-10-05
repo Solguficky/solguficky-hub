@@ -11,7 +11,11 @@ import org.scalatest.BeforeAndAfterEach
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Clock
 import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 /**
  * Синхронная часть entity лота на in-memory журнале: команда → событие → состояние → ответ и `restart()`.
@@ -73,6 +77,31 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
     entity.runCommand[Either[WithdrawProxyLimitRejected, Envelope]](
       LotEntity.WithdrawLimit(withdrawProxyLimit(who, opN), Initiator.Participant(participant(who)), _)
     )
+
+  /** Дедлайн лота, который удерживает [[holdThrough]]: на десять минут позже времени решения. */
+  private val heldAt = decidedAt.plus(Duration.ofMinutes(10))
+
+  /**
+   * Лот на сдвигаемых часах, открытый с дедлайном `heldAt`, со ставкой участника 1 по 110, отмеченный до дедлайна и
+   * удержанный на нём: `op(1)`–`op(6)` заняты. Возвращает ответы отметки и закрытия.
+   */
+  private def holdThrough() = {
+    val time = MovingClock(decidedAt)
+    entity = EventSourcedBehaviorTestKit(kit.system, LotEntity("lot-held", time, sequentialIds()), serialization)
+    draft(opN = 1)
+    plan(scheduleLot(opN = 2))
+    entity.runCommand[Either[OpenLotRejected, Envelope]](
+      LotEntity.Open(openLot(opN = 3, deadline = Some(heldAt)), Initiator.Scheduler, _)
+    )
+    bidOf(who = 1, amount = 110, opN = 4)
+    val marked = entity.runCommand[Either[MarkForFinalRejected, Envelope]](
+      LotEntity.MarkFinal(markForFinal(opN = 5), Initiator.Scheduler, _)
+    )
+    time.now = heldAt
+    val held =
+      entity.runCommand[Either[CloseLotRejected, Envelope]](LotEntity.Close(closeLot(opN = 6), Initiator.Scheduler, _))
+    (marked, held)
+  }
 
   "lot entity" should {
 
@@ -236,6 +265,29 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       }
     }
 
+    "write the hold of a marked lot at its deadline and keep it over a restart" in {
+      val (marked, held) = holdThrough()
+
+      marked.events.map(_.event.kind) shouldBe List("LotMarkedForFinal")
+      held.events.map(row => (row.event.kind, row.occurredAt)) shouldBe List(("LotHeldForFinal", heldAt))
+      held.reply.map(_.event) shouldBe Right(LotEvent.LotHeldForFinal(heldAt))
+      entity.restart().state shouldBe held.state
+      bidOf(who = 2, amount = 120, opN = 7).reply shouldBe Left(PlaceBidRejected.LotOnHold(money(110)))
+    }
+
+    "write the resume of a held lot and keep it live over a restart" in {
+      holdThrough()
+
+      val resumed = entity.runCommand[Either[ResumeLotRejected, Envelope]](
+        LotEntity.Resume(resumeLot(opN = 7), Initiator.Scheduler, _)
+      )
+
+      resumed.events.map(_.event.kind) shouldBe List("LotResumed")
+      val live = tradingOf(entity.restart().state.lot)
+      (live.phase, live.deadline, live.currentPrice, live.leader) shouldBe
+        (Phase.Live, None, money(110), Some(participant(1)))
+    }
+
     "restore proxy limits with their sequence after a restart from the journal alone (Т-16)" in {
       openThrough()
       limitOf(who = 1, max = 200, opN = 4)
@@ -269,4 +321,11 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       tradingOf(read.reply).currentPrice shouldBe money(100)
     }
   }
+}
+
+/** Часы, которые тест сдвигает между командами: момент решения entity берёт у них на каждую команду. */
+private final class MovingClock(var now: Instant) extends Clock {
+  override def getZone: ZoneId = ZoneOffset.UTC
+  override def withZone(zone: ZoneId): Clock = this
+  override def instant(): Instant = now
 }

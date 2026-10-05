@@ -188,8 +188,8 @@ object Lot {
    * транзакции — всегда событие самой команды, не производная ставка прокси, и участник в нём — инициатор. Чужой
    * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
    * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
-   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot` участника в событии нет, и своя команда —
-   * событие того же вида.
+   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal` и `ResumeLot` участника в
+   * событии нет, и своя команда — событие того же вида.
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
@@ -198,9 +198,11 @@ object Lot {
    * Закрытие лота (RFC-011, П-05). Таймер внешний, а наступил ли дедлайн, решает лот по серверному `now`: команда,
    * пришедшая раньше дедлайна или к лоту без дедлайна, получает `DeadlineNotReached` (Т-11), и досрочно закрыть лот
    * планировщик не может. С лидером лот продаётся по текущей цене (Т-12), без лидера закрывается без продажи (Т-13). У
-   * удержанного лота дедлайна нет, поэтому закрыть его может только ведущий.
+   * удержанного лота дедлайна нет, поэтому закрыть его может только ведущий (Т-49).
    *
-   * Отметки финала в состоянии ещё нет, и ветки `LotHeldForFinal` здесь нет: её приносит PER-310.
+   * Отмеченный для финала лот по дедлайну не продаётся, а удерживается `LotHeldForFinal` с той ценой, тем лидером и
+   * теми лимитами, что у него были (Т-35, П-09). Закрытие ведущим отметку не читает: так организатор продаёт лот,
+   * который решил не выводить в финал.
    */
   def decide(lot: Lot, command: CloseLot, now: Instant): Either[CloseLotRejected, Decision] =
     lot.seen.get(command.opId) match {
@@ -211,15 +213,58 @@ object Lot {
           case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
             Left(CloseLotRejected.LotNotOpen)
           case LotState.Trading(trading) =>
-            val reached = trading.deadline.exists(deadline => !now.isBefore(deadline))
-            if (command.reason == CloseReason.DeadlineReached && !reached)
-              Left(CloseLotRejected.DeadlineNotReached)
+            val byDeadline = command.reason == CloseReason.DeadlineReached
+            if (byDeadline && !deadlinePassed(trading, now)) Left(CloseLotRejected.DeadlineNotReached)
+            else if (byDeadline && trading.markedForFinal) Right(Decision.Accepted(LotEvent.LotHeldForFinal(now)))
             else Right(Decision.Accepted(closed(trading.leader, trading.currentPrice, trading.leadingBidId, now)))
           case LotState.Held(held) =>
             if (command.reason == CloseReason.DeadlineReached) Left(CloseLotRejected.DeadlineNotReached)
             else Right(Decision.Accepted(closed(held.leader, held.currentPrice, held.leadingBidId, now)))
         }
     }
+
+  /**
+   * Отметка для финала (RFC-011, П-09). Повтор `op_id` получает исходный ответ до разбора состояния, поэтому повтор
+   * отметки после удержания отвечает исходным `LotMarkedForFinal`, а не `LotNotOpen`. Команду шлёт аукцион, но ответ
+   * лота уходит администратору подтверждением финалиста, поэтому окно отвечает исходным конвертом только своей команде,
+   * а `op_id` под другим событием лота получает `OpIdTaken` (ADR-047, дополнение 2026-10-05, «Открыто»).
+   *
+   * Наступил ли дедлайн, решает лот по серверному `now` и тем же сравнением, что закрытие: отметка в момент дедлайна и
+   * позже получает `DeadlinePassed`, даже если `CloseLot` от аукциона ещё не дошёл (Т-36). Лот без дедлайна ведёт
+   * человек, и отметить его можно в любой момент торгов.
+   */
+  def decide(lot: Lot, command: MarkForFinal, now: Instant): Either[MarkForFinalRejected, Decision] =
+    repeatOf(lot, command.opId, MarkForFinalRejected.OpIdTaken)(_ == LotEvent.LotMarkedForFinal).getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(MarkForFinalRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Left(MarkForFinalRejected.LotNotOpen)
+        case LotState.Trading(trading) =>
+          if (trading.phase != Phase.Online) Left(MarkForFinalRejected.NotInOnlinePhase)
+          else if (trading.markedForFinal) Left(MarkForFinalRejected.AlreadyMarkedForFinal)
+          else if (deadlinePassed(trading, now)) Left(MarkForFinalRejected.DeadlinePassed)
+          else Right(Decision.Accepted(LotEvent.LotMarkedForFinal))
+      }
+    }
+
+  /**
+   * Возврат удержанного лота в торги живого финала (П-09). Производной ставки прокси по сетке, которую RFC-011 пишет
+   * той же транзакцией, здесь нет: пересчёт в `Live` — [PER-293](https://linear.app/anticnvm/issue/per-293), и до него
+   * лимиты, записанные в удержании, ждут первой ставки финала. Повтор — только своей команды, как у отметки.
+   */
+  def decide(lot: Lot, command: ResumeLot): Either[ResumeLotRejected, Decision] =
+    repeatOf(lot, command.opId, ResumeLotRejected.OpIdTaken)(_ == LotEvent.LotResumed).getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(ResumeLotRejected.LotNotFound)
+        case LotState.Held(_) => Right(Decision.Accepted(LotEvent.LotResumed))
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Left(ResumeLotRejected.LotNotHeld)
+      }
+    }
+
+  /** Дедлайн наступил: он есть, и `now` не раньше него. Одно сравнение для закрытия и отметки — у гонки один судья. */
+  private def deadlinePassed(trading: TradingState, now: Instant): Boolean =
+    trading.deadline.exists(deadline => !now.isBefore(deadline))
 
   /** Исход закрытия: продажа лидеру по текущей цене либо закрытие без продажи, если ставок не было (И-02, И-11). */
   private def closed(
@@ -377,6 +422,9 @@ object Lot {
    * `Online` выводится из факта открытия (RFC-011). Применяется он только к `Scheduled`: журнал, который начинается с
    * `LotOpened` без `LotDrafted`, лота не рождает. `ProxyLimitSet` получает `setSeq` из `sequence` своего конверта.
    * `DeadlineExtended` ставит дедлайн и счётчик из события, а не прибавляет к ним.
+   *
+   * Удержание `LotHeldForFinal` переносит цену, лидера, лимиты и счётчик продлений из торгов как есть, а возврат
+   * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09).
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
     val state = (lot.state, envelope.event) match {
@@ -393,7 +441,36 @@ object Lot {
             phase = Phase.Online,
             deadline = opened.deadline,
             extensionsUsed = 0,
-            proxyLimits = Map.empty
+            proxyLimits = Map.empty,
+            markedForFinal = false
+          )
+        )
+      case (LotState.Trading(trading), LotEvent.LotMarkedForFinal) =>
+        LotState.Trading(trading.copy(markedForFinal = true))
+      case (LotState.Trading(trading), LotEvent.LotHeldForFinal(_)) =>
+        LotState.Held(
+          HeldState(
+            config = trading.config,
+            currentPrice = trading.currentPrice,
+            leader = trading.leader,
+            leadingBidId = trading.leadingBidId,
+            proxyLimits = trading.proxyLimits,
+            extensionsUsed = trading.extensionsUsed
+          )
+        )
+      case (LotState.Held(held), LotEvent.LotResumed) =>
+        LotState.Trading(
+          TradingState(
+            config = held.config,
+            currentPrice = held.currentPrice,
+            ask = None,
+            leader = held.leader,
+            leadingBidId = held.leadingBidId,
+            phase = Phase.Live,
+            deadline = None,
+            extensionsUsed = held.extensionsUsed,
+            proxyLimits = held.proxyLimits,
+            markedForFinal = false
           )
         )
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) => LotState.Trading(bidden(trading, placed))

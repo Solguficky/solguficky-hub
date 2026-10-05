@@ -20,6 +20,7 @@
     "deadlineExtended": {
       "newDeadline": "2026-10-07T18:02:00Z",
       "extensionsUsed": 1
-    }
+    },
+    "lotHeldForFinal": null
   }
 }

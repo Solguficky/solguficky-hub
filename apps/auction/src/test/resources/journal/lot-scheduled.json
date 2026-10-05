@@ -56,6 +56,7 @@
     "proxyLimitWithdrawn": null,
     "lotSold": null,
     "lotUnsold": null,
-    "deadlineExtended": null
+    "deadlineExtended": null,
+    "lotHeldForFinal": null
   }
 }
