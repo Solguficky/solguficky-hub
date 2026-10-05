@@ -1,18 +1,21 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import type { RoleRequestOutcome } from "@solguficky/auction-bot-ui";
 import { Api, BotError, Context, GrammyError, type Transformer } from "grammy";
 import type { Update } from "grammy/types";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   botInfo,
   createCapturingLogger,
   createHarness,
   type LogRecord,
   type RecordedCall,
+  withEntry,
 } from "../../testkit/harness.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import {
   blockedHubAccessText,
+  declinedHubAccessText,
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { rejectedValueText } from "../application/meetup-form.js";
@@ -26,6 +29,7 @@ import type {
   CommunityAdministrator,
   IdentityResolver,
   RefusedApplication,
+  RoleRequester,
   SourceChannel,
   SourceChannelAdministrator,
   TelegramRecipientResolver,
@@ -1102,6 +1106,163 @@ describe("presentation adapter", () => {
       use_case: "find_meetup",
     });
     expect(records[0]?.fields.error).toBe("hub_access_blocked");
+  });
+
+  // Вход на `/start` (ADR-060): вместо разрешения личности бот зовёт
+  // `RequestRole` с кругом хаба, и Identity ставит заявку или гасит белый
+  // список. Фейк с явным `requestRole` показывает сам вход, а не вывод
+  // харнесса из `resolve`.
+  function entering(
+    answer: Awaited<ReturnType<RoleRequester["requestRole"]>>,
+  ): IdentityResolver & { requestRole: Mock<RoleRequester["requestRole"]> } {
+    return {
+      resolve: vi.fn<IdentityResolver["resolve"]>(),
+      requestRole: vi.fn<RoleRequester["requestRole"]>(async () => answer),
+    };
+  }
+  const answered = (
+    outcome: RoleRequestOutcome,
+    globalRoles: readonly string[] = [],
+  ) =>
+    ({
+      kind: "answered",
+      identityId: resolvedId,
+      globalRoles,
+      outcome,
+    }) as const;
+
+  it.each([
+    ["/start s_tg_ads", { sourceCode: "tg_ads" }],
+    ["/start s_", { sourceCode: "" }],
+    ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
+    ["/start", {}],
+    // `/menu` — тот же вход: начавший с него тоже получает заявку.
+    ["/menu", {}],
+  ])(
+    "enters on %s through RequestRole with the member circle",
+    async (text, code) => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const identity = entering(answered("pending"));
+      const { bot, calls } = createHarness(identity, { execute });
+      await bot.init();
+      await bot.handleUpdate(messageUpdate(text));
+      expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
+        {
+          telegramUserId: 42n,
+          requestedRole: "member",
+          firstName: "tester",
+          ...code,
+        },
+        expect.objectContaining({ requestId: expect.any(String) }),
+      );
+      // Личность разрешается один раз на update: вход её и устанавливает.
+      expect(identity.resolve).not.toHaveBeenCalled();
+      expect(sendMessageText(calls[0])).toBe(
+        refusalText(pendingHubAccessText(resolvedId, undefined)),
+      );
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it("opens /start for a person the allowlist has just admitted", async () => {
+    const identity = entering(
+      answered("granted-by-allowlist", ["member", "public"]),
+    );
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expect(identity.resolve).not.toHaveBeenCalled();
+  });
+
+  it("answers a declined application on /start with a refusal of its own", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering(answered("declined", ["public"])),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toBe(refusalText(declinedHubAccessText));
+    expect(JSON.stringify(calls[0]?.payload)).not.toContain("callback_data");
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("hub_access_declined");
+    expect(records[0]?.fields.identity_id).toBe(resolvedId);
+  });
+
+  it("shows the closed frame on /start by the blocked outcome", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering(answered("blocked")),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(sendMessageText(calls[0])).toBe(refusalText(blockedHubAccessText));
+    expect(execute).not.toHaveBeenCalled();
+    expect(records[0]?.fields.error).toBe("hub_access_blocked");
+  });
+
+  // Незнакомый исход по контракту — отказ, но не ответ о заявке: человек
+  // получает кадр недоступности, какие бы роли ни пришли рядом.
+  it("fails closed on /start when Identity answers an unknown outcome", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering(answered("unspecified", ["member", "public"])),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(execute).not.toHaveBeenCalled();
+    expect(sendMessageText(calls[0])).toContain("Не получилось");
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "invariant",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("role_request_outcome_unspecified");
+    expect(records[0]?.fields.identity_id).toBe(resolvedId);
+  });
+
+  it("fails closed on /start when the entry is unavailable", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering({ kind: "unavailable", cause: new Error("down") }),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(messageUpdate());
+    expect(execute).not.toHaveBeenCalled();
+    expect(sendMessageText(calls[0])).toContain("Не получилось");
+    expectBoundary(records[0], {
+      level: "error",
+      result: "error",
+      error_category: "dependency_unavailable",
+      use_case: "find_meetup",
+    });
+  });
+
+  // Заявку ставит только вход: команда экрана и кнопка лишь проверяют роль.
+  it("does not request a role on a screen command or a button", async () => {
+    const identity = {
+      ...resolvedIdentity(["public"]),
+      requestRole: vi.fn<RoleRequester["requestRole"]>(),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/meetups"));
+    await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
+    expect(identity.requestRole).not.toHaveBeenCalled();
+    expect(sendMessageText(calls[0])).toBe(
+      refusalText(pendingHubAccessText(resolvedId, undefined)),
+    );
   });
 
   it("does not show meetups to a pending person by list or deep link", async () => {
@@ -3979,7 +4140,7 @@ describe("presentation adapter", () => {
     const bot = createBot({
       token: "111:test-token",
       dispatcher: { execute },
-      identity: resolvedIdentity(),
+      identity: withEntry(resolvedIdentity()),
       logger,
       tracing: noopTracing(),
     });
@@ -4033,7 +4194,7 @@ describe("presentation adapter", () => {
     const bot = createBot({
       token: "111:test-token",
       dispatcher: createDispatcher(),
-      identity: resolvedIdentity(),
+      identity: withEntry(resolvedIdentity()),
       logger,
       tracing: noopTracing(),
     });
@@ -4198,7 +4359,7 @@ describe("presentation adapter", () => {
     const bot = createBot({
       token: "111:test-token",
       dispatcher: createDispatcher(),
-      identity,
+      identity: withEntry(identity),
       logger,
       tracing: noopTracing(),
     });
@@ -4270,7 +4431,7 @@ async function requestedUrl(
   const runtime = {
     token: "111:test-token",
     dispatcher: createDispatcher(),
-    identity: resolvedIdentity(),
+    identity: withEntry(resolvedIdentity()),
     logger,
     tracing: noopTracing(),
   };

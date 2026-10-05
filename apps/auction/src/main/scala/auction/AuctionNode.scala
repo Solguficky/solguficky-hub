@@ -31,6 +31,7 @@ import org.apache.pekko.Done
 import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
+import org.apache.pekko.http.scaladsl.settings.ServerSettings
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.cluster.MemberStatus
@@ -134,6 +135,19 @@ object AuctionNode {
           Future.successful(Done)
         }
     }
+  }
+
+  /**
+   * Предел тела запроса gRPC-границы. Умолчание pekko-http — 8 MiB, и файл крупнее до домена не дошёл бы: вместо
+   * именованного `ImageTooLarge` бот получил бы сбой транспорта. Предел покрывает всё, что бот вообще может скачать
+   * через `getFile` (до 20 MB), поэтому предел изображения решает домен, а не транспорт.
+   */
+  val GrpcMaxRequestBytes: Long = 24L * 1024 * 1024
+
+  /** Настройки сервера gRPC-границы; ими привязывают границу и сервис, и L1. */
+  def grpcServerSettings(system: ActorSystem[?]): ServerSettings = {
+    val defaults = ServerSettings(system)
+    defaults.withParserSettings(defaults.parserSettings.withMaxContentLength(GrpcMaxRequestBytes))
   }
 
   /**

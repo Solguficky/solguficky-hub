@@ -23,7 +23,7 @@ object SnapshotMapping {
       id = view.lotId.toString,
       auctionId = view.auctionId.toString,
       version = view.version,
-      card = view.card.map(card => wire.LotCard(card.title.value, card.description))
+      card = view.card.map(ResponseMapping.lotCard)
     )
     view.lot.state match {
       case LotState.Initial =>

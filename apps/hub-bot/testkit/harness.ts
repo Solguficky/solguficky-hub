@@ -2,11 +2,13 @@ import type { Transformer } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import type { Dispatcher } from "../src/application/dispatcher.js";
 import { createDispatcher } from "../src/application/dispatcher.js";
+import { inMemberCircle } from "../src/application/hub-access.js";
 import type {
   ApplicationAdministrator,
   ApplicationModerator,
   CommunityAdministrator,
   IdentityResolver,
+  RoleRequester,
   SourceChannelAdministrator,
 } from "../src/identity/port.js";
 import type { LogFields, Logger } from "../src/logging.js";
@@ -90,11 +92,53 @@ export type HarnessOptions = Partial<
 };
 
 /**
+ * Вход на `/start` для фейка, у которого его нет: ответ выводится из его же
+ * разрешения личности, как ответил бы Identity человеку с такой личностью —
+ * заблокированному `blocked`, кругу `member` «уже есть», остальным заявку.
+ * Тест, которому важен сам вход, передаёт `requestRole` явно.
+ */
+export function withEntry<T extends IdentityResolver & Partial<RoleRequester>>(
+  identity: T,
+): T & RoleRequester {
+  if (identity.requestRole !== undefined) {
+    // Поле проверено строкой выше; сужение обобщённого `T` компилятор до
+    // пересечения не доводит.
+    return identity as T & RoleRequester;
+  }
+  return {
+    ...identity,
+    async requestRole(input, meta) {
+      const resolved = await identity.resolve(
+        {
+          telegramUserId: input.telegramUserId,
+          ...(input.telegramUsername === undefined
+            ? {}
+            : { telegramUsername: input.telegramUsername }),
+        },
+        meta,
+      );
+      if (resolved.kind !== "resolved") return resolved;
+      return {
+        kind: "answered",
+        identityId: resolved.identityId,
+        globalRoles: resolved.globalRoles,
+        outcome: resolved.blocked
+          ? "blocked"
+          : inMemberCircle(resolved.globalRoles)
+            ? "already-held"
+            : "pending",
+      };
+    },
+  };
+}
+
+/**
  * `calls` передаётся снаружи, когда рестарт процесса нужно показать в том же
  * чате: новый бот теряет память, а история сообщений у человека остаётся.
  */
 export function createHarness(
   identity: IdentityResolver &
+    Partial<RoleRequester> &
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
@@ -112,7 +156,7 @@ export function createHarness(
   const bot = createBot({
     token: "111:test-token",
     dispatcher,
-    identity,
+    identity: withEntry(identity),
     logger,
     tracing,
     ...(presentation === undefined ? {} : { presentation }),

@@ -11,6 +11,7 @@ import {
   IdentityService,
   type ApplicationCard as WireApplicationCard,
   type RefusedApplication as WireRefusedApplication,
+  RoleRequestOutcome as WireRoleRequestOutcome,
 } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { communityLocalTime } from "../community-time.js";
@@ -27,14 +28,17 @@ import type {
   ApplicationDecision,
   ApplicationModerator,
   CommunityAdministrator,
+  IdentityFailure,
   IdentityResolver,
   OrganizerResolver,
   OrganizerUsernameResult,
   ApplicationOutcome as Outcome,
   ReconsiderResult,
   RefusedApplication,
+  RequestRoleInput,
+  RequestRoleResult,
   ResolveIdentityInput,
-  ResolveIdentityResult,
+  RoleRequester,
   SourceChannelAdministrator,
   TelegramRecipientResolver,
   TelegramRecipientResult,
@@ -50,6 +54,10 @@ export { requestIdHeader, useCaseHeader } from "../rpc-metadata.js";
 export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
   "resolveIdentity"
+>;
+export type RoleRequestRpc = Pick<
+  Client<typeof IdentityService>,
+  "requestRole"
 >;
 export type TelegramRecipientRpc = Pick<
   Client<typeof IdentityService>,
@@ -82,6 +90,7 @@ type ApplicationModeratorRpc = Pick<
 >;
 
 export type IdentityClient = IdentityResolver &
+  RoleRequester &
   TelegramRecipientResolver &
   OrganizerResolver &
   CommunityAdministrator &
@@ -109,6 +118,7 @@ export function createIdentityClient(
   });
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
+  const requester = createRoleRequester(client, timeoutMs);
   const administrator = createCommunityAdministrator(client, timeoutMs);
   const applications = createApplicationAdministrator(client, {
     timeoutMs,
@@ -120,6 +130,7 @@ export function createIdentityClient(
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
+    requestRole: (input, meta) => requester.requestRole(input, meta),
     resolveTelegramUserId: (identityId, meta) =>
       recipients.resolveTelegramUserId(identityId, meta),
     resolveOrganizerUsername: (viewer, identityId, meta) =>
@@ -584,6 +595,68 @@ export function createIdentityResolver(
   };
 }
 
+export function createRoleRequester(
+  rpc: RoleRequestRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): RoleRequester {
+  return {
+    async requestRole(
+      input: RequestRoleInput,
+      meta?: RpcMetadata,
+    ): Promise<RequestRoleResult> {
+      try {
+        const response = await rpc.requestRole(
+          {
+            telegramUserId: input.telegramUserId,
+            ...(input.telegramUsername === undefined
+              ? {}
+              : { telegramUsername: input.telegramUsername }),
+            requestedRole: roleValue(input.requestedRole),
+            // Присутствие кода значимо: пустой код после `s_` — «неизвестный
+            // источник», а не его отсутствие.
+            ...(input.sourceCode === undefined
+              ? {}
+              : { sourceCode: input.sourceCode }),
+            firstName: input.firstName,
+          },
+          { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+        );
+        return {
+          kind: "answered",
+          identityId: response.identityId,
+          globalRoles: response.globalRoles.flatMap(
+            (role) => roleName(role) ?? [],
+          ),
+          outcome: roleRequestOutcome(response.outcome),
+        };
+      } catch (cause) {
+        return classifyFailure(cause);
+      }
+    },
+  };
+}
+
+// Число, которого словарь ещё не знает, читается как `UNSPECIFIED`: по
+// контракту незнакомый исход — отказ, а не допуск.
+function roleRequestOutcome(
+  outcome: WireRoleRequestOutcome,
+): Extract<RequestRoleResult, { kind: "answered" }>["outcome"] {
+  switch (outcome) {
+    case WireRoleRequestOutcome.ALREADY_HELD:
+      return "already-held";
+    case WireRoleRequestOutcome.GRANTED_BY_ALLOWLIST:
+      return "granted-by-allowlist";
+    case WireRoleRequestOutcome.PENDING:
+      return "pending";
+    case WireRoleRequestOutcome.DECLINED:
+      return "declined";
+    case WireRoleRequestOutcome.BLOCKED:
+      return "blocked";
+    default:
+      return "unspecified";
+  }
+}
+
 export function createTelegramRecipientResolver(
   rpc: TelegramRecipientRpc,
   timeoutMs = identityRpcTimeoutMs,
@@ -662,7 +735,7 @@ const permanentCodes: ReadonlySet<Code> = new Set([
   Code.Unimplemented,
 ]);
 
-function classifyFailure(cause: unknown): ResolveIdentityResult {
+function classifyFailure(cause: unknown): IdentityFailure {
   if (cause instanceof ConnectError && permanentCodes.has(cause.code)) {
     return { kind: "rejected", code: Code[cause.code], cause };
   }

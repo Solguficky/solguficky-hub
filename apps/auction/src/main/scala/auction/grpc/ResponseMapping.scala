@@ -14,9 +14,11 @@ import auction.lot.PlaceBidRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimitRejected
 import auction.projection.AuctionSnapshotView
+import auction.projection.LotImageView
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_events.AuctionState as AuctionStateMessage
 import auction.v1.auction_service as wire
+import com.google.protobuf.ByteString
 import io.grpc.Status
 
 /**
@@ -95,6 +97,10 @@ object ResponseMapping {
           case CatalogRefusal.NotAdmin => wire.CreateLotCardRefusal.Reason.NotAdmin(wire.NotAdmin())
           case CatalogRefusal.EmptyTitle => wire.CreateLotCardRefusal.Reason.EmptyTitle(wire.EmptyTitle())
           case CatalogRefusal.CardConflict => wire.CreateLotCardRefusal.Reason.CardConflict(wire.CardConflict())
+          case CatalogRefusal.ImageTooLarge(maxBytes) =>
+            wire.CreateLotCardRefusal.Reason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong))
+          case CatalogRefusal.UnsupportedImage =>
+            wire.CreateLotCardRefusal.Reason.UnsupportedImage(wire.UnsupportedImage())
           case CatalogRefusal.CardNotFound =>
             throw new IllegalStateException("lot catalog creation refused with CardNotFound")
         }
@@ -109,6 +115,10 @@ object ResponseMapping {
           case CatalogRefusal.NotAdmin => wire.EditLotCardRefusal.Reason.NotAdmin(wire.NotAdmin())
           case CatalogRefusal.EmptyTitle => wire.EditLotCardRefusal.Reason.EmptyTitle(wire.EmptyTitle())
           case CatalogRefusal.CardNotFound => wire.EditLotCardRefusal.Reason.CardNotFound(wire.CardNotFound())
+          case CatalogRefusal.ImageTooLarge(maxBytes) =>
+            wire.EditLotCardRefusal.Reason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong))
+          case CatalogRefusal.UnsupportedImage =>
+            wire.EditLotCardRefusal.Reason.UnsupportedImage(wire.UnsupportedImage())
           case CatalogRefusal.CardConflict =>
             throw new IllegalStateException("lot catalog edit refused with CardConflict")
         }
@@ -252,7 +262,16 @@ object ResponseMapping {
 
   private def auctionNotFound: Status = Status.NOT_FOUND.withDescription("auction not found")
 
-  private def lotCard(card: LotCard): wire.LotCard = wire.LotCard(card.title.value, card.description)
+  /**
+   * Карточка без байтов: изображение — только версия, файл читается `GetLotImage`. Её делят ответы команд и снимок
+   * лота.
+   */
+  private[grpc] def lotCard(card: LotCard): wire.LotCard =
+    wire.LotCard(card.title.value, card.description, card.image.map(version => wire.LotImageRef(version.value)))
+
+  /** Изображение из строки каталога как есть: версия — версия этих байтов, а не прочитанной раньше карточки. */
+  def lotImage(image: LotImageView): wire.LotImage =
+    wire.LotImage(ByteString.copyFrom(IArray.genericWrapArray(image.content).toArray), image.mediaType, image.version)
 
   private def money(amount: Money): MoneyMessage = MoneyMessage(amount.minorUnits, amount.currency.value)
 }

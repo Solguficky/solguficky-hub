@@ -9,7 +9,9 @@ import {
   ListRefusedApplicationsResponseSchema,
   ReadApplicationQueueResponseSchema,
   RefusedApplicationSchema,
+  RequestRoleResponseSchema,
   ResolveIdentityResponseSchema,
+  RoleRequestOutcome,
 } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { noopTracing } from "../tracing.js";
@@ -19,6 +21,7 @@ import {
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
+  createRoleRequester,
   createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
@@ -741,5 +744,128 @@ describe("application moderator", () => {
     await expect(
       moderator.declineApplication(actor, applicationId),
     ).resolves.toMatchObject({ kind });
+  });
+});
+
+describe("role requester", () => {
+  const answer = (outcome: RoleRequestOutcome) =>
+    create(RequestRoleResponseSchema, {
+      identityId: "id-1",
+      globalRoles: [GlobalRole.MEMBER, GlobalRole.PUBLIC],
+      outcome,
+    });
+
+  it("requests the circle with the channel code and the first name", async () => {
+    const requestRole = vi.fn(async () =>
+      answer(RoleRequestOutcome.GRANTED_BY_ALLOWLIST),
+    );
+    const identity = createRoleRequester({ requestRole }, 75);
+    await expect(
+      identity.requestRole(
+        {
+          telegramUserId: 42n,
+          telegramUsername: "alice",
+          requestedRole: "member",
+          sourceCode: "tg_ads",
+          firstName: "Сова",
+        },
+        { requestId: "req-1", useCase: "find_meetup" },
+      ),
+    ).resolves.toEqual({
+      kind: "answered",
+      identityId: "id-1",
+      globalRoles: ["member", "public"],
+      outcome: "granted-by-allowlist",
+    });
+    expect(requestRole).toHaveBeenCalledExactlyOnceWith(
+      {
+        telegramUserId: 42n,
+        telegramUsername: "alice",
+        requestedRole: GlobalRole.MEMBER,
+        sourceCode: "tg_ads",
+        firstName: "Сова",
+      },
+      {
+        timeoutMs: 75,
+        headers: {
+          [requestIdHeader]: "req-1",
+          [useCaseHeader]: "find_meetup",
+        },
+      },
+    );
+  });
+
+  // Присутствие кода значимо: пустой код едет пустой строкой, отсутствующий
+  // поля в запросе не оставляет.
+  it.each([
+    ["", { sourceCode: "" }],
+    [undefined, {}],
+  ])("sends the channel code %j as received", async (sourceCode, expected) => {
+    const requestRole = vi.fn(async () => answer(RoleRequestOutcome.PENDING));
+    await createRoleRequester({ requestRole }).requestRole({
+      telegramUserId: 42n,
+      requestedRole: "public",
+      ...(sourceCode === undefined ? {} : { sourceCode }),
+      firstName: "Сова",
+    });
+    expect(requestRole).toHaveBeenCalledExactlyOnceWith(
+      {
+        telegramUserId: 42n,
+        requestedRole: GlobalRole.PUBLIC,
+        firstName: "Сова",
+        ...expected,
+      },
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    [RoleRequestOutcome.ALREADY_HELD, "already-held"],
+    [RoleRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
+    [RoleRequestOutcome.PENDING, "pending"],
+    [RoleRequestOutcome.DECLINED, "declined"],
+    [RoleRequestOutcome.BLOCKED, "blocked"],
+    [RoleRequestOutcome.UNSPECIFIED, "unspecified"],
+    // Число, которого словарь ещё не знает, — отказ, а не допуск.
+    [99 as RoleRequestOutcome, "unspecified"],
+  ])("reads the outcome %s as %s", async (wire, outcome) => {
+    const identity = createRoleRequester({
+      requestRole: async () => answer(wire),
+    });
+    await expect(
+      identity.requestRole({
+        telegramUserId: 42n,
+        requestedRole: "member",
+        firstName: "Сова",
+      }),
+    ).resolves.toMatchObject({ kind: "answered", outcome });
+  });
+
+  it("tells an unavailable Identity from a rejected request", async () => {
+    const failing = (cause: unknown) =>
+      createRoleRequester({
+        requestRole: () => Promise.reject(cause),
+      }).requestRole({
+        telegramUserId: 42n,
+        requestedRole: "member",
+        firstName: "Сова",
+      });
+    await expect(
+      failing(new ConnectError("connect", Code.Unavailable)),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(
+      failing(new ConnectError("requested_role", Code.InvalidArgument)),
+    ).resolves.toMatchObject({ kind: "rejected", code: "InvalidArgument" });
+  });
+
+  it("does not call identity once the action budget is spent", async () => {
+    const requestRole = vi.fn();
+    await expect(
+      createRoleRequester({ requestRole }).requestRole(
+        { telegramUserId: 42n, requestedRole: "member", firstName: "Сова" },
+        { deadlineAt: Date.now() - 1 },
+      ),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(requestRole).not.toHaveBeenCalled();
   });
 });

@@ -2,10 +2,12 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   type AuctionBotPorts,
   type AuctionResult,
+  decideEntry,
   encodeAuctionCallback,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
+  requestedRole,
   type TelegramUser,
   type Viewer,
 } from "@solguficky/auction-bot-ui";
@@ -16,7 +18,9 @@ import { parseEntryCallback } from "./faq.js";
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
 export type RouteFailure = {
-  category: "dependency_unavailable" | "timeout" | "unexpected";
+  // `invariant` — сосед ответил вне контракта: исход входа, которого край не
+  // знает.
+  category: "dependency_unavailable" | "timeout" | "invariant" | "unexpected";
   grpcCode?: string;
   message: string;
 };
@@ -64,22 +68,37 @@ export async function routeAuctionCallback(input: {
   });
 }
 
-// `sourceCode` — код канала из payload `s_<код>`. Входа с кругом и кодом
-// здесь ещё нет: `/start` разрешает личность через ResolveIdentity, и код
-// доносит до Identity операция входа RequestRole (PER-316).
+// `/start` — вход на поверхность (ADR-060): вместо разрешения личности бот
+// зовёт `RequestRole` с кругом `public`, кодом канала из payload `s_<код>` и
+// именем для карточки модератора. Identity гасит белый список или ставит
+// заявку, а ответ по исходу выбирает политика пакета.
 export function routeAuctionStart(input: {
   ports: EntryPorts;
   user: TelegramUser;
+  firstName: string;
   auctionId?: string;
   sourceCode?: string;
 }): Promise<RouteOutcome> {
-  return routeEntry({ ...input, action: { kind: "start" } });
+  return routeEntry({
+    ports: input.ports,
+    user: input.user,
+    ...(input.auctionId === undefined ? {} : { auctionId: input.auctionId }),
+    action: {
+      kind: "start",
+      firstName: input.firstName,
+      ...(input.sourceCode === undefined
+        ? {}
+        : { sourceCode: input.sourceCode }),
+    },
+  });
 }
 
 async function routeEntry(input: {
   ports: EntryPorts;
   user: TelegramUser;
-  action: { kind: "start" } | { kind: "callback"; data: string };
+  action:
+    | { kind: "start"; firstName: string; sourceCode?: string }
+    | { kind: "callback"; data: string };
   // Аукцион ленты из конфигурации. Нет — «Аукционы» отвечают, что каталог
   // ещё не открыт: чтения текущего аукциона в контракте нет.
   auctionId?: string;
@@ -97,7 +116,44 @@ async function routeEntry(input: {
   }
   let identity: ResolvedIdentity;
   try {
-    identity = await input.ports.identity.resolveIdentity(input.user);
+    if (input.action.kind === "start") {
+      const entry = decideEntry(
+        "auction",
+        await input.ports.entry.requestRole({
+          user: input.user,
+          requestedRole: requestedRole("auction"),
+          ...(input.action.sourceCode === undefined
+            ? {}
+            : { sourceCode: input.action.sourceCode }),
+          firstName: input.action.firstName,
+        }),
+      );
+      switch (entry.kind) {
+        case "entered":
+          identity = entry.identity;
+          break;
+        case "denied":
+          return {
+            screen: { kind: "denied", reason: entry.reason },
+            identityId: entry.identityId,
+          };
+        case "unknown-outcome":
+          return {
+            screen: { kind: "unavailable" },
+            identityId: entry.identityId,
+            failure: {
+              category: "invariant",
+              message: "identity answered an unknown role request outcome",
+            },
+          };
+        default: {
+          const _exhaustive: never = entry;
+          return _exhaustive;
+        }
+      }
+    } else {
+      identity = await input.ports.identity.resolveIdentity(input.user);
+    }
   } catch (cause) {
     return { screen: { kind: "unavailable" }, failure: classify(cause) };
   }

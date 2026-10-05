@@ -11,6 +11,9 @@ import scala.concurrent.Future
  */
 final case class LotSnapshotView(lotId: UUID, auctionId: UUID, version: Long, lot: Lot, card: Option[LotCard])
 
+/** Изображение лота так, как оно лежит в строке каталога: байты, тип и версия этих байтов. */
+final case class LotImageView(content: IArray[Byte], mediaType: String, version: String)
+
 /**
  * Чтение read model лота. Его пишет проекция, поэтому ответ отстаёт от entity на время её обработки: сразу после
  * команды прочитанное может ещё не содержать её события.
@@ -26,4 +29,10 @@ trait LotViews {
    * реестре его нет. Лот реестра без журнала лота в выдачу не попадает: снимка торгов у него ещё нет.
    */
   def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]]
+
+  /**
+   * Изображение лота, который виден в read model. Лота нет в read model или у него нет изображения — `None`: виден лот
+   * ровно тогда, когда его отдаёт `find`.
+   */
+  def image(lotId: UUID): Future[Option[LotImageView]]
 }

@@ -1,6 +1,7 @@
 package auction.grpc
 
 import auction.catalog.CatalogRefusal
+import auction.catalog.ImageVersion
 import auction.catalog.LotCard
 import auction.catalog.LotId
 import auction.catalog.LotTitle
@@ -12,6 +13,7 @@ import auction.lot.LotFixtures.*
 import auction.lot.PlaceBidRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.WithdrawProxyLimitRejected
+import auction.projection.LotImageView
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
 import io.grpc.Status
@@ -82,12 +84,38 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
     }
 
     "answers catalog commands with the stored card or a named refusal" in {
-      val card = LotCard(LotId(UUID.randomUUID()), LotTitle("Лот").value, "описание")
+      val card = LotCard(LotId(UUID.randomUUID()), LotTitle("Лот").value, "описание", None)
       ResponseMapping.createLotCard(Right(card)).getAccepted shouldBe wire.LotCard("Лот", "описание")
       ResponseMapping.createLotCard(Left(CatalogRefusal.NotAdmin)).getRefused.reason.isNotAdmin shouldBe true
       ResponseMapping.createLotCard(Left(CatalogRefusal.CardConflict)).getRefused.reason.isCardConflict shouldBe true
       ResponseMapping.editLotCard(Left(CatalogRefusal.EmptyTitle)).getRefused.reason.isEmptyTitle shouldBe true
       ResponseMapping.editLotCard(Left(CatalogRefusal.CardNotFound)).getRefused.reason.isCardNotFound shouldBe true
+    }
+
+    "answers an accepted card with the version of its image and without the bytes" in {
+      val card = LotCard(LotId(UUID.randomUUID()), LotTitle("Лот").value, "", Some(ImageVersion("v1")))
+      ResponseMapping.editLotCard(Right(card)).getAccepted.image shouldBe Some(wire.LotImageRef("v1"))
+    }
+
+    "carries the limit in an image-too-large refusal of both catalog commands" in {
+      val tooLarge = Left(CatalogRefusal.ImageTooLarge(2048))
+      ResponseMapping.createLotCard(tooLarge).getRefused.reason.imageTooLarge shouldBe Some(wire.ImageTooLarge(2048))
+      ResponseMapping.editLotCard(tooLarge).getRefused.reason.imageTooLarge shouldBe Some(wire.ImageTooLarge(2048))
+      ResponseMapping
+        .createLotCard(Left(CatalogRefusal.UnsupportedImage))
+        .getRefused
+        .reason
+        .isUnsupportedImage shouldBe true
+      ResponseMapping.editLotCard(Left(CatalogRefusal.UnsupportedImage)).getRefused.reason.isUnsupportedImage shouldBe
+        true
+    }
+
+    "answers an image read with the stored bytes, their type and their own version" in {
+      val bytes = Array[Byte](0xff.toByte, 0xd8.toByte, 0xff.toByte, 1)
+      val image = ResponseMapping.lotImage(LotImageView(IArray.from(bytes), "image/jpeg", "v2"))
+      image.content.toByteArray shouldBe bytes
+      image.mediaType shouldBe "image/jpeg"
+      image.version shouldBe "v2"
     }
   }
 }
