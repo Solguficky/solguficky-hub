@@ -87,6 +87,7 @@ import {
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
 import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
+import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
   type PendingMaterialSource as MaterialInputSource,
@@ -199,6 +200,11 @@ import {
 } from "./screens/source-channels.js";
 import { isSourceChannelCode } from "./source-deep-link.js";
 import {
+  createTelegramFiles,
+  type FileDownload,
+  type TelegramFiles,
+} from "./telegram-files.js";
+import {
   markUpdateFailed,
   type TracedContext,
   traceUpdate,
@@ -239,6 +245,9 @@ export type BotRuntime = {
   // Память процесса: тесты подставляют свою, чтобы проверить рестарт.
   auctionParents?: AuctionParents;
   lotPhotos?: LotPhotos;
+  // Скачивание присланного файла по пути из `getFile` (PER-452). Нет — бот
+  // ходит в Telegram сам, по токену и среде выше.
+  files?: TelegramFiles;
 };
 
 export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
@@ -513,6 +522,13 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   const questions = new Map<string, PendingInput>();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
   const lotPhotos = runtime.lotPhotos ?? createLotPhotos();
+  const files =
+    runtime.files ??
+    createTelegramFiles({
+      token: runtime.token,
+      environment: runtime.environment ?? defaultTelegramEnvironment,
+    });
+  const albums = createSeenAlbums();
   bot.use((ctx, next) => {
     const requestId = randomUUID();
     ctx.requestId = requestId;
@@ -526,7 +542,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions, lotPhotos),
   );
-  bot.on("message", (ctx) => handleMessage(ctx, runtime, questions));
+  bot.on("message", (ctx) =>
+    handleMessage(ctx, runtime, questions, { files, albums }),
+  );
   bot.catch((botError) => {
     writeBoundary(
       runtime.logger,
@@ -541,6 +559,7 @@ async function handleMessage(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
+  photos: { files: TelegramFiles; albums: SeenAlbums },
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -560,6 +579,18 @@ async function handleMessage(
     // его сообщение осталось бы держать режим ответа.
     if (command) await dropOpenQuestions(ctx, questions);
     removeExpiredQuestions(questions, Date.now());
+    // Остальные снимки альбома, которому вопрос о фото лота уже отказал: отказ
+    // ушёл на первый снимок, а вопрос задан заново.
+    const album = ctx.message?.media_group_id;
+    if (album !== undefined && photos.albums.seen(album)) {
+      outcome = {
+        level: "info",
+        message: "lot photo album message ignored",
+        result: "ok",
+        use_case: "manage_lot",
+      };
+      return;
+    }
     // Ответ принят либо отвергнут окончательно: вопрос больше не ждёт, и его
     // «Отмена» снимается. После сбоя сервиса вопрос остаётся открытым — тот же
     // ответ можно прислать ещё раз.
@@ -956,9 +987,50 @@ async function handleMessage(
     if (
       replyId !== undefined &&
       pending?.kind === "lot" &&
+      pending.question.kind === "image"
+    ) {
+      useCase = "manage_lot";
+      const question = pending.question;
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign lot form answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(ctx, identity, useCase, false);
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!isAdministrator(identity.person)) {
+        await answered();
+        outcome = await refuseLotForm(ctx, identity.person);
+        return;
+      }
+      outcome = await answerLotPhoto(ctx, runtime, questions, photos, {
+        person: identity.person,
+        question,
+        replyId,
+        answered,
+      });
+      return;
+    }
+    if (
+      replyId !== undefined &&
+      pending?.kind === "lot" &&
+      pending.question.kind !== "image" &&
       ctx.message?.text !== undefined
     ) {
       useCase = "manage_lot";
+      const question = pending.question;
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
           level: "info",
@@ -994,7 +1066,7 @@ async function handleMessage(
         return;
       }
       const result = await runtime.dispatcher.execute(
-        lotAnswerRequest(pending.question, ctx.message.text, {
+        lotAnswerRequest(question, ctx.message.text, {
           identity: identity.person,
           ...rpcCall(ctx, useCase),
         }),
@@ -1003,7 +1075,7 @@ async function handleMessage(
       // исходы, кроме сбоя Auction, вопрос закрывают.
       outcome = await renderLotAnswer(ctx, questions, result, {
         person: identity.person,
-        answered: pending.question,
+        answered: question,
         replyId,
       });
       if (result.kind !== "lot-ask") await answered(result);
@@ -4257,11 +4329,14 @@ async function handleLotFormCallback(
       { person },
     );
   }
+  // Фото, как и тексты, меняется и после старта торгов (ADR-057).
   await askLotQuestion(ctx, questions, {
     question:
       action.field === "price"
         ? { kind: "price", lotId }
-        : { kind: "text", field: action.field, lotId },
+        : action.field === "image"
+          ? { kind: "image", lotId }
+          : { kind: "text", field: action.field, lotId },
     lot: result.lot,
   });
   return sent("lot field requested");
@@ -4275,6 +4350,7 @@ function askLotQuestion(
     question: LotQuestion;
     lot?: LotFormView | undefined;
     error?: LotAskError | undefined;
+    maxImageBytes?: number | undefined;
     replaces?: number | undefined;
   },
 ): Promise<void> {
@@ -4282,7 +4358,7 @@ function askLotQuestion(
     ctx,
     questions,
     { kind: "lot", question: ask.question, telegramUserId: ctx.from?.id ?? 0 },
-    lotQuestionText(ask.question, ask.lot, ask.error),
+    lotQuestionText(ask.question, ask.lot, ask.error, ask.maxImageBytes),
     ask.replaces,
   );
 }
@@ -4293,7 +4369,7 @@ function askLotQuestion(
 // торгов рождается на каждый ответ: в кнопку вопроса о шаге он не помещается,
 // а условия Auction заменяет целиком, и повтор даёт тот же итог.
 function lotAnswerRequest(
-  question: LotQuestion,
+  question: Exclude<LotQuestion, { kind: "image" }>,
   value: string,
   call: { identity: Person } & RpcMetadata,
 ): ExecuteRequest {
@@ -4369,6 +4445,7 @@ async function renderLotAnswer(
       question: result.question,
       lot: result.lot,
       error: result.error,
+      maxImageBytes: result.maxImageBytes,
       replaces: answer.replyId,
     });
     return handled(
@@ -4381,6 +4458,108 @@ async function renderLotAnswer(
     person: answer.person,
     answered: answer.answered,
   });
+}
+
+// Ответ на вопрос о фото лота (PER-452). Фото скачивается здесь, на краю: путь
+// файла даёт `getFile`, байты — порт скачивания, а юзкейс получает только
+// байты. Не фото и альбом — тот же вопрос с причиной, без Auction. Telegram
+// файл не отдал — тоже: фото можно прислать ещё раз, лот не менялся.
+async function answerLotPhoto(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  photos: { files: TelegramFiles; albums: SeenAlbums },
+  answer: {
+    person: Person;
+    question: Extract<LotQuestion, { kind: "image" }>;
+    replyId: number;
+    answered: (result?: ExecuteResult) => Promise<void>;
+  },
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_lot";
+  const identity = { identity_id: answer.person.identityId };
+  const askAgain = async (error: LotAskError, message: string) => {
+    await askLotQuestion(ctx, questions, {
+      question: answer.question,
+      error,
+      replaces: answer.replyId,
+    });
+    return {
+      level: "info",
+      message,
+      result: "ok",
+      use_case: useCase,
+      ...identity,
+    } satisfies BoundaryOutcome;
+  };
+  const input = parseLotPhoto(ctx.message);
+  if (input.kind === "album") {
+    photos.albums.remember(input.group);
+    return askAgain("photo-album", "lot photo album refused");
+  }
+  if (input.kind === "not-photo") {
+    return askAgain("photo-needed", "lot photo answer asked again");
+  }
+  const downloaded = await downloadPhoto(ctx, photos.files, input.fileId);
+  if (downloaded.kind === "failed") {
+    await askLotQuestion(ctx, questions, {
+      question: answer.question,
+      error: "photo-unavailable",
+      replaces: answer.replyId,
+    });
+    return {
+      level: "warn",
+      message: "lot photo download failed",
+      result: "error",
+      use_case: useCase,
+      ...identity,
+      error_category:
+        downloaded.reason === "timeout" ? "timeout" : "dependency_unavailable",
+      error: downloaded.cause.message,
+    };
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: answer.person,
+    intent: "set-lot-image",
+    lotId: answer.question.lotId,
+    image: downloaded.bytes,
+    ...rpcCall(ctx, useCase),
+  });
+  const outcome = await renderLotAnswer(ctx, questions, result, {
+    person: answer.person,
+    answered: answer.question,
+    replyId: answer.replyId,
+  });
+  if (result.kind !== "lot-ask") await answer.answered(result);
+  return outcome;
+}
+
+// Путь файла у Telegram, затем байты. Отказ `getFile` — тоже отказ скачивания:
+// человеку он говорит одно и то же.
+async function downloadPhoto(
+  ctx: UpdateContext,
+  files: TelegramFiles,
+  fileId: string,
+): Promise<FileDownload> {
+  let path: string | undefined;
+  try {
+    path = (await ctx.api.getFile(fileId)).file_path;
+  } catch (cause) {
+    return {
+      kind: "failed",
+      reason: "unavailable",
+      cause: new Error(
+        `getFile failed: ${cause instanceof GrammyError ? cause.description : "unknown"}`,
+      ),
+    };
+  }
+  return path === undefined
+    ? {
+        kind: "failed",
+        reason: "unavailable",
+        cause: new Error("getFile answered without file_path"),
+      }
+    : files.download(path);
 }
 
 // Отказ формы лота: кадр с выходом туда, где видно текущее состояние. Сбой
@@ -5487,6 +5666,8 @@ function lotStepOf(question: LotQuestion): QuestionStep {
       return { kind: "lot-price", lot };
     case "step":
       return { kind: "lot-step", lot, price: question.priceRubles };
+    case "image":
+      return { kind: "lot-image", lot };
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -5512,6 +5693,8 @@ function lotQuestionOf(
       return { kind: "price", lotId };
     case "lot-step":
       return { kind: "step", lotId, priceRubles: step.price };
+    case "lot-image":
+      return { kind: "image", lotId };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -5577,6 +5760,7 @@ function pendingOf(
     case "lot-text":
     case "lot-price":
     case "lot-step":
+    case "lot-image":
       return {
         kind: "lot",
         question: lotQuestionOf(step),
@@ -5629,6 +5813,7 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-text":
     case "lot-price":
     case "lot-step":
+    case "lot-image":
       return { kind: "lot-form", lot: step.lot };
     default: {
       const _exhaustive: never = step;
@@ -5772,6 +5957,33 @@ function evictOldestQuestions(questions: Map<string, PendingInput>): void {
     if (oldest === undefined) return;
     questions.delete(oldest);
   }
+}
+
+// Альбом приходит отдельным update на каждую фотографию, и все они отвечают
+// на один вопрос. Отказ «нужна одна фотография» нужен один раз на альбом, а не
+// по сообщению на снимок. Память процесса: после рестарта посреди альбома
+// отказ придёт ещё раз, и это не теряет ничего.
+type SeenAlbums = {
+  seen(group: string): boolean;
+  remember(group: string): void;
+};
+
+const albumMemory = 64;
+
+function createSeenAlbums(): SeenAlbums {
+  const seen = new Set<string>();
+  return {
+    seen(group) {
+      return seen.has(group);
+    },
+    remember(group) {
+      seen.add(group);
+      if (seen.size > albumMemory) {
+        const oldest = seen.values().next().value;
+        if (oldest !== undefined) seen.delete(oldest);
+      }
+    },
+  };
 }
 
 function communityToday(ctx: UpdateContext) {

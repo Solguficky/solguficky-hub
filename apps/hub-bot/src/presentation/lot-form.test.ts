@@ -3,6 +3,7 @@ import {
   type LotView,
   type Money,
 } from "@solguficky/auction-bot-ui";
+import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
 import { describe, expect, it } from "vitest";
 import { createHarness, type RecordedCall } from "../../testkit/harness.js";
@@ -17,6 +18,7 @@ import type {
 import type { IdentityResolver } from "../identity/port.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { newLotIdOf } from "./new-lot-id.js";
+import type { FileDownload, TelegramFiles } from "./telegram-files.js";
 
 // Форма лота администратора в боте хаба (PER-319): входы в ленте и под
 // карточкой лота, вопросы и экран правки. Auction подменён одним состоянием на
@@ -53,8 +55,13 @@ function fakeAuction(
     // Отказ команды; `undefined` — команда принята.
     add?: () => AddLotResult | undefined;
     schedule?: () => ScheduleLotResult | undefined;
+    // Предел изображения Auction в байтах; по умолчанию — 2 МиБ, как у него.
+    imageLimit?: number;
   } = {},
 ) {
+  const imageLimit = options.imageLimit ?? 2 * 1024 * 1024;
+  // Байты изображений по лоту: их отдаёт `GetLotImage` экрана лота.
+  const images = new Map<string, { content: Uint8Array; version: string }>();
   const lots = new Map<string, LotView>(
     (options.lots ?? []).map((lot) => [lot.lotId, lot]),
   );
@@ -78,9 +85,26 @@ function fakeAuction(
       commands.push({ method: "editLotCard", args: card });
       const lot = lots.get(card.lotId);
       if (lot === undefined) return { kind: "card-not-found" };
+      const image = card.image;
+      if (image !== undefined && image.byteLength > imageLimit) {
+        return { kind: "image-too-large", maxBytes: imageLimit };
+      }
+      if (image !== undefined) {
+        images.set(card.lotId, {
+          content: image,
+          version: `img-${images.size + 1}`,
+        });
+      }
+      const stored = images.get(card.lotId);
       lots.set(card.lotId, {
         ...lot,
-        card: { title: card.title, description: card.description },
+        card: {
+          title: card.title,
+          description: card.description,
+          ...(stored === undefined
+            ? {}
+            : { image: { version: stored.version } }),
+        },
       });
       return { kind: "ok" };
     },
@@ -130,13 +154,20 @@ function fakeAuction(
           listLotHistory: async () => ({ entries: [], nextPageToken: "" }),
           getDisplayNames: async () => ({}),
         },
-        image: { getLotImage: notUsed },
+        image: {
+          async getLotImage({ lotId }) {
+            const stored = images.get(lotId);
+            if (stored === undefined) throw new Error("no image");
+            return { ...stored, mediaType: "image/jpeg" };
+          },
+        },
       };
     },
   };
   return {
     port,
     lots,
+    images,
     commands,
     methods: () => commands.map((command) => command.method),
   };
@@ -147,7 +178,12 @@ function harness(
   roles: readonly string[],
   auction: ReturnType<typeof fakeAuction>,
   calls: RecordedCall[] = [],
+  options: {
+    presentation?: "rich" | "plain";
+    telegram?: ReturnType<typeof fakeTelegramFiles>;
+  } = {},
 ) {
+  const telegram = options.telegram ?? fakeTelegramFiles();
   return createHarness(
     identity(roles),
     createDispatcher(
@@ -159,10 +195,53 @@ function harness(
     ),
     calls,
     undefined,
-    "plain",
+    options.presentation ?? "plain",
     undefined,
-    { auction: auction.port },
+    {
+      auction: auction.port,
+      files: telegram.files,
+      respond: telegram.respond,
+    },
   );
+}
+
+// Файлы Telegram: `getFile` отвечает путём по `file_id`, а скачивание по пути
+// отдаёт байты. Файл, которого тест не завёл, `getFile` не знает.
+function fakeTelegramFiles(
+  stored: Record<string, Uint8Array> = {},
+  download?: (path: string) => FileDownload,
+) {
+  const downloads: string[] = [];
+  const files: TelegramFiles = {
+    async download(path) {
+      downloads.push(path);
+      if (download !== undefined) return download(path);
+      const bytes = stored[path.replace(/^photos\//, "")];
+      return bytes === undefined
+        ? {
+            kind: "failed",
+            reason: "unavailable",
+            cause: new Error("not found"),
+          }
+        : { kind: "ok", bytes };
+    },
+  };
+  const respond = (method: string, payload: unknown) => {
+    if (method !== "getFile") return undefined;
+    const fileId = (payload as { file_id: string }).file_id;
+    return fileId in stored
+      ? {
+          file_id: fileId,
+          file_unique_id: `u-${fileId}`,
+          file_path: `photos/${fileId}`,
+        }
+      : {
+          ok: false,
+          error_code: 400,
+          description: "Bad Request: invalid file_id",
+        };
+  };
+  return { files, respond, downloads };
 }
 
 function press(data: string): Update {
@@ -240,6 +319,15 @@ function answer(
   text: string,
   from = 42,
 ): Update {
+  return reply(calls, { text }, from);
+}
+
+// Ответ на последний вопрос с любым содержимым: фото, документ, стикер.
+function reply(
+  calls: readonly RecordedCall[],
+  content: Record<string, unknown>,
+  from = 42,
+): Update {
   const asked = question(calls);
   return {
     update_id: 4,
@@ -248,7 +336,7 @@ function answer(
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: from, is_bot: false, first_name: "tester" },
-      text,
+      ...(content as { text?: string }),
       reply_to_message: {
         message_id: asked.messageId,
         date: 0,
@@ -378,6 +466,7 @@ describe("lot form", () => {
         [
           "Название: Ваза синяя",
           "Описание: нет",
+          "Фото: нет",
           "Стартовая цена: не задана",
           "Шаг: не задан",
         ].join("\n"),
@@ -386,6 +475,7 @@ describe("lot form", () => {
     expect(labels(form)).toEqual([
       ["Название"],
       ["Описание"],
+      ["Фото"],
       ["Цена и шаг"],
       ["‹ Лот", "Меню"],
     ]);
@@ -521,7 +611,7 @@ describe("lot form", () => {
     expect(form.text).toContain("Описание: Ручная роспись, 300 мл.");
   });
 
-  it("shows only the text rows once trading started and refuses an old price button", async () => {
+  it("keeps the text and photo rows once trading started and refuses an old price button", async () => {
     const auction = fakeAuction({
       lots: [
         {
@@ -536,9 +626,11 @@ describe("lot form", () => {
 
     await bot.handleUpdate(press(`v1:lot:form:${lot}`));
     const form = last(calls);
+    // Фото — каталог, а не условия торгов: его ряд остаётся (ADR-057).
     expect(labels(form)).toEqual([
       ["Название"],
       ["Описание"],
+      ["Фото"],
       ["‹ Лот", "Меню"],
     ]);
     expect(form.text).toContain(
@@ -667,5 +759,224 @@ describe("lot form", () => {
       error_category: "visibility",
       error: "lot_not_found",
     });
+  });
+});
+
+// Фото лота (PER-452): ответ фотографией на вопрос формы, скачивание у
+// Telegram и замена изображения в карточке каталога.
+describe("lot form photo question", () => {
+  const lot = uuidToToken(existingLot);
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  // Telegram присылает фото несколькими размерами, наибольший — последним.
+  const photo = {
+    photo: [
+      { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
+      { file_id: "large", file_unique_id: "l", width: 1280, height: 1280 },
+    ],
+  };
+  const photoQuestion =
+    "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
+
+  it("saves the photo sent in the form and shows it on the lot card after a restart", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const calls: RecordedCall[] = [];
+    const next = async (
+      update: (history: RecordedCall[]) => Update,
+      presentation: "rich" | "plain" = "plain",
+    ) => {
+      const { bot } = harness(["admin", "public"], auction, calls, {
+        telegram,
+        presentation,
+      });
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(`v1:lot:form:${lot}`));
+    expect(last(calls).text).toContain("Фото: нет");
+    await next(() => press(`v1:lot:ask:${lot}:image`));
+    const asked = question(calls).payload;
+    expect(asked.text).toBe(["Сейчас: нет", photoQuestion].join("\n"));
+    // Шаг вопроса лежит в его «Отмене»: ответ после рестарта принимается.
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:li:${lot}:42`);
+
+    await next((history) => reply(history, photo));
+
+    expect(telegram.downloads).toEqual(["photos/large"]);
+    expect(auction.commands).toEqual([
+      {
+        method: "editLotCard",
+        args: {
+          lotId: existingLot,
+          title: "Кружка с совой",
+          description: "Ручная роспись.",
+          image: jpeg,
+        },
+      },
+    ]);
+    const form = last(calls);
+    expect(form.text).toContain("Фото сохранено.");
+    expect(form.text).toContain("Фото: есть");
+
+    // Новый процесс с пустым кэшем `file_id` берёт фото у Auction.
+    await next(() => press(lotData(existingLot)), "rich");
+    const card = calls.at(-1)?.payload as {
+      rich_message?: { media?: { media: { media: unknown } }[] };
+    };
+    expect(card.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
+      InputFile,
+    );
+  });
+
+  it("answers a photo above the limit of Auction with the limit and the same question, the lot unchanged", async () => {
+    const auction = fakeAuction({ lots: [scheduled], imageLimit: 4 });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls, records } = harness(["admin", "public"], auction, [], {
+      telegram,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(reply(calls, photo));
+
+    const again = question(calls).payload;
+    expect(again.text?.split("\n")[0]).toBe(
+      "Фото больше 1 КБ, аукцион его не принял.",
+    );
+    expect(dataOf(again, "Отмена")).toBe(`v1:q:li:${lot}:42`);
+    expect(auction.lots.get(existingLot)?.card).toEqual(scheduled.card);
+    expect(records.every((record) => record.level !== "error")).toBe(true);
+  });
+
+  it("asks for a photo again when text, a document or a sticker comes instead, without Auction", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls, records } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    for (const content of [
+      { text: "вот фото" },
+      {
+        document: {
+          file_id: "doc",
+          file_unique_id: "d",
+          mime_type: "image/jpeg",
+        },
+      },
+      {
+        sticker: {
+          file_id: "sticker",
+          file_unique_id: "st",
+          type: "regular",
+          width: 512,
+          height: 512,
+          is_animated: false,
+          is_video: false,
+        },
+      },
+    ]) {
+      await bot.handleUpdate(reply(calls, content));
+      const again = question(calls).payload;
+      expect(again.text?.split("\n")[0]).toBe(
+        "Нужна фотография, а не текст, файл или стикер.",
+      );
+      expect(dataOf(again, "Отмена")).toBe(`v1:q:li:${lot}:42`);
+    }
+    expect(auction.commands).toEqual([]);
+    expect(records.every((record) => record.level === "info")).toBe(true);
+  });
+
+  it("refuses an album once and ignores its other photos", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls } = harness(["admin", "public"], auction, [], {
+      telegram,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    const asked = question(calls);
+    const albumPhoto = { ...photo, media_group_id: "album-1" };
+
+    await bot.handleUpdate(reply(calls, albumPhoto));
+    const refused = question(calls);
+    // Второй снимок того же альбома отвечает на тот же первый вопрос.
+    const second = reply(calls, albumPhoto);
+    (
+      second.message as { reply_to_message: { message_id: number } }
+    ).reply_to_message.message_id = asked.messageId;
+    await bot.handleUpdate(second);
+
+    expect(refused.payload.text?.split("\n")[0]).toBe(
+      "Нужна одна фотография, альбом не подходит.",
+    );
+    expect(question(calls).messageId).toBe(refused.messageId);
+    expect(telegram.downloads).toEqual([]);
+    expect(auction.commands).toEqual([]);
+  });
+
+  it.each([
+    [
+      "Telegram does not know the file",
+      fakeTelegramFiles(),
+      "dependency_unavailable",
+    ],
+    [
+      "the download breaks",
+      fakeTelegramFiles({ large: jpeg }, () => ({
+        kind: "failed",
+        reason: "timeout",
+        cause: new Error("file download failed: TimeoutError"),
+      })),
+      "timeout",
+    ],
+  ] as const)(
+    "asks for the photo again when %s, the lot unchanged",
+    async (_failure, telegram, category) => {
+      const auction = fakeAuction({ lots: [scheduled] });
+      const { bot, calls, records } = harness(
+        ["admin", "public"],
+        auction,
+        [],
+        { telegram },
+      );
+      await bot.init();
+      await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+      await bot.handleUpdate(reply(calls, photo));
+
+      expect(question(calls).payload.text?.split("\n")[0]).toBe(
+        "Не получилось получить фото у Telegram.",
+      );
+      expect(auction.commands).toEqual([]);
+      expect(records.at(-1)?.fields).toMatchObject({
+        result: "error",
+        error_category: category,
+        use_case: "manage_lot",
+      });
+      expect(JSON.stringify(records)).not.toContain("test-token");
+    },
+  );
+
+  it("replaces the photo of a lot that already trades", async () => {
+    const auction = fakeAuction({
+      lots: [
+        {
+          ...scheduled,
+          status: { kind: "trading", currentPrice: rub(50_000) },
+        },
+      ],
+    });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls } = harness(["admin", "public"], auction, [], {
+      telegram,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(reply(calls, photo));
+
+    expect(auction.methods()).toEqual(["editLotCard"]);
+    expect(last(calls).text).toContain("Фото сохранено.");
   });
 });

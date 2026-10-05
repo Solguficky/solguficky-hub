@@ -181,6 +181,7 @@ export function createDispatcher(
         case "set-lot-text":
         case "check-lot-price":
         case "set-lot-terms":
+        case "set-lot-image":
           return lotForm === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);

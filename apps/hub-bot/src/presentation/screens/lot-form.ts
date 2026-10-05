@@ -18,6 +18,8 @@ import type { ShownScreen } from "./show.js";
 // 2026-10-05). Форма устроена как у сходки (дизайн-код, «Форма создания»): бот
 // спрашивает только название, а дальше человек сам выбирает, что заполнить, с
 // этого экрана. Цена и шаг — один ряд: Auction принимает их только парой.
+// Фото (PER-452) меняется, как тексты, и после старта торгов: это каталог, а не
+// условия торгов (ADR-057).
 
 const untitled = "Лот без названия";
 // Заголовок карточки держит тот же предел; описание на экране правки — только
@@ -44,10 +46,14 @@ export function toLots(auctionId: string): Parent {
   };
 }
 
-export const lotSavedNote: Record<"created" | "text" | "terms", string> = {
+export const lotSavedNote: Record<
+  "created" | "text" | "terms" | "image",
+  string
+> = {
   created: "Лот добавлен. Задай цену и шаг: без них он не выйдет на торги.",
   text: "Изменение сохранено.",
   terms: "Цена и шаг сохранены.",
+  image: "Фото сохранено.",
 };
 
 function termsLines(terms: LotTermsView): string[] {
@@ -74,7 +80,9 @@ export function lotFormScreen(lot: LotFormView, note?: string): ShownScreen {
   const keyboard = new InlineKeyboard()
     .text("Название", lotAskData(token, "title"))
     .row()
-    .text("Описание", lotAskData(token, "description"));
+    .text("Описание", lotAskData(token, "description"))
+    .row()
+    .text("Фото", lotAskData(token, "image"));
   if (lot.terms.kind !== "closed") {
     keyboard.row().text("Цена и шаг", lotAskData(token, "price"));
   }
@@ -86,6 +94,7 @@ export function lotFormScreen(lot: LotFormView, note?: string): ShownScreen {
       [
         `Название: ${truncate(lot.title ?? untitled, titleLimit)}`,
         `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
+        `Фото: ${lot.hasImage ? "есть" : "нет"}`,
         ...termsLines(lot.terms),
       ]
         .map(escapeHtml)
@@ -102,7 +111,31 @@ const lotAskErrorText: Record<LotAskError, string> = {
   "amount-format": "Нужно целое число рублей: только цифры, без копеек.",
   "amount-range": "Сумма — от 1 до 9 999 999 рублей.",
   "step-refused": "Такой шаг аукцион не принимает. Пришли другой.",
+  "image-too-large": "Фото слишком большое, аукцион его не принял.",
+  "unsupported-image": "Аукцион не узнал в этом файле изображение.",
+  "photo-needed": "Нужна фотография, а не текст, файл или стикер.",
+  "photo-album": "Нужна одна фотография, альбом не подходит.",
+  "photo-unavailable": "Не получилось получить фото у Telegram.",
 };
+
+/**
+ * Предел Auction словами: мегабайты с одним знаком, меньше мегабайта — в
+ * килобайтах. Число берётся из отказа, а не из кода бота: предел держит Auction.
+ */
+export function imageLimitText(maxBytes: number): string {
+  const mib = 1024 * 1024;
+  if (maxBytes >= mib) {
+    const value = Math.round((maxBytes / mib) * 10) / 10;
+    return `${String(value).replace(".", ",")} МБ`;
+  }
+  return `${Math.max(1, Math.round(maxBytes / 1024))} КБ`;
+}
+
+function errorLine(error: LotAskError, maxImageBytes?: number): string {
+  return error === "image-too-large" && maxImageBytes !== undefined
+    ? `Фото больше ${imageLimitText(maxImageBytes)}, аукцион его не принял.`
+    : lotAskErrorText[error];
+}
 
 const rublesOf = (amount: number) =>
   money({ minorUnits: amount * 100, currency: lotCurrency });
@@ -120,6 +153,8 @@ function prompt(question: LotQuestion): string {
       return "Стартовая цена в рублях, целым числом. Например: 1500";
     case "step":
       return "Шаг ставки в рублях, целым числом: на столько новая ставка обязана быть выше текущей цены. Например: 100";
+    case "image":
+      return "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -152,6 +187,8 @@ function current(
       return lot.terms.kind === "set" && lot.terms.step !== undefined
         ? money(lot.terms.step)
         : undefined;
+    case "image":
+      return lot.hasImage ? "фото есть, новое его заменит" : "нет";
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -168,10 +205,11 @@ export function lotQuestionText(
   question: LotQuestion,
   lot?: LotFormView,
   error?: LotAskError,
+  maxImageBytes?: number,
 ): string {
   const now = current(question, lot);
   return [
-    ...(error === undefined ? [] : [lotAskErrorText[error]]),
+    ...(error === undefined ? [] : [errorLine(error, maxImageBytes)]),
     ...(question.kind === "step"
       ? [`Стартовая цена: ${rublesOf(question.priceRubles)}.`]
       : []),

@@ -291,12 +291,13 @@ export type QuestionStep =
   | { kind: "lot-new"; auction: string; key: string }
   | { kind: "lot-text"; lot: string; field: LotTextField }
   | { kind: "lot-price"; lot: string }
-  | { kind: "lot-step"; lot: string; price: number };
+  | { kind: "lot-step"; lot: string; price: number }
+  | { kind: "lot-image"; lot: string };
 
-/** Ряд экрана правки лота: текст карточки либо цена с шагом, парой. */
-export type LotFormField = LotTextField | "price";
+/** Ряд экрана правки лота: текст карточки, фото либо цена с шагом, парой. */
+export type LotFormField = LotTextField | "image" | "price";
 
-const LotFormFieldSchema = z.enum(["title", "description", "price"]);
+const LotFormFieldSchema = z.enum(["title", "description", "image", "price"]);
 // Ключ создания лота: двенадцать символов вместо двадцати двух у токена.
 const LotKeySchema = z.string().regex(/^[A-Za-z0-9_-]{12}$/);
 // Цена в рублях в кнопке вопроса о шаге: от 1 до 9 999 999, без ведущих нулей,
@@ -340,6 +341,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:lp:${step.lot}`;
     case "lot-step":
       return `v1:q:ls:${step.lot}:${step.price}`;
+    case "lot-image":
+      return `v1:q:li:${step.lot}`;
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
@@ -691,6 +694,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-text", lot: token.data, field: "description" };
       case "lp":
         return { kind: "lot-price", lot: token.data };
+      case "li":
+        return { kind: "lot-image", lot: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":
