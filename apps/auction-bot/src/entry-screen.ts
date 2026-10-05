@@ -77,6 +77,15 @@ const TITLE_LIMIT = 256;
 const context = "Аукцион сообщества.";
 const untitled = "Лот без названия";
 
+// Тексты отказов принадлежат этой оболочке (ADR-044). Отказ в `public` —
+// блокировка (ADR-060, пункт 12), поэтому `declined` Identity этому боту не
+// отдаёт; текст держит ответ на случай, если отдаст.
+export const deniedTexts: Record<AuctionDenial, string> = {
+  "not-admitted": "Заявка на рассмотрении. Участие в аукционе пока не открыто.",
+  declined: "Заявка на участие в аукционе отклонена.",
+  blocked: "Доступ к аукциону закрыт.",
+};
+
 const faqButton = {
   text: "Правила и FAQ",
   callback_data: entryCallback("faq"),
@@ -164,10 +173,7 @@ export function renderEntryScreen(
     case "denied":
       return {
         id: "denied",
-        text:
-          screen.reason === "blocked"
-            ? "Доступ к аукциону закрыт."
-            : "Заявка на рассмотрении. Участие в аукционе пока не открыто.",
+        text: deniedTexts[screen.reason],
         keyboard: [],
       };
     case "outdated":

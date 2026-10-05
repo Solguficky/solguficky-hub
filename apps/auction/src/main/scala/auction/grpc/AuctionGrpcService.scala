@@ -114,17 +114,21 @@ final class AuctionGrpcService(
   }
 
   def createLotCard(in: wire.CreateLotCardRequest): Future[wire.CreateLotCardResponse] =
-    RequestMapping.card(in.viewer, in.lotId, in.title, in.description) match {
+    RequestMapping.createCard(in) match {
       case Left(error) => invalid(error)
       case Right(card) =>
-        catalog.create(card.viewer, card.lotId, card.title, card.description).map(ResponseMapping.createLotCard)
+        catalog
+          .create(card.viewer, card.lotId, card.title, card.description, card.image)
+          .map(ResponseMapping.createLotCard)
     }
 
   def editLotCard(in: wire.EditLotCardRequest): Future[wire.EditLotCardResponse] =
-    RequestMapping.card(in.viewer, in.lotId, in.title, in.description) match {
+    RequestMapping.editCard(in) match {
       case Left(error) => invalid(error)
       case Right(card) =>
-        catalog.edit(card.viewer, card.lotId, card.title, card.description).map(ResponseMapping.editLotCard)
+        catalog
+          .edit(card.viewer, card.lotId, card.title, card.description, card.image)
+          .map(ResponseMapping.editLotCard)
     }
 
   def setProxyLimit(in: wire.SetProxyLimitRequest): Future[wire.SetProxyLimitResponse] =
@@ -225,8 +229,21 @@ final class AuctionGrpcService(
       case Right(acting) => run(acting.participant)
     }
 
-  // Изображение лота: колонку в строке каталога и его запись приносит форма лота PER-319 (ADR-057, дополнение).
-  def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = unimplemented
+  /**
+   * Байты изображения из строки каталога (ADR-057, дополнение). Видимость та же, что у `GetLot`: лота нет в read model,
+   * изображения нет или лот не виден — один и тот же `NOT_FOUND`.
+   */
+  def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] =
+    RequestMapping.getLotImage(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+      case Right(query) =>
+        views.image(query.lotId).flatMap {
+          case Some(image) => Future.successful(ResponseMapping.lotImage(image))
+          case None => refuse(Status.NOT_FOUND.withDescription("lot image not found"))
+        }
+    }
 
   /**
    * Аукцион у сходки (ADR-047, дополнение 2026-10-03). Роли смотрящего права не дают: его спрашивает у Meetups

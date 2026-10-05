@@ -1,5 +1,6 @@
 package auction.grpc
 
+import auction.catalog.ImageVersion
 import auction.catalog.LotCard
 import auction.catalog.LotId
 import auction.catalog.LotTitle
@@ -7,6 +8,7 @@ import auction.lot.*
 import auction.lot.LotFixtures.*
 import auction.projection.LotSnapshotView
 import auction.v1.auction as model
+import auction.v1.auction_service as wire
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -73,9 +75,17 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
     }
 
     "attaches the catalog card when the lot has one" in {
-      val card = LotCard(LotId(lotId), LotTitle("Лот").toOption.get, "описание")
+      val card = LotCard(LotId(lotId), LotTitle("Лот").toOption.get, "описание", None)
       SnapshotMapping.snapshot(view(drafted, Some(card)), participant(1)).card.map(_.title) shouldBe Some("Лот")
       SnapshotMapping.snapshot(view(drafted), participant(1)).card shouldBe None
+    }
+
+    "names the image of the card by its version and leaves it unset without one" in {
+      val bare = LotCard(LotId(lotId), LotTitle("Лот").toOption.get, "", None)
+      val pictured = bare.copy(image = Some(ImageVersion("v1")))
+      SnapshotMapping.snapshot(view(drafted, Some(pictured)), participant(1)).card.flatMap(_.image) shouldBe
+        Some(wire.LotImageRef("v1"))
+      SnapshotMapping.snapshot(view(drafted, Some(bare)), participant(1)).card.flatMap(_.image) shouldBe None
     }
   }
 }

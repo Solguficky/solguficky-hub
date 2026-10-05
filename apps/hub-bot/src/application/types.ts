@@ -26,7 +26,7 @@ export type MeetupAuctionView =
   | { kind: "open"; auctionId: string };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
-// до него код доносит операция входа (PER-316).
+// до него код доносит операция входа `RequestRole`.
 export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "source"; code: string }

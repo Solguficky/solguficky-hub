@@ -224,6 +224,16 @@ message CreateLotCardRequest {
   string title = 3;
 
   string description = 4;
+
+  // Unset creates the card without an image.
+  LotImageUpload image = 5;
+}
+
+// An image file sent to the catalog. There is no media type: Auction detects it
+// from the bytes.
+message LotImageUpload {
+  // The encoded image file as downloaded from Telegram.
+  bytes content = 1;
 }
 
 message CreateLotCardResponse {
@@ -240,6 +250,8 @@ message CreateLotCardRefusal {
     NotAdmin not_admin = 1;
     EmptyTitle empty_title = 2;
     CardConflict card_conflict = 3;
+    ImageTooLarge image_too_large = 4;
+    UnsupportedImage unsupported_image = 5;
   }
 }
 
@@ -249,11 +261,21 @@ message EditLotCardRequest {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 2;
 
-  // The whole new card: both fields replace the stored ones.
+  // Both text fields replace the stored ones.
   string title = 3;
 
   string description = 4;
+
+  // Unset keeps the stored image, or its absence, as it is: an edit of the text
+  // does not resend the file.
+  oneof image_change {
+    LotImageUpload replace_image = 5;
+    LotImageRemoval remove_image = 6;
+  }
 }
+
+// Removes the image of the card.
+message LotImageRemoval {}
 
 message EditLotCardResponse {
   // Exactly one is set.
@@ -269,6 +291,8 @@ message EditLotCardRefusal {
     NotAdmin not_admin = 1;
     EmptyTitle empty_title = 2;
     CardNotFound card_not_found = 3;
+    ImageTooLarge image_too_large = 4;
+    UnsupportedImage unsupported_image = 5;
   }
 }
 
@@ -280,6 +304,13 @@ message CardNotFound {}
 
 // Carries no card: the stored one is not shown to the caller.
 message CardConflict {}
+
+message ImageTooLarge {
+  // The largest accepted size of LotImageUpload.content, in bytes.
+  int64 max_bytes = 1;
+}
+
+message UnsupportedImage {}
 
 message GetLotRequest {
   Viewer viewer = 1;

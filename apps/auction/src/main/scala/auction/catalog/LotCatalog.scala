@@ -13,22 +13,54 @@ import scala.concurrent.Future
 trait LotCatalogStore {
 
   /** Вставляет карточку, если строки с её `lot_id` нет. `None` — вставлена, `Some` — уже была, и какая. */
-  def insertIfAbsent(card: LotCard): Future[Option[LotCard]]
+  def insertIfAbsent(card: NewCard): Future[Option[LotCard]]
 
-  /** Заменяет название и описание. `false` — карточки с этим `lot_id` нет. */
-  def update(card: LotCard): Future[Boolean]
+  /**
+   * Заменяет текст и меняет изображение по правке. `None` — карточки с этим `lot_id` нет, иначе карточка после правки.
+   */
+  def update(edit: CardEdit): Future[Option[LotCard]]
 
   def find(lotId: LotId): Future[Option[LotCard]]
 }
 
-/** Решение команды каталога без хранилища: права смотрящего, затем проверка полей. */
+/** Решение команды каталога без хранилища: права смотрящего, затем название, затем изображение. */
 object LotCatalogRules {
 
-  def decide(viewer: Viewer, lotId: LotId, title: String, description: String): Either[CatalogRefusal, LotCard] =
+  def create(
+      viewer: Viewer,
+      lotId: LotId,
+      title: String,
+      description: String,
+      image: Option[IArray[Byte]]
+  ): Either[CatalogRefusal, NewCard] =
     for {
-      _ <- Either.cond(viewer.isMeetupAdministrator, (), CatalogRefusal.NotAdmin)
+      _ <- admin(viewer)
       checked <- LotTitle(title)
-    } yield LotCard(lotId, checked, description)
+      accepted <- image match {
+        case None => Right(None)
+        case Some(bytes) => LotImage(bytes).map(Some(_))
+      }
+    } yield NewCard(lotId, checked, description, accepted)
+
+  def edit(
+      viewer: Viewer,
+      lotId: LotId,
+      title: String,
+      description: String,
+      image: ImageChange[IArray[Byte]]
+  ): Either[CatalogRefusal, CardEdit] =
+    for {
+      _ <- admin(viewer)
+      checked <- LotTitle(title)
+      change <- image match {
+        case ImageChange.Keep => Right(ImageChange.Keep)
+        case ImageChange.Remove => Right(ImageChange.Remove)
+        case ImageChange.Replace(bytes) => LotImage(bytes).map(ImageChange.Replace(_))
+      }
+    } yield CardEdit(lotId, checked, description, change)
+
+  private def admin(viewer: Viewer): Either[CatalogRefusal, Unit] =
+    Either.cond(viewer.isMeetupAdministrator, (), CatalogRefusal.NotAdmin)
 }
 
 /**
@@ -41,22 +73,28 @@ final class LotCatalogCommands(store: LotCatalogStore)(using ExecutionContext) {
       viewer: Viewer,
       lotId: LotId,
       title: String,
-      description: String
+      description: String,
+      image: Option[IArray[Byte]]
   ): Future[Either[CatalogRefusal, LotCard]] =
-    LotCatalogRules.decide(viewer, lotId, title, description) match {
+    LotCatalogRules.create(viewer, lotId, title, description, image) match {
       case Left(refusal) => Future.successful(Left(refusal))
-      case Right(card) =>
-        store.insertIfAbsent(card).map {
-          case None => Right(card)
-          case Some(existing) if existing == card => Right(existing)
+      case Right(created) =>
+        store.insertIfAbsent(created).map {
+          case None => Right(created.card)
+          case Some(existing) if existing == created.card => Right(existing)
           case Some(_) => Left(CatalogRefusal.CardConflict)
         }
     }
 
-  def edit(viewer: Viewer, lotId: LotId, title: String, description: String): Future[Either[CatalogRefusal, LotCard]] =
-    LotCatalogRules.decide(viewer, lotId, title, description) match {
+  def edit(
+      viewer: Viewer,
+      lotId: LotId,
+      title: String,
+      description: String,
+      image: ImageChange[IArray[Byte]]
+  ): Future[Either[CatalogRefusal, LotCard]] =
+    LotCatalogRules.edit(viewer, lotId, title, description, image) match {
       case Left(refusal) => Future.successful(Left(refusal))
-      case Right(card) =>
-        store.update(card).map(updated => if (updated) Right(card) else Left(CatalogRefusal.CardNotFound))
+      case Right(change) => store.update(change).map(_.toRight(CatalogRefusal.CardNotFound))
     }
 }
