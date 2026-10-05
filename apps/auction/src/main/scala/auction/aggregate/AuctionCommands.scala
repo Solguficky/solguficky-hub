@@ -42,15 +42,16 @@ trait MeetupAuthority {
 }
 
 /**
- * Почему команда аукциона не дошла до решения агрегата: так ответил Meetups, аукциона нет или лот, названный в
- * `AddLot`, уже родился в другом аукционе — такой `lot_id` край прислать не должен, и это дефект вызывающего, а не
- * отказ человеку.
+ * Почему команда аукциона не дошла до записи: так ответил Meetups, аукциона нет, реестр заморожен стартом торгов или
+ * лот, названный в `AddLot`, уже родился в другом аукционе — такой `lot_id` край прислать не должен, и это дефект
+ * вызывающего, а не отказ человеку.
  */
 enum Denial {
   case NotAdministrator
   case MeetupNotFound
   case Unavailable
   case AuctionNotFound
+  case LotsFrozen
   case LotOfAnotherAuction
 }
 
@@ -63,12 +64,29 @@ enum RemovalRefusal {
   case LotNotInAuction
 }
 
+/** Отказ `ScheduleAuction`: проверка до агрегата или решение агрегата. */
+enum SchedulingRefusal {
+  case Denied(denial: Denial)
+  case ConfigInvalid(reason: auction.aggregate.ConfigInvalid)
+  case AuctionAlreadyStarted
+}
+
+/** Отказ `StartPrebidding`: проверка до агрегата или решение агрегата. */
+enum OpeningRefusal {
+  case Denied(denial: Denial)
+  case AuctionNotScheduled
+}
+
 /**
  * Команды администратора аукциону (ADR-047, дополнение 2026-10-03). Порядок фиксирован:
  *
- *   1. повтор того же `op_id` получает исходный ответ раньше проверки права; 2. у `AddLot` и `RemoveLot` аукцион без
- *      журнала — `AuctionNotFound` до обращения к Meetups; 3. право у Meetups, и только после `Granted` — команда
+ *   1. повтор того же `op_id` получает исходный ответ раньше проверки права; 2. у всех команд, кроме рождения, аукцион
+ *      без журнала — `AuctionNotFound` до обращения к Meetups; 3. право у Meetups, и только после `Granted` — команда
  *      агрегату. Entity сверяет `seen` ещё раз, поэтому повтор, принятый между шагами, тоже получает исходный ответ.
+ *
+ * Открытие торгов командой здесь заканчивается записью события: лоты открывает entity аукциона, и ответ их не ждёт.
+ * Повтор открытия с тем же `op_id` идёт в entity мимо Meetups — события он не пишет, но доспрашивает лоты, не
+ * ответившие в прошлый раз.
  *
  * `AddLot` рождает лот в аукционе: после права лоту уходит `DraftLot` с тем же `op_id`, и только родившийся в этом
  * аукционе лот попадает в реестр. Двух записей в одной транзакции нет, поэтому порядок такой, чтобы обрыв между ними не
@@ -90,7 +108,7 @@ final class AuctionCommands(
     val auctionId = Auction.idOf(meetup)
     auctions.inspect(auctionId, opId).flatMap {
       case Inspection.Repeated(original) => Future.successful(Right(Drafted(auctionId, !drafting(original.event))))
-      case Inspection.Absent | Inspection.Present(_) =>
+      case Inspection.Absent | Inspection.Present(_, _) =>
         authorized(meetup, person, (denial: Denial) => denial) {
           auctions
             .draft(auctionId, DraftAuction(meetup, opId), Initiator.Operator(person))
@@ -110,16 +128,20 @@ final class AuctionCommands(
           case _ => Future.successful(Right(()))
         }
       case Inspection.Absent => Future.successful(Left(Denial.AuctionNotFound))
-      case Inspection.Present(meetup) =>
+      case Inspection.Present(meetup, registryOpen) =>
         authorized(meetup, person, (denial: Denial) => denial) {
-          born(auctionId, lot, opId, person).flatMap {
-            case false => Future.successful(Left(Denial.LotOfAnotherAuction))
-            case true =>
-              auctions.addLot(auctionId, AddLot(lot, opId), Initiator.Operator(person)).map {
-                case Left(AddLotRejected.AuctionNotFound) => Left(Denial.AuctionNotFound)
-                case Right(_) => Right(())
-              }
-          }
+          // Замороженный реестр отказывает до рождения лота: иначе лот остался бы с журналом, но вне реестра.
+          if (!registryOpen) Future.successful(Left(Denial.LotsFrozen))
+          else
+            born(auctionId, lot, opId, person).flatMap {
+              case false => Future.successful(Left(Denial.LotOfAnotherAuction))
+              case true =>
+                auctions.addLot(auctionId, AddLot(lot, opId), Initiator.Operator(person)).map {
+                  case Left(AddLotRejected.AuctionNotFound) => Left(Denial.AuctionNotFound)
+                  case Left(AddLotRejected.LotsFrozen) => Left(Denial.LotsFrozen)
+                  case Right(_) => Right(())
+                }
+            }
         }
     }
 
@@ -132,14 +154,51 @@ final class AuctionCommands(
     auctions.inspect(auctionId, opId).flatMap {
       case Inspection.Repeated(_) => Future.successful(Right(()))
       case Inspection.Absent => Future.successful(Left(RemovalRefusal.Denied(Denial.AuctionNotFound)))
-      case Inspection.Present(meetup) =>
+      case Inspection.Present(meetup, _) =>
         authorized(meetup, person, RemovalRefusal.Denied(_)) {
           auctions.removeLot(auctionId, RemoveLot(lot, opId), Initiator.Operator(person)).map {
             case Left(RemoveLotRejected.AuctionNotFound) => Left(RemovalRefusal.Denied(Denial.AuctionNotFound))
+            case Left(RemoveLotRejected.LotsFrozen) => Left(RemovalRefusal.Denied(Denial.LotsFrozen))
             case Left(RemoveLotRejected.LotNotInAuction) => Left(RemovalRefusal.LotNotInAuction)
             case Right(_) => Right(())
           }
         }
+    }
+
+  def schedule(
+      auctionId: AuctionId,
+      config: AuctionConfigInput,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[SchedulingRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(SchedulingRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, SchedulingRefusal.Denied(_)) {
+          auctions.schedule(auctionId, ScheduleAuction(config, opId), Initiator.Operator(person)).map {
+            case Left(ScheduleAuctionRejected.AuctionNotFound) =>
+              Left(SchedulingRefusal.Denied(Denial.AuctionNotFound))
+            case Left(ScheduleAuctionRejected.ConfigInvalid(reason)) => Left(SchedulingRefusal.ConfigInvalid(reason))
+            case Left(ScheduleAuctionRejected.AuctionAlreadyStarted) => Left(SchedulingRefusal.AuctionAlreadyStarted)
+            case Right(_) => Right(())
+          }
+        }
+    }
+
+  def startPrebidding(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[OpeningRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => start(auctionId, opId, person)
+      case Inspection.Absent => Future.successful(Left(OpeningRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, OpeningRefusal.Denied(_))(start(auctionId, opId, person))
+    }
+
+  private def start(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[OpeningRefusal, Unit]] =
+    auctions.startPrebidding(auctionId, StartPrebidding(opId), Initiator.Operator(person)).map {
+      case Left(StartPrebiddingRejected.AuctionNotFound) => Left(OpeningRefusal.Denied(Denial.AuctionNotFound))
+      case Left(StartPrebiddingRejected.AuctionNotScheduled) => Left(OpeningRefusal.AuctionNotScheduled)
+      case Right(_) => Right(())
     }
 
   /** Любой ответ Meetups, кроме `Granted`, — отказ, и до агрегата команда не доходит. */
@@ -168,6 +227,8 @@ final class AuctionCommands(
   private def drafting(event: AuctionEvent): Boolean =
     event match {
       case AuctionEvent.AuctionDrafted(_) => true
-      case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) => false
+      case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) | AuctionEvent.AuctionScheduled(_) |
+          AuctionEvent.PrebiddingStarted =>
+        false
     }
 }

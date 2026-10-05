@@ -244,7 +244,7 @@ enum ScheduleLotRejected {
 
 /**
  * Отказы `OpenLot`. `LotNotScheduled` — ответ лоту без условий торгов или уже открытому. `AnotherLotActive` проверяет
- * аукцион, а не лот (PER-325).
+ * аукцион, а не лот: это отказ `StartNextLot` в финале (PER-334), в онлайн-торгах лоты открыты одновременно.
  */
 enum OpenLotRejected {
   case LotNotFound

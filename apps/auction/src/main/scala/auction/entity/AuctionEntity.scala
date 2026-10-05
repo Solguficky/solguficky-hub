@@ -1,19 +1,26 @@
 package auction.entity
 
 import auction.aggregate.*
+import auction.catalog.LotId
+import auction.lot.LotState
 import auction.lot.OpId
+import auction.lot.OpenLotRejected
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
 import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
+import org.apache.pekko.persistence.typed.RecoveryCompleted
 import org.apache.pekko.persistence.typed.scaladsl.Effect
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
 import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
 import java.time.Clock
 import java.util.UUID
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 /**
  * Ответ entity аукциона на принятую команду: конверт записанного события (или исходный — на повтор) либо «без события».
@@ -29,6 +36,11 @@ enum AuctionAnswer {
  *
  * Права entity не проверяет: проверка у Meetups асинхронна и идёт в шлюзе между `Inspect` и командой. Окно `seen`
  * команда сверяет заново — повтор, принятый между двумя шагами, получает исходный ответ, а не второе событие.
+ *
+ * Протокол с лотами (И-14) entity только исполняет: что спросить и кого открыть, решает [[LotRoster]]. Знание о лотах в
+ * журнал и snapshot не попадает и живёт в этой инкарнации entity; после recovery оно строится тем же опросом, что и
+ * после команды открытия (ADR-045, «Восстановление лотов и аукциона»). Ответа лотов entity не ждёт: команда открытия
+ * отвечает сразу после записи события, а ответы лотов приходят ей сообщениями.
  */
 object AuctionEntity {
 
@@ -55,25 +67,107 @@ object AuctionEntity {
       replyTo: ActorRef[Either[RemoveLotRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Планирование; `Schedule` — имя сообщения, как `LotEntity.Plan` у лота. */
+  final case class Schedule(
+      command: ScheduleAuction,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[ScheduleAuctionRejected, AuctionAnswer]]
+  ) extends Command
+
+  /** Открытие онлайн-торгов. Повтор того же `op_id` события не пишет, но доспрашивает лоты, не ответившие раньше. */
+  final case class Start(
+      command: StartPrebidding,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[StartPrebiddingRejected, AuctionAnswer]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Auction]) extends Command
+
+  /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
+  final case class Lots(replyTo: ActorRef[LotRoster]) extends Command
+
+  /** Ответ лота на вопрос о состоянии; неудача — ответа нет. */
+  private[entity] final case class LotObserved(lot: LotId, state: Try[LotState]) extends Command
+
+  /** Ответ лота на `OpenLot`; неудача — ответа нет. */
+  private[entity] final case class LotAnswered(lot: LotId, answer: Try[Either[OpenLotRejected, Unit]]) extends Command
 
   /**
    * @param auctionId
    *   идентификатор аукциона: persistence id — `auction|<auctionId>`
+   * @param lots
+   *   лоты реестра: вопрос о состоянии и `OpenLot`
    */
   def apply(
       auctionId: String,
       clock: Clock,
       newId: () => UUID,
+      lots: AuctionLots,
       snapshotEvery: Int = DefaultSnapshotEvery
   ): Behavior[Command] =
     Behaviors.setup { context =>
       val persistenceId = PersistenceId(TypeKey.name, auctionId)
       val tag = Set(AuctionTags.of(Persistence(context.system.classicSystem).sliceForPersistenceId(persistenceId.id)))
+
+      // Знание о лотах несохраняемо по решению (RFC-011): рестарт пересоздаёт замыкание пустым, и устаревшее знание
+      // recovery пережить не может. Меняют его только сообщения этой entity, по одному.
+      var roster = LotRoster.empty
+
+      def follow(step: (LotRoster, List[LotInstruction])): Unit = {
+        val (known, instructions) = step
+        roster = known
+        instructions.foreach {
+          case LotInstruction.Ask(lot) => context.pipeToSelf(lots.stateOf(lot))(LotObserved(lot, _))
+          case LotInstruction.Open(lot, command) => context.pipeToSelf(lots.open(lot, command))(LotAnswered(lot, _))
+        }
+      }
+
+      def silent(lot: LotId, failure: Throwable): Unit = {
+        context.log.warn("auction {} got no answer from lot {}: {}", auctionId, lot.value, failure.getClass.getName)
+        roster = LotRoster.unanswered(roster, lot)
+      }
+
+      def onCommand(state: State, command: Command): Effect[StoredAuctionEvent, State] =
+        command match {
+          case Start(start, initiator, replyTo) =>
+            Auction.decide(state.auction, start) match {
+              case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+              case Right(decision) =>
+                record(state.auction, decision, start.opId, initiator, clock, newId) { (auction, answer) =>
+                  replyTo ! Right(answer)
+                  decision match {
+                    case AuctionDecision.Accepted(_) => follow(LotRoster.survey(auction))
+                    case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged =>
+                      follow(LotRoster.resume(auction, roster))
+                  }
+                }
+            }
+          case Lots(replyTo) => Effect.reply(replyTo)(roster)
+          case LotObserved(lot, Success(lotState)) =>
+            Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
+          case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => silent(lot, failure))
+          case LotAnswered(lot, Success(answer)) =>
+            Effect.none.thenRun(_ => roster = LotRoster.opened(roster, lot, answer))
+          case LotAnswered(lot, Failure(failure)) => Effect.none.thenRun(_ => silent(lot, failure))
+          case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
+          case Draft(draft, initiator, replyTo) =>
+            val decision = Auction.decide(state.auction, draft)
+            record(state.auction, decision, draft.opId, initiator, clock, newId)((_, answer) => replyTo ! answer)
+          case Add(add, initiator, replyTo) =>
+            answered(state.auction, Auction.decide(state.auction, add), add.opId, initiator, replyTo, clock, newId)
+          case Remove(remove, initiator, replyTo) =>
+            val decision = Auction.decide(state.auction, remove)
+            answered(state.auction, decision, remove.opId, initiator, replyTo, clock, newId)
+          case Schedule(schedule, initiator, replyTo) =>
+            val decision = Auction.decide(state.auction, schedule)
+            answered(state.auction, decision, schedule.opId, initiator, replyTo, clock, newId)
+          case Get(replyTo) => Effect.reply(replyTo)(state.auction)
+        }
+
       EventSourcedBehavior[Command, StoredAuctionEvent, State](
         persistenceId = persistenceId,
         emptyState = State(Auction.initial, 0),
-        commandHandler = (state, command) => handle(state, command, clock, newId),
+        commandHandler = onCommand,
         eventHandler = (state, stored) => {
           val sequence = state.sequence + 1
           State(Auction.apply(state.auction, AuctionJournal.envelope(sequence, stored)), sequence)
@@ -81,48 +175,46 @@ object AuctionEntity {
       ).snapshotAdapter(AuctionJournal.snapshotAdapter)
         .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
         .withTagger(_ => tag)
+        .receiveSignal { case (state, RecoveryCompleted) => follow(LotRoster.survey(state.auction)) }
     }
 
-  private def handle(
-      state: State,
-      command: Command,
-      clock: Clock,
-      newId: () => UUID
-  ): Effect[StoredAuctionEvent, State] = {
-    val auction = state.auction
-    command match {
-      case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(auction, opId))
-      case Draft(draft, initiator, replyTo) =>
-        record(Auction.decide(auction, draft), draft.opId, initiator, clock, newId)(replyTo ! _)
-      case Add(add, initiator, replyTo) =>
-        Auction.decide(auction, add) match {
-          case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
-          case Right(decision) => record(decision, add.opId, initiator, clock, newId)(answer => replyTo ! Right(answer))
-        }
-      case Remove(remove, initiator, replyTo) =>
-        Auction.decide(auction, remove) match {
-          case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
-          case Right(decision) =>
-            record(decision, remove.opId, initiator, clock, newId)(answer => replyTo ! Right(answer))
-        }
-      case Get(replyTo) => Effect.reply(replyTo)(auction)
-    }
-  }
-
-  /** Событие команды пишется одним `persist` с конвертом ADR-047; отказ и «без события» ничего не пишут. */
+  /**
+   * Событие команды пишется одним `persist` с конвертом ADR-047; отказ и «без события» ничего не пишут. Ответ получает
+   * аукцион после команды: у записанного события — уже с ним.
+   */
   private def record(
+      auction: Auction,
       decision: AuctionDecision,
       opId: OpId,
       initiator: Initiator,
       clock: Clock,
       newId: () => UUID
-  )(reply: AuctionAnswer => Unit): Effect[StoredAuctionEvent, State] =
+  )(reply: (Auction, AuctionAnswer) => Unit): Effect[StoredAuctionEvent, State] =
     decision match {
-      case AuctionDecision.Repeated(original) => Effect.none.thenRun(_ => reply(AuctionAnswer.Written(original)))
-      case AuctionDecision.Unchanged => Effect.none.thenRun(_ => reply(AuctionAnswer.Unchanged))
+      case AuctionDecision.Repeated(original) =>
+        Effect.none.thenRun(_ => reply(auction, AuctionAnswer.Written(original)))
+      case AuctionDecision.Unchanged => Effect.none.thenRun(_ => reply(auction, AuctionAnswer.Unchanged))
       case AuctionDecision.Accepted(event) =>
         val stored = AuctionJournal.store(newId(), newId(), opId, clock.instant(), initiator)(event)
-        Effect.persist(stored).thenRun(written => reply(AuctionAnswer.Written(firstOf(written.auction, opId))))
+        Effect
+          .persist(stored)
+          .thenRun(written => reply(written.auction, AuctionAnswer.Written(firstOf(written.auction, opId))))
+    }
+
+  /** Команда с именованным отказом: отказ уходит ответом без записи, принятое решение — в [[record]]. */
+  private def answered[R](
+      auction: Auction,
+      decision: Either[R, AuctionDecision],
+      opId: OpId,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[R, AuctionAnswer]],
+      clock: Clock,
+      newId: () => UUID
+  ): Effect[StoredAuctionEvent, State] =
+    decision match {
+      case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+      case Right(accepted) =>
+        record(auction, accepted, opId, initiator, clock, newId)((_, answer) => replyTo ! Right(answer))
     }
 
   private def firstOf(auction: Auction, opId: OpId): AuctionEnvelope =

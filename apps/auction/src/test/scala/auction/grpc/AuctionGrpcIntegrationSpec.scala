@@ -144,7 +144,7 @@ final class AuctionGrpcIntegrationSpec
       val clock = Clock.systemUTC()
       val sharding = AuctionNode.join(kit.system)
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-      AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock))
+      AuctionNode.registerAuctions(sharding, clock, UuidV7.generator(clock), 10.seconds)
       AuctionNode.startProjection(
         kit.system,
         ProjectionMetrics(OpenTelemetry.noop().getMeter("auction"), clock),

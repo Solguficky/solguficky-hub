@@ -43,6 +43,8 @@ object AuctionViewHandler {
   def status(stored: StoredAuction): String =
     stored.state match {
       case "Draft" => "draft"
+      case "Scheduled" => "scheduled"
+      case "Prebidding" => "prebidding"
       case other => throw new IllegalStateException(s"auction view of state $other has no status")
     }
 }

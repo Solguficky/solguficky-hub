@@ -30,7 +30,7 @@ object AuctionViews {
 
   /**
    * Статусы выборки — значения `auction_view.status`. Активные — от `scheduled` до `in_final`, прошедшие — `finished`;
-   * сегодня проекция пишет только `draft`, остальные статусы приносит машина аукциона (PER-325, PER-334).
+   * проекция пишет `draft`, `scheduled` и `prebidding`, остальные статусы приносит перерыв и финал (PER-334).
    */
   def statuses(listing: AuctionListing): List[String] =
     listing match {

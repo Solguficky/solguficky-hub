@@ -13,6 +13,7 @@
     "lotAdded": {
       "lotId": "0190f2a0-0000-7000-8000-00000000000b"
     },
-    "lotRemoved": null
+    "lotRemoved": null,
+    "auctionScheduled": null
   }
 }

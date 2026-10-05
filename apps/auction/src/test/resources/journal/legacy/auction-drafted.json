@@ -1,19 +1,18 @@
 {
   "eventId": "0190f2a0-0000-7000-8000-000000000001",
   "transactionId": "0190f2a0-0000-7000-8000-000000000002",
-  "opId": "00000000-0000-0003-0000-000000000003",
+  "opId": "00000000-0000-0003-0000-000000000001",
   "occurredAt": "2026-10-01T09:00:00Z",
   "actor": {
     "kind": "Operator",
     "id": "00000000-0000-0001-0000-000000000001"
   },
   "event": {
-    "kind": "LotRemoved",
-    "auctionDrafted": null,
-    "lotAdded": null,
-    "lotRemoved": {
-      "lotId": "0190f2a0-0000-7000-8000-00000000000b"
+    "kind": "AuctionDrafted",
+    "auctionDrafted": {
+      "meetupId": "0190f2a0-0000-7000-8000-00000000000a"
     },
-    "auctionScheduled": null
+    "lotAdded": null,
+    "lotRemoved": null
   }
 }
