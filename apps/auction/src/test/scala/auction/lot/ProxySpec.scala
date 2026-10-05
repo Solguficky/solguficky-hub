@@ -255,6 +255,44 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
         case other => fail(s"лот не удержан: $other")
       }
     }
+
+    "answer a repeated withdrawal with the original response and another participant's with OpIdTaken" in {
+      val (_, limited) = open.limit(setProxyLimit(who = 1, max = 200, opN = 1))
+      val (_, journal) = limited.withdraw(withdrawProxyLimit(who = 1, opN = 2))
+      val withdrawn = journal.entries.last
+
+      Lot.decide(journal.lot, withdrawProxyLimit(who = 1, opN = 2)) shouldBe Right(Decision.Repeated(withdrawn))
+      Lot.decide(journal.lot, withdrawProxyLimit(who = 2, opN = 2)) shouldBe Left(WithdrawProxyLimitRejected.OpIdTaken)
+    }
+  }
+
+  "op_id of another command" should {
+
+    "refuse another participant's limit under a taken op_id with OpIdTaken and write nothing" in {
+      val (_, journal) = open.limit(setProxyLimit(who = 1, max = 200, opN = 1))
+
+      journal.limit(setProxyLimit(who = 2, max = 300, opN = 1)) shouldBe
+        (Left(SetProxyLimitRejected.OpIdTaken), journal)
+    }
+
+    "refuse the owner's command of another kind under the op_id of an accepted one with OpIdTaken" in {
+      val (_, bidden) = open.submit(placeBid(who = 1, amount = 110, opN = 1), bid(1))
+      val (_, journal) = bidden.limit(setProxyLimit(who = 2, max = 300, opN = 2))
+
+      journal.limit(setProxyLimit(who = 1, max = 400, opN = 1)) shouldBe
+        (Left(SetProxyLimitRejected.OpIdTaken), journal)
+      journal.withdraw(withdrawProxyLimit(who = 1, opN = 1)) shouldBe
+        (Left(WithdrawProxyLimitRejected.OpIdTaken), journal)
+    }
+
+    "refuse a bid under the op_id of a limit that placed a derived bid, though the derived bid is the bidder's own" in {
+      val (_, bidden) = open.submit(placeBid(who = 1, amount = 110, opN = 1), bid(1))
+      val (_, journal) = bidden.limit(setProxyLimit(who = 2, max = 300, opN = 2))
+
+      journal.entries.last.event shouldBe a[LotEvent.BidPlaced]
+      journal.submit(placeBid(who = 2, amount = 500, opN = 2), bid(2)) shouldBe
+        (Left(PlaceBidRejected.OpIdTaken), journal)
+    }
   }
 
   "proxy bidding" should {

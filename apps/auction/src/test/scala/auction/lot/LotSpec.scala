@@ -351,6 +351,27 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       Lot.decide(recovered, command, bid(2), proxyBid(2)) shouldBe Right(Decision.Repeated(journal.entries.head))
     }
 
+    "refuse another participant's bid under a taken op_id with OpIdTaken, write nothing and leak no bid_id" in {
+      val (_, journal) = Journal.of(trading(price = 100)).submit(placeBid(who = 1, amount = 110, opN = 1), bid(1))
+
+      val (foreign, after) = journal.submit(placeBid(who = 2, amount = 120, opN = 1), bid(2))
+
+      foreign shouldBe Left(PlaceBidRejected.OpIdTaken)
+      after shouldBe journal
+    }
+
+    "tell the owner's repeat from another participant's after the window is replayed from the journal" in {
+      val start = trading(price = 100)
+      val command = placeBid(who = 1, amount = 110, opN = 1)
+      val (_, journal) = Journal.of(start).submit(command, bid(1))
+
+      val recovered = Lot.replay(start, journal.entries)
+
+      Lot.decide(recovered, command, bid(2), proxyBid(2)) shouldBe Right(Decision.Repeated(journal.entries.head))
+      Lot.decide(recovered, placeBid(who = 2, amount = 120, opN = 1), bid(2), proxyBid(2)) shouldBe
+        Left(PlaceBidRejected.OpIdTaken)
+    }
+
     "leave exactly one leader after a volley of equal bids in any order (Т-15)" in {
       val volleys = for {
         size <- Gen.chooseNum(2, 10)
