@@ -18,6 +18,7 @@
     "lotSold": null,
     "lotUnsold": {
       "reason": "NoBids"
-    }
+    },
+    "deadlineExtended": null
   }
 }

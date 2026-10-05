@@ -105,8 +105,20 @@ final class AuctionClosingIntegrationSpec
   private def weekUntil(closesAt: Instant): AuctionConfigInput =
     configInput(Some(OnlinePhase(Instant.now().minusSeconds(3600), Some(closesAt), closesLots = true)))
 
+  /**
+   * Анти-снайп с окном в секунду: ставка тестов за несколько секунд до дедлайна в него не попадает, и лот закрывается в
+   * свой дедлайн. Продление проверяет отдельный тест.
+   */
+  private val quietAntiSnipe = AntiSnipe(Duration.ofSeconds(1), Duration.ofSeconds(1), 3)
+
   /** Аукцион сходки с `size` лотами, у каждого условия торгов; открыт с общим дедлайном `closesIn` от планирования. */
-  private def opened(node: Node, size: Int, closesIn: java.time.Duration): (AuctionId, List[LotId], Instant) = {
+  private def opened(
+      node: Node,
+      size: Int,
+      closesIn: java.time.Duration,
+      antiSnipe: AntiSnipe = quietAntiSnipe
+  ): (AuctionId, List[LotId], Instant) = {
+    val terms = scheduleLot(opN = 2, input = _root_.auction.lot.LotFixtures.configInput().copy(antiSnipe = antiSnipe))
     val auction = node.commands
       .draft(MeetupId(newId()), newOp(), person)
       .futureValue
@@ -115,7 +127,7 @@ final class AuctionClosingIntegrationSpec
     lots.foreach { lot =>
       node.commands.addLot(auction, lot, newOp(), person).futureValue shouldBe Right(())
       lotRef(node, lot)
-        .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(person), _))
+        .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(terms, Initiator.Operator(person), _))
         .futureValue
         .isRight shouldBe true
     }
@@ -209,6 +221,31 @@ final class AuctionClosingIntegrationSpec
       onDatabase(database) { node =>
         lotState(node, lot) should matchPattern { case LotState.Sold(sale) if sale.winner == participant(2) => }
         journalRows(database, lot) shouldBe rows
+      }
+    }
+
+    "keep a deadline extended by a bid in the window over a restart and close the lot only after it (ПП-2)" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      // Окно шире всего теста, продление — четыре секунды: ставка сразу после открытия продлевает дедлайн.
+      val extending = AntiSnipe(Duration.ofSeconds(30), Duration.ofSeconds(4), 3)
+      val (lot, extended) = onDatabase(database) { node =>
+        val (_, lots, closesAt) = opened(node, size = 1, closesIn = java.time.Duration.ofSeconds(6), extending)
+        bid(node, lots.head, participant(2))
+        val extended = closesAt.plus(extending.extension)
+        lotState(node, lots.head) should matchPattern {
+          case LotState.Trading(trading) if trading.deadline.contains(extended) && trading.extensionsUsed == 1 =>
+        }
+        // Таймер старого дедлайна сработал, лот отказал закрытию, и аукцион взвёл таймер по продлённому.
+        sleepUntil(closesAt.plusSeconds(1))
+        lotState(node, lots.head) shouldBe a[LotState.Trading]
+        (lots.head, extended)
+      }
+      sleepUntil(extended.plusSeconds(1))
+      onDatabase(database) { node =>
+        eventually(lotState(node, lot) should matchPattern {
+          case LotState.Sold(sale) if sale.winner == participant(2) && !sale.at.isBefore(extended) =>
+        })
       }
     }
 

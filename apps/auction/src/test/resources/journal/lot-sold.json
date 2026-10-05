@@ -24,6 +24,7 @@
       "bidId": "00000000-0000-0002-0000-000000000001",
       "at": "2026-10-07T18:00:00Z"
     },
-    "lotUnsold": null
+    "lotUnsold": null,
+    "deadlineExtended": null
   }
 }

@@ -17,6 +17,8 @@ import auction.lot.LotFixtures.participant
 import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.PlaceBid
+import auction.lot.Sale
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
 import auction.lot.StepPolicyInput
@@ -36,6 +38,7 @@ import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -108,6 +111,18 @@ final class AuctionEntitySpec
         Lot.decide(lots(lot), command, now()).map(decision => written(lot, command.opId, decision)).map(_ => ())
       if (mute(lot)) Future.failed(new java.util.concurrent.TimeoutException("the lot did not answer"))
       else Future.successful(answer)
+    }
+
+    /** Ставка участника, как её принял бы лот: событие команды и производные, продление в том числе, — по порядку. */
+    def bid(lot: LotId, command: PlaceBid, at: Instant): Unit = synchronized {
+      Lot.decide(lots(lot), command, LotFixtures.bid(90), LotFixtures.proxyBid(90), at) match {
+        case Right(Decision.Accepted(event, derived)) =>
+          val after = (event :: derived).foldLeft(lots(lot)) { (current, each) =>
+            Lot.apply(current, Envelope(current.seen.size.toLong + 1, command.opId, each))
+          }
+          lots = lots.updated(lot, after)
+        case other => throw new AssertionError(s"the lot did not take the bid: $other")
+      }
     }
 
     private var conditions = Vector.empty[(LotId, ScheduleLot, Initiator)]
@@ -462,6 +477,32 @@ final class AuctionEntitySpec
       entity.restart()
       eventually(roster.lots shouldBe Map(lot -> LotStanding.Closed))
       lots.stateNow(lot) shouldBe LotState.Unsold(UnsoldReason.NoBids)
+    }
+
+    "re-arms the closing on the deadline the lot extended and sells the lot only after that deadline" in {
+      val opening = scheduledWith(lot)
+      // Таймер старого дедлайна сработает через секунду настоящего времени.
+      time.instant0 = closesAt.minusSeconds(1)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      lots.bid(lot, LotFixtures.placeBid(who = 2, amount = 110, opN = 90), time.instant())
+      val extended = closesAt.plus(Duration.ofMinutes(2))
+      time.instant0 = closesAt.plusSeconds(1)
+
+      // Лот отказал закрытию по старому дедлайну, аукцион переспросил его и взвёл таймер на новый.
+      eventually(timeout(Span(3, Seconds))) {
+        lots.closes.size shouldBe 1
+        lots.asked.count(_ == lot) shouldBe 2
+        roster.active shouldBe Set(lot)
+      }
+      lots.stateNow(lot) shouldBe a[LotState.Trading]
+
+      time.instant0 = extended.plusSeconds(1)
+      entity.restart()
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Closed))
+      lots.stateNow(lot) shouldBe
+        LotState.Sold(Sale(participant(2), LotFixtures.money(110), LotFixtures.bid(90), extended.plusSeconds(1)))
+      lots.closes.map(_._2.opId).distinct shouldBe Vector(LotRoster.closeOpId(op(opening), lot))
     }
 
     "asks a lot that did not answer the closing again on its own and closes it with the same op_id" in {

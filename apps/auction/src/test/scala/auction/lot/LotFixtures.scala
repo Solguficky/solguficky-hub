@@ -45,6 +45,15 @@ object LotFixtures {
 
   val deadline: Instant = Instant.parse("2026-10-07T18:00:00Z")
 
+  /** Время команды за час до дедлайна: вне окна анти-снайпа, поэтому ставка дедлайн не трогает. */
+  val calm: Instant = deadline.minus(Duration.ofHours(1))
+
+  /**
+   * Дедлайн для сьютов на системных часах: их ставка в окно анти-снайпа не попадает, когда бы тест ни шёл. С `deadline`
+   * такой сьют начал бы продлевать лот, как только настоящее время подошло бы к нему.
+   */
+  val distantDeadline: Instant = Instant.parse("2126-01-01T00:00:00Z")
+
   /** Вход `ScheduleLot`, который даёт `config()`: тот же образец в непроверенной форме. */
   def configInput(
       policy: StepPolicyInput = StepPolicyInput.Fixed(money(10)),
@@ -78,7 +87,9 @@ object LotFixtures {
       leader: Option[ParticipantId] = None,
       ask: Option[Long] = None,
       limits: Map[ParticipantId, ProxyLimit] = Map.empty,
-      proxyEnabled: Boolean = true
+      proxyEnabled: Boolean = true,
+      closesAt: Option[Instant] = Some(deadline),
+      extensionsUsed: Int = 0
   ): Lot =
     lotIn(
       LotState.Trading(
@@ -89,7 +100,8 @@ object LotFixtures {
           leader = leader,
           leadingBidId = leader.map(_ => bid(0)),
           phase = phase,
-          deadline = Some(deadline),
+          deadline = closesAt,
+          extensionsUsed = extensionsUsed,
           proxyLimits = limits
         )
       )
@@ -156,13 +168,16 @@ object LotFixtures {
     def open(command: OpenLot): (Either[OpenLotRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command))
 
-    /** Решение по команде и журнал после него: принятое событие получает следующий `sequence` и применяется. */
-    def submit(command: PlaceBid, bidId: BidId): (Either[PlaceBidRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, bidId, proxyBid(entries.size + 1)))
+    /**
+     * Решение по команде и журнал после него: принятое событие получает следующий `sequence` и применяется. По
+     * умолчанию команда приходит вне окна анти-снайпа.
+     */
+    def submit(command: PlaceBid, bidId: BidId, now: Instant = calm): (Either[PlaceBidRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, bidId, proxyBid(entries.size + 1), now))
 
     /** Лимит; производная ставка, если она есть, получает `proxyBid` с номером первой строки транзакции. */
-    def limit(command: SetProxyLimit): (Either[SetProxyLimitRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, entries.size.toLong + 1, proxyBid(entries.size + 1)))
+    def limit(command: SetProxyLimit, now: Instant = calm): (Either[SetProxyLimitRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, entries.size.toLong + 1, proxyBid(entries.size + 1), now))
 
     def withdraw(command: WithdrawProxyLimit): (Either[WithdrawProxyLimitRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command))

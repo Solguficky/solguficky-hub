@@ -67,6 +67,9 @@ final case class StoredProxyLimitSet(participant: UUID, max: StoredMoney)
 
 final case class StoredProxyLimitWithdrawn(participant: UUID)
 
+/** Секция `DeadlineExtended`: итог продления — новый дедлайн и счётчик, а не приращение (ADR-047). */
+final case class StoredDeadlineExtended(newDeadline: Instant, extensionsUsed: Int)
+
 /** Секция `LotUnsold`: причина именем варианта `UnsoldReason`. */
 final case class StoredLotUnsold(reason: String)
 
@@ -82,13 +85,14 @@ final case class StoredEvent(
     proxyLimitSet: Option[StoredProxyLimitSet],
     proxyLimitWithdrawn: Option[StoredProxyLimitWithdrawn],
     lotSold: Option[StoredSale],
-    lotUnsold: Option[StoredLotUnsold]
+    lotUnsold: Option[StoredLotUnsold],
+    deadlineExtended: Option[StoredDeadlineExtended]
 )
 
 object StoredEvent {
 
   /** Событие данного вида без единой секции; заполненную секцию добавляет `copy`. */
-  def of(kind: String): StoredEvent = StoredEvent(kind, None, None, None, None, None, None, None)
+  def of(kind: String): StoredEvent = StoredEvent(kind, None, None, None, None, None, None, None, None)
 }
 
 /** Поле `actor` конверта ADR-047; в коде его значение — [[Initiator]], чтобы не спорить с актором Pekko. */
@@ -115,7 +119,8 @@ final case class StoredProxyLimit(participant: UUID, max: StoredMoney, setSeq: L
 
 /**
  * `proxyLimits` необязателен по форме: snapshot, записанный до прокси-лимитов, его не несёт и читается как торги без
- * лимитов. Новый snapshot пишет его всегда, в порядке `setSeq`.
+ * лимитов. Новый snapshot пишет его всегда, в порядке `setSeq`. `extensionsUsed` так же: snapshot, записанный до
+ * анти-снайпа, читается как торги без продлений — других тогда и не было.
  */
 final case class StoredTrading(
     config: StoredConfig,
@@ -125,7 +130,8 @@ final case class StoredTrading(
     leadingBidId: Option[UUID],
     phase: String,
     deadline: Option[Instant],
-    proxyLimits: Option[List[StoredProxyLimit]]
+    proxyLimits: Option[List[StoredProxyLimit]],
+    extensionsUsed: Option[Int]
 )
 
 final case class StoredHeld(
@@ -302,6 +308,10 @@ object LotJournal {
         StoredEvent.of("LotSold").copy(lotSold = Some(StoredSale(winner.value, storeMoney(price), bidId.value, at)))
       case LotEvent.LotUnsold(reason) =>
         StoredEvent.of("LotUnsold").copy(lotUnsold = Some(StoredLotUnsold(reason.toString)))
+      case LotEvent.DeadlineExtended(newDeadline, extensionsUsed) =>
+        StoredEvent
+          .of("DeadlineExtended")
+          .copy(deadlineExtended = Some(StoredDeadlineExtended(newDeadline, extensionsUsed)))
     }
 
   /** Ровно одна секция, и та, что названа `kind`; у `LotDrafted` — ни одной. Иначе строка испорчена. */
@@ -313,7 +323,8 @@ object LotJournal {
       stored.proxyLimitSet,
       stored.proxyLimitWithdrawn,
       stored.lotSold,
-      stored.lotUnsold
+      stored.lotUnsold,
+      stored.deadlineExtended
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -353,6 +364,10 @@ object LotJournal {
       case ("LotUnsold", 1) =>
         stored.lotUnsold.fold(mismatch) { unsold =>
           LotEvent.LotUnsold(restoreEnum("unsold reason", unsold.reason)(UnsoldReason.valueOf))
+        }
+      case ("DeadlineExtended", 1) =>
+        stored.deadlineExtended.fold(mismatch) { extended =>
+          LotEvent.DeadlineExtended(extended.newDeadline, extended.extensionsUsed)
         }
       case _ => mismatch
     }
@@ -405,7 +420,8 @@ object LotJournal {
               leadingBidId = trading.leadingBidId.map(_.value),
               phase = trading.phase.toString,
               deadline = trading.deadline,
-              proxyLimits = storeLimits(trading.proxyLimits)
+              proxyLimits = storeLimits(trading.proxyLimits),
+              extensionsUsed = Some(trading.extensionsUsed)
             )
           ),
           held = None,
@@ -459,6 +475,7 @@ object LotJournal {
             leadingBidId = trading.leadingBidId.map(BidId(_)),
             phase = restoreEnum("phase", trading.phase)(Phase.valueOf),
             deadline = trading.deadline,
+            extensionsUsed = trading.extensionsUsed.getOrElse(0),
             proxyLimits = restoreLimits(trading.proxyLimits, config)
           )
         )

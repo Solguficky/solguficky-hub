@@ -17,6 +17,8 @@ import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.Await
@@ -81,15 +83,20 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
     kit.spawn(LotEntity(id, clock, UuidV7.generator(clock), snapshotEvery))
 
   /** Полный путь до торгов: рождение, планирование и открытие занимают `op(1)`–`op(3)` и строки 1–3 журнала. */
-  private def openOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command]): Either[OpenLotRejected, Envelope] = {
+  private def openOn(
+      kit: ActorTestKit,
+      entity: ActorRef[LotEntity.Command],
+      input: LotConfigInput = configInput(),
+      closesAt: Instant = deadline
+  ): Either[OpenLotRejected, Envelope] = {
     val drafted = kit.createTestProbe[Either[DraftLotRejected, Envelope]]()
     entity ! LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, drafted.ref)
     drafted.receiveMessage(patience)
     val planned = kit.createTestProbe[Either[ScheduleLotRejected, Envelope]]()
-    entity ! LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(participant(9)), planned.ref)
+    entity ! LotEntity.Plan(scheduleLot(opN = 2, input = input), Initiator.Operator(participant(9)), planned.ref)
     planned.receiveMessage(patience)
     val replies = kit.createTestProbe[Either[OpenLotRejected, Envelope]]()
-    entity ! LotEntity.Open(openLot(opN = 3), Initiator.Scheduler, replies.ref)
+    entity ! LotEntity.Open(openLot(opN = 3, deadline = Some(closesAt)), Initiator.Scheduler, replies.ref)
     replies.receiveMessage(patience)
   }
 
@@ -181,6 +188,39 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
           val written = journal(database, id)
           written.map(_.sequence) shouldBe (1L to 9L).toList
           rowsWithOp(database, id, opN = 6) shouldBe 2
+          if (snapshotEvery == 2) snapshots(database, id) should not be empty
+        } finally second.shutdownTestKit()
+      }
+    }
+
+    "keep the extended deadline and the count of extensions on a new node, so their limit is not reset (ПП-2)" in {
+      // Окно в час при двух продлениях: часы фиксированы, и каждая ставка ложится в окно, где бы ни был дедлайн.
+      val input = configInput().copy(antiSnipe = AntiSnipe(Duration.ofHours(1), Duration.ofMinutes(1), 2))
+      val closesAt = decidedAt.plus(Duration.ofMinutes(1))
+      List(LotEntity.DefaultSnapshotEvery, 2).foreach { snapshotEvery =>
+        val database = freshDatabase()
+        val id = UUID.randomUUID().toString
+        val first = node(database)
+        val beforeRestart =
+          try {
+            val entity = lot(first, id, snapshotEvery)
+            openOn(first, entity, input, closesAt)
+            bidOn(first, entity, who = 1, amount = 110, opN = 4)
+            bidOn(first, entity, who = 2, amount = 120, opN = 5)
+            tradingOf(read(first, entity))
+          } finally first.shutdownTestKit()
+
+        val second = node(database)
+        try {
+          val entity = lot(second, id, snapshotEvery)
+          val restored = tradingOf(read(second, entity))
+
+          restored shouldBe beforeRestart
+          (restored.deadline, restored.extensionsUsed) shouldBe (Some(closesAt.plus(Duration.ofMinutes(2))), 2)
+          // Лимит исчерпан до рестарта и после него не обнулился: ставка в окне пишет одну строку, без продления.
+          bidOn(second, entity, who = 1, amount = 130, opN = 6).map(_.sequence) shouldBe Right(8L)
+          rowsWithOp(database, id, opN = 6) shouldBe 1
+          tradingOf(read(second, entity)).deadline shouldBe restored.deadline
           if (snapshotEvery == 2) snapshots(database, id) should not be empty
         } finally second.shutdownTestKit()
       }

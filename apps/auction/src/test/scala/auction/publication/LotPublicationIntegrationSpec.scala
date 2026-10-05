@@ -95,7 +95,11 @@ final class LotPublicationIntegrationSpec
     entity
       .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(scheduleLot(opN = 2), Initiator.Scheduler, _))
       .futureValue
-    entity.ask[Either[OpenLotRejected, Envelope]](LotEntity.Open(openLot(opN = 3), Initiator.Scheduler, _)).futureValue
+    entity
+      .ask[Either[OpenLotRejected, Envelope]](
+        LotEntity.Open(openLot(opN = 3, deadline = Some(distantDeadline)), Initiator.Scheduler, _)
+      )
+      .futureValue
     id
   }
 
