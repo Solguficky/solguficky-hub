@@ -2,7 +2,9 @@ import type {
   AuctionBlock,
   AuctionButton,
   AuctionScreenBody,
+  BidOriginView,
   FeedItem,
+  HistoryItem,
   LotStatusView,
   Money,
 } from "@solguficky/auction-bot-ui";
@@ -59,14 +61,19 @@ export function auctionScreen(view: AuctionView): AuctionShown {
       block.kind === "lot",
   );
   if (lot !== undefined) return lotScreen(view, lot);
+  const history = view.body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "history" }> =>
+      block.kind === "history",
+  );
+  if (history !== undefined) return { screen: historyScreen(view, history) };
   const feed = view.body.blocks.find(
     (block): block is Extract<AuctionBlock, { kind: "feed" }> =>
       block.kind === "feed",
   );
   if (feed === undefined) {
-    // Тело без ленты и лота пакет не отдаёт: новый вид блока не становится
-    // лентой молча.
-    throw new Error("auction body without a feed or a lot block");
+    // Тело без ленты, лота и хронологии пакет не отдаёт: новый вид блока не
+    // становится лентой молча.
+    throw new Error("auction body without a feed, a lot or a history block");
   }
   return { screen: feedScreen(view, feed) };
 }
@@ -112,8 +119,12 @@ function feedLabel(
     case "feed.next":
       return "→";
     case "lot.refresh":
+    case "lot.history":
     case "lot.back":
-      throw new Error(`lot action ${button.action} in a feed body`);
+    case "history.prev":
+    case "history.next":
+    case "history.back":
+      throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
       return _exhaustive;
@@ -197,13 +208,109 @@ function lotLabel(button: AuctionButton): string {
   switch (button.action) {
     case "lot.refresh":
       return "Обновить";
+    case "lot.history":
+      return "Ставки";
     case "feed.open-lot":
     case "feed.prev":
     case "feed.next":
     case "lot.back":
+    case "history.prev":
+    case "history.next":
+    case "history.back":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
+      return _exhaustive;
+    }
+  }
+}
+
+// Хронология ставок лота (PER-309): строки по порядку журнала, листание
+// «←» и «→», а возврат тела на карточку оболочка ставит в один ряд с «Меню».
+function historyScreen(
+  view: AuctionView,
+  history: Extract<AuctionBlock, { kind: "history" }>,
+): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  let back: Parent | undefined;
+  for (const row of view.body.keyboard) {
+    const content = row.filter((button) => {
+      if (button.action !== "history.back") return true;
+      back = { name: "Лот", data: button.callbackData };
+      return false;
+    });
+    if (content.length === 0) continue;
+    nextRow(keyboard);
+    for (const button of content) {
+      keyboard.text(historyLabel(button), button.callbackData);
+    }
+  }
+  if (back === undefined) {
+    throw new Error("history body without a way back to the lot");
+  }
+  return {
+    id: "bids",
+    text: screenText(
+      pagedTitle("Ставки", {
+        items: history.entries,
+        page: history.page,
+        pageCount: history.pageCount,
+      }),
+      escapeHtml(truncate(history.title ?? untitled, titleLimit)),
+      history.entries.length === 0
+        ? "Ставок пока нет."
+        : history.entries
+            .map((entry) => escapeHtml(historyLine(entry, view)))
+            .join("\n"),
+    ),
+    keyboard: withNav(keyboard, back),
+    format: "HTML",
+  };
+}
+
+function historyLabel(button: AuctionButton): string {
+  switch (button.action) {
+    case "history.prev":
+      return "←";
+    case "history.next":
+      return "→";
+    case "feed.open-lot":
+    case "feed.prev":
+    case "feed.next":
+    case "lot.refresh":
+    case "lot.history":
+    case "lot.back":
+    case "history.back":
+      throw new Error(`action ${button.action} in a history body`);
+    default: {
+      const _exhaustive: never = button;
+      return _exhaustive;
+    }
+  }
+}
+
+// Строка ставки: когда, кто, сколько и как. Имени нет — Auction его не отдал,
+// идентификатор человеку не показывается; лимита прокси нет и в теле.
+function historyLine(entry: HistoryItem, view: AuctionView): string {
+  return [
+    readableMoment(
+      communityLocalTime(entry.occurredAt, view.timeZone),
+      view.today,
+    ),
+    ...(entry.participantName === undefined ? [] : [entry.participantName]),
+    money(entry.amount),
+    originLabel(entry.origin),
+  ].join(" · ");
+}
+
+function originLabel(origin: BidOriginView): string {
+  switch (origin.kind) {
+    case "proxy":
+      return "авто";
+    case "manual":
+      return origin.source === "floor" ? "в зале" : "вручную";
+    default: {
+      const _exhaustive: never = origin;
       return _exhaustive;
     }
   }

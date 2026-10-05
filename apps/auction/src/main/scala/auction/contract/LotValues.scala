@@ -1,6 +1,7 @@
 package auction.contract
 
 import auction.lot.AntiSnipe
+import auction.lot.BidSource
 import auction.lot.HeldState
 import auction.lot.LotConfig
 import auction.lot.Money
@@ -71,6 +72,12 @@ object LotValues {
 
   /** RFC 3339 в UTC: `Instant.toString` пишет ровно эту форму. */
   def instant(at: Instant): String = at.toString
+
+  def bidSource(source: BidSource): model.BidSource =
+    source match {
+      case BidSource.Bot => model.BidSource.BID_SOURCE_BOT
+      case BidSource.Floor => model.BidSource.BID_SOURCE_FLOOR
+    }
 
   /** Первый порог хранится в политике отдельно как шаг от нуля; в контракте он первый в списке с границей ноль. */
   private def stepPolicy(policy: StepPolicy): model.StepPolicy =

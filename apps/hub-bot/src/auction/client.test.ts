@@ -31,6 +31,7 @@ function adapter(rpc: {
     getMeetupAuction: (rpc.getMeetupAuction ?? notUsed) as never,
     getLot: notUsed,
     listAuctionLots: notUsed,
+    listLotHistory: notUsed,
     getDisplayNames: notUsed,
     getLotImage: notUsed,
   });

@@ -19,9 +19,14 @@ const MAX_BYTES = 64;
 // Номер страницы ленты едет в обеих кнопках: карточка помнит, на какую
 // страницу вернуться. Состояния экрана у бота нет (ADR-030), поэтому всё, что
 // нужно следующему нажатию, лежит в самой строке.
+//
+// Хронология несёт обе страницы: свою и ту страницу ленты, на которую ведёт
+// возврат с карточки. Страница хронологии за её пределом открывает последнюю,
+// поэтому кнопка «Ставки» на карточке просит `MAX_FEED_PAGE` — свежие ставки.
 export type AuctionIntent =
   | { kind: "feed"; auctionId: string; page: number }
-  | { kind: "lot"; lotId: string; page: number };
+  | { kind: "lot"; lotId: string; page: number }
+  | { kind: "history"; lotId: string; page: number; historyPage: number };
 
 // Страница — десятичное число без ведущих нулей: у одной кнопки одно
 // написание, как у токена. Тысяча страниц по восемь лотов — с запасом выше
@@ -92,6 +97,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       return `${prefix}:feed:${uuidToToken(intent.auctionId)}:${pageArgument(intent.page)}`;
     case "lot":
       return `${prefix}:lot:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
+    case "history":
+      return `${prefix}:hist:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pageArgument(intent.historyPage)}`;
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;
@@ -117,8 +124,11 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (domain !== AUCTION_CALLBACK_DOMAIN) return refuse("foreign");
   // Своя строка другой версии: этот пакет её не понимает, экран устарел.
   if (version !== VERSION) return refuse("outdated");
+  // Аргументов у действия ровно столько, сколько пишет его кодировщик: лишний
+  // аргумент — не та строка, а не страница, которую можно молча отбросить.
   const [token, rawPage, ...rest] = args;
-  if (token === undefined || rest.length > 0) return refuse("malformed");
+  const extra = action === "hist" ? 1 : 0;
+  if (token === undefined || rest.length !== extra) return refuse("malformed");
   const id = tokenToUuid(token);
   // Кнопка лота без страницы — форма PER-305: она ведёт на ту же карточку, а
   // возврат — на первую страницу ленты.
@@ -129,6 +139,14 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
       return { ok: true, intent: { kind: "feed", auctionId: id, page } };
     case "lot":
       return { ok: true, intent: { kind: "lot", lotId: id, page } };
+    case "hist": {
+      const historyPage = pageOf(rest[0]);
+      if (historyPage === undefined) return refuse("malformed");
+      return {
+        ok: true,
+        intent: { kind: "history", lotId: id, page, historyPage },
+      };
+    }
     default:
       return refuse("malformed");
   }

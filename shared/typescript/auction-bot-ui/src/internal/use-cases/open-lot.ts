@@ -1,6 +1,7 @@
-import { encodeAuctionCallback } from "../../callback-data.js";
+import { encodeAuctionCallback, MAX_FEED_PAGE } from "../../callback-data.js";
 import type { AuctionPort, LotStatusView, Viewer } from "../../ports.js";
-import type { AuctionScreenBody } from "../../screen.js";
+import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
+import { namesOf } from "./names.js";
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
 // Войти в него можно только через `handleAuctionUpdate`, после шлюза.
@@ -16,12 +17,32 @@ export async function openLot(input: {
     viewer: input.viewer,
     lotId: input.lotId,
   });
-  const participantName = await nameOf({
+  const participantId = participantOf(lot.status);
+  const names = await namesOf({
     auction: input.auction,
     viewer: input.viewer,
     auctionId: lot.auctionId,
-    participantId: participantOf(lot.status),
+    participantIds: participantId === undefined ? [] : [participantId],
   });
+  const participantName =
+    participantId === undefined ? undefined : names[participantId];
+  // Хронология открывается на последней странице — со свежими ставками:
+  // страницу за пределом юзкейс хронологии прижимает к последней.
+  const history: AuctionButton[][] = hasTraded(lot.status)
+    ? [
+        [
+          {
+            action: "lot.history",
+            callbackData: encodeAuctionCallback({
+              kind: "history",
+              lotId: lot.lotId,
+              page: input.page,
+              historyPage: MAX_FEED_PAGE,
+            }),
+          },
+        ],
+      ]
+    : [];
   return {
     blocks: [
       {
@@ -47,6 +68,7 @@ export async function openLot(input: {
           }),
         },
       ],
+      ...history,
       [
         {
           action: "lot.back",
@@ -83,25 +105,23 @@ function participantOf(status: LotStatusView): string | undefined {
   }
 }
 
-// Имя — подпись к цене, а не сам исход: отказ `GetDisplayNames` оставляет
-// карточку без имени, но не прячет ни цену, ни исход. Так же карточка сходки
-// в хабе переживает отказ ника автора (docs/services/hub-bot.md). Отказ
-// пишет в лог порт приложения: пакет логгера не держит.
-async function nameOf(input: {
-  auction: AuctionPort;
-  viewer: Viewer;
-  auctionId: string;
-  participantId: string | undefined;
-}): Promise<string | undefined> {
-  if (input.participantId === undefined) return undefined;
-  try {
-    const names = await input.auction.getDisplayNames({
-      viewer: input.viewer,
-      auctionId: input.auctionId,
-      participantIds: [input.participantId],
-    });
-    return names[input.participantId];
-  } catch {
-    return undefined;
+// Хронология есть у лота, который открывался к торгам: у черновика и
+// запланированного ставок быть не может. Снятый лот мог быть снят и из торгов,
+// поэтому кнопка у него остаётся, а пустая хронология говорит сама за себя.
+function hasTraded(status: LotStatusView): boolean {
+  switch (status.kind) {
+    case "trading":
+    case "held":
+    case "sold":
+    case "unsold":
+    case "withdrawn":
+      return true;
+    case "draft":
+    case "scheduled":
+      return false;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
   }
 }

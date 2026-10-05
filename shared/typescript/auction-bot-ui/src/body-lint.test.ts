@@ -11,7 +11,11 @@ import type { LotView, ResolvedIdentity } from "./ports.js";
 
 const rules: BodyRules = {
   pair: (row) =>
-    row.every(({ action }) => action === "feed.prev" || action === "feed.next"),
+    row.every(({ action }) =>
+      ["feed.prev", "feed.next", "history.prev", "history.next"].includes(
+        action,
+      ),
+    ),
   // Общий потолок двенадцать рядов. Оболочка бота аукциона сегодня ставит
   // под телом два ряда — FAQ и меню, — и пока исключение `rows` ленты в её
   // каталоге снимает и потолок экрана, место под оба держит этот тест.
@@ -55,6 +59,20 @@ const surface: AuctionSurface = {
       async listAuctionLots() {
         return { lots, nextPageToken: "" };
       },
+      async listLotHistory() {
+        return {
+          entries: Array.from({ length: 20 }, (_, n) => ({
+            kind: "bid" as const,
+            sequence: n + 4,
+            occurredAt: "2026-10-04T12:00:00Z",
+            bidId: `01929b7e-5c1d-7a3f-8e4b-1${String(n).padStart(11, "0")}`,
+            participantId: identity.identityId,
+            amount: { minorUnits: 1000 + n, currency: "RUB" },
+            origin: { kind: "proxy" as const },
+          })),
+          nextPageToken: "",
+        };
+      },
       async getDisplayNames() {
         return {};
       },
@@ -90,4 +108,22 @@ describe("auction screen body", () => {
     );
     expect(inspectBody(body.keyboard, rules)).toEqual([]);
   });
+
+  // Средняя страница — с обеими кнопками листания: худший ряд пары.
+  it.each([0, 1, 2])(
+    "keeps lot history page %i within the body rules",
+    async (historyPage) => {
+      const lot = lots.at(-1);
+      if (lot === undefined) throw new Error("no lots");
+      const body = await bodyOf(
+        encodeAuctionCallback({
+          kind: "history",
+          lotId: lot.lotId,
+          page: 999,
+          historyPage,
+        }),
+      );
+      expect(inspectBody(body.keyboard, rules)).toEqual([]);
+    },
+  );
 });

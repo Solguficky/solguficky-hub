@@ -50,12 +50,28 @@ describe("auction callback_data", () => {
     });
   });
 
+  // Хронология несёт страницу ленты для возврата и свою страницу.
+  it("encodes the history of a lot with both pages and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "history",
+      lotId: LOT_ID,
+      page: 3,
+      historyPage: 12,
+    });
+    expect(raw).toBe(`v1:auc:hist:${LOT_TOKEN}:3:12`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: { kind: "history", lotId: LOT_ID, page: 3, historyPage: 12 },
+    });
+  });
+
   // Самая длинная кнопка пакета обязана пройти лимит Telegram.
   it("keeps the longest button within 64 bytes", () => {
     const raw = encodeAuctionCallback({
-      kind: "feed",
-      auctionId: AUCTION_ID,
+      kind: "history",
+      lotId: LOT_ID,
       page: MAX_FEED_PAGE,
+      historyPage: MAX_FEED_PAGE,
     });
     expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64);
     expect(parseAuctionCallback(raw).ok).toBe(true);
@@ -104,6 +120,10 @@ describe("auction callback_data", () => {
     ["empty argument", "v1:auc:lot:"],
     ["extra argument", `v1:auc:lot:${LOT_TOKEN}:1:1`],
     ["feed without page", `v1:auc:feed:${AUCTION_TOKEN}`],
+    ["history without its page", `v1:auc:hist:${LOT_TOKEN}:3`],
+    ["history with an extra argument", `v1:auc:hist:${LOT_TOKEN}:3:1:1`],
+    ["history page over the limit", `v1:auc:hist:${LOT_TOKEN}:3:1000`],
+    ["feed with a history page", `v1:auc:feed:${AUCTION_TOKEN}:0:0`],
     ["empty page", `v1:auc:feed:${AUCTION_TOKEN}:`],
     ["page with a leading zero", `v1:auc:feed:${AUCTION_TOKEN}:01`],
     ["negative page", `v1:auc:feed:${AUCTION_TOKEN}:-1`],

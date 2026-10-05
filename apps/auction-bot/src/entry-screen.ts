@@ -3,7 +3,9 @@ import type {
   AuctionButton,
   AuctionDenial,
   AuctionScreenBody,
+  BidOriginView,
   FeedItem,
+  HistoryItem,
   LotStatusView,
   Money,
 } from "@solguficky/auction-bot-ui";
@@ -91,6 +93,9 @@ const faqButton = {
   callback_data: entryCallback("faq"),
 };
 const menuButton = { text: "В меню", callback_data: entryCallback("menu") };
+// Вход в меню по словарю дизайн-кода. Экраны, написанные по нему сразу, ставят
+// эту кнопку; «В меню» остаётся у остальных до перевёрстки (PER-463).
+const menuNavButton = { text: "Меню", callback_data: entryCallback("menu") };
 
 export function renderEntryScreen(
   screen: AuctionEntryScreen,
@@ -165,6 +170,15 @@ export function renderEntryScreen(
       };
     case "auction": {
       const body = renderBody(screen.body, options);
+      // Хронология написана по дизайн-коду сразу: возврат тела и «Меню» —
+      // один последний ряд, боковой кнопки FAQ нет.
+      if (body.id === "history") {
+        const back = body.keyboard.at(-1) ?? [];
+        return {
+          ...body,
+          keyboard: [...body.keyboard.slice(0, -1), [...back, menuNavButton]],
+        };
+      }
       return {
         ...body,
         keyboard: [...body.keyboard, [faqButton], [menuButton]],
@@ -215,6 +229,12 @@ function renderBody(
   if (id === "lot" && lot !== undefined) {
     return { id, keyboard, ...renderCard(lot, options) };
   }
+  const history = body.blocks.find(
+    (block): block is HistoryBlock => block.kind === "history",
+  );
+  if (id === "history" && history !== undefined) {
+    return { id, keyboard, ...renderHistory(history, options) };
+  }
   // Лента — текст без разметки до перевёрстки оболочки (PER-463).
   return {
     id,
@@ -235,6 +255,9 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "lot":
         screen = "lot";
         break;
+      case "history":
+        screen = "history";
+        break;
       case "feed":
         break;
       default: {
@@ -247,6 +270,7 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
 }
 
 type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
+type HistoryBlock = Extract<AuctionBlock, { kind: "history" }>;
 
 // Строка ленты. Карточку лота собирает `renderCard`: у неё своя разметка.
 function renderBlock(block: AuctionBlock): string {
@@ -256,9 +280,60 @@ function renderBlock(block: AuctionBlock): string {
         ? "Лотов пока нет."
         : `Лоты по возрастанию цены, страница ${block.page + 1} из ${block.pageCount}.`;
     case "lot":
+    case "history":
       return "";
     default: {
       const _exhaustive: never = block;
+      return _exhaustive;
+    }
+  }
+}
+
+// Хронология ставок лота (PER-309): жирный заголовок с номером страницы,
+// название лота и строки ставок по порядку журнала. Восемь строк на странице
+// держат текст далеко под лимитом сообщения при любом названии.
+function renderHistory(
+  block: HistoryBlock,
+  options: RenderOptions,
+): Pick<RenderedScreen, "text" | "format"> {
+  const title =
+    block.pageCount === 1
+      ? "Ставки"
+      : `Ставки · ${block.page + 1} из ${block.pageCount}`;
+  return {
+    format: "html",
+    text: [
+      `<b>${escapeHtml(title)}</b>`,
+      escapeHtml(truncate(block.title ?? untitled, TITLE_LIMIT)),
+      block.entries.length === 0
+        ? "Ставок пока нет."
+        : block.entries
+            .map((entry) => escapeHtml(historyLine(entry, options)))
+            .join("\n"),
+    ].join("\n\n"),
+  };
+}
+
+// Строка ставки: когда, кто, сколько и как. Имени нет — Auction его не отдал,
+// и строка остаётся без него: идентификатор человеку не показывается. Лимита
+// прокси в строке нет — его нет и в теле.
+function historyLine(entry: HistoryItem, options: RenderOptions): string {
+  return [
+    readableMoment(entry.occurredAt, options.timeZone),
+    ...(entry.participantName === undefined ? [] : [entry.participantName]),
+    money(entry.amount),
+    originLabel(entry.origin),
+  ].join(" · ");
+}
+
+function originLabel(origin: BidOriginView): string {
+  switch (origin.kind) {
+    case "proxy":
+      return "авто";
+    case "manual":
+      return origin.source === "floor" ? "в зале" : "вручную";
+    default: {
+      const _exhaustive: never = origin;
       return _exhaustive;
     }
   }
@@ -436,8 +511,16 @@ function renderButton(
       return text("Следующие ›");
     case "lot.refresh":
       return text("Обновить");
+    case "lot.history":
+      return text("Ставки");
     case "lot.back":
       return text("К лотам");
+    case "history.prev":
+      return text("←");
+    case "history.next":
+      return text("→");
+    case "history.back":
+      return text("‹ Лот");
     default: {
       const _exhaustive: never = button;
       return _exhaustive;
@@ -481,6 +564,22 @@ export function money(amount: Money): string {
     minimumFractionDigits: whole ? 0 : 2,
     maximumFractionDigits: 2,
   }).format(amount.minorUnits / 100);
+}
+
+// Дата для чтения по дизайн-коду: «12 июня, сб, 19:04».
+export function readableMoment(instant: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    timeZone,
+    day: "numeric",
+    month: "long",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(instant));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((each) => each.type === type)?.value ?? "";
+  return `${part("day")} ${part("month")}, ${part("weekday")}, ${part("hour")}:${part("minute")}`;
 }
 
 function moment(instant: string, timeZone: string): string {

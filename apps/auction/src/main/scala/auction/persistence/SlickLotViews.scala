@@ -6,6 +6,7 @@ import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.entity.LotJournal
 import auction.projection.LotImageView
+import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
 import auction.projection.LotViewJson
 import auction.projection.LotViews
@@ -82,6 +83,33 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             FROM lot_view v JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE v.lot_id = ${lotId.toString}::uuid AND c.image IS NOT NULL""".as[LotImageView].headOption
     )
+  private given GetResult[BidRecord] = GetResult { row =>
+    BidRecord(
+      lotId = UUID.fromString(row.nextString()),
+      sequence = row.nextLong(),
+      bidId = UUID.fromString(row.nextString()),
+      participant = UUID.fromString(row.nextString()),
+      minorUnits = row.nextLong(),
+      currency = row.nextString(),
+      origin = row.nextString(),
+      source = row.nextStringOption(),
+      occurredAt = row.nextTimestamp().toInstant
+    )
+  }
+
+  def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]] = {
+    val id = lotId.toString
+    // Номер события начинается с 1, поэтому первая страница — тот же запрос с нулём.
+    val from = after.getOrElse(0L)
+    val read = for {
+      known <- sql"""SELECT 1 FROM lot_view WHERE lot_id = $id::uuid""".as[Int].headOption
+      bids <- sql"""SELECT lot_id::text, sequence, bid_id::text, participant_id::text, minor_units, currency, origin,
+                       source, occurred_at
+                FROM lot_bid WHERE lot_id = $id::uuid AND sequence > $from
+                ORDER BY sequence LIMIT $limit""".as[BidRecord]
+    } yield known.map(_ => bids.toList)
+    database.run(read)
+  }
 
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.
   private def restored(lotId: UUID, title: String): LotTitle =

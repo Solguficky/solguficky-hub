@@ -1,5 +1,6 @@
 import { Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { BidSource } from "../gen/auction/v1/auction_pb.js";
 import { RoleRequestOutcome } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import {
@@ -41,6 +42,40 @@ function rpcs() {
     listAuctionLots: vi.fn(async () => ({
       lots: [snapshot],
       nextPageToken: "next",
+    })),
+    // Запись вида, которого бот не знает, стоит между ставками: так её
+    // присылает Auction, добавивший новый вид.
+    listLotHistory: vi.fn(async () => ({
+      entries: [
+        {
+          sequence: 4n,
+          occurredAt: "2026-10-03T16:04:00Z",
+          kind: {
+            case: "bid",
+            value: {
+              bidId: "b-1",
+              participantId: "p-1",
+              amount: { minorUnits: 150_000n, currency: "RUB" },
+              origin: { case: "manual", value: { source: BidSource.FLOOR } },
+            },
+          },
+        },
+        { sequence: 5n, occurredAt: "2026-10-03T16:05:00Z", kind: {} },
+        {
+          sequence: 6n,
+          occurredAt: "2026-10-03T16:05:00Z",
+          kind: {
+            case: "bid",
+            value: {
+              bidId: "b-2",
+              participantId: "p-2",
+              amount: { minorUnits: 160_000n, currency: "RUB" },
+              origin: { case: "proxy", value: {} },
+            },
+          },
+        },
+      ],
+      nextPageToken: "",
     })),
     getDisplayNames: vi.fn(async () => ({
       names: { "p-1": { text: "@owl", kind: 1 } },
@@ -215,6 +250,42 @@ describe("createPorts", () => {
     expect(page.lots.map((lot) => lot.lotId)).toEqual(["lot-1"]);
     expect(auction.listAuctionLots).toHaveBeenCalledWith(
       { viewer: wireViewer, auctionId: "auc-1", pageToken: "t" },
+      callOptions,
+    );
+  });
+
+  it("reads the history of a lot and skips an entry of a kind it does not know", async () => {
+    const { auction, ports } = rpcs();
+    const page = await ports.auction.listLotHistory({
+      viewer,
+      lotId: "lot-1",
+      pageToken: "",
+    });
+    expect(page).toEqual({
+      entries: [
+        {
+          kind: "bid",
+          sequence: 4,
+          occurredAt: "2026-10-03T16:04:00Z",
+          bidId: "b-1",
+          participantId: "p-1",
+          amount: { minorUnits: 150_000, currency: "RUB" },
+          origin: { kind: "manual", source: "floor" },
+        },
+        {
+          kind: "bid",
+          sequence: 6,
+          occurredAt: "2026-10-03T16:05:00Z",
+          bidId: "b-2",
+          participantId: "p-2",
+          amount: { minorUnits: 160_000, currency: "RUB" },
+          origin: { kind: "proxy" },
+        },
+      ],
+      nextPageToken: "",
+    });
+    expect(auction.listLotHistory).toHaveBeenCalledWith(
+      { viewer: wireViewer, lotId: "lot-1", pageToken: "" },
       callOptions,
     );
   });

@@ -20,6 +20,7 @@ object MethodAccess {
     "EditLotCard" -> bots,
     "GetLot" -> bots,
     "ListAuctionLots" -> bots,
+    "ListLotHistory" -> bots,
     "ChooseDisplayName" -> bots,
     "GetDisplayNames" -> bots,
     "GetFaqAcknowledgement" -> Set(Caller.AuctionBot),
