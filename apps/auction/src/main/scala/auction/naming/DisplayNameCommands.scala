@@ -37,8 +37,8 @@ enum ChooseResult {
  * Команды имени участника. К хранилищу выбор идёт только после того, как решение вернуло `Right`: отказ по нику и по
  * псевдониму наступает до обращения к базе по построению.
  *
- * gRPC-граница их пока не зовёт: `ChooseDisplayName`, `GetDisplayNames`, проверку имени перед ставкой и заморозку после
- * принятой ставки подключает PER-434.
+ * Зовёт их gRPC-граница: `ChooseDisplayName`, `GetDisplayNames`, проверка имени перед ставкой и прокси-лимитом и
+ * заморозка после принятой команды.
  */
 final class DisplayNameCommands(store: DisplayNameStore)(using ExecutionContext) {
 

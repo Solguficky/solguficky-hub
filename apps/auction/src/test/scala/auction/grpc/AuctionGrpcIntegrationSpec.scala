@@ -359,21 +359,35 @@ final class AuctionGrpcIntegrationSpec
   private def auctionMeetup(node: Node, auction: String): String =
     auctionState(node, auction).meetup.map(_.value.toString).getOrElse(fail("the auction has no meetup"))
 
+  /** Аукцион с идентификатором по контракту: поля аукциона лота принимают только канонический UUID версии 5 или 7. */
+  private def freshAuction(): AuctionId = AuctionId(UuidV7.generator(Clock.systemUTC())())
+
+  private def choose(node: Node, who: wire.Viewer, auction: AuctionId, alias: String): wire.ChooseDisplayNameResponse =
+    asHubBot(node.client.chooseDisplayName())
+      .invoke(wire.ChooseDisplayNameRequest(Some(who), auction.value.toString).withAlias(alias))
+      .futureValue
+
+  /** Участник с ролью `public`, выбравший имя в аукционе: без имени ставка до лота не доходит (ADR-059). */
+  private def named(node: Node, auction: AuctionId, alias: String = "Кот"): wire.Viewer = {
+    val who = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+    choose(node, who, auction, alias).outcome.isAccepted shouldBe true
+    who
+  }
+
   "auction grpc" should {
 
     "places a bid through the wire and leaves the new price in the lot" in withNode { node =>
-      val lotId = tradingLot(node)
-      val response =
-        asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)))
+      val auction = freshAuction()
+      val lotId = tradingLot(node, auction)
+      val response = asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, named(node, auction)))
       response.futureValue.outcome.isAccepted shouldBe true
       currentPrice(node, lotId) shouldBe money(150)
     }
 
     "places a bid through the wire and answers the new price through GetLot and ListAuctionLots" in withNode { node =>
-      // Аукцион с идентификатором по контракту: ListAuctionLots принимает только канонический UUIDv7.
-      val auction = AuctionId(UuidV7.generator(Clock.systemUTC())())
+      val auction = freshAuction()
       val lotId = tradingLot(node, auction)
-      val bidder = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+      val bidder = named(node, auction)
       asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, bidder)).futureValue.outcome.isAccepted shouldBe true
       // GetLot читает read model, которую пишет проекция: новая цена приходит с её задержкой, а не сразу.
       eventually {
@@ -393,9 +407,10 @@ final class AuctionGrpcIntegrationSpec
 
     "answers the history of a lot in journal order with a proxy war folded into one entry and no limit" in withNode {
       node =>
-        val lotId = tradingLot(node)
-        val rival = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
-        val holder = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val sale = freshAuction()
+        val lotId = tradingLot(node, sale)
+        val rival = named(node, sale, "Кот")
+        val holder = named(node, sale, "Пёс")
         def limit(who: wire.Viewer, max: Long) =
           asHubBot(node.client.setProxyLimit())
             .invoke(wire.SetProxyLimitRequest(Some(who), lotId.toString, Some(MoneyMessage(max, "RUB")), newId()))
@@ -452,14 +467,74 @@ final class AuctionGrpcIntegrationSpec
       ) shouldBe Status.Code.NOT_FOUND
     }
 
-    "answers a bid below the minimum with the minimum price and leaves the price as it was" in withNode { node =>
-      val lotId = tradingLot(node)
-      val refused = asHubBot(node.client.placeBid())
-        .invoke(bid(lotId, 105, viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)))
+    "answers a bid below the minimum with the minimum price and leaves the price and the name as they were" in withNode {
+      node =>
+        val auction = freshAuction()
+        val lotId = tradingLot(node, auction)
+        val bidder = named(node, auction)
+        val refused = asHubBot(node.client.placeBid())
+          .invoke(bid(lotId, 105, bidder))
+          .futureValue
+          .getRefused
+        refused.getBidBelowMinimum.minRequired shouldBe Some(MoneyMessage(110, "RUB"))
+        currentPrice(node, lotId) shouldBe money(100)
+        // Отклонённая ставка имя не замораживает: обещание — «до первой принятой».
+        choose(node, bidder, auction, "Пёс").outcome.isAccepted shouldBe true
+    }
+
+    "refuses a bid of a participant without a chosen name and leaves the lot untouched" in withNode { node =>
+      val auction = freshAuction()
+      val lotId = tradingLot(node, auction)
+      val stranger = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+      // Имя в другом аукционе не в счёт: выбор действует в одном аукционе.
+      choose(node, stranger, freshAuction(), "Кот").outcome.isAccepted shouldBe true
+      asHubBot(node.client.placeBid())
+        .invoke(bid(lotId, 150, stranger))
         .futureValue
         .getRefused
-      refused.getBidBelowMinimum.minRequired shouldBe Some(MoneyMessage(110, "RUB"))
+        .reason
+        .isDisplayNameNotChosen shouldBe true
       currentPrice(node, lotId) shouldBe money(100)
+    }
+
+    "freezes the name after an accepted bid: another name is NameFrozen, the same one succeeds" in withNode { node =>
+      val auction = freshAuction()
+      val lotId = tradingLot(node, auction)
+      val bidder = named(node, auction, "Кот")
+      asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, bidder)).futureValue.outcome.isAccepted shouldBe true
+      choose(node, bidder, auction, "Пёс").getRefused.reason.isNameFrozen shouldBe true
+      choose(node, bidder, auction, "Кот").getAccepted shouldBe
+        wire.DisplayName("Кот*", wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS)
+    }
+
+    "refuses a proxy limit without a chosen name and freezes the name after an accepted one" in withNode { node =>
+      val auction = freshAuction()
+      val lotId = tradingLot(node, auction)
+      def limit(who: wire.Viewer) =
+        asHubBot(node.client.setProxyLimit())
+          .invoke(wire.SetProxyLimitRequest(Some(who), lotId.toString, Some(MoneyMessage(300, "RUB")), newId()))
+          .futureValue
+      limit(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)).getRefused.reason.isDisplayNameNotChosen shouldBe true
+      currentPrice(node, lotId) shouldBe money(100)
+      val bidder = named(node, auction, "Кот")
+      limit(bidder).outcome.isAccepted shouldBe true
+      choose(node, bidder, auction, "Пёс").getRefused.reason.isNameFrozen shouldBe true
+    }
+
+    "answers every requested participant by name, and one without a choice by a placeholder" in withNode { node =>
+      val auction = freshAuction()
+      val chosen = named(node, auction, "Кот")
+      val silent = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+      val names = asHubBot(node.client.getDisplayNames())
+        .invoke(
+          wire.GetDisplayNamesRequest(Some(silent), auction.value.toString, Seq(chosen.identityId, silent.identityId))
+        )
+        .futureValue
+        .names
+      names.keySet shouldBe Set(chosen.identityId, silent.identityId)
+      names(chosen.identityId) shouldBe wire.DisplayName("Кот*", wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS)
+      names(silent.identityId).kind shouldBe wire.DisplayNameKind.DISPLAY_NAME_KIND_PLACEHOLDER
+      names(silent.identityId).text shouldBe s"Участник ${silent.identityId.takeRight(4)}"
     }
 
     "refuses a viewer without the public role and leaves the lot untouched" in withNode { node =>

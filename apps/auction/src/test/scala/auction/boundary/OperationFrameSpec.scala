@@ -84,21 +84,16 @@ final class OperationFrameSpec extends AnyWordSpec with Matchers with ScalaCheck
       frame.keySet should not contain "stack"
     }
 
-    "names the caught failure and keeps its stack when something was thrown" in {
-      val cause = new IllegalStateException("lot registry is not wired yet")
+    "names only the class of the caught failure and keeps its frames without messages" in {
+      val cause = new IllegalStateException("Failing row contains (Кот)", new IllegalArgumentException("(Пёс)"))
       val frame =
         OperationFrame.of("GET /lots", StatusCodes.InternalServerError, 1, None, Some(cause))
 
-      frame("error") should include("java.lang.IllegalStateException")
-      frame("error") should include("lot registry is not wired yet")
+      frame("error") shouldBe "java.lang.IllegalStateException"
       frame("stack") should include("OperationFrameSpec")
-    }
-
-    "falls back to the failure class when the exception carries no message" in {
-      val frame =
-        OperationFrame.of("GET /lots", StatusCodes.InternalServerError, 1, None, Some(new RuntimeException))
-
-      frame("error") shouldBe "java.lang.RuntimeException"
+      frame("stack") should include("Caused by: java.lang.IllegalArgumentException")
+      frame("stack") should not include "Кот"
+      frame("stack") should not include "Пёс"
     }
 
     "carries an error category and an error text exactly when the result is an error" in {

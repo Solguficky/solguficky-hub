@@ -11,6 +11,7 @@ import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
+import auction.naming.DisplayNameCommands
 import auction.persistence.JournalDatabase
 import auction.persistence.SlickAuctionViews
 import auction.persistence.SlickLotViews
@@ -25,6 +26,7 @@ import auction.publication.OutboxRelay
 import auction.publication.PublicationSettings
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
+import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
 import org.apache.pekko.Done
@@ -151,8 +153,9 @@ object AuctionNode {
   }
 
   /**
-   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, read model и права у Meetups, обёрнутый
-   * проверкой вызывающего и записью операции. Entity лота и аукциона к этому моменту уже зарегистрированы в `sharding`.
+   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, имён участников, read model и права у
+   * Meetups, обёрнутый проверкой вызывающего и записью операции. Entity лота и аукциона к этому моменту уже
+   * зарегистрированы в `sharding`.
    */
   def grpc(
       system: ActorSystem[?],
@@ -170,7 +173,8 @@ object AuctionNode {
       SlickFaqAcknowledgements(system),
       SlickLotViews(system),
       AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),
-      SlickAuctionViews(system)
+      SlickAuctionViews(system),
+      DisplayNameCommands(SlickDisplayNameStore(system))
     )
     GrpcBoundary(callers, correlation => service.within(correlation))
   }
