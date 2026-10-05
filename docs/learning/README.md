@@ -48,6 +48,7 @@
 | [self-hosting/vocabulary.md](self-hosting/vocabulary.md) | SSH и console/rescue, порядок работ по цене ошибки, образ и digest, rootless Podman и Quadlet, cgroup/slice и квоты, один poller при long polling, SOPS/age и tmpfs против swap, WAL/PITR, off-provider, escrow и restore drill, attestation, пиннинг actions по SHA и чего он не закрывает, идемпотентность Ansible | вернуться |
 | [self-hosting/disks.md](self-hosting/disks.md) | диск, раздел и файловая система, bounded volume, LVM: PV, VG, LV и рост тома, нестабильные `/dev/sdX` против `/dev/disk/by-id`, дополнительный диск при переустановке ОС, `wipefs -n` | вернуться |
 | [self-hosting/memory-accounting.md](self-hosting/memory-accounting.md) | страницы и общая память, RSS против PSS, working set пода, `anon` и `file` в cgroup, `used` против `available`, сверка методов на одном кластере | вернуться |
+| [self-hosting/recovery-keys.md](self-hosting/recovery-keys.md) | age: identity и recipient, `age-keygen -y`, заголовок с ключом файла на каждого recipient и подбор identity, bech32 и отказ перенабора с опечаткой; restic: master key под key-файлами, `key passwd` и возврат старого key-файла из версий bucket; проверка копии против эталона не из неё | вернуться |
 | [self-hosting/host-benchmarks.md](self-hosting/host-benchmarks.md) | CPU steal под нагрузкой, `fio`: `bs`, `iodepth`, `direct`, `fdatasync` как цена коммита, p99 и шумные соседи, серии в одном окне, время reboot | вернуться |
 
 Статус ставится по факту, а не по ощущению:
