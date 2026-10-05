@@ -1,11 +1,20 @@
 package auction.aggregate
 
 import auction.catalog.LotId
+import auction.lot.AntiSnipe
 import auction.lot.AuctionId
+import auction.lot.CurrencyCode
+import auction.lot.LotConfig
+import auction.lot.LotConfigInput
+import auction.lot.Money
 import auction.lot.OpId
+import auction.lot.ScheduleLot
+import auction.lot.ScheduleLotRejected
+import auction.lot.StepPolicyInput
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Duration
 import java.util.UUID
 
 /** Сходка, у которой родился аукцион. Её идентификатор принадлежит Meetups; Auction хранит его и не меняет (И-21). */
@@ -36,6 +45,32 @@ final case class ScheduleAuction(config: AuctionConfigInput, opId: OpId)
 
 /** Открытие онлайн-торгов. Лоты открывает не сама команда, а протокол подтверждения после неё ([[LotRoster]]). */
 final case class StartPrebidding(opId: OpId)
+
+/**
+ * `ScheduleLot` словаря ADR-047, каким он приходит аукциону: администратор задаёт стартовую цену и шаг, остальные
+ * условия подставляет аукцион ([[LotTerms]]). Лоту после решения уходит его собственная команда [[ScheduleLot]] с тем
+ * же `op_id`. События аукцион на неё не пишет: условия торгов живут только в журнале лота.
+ */
+final case class ScheduleAuctionLot(lot: LotId, startingPrice: Money, stepPolicy: StepPolicyInput, opId: OpId)
+
+/**
+ * Условия торгов, которые лоту задаёт не администратор, а аукцион: валюта, анти-снайп и признак прокси (ADR-047,
+ * `LotDefaults`). Шага здесь нет: его всегда называет команда.
+ */
+final case class LotTerms(currency: CurrencyCode, antiSnipe: AntiSnipe, proxyEnabled: Boolean)
+
+object LotTerms {
+
+  /**
+   * Умолчания платформы для аукциона в `Draft` (ADR-047, дополнение 2026-10-05): конфигурации у него ещё нет, а
+   * `ScheduleAuction` приходит позже или не приходит вовсе. Лот, запланированный с ними, сохраняет их и после
+   * планирования аукциона — до следующего `ScheduleLot`.
+   */
+  val platform: LotTerms =
+    LotTerms(CurrencyCode("RUB"), AntiSnipe(Duration.ofMinutes(2), Duration.ofMinutes(2), 3), proxyEnabled = true)
+
+  def of(defaults: LotConfig): LotTerms = LotTerms(defaults.currency, defaults.antiSnipe, defaults.proxyEnabled)
+}
 
 /**
  * События аукциона: payload рождения — `meetup_id`, реестра — `lot_id`, планирования — конфигурация целиком, у старта
@@ -76,6 +111,17 @@ enum ScheduleAuctionRejected {
 enum StartPrebiddingRejected {
   case AuctionNotFound
   case AuctionNotScheduled
+}
+
+/**
+ * Отказы `ScheduleLot`, идущего через аукцион: аукциона нет, условия заморожены стартом торгов, лота нет в реестре —
+ * это решает аукцион, — либо отказал сам лот.
+ */
+enum ScheduleAuctionLotRejected {
+  case AuctionNotFound
+  case LotsFrozen
+  case LotNotInAuction
+  case ByLot(rejected: ScheduleLotRejected)
 }
 
 /**
@@ -232,6 +278,31 @@ object Auction {
           case AuctionState.Scheduled(_) => Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingStarted))
           case AuctionState.Draft | AuctionState.Prebidding(_, _) => Left(StartPrebiddingRejected.AuctionNotScheduled)
         }
+    }
+
+  /**
+   * Условия торгов лоту реестра. Решение — команда лоту, а не событие аукциона, поэтому окна `seen` здесь нет: повтор
+   * `op_id` узнаёт лот. Состояние проверяется раньше реестра, как у `RemoveLot`: после старта торгов ответ —
+   * `LotsFrozen` на любой лот, и условия лота, которому аукцион уже шлёт `OpenLot`, не меняются. Незаданные условия —
+   * из `lotDefaults` запланированного аукциона, а в `Draft` — умолчания платформы.
+   */
+  def decide(auction: Auction, command: ScheduleAuctionLot): Either[ScheduleAuctionLotRejected, ScheduleLot] =
+    auction.state match {
+      case AuctionState.Initial => Left(ScheduleAuctionLotRejected.AuctionNotFound)
+      case AuctionState.Prebidding(_, _) => Left(ScheduleAuctionLotRejected.LotsFrozen)
+      case AuctionState.Draft => planned(auction, command, LotTerms.platform)
+      case AuctionState.Scheduled(config) => planned(auction, command, LotTerms.of(config.lotDefaults))
+    }
+
+  private def planned(
+      auction: Auction,
+      command: ScheduleAuctionLot,
+      terms: LotTerms
+  ): Either[ScheduleAuctionLotRejected, ScheduleLot] =
+    if (!auction.lots.contains(command.lot)) Left(ScheduleAuctionLotRejected.LotNotInAuction)
+    else {
+      val config = LotConfigInput(terms.currency, command.stepPolicy, terms.antiSnipe, terms.proxyEnabled)
+      Right(ScheduleLot(command.startingPrice, config, command.opId))
     }
 
   /**

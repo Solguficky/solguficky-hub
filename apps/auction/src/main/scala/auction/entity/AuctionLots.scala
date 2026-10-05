@@ -9,6 +9,8 @@ import auction.lot.LotEvent
 import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.ScheduleLot
+import auction.lot.ScheduleLotRejected
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout
 
@@ -21,9 +23,10 @@ import scala.util.Success
 import scala.util.Try
 
 /**
- * Лоты, какими их видит entity аукциона: вопрос о состоянии, команда открытия и закрытие по дедлайну. Это не
- * [[LotGateway]]: тот — порт транспорта, а `OpenLot` и `CloseLot` шлёт лоту сам аукцион, и межсервисной поверхности у
- * них нет (integration.md, «Auction gRPC»).
+ * Лоты, какими их видит entity аукциона: вопрос о состоянии, команда открытия, закрытие по дедлайну и условия торгов.
+ * Это не [[LotGateway]]: тот — порт транспорта, а `OpenLot` и `CloseLot` шлёт лоту сам аукцион, и межсервисной
+ * поверхности у них нет (integration.md, «Auction gRPC»). `ScheduleLot` приходит снаружи, но тоже через аукцион:
+ * заморозку условий решает он.
  *
  * Неудачное `Future` — ответа нет: ask истёк или шардинг не доставил сообщение. Команда при этом могла быть принята,
  * поэтому аукцион после такого ответа снова спрашивает состояние, а не считает лот закрытым.
@@ -35,6 +38,12 @@ trait AuctionLots {
   def open(lot: LotId, command: OpenLot): Future[Either[OpenLotRejected, Option[Instant]]]
 
   def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Unit]]
+
+  /**
+   * Условия торгов лоту реестра — `ScheduleLot`, который идёт через аукцион (ADR-047). Инициатор — администратор,
+   * отдавший команду: в отличие от открытия и закрытия, без человека она не повторяется.
+   */
+  def schedule(lot: LotId, command: ScheduleLot, initiator: Initiator): Future[Either[ScheduleLotRejected, Unit]]
 }
 
 object AuctionLots {
@@ -62,6 +71,12 @@ object AuctionLots {
         entity(lot)
           .ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(command, Initiator.Scheduler, _))
           .flatMap(answer => Future.fromTry(closure(answer)))(using ExecutionContext.parasitic)
+
+      // Принятый ответ лота — всегда конверт `LotScheduled`: чужой `op_id` лот отклоняет сам (`OpIdTaken`).
+      def schedule(lot: LotId, command: ScheduleLot, initiator: Initiator): Future[Either[ScheduleLotRejected, Unit]] =
+        entity(lot)
+          .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(command, initiator, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
     }
 
   /**

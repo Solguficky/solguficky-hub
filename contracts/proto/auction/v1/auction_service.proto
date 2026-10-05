@@ -7,9 +7,10 @@ import "auction/v1/auction_events.proto";
 import "identity/v1/roles.proto";
 
 // Commands of a participant, commands of the lot catalog, the birth of an auction
-// at a meetup and the registry of its lots, reads of a lot, of its history, of its
-// image, of the display names of participants and of auctions, and the invoices of
-// sold lots: the commands of the organizer and of the winner and their reads.
+// at a meetup, the registry of its lots and the trading conditions of a lot,
+// reads of a lot, of its history, of its image, of the display names of
+// participants and of auctions, and the invoices of sold lots: the commands of
+// the organizer and of the winner and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -36,6 +37,7 @@ service AuctionService {
   rpc DraftAuction(DraftAuctionRequest) returns (DraftAuctionResponse);
   rpc AddLot(AddLotRequest) returns (AddLotResponse);
   rpc RemoveLot(RemoveLotRequest) returns (RemoveLotResponse);
+  rpc ScheduleLot(ScheduleLotRequest) returns (ScheduleLotResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
   rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
@@ -666,11 +668,67 @@ message NotMeetupAdministrator {}
 // The meetup does not exist for the viewer. Only an administrator learns it.
 message MeetupNotFound {}
 
-// The registry of the auction is frozen: prebidding has started.
+// The registry of the auction and the trading conditions of its lots are frozen:
+// prebidding has started.
 message LotsFrozen {}
 
 // The lot is not in the registry of the auction.
 message LotNotInAuction {}
+
+message ScheduleLotRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+
+  // The price trading opens at.
+  Money starting_price = 5;
+
+  // The minimum raise. There is no default: a request without it is malformed.
+  //
+  // The currency, the anti-sniping parameters and the proxy flag are deliberately
+  // absent: the auction fills them in. The conditions replace the stored ones as a
+  // whole, so a caller that changes one of the two values resends the other.
+  StepPolicy step_policy = 6;
+}
+
+message ScheduleLotResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotSchedulingAccepted accepted = 1;
+    ScheduleLotRefusal refused = 2;
+  }
+}
+
+// Carries nothing: the stored conditions are visible in the state of the lot.
+message LotSchedulingAccepted {}
+
+message ScheduleLotRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    LotsFrozen lots_frozen = 3;
+    LotNotInAuction lot_not_in_auction = 4;
+    SchedulingClosed scheduling_closed = 5;
+    StepPolicyInvalid step_policy_invalid = 6;
+    CurrencyMismatch currency_mismatch = 7;
+  }
+}
+
+// The lot has been opened: its trading conditions no longer change.
+message SchedulingClosed {}
+
+// The step policy contradicts itself: a step that is not positive, tiers that are
+// empty, unsorted or do not start at zero, or amounts in different currencies.
+message StepPolicyInvalid {}
 
 message GetMeetupAuctionRequest {
   Viewer viewer = 1;

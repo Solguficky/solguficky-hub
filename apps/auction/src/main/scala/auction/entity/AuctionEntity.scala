@@ -6,6 +6,7 @@ import auction.lot.CloseLotRejected
 import auction.lot.LotState
 import auction.lot.OpId
 import auction.lot.OpenLotRejected
+import auction.lot.ScheduleLotRejected
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
@@ -60,6 +61,9 @@ enum AuctionAnswer {
  * пассивации и остановкой, проходит без шарда, и запланированный аукцион мог бы войти в торги и тут же забыться вместе
  * с таймерами. Из `Initial` до торгов — рождение, реестр, планирование и старт, каждое с ответом, в одно такое окно они
  * не помещаются, а `Draft` и `Scheduled` — настоящие аукционы сходок, и их число ограничено сходками.
+ *
+ * `ScheduleLot` — единственная команда, которую entity передаёт лоту, ничего не записав: условия торгов живут в журнале
+ * лота, а аукцион только решает, не заморожены ли они ([[Auction.decide]]), и подставляет незаданное.
  */
 object AuctionEntity {
 
@@ -103,6 +107,17 @@ object AuctionEntity {
       replyTo: ActorRef[Either[StartPrebiddingRejected, AuctionAnswer]]
   ) extends Command
 
+  /**
+   * Условия торгов лоту реестра — `ScheduleLot`, идущий через аукцион; `PlanLot` — имя сообщения, как `LotEntity.Plan`
+   * у лота. События аукцион не пишет: решает, можно ли ещё менять условия, и шлёт команду лоту. Ответ приходит после
+   * ответа лота; лот не ответил — ответа нет, и повтор с тем же `op_id` узнаёт лот.
+   */
+  final case class PlanLot(
+      command: ScheduleAuctionLot,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[ScheduleAuctionLotRejected, Unit]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Auction]) extends Command
 
   /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
@@ -127,6 +142,13 @@ object AuctionEntity {
   private final case class DeadlineKey(lot: LotId)
 
   private case object RecheckKey
+
+  /** Ответ лота на `ScheduleLot` вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class LotPlanned(
+      lot: LotId,
+      replyTo: ActorRef[Either[ScheduleAuctionLotRejected, Unit]],
+      answer: Try[Either[ScheduleLotRejected, Unit]]
+  ) extends Command
 
   /**
    * @param auctionId
@@ -171,7 +193,7 @@ object AuctionEntity {
         timers.startTimerWithFixedDelay(RecheckKey, Recheck, recheckEvery)
 
         // Ожидаемый отказ зависимости: лот не ответил в срок. Сообщение исключения в запись не идёт — только его класс.
-        def unanswered(lot: LotId, failure: Throwable): Unit = {
+        def silent(lot: LotId, failure: Throwable): Unit =
           context.log.warn(
             "lot did not answer the auction",
             StructuredArguments.keyValue("auction_id", auctionId),
@@ -179,6 +201,9 @@ object AuctionEntity {
             StructuredArguments.keyValue("error_category", "dependency_unavailable"),
             StructuredArguments.keyValue("error", failure.getClass.getName)
           )
+
+        def unanswered(lot: LotId, failure: Throwable): Unit = {
+          silent(lot, failure)
           roster = LotRoster.unanswered(roster, lot)
         }
 
@@ -212,6 +237,21 @@ object AuctionEntity {
                     follow(LotRoster.recheck(after.auction, roster))
                 }
               }
+            case PlanLot(plan, initiator, replyTo) =>
+              Auction.decide(state.auction, plan) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(schedule) =>
+                  // Команда уходит лоту в обработке этого же сообщения. Старт торгов, принятый следом, шлёт лоту
+                  // вопрос и `OpenLot` тем же путём и позже, поэтому лот получает условия раньше открытия, а
+                  // `ScheduleLot`, пришедший после старта, сюда уже не доходит: окна между решением и командой нет.
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.schedule(plan.lot, schedule, initiator))(LotPlanned(plan.lot, replyTo, _))
+                  }
+              }
+            case LotPlanned(_, replyTo, Success(answer)) =>
+              Effect.reply(replyTo)(answer.left.map(ScheduleAuctionLotRejected.ByLot(_)))
+            // Знание об открытии это не меняет: молчащий лот остаётся с прежними условиями либо с принятыми.
+            case LotPlanned(lot, _, Failure(failure)) => Effect.none.thenRun(_ => silent(lot, failure))
             case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
             case Draft(draft, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, draft)

@@ -253,10 +253,12 @@ enum DraftLotRejected {
 
 /**
  * Отказы `ScheduleLot`. `SchedulingClosed` — после `LotOpened` условия заморожены (И-10). `StepPolicyInvalid` называет
- * нарушение И-15, `CurrencyMismatch` — стартовую цену в валюте, отличной от конфигурации.
+ * нарушение И-15, `CurrencyMismatch` — стартовую цену в валюте, отличной от конфигурации. `OpIdTaken` — `op_id` уже
+ * записан под другим событием лота; как у команд участника, на границе это статус, а не значение ответа.
  */
 enum ScheduleLotRejected {
   case LotNotFound
+  case OpIdTaken
   case SchedulingClosed
   case StepPolicyInvalid(reason: auction.lot.StepPolicyInvalid)
   case CurrencyMismatch

@@ -14,10 +14,13 @@ import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
 import auction.lot.SetProxyLimit
+import auction.lot.StepPolicy
+import auction.lot.StepPolicyInput
 import auction.lot.WithdrawProxyLimit
 import auction.naming.NameChoice
 import auction.naming.TelegramUsername
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.ChooseDisplayNameRequest
@@ -34,6 +37,7 @@ import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -75,6 +79,18 @@ final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
 
 /** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
 final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
+
+/**
+ * Условия торгов лоту реестра. Политика шага здесь ещё не проверена: И-15 — решение домена, а не форма запроса.
+ */
+final case class LotScheduleCommand(
+    auctionId: AuctionId,
+    lotId: LotId,
+    startingPrice: Money,
+    stepPolicy: StepPolicyInput,
+    opId: OpId,
+    acting: Acting
+)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
@@ -235,6 +251,34 @@ object RequestMapping {
 
   def removeLot(request: RemoveLotRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def scheduleLot(request: ScheduleLotRequest): Either[FormError, LotScheduleCommand] =
+    for {
+      command <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
+      startingPrice <- money("starting_price", request.startingPrice)
+      policy <- stepPolicy(request.stepPolicy)
+    } yield LotScheduleCommand(command.auctionId, command.lotId, startingPrice, policy, command.opId, command.acting)
+
+  /**
+   * Политика шага без проверки И-15: форма требует только, чтобы `oneof` был задан, а суммы были суммами. Пустые,
+   * неотсортированные или неположительные пороги — отказ домена `StepPolicyInvalid`, а не нарушение формы.
+   */
+  private def stepPolicy(value: Option[StepPolicyMessage]): Either[FormError, StepPolicyInput] =
+    value.map(_.policy) match {
+      case Some(StepPolicyMessage.Policy.Fixed(step)) =>
+        money("step_policy.fixed", Some(step)).map(StepPolicyInput.Fixed(_))
+      case Some(StepPolicyMessage.Policy.Tiered(steps)) =>
+        steps.tiers
+          .foldLeft[Either[FormError, List[StepPolicy.Tier]]](Right(Nil)) { (acc, tier) =>
+            for {
+              tiers <- acc
+              bound <- money("step_policy.tiered.lower_bound", tier.lowerBound)
+              step <- money("step_policy.tiered.step", tier.step)
+            } yield StepPolicy.Tier(bound, step) :: tiers
+          }
+          .map(tiers => StepPolicyInput.Tiered(tiers.reverse))
+      case Some(StepPolicyMessage.Policy.Empty) | None => Left(FormError("step_policy"))
+    }
 
   def getMeetupAuction(request: GetMeetupAuctionRequest): Either[FormError, MeetupAuctionQuery] =
     for {

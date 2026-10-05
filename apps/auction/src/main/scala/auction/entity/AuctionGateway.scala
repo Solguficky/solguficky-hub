@@ -38,6 +38,13 @@ trait AuctionGateway {
       command: StartPrebidding,
       initiator: Initiator
   ): Future[Either[StartPrebiddingRejected, AuctionAnswer]]
+
+  /** Условия торгов лоту реестра. Ответ приходит после ответа лота: событие пишет он, а не аукцион. */
+  def scheduleLot(
+      auctionId: AuctionId,
+      command: ScheduleAuctionLot,
+      initiator: Initiator
+  ): Future[Either[ScheduleAuctionLotRejected, Unit]]
 }
 
 object AuctionGateway {
@@ -85,5 +92,12 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[StartPrebiddingRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Start(command, initiator, _))
+
+      def scheduleLot(
+          auctionId: AuctionId,
+          command: ScheduleAuctionLot,
+          initiator: Initiator
+      ): Future[Either[ScheduleAuctionLotRejected, Unit]] =
+        entity(auctionId).ask(AuctionEntity.PlanLot(command, initiator, _))
     }
 }

@@ -9,8 +9,11 @@ import auction.lot.AuctionId
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.LotEvent
+import auction.lot.Money
 import auction.lot.OpId
 import auction.lot.ParticipantId
+import auction.lot.ScheduleLotRejected
+import auction.lot.StepPolicyInput
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -77,6 +80,13 @@ enum OpeningRefusal {
   case AuctionNotScheduled
 }
 
+/** Отказ `ScheduleLot`: проверка до агрегата, решение аукциона о реестре или решение самого лота. */
+enum LotSchedulingRefusal {
+  case Denied(denial: Denial)
+  case LotNotInAuction
+  case ByLot(rejected: ScheduleLotRejected)
+}
+
 /**
  * Команды администратора аукциону (ADR-047, дополнение 2026-10-03). Порядок фиксирован:
  *
@@ -93,6 +103,11 @@ enum OpeningRefusal {
  * оставлял в реестре лота без журнала: оборванное добавление дописывает повтор с тем же `op_id`. Лот, который уже
  * родился, отвечает `LotAlreadyExists`; родился он в этом же аукционе — это не отказ (повторное добавление после
  * `RemoveLot`), в другом — `LotOfAnotherAuction`, и реестр не меняется.
+ *
+ * `ScheduleLot` идёт через аукцион (ADR-047): заморозку, реестр и незаданные условия решает entity аукциона, и она же
+ * шлёт команду лоту, поэтому старт торгов между проверкой и командой здесь невозможен. Событие пишет только лот, и
+ * повтор `op_id` узнаёт он: на шаге 1 аукцион находит в своём окне разве что `op_id` другой команды, и это `OpIdTaken`,
+ * а не исходный ответ. Повтор принятого `ScheduleLot` после старта торгов отвечает `LotsFrozen`.
  */
 final class AuctionCommands(
     auctions: AuctionGateway,
@@ -200,6 +215,32 @@ final class AuctionCommands(
       case Inspection.Absent => Future.successful(Left(OpeningRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
         authorized(meetup, person, OpeningRefusal.Denied(_))(start(auctionId, opId, person))
+    }
+
+  def scheduleLot(
+      auctionId: AuctionId,
+      lot: LotId,
+      startingPrice: Money,
+      stepPolicy: StepPolicyInput,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LotSchedulingRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) =>
+        Future.successful(Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken)))
+      case Inspection.Absent => Future.successful(Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, LotSchedulingRefusal.Denied(_)) {
+          val command = ScheduleAuctionLot(lot, startingPrice, stepPolicy, opId)
+          auctions.scheduleLot(auctionId, command, Initiator.Operator(person)).map {
+            case Right(()) => Right(())
+            case Left(ScheduleAuctionLotRejected.AuctionNotFound) =>
+              Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound))
+            case Left(ScheduleAuctionLotRejected.LotsFrozen) => Left(LotSchedulingRefusal.Denied(Denial.LotsFrozen))
+            case Left(ScheduleAuctionLotRejected.LotNotInAuction) => Left(LotSchedulingRefusal.LotNotInAuction)
+            case Left(ScheduleAuctionLotRejected.ByLot(rejected)) => Left(LotSchedulingRefusal.ByLot(rejected))
+          }
+        }
     }
 
   private def start(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[OpeningRefusal, Unit]] =

@@ -2,12 +2,22 @@ package auction.aggregate
 
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
+import auction.lot.AntiSnipe
+import auction.lot.LotConfigInput
+import auction.lot.LotFixtures
+import auction.lot.LotFixtures.eur
+import auction.lot.LotFixtures.money
 import auction.lot.LotFixtures.op
+import auction.lot.LotFixtures.rub
+import auction.lot.Money
+import auction.lot.ScheduleLot
+import auction.lot.StepPolicyInput
 import org.scalacheck.Gen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 
+import java.time.Duration
 import java.util.UUID
 
 final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPropertyChecks {
@@ -26,6 +36,14 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
 
   private def started: Auction =
     Auction.apply(scheduled, AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted))
+
+  /** Тот же аукцион с `lot` в реестре; номер строки и `op_id` — вне тех, что заняты образцами выше. */
+  private def holding(auction: Auction): Auction =
+    Auction.apply(auction, AuctionEnvelope(8, op(8), AuctionEvent.LotAdded(lot)))
+
+  private val step = StepPolicyInput.Fixed(money(250))
+
+  private val conditions = ScheduleAuctionLot(lot, money(5000), step, op(9))
 
   private def applied(auction: Auction, decision: AuctionDecision, sequence: Long, opN: Int): Auction =
     decision match {
@@ -141,6 +159,37 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
     "refuses scheduling before it is born" in {
       Auction.decide(Auction.initial, ScheduleAuction(configInput(), op(2))) shouldBe
         Left(ScheduleAuctionRejected.AuctionNotFound)
+    }
+
+    "gives a lot of its registry the price and the step of the command and the platform terms while it is a draft" in {
+      Auction.decide(holding(born), conditions) shouldBe Right(
+        ScheduleLot(money(5000), LotConfigInput(rub, step, LotFixtures.antiSnipe, proxyEnabled = true), op(9))
+      )
+    }
+
+    "takes the currency, the anti-snipe and the proxy flag from its lot defaults once it is scheduled, never the step" in {
+      val defaults = LotConfigInput(
+        eur,
+        StepPolicyInput.Fixed(Money(1, eur)),
+        AntiSnipe(Duration.ofMinutes(1), Duration.ofMinutes(5), 1),
+        proxyEnabled = false
+      )
+      val planned = Auction.apply(
+        holding(born),
+        AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config(configInput(lotDefaults = defaults))))
+      )
+      Auction.decide(planned, conditions).map(_.config) shouldBe Right(defaults.copy(stepPolicy = step))
+    }
+
+    "refuses conditions for a lot outside its registry and before it is born" in {
+      Auction.decide(born, conditions) shouldBe Left(ScheduleAuctionLotRejected.LotNotInAuction)
+      Auction.decide(Auction.initial, conditions) shouldBe Left(ScheduleAuctionLotRejected.AuctionNotFound)
+    }
+
+    "freezes the conditions of every lot once prebidding started, in its registry or not" in {
+      val withLot = Auction.apply(holding(scheduled), AuctionEnvelope(4, op(4), AuctionEvent.PrebiddingStarted))
+      Auction.decide(withLot, conditions) shouldBe Left(ScheduleAuctionLotRejected.LotsFrozen)
+      Auction.decide(started, conditions) shouldBe Left(ScheduleAuctionLotRejected.LotsFrozen)
     }
 
     "folds the same journal into the same auction whatever order its rows arrive in" in {

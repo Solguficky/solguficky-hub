@@ -5,13 +5,19 @@ import auction.catalog.ImageChange
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
 import auction.lot.Money
+import auction.lot.StepPolicy
+import auction.lot.StepPolicyInput
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction.StepPolicy as StepPolicyMessage
+import auction.v1.auction.StepTier
+import auction.v1.auction.TieredSteps
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.LotImageRemoval
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -132,6 +138,57 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       RequestMapping.getLotImage(GetLotImageRequest(Some(viewer), "")).left.value shouldBe FormError("lot_id")
       RequestMapping.getLotImage(GetLotImageRequest(Some(viewer), lot)).value.lotId shouldBe UUID.fromString(lot)
     }
+
+    "maps the conditions of a lot with the price and a fixed step as sent" in {
+      val command = RequestMapping.scheduleLot(validSchedule).value
+      command.auctionId.value shouldBe UUID.fromString(meetupAuction)
+      command.lotId.value shouldBe UUID.fromString(lot)
+      command.startingPrice shouldBe Money(500000, CurrencyCode("RUB"))
+      command.stepPolicy shouldBe StepPolicyInput.Fixed(Money(25000, CurrencyCode("RUB")))
+      command.opId.value shouldBe UUID.fromString(op)
+    }
+
+    // И-15 проверяет домен: порядок и пустоту порогов форма не трогает.
+    "passes the tiers of a step policy on in their order, unchecked" in {
+      val tiers = TieredSteps(
+        Seq(
+          StepTier(Some(MoneyMessage(100, "RUB")), Some(MoneyMessage(10, "RUB"))),
+          StepTier(Some(MoneyMessage(0, "RUB")), Some(MoneyMessage(0, "RUB")))
+        )
+      )
+      val rub = CurrencyCode("RUB")
+      RequestMapping
+        .scheduleLot(validSchedule.withStepPolicy(StepPolicyMessage().withTiered(tiers)))
+        .value
+        .stepPolicy shouldBe
+        StepPolicyInput.Tiered(
+          List(StepPolicy.Tier(Money(100, rub), Money(10, rub)), StepPolicy.Tier(Money(0, rub), Money(0, rub)))
+        )
+      RequestMapping
+        .scheduleLot(validSchedule.withStepPolicy(StepPolicyMessage().withTiered(TieredSteps())))
+        .value
+        .stepPolicy shouldBe StepPolicyInput.Tiered(Nil)
+    }
+
+    "names the invalid field of the conditions of a lot" in {
+      RequestMapping.scheduleLot(validSchedule.withAuctionId(lot)).left.value shouldBe FormError("auction_id")
+      RequestMapping.scheduleLot(validSchedule.clearStartingPrice).left.value shouldBe FormError("starting_price")
+      RequestMapping.scheduleLot(validSchedule.clearStepPolicy).left.value shouldBe FormError("step_policy")
+      RequestMapping.scheduleLot(validSchedule.withStepPolicy(StepPolicyMessage())).left.value shouldBe
+        FormError("step_policy")
+      RequestMapping
+        .scheduleLot(validSchedule.withStepPolicy(StepPolicyMessage().withFixed(MoneyMessage(10, "rub"))))
+        .left
+        .value shouldBe FormError("step_policy.fixed")
+      RequestMapping
+        .scheduleLot(
+          validSchedule.withStepPolicy(
+            StepPolicyMessage().withTiered(TieredSteps(Seq(StepTier(None, Some(MoneyMessage(10, "RUB"))))))
+          )
+        )
+        .left
+        .value shouldBe FormError("step_policy.tiered.lower_bound")
+    }
   }
 }
 
@@ -149,4 +206,16 @@ object RequestMappingSpec {
   val validLimit: SetProxyLimitRequest = SetProxyLimitRequest(Some(viewer), lot, Some(MoneyMessage(200, "RUB")), op)
 
   val validWithdrawal: WithdrawProxyLimitRequest = WithdrawProxyLimitRequest(Some(viewer), lot, op)
+
+  /** Аукцион сходки `meetupId`: UUIDv5, вектор контракта. */
+  val meetupAuction = "daef05c7-cd68-5048-b03d-cb4860e8dc73"
+
+  val validSchedule: ScheduleLotRequest = ScheduleLotRequest(
+    Some(viewer),
+    meetupAuction,
+    lot,
+    op,
+    Some(MoneyMessage(500000, "RUB")),
+    Some(StepPolicyMessage().withFixed(MoneyMessage(25000, "RUB")))
+  )
 }

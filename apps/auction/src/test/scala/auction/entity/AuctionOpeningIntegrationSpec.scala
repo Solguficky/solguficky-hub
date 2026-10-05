@@ -8,6 +8,7 @@ import auction.catalog.LotId
 import auction.lot.AuctionId
 import auction.lot.Envelope
 import auction.lot.Lot
+import auction.lot.LotFixtures.money
 import auction.lot.LotFixtures.participant
 import auction.lot.LotFixtures.scheduleLot
 import auction.lot.LotState
@@ -15,6 +16,7 @@ import auction.lot.OpId
 import auction.lot.OpenLotRejected
 import auction.lot.ParticipantId
 import auction.lot.ScheduleLotRejected
+import auction.lot.StepPolicyInput
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.persistence.SlickAuctionViews
@@ -58,6 +60,8 @@ final class AuctionOpeningIntegrationSpec
   private given Timeout = Timeout(20.seconds)
 
   private val person: ParticipantId = participant(1)
+
+  private val step = StepPolicyInput.Fixed(money(10))
 
   private final class StubAuthority extends MeetupAuthority {
     @volatile var answer: Authority = Authority.Granted
@@ -189,6 +193,46 @@ final class AuctionOpeningIntegrationSpec
             case Some(AuctionState.Prebidding(_, started)) if started == op =>
           }
           views.page(AuctionListing.Active, None, 10).futureValue.map(_.auctionId) should contain(auction.auction.value)
+        }
+      }
+    }
+
+    "refuses new conditions of a lot after the start and leaves the journal of the lot as it was" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      onDatabase(database) { node =>
+        val auction = scheduled(node)
+        node.commands.startPrebidding(auction.auction, newOp(), person).futureValue shouldBe Right(())
+        eventually(roster(node, auction.auction).active shouldBe Set(auction.planned))
+        for (lot <- List(auction.planned, auction.bare))
+          node.commands.scheduleLot(auction.auction, lot, money(900), step, newOp(), person).futureValue shouldBe
+            Left(LotSchedulingRefusal.Denied(Denial.LotsFrozen))
+        journalRows(database, auction.planned) shouldBe 3
+        lotState(node, auction.bare) shouldBe LotState.Draft
+      }
+    }
+
+    // Обе команды уходят entity подряд, без ожидания ответа на первую: условия обязаны дойти до лота раньше вопроса
+    // и `OpenLot`, которые аукцион шлёт ему после старта.
+    "opens a lot whose conditions reached the auction right before the start" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      onDatabase(database) { node =>
+        val auction = scheduled(node)
+        val entity = node.sharding.entityRefFor(AuctionEntity.TypeKey, auction.auction.value.toString)
+        val operator = Initiator.Operator(person)
+        val planned = entity.ask[Either[ScheduleAuctionLotRejected, Unit]](
+          AuctionEntity.PlanLot(ScheduleAuctionLot(auction.bare, money(900), step, newOp()), operator, _)
+        )
+        val started = entity.ask[Either[StartPrebiddingRejected, AuctionAnswer]](
+          AuctionEntity.Start(StartPrebidding(newOp()), operator, _)
+        )
+        planned.futureValue shouldBe Right(())
+        started.futureValue.isRight shouldBe true
+        eventually(roster(node, auction.auction).active shouldBe Set(auction.planned, auction.bare))
+        lotState(node, auction.bare) match {
+          case LotState.Trading(trading) => trading.currentPrice shouldBe money(900)
+          case other => fail(s"the lot planned before the start is not trading: $other")
         }
       }
     }
