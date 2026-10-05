@@ -135,6 +135,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза",
         description: "",
+        hasImage: false,
         terms: { kind: "unset" },
       },
       saved: "created",
@@ -206,6 +207,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза синяя",
         description: "Синяя.",
+        hasImage: false,
         terms: {
           kind: "set",
           startingPrice: { minorUnits: 150_000, currency: "RUB" },
@@ -315,6 +317,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза",
         description: "Синяя.",
+        hasImage: false,
         terms: {
           kind: "set",
           startingPrice: { minorUnits: 150_000, currency: "RUB" },
@@ -360,6 +363,55 @@ describe("lot form", () => {
       saved: "text",
     });
   });
+
+  it("replaces the image of the card and resends both texts as they are stored", async () => {
+    const { dispatcher, calls } = fakeLots();
+    const image = new Uint8Array([0xff, 0xd8, 0xff]);
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-image",
+      lotId,
+      image,
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "editLotCard",
+      args: { lotId, title: "Ваза", description: "Синяя.", image },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: { hasImage: true },
+      saved: "image",
+    });
+  });
+
+  it.each([
+    [
+      { kind: "image-too-large", maxBytes: 2_097_152 } as const,
+      { error: "image-too-large", maxImageBytes: 2_097_152 },
+    ],
+    [{ kind: "unsupported-image" } as const, { error: "unsupported-image" }],
+  ])(
+    "asks for the photo again when Auction refuses it with %o",
+    async (refusal, expected) => {
+      const { dispatcher } = fakeLots({ edit: refusal });
+
+      await expect(
+        dispatcher.execute({
+          identity: admin,
+          intent: "set-lot-image",
+          lotId,
+          image: new Uint8Array([1]),
+        }),
+      ).resolves.toEqual({
+        kind: "lot-ask",
+        question: { kind: "image", lotId },
+        lot: expect.objectContaining({ lotId, hasImage: false }),
+        ...expected,
+      });
+    },
+  );
 
   it("asks the title again when its edit is refused as empty", async () => {
     const { dispatcher } = fakeLots({ edit: { kind: "empty-title" } });

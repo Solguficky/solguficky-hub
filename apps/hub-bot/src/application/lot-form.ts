@@ -16,7 +16,8 @@ import type {
 
 // Форма лота администратора (PER-319; ADR-047, дополнение 2026-10-05). Каждый
 // принятый ответ сразу уходит в Auction: название и описание — в карточку
-// каталога, цена и шаг — условиями торгов. Своего состояния у формы нет.
+// каталога, цена и шаг — условиями торгов, фото (PER-452) — байтами в ту же
+// карточку. Своего состояния у формы нет.
 // Право здесь не решается: его проверяют Auction и Meetups на каждой команде,
 // а край только не показывает вход тому, кто не администратор.
 
@@ -85,6 +86,7 @@ function viewOf(lot: LotView): LotFormView {
     auctionId: lot.auctionId,
     ...(lot.card === undefined ? {} : { title: lot.card.title }),
     description: lot.card?.description ?? "",
+    hasImage: lot.card?.image !== undefined,
     terms: termsOf(lot),
   };
 }
@@ -148,6 +150,22 @@ export function createLotForm(lots: LotAdministration) {
           kind: "lot-refused",
           reason: "not-administrator",
           lotId: question.lotId,
+        };
+      // Фото не прошло, лот прежний: тот же вопрос заново, с пределом Auction.
+      case "image-too-large":
+        return {
+          kind: "lot-ask",
+          question,
+          ...(lot === undefined ? {} : { lot }),
+          error: "image-too-large",
+          maxImageBytes: card.maxBytes,
+        };
+      case "unsupported-image":
+        return {
+          kind: "lot-ask",
+          question,
+          ...(lot === undefined ? {} : { lot }),
+          error: "unsupported-image",
         };
       default:
         return failed(card);
@@ -217,6 +235,7 @@ export function createLotForm(lots: LotAdministration) {
                 auctionId: request.auctionId,
                 title,
                 description: "",
+                hasImage: false,
                 terms: { kind: "unset" },
               },
               saved: "created",
@@ -302,6 +321,59 @@ export function createLotForm(lots: LotAdministration) {
       });
     }
     return cardRefused(written, question, current.lot);
+  }
+
+  // Фото меняется в любом состоянии лота, как название и описание: каталог
+  // торгов не касается (ADR-057). Правка заменяет оба текста, поэтому они
+  // берутся из карточки, как у `setText`.
+  async function setImage(
+    request: Extract<LotFormRequest, { intent: "set-lot-image" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const stored = current.raw.card;
+    if (stored === undefined) {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    const written = await lots.editLotCard(
+      request.identity,
+      {
+        lotId: request.lotId,
+        title: stored.title,
+        description: stored.description,
+        image: request.image,
+      },
+      rpcMeta(request),
+    );
+    if (written.kind === "ok") {
+      return {
+        kind: "lot-form",
+        lot: { ...current.lot, hasImage: true },
+        saved: "image",
+      };
+    }
+    if (written.kind === "card-not-found") {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    if (written.kind === "card-conflict") {
+      return failed({
+        kind: "invalid",
+        cause: new Error("lot card edit answered card-conflict"),
+      });
+    }
+    return cardRefused(
+      written,
+      { kind: "image", lotId: request.lotId },
+      current.lot,
+    );
   }
 
   async function checkPrice(
@@ -439,6 +511,8 @@ export function createLotForm(lots: LotAdministration) {
         return checkPrice(request);
       case "set-lot-terms":
         return setTerms(request);
+      case "set-lot-image":
+        return setImage(request);
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

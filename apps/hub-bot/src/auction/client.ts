@@ -127,18 +127,30 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...card },
           options(meta),
         );
-        return cardResult(response.outcome);
+        return cardResult(response.outcome, false);
       } catch (cause) {
         return toFailure(cause);
       }
     },
     async editLotCard(person, card, meta) {
+      const { image, ...text } = card;
       try {
         const response = await rpc.editLotCard(
-          { viewer: wireViewer(viewerOf(person)), ...card },
+          {
+            viewer: wireViewer(viewerOf(person)),
+            ...text,
+            ...(image === undefined
+              ? {}
+              : {
+                  imageChange: {
+                    case: "replaceImage",
+                    value: { content: image },
+                  },
+                }),
+          },
           options(meta),
         );
-        return cardResult(response.outcome);
+        return cardResult(response.outcome, image !== undefined);
       } catch (cause) {
         return toFailure(cause);
       }
@@ -315,8 +327,9 @@ type CardOutcome =
   | Awaited<ReturnType<AuctionRpc["createLotCard"]>>["outcome"]
   | Awaited<ReturnType<AuctionRpc["editLotCard"]>>["outcome"];
 
-// Форма изображения не шлёт, поэтому его отказы здесь — тоже дефект.
-function cardResult(outcome: CardOutcome): LotCardResult {
+// Отказ изображения — ответ на команду, которая его прислала. У команды без
+// изображения такого отказа быть не может, и он — дефект соседа.
+function cardResult(outcome: CardOutcome, sentImage: boolean): LotCardResult {
   switch (outcome.case) {
     case "accepted":
       return { kind: "ok" };
@@ -331,8 +344,16 @@ function cardResult(outcome: CardOutcome): LotCardResult {
         case "cardNotFound":
           return { kind: "card-not-found" };
         case "imageTooLarge":
+          return sentImage
+            ? {
+                kind: "image-too-large",
+                maxBytes: Number(outcome.value.reason.value.maxBytes),
+              }
+            : defect("lot card refused an image that was not sent");
         case "unsupportedImage":
-          return defect("lot card refused an image that was not sent");
+          return sentImage
+            ? { kind: "unsupported-image" }
+            : defect("lot card refused an image that was not sent");
         case undefined:
           return defect("lot card refusal without a reason");
         default: {

@@ -56,13 +56,17 @@ export type MeetupAuctions = {
 // Именованный отказ Auction — значение ответа, и бот его не повторяет.
 
 // `card-conflict` бывает только у создания: карточка с этим `lot_id` уже есть
-// с другим текстом. `card-not-found` — только у правки.
+// с другим текстом. `card-not-found` — только у правки. Отказы изображения —
+// только у правки, которая его заменяет (PER-452): предел размера и тип файла
+// решает Auction, а `maxBytes` — его предел, как он его назвал.
 export type LotCardResult =
   | { kind: "ok" }
   | { kind: "not-admin" }
   | { kind: "empty-title" }
   | { kind: "card-conflict" }
   | { kind: "card-not-found" }
+  | { kind: "image-too-large"; maxBytes: number }
+  | { kind: "unsupported-image" }
   | AuctionFailure;
 
 export type AddLotResult =
@@ -94,16 +98,19 @@ export type LotReadResult =
 
 export type LotCardText = { lotId: string; title: string; description: string };
 
+// Правка карточки. Без `image` изображение остаётся как есть: `image_change` не
+// выставляется. С ним — заменяется файлом, скачанным у Telegram.
+export type LotCardEdit = LotCardText & { image?: Uint8Array };
+
 export type LotAdministration = {
   createLotCard(
     person: Person,
     card: LotCardText,
     meta?: RpcMetadata,
   ): Promise<LotCardResult>;
-  // Изображение правка не трогает: `image_change` не выставляется.
   editLotCard(
     person: Person,
-    card: LotCardText,
+    card: LotCardEdit,
     meta?: RpcMetadata,
   ): Promise<LotCardResult>;
   addLot(

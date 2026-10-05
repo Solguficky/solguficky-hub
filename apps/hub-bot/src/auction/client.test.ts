@@ -192,7 +192,7 @@ describe("auction adapter of the lot form", () => {
     },
   );
 
-  it("reads CardNotFound of an edit as a final answer and an image refusal as a defect", async () => {
+  it("reads CardNotFound of an edit as a final answer and an image refusal of a text edit as a defect", async () => {
     const missing = adapter({
       editLotCard: async () =>
         refused(EditLotCardResponseSchema, "cardNotFound"),
@@ -208,6 +208,42 @@ describe("auction adapter of the lot form", () => {
     await expect(image.editLotCard(admin, card)).resolves.toMatchObject({
       kind: "invalid",
     });
+  });
+
+  it("sends a new image as a replacement and reads its refusals as final answers", async () => {
+    const content = new Uint8Array([0xff, 0xd8, 0xff]);
+    const editLotCard = vi.fn(async () =>
+      create(EditLotCardResponseSchema, {
+        outcome: {
+          case: "refused",
+          value: {
+            reason: { case: "imageTooLarge", value: { maxBytes: 2_097_152n } },
+          },
+        },
+      }),
+    );
+    const unsupported = adapter({
+      editLotCard: async () =>
+        refused(EditLotCardResponseSchema, "unsupportedImage"),
+    });
+
+    await expect(
+      adapter({ editLotCard }).editLotCard(admin, { ...card, image: content }),
+    ).resolves.toEqual({ kind: "image-too-large", maxBytes: 2_097_152 });
+    await expect(
+      unsupported.editLotCard(admin, { ...card, image: content }),
+    ).resolves.toEqual({ kind: "unsupported-image" });
+    expect(editLotCard).toHaveBeenCalledWith(
+      {
+        ...card,
+        viewer: {
+          identityId: admin.identityId,
+          globalRoles: [GlobalRole.ADMIN],
+        },
+        imageChange: { case: "replaceImage", value: { content } },
+      },
+      expect.anything(),
+    );
   });
 
   it.each([

@@ -90,6 +90,7 @@ export type HarnessOptions = Partial<
     | "lotPhotos"
     | "communityTimeZone"
     | "auctionBotUsername"
+    | "files"
   >
 > & {
   respond?: (method: ApiMethod, payload: ApiPayload) => unknown;

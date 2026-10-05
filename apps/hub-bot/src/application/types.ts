@@ -49,12 +49,14 @@ export type NewLotId = string & { readonly __newLot: true };
 // Что спросил вопрос формы лота. Этого хватает, чтобы принять ответ: шаг
 // переживает рестарт в кнопке вопроса. У нового лота идентификатор рождён до
 // вопроса, поэтому повторный ответ создаёт тот же лот, а не второй. Вопрос о
-// шаге несёт цену из предыдущего ответа, в целых рублях.
+// шаге несёт цену из предыдущего ответа, в целых рублях. Ответ на вопрос о
+// фото — фотография, а не текст (PER-452).
 export type LotQuestion =
   | { kind: "new"; auctionId: string; lotId: NewLotId }
   | { kind: "text"; field: LotTextField; lotId: string }
   | { kind: "price"; lotId: string }
-  | { kind: "step"; lotId: string; priceRubles: number };
+  | { kind: "step"; lotId: string; priceRubles: number }
+  | { kind: "image"; lotId: string };
 
 // Почему вопрос формы лота задан заново.
 export type LotAskError =
@@ -62,7 +64,16 @@ export type LotAskError =
   | "empty-description"
   | "amount-format"
   | "amount-range"
-  | "step-refused";
+  | "step-refused"
+  // Отказы Auction на фото: больше его предела либо не изображение.
+  | "image-too-large"
+  | "unsupported-image"
+  // Ответ на вопрос о фото — не фотография: текст, файл, стикер.
+  | "photo-needed"
+  // Альбом: лоту нужна одна фотография.
+  | "photo-album"
+  // Telegram не отдал файл фотографии: её можно прислать ещё раз.
+  | "photo-unavailable";
 
 // `unset` — лот без условий торгов. `closed` — торги по лоту начались или
 // закончились: условия заморожены. Шага у `set` нет, когда он не один на все
@@ -81,6 +92,7 @@ export type LotFormView = {
   auctionId: string;
   title?: string;
   description: string;
+  hasImage: boolean;
   terms: LotTermsView;
 };
 
@@ -258,6 +270,12 @@ export type LotFormRequest =
       priceRubles: number;
       value: string;
       opId: string;
+    })
+  // Фото уже скачано у Telegram краем: юзкейс получает только байты.
+  | (LotFormCall & {
+      intent: "set-lot-image";
+      lotId: string;
+      image: Uint8Array;
     });
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
@@ -381,7 +399,11 @@ export type ExecuteResult =
   | { kind: "auction-refused"; reason: "not-administrator" }
   // Экран правки лота (PER-319). `saved` — что только что записано: лот собран
   // из ответа команды, потому что чтение Auction её ещё могло не увидеть.
-  | { kind: "lot-form"; lot: LotFormView; saved?: "created" | "text" | "terms" }
+  | {
+      kind: "lot-form";
+      lot: LotFormView;
+      saved?: "created" | "text" | "terms" | "image";
+    }
   // Вопрос формы лота: следующий шаг либо тот же заново, с причиной отказа.
   // Лота нет у нового лота и там, где его не читали.
   | {
@@ -389,6 +411,8 @@ export type ExecuteResult =
       question: LotQuestion;
       lot?: LotFormView;
       error?: LotAskError;
+      // Предел Auction в байтах, когда фото его превысило.
+      maxImageBytes?: number;
     }
   // Отказ Auction, который человеку показывают, а не повторяют.
   | {
