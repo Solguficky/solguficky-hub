@@ -41,7 +41,13 @@ def cli():
         # Read a durable JetStream consumer, flagging repeats by event_id
         nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events
     """
-    pass
+    # Вывод несёт эмодзи, а на Windows поток, перенаправленный в пайп — Git
+    # Bash, just, — берёт кодировку ANSI-страницы, cp1251, и первая же строка
+    # падает с UnicodeEncodeError. Терминал Git Bash (mintty) читает UTF-8, а
+    # настоящая консоль Windows пишет его и так. Поток без reconfigure не трогаем.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
 
 
 @cli.command()

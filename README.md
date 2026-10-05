@@ -6,27 +6,34 @@
 
 ## Текущее состояние
 
-Продуктовое ядро MVP спроектировано, но доменной логики пока нет ни у одного компонента. Сейчас здесь находятся:
+Продуктовое ядро MVP спроектировано, и его первый срез работает в коде. Сейчас здесь находятся:
 
-- Protobuf-контракты и контур Go-кодогенерации Identity;
-- Identity: gRPC-сервер разрешения личности поверх PostgreSQL;
-- Meetups: скелет gRPC-сервиса на F#, отвечающий на операции контракта заглушкой;
+- Protobuf-контракты NATS и gRPC с кодогенерацией у каждого потребителя;
+- Identity на Go: gRPC-сервер разрешения личности поверх PostgreSQL и outbox исходящих событий;
+- Meetups на F#: состояние сходки и журнал её событий в PostgreSQL за gRPC-границей;
+- Notifications на C# и Orleans: адресные факты о сходках и напоминания;
 - Hub Bot — бот хаба на TypeScript;
-- AppHost на .NET Aspire, поднимающий эти компоненты, NATS и PostgreSQL;
-- конфигурация локального стека логов и инструменты разработки;
-- проектные решения по Meetups, Identity, Hub Bot и Notifications — в ADR и service briefs.
+- Auction на Scala и Apache Pekko и бот аукциона — вне MVP;
+- serverless-функции сайта сообщества;
+- общий код ботов и .NET-сервисов в `shared/`;
+- AppHost на .NET Aspire, поднимающий сервисы и ботов вместе с NATS и PostgreSQL;
+- сквозные наборы тестов, конфигурация локального стека логов и инструменты разработки;
+- проектные решения — в ADR и service briefs.
 
 Актуальные статусы Current / MVP / Future собраны в [архитектурном обзоре](docs/architecture/overview.md) и [service briefs](docs/services/README.md). Milestones, приоритеты и прогресс ведутся в Linear, а не в roadmap-файле репозитория.
 
 ## Структура
 
 ```text
-apps/                         компоненты платформы: Identity, Meetups, Hub Bot
+apps/                         компоненты платформы: Identity, Meetups, Notifications,
+                              Hub Bot, Auction, бот аукциона, API сайта сообщества
 contracts/proto/              Protobuf-контракты NATS и gRPC
 docs/                         продукт, архитектура, решения и руководства
 infra/apphost/                локальная оркестрация .NET Aspire: AppHost и его тесты
 infra/observability/          конфигурация Loki, Promtail и Grafana
 shared/dotnet/                общая обвязка .NET-сервисов (ServiceDefaults)
+shared/typescript/            общие пакеты ботов: интерфейс аукциона, доставка, линтер экрана
+tests/                        сквозные наборы: контур Aspire и живой Telegram
 tools/git-hooks/              скрипты проверок для хуков и CI
 tools/nats-tester/            ручная проверка NATS-сообщений
 justfile                      единая точка входа для команд репозитория
@@ -52,7 +59,7 @@ aspire run
 
 Какой AppHost запускать, CLI читает из корневого `aspire.config.json`, поэтому команда работает из любого каталога клона.
 
-Профиль перечисляет узлы, которыми AppHost владеет в запуске, и задаётся данными в `Topology:Profiles`; сейчас определены `infra`, `identity`, `meetups`, `notifications` и `hub`. Что подтверждено живым прогоном, а что нет, вместе с командами, переменными и известными ограничениями описано в [руководстве по локальной разработке](docs/development/local-development.md).
+Профиль перечисляет узлы, которыми AppHost владеет в запуске, и задаётся данными в `Topology:Profiles`. Перечень профилей, что подтверждено живым прогоном, а что нет, вместе с командами, переменными и известными ограничениями описано в [руководстве по локальной разработке](docs/development/local-development.md).
 
 ## Документация
 
