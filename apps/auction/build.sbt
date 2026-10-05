@@ -184,5 +184,14 @@ lazy val auction = (project in file("."))
         output.copy(overall = TestResult.Failed)
       }
     },
+    // L1 рестарта под залпом (PER-332) запускает сервис голой JVM `java auction.Main`, как узел Aspire, и убивает
+    // процесс. Тест не форкается, и его собственный classpath — загрузчики sbt по слоям, а не путь, который можно
+    // отдать дочерней JVM. Поэтому runtime classpath уходит тесту файлом ресурса, тем же выражением, что у рецепта
+    // `auction-classpath`.
+    Test / resourceGenerators += Def.task {
+      val file = (Test / resourceManaged).value / "auction-runtime-classpath"
+      IO.write(file, (Runtime / fullClasspath).value.files.mkString(java.io.File.pathSeparator))
+      Seq(file)
+    }.taskValue,
     run / fork := true
   )

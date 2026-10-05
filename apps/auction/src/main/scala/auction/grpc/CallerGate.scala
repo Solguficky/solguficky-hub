@@ -30,6 +30,8 @@ object MethodAccess {
     "AddLot" -> bots,
     "RemoveLot" -> bots,
     "ScheduleLot" -> Set(Caller.HubBot),
+    "ScheduleAuction" -> Set(Caller.HubBot),
+    "StartPrebidding" -> Set(Caller.HubBot),
     "GetMeetupAuction" -> Set(Caller.HubBot),
     "ListAuctions" -> bots,
     "MarkInvoicePaid" -> Set(Caller.AuctionBot),

@@ -321,6 +321,31 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.scheduleLot(outcome).fold(refuse, Future.successful))
     }
 
+  /** Планирование аукциона (ADR-047, дополнение 2026-10-04): право у Meetups, `ConfigInvalid` решает ядро аукциона. */
+  def scheduleAuction(in: wire.ScheduleAuctionRequest): Future[wire.ScheduleAuctionResponse] =
+    RequestMapping.scheduleAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .schedule(command.auctionId, command.config, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.scheduleAuction(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Открытие онлайн-торгов. Ответ — запись `PrebiddingStarted`; лоты реестра аукцион открывает после неё по протоколу
+   * И-14, и повтор с тем же `op_id` доспрашивает не ответившие.
+   */
+  def startPrebidding(in: wire.StartPrebiddingRequest): Future[wire.StartPrebiddingResponse] =
+    RequestMapping.startPrebidding(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .startPrebidding(command.auctionId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.startPrebidding(outcome).fold(refuse, Future.successful))
+    }
+
   /**
    * Чтения аукционов идут из read model и видимость сходки не проверяют (ADR-047): путь «сходка → аукцион» есть только
    * у бота хаба после ответа Meetups, а списки сходку не называют. Аукциона у сходки нет — пустой ответ, а не ошибка.

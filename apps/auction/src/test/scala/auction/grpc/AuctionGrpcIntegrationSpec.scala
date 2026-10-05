@@ -19,7 +19,13 @@ import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
 import auction.catalog.LotImage
 import auction.catalog.TestImages
+import auction.v1.auction.AntiSnipe as AntiSnipeMessage
+import auction.v1.auction.AuctionConfig as AuctionConfigMessage
+import auction.v1.auction.ClosingByDeadline
+import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
+import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
+import auction.v1.auction.OnlinePhase as OnlinePhaseMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service as wire
 import com.google.protobuf.ByteString
@@ -43,6 +49,8 @@ import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
 import java.time.Clock
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import scala.concurrent.Future
 import scala.concurrent.duration.*
@@ -257,6 +265,33 @@ final class AuctionGrpcIntegrationSpec
       Some(StepPolicyMessage().withFixed(MoneyMessage(step, "RUB")))
     )
 
+  /** Онлайн-неделя, которая закрывает лоты общим дедлайном: умолчания лота — рубли, анти-снайп по две минуты. */
+  private def auctionConfig(opensAt: String, closesAt: String): AuctionConfigMessage =
+    AuctionConfigMessage(
+      Some(OnlinePhaseMessage(opensAt, Some(closesAt), closesLots = true)),
+      0,
+      Some(ClosingPolicyMessage().withByDeadline(ClosingByDeadline())),
+      Some(
+        LotDefaultsMessage(
+          "RUB",
+          Some(StepPolicyMessage().withFixed(MoneyMessage(25000, "RUB"))),
+          Some(AntiSnipeMessage(120, 120, 3)),
+          proxyEnabled = true
+        )
+      )
+    )
+
+  /** Планирование аукциона с дедлайном через месяц от часов теста. */
+  private def auctionSchedule(auction: String): wire.ScheduleAuctionRequest = {
+    val closesAt = Instant.now().plus(30, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS)
+    wire.ScheduleAuctionRequest(
+      Some(administrator),
+      auction,
+      newId(),
+      Some(auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString))
+    )
+  }
+
   /** Сколько событий в журнале лота: окно `seen` entity хранит по записи на каждый `op_id`. */
   private def lotJournal(node: Node, lot: String): Int =
     node.sharding.entityRefFor(LotEntity.TypeKey, lot).ask[Lot](LotEntity.Get(_)).futureValue.seen.size
@@ -305,6 +340,94 @@ final class AuctionGrpcIntegrationSpec
         .outcome
         .isAccepted shouldBe true
       node.authority.correlations shouldBe List(Correlation(Some("req-auction-1"), Some("enable-meetup-auction")))
+    }
+
+    "schedules an auction and starts its prebidding through the wire, and the scheduled lot opens to the common deadline" in withNode {
+      node =>
+        val auction = enable(node, newId()).getAccepted.auctionId
+        val lot = newId()
+        asHubBot(node.client.addLot())
+          .invoke(wire.AddLotRequest(Some(administrator), auction, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        val start = wire.StartPrebiddingRequest(Some(administrator), auction, newId())
+        asHubBot(node.client.startPrebidding())
+          .invoke(start)
+          .futureValue
+          .getRefused
+          .reason
+          .isAuctionNotScheduled shouldBe
+          true
+        // Дедлайн — от часов теста: прошедший дедлайн закрыл бы лот таймером раньше чтения.
+        val closesAt = Instant.now().plus(30, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS)
+        val backwards = auctionConfig(closesAt.plus(1, ChronoUnit.DAYS).toString, closesAt.toString)
+        asHubBot(node.client.scheduleAuction())
+          .invoke(wire.ScheduleAuctionRequest(Some(administrator), auction, newId(), Some(backwards)))
+          .futureValue
+          .getRefused
+          .getConfigInvalid
+          .reason
+          .isClosesAtNotAfterOpensAt shouldBe true
+        val scheduled = wire.ScheduleAuctionRequest(
+          Some(administrator),
+          auction,
+          newId(),
+          Some(auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString))
+        )
+        asHubBot(node.client.scheduleAuction()).invoke(scheduled).futureValue.outcome.isAccepted shouldBe true
+        asHubBot(node.client.scheduleLot()).invoke(schedule(auction, lot)).futureValue.outcome.isAccepted shouldBe true
+        asHubBot(node.client.startPrebidding()).invoke(start).futureValue.outcome.isAccepted shouldBe true
+        // Повтор того же op_id отвечает принятием; новое планирование после старта — отказ.
+        asHubBot(node.client.startPrebidding()).invoke(start).futureValue.outcome.isAccepted shouldBe true
+        asHubBot(node.client.scheduleAuction())
+          .invoke(scheduled.withOpId(newId()))
+          .futureValue
+          .getRefused
+          .reason
+          .isAuctionAlreadyStarted shouldBe true
+        eventually {
+          val snapshot = asHubBot(node.client.getLot())
+            .invoke(wire.GetLotRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), lot))
+            .futureValue
+          snapshot.getTrading.deadline shouldBe Some(closesAt.toString)
+          snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(500000, "RUB"))
+        }
+    }
+
+    "refuses scheduling and opening from the auction bot at the boundary, before meetups and the auction" in withNode {
+      node =>
+        val auction = enable(node, newId()).getAccepted.auctionId
+        val asked = node.authority.asked
+        statusOf(
+          node.client.scheduleAuction().addHeader("authorization", "Bearer auction").invoke(auctionSchedule(auction))
+        ) shouldBe Status.Code.UNAUTHENTICATED
+        statusOf(
+          node.client
+            .startPrebidding()
+            .addHeader("authorization", "Bearer auction")
+            .invoke(wire.StartPrebiddingRequest(Some(administrator), auction, newId()))
+        ) shouldBe Status.Code.UNAUTHENTICATED
+        node.authority.asked shouldBe asked
+        auctionState(node, auction).state shouldBe AuctionState.Draft
+    }
+
+    "refuses scheduling and opening to a viewer whom meetups does not confirm as administrator" in withNode { node =>
+      val auction = enable(node, newId()).getAccepted.auctionId
+      node.authority.answer = Authority.NotAdministrator
+      asHubBot(node.client.scheduleAuction())
+        .invoke(auctionSchedule(auction))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      asHubBot(node.client.startPrebidding())
+        .invoke(wire.StartPrebiddingRequest(Some(administrator), auction, newId()))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      auctionState(node, auction).state shouldBe AuctionState.Draft
     }
 
     "answers NOT_FOUND to a registry command on an auction that was never enabled, without asking meetups" in withNode {

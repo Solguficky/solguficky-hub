@@ -1,10 +1,13 @@
 package auction.grpc
 
 import auction.aggregate.AuctionState
+import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.Drafted
 import auction.aggregate.LotSchedulingRefusal
+import auction.aggregate.OpeningRefusal
 import auction.aggregate.RemovalRefusal
+import auction.aggregate.SchedulingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
 import auction.contract.AuctionValues
@@ -320,6 +323,70 @@ object ResponseMapping {
 
   private def schedulingRefused(reason: wire.ScheduleLotRefusal.Reason): wire.ScheduleLotResponse =
     wire.ScheduleLotResponse().withRefused(wire.ScheduleLotRefusal(reason))
+
+  /**
+   * Право — как у реестра: отказы значениями, `Unavailable` статусом, аукциона нет — `NOT_FOUND`. Повтор принятого
+   * `op_id` отвечает принятием до права, поэтому `OpIdTaken` у команды аукциона нет.
+   */
+  def scheduleAuction(outcome: Either[SchedulingRefusal, Unit]): Either[Status, wire.ScheduleAuctionResponse] =
+    outcome match {
+      case Right(()) => Right(wire.ScheduleAuctionResponse().withAccepted(wire.AuctionSchedulingAccepted()))
+      case Left(SchedulingRefusal.ConfigInvalid(reason)) =>
+        Right(auctionSchedulingRefused(wire.ScheduleAuctionRefusal.Reason.ConfigInvalid(configInvalid(reason))))
+      case Left(SchedulingRefusal.AuctionAlreadyStarted) =>
+        Right(
+          auctionSchedulingRefused(
+            wire.ScheduleAuctionRefusal.Reason.AuctionAlreadyStarted(wire.AuctionAlreadyStarted())
+          )
+        )
+      case Left(SchedulingRefusal.Denied(Denial.NotAdministrator)) =>
+        Right(
+          auctionSchedulingRefused(
+            wire.ScheduleAuctionRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())
+          )
+        )
+      case Left(SchedulingRefusal.Denied(Denial.MeetupNotFound)) =>
+        Right(auctionSchedulingRefused(wire.ScheduleAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(SchedulingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(SchedulingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(SchedulingRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"auction scheduling answered $denial")
+    }
+
+  private def configInvalid(reason: ConfigInvalid): wire.ConfigInvalid = {
+    val named = reason match {
+      case ConfigInvalid.ClosesAtMissing => wire.ConfigInvalid.Reason.ClosesAtMissing(wire.ClosesAtMissing())
+      case ConfigInvalid.ClosesAtNotAfterOpensAt =>
+        wire.ConfigInvalid.Reason.ClosesAtNotAfterOpensAt(wire.ClosesAtNotAfterOpensAt())
+      case ConfigInvalid.FinalBlocksOutOfRange =>
+        wire.ConfigInvalid.Reason.FinalBlocksOutOfRange(wire.FinalBlocksOutOfRange())
+      case ConfigInvalid.LotDefaults(_) =>
+        wire.ConfigInvalid.Reason.LotDefaultsStepPolicyInvalid(wire.StepPolicyInvalid())
+    }
+    wire.ConfigInvalid(named)
+  }
+
+  private def auctionSchedulingRefused(reason: wire.ScheduleAuctionRefusal.Reason): wire.ScheduleAuctionResponse =
+    wire.ScheduleAuctionResponse().withRefused(wire.ScheduleAuctionRefusal(reason))
+
+  /** Принятие не ждёт лотов: их открывает entity аукциона после записи события, и ответ этого не несёт. */
+  def startPrebidding(outcome: Either[OpeningRefusal, Unit]): Either[Status, wire.StartPrebiddingResponse] =
+    outcome match {
+      case Right(()) => Right(wire.StartPrebiddingResponse().withAccepted(wire.PrebiddingStartAccepted()))
+      case Left(OpeningRefusal.AuctionNotScheduled) =>
+        Right(openingRefused(wire.StartPrebiddingRefusal.Reason.AuctionNotScheduled(wire.AuctionNotScheduled())))
+      case Left(OpeningRefusal.Denied(Denial.NotAdministrator)) =>
+        Right(openingRefused(wire.StartPrebiddingRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
+      case Left(OpeningRefusal.Denied(Denial.MeetupNotFound)) =>
+        Right(openingRefused(wire.StartPrebiddingRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(OpeningRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(OpeningRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(OpeningRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"prebidding start answered $denial")
+    }
+
+  private def openingRefused(reason: wire.StartPrebiddingRefusal.Reason): wire.StartPrebiddingResponse =
+    wire.StartPrebiddingResponse().withRefused(wire.StartPrebiddingRefusal(reason))
 
   /**
    * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у
