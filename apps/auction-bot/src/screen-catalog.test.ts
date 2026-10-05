@@ -70,7 +70,18 @@ const lot = (image: boolean): AuctionScreenBody => ({
     },
   ],
   keyboard: [
+    // Ряды листа ставки (PER-317): лот в онлайн-торгах с автоставкой.
+    [
+      {
+        action: "lot.bid-step",
+        amount: rub(550),
+        callbackData: "v1:auc:cb:lot-1:fa:1",
+      },
+    ],
+    [{ action: "lot.bid-custom", callbackData: "v1:auc:ab:lot-1:1" }],
+    [{ action: "lot.proxy", callbackData: "v1:auc:ax:lot-1:1" }],
     [{ action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" }],
+    [{ action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" }],
     [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
   ],
 });
