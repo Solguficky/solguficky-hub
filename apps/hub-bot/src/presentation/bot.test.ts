@@ -42,7 +42,6 @@ import {
   parseTelegramEnvironment,
   type TelegramEnvironment,
 } from "./bot.js";
-import { editQuestion, publishMomentQuestion } from "./edit-question.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
 import { refusalText } from "./screens/kit.js";
 
@@ -133,6 +132,14 @@ function forwardedReplyUpdate(replyMessageId: number): Update {
         // property, which is uninhabitable under exactOptionalPropertyTypes.
       } as never,
     },
+  };
+}
+
+// Клавиатура вопроса: режим ответа и «Отмена» с его шагом.
+function cancel(data: string) {
+  return {
+    force_reply: true,
+    inline_keyboard: [[{ text: "Отмена", callback_data: data }]],
   };
 }
 
@@ -2821,7 +2828,7 @@ describe("presentation adapter", () => {
           [
             {
               text: "Отмена",
-              callback_data: "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:venue",
+              callback_data: "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:venue:42",
             },
           ],
         ],
@@ -2867,6 +2874,35 @@ describe("presentation adapter", () => {
       "<p>Изменение сохранено.</p><h1>",
     );
   });
+
+  // Вопрос после рестарта знает, кому задан, из своей кнопки, и чужой ответ
+  // отбрасывает так же, как до рестарта (PER-461).
+  it.each([
+    { data: "v1:q:fe:AZLzpLXGfY6fChssPU5fYA:venue:42", kind: "a field" },
+    { data: "v1:q:pm:AZLzpLXGfY6fChssPU5fYA:42", kind: "a publish moment" },
+  ])(
+    "ignores a foreign answer to $kind question after restart",
+    async ({ data }) => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const restarted = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await restarted.bot.init();
+      await restarted.bot.handleUpdate(
+        replyUpdate({
+          text: "05.10.2026 19:00",
+          fromId: 7,
+          replyMessageId: 77,
+          replyFromId: 1,
+          replyText: "Вопрос",
+          replyMarkup: cancel(data),
+        }),
+      );
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(restarted.calls).toEqual([]);
+    },
+  );
 
   it("asks before unpublishing and refusal performs no state command", async () => {
     const meetup = publishedMeetup();
@@ -4656,10 +4692,6 @@ describe("confirmations", () => {
 
 describe("questions", () => {
   const token = "AZLzpLXGfY6fChssPU5fYA";
-  const cancel = (data: string) => ({
-    force_reply: true,
-    inline_keyboard: [[{ text: "Отмена", callback_data: data }]],
-  });
   const buttonsOf = (call: RecordedCall | undefined) =>
     (
       call?.payload as
@@ -4691,7 +4723,7 @@ describe("questions", () => {
     expect(calls[0]?.payload).toMatchObject({ message_id: 9 });
     expect(buttonsOf(calls[0])).toEqual([]);
     expect(calls[2]?.payload).toMatchObject({
-      reply_markup: cancel(`v1:q:fe:${token}:venue`),
+      reply_markup: cancel(`v1:q:fe:${token}:venue:42`),
     });
   });
 
@@ -4832,37 +4864,51 @@ describe("questions", () => {
     );
   });
 
-  it("reads the step of a question asked by the previous release from its marker", async () => {
-    const execute = viewing();
-    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
-    await bot.init();
-    const asked = editQuestion({
-      prompt: "Где встречаемся?",
-      botUsername: "stub_bot",
-      token,
-      field: "venue",
-    });
+  // Вопросы прошлых релизов не знают, кому заданы: маркер шага в тексте и
+  // «Отмена» без id. Ответ на них не применяется (PER-461).
+  it.each([
+    {
+      name: "a step marker in the text",
+      replyText: "​Где встречаемся?",
+      replyEntities: [
+        {
+          type: "text_link" as const,
+          offset: 0,
+          length: 1,
+          url: `https://t.me/stub_bot#v1:manage:field:${token}:venue`,
+        },
+      ],
+    },
+    {
+      name: "a cancel button without the asked id",
+      replyText: "Где встречаемся?",
+      replyMarkup: cancel(`v1:q:fe:${token}:venue`),
+    },
+  ])(
+    "calls a question of the previous release with $name outdated",
+    async ({ name: _name, ...replied }) => {
+      const execute = viewing();
+      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+        execute,
+      });
+      await bot.init();
 
-    await bot.handleUpdate(
-      replyUpdate({
-        text: "Новый зал",
-        fromId: 42,
-        replyMessageId: 77,
-        replyFromId: 1,
-        replyText: asked.text,
-        replyEntities: asked.entities,
-      }),
-    );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "Новый зал",
+          fromId: 42,
+          replyMessageId: 77,
+          replyFromId: 1,
+          ...replied,
+        }),
+      );
 
-    expect(execute).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        intent: "update-meetup-field",
-        field: "venue",
-        value: "Новый зал",
-        meetupId: tokenToUuid(token),
-      }),
-    );
-  });
+      expect(execute).not.toHaveBeenCalled();
+      expect(sendMessageText(sentMessages(calls).at(-1))).toContain(
+        "Этот вопрос уже устарел.",
+      );
+    },
+  );
 
   it("sends a restarted material title question back to the materials", async () => {
     const execute = viewing();
@@ -4901,6 +4947,7 @@ describe("questions", () => {
     `v1:q:ms:${token}:3`,
     `v1:q:mt:${token}`,
     `v1:q:bm:${token}`,
+    `v1:q:bm:${token}:42`,
   ])("cancels %s without a command to the service", async (data) => {
     const execute = viewing();
     const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
@@ -4985,7 +5032,7 @@ describe("questions", () => {
         reply_markup: {
           force_reply: true,
           inline_keyboard: [
-            [{ text: "Отмена", callback_data: `v1:q:fe:${token}:venue` }],
+            [{ text: "Отмена", callback_data: `v1:q:fe:${token}:venue:42` }],
           ],
         },
       });
@@ -6031,7 +6078,7 @@ describe("deferred publication frames", () => {
       reply_markup: {
         force_reply: true,
         inline_keyboard: [
-          [{ text: "Отмена", callback_data: `v1:q:fc:${draftToken}:venue` }],
+          [{ text: "Отмена", callback_data: `v1:q:fc:${draftToken}:venue:42` }],
         ],
       },
     });
@@ -6138,7 +6185,7 @@ describe("deferred publication frames", () => {
               [
                 {
                   text: "Отмена",
-                  callback_data: `v1:q:fc:${draftToken}:schedule`,
+                  callback_data: `v1:q:fc:${draftToken}:schedule:42`,
                 },
               ],
             ],
@@ -6512,11 +6559,7 @@ describe("deferred publication frames", () => {
       execute,
     });
     await bot.init();
-    const question = publishMomentQuestion({
-      prompt: "Когда опубликовать?",
-      botUsername: botInfo.username,
-      token,
-    });
+    const replyMarkup = cancel(`v1:q:pm:${token}:42`);
     const answer = () =>
       bot.handleUpdate(
         replyUpdate({
@@ -6524,8 +6567,8 @@ describe("deferred publication frames", () => {
           fromId: 42,
           replyMessageId: 7,
           replyFromId: 1,
-          replyText: question.text,
-          replyEntities: question.entities,
+          replyText: "Когда опубликовать?",
+          replyMarkup,
         }),
       );
 
@@ -6604,11 +6647,7 @@ describe("deferred publication frames", () => {
       execute,
     });
     await bot.init();
-    const question = publishMomentQuestion({
-      prompt: "Когда опубликовать?",
-      botUsername: botInfo.username,
-      token,
-    });
+    const replyMarkup = cancel(`v1:q:pm:${token}:42`);
 
     await bot.handleUpdate(
       replyUpdate({
@@ -6616,8 +6655,8 @@ describe("deferred publication frames", () => {
         fromId: 42,
         replyMessageId: 7,
         replyFromId: 1,
-        replyText: question.text,
-        replyEntities: question.entities,
+        replyText: "Когда опубликовать?",
+        replyMarkup,
       }),
     );
 

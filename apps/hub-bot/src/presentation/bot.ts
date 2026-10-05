@@ -80,10 +80,6 @@ import {
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { NavScreen } from "./commands.js";
-import {
-  parseEditQuestion,
-  parsePublishMomentQuestion,
-} from "./edit-question.js";
 import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
@@ -553,48 +549,20 @@ async function handleMessage(
         ? undefined
         : questions.get(questionKey(ctx.chat?.id, replyId));
     const repliedMessage = ctx.message?.reply_to_message;
-    const repliedEntities =
-      repliedMessage !== undefined && "entities" in repliedMessage
-        ? repliedMessage.entities
-        : undefined;
-    const recoveredEdit =
-      storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
-        ? parseEditQuestion(repliedEntities)
-        : undefined;
-    const recoveredMoment =
-      storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
-        ? parsePublishMomentQuestion(repliedEntities)
-        : undefined;
-    // Шаг вопроса лежит в его кнопке «Отмена» и возвращается с ответом: так
-    // вопрос переживает рестарт. Маркер шага в тексте — вопросы прошлого
-    // релиза, они читаются ещё один релиз.
-    const askedStep =
+    // Шаг вопроса и тот, кому он задан, лежат в его кнопке «Отмена» и
+    // возвращаются с ответом: так вопрос переживает рестарт и после него
+    // принимает ответ только от спрашиваемого. Вопрос прошлого релиза — без id
+    // в кнопке или с маркером в тексте — устарел (PER-461).
+    const recovered =
       storedPending === undefined && repliedMessage?.from?.id === ctx.me.id
         ? questionStepOf(repliedMessage)
         : undefined;
+    const askedStep = recovered?.step;
     const pending: PendingInput | undefined =
       storedPending ??
-      (askedStep === undefined
+      (recovered?.askedBy === undefined
         ? undefined
-        : pendingOf(askedStep, ctx.from?.id ?? 0)) ??
-      (recoveredEdit !== undefined
-        ? {
-            kind: "meetup" as const,
-            mode: "edit" as const,
-            field: recoveredEdit.field,
-            meetupId: tokenToUuid(recoveredEdit.token),
-            telegramUserId: ctx.from?.id ?? 0,
-            expiresAt: Date.now() + questionTtlMs,
-          }
-        : recoveredMoment !== undefined
-          ? {
-              kind: "publish-moment" as const,
-              meetupId: tokenToUuid(recoveredMoment.token),
-              origin: "status" as const,
-              telegramUserId: ctx.from?.id ?? 0,
-              expiresAt: Date.now() + questionTtlMs,
-            }
-          : undefined);
+        : pendingOf(recovered.step, recovered.askedBy));
     if (
       replyId !== undefined &&
       pending?.kind === "publish-moment" &&
@@ -5022,8 +4990,10 @@ function stepOf(pending: PendingBody): QuestionStep {
 }
 
 // Ожидаемый ответ по шагу из кнопки вопроса — то, что раньше жило только в
-// памяти процесса. Название материала по шагу не восстановить: источник файла
-// в кнопку не помещается.
+// памяти процесса. `telegramUserId` — спрашиваемый из той же кнопки, а не
+// автор ответа: иначе после рестарта чужой ответ проходил бы проверку.
+// Название материала по шагу не восстановить: источник файла в кнопку не
+// помещается.
 function pendingOf(
   step: QuestionStep,
   telegramUserId: number,
@@ -5116,12 +5086,16 @@ function cancelTarget(step: QuestionStep): ScreenAction {
   }
 }
 
-function questionStepOf(replied: unknown): QuestionStep | undefined {
+function questionStepOf(
+  replied: unknown,
+): { step: QuestionStep; askedBy: number | undefined } | undefined {
   const parsed = RepliedKeyboardSchema.safeParse(replied);
   if (!parsed.success) return undefined;
   for (const button of parsed.data.reply_markup.inline_keyboard.flat()) {
     const action = parseCallback(button.callback_data);
-    if (action.kind === "question") return action.step;
+    if (action.kind === "question") {
+      return { step: action.step, askedBy: action.askedBy };
+    }
   }
   return undefined;
 }
@@ -5153,7 +5127,7 @@ async function askQuestion(
   }
   const keyboard = new InlineKeyboard().text(
     cancelLabel,
-    questionData(stepOf(pending)),
+    questionData(stepOf(pending), pending.telegramUserId),
   );
   const prompt = await ctx.reply(text, {
     ...screenMark("question"),

@@ -635,11 +635,32 @@ describe("notification callbacks", () => {
       ["v1:q:cc", { kind: "channel-code" }],
       ["v1:q:cl", { kind: "channel-label" }],
     ];
+    // Самый длинный Telegram id — 16 цифр: id укладывается в 52 бита.
+    const askedBy = 9007199254740991;
     for (const [data, step] of steps) {
-      expect(questionData(step)).toBe(data);
-      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      const asked = `${data}:${askedBy}`;
+      expect(questionData(step, askedBy)).toBe(asked);
+      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+      expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+      // Кнопка прошлого релиза id не несёт: шаг читается, а спрашиваемого нет.
       expect(parseCallback(data)).toEqual({ kind: "question", step });
     }
+  });
+
+  it("does not take a material version of the previous release for the asked id", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    expect(parseCallback(`v1:q:ms:${token}:3`)).toEqual({
+      kind: "question",
+      step: { kind: "material-source", token, version: 3 },
+    });
+    expect(parseCallback(`v1:q:ms:${token}:3:42`)).toEqual({
+      kind: "question",
+      step: { kind: "material-source", token, version: 3 },
+      askedBy: 42,
+    });
+    expect(parseCallback(`v1:q:fe:${token}:venue:0`)).toEqual({
+      kind: "malformed",
+    });
   });
 
   it("parses the date presets: the day list, a chosen day and a chosen moment", () => {
