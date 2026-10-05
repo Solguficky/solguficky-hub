@@ -2704,13 +2704,15 @@ async function handleCallback(
       });
       if (result.kind === "published" && result.repeated === true) {
         // Повтор (E-09) и устаревший предпросмотр (E-04): карточка по текущему
-        // состоянию вместо второго «Сходка создана».
+        // состоянию вместо второго «Сходка создана». Правка стирает сообщение
+        // первой публикации, поэтому ссылка для чата переезжает на карточку.
         await renderMeetupCard(
           ctx,
           cardFrom(result),
           true,
           runtime.presentation ?? "rich",
           true,
+          `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`,
         );
       } else {
         await renderFormResult(

@@ -3328,6 +3328,11 @@ describe("presentation adapter", () => {
         rich_message: { html: expect.stringContaining("Настолки") },
       },
     });
+    // Правка стёрла сообщение первой публикации, но ссылка для чата осталась
+    // на экране (PER-461).
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Сходка уже опубликована. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
+    );
   });
 
   it("redraws a stale preview by the current state without a new message", async () => {
