@@ -29,6 +29,9 @@ workload is checked against the rules of the production chart:
   restarts in place, and every object it reads is rendered as a hook of the
   same events with a lower weight: a pre-hook runs before the release's own
   objects exist, and Helm creates the hooks of one event in weight order.
+  Equal weights fall back to Helm's kind order, which happens to put
+  ConfigMap and Secret before Job; the rule states the order instead of
+  leaning on that.
 
 The fixture proves that the chart carries a digest through, not that a digest
 is real: real digests live in the ops repository (ADR-055).
@@ -198,7 +201,7 @@ def check_rendered(rendered: Path) -> list[str]:
         if name in jobs and weight >= jobs[name][0]:
             errors.append(
                 f"{name}: {kind} {input_name} in {path} has hook weight {weight}, not below its Job's {jobs[name][0]}: "
-                f"Helm may create it after the Job starts")
+                f"the order would rest on Helm's kind order alone")
     return errors
 
 
