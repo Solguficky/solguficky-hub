@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   communityDay,
+  communityInstant,
   communityLocalTime,
   isBeforeDay,
   parseTimeZone,
@@ -56,5 +57,40 @@ describe("community time zone", () => {
     expect(isBeforeDay({ year: 2025, month: 12, day: 31 }, today)).toBe(true);
     expect(isBeforeDay(today, today)).toBe(false);
     expect(isBeforeDay({ year: 2026, month: 10, day: 1 }, today)).toBe(false);
+  });
+});
+
+describe("community instant", () => {
+  it("turns community time into a UTC instant, across midnight", () => {
+    expect(
+      communityInstant(
+        { year: 2026, month: 10, day: 27, hours: 0, minutes: 0 },
+        "Europe/Moscow",
+      ),
+    ).toBe("2026-10-26T21:00:00Z");
+  });
+
+  it("follows the zone offset on both sides of a daylight saving change", () => {
+    expect(
+      communityInstant(
+        { year: 2026, month: 3, day: 28, hours: 19, minutes: 0 },
+        "Europe/Berlin",
+      ),
+    ).toBe("2026-03-28T18:00:00Z");
+    expect(
+      communityInstant(
+        { year: 2026, month: 3, day: 29, hours: 20, minutes: 0 },
+        "Europe/Berlin",
+      ),
+    ).toBe("2026-03-29T18:00:00Z");
+  });
+
+  it("has no instant for a time the clocks skipped", () => {
+    expect(
+      communityInstant(
+        { year: 2026, month: 3, day: 29, hours: 2, minutes: 30 },
+        "Europe/Berlin",
+      ),
+    ).toBeUndefined();
   });
 });

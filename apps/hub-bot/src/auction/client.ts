@@ -21,17 +21,24 @@ import {
   limitOutcomeOf,
   unansweredOn,
 } from "./commands.js";
+import { consoleOf } from "./console.js";
 import { historyPageOf } from "./history.js";
 import {
   type AddLotResult,
+  type AuctionConsoles,
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
+  type ConsoleReadResult,
   type EnableAuctionResult,
+  type FinalistRefusal,
+  type FinalistResult,
   type LotAdministration,
   type LotCardResult,
   type MeetupAuctions,
+  type ScheduleAuctionResult,
   type ScheduleLotResult,
+  type StartPrebiddingResult,
   viewerOf,
 } from "./port.js";
 import { lotViewOf } from "./snapshot.js";
@@ -56,11 +63,17 @@ type AuctionRpc = Pick<
   | "setProxyLimit"
   | "chooseDisplayName"
   | "getLotImage"
+  | "getAuctionConsole"
+  | "scheduleAuction"
+  | "startPrebidding"
+  | "selectForFinal"
+  | "deselectForFinal"
 >;
 
 export type AuctionClient = MeetupAuctions &
   AuctionScreens &
-  LotAdministration & { close(): void };
+  LotAdministration &
+  AuctionConsoles & { close(): void };
 
 export type AuctionAdapterOptions = {
   timeoutMs?: number;
@@ -105,7 +118,7 @@ export function createAuctionAdapter(
     onNamesRefused,
     newOperationId = createUuidV7,
   }: AuctionAdapterOptions = {},
-): MeetupAuctions & AuctionScreens & LotAdministration {
+): MeetupAuctions & AuctionScreens & LotAdministration & AuctionConsoles {
   // Дедлайн вызова — меньшее из своего и остатка бюджета действия: бюджет
   // один на Identity, чтение лота и изображение (дизайн-код, «Ожидание»).
   const options = (meta?: RpcMetadata) => ({
@@ -215,6 +228,81 @@ export function createAuctionAdapter(
           return { kind: "not-found" };
         }
         return toFailure(cause);
+      }
+    },
+    // Пульт аукциона (PER-320). `NOT_FOUND` у всех пяти — аукциона нет.
+    async getAuctionConsole(person, auctionId, meta) {
+      try {
+        const response = await rpc.getAuctionConsole(
+          { viewer: wireViewer(viewerOf(person)), auctionId },
+          options(meta),
+        );
+        return consoleResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async scheduleAuction(person, week, meta) {
+      try {
+        const response = await rpc.scheduleAuction(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: week.auctionId,
+            opId: week.opId,
+            // Неделя закрывает лоты общим дедлайном; финал — один блок либо
+            // ни одного. `lot_defaults` не шлются: их подставляет Auction.
+            config: {
+              onlinePhase: {
+                opensAt: week.opensAt,
+                closesAt: week.closesAt,
+                closesLots: true,
+              },
+              finalBlocks: week.final ? 1 : 0,
+              closingPolicy: {
+                policy: week.final
+                  ? { case: "mixed", value: { onlineByDeadline: true } }
+                  : { case: "byDeadline", value: {} },
+              },
+            },
+          },
+          options(meta),
+        );
+        return scheduleAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async startPrebidding(person, start, meta) {
+      try {
+        const response = await rpc.startPrebidding(
+          { viewer: wireViewer(viewerOf(person)), ...start },
+          options(meta),
+        );
+        return startPrebiddingResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async selectForFinal(person, mark, meta) {
+      try {
+        const response = await rpc.selectForFinal(
+          { viewer: wireViewer(viewerOf(person)), ...mark },
+          options(meta),
+        );
+        return finalistResult(response.outcome, "select");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async deselectForFinal(person, mark, meta) {
+      try {
+        const response = await rpc.deselectForFinal(
+          { viewer: wireViewer(viewerOf(person)), ...mark },
+          options(meta),
+        );
+        return finalistResult(response.outcome, "deselect");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
       }
     },
     screenPorts(meta): AuctionScreenPorts {
@@ -496,6 +584,159 @@ function scheduleLotResult(
       }
     case undefined:
       return defect("schedule lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function consoleResult(
+  outcome: Awaited<ReturnType<AuctionRpc["getAuctionConsole"]>>["outcome"],
+): ConsoleReadResult {
+  switch (outcome.case) {
+    case "console":
+      return { kind: "ok", console: consoleOf(outcome.value) };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("auction console refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("auction console response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function scheduleAuctionResult(
+  outcome: Awaited<ReturnType<AuctionRpc["scheduleAuction"]>>["outcome"],
+): ScheduleAuctionResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "auctionAlreadyStarted":
+          return { kind: "already-started" };
+        case "configInvalid": {
+          // Конфигурацию собирает бот: конец позже начала задаёт человек, а
+          // остальные отказы — дефект сборки, а не ответ человеку.
+          const invalid = outcome.value.reason.value.reason.case;
+          return invalid === "closesAtNotAfterOpensAt"
+            ? { kind: "closes-not-after-opens" }
+            : defect(
+                `schedule auction refused the configuration: ${invalid ?? "no reason"}`,
+              );
+        }
+        case undefined:
+          return defect("schedule auction refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("schedule auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function startPrebiddingResult(
+  outcome: Awaited<ReturnType<AuctionRpc["startPrebidding"]>>["outcome"],
+): StartPrebiddingResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "auctionNotScheduled":
+          return { kind: "not-scheduled" };
+        case undefined:
+          return defect("start prebidding refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("start prebidding response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+type FinalistOutcome =
+  | Awaited<ReturnType<AuctionRpc["selectForFinal"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["deselectForFinal"]>>["outcome"];
+
+// Отметку и её снятие Auction отвечает одним словарём отказов, кроме пары
+// «уже отмечен» и «не отмечен»: каждая — у своей команды.
+function finalistResult(
+  outcome: FinalistOutcome,
+  command: "select" | "deselect",
+): FinalistResult {
+  const refused = (reason: FinalistRefusal): FinalistResult => ({
+    kind: "refused",
+    reason,
+  });
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "notInPrebidding":
+          return refused("not-in-prebidding");
+        case "lotNotInAuction":
+          return refused("lot-not-in-auction");
+        case "lotNotOpen":
+          return refused("lot-not-open");
+        case "notInOnlinePhase":
+          return refused("not-in-online-phase");
+        case "alreadyMarkedForFinal":
+          return refused("already-marked");
+        case "notMarkedForFinal":
+          return refused("not-marked");
+        case "deadlinePassed":
+          return refused("deadline-passed");
+        case undefined:
+          return defect(`${command} for final refusal without a reason`);
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect(`${command} for final response without an outcome`);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

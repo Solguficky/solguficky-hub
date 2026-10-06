@@ -7,7 +7,7 @@ import type {
   OperationIdPort,
   Viewer,
 } from "@solguficky/auction-bot-ui";
-import type { Person } from "../application/types.js";
+import type { AuctionConsoleView, Person } from "../application/types.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 
 // Аукцион у сходки (ADR-047, дополнение 2026-10-03; PER-307). Бот хаба зовёт
@@ -136,6 +136,98 @@ export type LotAdministration = {
     lotId: string,
     meta?: RpcMetadata,
   ): Promise<LotReadResult>;
+};
+
+// Пульт аукциона администратора (PER-320): чтение пульта, сроки недели и
+// финал, открытие онлайн-торгов и отметка лотов для финала. Четвёртая роль
+// бота хаба перед Auction, и тоже только его. Право решает Auction, спрашивая
+// Meetups; именованный отказ — значение ответа, и бот его не повторяет.
+// `auction-not-found` — `NOT_FOUND`: аукциона нет, кнопка устарела.
+
+export type ConsoleReadResult =
+  | { kind: "ok"; console: AuctionConsoleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Из отказов конфигурации человек может вызвать только «конец не позже
+// начала»: остальные бот не собирает, и они — дефект.
+export type ScheduleAuctionResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "closes-not-after-opens" }
+  | { kind: "already-started" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type StartPrebiddingResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "not-scheduled" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type FinalistRefusal =
+  | "not-in-prebidding"
+  | "lot-not-in-auction"
+  | "lot-not-open"
+  | "not-in-online-phase"
+  | "already-marked"
+  | "not-marked"
+  | "deadline-passed";
+
+export type FinalistResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "refused"; reason: FinalistRefusal }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Сроки недели целиком: Auction заменяет конфигурацию, а не правит её.
+// `lot_defaults` бот не шлёт — их подставляет Auction; правило закрытия
+// выводится из финала.
+export type AuctionWeekConfig = {
+  auctionId: string;
+  opId: string;
+  opensAt: string;
+  closesAt: string;
+  final: boolean;
+};
+
+export type FinalistMark = { auctionId: string; lotId: string; opId: string };
+
+export type AuctionConsoles = {
+  getAuctionConsole(
+    person: Person,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<ConsoleReadResult>;
+  scheduleAuction(
+    person: Person,
+    config: AuctionWeekConfig,
+    meta?: RpcMetadata,
+  ): Promise<ScheduleAuctionResult>;
+  // Повтор того же `opId` Auction принимает; новый ключ на открытом
+  // аукционе — `not-scheduled`.
+  startPrebidding(
+    person: Person,
+    start: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<StartPrebiddingResult>;
+  selectForFinal(
+    person: Person,
+    mark: FinalistMark,
+    meta?: RpcMetadata,
+  ): Promise<FinalistResult>;
+  deselectForFinal(
+    person: Person,
+    mark: FinalistMark,
+    meta?: RpcMetadata,
+  ): Promise<FinalistResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

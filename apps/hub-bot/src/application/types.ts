@@ -1,3 +1,4 @@
+import type { LotView } from "@solguficky/auction-bot-ui";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -233,7 +234,8 @@ export type ExecuteRequest =
     }
   | NotificationRequest
   | BroadcastRequest
-  | LotFormRequest;
+  | LotFormRequest
+  | AuctionConsoleRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -276,6 +278,95 @@ export type LotFormRequest =
       intent: "set-lot-image";
       lotId: string;
       image: Uint8Array;
+    });
+
+// Пульт аукциона администратора (PER-320). Пульт — экран хаба, а не тело
+// пакета, как форма лота: своего состояния у него нет, и всё, что нужно
+// следующему шагу, едет в кнопке или в вопросе.
+
+// Где аукцион, словами Auction (`AuctionSnapshot.status`).
+export type ConsoleAuctionStatus =
+  | "draft"
+  | "scheduled"
+  | "prebidding"
+  | "settling"
+  | "break"
+  | "lineup-frozen"
+  | "final"
+  | "finished";
+
+// Сроки онлайн-недели из конфигурации аукциона: мгновения RFC 3339 в UTC.
+// Мгновения нет, когда его нет в конфигурации: формат без онлайн-фазы или
+// фаза, которую закрывает человек, а не время.
+export type AuctionWeek = {
+  opensAt?: string;
+  closesAt?: string;
+  final: boolean;
+};
+
+// Лот на пульте: снимок, число ставок, отметка «в финал» и просрочка — торги
+// идут дольше дедлайна, а лот не закрыт (решает Auction).
+export type ConsoleLot = {
+  lot: LotView;
+  bidCount: number;
+  markedForFinal: boolean;
+  overdue: boolean;
+};
+
+// `week` нет у черновика: сроков у него ещё не задавали.
+export type AuctionConsoleView = {
+  auctionId: string;
+  status: ConsoleAuctionStatus;
+  week?: AuctionWeek;
+  lots: readonly ConsoleLot[];
+};
+
+// Строка исхода команды пульта: принятая команда и именованный отказ Auction,
+// который человеку показывают на том же экране, а не кадром отказа.
+export type ConsoleNote =
+  | "week-saved"
+  | "week-opened"
+  | "week-already-open"
+  | "week-not-scheduled"
+  | "week-frozen"
+  | "week-needed"
+  | "marked"
+  | "unmarked"
+  | "already-marked"
+  | "not-marked"
+  | "deadline-passed"
+  | "not-in-prebidding"
+  | "lot-not-open"
+  | "not-in-online-phase"
+  | "lot-not-in-auction";
+
+// Почему вопрос о сроках недели задан заново.
+export type WeekAskError = "week-format" | "week-moment" | "week-order";
+
+type AuctionConsoleCall = LotFormCall & { auctionId: string };
+
+// `opId` рождает край: у открытия недели — в кнопке подтверждения, у
+// остальных команд — на каждое нажатие и каждый ответ.
+export type AuctionConsoleRequest =
+  | (AuctionConsoleCall & { intent: "view-auction-console" })
+  // Сроки приходят строкой, как их написал человек: разбор — дело юзкейса.
+  | (AuctionConsoleCall & {
+      intent: "schedule-auction-week";
+      value: string;
+      opId: string;
+    })
+  // Кнопка несёт целевое состояние финала, а не переворот.
+  | (AuctionConsoleCall & {
+      intent: "set-auction-final";
+      final: boolean;
+      opId: string;
+    })
+  | (AuctionConsoleCall & { intent: "start-auction-week"; opId: string })
+  | (AuctionConsoleCall & {
+      intent: "mark-auction-finalist";
+      lotId: string;
+      selected: boolean;
+      opId: string;
     });
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
@@ -420,6 +511,28 @@ export type ExecuteResult =
       reason: LotRefusal;
       lotId?: string;
       auctionId?: string;
+    }
+  // Пульт аукциона (PER-320). `note` — исход команды первой строкой. После
+  // команды пульт собран из чтения Auction и принятой команды: чтения
+  // отстают от команд.
+  | {
+      kind: "auction-console";
+      console: AuctionConsoleView;
+      note?: ConsoleNote;
+      // Переключатель финала принят: исход — всплывающий текст, а не строка.
+      toggled?: true;
+    }
+  // Вопрос о сроках недели: первый либо тот же заново, с причиной.
+  | {
+      kind: "auction-week-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+      error?: WeekAskError;
+    }
+  // Отказ пульту целиком: не администратор сходки либо аукциона нет.
+  | {
+      kind: "auction-console-refused";
+      reason: "not-administrator" | "auction-not-found";
     }
   | {
       kind: "meetup-notification-settings";

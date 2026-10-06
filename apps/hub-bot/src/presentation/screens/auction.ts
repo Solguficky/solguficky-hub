@@ -12,7 +12,7 @@ import { InlineKeyboard } from "grammy";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { lotFormData, lotNewData } from "../parse-callback.js";
+import { consoleViewData, lotFormData, lotNewData } from "../parse-callback.js";
 import {
   confirmScreen,
   nameChoiceScreen,
@@ -57,6 +57,8 @@ export type AuctionView = {
 // нет, и тело у двух ботов остаётся одним.
 const addLotLabel = "Добавить лот";
 const editLotLabel = "Изменить лот";
+// Пульт аукциона (PER-320) — тоже ряд оболочки хаба под «Добавить лот».
+const consoleLabel = "Пульт";
 
 /**
  * Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает
@@ -130,7 +132,11 @@ function feedScreen(
   const keyboard = new InlineKeyboard();
   // Действие экрана стоит первым рядом, над лотами и листанием.
   if (view.canManage === true) {
-    keyboard.text(addLotLabel, lotNewData(uuidToToken(feed.auctionId)));
+    const auction = uuidToToken(feed.auctionId);
+    keyboard
+      .text(addLotLabel, lotNewData(auction))
+      .row()
+      .text(consoleLabel, consoleViewData(auction));
   }
   for (const row of view.body.keyboard) {
     nextRow(keyboard);

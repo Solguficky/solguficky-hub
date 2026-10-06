@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { maxLotRubles } from "../application/lot-form.js";
 import {
   cardCursorData,
+  consoleConfirmData,
+  consoleFinalData,
+  consoleMarkData,
+  consoleOpenData,
+  consoleViewData,
+  consoleWeekData,
   lotAskData,
   lotFormData,
   lotNewData,
@@ -864,6 +870,74 @@ describe("lot form callbacks", () => {
       `v1:q:ls:${lot}:${maxLotRubles + 1}`,
       `v1:q:ls:${lot}:1e3`,
       `v1:q:ls:${lot}:-5`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+});
+
+describe("auction console callbacks", () => {
+  // Худший случай длины: токены по байту на символ, страница — четыре цифры.
+  const auction = "2u8Fx81oUEiwPctIYOjccw";
+  const lot = "AZKbflwdej-OSy1snwobPA";
+  const op = "AZnypHwefTqbIU-OEqs0qg";
+
+  it("parses every button of the console within the byte budget", () => {
+    const cases = [
+      [consoleViewData(auction), { kind: "console-view", auction, page: 0 }],
+      [consoleViewData(auction, 3), { kind: "console-view", auction, page: 3 }],
+      [consoleWeekData(auction), { kind: "console-week", auction }],
+      [
+        consoleFinalData(auction, false),
+        { kind: "console-final", auction, final: false },
+      ],
+      [
+        consoleFinalData(auction, true),
+        { kind: "console-final", auction, final: true },
+      ],
+      [consoleOpenData(auction), { kind: "console-open", auction }],
+      [
+        consoleConfirmData(auction, op),
+        { kind: "console-confirm", auction, op },
+      ],
+      [
+        consoleMarkData({ auction, lot, selected: true, page: 9999 }),
+        { kind: "console-mark", auction, lot, selected: true, page: 9999 },
+      ],
+      [
+        consoleMarkData({ auction, lot, selected: false, page: 0 }),
+        { kind: "console-mark", auction, lot, selected: false, page: 0 },
+      ],
+    ] as const;
+    for (const [data, expected] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(expected);
+    }
+  });
+
+  it("carries the auction of the week question in its cancel button", () => {
+    const askedBy = 9007199254740991;
+    const step: QuestionStep = { kind: "console-week", auction };
+    const asked = `v1:q:aw:${auction}:${askedBy}`;
+    expect(questionData(step, askedBy)).toBe(asked);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+  });
+
+  it("rejects a console callback with a broken token, state or shape", () => {
+    for (const data of [
+      "v1:ac:v",
+      "v1:ac:v:short",
+      `v1:ac:v:${auction}:x`,
+      `v1:ac:w:${auction}:1`,
+      `v1:ac:f:${auction}`,
+      `v1:ac:f:${auction}:2`,
+      `v1:ac:o:${auction}:1`,
+      `v1:ac:y:${auction}`,
+      `v1:ac:y:${auction}:short`,
+      `v1:ac:s:${auction}:${lot}`,
+      `v1:ac:d:${auction}:${lot}:-1`,
+      `v1:ac:x:${auction}`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }
