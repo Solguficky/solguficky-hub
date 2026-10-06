@@ -51,6 +51,7 @@ const catalog: Record<string, ScreenEntry> = {
     refresh: true,
   },
   confirm: { class: "screen", nav: "confirm" },
+  bid: { class: "screen", nav: "confirm", title: "Ставка", money: true },
   question: { class: "question", nav: "question" },
   "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
@@ -208,9 +209,7 @@ describe("inspectCall", () => {
         screen("confirm", "<b>Отменить сходку?</b>", rows),
       );
 
-    expect(
-      confirm([[key("Да, отменить сходку", "danger")], [key("Нет")]]),
-    ).toEqual([]);
+    expect(confirm([[key("Да, отменить сходку")], [key("Нет")]])).toEqual([]);
     expect(
       confirm([
         [{ text: "Открыть источник ↗", url: "https://t.me/c/1/2" }],
@@ -226,18 +225,31 @@ describe("inspectCall", () => {
     ]);
   });
 
-  it("colours nothing but the confirming button, and only as danger", () => {
+  // PER-473: красное — только «Да» подтверждения траты денег, и там оно
+  // обязательно; необратимость остальных называет текст.
+  it("colours only the money confirmation, and only its answer as danger", () => {
     const styled = (rows: Key[][]) =>
       rulesOf(
         "editMessageText",
         screen("confirm", "<b>Отменить сходку?</b>", rows),
       );
+    const paid = (rows: Key[][]) =>
+      rulesOf("editMessageText", screen("bid", "<b>Ставка</b>", rows));
 
+    expect(
+      styled([[key("Да, отменить сходку", "danger")], [key("Нет")]]),
+    ).toEqual(["style"]);
     expect(
       styled([[key("Да, отменить сходку", "primary")], [key("Нет")]]),
     ).toEqual(["style"]);
     expect(
-      styled([[key("Да, отменить сходку")], [key("Нет", "danger")]]),
+      paid([[key("Да, поставить 1 300 ₽", "danger")], [key("Нет")]]),
+    ).toEqual([]);
+    expect(paid([[key("Да, поставить 1 300 ₽")], [key("Нет")]])).toEqual([
+      "style",
+    ]);
+    expect(
+      paid([[key("Да, поставить 1 300 ₽", "danger")], [key("Нет", "danger")]]),
     ).toEqual(["style"]);
   });
 

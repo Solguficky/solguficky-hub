@@ -220,6 +220,24 @@ const nameChoice = (username: boolean): AuctionScreenBody => ({
     [{ action: "name.back", callbackData: "v1:auc:lot:lot-1:1" }],
   ],
 });
+// Принятая команда (PER-473): кадр исхода с «К лоту», «Меню» ставит оболочка.
+const accepted = (
+  command: "bid" | "proxy",
+  title: boolean,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "accepted",
+      command,
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      ...(title ? { title: "Кружка <с совой>" } : {}),
+      amount: rub(600),
+    },
+  ],
+  keyboard: [[{ action: "accepted.lot", callbackData: "v1:auc:lot:lot-1:1" }]],
+});
+
 const emptyList: AuctionListPage = { page: 0, pageCount: 1, auctions: [] };
 
 // Страница посередине: строки аукционов, обе стрелки листания и возврат.
@@ -279,6 +297,8 @@ const shown: readonly {
   { screen: { kind: "auction", body: history(false) } },
   { screen: { kind: "auction", body: confirm("bid") } },
   { screen: { kind: "auction", body: confirm("proxy") } },
+  { screen: { kind: "auction", body: accepted("bid", true) } },
+  { screen: { kind: "auction", body: accepted("proxy", false) } },
   { screen: { kind: "auction", body: question("bid", false) } },
   { screen: { kind: "auction", body: question("bid", true) } },
   { screen: { kind: "auction", body: question("proxy", false) } },

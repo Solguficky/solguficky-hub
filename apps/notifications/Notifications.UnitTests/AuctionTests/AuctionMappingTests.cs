@@ -47,10 +47,50 @@ public class AuctionMappingTests
     }
 
     [Fact]
-    public void When_LeaderProxyRaisesPrice_Expect_NoRecipient()
+    public void When_LeaderProxyRaisesPriceOnOwnCommand_Expect_NoRecipient()
     {
         var leader = EventFactory.NewId();
-        Decode(EventFactory.Bid(EventFactory.NewId(), leader, leader, proxy: true)).OutbidRecipient.ShouldBeNull();
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), leader, leader, proxy: true));
+        bid.OutbidRecipient.ShouldBeNull();
+        bid.ProxyRaisedRecipient.ShouldBeNull();
+    }
+
+    [Fact]
+    public void When_LeaderProxyAnswersRivalLimit_Expect_LeaderAddressedAndNoOutbid()
+    {
+        var leader = EventFactory.NewId();
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), leader, leader, proxy: true, answers: true));
+        bid.OutbidRecipient.ShouldBeNull();
+        bid.ProxyRaisedRecipient.ShouldBe(Guid.Parse(leader));
+    }
+
+    [Fact]
+    public void When_LeaderProxyAnswersRivalBid_Expect_LeaderAndRivalBothAddressed()
+    {
+        var rival = EventFactory.NewId();
+        var leader = EventFactory.NewId();
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), rival, leader, proxy: true, answers: true));
+        bid.OutbidRecipient.ShouldBe(Guid.Parse(rival));
+        bid.ProxyRaisedRecipient.ShouldBe(Guid.Parse(leader));
+    }
+
+    [Fact]
+    public void When_ManualBidOvertakenInSameCommand_Expect_PreviousLeaderNotOutbid()
+    {
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId(), overtaken: true));
+        bid.OutbidRecipient.ShouldBeNull();
+        bid.ProxyRaisedRecipient.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void When_TransactionFlagContradictsOrigin_Expect_Poison(bool proxy, bool overtaken)
+    {
+        var message = EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId(), proxy: proxy,
+            overtaken: overtaken, answers: !overtaken);
+        AuctionMapping.Decode(AuctionFeed.BidPlacedSubject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Poison>();
     }
 
     [Theory]

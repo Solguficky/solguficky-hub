@@ -96,7 +96,9 @@ object Lot {
    * `seen` проверяется до разбора состояния: повтор ставки, принятой до удержания, получает исходный ответ, а не
    * `LotOnHold` (RFC-011, П-09). `bidId` и `proxyBidId` приходят снаружи, как и любой идентификатор: решение не рождает
    * их само. Второй нужен производной ставке и пропадает, если её нет. `now` — серверное время команды, оно же
-   * `occurred_at` её строк: им П-04 решает, попала ли ставка в окно.
+   * `occurred_at` её строк: им П-04 решает, попала ли ставка в окно. Производная ставка другого участника помечает
+   * ручную `overtakenByProxy`: лидерство ставки до конца команды не дожило, и факт о ней не должен сообщать прежнему
+   * лидеру о перебитии (PER-473).
    */
   def decide(
       lot: Lot,
@@ -106,7 +108,7 @@ object Lot {
       now: Instant
   ): Either[PlaceBidRejected, Decision] =
     repeatOf(lot, command.opId, PlaceBidRejected.OpIdTaken) {
-      case LotEvent.BidPlaced(_, participant, _, _, BidOrigin.Manual(_)) => participant == command.participant
+      case LotEvent.BidPlaced(_, participant, _, _, BidOrigin.Manual(_), _) => participant == command.participant
       case _ => false
     }.getOrElse {
       lot.state match {
@@ -114,7 +116,9 @@ object Lot {
         case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
         case LotState.Trading(trading) =>
           placeBid(trading, command, bidId).map { placed =>
-            Decision.Accepted(placed, resolve(bidden(trading, placed), proxyBidId).toList ++ extended(trading, now))
+            val derived = resolve(bidden(trading, placed), proxyBidId)
+            val overtaken = derived.exists(_.participant != command.participant)
+            Decision.Accepted(placed.copy(overtakenByProxy = overtaken), derived.toList ++ extended(trading, now))
           }
         case LotState.Held(held) => Left(PlaceBidRejected.LotOnHold(held.currentPrice))
         case LotState.Sold(_) | LotState.Unsold(_) => Left(PlaceBidRejected.LotNotOpen)

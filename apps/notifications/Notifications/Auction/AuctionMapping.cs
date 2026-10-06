@@ -5,11 +5,20 @@ using Google.Protobuf;
 
 namespace Notifications.Auction;
 
-/// <summary>Проверенная ставка; снимок лота не реплицируется и версией не фильтруется.</summary>
+/// <summary>
+/// Проверенная ставка; снимок лота не реплицируется и версией не фильтруется.
+/// Ручная ставка, которую та же команда перебила чужой автоставкой, лидерство
+/// прежнего лидера не отняла: оно вернулось к нему следующим фактом, и о
+/// перебитии ему не сообщают (PER-473). Автоставка, ответившая чужой команде,
+/// сообщает лидеру, что подняла цену.
+/// </summary>
 public sealed record AuctionBid(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt,
-    Guid? PreviousLeader, Guid Leader, Money Price)
+    Guid? PreviousLeader, Guid Leader, Money Price, bool OvertakenByProxy = false, bool AnswersOtherBidder = false)
 {
-    public Guid? OutbidRecipient => PreviousLeader is { } previous && previous != Leader ? previous : null;
+    public Guid? OutbidRecipient =>
+        PreviousLeader is { } previous && previous != Leader && !OvertakenByProxy ? previous : null;
+
+    public Guid? ProxyRaisedRecipient => AnswersOtherBidder ? Leader : null;
 }
 
 /// <summary>Проверенная продажа: победитель и цена из state.sold.</summary>
@@ -84,6 +93,11 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("bid_placed origin is invalid");
         }
+        if (placed.OvertakenByProxy && placed.OriginCase != BidPlaced.OriginOneofCase.Manual ||
+            placed.AnswersOtherBidder && placed.OriginCase != BidPlaced.OriginOneofCase.Proxy)
+        {
+            return new AuctionDecoded.Poison("bid_placed overtaken_by_proxy or answers_other_bidder does not match origin");
+        }
 
         Guid? previous = null;
         if (placed.HasPreviousLeaderId)
@@ -94,7 +108,8 @@ public static class AuctionMapping
             }
             previous = previousId;
         }
-        return new AuctionDecoded.Bid(new AuctionBid(eventId, lotId, message.Version, occurredAt, previous, leader, price.Clone()));
+        return new AuctionDecoded.Bid(new AuctionBid(eventId, lotId, message.Version, occurredAt, previous, leader, price.Clone(),
+            placed.OvertakenByProxy, placed.AnswersOtherBidder));
     }
 
     private static AuctionDecoded DecodeSale(LotEvent message, Guid eventId, Guid lotId, DateTimeOffset occurredAt)

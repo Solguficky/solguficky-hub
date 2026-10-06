@@ -29,12 +29,12 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             Record(message, started, null, "poison", 0, "invariant", poison.Reason);
             return;
         }
-        var (source, type, apply) = decoded switch
+        var (source, apply) = decoded switch
         {
             AuctionDecoded.Bid { Value: var bid } => (new EventRef(bid.EventId, bid.LotId, bid.Version, bid.OccurredAt),
-                AuctionFacts.OutbidType, (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
+                (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
             AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, sale.Version, sale.OccurredAt),
-                AuctionFacts.PurchasedType, () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
+                () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(message)),
         };
         AuctionApplication application;
@@ -52,13 +52,17 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             Record(message, started, source, "failed", 0, "dependency_unavailable", "auction cause apply failed; message returned to the stream", ex);
             return;
         }
-        facts.Record(type, new FactCount(application.FactsCreated, 0));
+        foreach (var (type, created) in application.Created)
+        {
+            facts.Record(type, new FactCount(created, 0));
+        }
         await message.Accept(stoppingToken);
         Record(message, started, source, application.Outcome switch
         {
             AuctionOutcome.Outbid => "outbid",
             AuctionOutcome.FirstBid => "first_bid",
             AuctionOutcome.LeaderUnchanged => "leader_unchanged",
+            AuctionOutcome.Overtaken => "overtaken",
             AuctionOutcome.Purchased => "purchased",
             AuctionOutcome.Duplicate => "duplicate",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),

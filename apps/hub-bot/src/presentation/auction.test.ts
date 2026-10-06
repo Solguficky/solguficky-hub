@@ -887,6 +887,43 @@ describe("bid leaf in the hub", () => {
     });
   });
 
+  // PER-473: принятая ставка — свой экран с «К лоту» и «Меню», а не строка
+  // над карточкой с прежней ценой.
+  it("answers an accepted bid with its own screen and the lot button", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "commit",
+          command: "bid",
+          lotId,
+          opId: "0198f2a4-7c1e-7d3a-9b21-00000000c001",
+          amount: 130_000,
+          page: 0,
+        }),
+      ),
+    );
+    const shown = calls.find((call) => call.method === "editMessageText");
+    expect(shown?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Ставка 1\s300\s₽ принята<\/b>/),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "К лоту",
+              callback_data: encodeAuctionCallback({
+                kind: "lot",
+                lotId,
+                page: 0,
+              }),
+            },
+            { text: "Меню", callback_data: "v1:nav:start" },
+          ],
+        ],
+      },
+    });
+  });
+
   it.each([
     [{ text: "много" }, "Это не сумма."],
     [{ text: "$20" }, "Ставки принимаются только в рублях."],

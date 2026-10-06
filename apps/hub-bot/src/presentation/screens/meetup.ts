@@ -539,44 +539,44 @@ export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
 }
 
 // Общая форма действий смены состояния: кадр подтверждения и повтор после
-// конфликта версий говорят об одном и том же действии одними словами. `danger`
-// — у действий, которые человек не отменит с того же экрана.
+// конфликта версий говорят об одном и том же действии одними словами. Цвета у
+// них нет: красным красится только трата денег, а необратимость конечной
+// стадии называет строка `irreversible` (PER-473).
 export const stateActionCopy: Record<
   MeetupStateAction,
   {
     question: string;
     label: string;
     yes: string;
-    danger: boolean;
     confirmAction: string;
+    irreversible?: string;
   }
 > = {
   unpublish: {
     question: "Скрыть сходку из общего списка?",
     label: "Скрыть из списка",
     yes: "Да, скрыть из списка",
-    danger: false,
     confirmAction: "confirm-unpublish",
   },
   cancel: {
     question: "Отменить сходку?",
     label: "Отменить сходку",
     yes: "Да, отменить сходку",
-    danger: true,
     confirmAction: "confirm-cancel",
+    irreversible: "Отменить нельзя: отменённая сходка в план не возвращается.",
   },
   hold: {
     question: "Отметить сходку состоявшейся?",
     label: "Отметить состоявшейся",
     yes: "Да, отметить состоявшейся",
-    danger: true,
     confirmAction: "confirm-hold",
+    irreversible:
+      "Отменить нельзя: состоявшаяся сходка в план не возвращается.",
   },
   unschedule: {
     question: "Отменить отложенную публикацию?",
     label: "Отменить отложенную публикацию",
     yes: "Да, отменить публикацию",
-    danger: false,
     confirmAction: "confirm-unschedule",
   },
 };
@@ -658,12 +658,12 @@ export function stateConfirmScreen(confirm: {
       heading(copy.question),
       "",
       `«${escapeHtml(meetupTitleLabel(confirm.meetup.title))}»`,
+      ...(copy.irreversible === undefined ? [] : [copy.irreversible]),
     ].join("\n"),
     keyboard: confirmKeyboard({
       yes: copy.yes,
       yesData: confirmStateCallback(confirm.action, token),
       noData: confirm.back,
-      danger: copy.danger,
     }),
     format: "HTML",
   };

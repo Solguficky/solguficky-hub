@@ -138,7 +138,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
 
       result shouldBe Right(
         Decision.Accepted(
-          manual(bid(2), who = 2, amount = 150, previous = Some(1)),
+          manual(bid(2), who = 2, amount = 150, previous = Some(1)).copy(overtakenByProxy = true),
           List(proxied(proxyBid(3), who = 1, amount = 160, previous = Some(2)))
         )
       )

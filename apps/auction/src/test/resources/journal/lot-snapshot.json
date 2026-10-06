@@ -212,7 +212,8 @@
           },
           "previousLeader": null,
           "origin": "Manual",
-          "source": "Bot"
+          "source": "Bot",
+          "overtakenByProxy": null
         },
         "lotScheduled": null,
         "proxyLimitSet": null,

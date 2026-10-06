@@ -82,7 +82,10 @@ final class AntiSnipeSpec extends AnyWordSpec with Matchers with ScalaCheckDrive
       val (result, journal) = Journal.of(rivalLimit).submit(placeBid(1, 110, 1), bid(1), oneMinuteBefore)
 
       result shouldBe Right(
-        Decision.Accepted(manual(bid(1), 1, 110, None), List(proxied(proxyBid(1), 2, 120, Some(1)), extendedTo(2, 1)))
+        Decision.Accepted(
+          manual(bid(1), 1, 110, None).copy(overtakenByProxy = true),
+          List(proxied(proxyBid(1), 2, 120, Some(1)), extendedTo(2, 1))
+        )
       )
       tradingOf(journal.lot).extensionsUsed shouldBe 1
     }

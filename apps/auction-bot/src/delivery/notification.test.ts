@@ -43,6 +43,23 @@ describe("decodeNotification", () => {
     });
   });
 
+  it("decodes a proxy raise with the lot and the current price", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "lotProxyRaised", value: { lotId, currentPrice: price } }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-proxy-raised",
+          lotId,
+          currentPrice: { minorUnits: 150_000, currency: "RUB" },
+        },
+      },
+    });
+  });
+
   it("decodes a purchase fact with the sale price", () => {
     expect(
       decodeNotification(

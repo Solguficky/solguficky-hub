@@ -1495,7 +1495,6 @@ describe("presentation adapter", () => {
                 {
                   text: "Да, закрыть доступ",
                   callback_data: `v1:cm:by:${memberToken}:a0`,
-                  style: "danger",
                 },
               ],
               [{ text: "Нет", callback_data: "v1:cm:a:0" }],
@@ -2621,14 +2620,13 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Отметить сходку состоявшейся?</b>\n\n«Настолки»",
+        text: "<b>Отметить сходку состоявшейся?</b>\n\n«Настолки»\nОтменить нельзя: состоявшаяся сходка в план не возвращается.",
         reply_markup: {
           inline_keyboard: [
             [
               {
                 text: "Да, отметить состоявшейся",
                 callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
-                style: "danger",
               },
             ],
             [
@@ -3215,7 +3213,6 @@ describe("presentation adapter", () => {
                 text: "Да, отменить сходку",
                 callback_data:
                   "v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA",
-                style: "danger",
               },
             ],
             [
@@ -4535,7 +4532,7 @@ describe("confirmations", () => {
         | undefined
     )?.reply_markup?.inline_keyboard;
 
-  it("asks before removing a material with a red verb answer", async () => {
+  it("asks before removing a material with a plain verb answer", async () => {
     const meetup = {
       ...publishedMeetup(),
       materials: [
@@ -4570,7 +4567,6 @@ describe("confirmations", () => {
         {
           text: "Да, убрать материал",
           callback_data: `v1:mm:cr:${token}:${materialToken}:1`,
-          style: "danger",
         },
       ],
       [{ text: "Нет", callback_data: `v1:mm:list:${token}` }],
@@ -4606,7 +4602,7 @@ describe("confirmations", () => {
     expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
   });
 
-  it("asks before a broadcast with a red answer and returns a refusal to the meetup", async () => {
+  it("asks before a broadcast with a plain answer and returns a refusal to the meetup", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",
       meetup: publishedMeetup(),
@@ -4635,7 +4631,6 @@ describe("confirmations", () => {
         {
           text: "Да, отправить",
           callback_data: expect.stringMatching(/^v1:bc:ms:/),
-          style: "danger",
         },
       ],
       [{ text: "Нет", callback_data: `v1:bc:no:${token}` }],

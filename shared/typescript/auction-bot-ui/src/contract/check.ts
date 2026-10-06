@@ -682,6 +682,50 @@ const lotWithResult = (
   ],
 });
 
+// Принятая команда — свой экран с «К лоту» (PER-473); карточку перечитывает
+// кнопка, поэтому после ответа Auction лот не читается.
+const acceptedBody = (
+  command: "bid" | "proxy",
+  amount: number,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "accepted",
+      command,
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      title: "Кружка с совой",
+      amount: { minorUnits: amount, currency: "RUB" },
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "accepted.lot",
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+      },
+    ],
+  ],
+});
+
+// Тот же лот, где лидирует смотрящий: ставить против себя ему нечего.
+const LOT_LED_BY_VIEWER: LotView = {
+  ...CONTRACT_LOT,
+  status: {
+    kind: "trading",
+    currentPrice: rub(1200),
+    leaderId: CONTRACT_IDENTITY.identityId,
+    deadline: "2026-10-10T18:00:00Z",
+    phase: "online",
+  },
+};
+
+const LED_BY_VIEWER: ContractAuction = {
+  ...AUCTION,
+  lots: [LOT_LED_BY_VIEWER],
+  names: { ...NAMES, [CONTRACT_IDENTITY.identityId]: "@me" },
+};
+
 const pending = (command: "bid" | "proxy", amount: number) => ({
   command,
   amount,
@@ -788,25 +832,34 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [LOT_CALL],
     body: confirmBody("bid", 125000),
   },
-  // «Да»: ставка меняет цену и лидера на карточке.
+  // «Да»: принятая ставка — экран «принята» с «К лоту», а не карточка.
   {
     intent: "bid: accepted",
     callbackData: commitCallback("bid", 130000),
-    auction: {
-      ...AUCTION,
-      bids: [{ kind: "accepted" }],
-      after: [LOT_AFTER_BID],
-      names: { ...NAMES, [CONTRACT_IDENTITY.identityId]: "@me" },
-    },
-    auctionCalls: [
-      LOT_CALL,
-      bidCall(130000),
-      LOT_CALL,
-      namesCall(CONTRACT_IDENTITY.identityId),
-    ],
+    auction: { ...AUCTION, bids: [{ kind: "accepted" }] },
+    auctionCalls: [LOT_CALL, bidCall(130000)],
+    body: acceptedBody("bid", 130000),
+  },
+  // Отказ, который виден по снимку, приходит до «Да» (PER-473): лидер и
+  // сумма ниже порога не получают подтверждения, и Auction не зовут.
+  {
+    intent: "bid: step refused to the leader before the confirmation",
+    callbackData: callback({
+      kind: "confirm",
+      command: "bid",
+      lotId: CONTRACT_LOT.lotId,
+      amount: 125000,
+      page: 2,
+    }),
+    auction: LED_BY_VIEWER,
+    auctionCalls: [LOT_CALL, namesCall(CONTRACT_IDENTITY.identityId)],
     body: lotWithResult(
-      LOT_AFTER_BID,
-      { command: "bid", kind: "accepted", amount: rub(1300) },
+      LOT_LED_BY_VIEWER,
+      {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+      },
       "@me",
     ),
   },
@@ -866,18 +919,8 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       bids: [{ kind: "unanswered" }, { kind: "accepted" }],
       after: [LOT_AFTER_BID],
     },
-    auctionCalls: [
-      LOT_CALL,
-      bidCall(130000),
-      bidCall(130000),
-      LOT_CALL,
-      namesCall(CONTRACT_IDENTITY.identityId),
-    ],
-    body: lotWithResult(LOT_AFTER_BID, {
-      command: "bid",
-      kind: "accepted",
-      amount: rub(1300),
-    }),
+    auctionCalls: [LOT_CALL, bidCall(130000), bidCall(130000)],
+    body: acceptedBody("bid", 130000),
   },
   {
     intent: "bid: unanswered twice",
@@ -964,6 +1007,39 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [LOT_CALL],
     body: confirmBody("bid", 130000),
   },
+  // Сумма ниже порога и ответ лидера — карточка с отказом, без «Да».
+  {
+    intent: "bid: answer below the minimum",
+    callbackData: questionCallback("bid"),
+    reply: { text: "10" },
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: lotWithResult(
+      CONTRACT_LOT,
+      {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bid-below-minimum", minRequired: rub(1250) },
+      },
+      "@owl",
+    ),
+  },
+  {
+    intent: "bid: answer from the leader",
+    callbackData: questionCallback("bid"),
+    reply: { text: "1 400" },
+    auction: LED_BY_VIEWER,
+    auctionCalls: [LOT_CALL, namesCall(CONTRACT_IDENTITY.identityId)],
+    body: lotWithResult(
+      LOT_LED_BY_VIEWER,
+      {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+      },
+      "@me",
+    ),
+  },
   // Не число и чужая валюта — тот же вопрос с причиной, Auction не зовут.
   {
     intent: "bid: answer not a number",
@@ -1044,23 +1120,9 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
   {
     intent: "proxy: accepted",
     callbackData: commitCallback("proxy", 200000),
-    auction: {
-      ...AUCTION,
-      limits: [{ kind: "accepted" }],
-      after: [LOT_AFTER_LIMIT],
-      names: { ...NAMES, [CONTRACT_IDENTITY.identityId]: "@me" },
-    },
-    auctionCalls: [
-      LOT_CALL,
-      limitCall(200000),
-      LOT_CALL,
-      namesCall(CONTRACT_IDENTITY.identityId),
-    ],
-    body: lotWithResult(
-      LOT_AFTER_LIMIT,
-      { command: "proxy", kind: "accepted", amount: rub(2000) },
-      "@me",
-    ),
+    auction: { ...AUCTION, limits: [{ kind: "accepted" }] },
+    auctionCalls: [LOT_CALL, limitCall(200000)],
+    body: acceptedBody("proxy", 200000),
   },
   {
     intent: "proxy: refused below the current price",

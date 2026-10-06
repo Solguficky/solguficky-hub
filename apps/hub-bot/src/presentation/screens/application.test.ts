@@ -169,7 +169,6 @@ describe("decline confirmation", () => {
         {
           text: "Да, отказать",
           callback_data: `v1:cm:qy:${cursor}`,
-          style: "danger",
         },
       ],
       [{ text: "Нет", callback_data: `v1:cm:qc:${cursor}` }],

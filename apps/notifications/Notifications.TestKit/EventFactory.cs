@@ -208,8 +208,13 @@ public static class EventFactory
 
     public static ReadOnlyMemory<byte> Bytes(IMessage message) => message.ToByteArray();
 
+    /// <summary>
+    /// Ставка лота. <paramref name="overtaken" /> — ручная ставка, которую та же
+    /// команда перебила чужой автоставкой; <paramref name="answers" /> —
+    /// автоставка, ответившая чужой команде.
+    /// </summary>
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
-        string? leader = null, long version = 3, bool proxy = false) => new()
+        string? leader = null, long version = 3, bool proxy = false, bool overtaken = false, bool answers = false) => new()
     {
         EventId = NewId(), LotId = lotId, Version = version,
         OccurredAt = Committed.AddMinutes(version).ToString("O"),
@@ -224,7 +229,7 @@ public static class EventFactory
                 Phase = global::Auction.V1.LotPhase.Online,
             },
         },
-        BidPlaced = Placed(previousLeader, proxy),
+        BidPlaced = Placed(previousLeader, proxy, overtaken, answers),
     };
 
     /// <summary>
@@ -281,9 +286,9 @@ public static class EventFactory
         AntiSnipe = new global::Auction.V1.AntiSnipe(),
     };
 
-    private static global::Auction.V1.BidPlaced Placed(string? previous, bool proxy)
+    private static global::Auction.V1.BidPlaced Placed(string? previous, bool proxy, bool overtaken, bool answers)
     {
-        var placed = new global::Auction.V1.BidPlaced();
+        var placed = new global::Auction.V1.BidPlaced { OvertakenByProxy = overtaken, AnswersOtherBidder = answers };
         if (previous is not null) placed.PreviousLeaderId = previous;
         if (proxy) placed.Proxy = new global::Auction.V1.ProxyBid();
         else placed.Manual = new global::Auction.V1.ManualBid { Source = global::Auction.V1.BidSource.Bot };

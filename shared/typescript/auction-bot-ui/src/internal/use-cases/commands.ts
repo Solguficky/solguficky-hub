@@ -103,9 +103,40 @@ function confirmOrRefuse(
       result: notOffered(pending.command, lot),
     });
   }
+  const refusal =
+    pending.command === "bid"
+      ? refusedBeforeConfirm(context.viewer, lot, status, pending.amount)
+      : undefined;
+  if (refusal !== undefined) {
+    return showLot({
+      ...context,
+      lot,
+      page,
+      result: { command: "bid", kind: "refused", refusal },
+    });
+  }
   return Promise.resolve(
     confirmBody(context, lot, pending, status.currentPrice, page),
   );
+}
+
+// Отказы, которые снимок лота называет до «Да» (PER-473): лидер не ставит
+// против себя, а сумма ниже порога не пройдёт. Auction проверяет то же самое
+// на команде — снимок мог устареть, — но человек не видит подтверждения
+// ставки, заведомо мёртвой уже по экрану, с которого он её поставил.
+function refusedBeforeConfirm(
+  viewer: Viewer,
+  lot: LotView,
+  status: Extract<LotView["status"], { kind: "trading" }>,
+  amount: number,
+): BidRefusal | undefined {
+  if (status.leaderId === viewer.identityId) {
+    return { kind: "bidder-is-leader", currentPrice: status.currentPrice };
+  }
+  if (lot.nextPrice !== undefined && amount < lot.nextPrice.minorUnits) {
+    return { kind: "bid-below-minimum", minRequired: lot.nextPrice };
+  }
+  return undefined;
 }
 
 // Ветки одинаковы по форме, но разные по типу: `CommandResult` сужает отказ
@@ -193,9 +224,11 @@ export async function commitCommand(
       );
 }
 
-// Ответ Auction на команду — экран. Принятая и неизвестная команда меняют
-// лот, и карточка перечитывается; отказ состояния не меняет, и карточка идёт
-// по снимку до команды. Имя не выбрано — экран выбора имени, а не отказ.
+// Ответ Auction на команду — экран. Принятая — экран «принята» с «К лоту»:
+// лот он не перечитывает, карточку перечитывает кнопка. Неизвестная команда
+// могла изменить лот, и карточка перечитывается; отказ состояния не меняет, и
+// карточка идёт по снимку до команды. Имя не выбрано — экран выбора имени, а
+// не отказ.
 async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   settled: {
     context: CommandContext;
@@ -214,12 +247,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   const { context, lot, intent, amount } = settled;
   switch (outcome.kind) {
     case "accepted":
-      return showLot({
-        ...context,
-        lot: await readLot(context, intent.lotId),
-        page: intent.page,
-        result: { command: intent.command, kind: "accepted", amount },
-      });
+      return acceptedBody(lot, intent, amount);
     case "unanswered":
       // Бюджет действия мог уйти весь на команду: тогда перечитать лот нечем,
       // и карточка идёт по снимку до команды — исход «неизвестен» важнее
@@ -250,6 +278,33 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
       return _exhaustive;
     }
   }
+}
+
+function acceptedBody(
+  lot: LotView,
+  intent: { command: AuctionCommand; lotId: string; page: number },
+  amount: Money,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "accepted",
+        command: intent.command,
+        lotId: lot.lotId,
+        auctionId: lot.auctionId,
+        ...titled(lot),
+        amount,
+      },
+    ],
+    keyboard: [
+      [
+        {
+          action: "accepted.lot",
+          callbackData: lotCallback(lot.lotId, intent.page),
+        },
+      ],
+    ],
+  };
 }
 
 // Первая ставка в аукционе: имя видно всем, и выбрать его нужно до команды
@@ -414,11 +469,10 @@ export async function answerQuestion(
   }
   const amount = parseAmount(text, status.currentPrice.currency);
   if (!amount.ok) return questionBody(context, lot, intent, amount.refusal);
-  return confirmBody(
+  return confirmOrRefuse(
     context,
     lot,
     { command, amount: amount.minorUnits },
-    status.currentPrice,
     intent.page,
   );
 }

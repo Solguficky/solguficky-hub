@@ -19,6 +19,11 @@ const outbid: AuctionNotificationContent = {
   lotId,
   currentPrice: { minorUnits: 150_000, currency: "RUB" },
 };
+const raised: AuctionNotificationContent = {
+  kind: "lot-proxy-raised",
+  lotId,
+  currentPrice: { minorUnits: 160_000, currency: "RUB" },
+};
 const purchased: AuctionNotificationContent = {
   kind: "lot-purchased",
   lotId,
@@ -33,6 +38,19 @@ describe("renderNotification", () => {
     expect(renderNotification(outbid, "Кружка").text).toBe(
       `Твою ставку на «Кружка» перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
     );
+  });
+
+  // PER-473: лидер узнаёт, что его автоставка ответила чужой, с кнопкой на
+  // тот же лот, что и перебитый.
+  it("tells the leader the proxy answered and leads, with the lot button", () => {
+    const message = renderNotification(raised, "Кружка");
+    expect(message.text).toBe(
+      `Твоя автоставка на «Кружка» подняла цену до 1${nbsp}600${nbsp}₽: лидируешь ты.`,
+    );
+    expect(message.button).toEqual({
+      text: "К лоту",
+      callback_data: traceLotCallback(lotId),
+    });
   });
 
   it("names the lot and the sale price of a purchase", () => {

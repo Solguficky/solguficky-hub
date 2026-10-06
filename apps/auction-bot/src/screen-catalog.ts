@@ -95,9 +95,23 @@ export const screenCatalog = {
     parent: "lot",
   },
   // Лист ставки (PER-317): подтверждение без ряда навигации, вопросы с
-  // `force_reply` и «Отменой», выбор имени под лотом.
-  "bid-confirm": { class: "screen", nav: "confirm", title: "Ставка" },
-  "proxy-confirm": { class: "screen", nav: "confirm", title: "Автоставка" },
+  // `force_reply` и «Отменой», выбор имени под лотом. Ставка и автоставка —
+  // траты денег: их «Да» красное (PER-473). Принятая команда — кадр исхода с
+  // «К лоту» и «Меню».
+  "bid-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Ставка",
+    money: true,
+  },
+  "proxy-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Автоставка",
+    money: true,
+  },
+  "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
+  "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
   "bid-question": { class: "question", nav: "question" },
   "proxy-question": { class: "question", nav: "question" },
   "alias-question": { class: "question", nav: "question" },

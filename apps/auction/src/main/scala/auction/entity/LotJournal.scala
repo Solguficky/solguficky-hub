@@ -51,7 +51,8 @@ final case class StoredLotOpened(startingPrice: StoredMoney, config: StoredConfi
 
 /**
  * `source` есть только у ручной ставки: производную ставку прокси поставила система, а не канал. Строка, записанная до
- * прокси, несёт его всегда и читается так же.
+ * прокси, несёт его всегда и читается так же. `overtakenByProxy` пишется только со значением `true` (PER-473): строка
+ * без него — ставка, которую команда не перебила, и так читается всё, что записано до этого поля.
  */
 final case class StoredBidPlaced(
     bidId: UUID,
@@ -59,7 +60,8 @@ final case class StoredBidPlaced(
     amount: StoredMoney,
     previousLeader: Option[UUID],
     origin: String,
-    source: Option[String]
+    source: Option[String],
+    overtakenByProxy: Option[Boolean] = None
 )
 
 /** `setSeq` в payload не входит: это `sequence_number` той же строки (ADR-047). */
@@ -288,7 +290,7 @@ object LotJournal {
         StoredEvent
           .of("LotOpened")
           .copy(lotOpened = Some(StoredLotOpened(storeMoney(startingPrice), storeConfig(config), deadline)))
-      case LotEvent.BidPlaced(bidId, participant, amount, previousLeader, origin) =>
+      case LotEvent.BidPlaced(bidId, participant, amount, previousLeader, origin, overtakenByProxy) =>
         val (originKind, source) = origin match {
           case BidOrigin.Manual(channel) => ("Manual", Some(channel.toString))
           case BidOrigin.Proxy => ("Proxy", None)
@@ -303,7 +305,8 @@ object LotJournal {
                 amount = storeMoney(amount),
                 previousLeader = previousLeader.map(_.value),
                 origin = originKind,
-                source = source
+                source = source,
+                overtakenByProxy = Option.when(overtakenByProxy)(true)
               )
             )
           )
@@ -366,7 +369,8 @@ object LotJournal {
             participant = ParticipantId(placed.participant),
             amount = restoreMoney(placed.amount),
             previousLeader = placed.previousLeader.map(ParticipantId(_)),
-            origin = restoreOrigin(placed.origin, placed.source)
+            origin = restoreOrigin(placed.origin, placed.source),
+            overtakenByProxy = placed.overtakenByProxy.contains(true)
           )
         }
       case ("ProxyLimitSet", 1) =>

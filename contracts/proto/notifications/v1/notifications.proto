@@ -87,6 +87,11 @@ message Notification {
     // an application. Sent only to the recipient: a subscription and a category
     // are not required.
     RoleGranted role_granted = 18;
+
+    // The recipient's proxy limit answered another participant and raised the
+    // price of a lot; the recipient leads. Sent only to that bidder: a
+    // subscription is not required.
+    LotProxyRaised lot_proxy_raised = 19;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -238,6 +243,20 @@ message LotOutbid {
   string lot_id = 1;
 
   // The price of the lot after the bid that took the lead.
+  auction.v1.Money current_price = 2;
+}
+
+// The recipient's proxy limit answered a command of another participant and
+// placed a bid for the recipient, who now leads.
+//
+// Who the recipient answered is not carried, for the same reason as in
+// LotOutbid; neither is the limit, which only its owner sees and the auction
+// fact does not carry. The lot title is read by lot_id.
+message LotProxyRaised {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price of the lot after the proxy bid.
   auction.v1.Money current_price = 2;
 }
 

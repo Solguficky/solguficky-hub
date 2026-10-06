@@ -18,6 +18,9 @@ import {
 // лота не входит в домен торгов, и канал читает его у Auction сам.
 export type AuctionNotificationContent =
   | { kind: "lot-outbid"; lotId: string; currentPrice: Money }
+  // Автоставка получателя ответила чужой команде и подняла цену; он лидер
+  // (PER-473).
+  | { kind: "lot-proxy-raised"; lotId: string; currentPrice: Money }
   | { kind: "lot-purchased"; lotId: string; price: Money }
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
@@ -55,6 +58,13 @@ function toContent(
       return lotId === undefined || currentPrice === undefined
         ? undefined
         : { kind: "lot-outbid", lotId, currentPrice };
+    }
+    case "lotProxyRaised": {
+      const lotId = canonical(type.value.lotId);
+      const currentPrice = toMoney(type.value.currentPrice);
+      return lotId === undefined || currentPrice === undefined
+        ? undefined
+        : { kind: "lot-proxy-raised", lotId, currentPrice };
     }
     case "lotPurchased": {
       const lotId = canonical(type.value.lotId);

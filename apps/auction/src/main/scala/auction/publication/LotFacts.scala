@@ -1,6 +1,7 @@
 package auction.publication
 
 import auction.contract.LotValues
+import auction.entity.Initiator
 import auction.entity.LotJournal
 import auction.lot.BidOrigin
 import auction.lot.LotEvent
@@ -30,7 +31,10 @@ object LotFacts {
   val SubjectPrefix: String = "events.auction."
 
   def fact(applied: AppliedEvent): Option[LotFact] =
-    occasion(LotJournal.envelope(applied.sequence, applied.stored).event).map { (name, occasion) =>
+    occasion(
+      LotJournal.envelope(applied.sequence, applied.stored).event,
+      LotJournal.restoreInitiator(applied.stored.actor)
+    ).map { (name, occasion) =>
       val message = bus.LotEvent(
         eventId = applied.stored.eventId.toString,
         lotId = applied.row.lotId.toString,
@@ -46,19 +50,25 @@ object LotFacts {
    * Повод события и имя его subject'а: `events.auction.` плюс имя ветки `oneof occasion`. Match без ветки по умолчанию
    * намеренно: новое событие домена — закрытие лота, снятие — не скомпилируется, пока ему не назначат повод или не
    * признают приватным.
+   *
+   * `initiator` — тот, чья команда записала событие: производная ставка, поставленная не командой самого участника,
+   * отвечает другому (`answers_other_bidder`, PER-473). Флаг выводится из конверта, а не хранится в событии:
+   * производную ставку пишут только ставка и прокси-лимит, а их инициатор — всегда участник.
    */
-  def occasion(event: LotEvent): Option[(String, bus.LotEvent.Occasion)] =
+  def occasion(event: LotEvent, initiator: Initiator): Option[(String, bus.LotEvent.Occasion)] =
     event match {
       case LotEvent.LotDrafted(_) => Some("lot_drafted" -> bus.LotEvent.Occasion.LotDrafted(bus.LotDrafted()))
       case LotEvent.LotScheduled(_) => Some("lot_scheduled" -> bus.LotEvent.Occasion.LotScheduled(bus.LotScheduled()))
       case LotEvent.LotOpened(_, _, _) => Some("lot_opened" -> bus.LotEvent.Occasion.LotOpened(bus.LotOpened()))
-      case LotEvent.BidPlaced(_, _, _, previousLeader, origin) =>
+      case LotEvent.BidPlaced(_, participant, _, previousLeader, origin, overtakenByProxy) =>
         val placed = bus.BidPlaced(
           previousLeaderId = previousLeader.map(_.value.toString),
           origin = origin match {
             case BidOrigin.Manual(source) => bus.BidPlaced.Origin.Manual(bus.ManualBid(LotValues.bidSource(source)))
             case BidOrigin.Proxy => bus.BidPlaced.Origin.Proxy(bus.ProxyBid())
-          }
+          },
+          overtakenByProxy = overtakenByProxy,
+          answersOtherBidder = origin == BidOrigin.Proxy && initiator != Initiator.Participant(participant)
         )
         Some("bid_placed" -> bus.LotEvent.Occasion.BidPlaced(placed))
       case LotEvent.DeadlineExtended(_, _) =>

@@ -290,14 +290,26 @@ function checkRules(
     }
   });
 
+  // Цвет — по каталогу: красный только у «Да, …» подтверждения, где человек
+  // платит, и там он обязателен.
+  const paid = entry.money === true && entry.nav === "confirm";
+  const yes = buttons.find((button) => button.text.startsWith(confirmPrefix));
+  if (paid && yes !== undefined && yes.style !== "danger") {
+    found.push([
+      "style",
+      `«${yes.text}» подтверждает трату денег, а цвета danger у него нет`,
+    ]);
+  }
   for (const button of buttons) {
     if (
       button.style !== undefined &&
-      (button.style !== "danger" || !button.text.startsWith(confirmPrefix))
+      (!paid ||
+        button.style !== "danger" ||
+        !button.text.startsWith(confirmPrefix))
     ) {
       found.push([
         "style",
-        `цвет ${button.style} у «${button.text}»: красится только «${confirmPrefix}…» и только danger`,
+        `цвет ${button.style} у «${button.text}»: красится только «${confirmPrefix}…» подтверждения с деньгами и только danger`,
       ]);
     }
     if (retiredLabels.has(button.text) || /^\[[x ]\] /.test(button.text)) {

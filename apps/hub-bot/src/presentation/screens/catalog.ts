@@ -167,6 +167,7 @@ export const screenCatalog = {
     parent: "lots",
   },
   // Открытие онлайн-недели: отменить его нельзя, поэтому — подтверждение.
+  // Цвета у него нет: неделю открывают штатно, денег оно не тратит (PER-473).
   "week-confirm": {
     class: "screen",
     nav: "confirm",
@@ -181,8 +182,22 @@ export const screenCatalog = {
   },
   // Лист ставки (PER-317): тело — общий пакет, тексты — оболочка хаба.
   // Подтверждение — без ряда навигации, выбор имени — под карточкой лота.
-  "bid-confirm": { class: "screen", nav: "confirm", title: "Ставка" },
-  "proxy-confirm": { class: "screen", nav: "confirm", title: "Автоставка" },
+  // Ставка и автоставка — траты денег: их «Да» красное, и только оно
+  // (PER-473). Принятая команда — кадр исхода с «К лоту» и «Меню».
+  "bid-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Ставка",
+    money: true,
+  },
+  "proxy-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Автоставка",
+    money: true,
+  },
+  "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
+  "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
   "name-choice": {
     class: "screen",
     nav: "tree",
