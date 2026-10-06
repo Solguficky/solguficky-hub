@@ -55,6 +55,24 @@ on(filter, ...middleware) {
 
 Скелет намеренно берёт весь `message`, а не `bot.command("start")`: разбор того, что пришло, живёт в `parseUpdate` и Zod-схеме, а не в фильтрах библиотеки.
 
+### Команда — сущность `bot_command`, а не косая черта в тексте
+
+Telegram не оставляет боту угадывать, что `/start` — команда: клиент размечает текст сущностями, и в update рядом с `text` лежит `entities: [{ type: "bot_command", offset: 0, length: 6 }]`. grammY доверяет этой разметке, а не строке. `bot.command("start")` в `composer.js` — тот же `filter`, что и `on`, с предикатом `Context.has.command`, и предикат в `context.js` сначала требует filter query `":entities:bot_command"`, а затем ищет сущность с `offset === 0`, у которой `txt.substring(1, e.length)` равен зарегистрированному имени. Хвост после команды он кладёт в `ctx.match`. Имя с адресатом, `/start@stub_bot`, принимается, только если `@`-часть совпадает с `ctx.me.username` без учёта регистра, — поэтому `botInfo` харнесса обязан нести `username`.
+
+Следствие для тестов: update, собранный руками как `{ text: "/start" }`, до обработчика не доходит — без единой ошибки, бот просто молчит. Бот хаба этого не замечал: он разбирает текст сам в `parseUpdate`, и его L0 с голым `text` зелёные. Бот аукциона использует `direct.command("start", …)`, и пульт провода с тем же kit получил от него пустой экран. Модель разговора kit хаба теперь размечает команду сама:
+
+```ts
+const command = /^\/\S+/.exec(text)?.[0];
+await write(
+  command === undefined
+    ? { text }
+    : { text, entities: [{ type: "bot_command", offset: 0, length: command.length }] },
+  answerable(),
+);
+```
+
+Аналогия из .NET: маршрутизация ASP.NET Core выбирает endpoint по уже разобранному запросу — методу и шаблону пути, — а не по сырому байтовому буферу. Отличие в том, что здесь разметку делает не сервер, а клиент человека, и сервер Telegram её лишь передаёт: подделывая update, тест берёт на себя работу клиента.
+
 ### Два входа для update, и `bot.catch` подключён только к одному
 
 Это главное место файла: от него зависит и форма кода, и то, что вообще может проверить тест.
@@ -236,6 +254,8 @@ const rich = {
 
 **Повтор безопасен, только если источник повторяем.** Буфер можно отправить дважды, поток — нет. Код, который повторяет отправку, должен держать данные, а не курсор по ним.
 
+**Фикстура внешней платформы несёт не только полезную нагрузку, но и разметку, которую платформа добавляет сама.** Человек видит `/start`, а бот получает `/start` плюс сущность, и библиотека читает сущность. Подделка без разметки проходит один бот и молча валит другой. То же у заголовков NATS и metadata gRPC: фикстура, собранная «как выглядит сообщение», а не «как его шлёт платформа», проверяет не ту границу.
+
 **Шов для теста у сетевого SDK ищется в его собственной точке расширения.** Не в HTTP-клиенте и не в моке интерфейса: transformer знает домен библиотеки, поэтому тест ассертит `sendMessage` и его payload. Следующий SDK — клиент NATS, транспорт gRPC — сначала проверяется на наличие такой точки, и только потом обкладывается моками.
 
 **Границу надо знать по коду, а не по названию.** «Глобальный обработчик ошибок» звучит как первый рубеж, а подключён к одному из двух путей приёма update. Тест, который кормит бота напрямую, его не задевает; тест, который «проверяет `bot.catch`» через `handleUpdate`, проверяет пустоту.
@@ -264,6 +284,8 @@ const rich = {
 | Пробовать `editMessageMedia` и ловить отказ на текстовом сообщении | лишний вызов Bot API на каждую смену вида, а различение строится на тексте ошибки; вид нажатого сообщения известен заранее |
 | Хранить `file_id` в базе Auction | идентификатор действует только у одного бота, второй бот его не использует; отвергнуто в ADR-057 |
 | Грузить байты на каждый показ | мегабайты на каждое нажатие; кэш в памяти процесса снимает это и теряется при рестарте без вреда |
+| В kit узнавать команду по косой черте и не ставить сущность | именно так kit и был написан, и бот аукциона на нём молчал. Сущность — часть update, который шлёт Telegram; фикстура без неё правдоподобна только для бота, который разметку не читает |
+| Переписать бот аукциона на `bot.on("message")` с разбором текста | уравняло бы оба бота, но отобрало бы у бота аукциона адресацию `/start@имя` и `ctx.match`, которые grammY даёт бесплатно, ради удобства теста |
 
 ## Схема
 
@@ -315,6 +337,8 @@ flowchart TD
 - [grammY: middleware](https://grammy.dev/guide/middleware) — цепочка `(ctx, next)` и почему `next` надо дождаться.
 - [grammY: context flavors](https://grammy.dev/guide/context) — расширение `Context` типом вместо словаря.
 - [grammY: filter queries](https://grammy.dev/guide/filter-queries) — язык `"message:text"` и то, что `on` это `filter`.
+- [grammY: commands](https://grammy.dev/guide/commands) — `bot.command`, `ctx.match` и адресация `/command@bot`.
+- [Telegram Bot API: MessageEntity](https://core.telegram.org/bots/api#messageentity) — тип `bot_command`, `offset` и `length` в UTF-16 code units; откуда в update берётся разметка команды.
 - [grammY: transformers](https://grammy.dev/advanced/transformers) — middleware исходящих вызовов Bot API.
 - [grammY: deployment types](https://grammy.dev/guide/deployment-types) — long polling против webhook и почему `start()` сначала снимает webhook.
 - [Telegram Bot API: getUpdates](https://core.telegram.org/bots/api#getupdates) — семантика подтверждения offset, на которой стоит `bot.stop()`.
@@ -340,6 +364,14 @@ flowchart TD
 - Без установленного transformer `ctx.reply("hi")` реально ходит в Telegram: `GrammyError: Call to 'sendMessage' failed! (401: Unauthorized)`. Проверено.
 - `isInited()` в `node_modules/grammy/out/bot.js` — это `me !== undefined`, поэтому после `bot.botInfo = ...` вызов `init()` не делает `getMe`. Прочитано в исходнике и косвенно подтверждено тем, что весь набор тестов проходит с фиктивным токеном.
 - `npx vitest run` в `apps/telegram-bot` — 4 файла, 11 тестов, все зелёные. Проверено.
+
+Команды проверялись на `grammy@1.46.0` из `apps/hub-bot`, Node 26, скриптом `node --input-type=module -e` с `new Bot("1:x", { botInfo })` и `bot.handleUpdate`:
+
+- `bot.command("start")` на `{ text: "/start" }` без `entities` не вызывается. Проверено.
+- Тот же текст `/start m_abc` с сущностью `bot_command` `offset: 0, length: 6` вызывает обработчик, `ctx.match` равен `m_abc`. Проверено.
+- Сущность с `offset: 3` (`hi /start`) обработчик не вызывает. Проверено.
+- `/start@other_bot` не вызывает, `/start@stub_bot` при `botInfo.username = "stub_bot"` вызывает. Проверено.
+- `Context.has.command` в `node_modules/grammy/out/context.js` начинается с `checker.filterQuery(":entities:bot_command")`. Прочитано в исходнике.
 
 Фото в боте аукциона проверялось на `grammy@1.46.0` из `apps/auction-bot`:
 
