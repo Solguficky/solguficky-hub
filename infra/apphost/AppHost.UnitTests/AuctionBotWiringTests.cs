@@ -48,6 +48,37 @@ public class AuctionBotWiringTests
         profile.Infrastructure.Order(StringComparer.Ordinal).ShouldBe(["nats", "postgres"]);
     }
 
+    /// <summary>
+    /// Профиль живого прогона двух ботов — <c>hub</c> целиком плюс всё, чем
+    /// владеет <c>auction-bot</c>, на той же инфраструктуре. Сам <c>hub</c>
+    /// аукциона не получает: он по-прежнему не требует JDK.
+    /// </summary>
+    [Fact]
+    public void HubAuctionProfile_IsHubPlusAuctionBotProfile()
+    {
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json")
+            .Build();
+
+        var hub = Resolve(configuration, "hub");
+        var auctionBot = Resolve(configuration, "auction-bot");
+        var hubAuction = Resolve(configuration, "hub-auction");
+
+        hubAuction.Services.Order(StringComparer.Ordinal)
+            .ShouldBe(hub.Services.Union(auctionBot.Services).Order(StringComparer.Ordinal));
+        hubAuction.Infrastructure.Order(StringComparer.Ordinal)
+            .ShouldBe(hub.Infrastructure.Order(StringComparer.Ordinal));
+        hub.Services.ShouldNotContain(Auction);
+        hub.Services.ShouldNotContain(AuctionBot);
+    }
+
+    private static ProfileConfig Resolve(IConfiguration configuration, string profile) =>
+        ProfileResolver.Resolve(new ConfigurationBuilder()
+            .AddConfiguration(configuration)
+            .AddInMemoryCollection([new("profile", profile)])
+            .Build());
+
     [Fact]
     public async Task AuctionBot_GetsOnlyItsOwnVariables()
     {
