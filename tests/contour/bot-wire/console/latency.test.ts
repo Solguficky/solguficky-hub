@@ -48,6 +48,13 @@ function roundTrip(
       }
     });
     socket.on("error", rejectEchoed);
+    // Закрытие без полного эха — тоже отказ: тихий FIN от прокси иначе держал
+    // бы промис до таймаута теста.
+    socket.on("close", () => {
+      if (echoed.length < expected) {
+        rejectEchoed(new Error(`соединение закрыто после «${echoed}»`));
+      }
+    });
     socket.on("connect", () => {
       for (const chunk of chunks) socket.write(chunk);
     });

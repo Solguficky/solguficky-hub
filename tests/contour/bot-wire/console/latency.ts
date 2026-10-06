@@ -43,8 +43,11 @@ export async function openDelayProxy(target: string): Promise<DelayProxy> {
   const server = createServer({ allowHalfOpen: true }, (client) => {
     if (down) {
       // Отказ соединения, а не тишина: иначе бот ждал бы дедлайн и показывал
-      // бы «не ответил» вместо «недоступен».
-      client.destroy();
+      // бы «не ответил» вместо «недоступен». Именно RST: `destroy()` на
+      // принятом соединении без непрочитанных байтов шлёт FIN, и на Linux
+      // клиент видел бы тихое закрытие без ошибки — исход зависел бы от того,
+      // успел ли его первый байт дойти раньше закрытия.
+      client.resetAndDestroy();
       return;
     }
     const service = connect({
