@@ -69,8 +69,25 @@ internal static class NotificationsSetup
     /// В чарте — тот же проект: образ собирает SDK-контейнер по Container.targets,
     /// тем же путём, что CI и <c>aspire do push</c> (ADR-055).
     /// </summary>
-    public static IResourceBuilder<ProjectResource> Publish(ServiceGraphContext context) =>
-        Configure(context)
-            .WithEndpoint(AppHostNames.Endpoints.Grpc, endpoint => endpoint.TargetPort = ContainerGrpcPort)
+    public static IResourceBuilder<ProjectResource> Publish(ServiceGraphContext context)
+    {
+        var notifications = Configure(context)
+            .WithEndpoint(AppHostNames.Endpoints.Grpc, endpoint => endpoint.TargetPort = ContainerGrpcPort);
+
+        // Силос в поде (PER-387) объявляет себя постоянным адресом Service, а не
+        // адресом пода: новый под после Recreate закрывает запись membership
+        // предшественника, только если объявляет тот же адрес. В чарте host
+        // endpoint'а и есть имя Service. ClusterId и ServiceId — свои у каждой
+        // среды, поэтому параметры без значения: их кладут values среды, а пустое
+        // значение роняет силос с именем переменной, а не поднимает с чужим.
+        var grpc = notifications.GetEndpoint(AppHostNames.Endpoints.Grpc);
+        var clusterId = context.Builder.AddParameter("notifications-cluster-id");
+        var serviceId = context.Builder.AddParameter("notifications-service-id");
+
+        return notifications
+            .WithEnvironment("NOTIFICATIONS_SILO_ADVERTISED_HOST", ReferenceExpression.Create($"{grpc.Property(EndpointProperty.Host)}"))
+            .WithEnvironment("NOTIFICATIONS_CLUSTER_ID", clusterId)
+            .WithEnvironment("NOTIFICATIONS_SERVICE_ID", serviceId)
             .AsClusterWorkload(Cluster);
+    }
 }
