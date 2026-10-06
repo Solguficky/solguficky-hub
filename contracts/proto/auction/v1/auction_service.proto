@@ -8,10 +8,11 @@ import "identity/v1/roles.proto";
 
 // Commands of a participant, commands of the lot catalog, the birth of an auction
 // at a meetup, the registry of its lots, the trading conditions of a lot, the
-// scheduling of an auction and the start of its prebidding, reads of a lot, of
-// its history, of its image, of the display names of participants and of
-// auctions, and the invoices of sold lots: the commands of the organizer and of
-// the winner and their reads.
+// scheduling of an auction and the start of its prebidding, the selection of lots
+// for the final, reads of a lot, of its history, of its image, of the display
+// names of participants and of auctions, the console of the meetup administrator,
+// and the invoices of sold lots: the commands of the organizer and of the winner
+// and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -41,6 +42,9 @@ service AuctionService {
   rpc ScheduleLot(ScheduleLotRequest) returns (ScheduleLotResponse);
   rpc ScheduleAuction(ScheduleAuctionRequest) returns (ScheduleAuctionResponse);
   rpc StartPrebidding(StartPrebiddingRequest) returns (StartPrebiddingResponse);
+  rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
+  rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
+  rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
   rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
@@ -395,6 +399,10 @@ message LotSnapshot {
     UnsoldReason unsold = 13;
     WithdrawnReason withdrawn = 14;
   }
+
+  // How many bids the lot has accepted, manual and proxy alike. 0 is a real value:
+  // no bid yet.
+  int64 bid_count = 15;
 }
 
 message ListLotHistoryRequest {
@@ -752,8 +760,9 @@ message ScheduleAuctionRequest {
   // Caller-generated canonical lowercase UUIDv7 with hyphens.
   string op_id = 3;
 
-  // The configuration as a whole: it replaces the stored one. Required, and so are
-  // its closing_policy and lot_defaults with their step_policy and anti_snipe.
+  // The configuration as a whole: it replaces the stored one. Required, and so is
+  // its closing_policy. lot_defaults is optional: unset, the auction fills in the
+  // defaults of the platform; set, its step_policy and anti_snipe are required.
   AuctionConfig config = 4;
 }
 
@@ -842,6 +851,143 @@ message StartPrebiddingRefusal {
 
 // The auction has no configuration yet: ScheduleAuction comes first.
 message AuctionNotScheduled {}
+
+message SelectForFinalRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message SelectForFinalResponse {
+  // Exactly one is set.
+  oneof outcome {
+    FinalistSelectionAccepted accepted = 1;
+    SelectForFinalRefusal refused = 2;
+  }
+}
+
+// Carries nothing: the mark is visible in the console, not in public reads.
+message FinalistSelectionAccepted {}
+
+message SelectForFinalRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    NotInPrebidding not_in_prebidding = 3;
+    LotNotInAuction lot_not_in_auction = 4;
+    LotNotOpen lot_not_open = 5;
+    NotInOnlinePhase not_in_online_phase = 6;
+    AlreadyMarkedForFinal already_marked_for_final = 7;
+    DeadlinePassed deadline_passed = 8;
+  }
+}
+
+message DeselectForFinalRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message DeselectForFinalResponse {
+  // Exactly one is set.
+  oneof outcome {
+    FinalistDeselectionAccepted accepted = 1;
+    DeselectForFinalRefusal refused = 2;
+  }
+}
+
+message FinalistDeselectionAccepted {}
+
+message DeselectForFinalRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    NotInPrebidding not_in_prebidding = 3;
+    LotNotInAuction lot_not_in_auction = 4;
+    LotNotOpen lot_not_open = 5;
+    NotInOnlinePhase not_in_online_phase = 6;
+    NotMarkedForFinal not_marked_for_final = 7;
+    DeadlinePassed deadline_passed = 8;
+  }
+}
+
+// The auction is not in prebidding: the lots are not trading online yet.
+message NotInPrebidding {}
+
+// The lot is already in the live final.
+message NotInOnlinePhase {}
+
+message AlreadyMarkedForFinal {}
+
+message NotMarkedForFinal {}
+
+// The deadline of the lot has come, even if the lot is not closed yet. A held lot
+// answers the same: its deadline has passed.
+message DeadlinePassed {}
+
+message GetAuctionConsoleRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+}
+
+message GetAuctionConsoleResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionConsole console = 1;
+    GetAuctionConsoleRefusal refused = 2;
+  }
+}
+
+message GetAuctionConsoleRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+  }
+}
+
+// The auction as its meetup administrator runs it. The console is the only read
+// that names a lot marked for the final before the lineup is frozen.
+message AuctionConsole {
+  AuctionSnapshot auction = 1;
+
+  // Every lot of the registry, in no particular order. The registry is not paged:
+  // the administrator enters its lots one by one.
+  repeated ConsoleLot lots = 2;
+}
+
+message ConsoleLot {
+  // The lot as the administrator sees it as a viewer.
+  LotSnapshot lot = 1;
+
+  // The lot is trading online and marked for the final. false is a real value.
+  bool marked_for_final = 2;
+
+  // The lot is trading past its deadline by more than the grace of the service:
+  // it should have closed and has not. false is a real value.
+  bool overdue = 3;
+}
 
 message GetMeetupAuctionRequest {
   Viewer viewer = 1;

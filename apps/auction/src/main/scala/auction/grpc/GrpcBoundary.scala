@@ -180,6 +180,9 @@ object GrpcBoundary {
     def scheduleLot(in: wire.ScheduleLotRequest): Future[wire.ScheduleLotResponse] = refuse
     def scheduleAuction(in: wire.ScheduleAuctionRequest): Future[wire.ScheduleAuctionResponse] = refuse
     def startPrebidding(in: wire.StartPrebiddingRequest): Future[wire.StartPrebiddingResponse] = refuse
+    def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] = refuse
+    def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] = refuse
+    def getAuctionConsole(in: wire.GetAuctionConsoleRequest): Future[wire.GetAuctionConsoleResponse] = refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
     def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = refuse

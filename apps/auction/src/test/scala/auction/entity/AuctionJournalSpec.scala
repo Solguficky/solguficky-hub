@@ -56,6 +56,11 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("prebidding-started", stored(started.event, 4))
     }
 
+    "keeps the stored form of a schedule without lot defaults and reads it back as one" in {
+      val bare = AuctionEvent.AuctionScheduled(AuctionFixtures.config(AuctionFixtures.configInput(lotDefaults = None)))
+      keepsGolden("auction-scheduled-without-defaults", stored(bare, 3))
+    }
+
     "keeps the stored form of a snapshot in prebidding with its config and the op_id of the start" in {
       keepsGolden("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(prebidding, sequence = 4)) shouldBe prebidding

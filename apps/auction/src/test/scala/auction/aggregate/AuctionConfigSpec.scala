@@ -30,7 +30,7 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
     "accepts the week format and hands lots its closesAt as their deadline" in {
       val accepted = AuctionConfig.parse(configInput())
       accepted.map(_.lotDeadline) shouldBe Right(Some(closesAt))
-      accepted.map(_.lotDefaults) shouldBe Right(LotFixtures.config())
+      accepted.map(_.lotDefaults) shouldBe Right(Some(LotFixtures.config()))
     }
 
     // Т-19
@@ -84,7 +84,7 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
 
     "refuses lot defaults whose step policy is contradictory" in {
       val unsorted = LotFixtures.configInput(StepPolicyInput.Tiered(tiers((0, 10), (500, 20), (100, 30))))
-      AuctionConfig.parse(configInput(lotDefaults = unsorted)) shouldBe
+      AuctionConfig.parse(configInput(lotDefaults = Some(unsorted))) shouldBe
         Left(ConfigInvalid.LotDefaults(StepPolicyInvalid.BoundsNotAscending))
     }
   }

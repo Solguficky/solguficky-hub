@@ -188,8 +188,8 @@ object Lot {
    * транзакции — всегда событие самой команды, не производная ставка прокси, и участник в нём — инициатор. Чужой
    * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
    * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
-   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal` и `ResumeLot` участника в
-   * событии нет, и своя команда — событие того же вида.
+   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal`, `UnmarkForFinal` и `ResumeLot`
+   * участника в событии нет, и своя команда — событие того же вида.
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
@@ -244,6 +244,27 @@ object Lot {
           else if (trading.markedForFinal) Left(MarkForFinalRejected.AlreadyMarkedForFinal)
           else if (deadlinePassed(trading, now)) Left(MarkForFinalRejected.DeadlinePassed)
           else Right(Decision.Accepted(LotEvent.LotMarkedForFinal))
+      }
+    }
+
+  /**
+   * Снятие отметки для финала (ADR-047, дополнение 2026-10-06). Зеркало отметки: тот же порядок проверок, тот же судья
+   * дедлайна и повтор только своей команды. Снять отметку в момент дедлайна и позже нельзя — ни у лота, к которому
+   * закрытие ещё не дошло, ни у удержанного: иначе финалист вернулся бы к закрытию задним числом. Снятая отметка
+   * возвращает лоту обычное закрытие по дедлайну, а следующая отметка с новым `op_id` ставит её снова.
+   */
+  def decide(lot: Lot, command: UnmarkForFinal, now: Instant): Either[UnmarkForFinalRejected, Decision] =
+    repeatOf(lot, command.opId, UnmarkForFinalRejected.OpIdTaken)(_ == LotEvent.LotUnmarkedForFinal).getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(UnmarkForFinalRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Left(UnmarkForFinalRejected.LotNotOpen)
+        case LotState.Held(_) => Left(UnmarkForFinalRejected.DeadlinePassed)
+        case LotState.Trading(trading) =>
+          if (trading.phase != Phase.Online) Left(UnmarkForFinalRejected.NotInOnlinePhase)
+          else if (!trading.markedForFinal) Left(UnmarkForFinalRejected.NotMarkedForFinal)
+          else if (deadlinePassed(trading, now)) Left(UnmarkForFinalRejected.DeadlinePassed)
+          else Right(Decision.Accepted(LotEvent.LotUnmarkedForFinal))
       }
     }
 
@@ -447,6 +468,8 @@ object Lot {
         )
       case (LotState.Trading(trading), LotEvent.LotMarkedForFinal) =>
         LotState.Trading(trading.copy(markedForFinal = true))
+      case (LotState.Trading(trading), LotEvent.LotUnmarkedForFinal) =>
+        LotState.Trading(trading.copy(markedForFinal = false))
       case (LotState.Trading(trading), LotEvent.LotHeldForFinal(_)) =>
         LotState.Held(
           HeldState(

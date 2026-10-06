@@ -214,10 +214,16 @@ enum CloseReason {
 final case class CloseLot(reason: CloseReason, opId: OpId)
 
 /**
- * Отметка лота для финала (RFC-011, П-09). Шлёт аукцион по выбору организатора (PER-334); отметка торгов не
+ * Отметка лота для финала (RFC-011, П-09). Шлёт аукцион по выбору организатора (PER-320); отметка торгов не
  * останавливает, а меняет исход закрытия по дедлайну.
  */
 final case class MarkForFinal(opId: OpId)
+
+/**
+ * Снятие отметки для финала (PER-320, ADR-047, дополнение 2026-10-06). Подчиняется тому же дедлайну, что отметка:
+ * снятая до него отметка возвращает лоту обычное закрытие, а удержанный лот с финала этой командой не снимается.
+ */
+final case class UnmarkForFinal(opId: OpId)
 
 /** Возврат удержанного лота в торги живого финала (П-09): без дедлайна и ask, в фазе `Live`. */
 final case class ResumeLot(opId: OpId)
@@ -235,7 +241,8 @@ final case class ResumeLot(opId: OpId)
  * snapshot она началась.
  *
  * `LotMarkedForFinal` и `LotResumed` payload не несут, `LotHeldForFinal` — только время удержания (ADR-047, дополнение
- * 2026-09-24): цена, лидер и лимиты удержанного лота — те, что свёрнуты из журнала до него.
+ * 2026-09-24): цена, лидер и лимиты удержанного лота — те, что свёрнуты из журнала до него. `LotUnmarkedForFinal` тоже
+ * без payload (дополнение 2026-10-06): он только снимает признак.
  */
 enum LotEvent {
   case LotDrafted(auction: AuctionId)
@@ -256,6 +263,7 @@ enum LotEvent {
   case LotMarkedForFinal
   case LotHeldForFinal(at: Instant)
   case LotResumed
+  case LotUnmarkedForFinal
 }
 
 /**
@@ -351,6 +359,20 @@ enum MarkForFinalRejected {
   case LotNotOpen
   case NotInOnlinePhase
   case AlreadyMarkedForFinal
+  case DeadlinePassed
+}
+
+/**
+ * Отказы `UnmarkForFinal` (ADR-047, дополнение 2026-10-06). `LotNotOpen` — лот ещё не в торгах или уже закрыт.
+ * `DeadlinePassed` — дедлайн наступил, в том числе у удержанного лота: снять финалиста после дедлайна значило бы
+ * продать лот задним числом. `NotMarkedForFinal` — отметки нет, снимать нечего.
+ */
+enum UnmarkForFinalRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotOpen
+  case NotInOnlinePhase
+  case NotMarkedForFinal
   case DeadlinePassed
 }
 

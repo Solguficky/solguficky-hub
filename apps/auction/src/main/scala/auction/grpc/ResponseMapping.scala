@@ -4,6 +4,7 @@ import auction.aggregate.AuctionState
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.Drafted
+import auction.aggregate.FinalChoiceRefusal
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.RemovalRefusal
@@ -13,11 +14,13 @@ import auction.catalog.LotCard
 import auction.contract.AuctionValues
 import auction.lot.Envelope
 import auction.lot.LotEvent
+import auction.lot.MarkForFinalRejected
 import auction.lot.Money
 import auction.lot.ParticipantId
 import auction.lot.PlaceBidRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimitRejected
+import auction.lot.UnmarkForFinalRejected
 import auction.lot.WithdrawProxyLimitRejected
 import auction.naming.DisplayKind
 import auction.naming.DisplayName
@@ -387,6 +390,89 @@ object ResponseMapping {
 
   private def openingRefused(reason: wire.StartPrebiddingRefusal.Reason): wire.StartPrebiddingResponse =
     wire.StartPrebiddingResponse().withRefused(wire.StartPrebiddingRefusal(reason))
+
+  /**
+   * Отметка для финала (ADR-047, дополнение 2026-10-06). Отказы аукциона и лота — значения ответа: `DeadlinePassed`
+   * администратор видит на пульте как отказ, а не как сбой. Лот реестра без журнала, как у `scheduleLot`, — дефект.
+   */
+  def selectForFinal(
+      outcome: Either[FinalChoiceRefusal[MarkForFinalRejected], Unit]
+  ): Either[Status, wire.SelectForFinalResponse] = {
+    import wire.SelectForFinalRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SelectForFinalResponse().withRefused(wire.SelectForFinalRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SelectForFinalResponse().withAccepted(wire.FinalistSelectionAccepted()))
+      case Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.LotNotOpen)) =>
+        refused(Reason.LotNotOpen(wire.LotNotOpen()))
+      case Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.NotInOnlinePhase)) =>
+        refused(Reason.NotInOnlinePhase(wire.NotInOnlinePhase()))
+      case Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.AlreadyMarkedForFinal)) =>
+        refused(Reason.AlreadyMarkedForFinal(wire.AlreadyMarkedForFinal()))
+      case Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.DeadlinePassed)) =>
+        refused(Reason.DeadlinePassed(wire.DeadlinePassed()))
+      case Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.OpIdTaken)) => Left(opIdTaken)
+      case Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.LotNotFound)) =>
+        throw new IllegalStateException("a lot of the registry has no journal")
+      case Left(FinalChoiceRefusal.NotInPrebidding) => refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(FinalChoiceRefusal.LotNotInAuction) => refused(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case Left(FinalChoiceRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(FinalChoiceRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(FinalChoiceRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(FinalChoiceRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"final selection answered $denial")
+    }
+  }
+
+  /** Снятие отметки — те же правила отображения, что у отметки. */
+  def deselectForFinal(
+      outcome: Either[FinalChoiceRefusal[UnmarkForFinalRejected], Unit]
+  ): Either[Status, wire.DeselectForFinalResponse] = {
+    import wire.DeselectForFinalRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.DeselectForFinalResponse().withRefused(wire.DeselectForFinalRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.DeselectForFinalResponse().withAccepted(wire.FinalistDeselectionAccepted()))
+      case Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.LotNotOpen)) =>
+        refused(Reason.LotNotOpen(wire.LotNotOpen()))
+      case Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.NotInOnlinePhase)) =>
+        refused(Reason.NotInOnlinePhase(wire.NotInOnlinePhase()))
+      case Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.NotMarkedForFinal)) =>
+        refused(Reason.NotMarkedForFinal(wire.NotMarkedForFinal()))
+      case Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.DeadlinePassed)) =>
+        refused(Reason.DeadlinePassed(wire.DeadlinePassed()))
+      case Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.OpIdTaken)) => Left(opIdTaken)
+      case Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.LotNotFound)) =>
+        throw new IllegalStateException("a lot of the registry has no journal")
+      case Left(FinalChoiceRefusal.NotInPrebidding) => refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(FinalChoiceRefusal.LotNotInAuction) => refused(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case Left(FinalChoiceRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(FinalChoiceRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(FinalChoiceRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(FinalChoiceRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"final deselection answered $denial")
+    }
+  }
+
+  /** Отказ права на чтение пульта: значения ответа, как у команд; недоступный Meetups — статус. */
+  def consoleDenied(denial: Denial): Either[Status, wire.GetAuctionConsoleResponse] = {
+    import wire.GetAuctionConsoleRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.GetAuctionConsoleResponse().withRefused(wire.GetAuctionConsoleRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"console authority answered $denial")
+    }
+  }
 
   /**
    * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у

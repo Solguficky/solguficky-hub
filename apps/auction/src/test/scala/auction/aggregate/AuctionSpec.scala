@@ -9,9 +9,11 @@ import auction.lot.LotFixtures.eur
 import auction.lot.LotFixtures.money
 import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.rub
+import auction.lot.MarkForFinal
 import auction.lot.Money
 import auction.lot.ScheduleLot
 import auction.lot.StepPolicyInput
+import auction.lot.UnmarkForFinal
 import org.scalacheck.Gen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -176,9 +178,19 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       )
       val planned = Auction.apply(
         holding(born),
-        AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config(configInput(lotDefaults = defaults))))
+        AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config(configInput(lotDefaults = Some(defaults)))))
       )
       Auction.decide(planned, conditions).map(_.config) shouldBe Right(defaults.copy(stepPolicy = step))
+    }
+
+    "falls back to the platform defaults when it is scheduled without lot defaults" in {
+      val planned = Auction.apply(
+        holding(born),
+        AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config(configInput(lotDefaults = None))))
+      )
+      val platform = LotTerms.platform
+      Auction.decide(planned, conditions).map(_.config) shouldBe
+        Right(LotConfigInput(platform.currency, step, platform.antiSnipe, platform.proxyEnabled))
     }
 
     "refuses conditions for a lot outside its registry and before it is born" in {
@@ -203,6 +215,30 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Auction.replay(Auction.initial, shuffled) shouldBe Auction.replay(Auction.initial, journal)
       }
       Auction.replay(Auction.initial, journal).lots shouldBe Set(lot)
+    }
+  }
+
+  "choice of a finalist" should {
+
+    /** Аукцион в онлайн-торгах с `lot` в реестре: реестр заполняется до старта, после него он заморожен. */
+    def trading: Auction = Auction.apply(holding(scheduled), AuctionEnvelope(9, op(9), AuctionEvent.PrebiddingStarted))
+
+    "send the lot its mark and its unmark with the op_id of the command, writing nothing of its own" in {
+      Auction.decide(trading, SelectForFinal(lot, op(10))) shouldBe Right(MarkForFinal(op(10)))
+      Auction.decide(trading, DeselectForFinal(lot, op(11))) shouldBe Right(UnmarkForFinal(op(11)))
+    }
+
+    "refuse a choice before prebidding, whatever the lot" in {
+      List(holding(born), holding(scheduled)).foreach { auction =>
+        Auction.decide(auction, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
+        Auction.decide(auction, DeselectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
+      }
+    }
+
+    "refuse a lot outside the registry and an auction that was never born" in {
+      Auction.decide(started, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.LotNotInAuction)
+      Auction.decide(started, DeselectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.LotNotInAuction)
+      Auction.decide(Auction.initial, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.AuctionNotFound)
     }
   }
 }

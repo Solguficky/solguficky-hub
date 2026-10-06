@@ -191,7 +191,9 @@ object AuctionNode {
       sharding: ClusterSharding,
       callers: CallerTable,
       askTimeout: FiniteDuration,
-      authority: MeetupAuthority
+      authority: MeetupAuthority,
+      clock: Clock = Clock.systemUTC(),
+      overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace
   ): HttpRequest => Future[HttpResponse] = {
     given ActorSystem[?] = system
     import system.executionContext
@@ -203,7 +205,9 @@ object AuctionNode {
       SlickLotViews(system),
       AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),
       SlickAuctionViews(system),
-      DisplayNameCommands(SlickDisplayNameStore(system))
+      DisplayNameCommands(SlickDisplayNameStore(system)),
+      clock = clock,
+      overdueGrace = overdueGrace
     )
     GrpcBoundary(callers, correlation => service.within(correlation))
   }

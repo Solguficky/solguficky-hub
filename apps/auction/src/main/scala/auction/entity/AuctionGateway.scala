@@ -2,7 +2,9 @@ package auction.entity
 
 import auction.aggregate.*
 import auction.lot.AuctionId
+import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
+import auction.lot.UnmarkForFinalRejected
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout
 
@@ -45,6 +47,19 @@ trait AuctionGateway {
       command: ScheduleAuctionLot,
       initiator: Initiator
   ): Future[Either[ScheduleAuctionLotRejected, Unit]]
+
+  /** Отметка лота реестра для финала. Ответ приходит после ответа лота, как у `scheduleLot`. */
+  def selectForFinal(
+      auctionId: AuctionId,
+      command: SelectForFinal,
+      initiator: Initiator
+  ): Future[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]]
+
+  def deselectForFinal(
+      auctionId: AuctionId,
+      command: DeselectForFinal,
+      initiator: Initiator
+  ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
 }
 
 object AuctionGateway {
@@ -99,5 +114,19 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[ScheduleAuctionLotRejected, Unit]] =
         entity(auctionId).ask(AuctionEntity.PlanLot(command, initiator, _))
+
+      def selectForFinal(
+          auctionId: AuctionId,
+          command: SelectForFinal,
+          initiator: Initiator
+      ): Future[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]] =
+        entity(auctionId).ask(AuctionEntity.Select(command, initiator, _))
+
+      def deselectForFinal(
+          auctionId: AuctionId,
+          command: DeselectForFinal,
+          initiator: Initiator
+      ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] =
+        entity(auctionId).ask(AuctionEntity.Deselect(command, initiator, _))
     }
 }

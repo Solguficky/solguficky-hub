@@ -213,11 +213,13 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         Some(OnlinePhase(Instant.parse("2026-10-20T00:00:00Z"), Some(Instant.parse("2026-10-27T00:00:00Z")), true)),
         1,
         ClosingPolicy.Mixed(onlineByDeadline = true),
-        LotConfigInput(
-          CurrencyCode("RUB"),
-          StepPolicyInput.Fixed(Money(10000, CurrencyCode("RUB"))),
-          AntiSnipe(Duration.ofSeconds(120), Duration.ofSeconds(300), 3),
-          proxyEnabled = true
+        Some(
+          LotConfigInput(
+            CurrencyCode("RUB"),
+            StepPolicyInput.Fixed(Money(10000, CurrencyCode("RUB"))),
+            AntiSnipe(Duration.ofSeconds(120), Duration.ofSeconds(300), 3),
+            proxyEnabled = true
+          )
         )
       )
       // ConfigInvalid решает ядро: `closes_at` раньше `opens_at` и пять блоков финала форма пропускает.
@@ -231,6 +233,11 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         .config
         .onlinePhase shouldBe
         None
+    }
+
+    "leaves the lot defaults to the auction when the configuration does not carry them" in {
+      val command = RequestMapping.scheduleAuction(validAuctionSchedule.withConfig(validConfig.clearLotDefaults)).value
+      command.config.lotDefaults shouldBe None
     }
 
     "names the invalid field of the configuration of an auction" in {
@@ -248,7 +255,6 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         FormError("config.online_phase.closes_at")
       field(validConfig.clearClosingPolicy) shouldBe FormError("config.closing_policy")
       field(validConfig.withClosingPolicy(ClosingPolicyMessage())) shouldBe FormError("config.closing_policy")
-      field(validConfig.clearLotDefaults) shouldBe FormError("config.lot_defaults")
       field(validConfig.withLotDefaults(validDefaults.withCurrency("rub"))) shouldBe
         FormError("config.lot_defaults.currency")
       field(validConfig.withLotDefaults(validDefaults.clearStepPolicy)) shouldBe FormError("step_policy")

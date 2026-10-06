@@ -9,11 +9,13 @@ import auction.lot.AuctionId
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.LotEvent
+import auction.lot.MarkForFinalRejected
 import auction.lot.Money
 import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.lot.ScheduleLotRejected
 import auction.lot.StepPolicyInput
+import auction.lot.UnmarkForFinalRejected
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -88,6 +90,17 @@ enum LotSchedulingRefusal {
 }
 
 /**
+ * Отказ выбора финалиста: проверка до агрегата, решение аукциона о фазе и реестре или решение самого лота (`R` — отказы
+ * его команды).
+ */
+enum FinalChoiceRefusal[+R] {
+  case Denied(denial: Denial) extends FinalChoiceRefusal[Nothing]
+  case NotInPrebidding extends FinalChoiceRefusal[Nothing]
+  case LotNotInAuction extends FinalChoiceRefusal[Nothing]
+  case ByLot(rejected: R)
+}
+
+/**
  * Команды администратора аукциону (ADR-047, дополнение 2026-10-03). Порядок фиксирован:
  *
  *   1. повтор того же `op_id` получает исходный ответ раньше проверки права; 2. у всех команд, кроме рождения, аукцион
@@ -108,6 +121,9 @@ enum LotSchedulingRefusal {
  * шлёт команду лоту, поэтому старт торгов между проверкой и командой здесь невозможен. Событие пишет только лот, и
  * повтор `op_id` узнаёт он: на шаге 1 аукцион находит в своём окне разве что `op_id` другой команды, и это `OpIdTaken`,
  * а не исходный ответ. Повтор принятого `ScheduleLot` после старта торгов отвечает `LotsFrozen`.
+ *
+ * Отметка для финала и её снятие идут тем же путём, что `ScheduleLot` (ADR-047, дополнение 2026-10-06): решает entity
+ * аукциона, событие пишет лот, повтор `op_id` узнаёт лот, а `op_id` из окна аукциона — `OpIdTaken` лота.
  */
 final class AuctionCommands(
     auctions: AuctionGateway,
@@ -239,6 +255,52 @@ final class AuctionCommands(
             case Left(ScheduleAuctionLotRejected.LotsFrozen) => Left(LotSchedulingRefusal.Denied(Denial.LotsFrozen))
             case Left(ScheduleAuctionLotRejected.LotNotInAuction) => Left(LotSchedulingRefusal.LotNotInAuction)
             case Left(ScheduleAuctionLotRejected.ByLot(rejected)) => Left(LotSchedulingRefusal.ByLot(rejected))
+          }
+        }
+    }
+
+  def selectForFinal(
+      auctionId: AuctionId,
+      lot: LotId,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[FinalChoiceRefusal[MarkForFinalRejected], Unit]] =
+    chosen(auctionId, opId, person, MarkForFinalRejected.OpIdTaken) {
+      auctions.selectForFinal(auctionId, SelectForFinal(lot, opId), Initiator.Operator(person))
+    }
+
+  def deselectForFinal(
+      auctionId: AuctionId,
+      lot: LotId,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[FinalChoiceRefusal[UnmarkForFinalRejected], Unit]] =
+    chosen(auctionId, opId, person, UnmarkForFinalRejected.OpIdTaken) {
+      auctions.deselectForFinal(auctionId, DeselectForFinal(lot, opId), Initiator.Operator(person))
+    }
+
+  /**
+   * Право на чтение пульта администратора (PER-320): тот же вопрос Meetups, что у команд, но без записи и без окна
+   * `seen` — чтению нечего повторять.
+   */
+  def authorize(meetup: MeetupId, person: ParticipantId): Future[Either[Denial, Unit]] =
+    authorized(meetup, person, (denial: Denial) => denial)(Future.successful(Right(())))
+
+  /** Общий путь выбора финалиста: повтор из окна аукциона — чужая команда, затем право, затем entity. */
+  private def chosen[R](auctionId: AuctionId, opId: OpId, person: ParticipantId, opIdTaken: R)(
+      run: => Future[Either[FinalChoiceRejected[R], Unit]]
+  ): Future[Either[FinalChoiceRefusal[R], Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Left(FinalChoiceRefusal.ByLot(opIdTaken)))
+      case Inspection.Absent => Future.successful(Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, FinalChoiceRefusal.Denied(_)) {
+          run.map {
+            case Right(()) => Right(())
+            case Left(FinalChoiceRejected.AuctionNotFound) => Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound))
+            case Left(FinalChoiceRejected.NotInPrebidding) => Left(FinalChoiceRefusal.NotInPrebidding)
+            case Left(FinalChoiceRejected.LotNotInAuction) => Left(FinalChoiceRefusal.LotNotInAuction)
+            case Left(FinalChoiceRejected.ByLot(rejected)) => Left(FinalChoiceRefusal.ByLot(rejected))
           }
         }
     }

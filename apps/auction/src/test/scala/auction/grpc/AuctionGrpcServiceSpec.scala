@@ -2,12 +2,16 @@ package auction.grpc
 
 import auction.aggregate.AddLot
 import auction.aggregate.Auction
+import auction.aggregate.AuctionEnvelope
+import auction.aggregate.AuctionEvent
 import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionFixtures
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.Correlation
+import auction.aggregate.DeselectForFinal
 import auction.aggregate.DraftAuction
+import auction.aggregate.FinalChoiceRejected
 import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
@@ -16,6 +20,7 @@ import auction.aggregate.RemoveLotRejected
 import auction.aggregate.ScheduleAuction
 import auction.aggregate.ScheduleAuctionLot
 import auction.aggregate.ScheduleAuctionLotRejected
+import auction.aggregate.SelectForFinal
 import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
 import auction.catalog.LotCard
@@ -33,6 +38,8 @@ import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.Envelope
 import auction.lot.LotEvent
+import auction.lot.MarkForFinalRejected
+import auction.lot.UnmarkForFinalRejected
 import auction.lot.OpId
 import auction.lot.LotFixtures
 import auction.lot.LotFixtures.*
@@ -78,6 +85,8 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.slf4j.LoggerFactory
 
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import scala.annotation.tailrec
@@ -231,12 +240,23 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         command: ScheduleAuctionLot,
         initiator: Initiator
     ): Future[Either[ScheduleAuctionLotRejected, Unit]] = fail("the auction was reached")
+    def selectForFinal(
+        auctionId: AuctionId,
+        command: SelectForFinal,
+        initiator: Initiator
+    ): Future[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]] = fail("the auction was reached")
+    def deselectForFinal(
+        auctionId: AuctionId,
+        command: DeselectForFinal,
+        initiator: Initiator
+    ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] = fail("the auction was reached")
   }
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
 
   private object UntouchableAuctionViews extends AuctionViews {
     def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
+    def find(auctionId: UUID): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
     def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] =
       fail("the auction read model was touched")
   }
@@ -247,7 +267,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       views: LotViews = UntouchableViews,
       auctions: AuctionCommands = AuctionCommands(new Auctions, Unreachable, NoMeetups),
       auctionViews: AuctionViews = UntouchableAuctionViews,
-      names: DisplayNameStore = Names(named)
+      names: DisplayNameStore = Names(named),
+      clock: Clock = Clock.systemUTC()
   ) =
     AuctionGrpcService(
       lots,
@@ -256,8 +277,30 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       views,
       auctions,
       auctionViews,
-      DisplayNameCommands(names)
+      DisplayNameCommands(names),
+      clock = clock,
+      overdueGrace = Duration.ofMinutes(2)
     )
+
+  /** Аукцион сходки в онлайн-торгах с двумя лотами в реестре — то, что пульт читает из read model. */
+  private def consoleOf(first: UUID, second: UUID): AuctionViews = {
+    val meetup = MeetupId(UUID.fromString(meetupId))
+    val running = Auction.replay(
+      Auction.initial,
+      List(
+        AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)),
+        AuctionEnvelope(2, LotFixtures.op(2), AuctionEvent.LotAdded(LotId(first))),
+        AuctionEnvelope(3, LotFixtures.op(3), AuctionEvent.LotAdded(LotId(second))),
+        AuctionEnvelope(4, LotFixtures.op(4), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
+        AuctionEnvelope(5, LotFixtures.op(5), AuctionEvent.PrebiddingStarted)
+      )
+    )
+    new AuctionViews {
+      def byMeetup(meetup: MeetupId) = fail("the auction was read by meetup")
+      def find(auctionId: UUID) = Future.successful(Some(AuctionSnapshotView(auctionId, running)))
+      def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("the auctions were listed")
+    }
+  }
 
   // Пока SLF4J инициализирует backend, он отдаёт SubstituteLogger, и приведение к logback падает (как в GrpcBoundarySpec).
   private def serviceLogger: LogbackLogger = {
@@ -605,6 +648,105 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Status.Code.NOT_FOUND
     }
 
+    "shows the administrator the lots of the console with their bids, the mark and the overdue lot" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val (marked, late) = (new UUID(7L, 1L), new UUID(7L, 2L))
+      val registry = new Views {
+        override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) =
+          Future.successful(
+            List(
+              LotSnapshotView(
+                marked,
+                auctionId,
+                4,
+                trading(price = 300, closesAt = Some(deadline.plusSeconds(3600)), markedForFinal = true),
+                None,
+                bidCount = 3
+              ),
+              LotSnapshotView(late, auctionId, 2, trading(price = 100, closesAt = Some(deadline)), None)
+            )
+          )
+      }
+      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val console = service(
+        Unreachable,
+        views = registry,
+        auctions = AuctionCommands(new Auctions, Unreachable, meetups),
+        auctionViews = consoleOf(marked, late),
+        clock = Clock.fixed(deadline.plusSeconds(600), java.time.ZoneOffset.UTC)
+      ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString)).futureValue.getConsole
+
+      console.getAuction.status.isPrebidding shouldBe true
+      console.lots.map(entry => (entry.getLot.id, entry.getLot.bidCount, entry.markedForFinal, entry.overdue)) shouldBe
+        Seq((marked.toString, 3L, true, false), (late.toString, 0L, false, true))
+    }
+
+    "refuses the console to a viewer whom the meetup does not confirm and reads no lot" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(
+        Unreachable,
+        auctions = AuctionCommands(new Auctions, Unreachable, stranger),
+        auctionViews = consoleOf(new UUID(7L, 1L), new UUID(7L, 2L))
+      ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+    }
+
+    "answers NOT_FOUND for the console of an auction the read model does not know, before asking meetups" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val absent = new AuctionViews {
+        def byMeetup(meetup: MeetupId) = fail("the auction was read by meetup")
+        def find(auctionId: UUID) = Future.successful(None)
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("the auctions were listed")
+      }
+      statusOf(
+        service(Unreachable, auctionViews = absent)
+          .getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers a mark after the deadline with the DeadlinePassed refusal, not with a status" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val late = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def selectForFinal(auctionId: AuctionId, command: SelectForFinal, initiator: Initiator) =
+          Future.successful(Left(FinalChoiceRejected.ByLot(MarkForFinalRejected.DeadlinePassed)))
+        override def deselectForFinal(auctionId: AuctionId, command: DeselectForFinal, initiator: Initiator) =
+          Future.successful(Left(FinalChoiceRejected.ByLot(UnmarkForFinalRejected.DeadlinePassed)))
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val auction = service(Unreachable, auctions = AuctionCommands(late, Unreachable, granted))
+      auction
+        .selectForFinal(wire.SelectForFinalRequest(Some(viewer), meetupAuction.toString, lot, op))
+        .futureValue
+        .getRefused
+        .reason
+        .isDeadlinePassed shouldBe true
+      auction
+        .deselectForFinal(wire.DeselectForFinalRequest(Some(viewer), meetupAuction.toString, lot, op))
+        .futureValue
+        .getRefused
+        .reason
+        .isDeadlinePassed shouldBe true
+    }
+
+    "carries the bid count of the read model in the snapshot of a lot" in {
+      val counted = new Views {
+        override def find(lotId: UUID) =
+          Future.successful(
+            Some(LotSnapshotView(lotId, auctionId(1).value, 3, trading(price = 120), None, bidCount = 2))
+          )
+      }
+      service(Unreachable, views = counted)
+        .getLot(wire.GetLotRequest(Some(viewer), lot))
+        .futureValue
+        .bidCount shouldBe 2
+    }
+
     "answers a lot from the read model as the viewer sees it" in {
       val held = new Views {
         override def find(lotId: UUID) =
@@ -754,6 +896,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "answers a meetup without an auction with an empty response, not an error" in {
       val none = new AuctionViews {
+        def find(auctionId: UUID) = fail("the auction was read by id")
         def byMeetup(meetup: MeetupId) = Future.successful(None)
         def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")
       }
@@ -773,6 +916,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Map.empty
       )
       val views = new AuctionViews {
+        def find(auctionId: UUID) = fail("the auction was read by id")
         def byMeetup(meetup: MeetupId) = Future.successful(Some(AuctionSnapshotView(sorted.head, draft)))
         def page(listing: AuctionListing, after: Option[UUID], limit: Int) =
           Future.successful(
@@ -905,6 +1049,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val id = Auction.idOf(meetup).value
       def read(state: AuctionState): wire.AuctionSnapshot = {
         val views = new AuctionViews {
+          def find(auctionId: UUID) = fail("the auction was read by id")
           def byMeetup(meetup: MeetupId) =
             Future.successful(Some(AuctionSnapshotView(id, Auction(state, Some(meetup), Set.empty, Map.empty))))
           def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")

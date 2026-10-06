@@ -33,8 +33,10 @@ import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
+import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.GetLotRequest
@@ -46,6 +48,7 @@ import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.ScheduleAuctionRequest
+import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.StartPrebiddingRequest
@@ -115,6 +118,9 @@ final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Act
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
+
+/** Чтение пульта администратора: аукцион сходки и тот, кто смотрит. */
+final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Страница аукционов выборки: после `after` по возрастанию `auction_id`, не больше `limit`. */
 final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], limit: Int, acting: Acting)
@@ -273,6 +279,19 @@ object RequestMapping {
   def removeLot(request: RemoveLotRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
 
+  /** Отметка и снятие отметки несут то же, что команды реестра: аукцион сходки, лот и `op_id`. */
+  def selectForFinal(request: SelectForFinalRequest): Either[FormError, RegistryCommand] =
+    registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def deselectForFinal(request: DeselectForFinalRequest): Either[FormError, RegistryCommand] =
+    registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def getAuctionConsole(request: GetAuctionConsoleRequest): Either[FormError, ConsoleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield ConsoleQuery(auction, acting)
+
   def scheduleLot(request: ScheduleLotRequest): Either[FormError, LotScheduleCommand] =
     for {
       command <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
@@ -340,7 +359,10 @@ object RequestMapping {
         case Some(ClosingPolicyMessage.Policy.Mixed(mixed)) => Right(ClosingPolicy.Mixed(mixed.onlineByDeadline))
         case Some(ClosingPolicyMessage.Policy.Empty) | None => Left(FormError("config.closing_policy"))
       }
-      defaults <- config.lotDefaults.toRight(FormError("config.lot_defaults")).flatMap(lotDefaults)
+      defaults <- config.lotDefaults match {
+        case None => Right(None)
+        case Some(set) => lotDefaults(set).map(Some(_))
+      }
     } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults)
 
   private def lotDefaults(defaults: LotDefaultsMessage): Either[FormError, LotConfigInput] =

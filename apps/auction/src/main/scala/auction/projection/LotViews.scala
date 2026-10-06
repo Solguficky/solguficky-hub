@@ -8,8 +8,16 @@ import scala.concurrent.Future
 
 /**
  * Лот из read model вместе с карточкой каталога: карточку торги не знают (ADR-057), и она присоединяется при чтении.
+ * `bidCount` — число строк `lot_bid` лота, ручных и прокси вместе (PER-320).
  */
-final case class LotSnapshotView(lotId: UUID, auctionId: UUID, version: Long, lot: Lot, card: Option[LotCard])
+final case class LotSnapshotView(
+    lotId: UUID,
+    auctionId: UUID,
+    version: Long,
+    lot: Lot,
+    card: Option[LotCard],
+    bidCount: Long = 0
+)
 
 /** Изображение лота так, как оно лежит в строке каталога: байты, тип и версия этих байтов. */
 final case class LotImageView(content: IArray[Byte], mediaType: String, version: String)

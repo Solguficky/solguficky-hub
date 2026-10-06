@@ -15,6 +15,8 @@ import auction.lot.LotFixtures
 import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.participant
 import auction.lot.LotState
+import auction.lot.MarkForFinal
+import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.PlaceBid
@@ -23,6 +25,8 @@ import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
 import auction.lot.StepPolicyInput
 import auction.lot.StepPolicyInvalid
+import auction.lot.UnmarkForFinal
+import auction.lot.UnmarkForFinalRejected
 import auction.lot.UnsoldReason
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorRef
@@ -139,6 +143,34 @@ final class AuctionEntitySpec
           )
       }
 
+    private var choices = Vector.empty[(LotId, Any, Initiator)]
+
+    def chosen: Vector[(LotId, Any, Initiator)] = synchronized(choices)
+
+    def mark(lot: LotId, command: MarkForFinal, initiator: Initiator): Future[Either[MarkForFinalRejected, Unit]] =
+      synchronized {
+        choices :+= (lot, command, initiator)
+        if (lost(lot)) Promise[Either[MarkForFinalRejected, Unit]]().future
+        else
+          Future.successful(
+            Lot.decide(lots(lot), command, now()).map(decision => written(lot, command.opId, decision)).map(_ => ())
+          )
+      }
+
+    def unmark(
+        lot: LotId,
+        command: UnmarkForFinal,
+        initiator: Initiator
+    ): Future[Either[UnmarkForFinalRejected, Unit]] =
+      synchronized {
+        choices :+= (lot, command, initiator)
+        if (lost(lot)) Promise[Either[UnmarkForFinalRejected, Unit]]().future
+        else
+          Future.successful(
+            Lot.decide(lots(lot), command, now()).map(decision => written(lot, command.opId, decision)).map(_ => ())
+          )
+      }
+
     private def opening(event: LotEvent): Option[Instant] =
       event match {
         case opened: LotEvent.LotOpened => opened.deadline
@@ -225,6 +257,24 @@ final class AuctionEntitySpec
     val command = ScheduleAuctionLot(planned, LotFixtures.money(5000), policy, op(opN))
     (entity.runCommand(AuctionEntity.PlanLot(command, administrator, answer.ref)).events, answer)
   }
+
+  /** Отметка и снятие: ответ, как у условий, приходит после ответа лота, и его ждёт проба. */
+  private def select(opN: Int, chosen: LotId = lot) = {
+    val answer = kit.createTestProbe[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]]()
+    (entity.runCommand(AuctionEntity.Select(SelectForFinal(chosen, op(opN)), administrator, answer.ref)).events, answer)
+  }
+
+  private def deselect(opN: Int, chosen: LotId = lot) = {
+    val answer = kit.createTestProbe[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]()
+    val command = DeselectForFinal(chosen, op(opN))
+    (entity.runCommand(AuctionEntity.Deselect(command, administrator, answer.ref)).events, answer)
+  }
+
+  private def markedNow(chosen: LotId): Boolean =
+    lots.stateNow(chosen) match {
+      case LotState.Trading(trading) => trading.markedForFinal
+      case other => fail(s"the lot is not trading: $other")
+    }
 
   /** Аукцион с реестром `registry`, запланированный на неделю Ф-4: события 1…N+2, старт — следующим `op_id`. */
   private def scheduledWith(registry: LotId*): Int = {
@@ -412,6 +462,51 @@ final class AuctionEntitySpec
       events shouldBe empty
       lots.plans shouldBe empty
       lots.stateNow(other) shouldBe LotState.Draft
+    }
+
+    "marks and unmarks a trading lot of its registry in the name of the administrator and writes nothing itself" in {
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+
+      val (marking, marked) = select(opening + 1)
+      marked.expectMessage(Right(()))
+      marking shouldBe empty
+      markedNow(lot) shouldBe true
+
+      val (unmarking, unmarked) = deselect(opening + 2)
+      unmarked.expectMessage(Right(()))
+      unmarking shouldBe empty
+      markedNow(lot) shouldBe false
+      lots.chosen shouldBe Vector(
+        (lot, MarkForFinal(op(opening + 1)), administrator),
+        (lot, UnmarkForFinal(op(opening + 2)), administrator)
+      )
+      entity.getState().sequence shouldBe 4
+    }
+
+    "passes DeadlinePassed of the lot through once its deadline came, though the closing has not arrived" in {
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      time.instant0 = closesAt
+
+      val (_, answer) = select(opening + 1)
+
+      answer.expectMessage(Left(FinalChoiceRejected.ByLot(MarkForFinalRejected.DeadlinePassed)))
+      markedNow(lot) shouldBe false
+    }
+
+    "refuses a choice of a finalist before prebidding and outside its registry without reaching the lot" in {
+      draft(1)
+      add(2, lot)
+      val (_, early) = select(3)
+      early.expectMessage(Left(FinalChoiceRejected.NotInPrebidding))
+      schedule(4).reply.isRight shouldBe true
+      start(5).reply.isRight shouldBe true
+      val (_, outside) = deselect(6, other)
+      outside.expectMessage(Left(FinalChoiceRejected.LotNotInAuction))
+      lots.chosen shouldBe empty
     }
 
     "opens a lot that got its conditions right before the start" in {
