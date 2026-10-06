@@ -1,11 +1,5 @@
 import { connect, createServer, type Server } from "node:net";
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  it,
-} from "../../../../apps/hub-bot/testkit/index.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDelayProxy } from "./latency.js";
 
 // L0: прокси задержки пульта против эхо-сервера на localhost. Контур ему не
@@ -54,6 +48,13 @@ function roundTrip(
       }
     });
     socket.on("error", rejectEchoed);
+    // Закрытие без полного эха — тоже отказ: тихий FIN от прокси иначе держал
+    // бы промис до таймаута теста.
+    socket.on("close", () => {
+      if (echoed.length < expected) {
+        rejectEchoed(new Error(`соединение закрыто после «${echoed}»`));
+      }
+    });
     socket.on("connect", () => {
       for (const chunk of chunks) socket.write(chunk);
     });
@@ -129,6 +130,19 @@ describe("openDelayProxy", () => {
       await new Promise<void>((closed) => {
         sink.close(() => closed());
       });
+    }
+  });
+
+  it("refuses connections while the service is down and lets them back", async () => {
+    const proxy = await openDelayProxy(echoUrl);
+    try {
+      proxy.setDown(true);
+      await expect(roundTrip(proxy.url, ["раз"])).rejects.toThrow();
+      proxy.setDown(false);
+      const { echoed } = await roundTrip(proxy.url, ["два"]);
+      expect(echoed).toBe("два");
+    } finally {
+      await proxy.close();
     }
   });
 

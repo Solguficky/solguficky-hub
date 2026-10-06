@@ -1,3 +1,4 @@
+import type { openAuctionBotWire } from "../../../../apps/auction-bot/testkit/index.js";
 import {
   freshTelegramUserId,
   type LogRecord,
@@ -12,6 +13,7 @@ import {
   usernameFor,
 } from "../../../../apps/hub-bot/testkit/index.js";
 import {
+  type BotName,
   type Command,
   CommandError,
   help,
@@ -19,19 +21,25 @@ import {
   type SlowService,
 } from "./commands.js";
 
-// Исполнение команд пульта поверх провода бота. Человек здесь тот же `Person`,
-// что в сценариях L2: пульт — это сценарий, который пишут по шагу, глядя на
-// ответ, а не заранее.
+// Исполнение команд пульта поверх двух проводов. Человек здесь тот же `Person`,
+// что в сценариях L2, — по одному на чат с каждым ботом: пульт — это сценарий,
+// который пишут по шагу, глядя на ответ, а не заранее.
 
-type Wire = ReturnType<typeof openBotWire>;
+type HubWire = ReturnType<typeof openBotWire>;
+type AuctionWire = ReturnType<typeof openAuctionBotWire>;
 type Direct = ReturnType<typeof openDirectClients>;
-type Slowdown = { slow(service: SlowService, delayMs: number): void };
+export type Wires = { hub: HubWire; auction: AuctionWire };
+type Outage = {
+  slow(service: SlowService, delayMs: number): void;
+  down(service: SlowService): void;
+  up(service: SlowService): void;
+};
 
 type Member = {
   role: Role;
   telegramUserId: bigint;
-  username?: string;
-  person: Person;
+  username: string;
+  persons: Record<BotName, Person>;
 };
 
 export type ChangedScreen = ScreenView & {
@@ -49,18 +57,22 @@ export type Ack = { text?: string; alert?: boolean } | null;
 export type Reply =
   | { ok: true; kind: "help"; commands: string[] }
   | { ok: true; kind: "quit" }
-  | { ok: true; kind: "restart" }
+  | { ok: true; kind: "restart"; bot: BotName }
   | { ok: true; kind: "slow"; service: SlowService; delayMs: number }
+  | { ok: true; kind: "down"; service: SlowService }
+  | { ok: true; kind: "up"; service: SlowService }
   | {
       ok: true;
       kind: "people";
-      people: { who: string; role: Role; username?: string }[];
+      people: { who: string; role: Role; username: string }[];
     }
-  | { ok: true; kind: "new"; who: string; role: Role; username?: string }
+  | { ok: true; kind: "new"; who: string; role: Role; username: string }
   | {
       ok: true;
       kind: "screen";
       who: string;
+      /** Бот, с которым говорил человек: экраны и лог — его. */
+      bot: BotName;
       /** Экраны, которые действие отправило или правило, по порядку. */
       changed: ChangedScreen[];
       /** Последний изменённый экран чата — то, что человек видит внизу. */
@@ -86,6 +98,7 @@ export type Reply =
       ok: true;
       kind: "look";
       who: string;
+      bot: BotName;
       /** Все экраны чата по порядку последнего изменения. */
       screens: ScreenView[];
       pressable: string[];
@@ -93,9 +106,9 @@ export type Reply =
   | { ok: false; error: string };
 
 export function openConsoleSession(
-  wire: Wire,
+  wires: Wires,
   direct: Direct,
-  slowdown: Slowdown,
+  outage: Outage,
 ) {
   const people = new Map<string, Member>();
   let firstAdminId: string | undefined;
@@ -115,50 +128,51 @@ export function openConsoleSession(
       throw new CommandError(`«${who}» уже заведён`);
     }
     const telegramUserId = freshTelegramUserId();
-    let username: string | undefined;
+    // Ник есть у всех: Auction признаёт участником только буквальную роль
+    // `public`, а её человек получает вместе с `member` — по нику из белого
+    // списка на первом `/start`. Администратор вносит свой ник сам, как
+    // настоящий администратор состоит и в сообществе; одной ролью `admin`
+    // он не открыл бы ни ленту лотов, ни форму лота.
+    const username = usernameFor(telegramUserId);
     if (role === "admin") {
       const identityId = await direct.grantAdmin(telegramUserId);
       firstAdminId ??= identityId;
-    } else {
-      username = usernameFor(telegramUserId);
-      if (role === "member") {
-        // Роль member человек получает на первом `/start`, как в продукте:
-        // его ник заранее внесён администратором в whitelist.
-        if (firstAdminId === undefined) {
-          throw new CommandError(
-            "member вносится в whitelist администратором: сначала new <имя> admin",
-          );
-        }
-        await direct.allowUsername(firstAdminId, username);
+      await direct.allowUsername(identityId, username);
+    } else if (role === "member") {
+      // Роль member человек получает на первом `/start`, как в продукте:
+      // его ник заранее внесён администратором в whitelist.
+      if (firstAdminId === undefined) {
+        throw new CommandError(
+          "member вносится в whitelist администратором: сначала new <имя> admin",
+        );
       }
+      await direct.allowUsername(firstAdminId, username);
     }
-    const person = startConversation(
-      wire.bot,
-      wire.calls,
-      telegramUserId,
-      username === undefined ? {} : { username },
-    );
+    // Один человек — один Telegram id и ник в обоих чатах: Identity видит его
+    // одной личностью, как и в жизни.
+    const conversation = (wire: HubWire | AuctionWire) =>
+      startConversation(wire.bot, wire.calls, telegramUserId, { username });
     people.set(who, {
       role,
       telegramUserId,
-      person,
-      ...(username === undefined ? {} : { username }),
+      username,
+      persons: {
+        hub: conversation(wires.hub),
+        auction: conversation(wires.auction),
+      },
     });
-    return {
-      ok: true,
-      kind: "new",
-      who,
-      role,
-      ...(username === undefined ? {} : { username }),
-    };
+    return { ok: true, kind: "new", who, role, username };
   }
 
   async function act(
     who: string,
+    bot: BotName,
     action: (person: Person) => Promise<void>,
     pressed = false,
   ): Promise<Reply> {
-    const { person, telegramUserId } = member(who);
+    const { persons, telegramUserId } = member(who);
+    const person = persons[bot];
+    const wire = wires[bot];
     const before = new Map(
       person.history().map((screen) => [screen.message, screen]),
     );
@@ -177,6 +191,8 @@ export function openConsoleSession(
       throw error;
     }
     const tookMs = Math.round(performance.now() - startedAt);
+    // Линтер общий у двух kit: оба зовут один модуль `shared/typescript/screen-lint`,
+    // и найденное за действие принадлежит боту, который отвечал.
     const lint = takeViolations();
     const calls = wire.calls.slice(callsBefore);
     const history = person.history();
@@ -187,6 +203,7 @@ export function openConsoleSession(
       ok: true,
       kind: "screen",
       who,
+      bot,
       changed,
       last: history.at(-1) ?? null,
       pressable: person.pressable(),
@@ -208,16 +225,22 @@ export function openConsoleSession(
       case "quit":
         return { ok: true, kind: "quit" };
       case "restart":
-        wire.restart();
-        return { ok: true, kind: "restart" };
+        wires[command.bot].restart();
+        return { ok: true, kind: "restart", bot: command.bot };
       case "slow":
-        slowdown.slow(command.service, command.delayMs);
+        outage.slow(command.service, command.delayMs);
         return {
           ok: true,
           kind: "slow",
           service: command.service,
           delayMs: command.delayMs,
         };
+      case "down":
+        outage.down(command.service);
+        return { ok: true, kind: "down", service: command.service };
+      case "up":
+        outage.up(command.service);
+        return { ok: true, kind: "up", service: command.service };
       case "people":
         return {
           ok: true,
@@ -225,41 +248,76 @@ export function openConsoleSession(
           people: [...people].map(([who, { role, username }]) => ({
             who,
             role,
-            ...(username === undefined ? {} : { username }),
+            username,
           })),
         };
       case "new":
         return create(command.who, command.role);
       case "say":
-        return act(command.who, (person) => person.says(command.text));
+        return act(command.who, command.bot, (person) =>
+          person.says(command.text),
+        );
       case "answer":
-        return act(command.who, (person) =>
+        return act(command.who, command.bot, (person) =>
           person.answers(command.number, command.text),
         );
       case "press":
         return act(
           command.who,
-          (person) => person.presses(command.label),
+          command.bot,
+          (person) => person.presses(exactLabel(person, command.label)),
+          true,
+        );
+      case "pick":
+        return act(
+          command.who,
+          command.bot,
+          (person) =>
+            person.presses(
+              exactLabel(person, command.label),
+              command.occurrence,
+            ),
+          true,
+        );
+      case "old":
+        return act(
+          command.who,
+          command.bot,
+          (person) =>
+            person.pressesFromOlderRelease(exactLabel(person, command.label)),
+          true,
+        );
+      case "raw":
+        return act(
+          command.who,
+          command.bot,
+          (person) => person.pressesRaw(command.data),
           true,
         );
       case "link":
-        return act(command.who, (person) => person.opensLink(command.meetupId));
+        return act(command.who, command.bot, (person) =>
+          person.opensLink(command.meetupId),
+        );
       case "forward":
-        return act(command.who, (person) =>
+        return act(command.who, command.bot, (person) =>
           person.forwardsChannelPost(command.channel, command.postId),
         );
       case "document":
-        return act(command.who, (person) =>
+        return act(command.who, command.bot, (person) =>
           person.sendsDocument(command.fileName),
         );
       case "photo":
-        return act(command.who, (person) => person.sendsPhoto());
+        return act(command.who, command.bot, (person) =>
+          person.sendsPhoto(command.photo),
+        );
       case "look": {
-        const { person } = member(command.who);
+        const { persons } = member(command.who);
+        const person = persons[command.bot];
         return {
           ok: true,
           kind: "look",
           who: command.who,
+          bot: command.bot,
           screens: person.history(),
           pressable: person.pressable(),
         };
@@ -279,6 +337,25 @@ export function openConsoleSession(
   };
 }
 
+/**
+ * Подпись с пульта сравнивается с кнопками без различия пробелов: суммы в
+ * подписях бот разделяет неразрывным пробелом, а человек за пультом набирает
+ * обычный. Точного совпадения нет — подпись уходит в kit как есть, и его отказ
+ * перечисляет, что нажать можно.
+ */
+function exactLabel(person: Person, label: string): string {
+  const wanted = collapseSpaces(label);
+  return (
+    person
+      .pressable()
+      .find((candidate) => collapseSpaces(candidate) === wanted) ?? label
+  );
+}
+
+function collapseSpaces(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 // Ряды сравниваются целиком: правка, которая меняет только раскладку или цвет
 // кнопки, — тоже изменение экрана.
 function sameScreen(left: ScreenView | undefined, right: ScreenView): boolean {
@@ -287,11 +364,12 @@ function sameScreen(left: ScreenView | undefined, right: ScreenView): boolean {
     left.text === right.text &&
     left.awaitsReply === right.awaitsReply &&
     left.format === right.format &&
+    left.posters === right.posters &&
     JSON.stringify(left.rows) === JSON.stringify(right.rows)
   );
 }
 
-type Call = Wire["calls"][number];
+type Call = HubWire["calls"][number] | AuctionWire["calls"][number];
 
 function describeCall(call: Call, chatId: number): string {
   const target = (call.payload as { chat_id?: unknown }).chat_id;

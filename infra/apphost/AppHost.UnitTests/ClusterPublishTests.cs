@@ -100,7 +100,7 @@ public class ClusterPublishTests
     /// теста, а не тихо приехать в прод вместе с изменением локального профиля.
     /// Единственное расхождение — Auction: stage поднимает аукцион вместе с хабом
     /// (дополнение к ADR-055), а локальный <c>hub</c> JVM не тянет, и аукцион
-    /// поднимают его профили <c>auction</c> и <c>auction-bot</c>.
+    /// поднимают профили <c>auction</c>, <c>auction-bot</c> и <c>hub-auction</c>.
     /// </summary>
     [Fact]
     public void PublishProfile_MatchesHubComposition()

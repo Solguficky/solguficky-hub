@@ -183,8 +183,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, общий пакет доставки уведомлений ботов, Hub Bot, API сайта, линтер экрана дизайн-кода, общий пакет аукционного интерфейса ботов, бот аукциона, путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint telegram-delivery-typecheck telegram-delivery-lint telegram-delivery-test hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, общий пакет доставки уведомлений ботов, Hub Bot, API сайта, линтер экрана дизайн-кода, общий пакет аукционного интерфейса ботов, бот аукциона, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint telegram-delivery-typecheck telegram-delivery-lint telegram-delivery-test hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build bot-console-typecheck bot-console-lint bot-console-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -206,7 +206,7 @@ verify-changed:
 test-all: identity-test-integration telegram-delivery-test hub-bot-test hub-bot-test-integration community-site-api-test screen-lint-test auction-bot-ui-test auction-bot-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools telegram-delivery-tools hub-bot-tools community-site-api-tools screen-lint-tools auction-bot-ui-tools auction-bot-tools dotnet-tools auction-tools nats-tester-tools
+tools: identity-tools telegram-delivery-tools hub-bot-tools community-site-api-tools screen-lint-tools auction-bot-ui-tools auction-bot-tools bot-console-tools dotnet-tools auction-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -236,7 +236,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "99"
+APPHOST_TEST_THRESHOLD := "100"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -651,8 +651,8 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "386"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "145"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "391"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "151"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
@@ -867,16 +867,42 @@ contour-bot-test: telegram-delivery-build hub-bot-proto
 contour-bot-explore: telegram-delivery-build hub-bot-proto
     dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/hub-bot run explore:contour
 
-# Пульт провода бота (L2): разговор с ботом по шагу против настоящих Identity
-# и Meetups — завести людей с ролями, писать, жать кнопки по подписи и читать
-# экраны. Команда — строка в теле POST на 127.0.0.1:7357, ответ — JSON; клиент
-# `tests/contour/bot-wire/console/send.sh`, язык команд — `commands.ts` рядом.
-# Живёт до `quit` или Ctrl+C, журнал обмена — в .work/bot-console/. Telegram не
-# участвует. Не гейт: вне verify, test-all и CI.
+# Пульт провода двух ботов (L2): разговор с ботом хаба и ботом аукциона по
+# шагу против настоящих Identity, Meetups и Auction — завести людей с ролями,
+# писать, жать кнопки по подписи и читать экраны. Контур поднимается с Auction
+# (`Contour.Host --with-auction`), поэтому нужны ещё JDK из
+# apps/auction/.java-version и sbt. Команда — строка в теле POST на
+# 127.0.0.1:7357, ответ — JSON; клиент `tests/contour/bot-wire/console/send.sh`,
+# язык команд — `commands.ts` рядом. Живёт до `quit` или Ctrl+C, журнал обмена
+# — в .work/bot-console/. Telegram не участвует. Не гейт: вне verify, test-all
+# и CI.
 #
-# Пульт провода бота для ручного и агентского прохода; вне verify, test-all и CI
-contour-bot-console: telegram-delivery-build hub-bot-proto
-    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/hub-bot run console:contour
+# Пульт провода двух ботов для ручного и агентского прохода; вне verify, test-all и CI
+contour-bot-console: auction-bot-ui-build telegram-delivery-build hub-bot-proto auction-bot-proto
+    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- --with-auction -- npm --prefix tests/contour/bot-wire/console run console
+
+# --- Bot console (TypeScript) -----------------------------------------------
+#
+# Пульт провода `tests/contour/bot-wire/console` — своя единица: он импортирует
+# test kit обоих ботов относительным путём, и под конфигами хаба тянул бы
+# исходники бота аукциона в его typecheck. Зависимости у пульта свои (vitest,
+# typescript, biome), код ботов он берёт из их деревьев, поэтому его typecheck
+# требует установленных и сгенерированных обоих ботов. L0 — разбор языка команд
+# и прокси задержки с обрывом; сам пульт запускает contour-bot-console.
+
+bot-console-tools:
+    cd tests/contour/bot-wire/console && npm ci
+
+bot-console-typecheck: hub-bot-typecheck auction-bot-typecheck
+    cd tests/contour/bot-wire/console && npm run typecheck
+
+# L0 импортирует kit обоих ботов, а тот — их сгенерированный код и собранные
+# общие пакеты
+bot-console-test: auction-bot-ui-build telegram-delivery-build hub-bot-proto auction-bot-proto
+    cd tests/contour/bot-wire/console && npm test
+
+bot-console-lint:
+    cd tests/contour/bot-wire/console && npm run lint
 
 # Контрактный проект контура остаётся generated-only (ADR-025)
 contour-contracts-check:

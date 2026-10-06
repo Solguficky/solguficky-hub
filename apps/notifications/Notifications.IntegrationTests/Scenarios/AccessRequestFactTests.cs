@@ -191,11 +191,7 @@ public class AccessRequestFactTests
         await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Public));
         await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
 
-        var granted = EventFactory.Identity(applicant, version: 4);
-        granted.State.GlobalRoles.Clear();
-        granted.State.GlobalRoles.Add(GlobalRole.Public);
-        granted.RoleGranted = new RoleGranted { Role = GlobalRole.Public };
-        await Apply(nats, replica, RoleGrantedSubject, granted);
+        await Apply(nats, replica, RoleGrantedSubject, EventFactory.RoleGrant(applicant, version: 4, GlobalRole.Public));
 
         var rows = await Rows(db);
         rows.Single(row => row.AccessCircle == "public").WithdrawalReason.ShouldBe(NotificationFacts.WithdrawnOnApplicationClosed);

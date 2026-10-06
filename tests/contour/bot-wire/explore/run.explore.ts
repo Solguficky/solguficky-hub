@@ -196,9 +196,7 @@ function writeReport(
 // прошлых нажатий: иначе обход крутится у главного экрана и не доходит до форм.
 const commands = [
   "/start",
-  "/meetups",
-  "/archive",
-  "/notifications",
+  "/menu",
   "/help",
   "/nosuchcommand",
   "/start garbage",

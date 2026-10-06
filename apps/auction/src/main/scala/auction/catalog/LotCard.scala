@@ -60,11 +60,13 @@ final class LotImage private (val content: IArray[Byte], val mediaType: ImageMed
 object LotImage {
 
   /**
-   * Предел размера файла (ADR-057, дополнение 2026-09-30: значение выбирает реализация). Сжатое Telegram фото весит
-   * сотни килобайт; потолок задаёт grpc-js ботов, который по умолчанию не принимает сообщение больше 4 MiB, и ответ
-   * `GetLotImage` с файлом у этого потолка бот бы не прочитал.
+   * Предел размера файла — 1 МБ, решение владельца от 2026-10-04 в дизайн-коде бота (`docs/design/bot/design-code.md`,
+   * «Показ фото лота» → «Размер изображения — 1 МБ»); ADR-057 (дополнение 2026-09-30) оставляет значение реализации.
+   * Основание — замер: загрузка фото в несколько мегабайт в Telegram держит очередь апдейтов бота десятки секунд, а
+   * сжатое Telegram фото весит сотни килобайт. Вторая граница — grpc-js ботов, который по умолчанию не принимает
+   * сообщение больше 4 MiB: ответ `GetLotImage` с файлом у этого потолка бот бы не прочитал.
    */
-  val MaxBytes: Int = 2 * 1024 * 1024
+  val MaxBytes: Int = 1 * 1024 * 1024
 
   def apply(bytes: IArray[Byte]): Either[CatalogRefusal, LotImage] =
     if (bytes.length > MaxBytes) Left(CatalogRefusal.ImageTooLarge(MaxBytes))

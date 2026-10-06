@@ -585,9 +585,18 @@ export type ExecuteResult =
       error?: string;
       rejected?: unknown;
     }
+  // Результаты формы, которые бот показывает карточкой сходки, — `draft` у уже
+  // видимой сходки, `published`, `publication-scheduled`,
+  // `publication-unavailable`, `meetup-updated` и `meetup-state-changed` —
+  // несут и `auction` по тому же правилу, что `meetup-card`: иначе карточка
+  // сразу после «Опубликовать» была бы без ряда аукциона, а та же карточка из
+  // списка — с ним. Дописывает его диспетчер; отказ Auction карточку не роняет.
+  //
   // Черновик после принятого ответа формы создания: дальше человек сам
-  // выбирает, какое поле заполнить, и публикует с того же экрана.
-  | { kind: "draft"; meetup: MeetupSnapshot }
+  // выбирает, какое поле заполнить, и публикует с того же экрана. Если сходку
+  // успели опубликовать, пока вопрос висел, бот показывает её карточкой, и
+  // диспетчер дописывает `auction` только в этом случае.
+  | { kind: "draft"; meetup: MeetupSnapshot; auction?: MeetupAuctionView }
   // Введённая дата раньше сегодняшнего дня сообщества: сходка с ней сразу
   // уйдёт в архив. Команда в Meetups не отправлена и ждёт подтверждения.
   | {
@@ -605,6 +614,7 @@ export type ExecuteResult =
       repeated?: true;
       archived?: true;
       author?: MeetupAuthor;
+      auction?: MeetupAuctionView;
     }
   | {
       kind: "ask-publish-moment";
@@ -615,6 +625,7 @@ export type ExecuteResult =
       kind: "publication-scheduled";
       meetup: MeetupSnapshot;
       author?: MeetupAuthor;
+      auction?: MeetupAuctionView;
     }
   // Назначить публикацию нельзя в текущем состоянии сходки: она уже
   // опубликована, отменена или у неё нет названия (FAILED_PRECONDITION).
@@ -623,18 +634,21 @@ export type ExecuteResult =
       kind: "publication-unavailable";
       meetup: MeetupSnapshot;
       author?: MeetupAuthor;
+      auction?: MeetupAuctionView;
     }
   | {
       kind: "meetup-updated";
       meetup: MeetupSnapshot;
       archived?: true;
       author?: MeetupAuthor;
+      auction?: MeetupAuctionView;
     }
   | {
       kind: "meetup-state-changed";
       action: MeetupStateAction;
       meetup: MeetupSnapshot;
       author?: MeetupAuthor;
+      auction?: MeetupAuctionView;
     }
   | {
       kind: "meetup-state-unchanged";

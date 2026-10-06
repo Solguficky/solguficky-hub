@@ -43,6 +43,16 @@ public static class NotificationFacts
     public const string AccessGrantedType = "access_granted";
 
     /// <inheritdoc cref="MeetupPublishedType" />
+    public const string RoleGrantedType = "role_granted";
+
+    /// <summary>
+    /// Единственная роль, выдача которой — повод факта <see cref="RoleGranted" />:
+    /// её даёт служебный вызов, а не заявка, белый список или вложенность
+    /// (ADR-043, PER-468).
+    /// </summary>
+    public const string RoleGrantedRole = "admin";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
 
     /// <inheritdoc cref="MeetupPublishedType" />
@@ -317,6 +327,42 @@ public static class NotificationFacts
             now,
             notAfter);
         notification.AccessGranted = new V1.AccessGranted { Circle = RequestableCircle(fact) };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Факт «вам выдали роль администратора» самому человеку (PER-468). Повод —
+    /// <c>role_granted</c> с ролью <c>admin</c>: её даёт только служебный вызов
+    /// мейнтейнера или администратора, не заявка. Выдача круга по белому списку
+    /// или вложенностью фактом не является: о допуске сообщает
+    /// <see cref="AccessGranted" />. Кто выдал, в сообщение не попадает.
+    /// </summary>
+    /// <param name="fact">Событие Identity о выдаче роли.</param>
+    public static Notification RoleGranted(
+        Guid notificationId,
+        IdentityFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        if (fact.Occasion != IdentityOccasion.RoleGranted)
+        {
+            throw new ArgumentException($"occasion {fact.Occasion} is not a role grant", nameof(fact));
+        }
+
+        if (fact.OccasionRole != RoleGrantedRole)
+        {
+            throw new ArgumentException($"a grant of {fact.OccasionRole} is not a cause of a notification", nameof(fact));
+        }
+
+        var notification = Envelope(
+            notificationId,
+            fact.IdentityId,
+            new Cause { IdentityEventId = fact.EventId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.RoleGranted = new V1.RoleGranted { Role = Identity.V1.GlobalRole.Admin };
 
         return notification;
     }

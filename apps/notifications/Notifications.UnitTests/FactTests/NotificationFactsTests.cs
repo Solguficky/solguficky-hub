@@ -299,6 +299,47 @@ public class NotificationFactsTests
         Should.Throw<ArgumentException>(() => NotificationFacts.AccessGranted(NotificationId, fact, Now, NotAfter));
     }
 
+    [Fact]
+    public void RoleGranted_AdminGrant_AddressesThePersonWithRole()
+    {
+        var person = EventFactory.NewId();
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.RoleGrant(person, version: 3, Identity.V1.GlobalRole.Admin)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        var notification = NotificationFacts.RoleGranted(NotificationId, fact, Now, NotAfter);
+
+        notification.NotificationId.ShouldBe(NotificationId.ToString());
+        notification.RecipientId.ShouldBe(person);
+        notification.CreatedAt.ShouldBe("2026-09-25T10:15:30Z");
+        notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.RoleGranted);
+        notification.RoleGranted.Role.ShouldBe(Identity.V1.GlobalRole.Admin);
+        notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
+        notification.HasRequestId.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(Identity.V1.GlobalRole.Maintainer)]
+    [InlineData(Identity.V1.GlobalRole.Member)]
+    [InlineData(Identity.V1.GlobalRole.Public)]
+    public void RoleGranted_OtherRole_Throws(Identity.V1.GlobalRole role)
+    {
+        // Выдачу круга дают и белый список, и вложенность: о ней не пишут.
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.RoleGrant(EventFactory.NewId(), version: 3, role)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        Should.Throw<ArgumentException>(() => NotificationFacts.RoleGranted(NotificationId, fact, Now, NotAfter));
+    }
+
+    [Fact]
+    public void RoleGranted_OtherOccasion_Throws()
+    {
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(EventFactory.NewId(), version: 4, Identity.V1.GlobalRole.Member)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        Should.Throw<ArgumentException>(() => NotificationFacts.RoleGranted(NotificationId, fact, Now, NotAfter));
+    }
+
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>
         ReplicaMapping.Meetup(EventFactory.Bytes(message))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<MeetupFact>();

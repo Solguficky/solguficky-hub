@@ -24,7 +24,7 @@ internal static partial class GraphSnapshot
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Assembly и content root принадлежат AppHost, а не test runner. Так
-        // читаются его appsettings и user-secrets и разрешаются пути компонентов.
+        // читаются его appsettings и разрешаются пути компонентов.
         var builder = DistributedApplication.CreateBuilder(new DistributedApplicationOptions
         {
             AssemblyName = typeof(AppHostTopology).Assembly.GetName().Name,
@@ -38,10 +38,13 @@ internal static partial class GraphSnapshot
         // CreateBuilder вызывается из test runner, не из каталога AppHost.
         // Загружаем его обычные источники в том же порядке приоритетов, сохраняя
         // добавленные Aspire настройки и не меняя cwd/переменные всего процесса.
+        // User-secrets сюда намеренно не подключены: они свойство машины, а снимок
+        // обязан совпадать на любой. Ключ вроде HubBot:AuctionBotUsername, заданный
+        // у владельца, добавлял в модель переменную, которой нет в CI, и снимок
+        // краснел только локально. Значения, нужные тесту, он задаёт через configure.
         builder.Configuration
             .AddJsonFile(Path.Combine(appHostDirectory, "appsettings.json"))
             .AddJsonFile(Path.Combine(appHostDirectory, "appsettings.Development.json"), optional: true)
-            .AddUserSecrets(typeof(AppHostTopology).Assembly, optional: true)
             .AddEnvironmentVariables()
             .AddCommandLine(args);
         AppHostTopology.Configure(builder);

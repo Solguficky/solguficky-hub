@@ -16,6 +16,7 @@ import {
   type Notification,
   NotificationSchema,
   OrganizerMessageSchema,
+  RoleGrantedSchema,
 } from "../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -473,6 +474,32 @@ describe("decodeNotification", () => {
       "rejects an admission to circle %s",
       (circle) => {
         expect(decodeNotification(granted(circle)).kind).toBe("malformed");
+      },
+    );
+  });
+
+  describe("role granted", () => {
+    const roleGranted = (role: GlobalRole): Uint8Array =>
+      published((message) => {
+        message.type = {
+          case: "roleGranted",
+          value: create(RoleGrantedSchema, { role }),
+        };
+      });
+
+    it("decodes the administrator role as its own branch", () => {
+      expect(decodeNotification(roleGranted(GlobalRole.ADMIN))).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "role-granted", role: "admin" } },
+      });
+    });
+
+    // Notifications шлёт ветку только для администратора: иная роль — дефект
+    // издателя, а не весть, которую можно показать.
+    it.each([GlobalRole.MEMBER, GlobalRole.PUBLIC, GlobalRole.UNSPECIFIED])(
+      "rejects a grant of role %s",
+      (role) => {
+        expect(decodeNotification(roleGranted(role)).kind).toBe("malformed");
       },
     );
   });

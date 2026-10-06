@@ -328,8 +328,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// Разворачивает повод события Identity и пишет факты в транзакции
     /// <paramref name="work" /> — той же, где ключ события и снимок реплики.
     /// Новая заявка оповещает администраторов, допуск по заявке — самого
-    /// заявителя, выдача и блокировка снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если событие
-    /// поводом не является или снимать было нечего.
+    /// заявителя, выдача <c>admin</c> — самого человека, выдача и блокировка
+    /// снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если
+    /// событие поводом не является или снимать было нечего.
     /// </summary>
     /// <remarks>
     /// Как и у сходки, повод не зависит от того, сдвинул ли он реплику:
@@ -358,6 +359,20 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             case IdentityOccasion.RoleGranted:
             case IdentityOccasion.ProfileBlocked:
                 var withdrawn = await WithdrawOnApplicationClosed(work, fact, now, cancellationToken);
+
+                // Выдача admin — повод сама по себе (PER-468): человеку сообщают
+                // о новой роли, а снятое о его заявках идёт в тот же отчёт, как
+                // снятое отменой у поводов Meetups.
+                if (fact is { Occasion: IdentityOccasion.RoleGranted, OccasionRole: NotificationFacts.RoleGrantedRole })
+                {
+                    return new ProducedFacts(
+                        NotificationFacts.RoleGrantedType,
+                        await AddRoleGranted(work, fact, now, now + staleAfter, cancellationToken))
+                    {
+                        Withdrawn = withdrawn,
+                        WithdrawalReason = NotificationFacts.WithdrawnOnApplicationClosed,
+                    };
+                }
 
                 // Выдача и блокировка случаются часто, а заявка у человека —
                 // редко: пустое снятие в лог не идёт, иначе каждая выдача
@@ -451,6 +466,36 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             work,
             NotificationFacts.AccessGranted(Guid.CreateVersion7(now), fact, now, notAfter),
             NotificationFacts.AccessGrantedType,
+            NotificationFacts.IdentityEventCause,
+            fact.EventId.ToString(),
+            now,
+            notAfter,
+            cancellationToken);
+
+        return new FactCount(created, 0);
+    }
+
+    // Адресат — сам человек, аудитории и категории нет, как у допуска. Писать
+    // ли, решает последнее слово реплики: запоздавшая выдача, вернувшаяся после
+    // Nak, когда роль уже отозвали или человека заблокировали, о роли, которой
+    // нет, не сообщает. Повтор события упирается в ключ повода
+    // notification_cause_once_per_recipient.
+    private static async Task<FactCount> AddRoleGranted(
+        UnitOfWork work,
+        IdentityFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Holding = new[] { NotificationFacts.RoleGrantedRole } }, cancellationToken))
+        {
+            return FactCount.None;
+        }
+
+        var created = await AddAddressed(
+            work,
+            NotificationFacts.RoleGranted(Guid.CreateVersion7(now), fact, now, notAfter),
+            NotificationFacts.RoleGrantedType,
             NotificationFacts.IdentityEventCause,
             fact.EventId.ToString(),
             now,

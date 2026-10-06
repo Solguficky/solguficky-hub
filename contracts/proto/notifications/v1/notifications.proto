@@ -82,6 +82,11 @@ message Notification {
     // An administrator admitted the recipient by their own application. Sent
     // only to the applicant: a subscription and a category are not required.
     AccessGranted access_granted = 17;
+
+    // A maintainer or an administrator granted the recipient a role outside of
+    // an application. Sent only to the recipient: a subscription and a category
+    // are not required.
+    RoleGranted role_granted = 18;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -262,4 +267,11 @@ message AccessRequested {
 message AccessGranted {
   // The circle of the application: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
   identity.v1.GlobalRole circle = 1;
+}
+
+// The recipient was granted a role outside of an application. The hub bot
+// delivers it. Who granted is deliberately absent.
+message RoleGranted {
+  // The granted role.
+  identity.v1.GlobalRole role = 1;
 }

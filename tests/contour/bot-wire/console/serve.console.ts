@@ -2,11 +2,13 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import {
-  afterAll,
-  beforeAll,
-  describe,
-  it,
+  botInfo as auctionBotInfo,
+  openAuctionBotWire,
+  readAuctionContourEnvironment,
+} from "../../../../apps/auction-bot/testkit/index.js";
+import {
   openBotWire,
   openDirectClients,
   readContourEnvironment,
@@ -15,15 +17,15 @@ import { CommandError, help, parseCommand } from "./commands.js";
 import { openLatency } from "./latency.js";
 import { openConsoleSession, type Reply } from "./session.js";
 
-// Пульт провода бота: человек или агент ведёт разговор с ботом по шагу — пишет,
-// жмёт кнопки по подписи и читает экраны — против настоящих Identity и Meetups.
-// Уровень L2, Telegram не участвует. Не гейт и не набор: файл назван
-// `*.console.ts`, его гоняет только `vitest.console.config.ts`
-// (`just contour-bot-console`), а vitest здесь — загрузчик TypeScript с теми же
-// путями, что у сценариев.
+// Пульт провода двух ботов: человек или агент ведёт разговор по шагу — пишет,
+// жмёт кнопки по подписи и читает экраны — с ботом хаба и ботом аукциона
+// против настоящих Identity, Meetups и Auction. Уровень L2, Telegram не
+// участвует. Не гейт и не набор: файл назван `*.console.ts`, его гоняет только
+// `vitest.console.config.ts` (`just contour-bot-console`), а vitest здесь —
+// загрузчик TypeScript. Среду поднимает Contour.Host с `--with-auction`.
 //
 // Команда — строка в теле POST, ответ — JSON:
-//   curl -sS --data-binary 'alice say /start' http://127.0.0.1:7357/
+//   curl -sS --data-binary 'alice@hub say /start' http://127.0.0.1:7357/
 // Язык команд — `commands.ts`. Каждый обмен дописывается в
 // `.work/bot-console/<время старта>.jsonl`, чтобы владелец видел, что делал агент.
 //
@@ -31,6 +33,11 @@ import { openConsoleSession, type Reply } from "./session.js";
 
 const port = readPort(process.env["BOT_CONSOLE_PORT"]) ?? 7357;
 const maxBodyBytes = 16 * 1024;
+
+// Имя бота аукциона для ссылки из хаба человеку с `public` (PER-455) — ник
+// заглушки `botInfo` kit бота аукциона: пульт url-кнопку не нажимает, а ссылка
+// на экране должна вести на того бота, с которым человек здесь говорит.
+const auctionBotUsername = auctionBotInfo.username;
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const transcriptDir = resolve(repoRoot, ".work/bot-console/");
@@ -40,6 +47,7 @@ const transcript = resolve(
 );
 
 const environment = readContourEnvironment();
+const auctionEnvironment = readAuctionContourEnvironment();
 const direct = openDirectClients(environment);
 
 beforeAll(async () => {
@@ -53,15 +61,27 @@ afterAll(() => {
 describe("bot wire console", () => {
   it("serves commands until quit", async () => {
     mkdirSync(transcriptDir, { recursive: true });
-    // Бот ходит к сервисам через прокси задержки (`slow`), прямые клиенты —
-    // мимо него: заведение людей и проверка итога не ждут вместе с ботом.
-    const latency = await openLatency(environment);
-    const wire = openBotWire({
-      ...environment,
-      identityUrl: latency.identityUrl,
-      meetupsUrl: latency.meetupsUrl,
+    // Боты ходят к сервисам через прокси задержки и обрыва (`slow`, `down`),
+    // прямые клиенты — мимо него: заведение людей и проверка итога не ждут
+    // вместе с ботом.
+    const latency = await openLatency({
+      identity: environment.identityUrl,
+      meetups: environment.meetupsUrl,
+      auction: auctionEnvironment.auctionUrl,
     });
-    const session = openConsoleSession(wire, direct, latency);
+    const hub = openBotWire({
+      ...environment,
+      identityUrl: latency.urls.identity,
+      meetupsUrl: latency.urls.meetups,
+      auctionUrl: latency.urls.auction,
+      auctionBotUsername,
+    });
+    const auction = openAuctionBotWire({
+      ...auctionEnvironment,
+      identityUrl: latency.urls.identity,
+      auctionUrl: latency.urls.auction,
+    });
+    const session = openConsoleSession({ hub, auction }, direct, latency);
 
     try {
       await new Promise<void>((resolveServed, rejectServed) => {
@@ -75,7 +95,7 @@ describe("bot wire console", () => {
 
           if (request.method === "GET") {
             // Готовность и справка разом: пульт слушает только после ответа
-            // обоих сервисов.
+            // сервисов.
             answer(200, { ok: true, kind: "help", commands: help });
             return;
           }
@@ -124,7 +144,8 @@ describe("bot wire console", () => {
         });
       });
     } finally {
-      wire.close();
+      hub.close();
+      auction.close();
       await latency.close();
     }
   });

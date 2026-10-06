@@ -124,19 +124,19 @@ describe("waiting", () => {
     ).toEqual(["answerCallbackQuery", "editMessageText"]);
   });
 
-  it("shows typing while an answer to a question waits for the service", async () => {
+  it("shows typing while a command waits for the service", async () => {
     const service = pendingService();
     const { bot, calls } = createHarness(resolved(), service);
     await bot.init();
 
     const handled = bot.handleUpdate({
       update_id: 1,
-      message: { message_id: 7, date: 0, chat, from, text: "/meetups" },
+      message: { message_id: 7, date: 0, chat, from, text: "/menu" },
     });
     await vi.advanceTimersByTimeAsync(typingAfterMs);
     expect(methods(calls)).toEqual(["sendChatAction"]);
 
-    service.respond(emptyList);
+    service.respond({ kind: "message", text: "Привет" });
     await handled;
     expect(methods(calls)).toEqual(["sendChatAction", "sendMessage"]);
   });

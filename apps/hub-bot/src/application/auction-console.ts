@@ -8,6 +8,7 @@ import { rpcMeta } from "../rpc-metadata.js";
 import type {
   AuctionConsoleRequest,
   AuctionConsoleView,
+  ConsoleAuctionStatus,
   ConsoleNote,
   ExecuteResult,
   WeekAskError,
@@ -103,9 +104,15 @@ const auctionNotFound: ExecuteResult = {
   reason: "auction-not-found",
 };
 
+// Лоты добавляются, пока онлайн-неделя не открыта; после старта Auction
+// отвечает `lots_frozen`. По тому же правилу лента показывает «Добавить лот».
+export function acceptsLots(status: ConsoleAuctionStatus): boolean {
+  return status === "draft" || status === "scheduled";
+}
+
 // Сроки и финал меняются, пока онлайн-неделя не открыта.
 function editable(console: AuctionConsoleView): boolean {
-  return console.status === "draft" || console.status === "scheduled";
+  return acceptsLots(console.status);
 }
 
 export function createAuctionConsole(

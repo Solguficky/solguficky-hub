@@ -175,6 +175,37 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Выдача роли вне заявки. Снимок — после выдачи: незаблокирован и держит
+    /// выданную роль, а у <see cref="GlobalRole.Admin" /> — ещё вложенные
+    /// <see cref="GlobalRole.Member" /> и <see cref="GlobalRole.Public" />,
+    /// как разворачивает вложенность Identity.
+    /// </summary>
+    public static IdentityEvent RoleGrant(
+        string identityId,
+        long version,
+        GlobalRole role,
+        string? eventId = null)
+    {
+        var message = new IdentityEvent
+        {
+            EventId = eventId ?? NewId(),
+            IdentityId = identityId,
+            Version = version,
+            OccurredAt = Committed.AddMinutes(version).ToString("O"),
+            State = new IdentityState { Id = identityId },
+            RoleGranted = new RoleGranted { Role = role },
+        };
+        message.State.GlobalRoles.Add(role);
+        if (role == GlobalRole.Admin)
+        {
+            message.State.GlobalRoles.Add(GlobalRole.Member);
+            message.State.GlobalRoles.Add(GlobalRole.Public);
+        }
+
+        return message;
+    }
+
     public static ReadOnlyMemory<byte> Bytes(IMessage message) => message.ToByteArray();
 
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,

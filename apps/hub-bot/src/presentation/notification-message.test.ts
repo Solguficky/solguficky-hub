@@ -360,6 +360,21 @@ describe("access granted", () => {
   });
 });
 
+describe("role granted", () => {
+  it("names the administrator rights and leads to the start screen by a trace button", () => {
+    const content: RenderableContent = { kind: "role-granted", role: "admin" };
+    expect(renderNotification(content).text).toBe(
+      "Тебе выданы права администратора сообщества. На стартовом экране появилось «Управление».",
+    );
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({
+        text: "Меню",
+        callback_data: "v1:t:nav:start",
+      }),
+    ]);
+  });
+});
+
 describe("community announcement", () => {
   const announcement = (body: string): RenderableContent => ({
     kind: "community-announcement",

@@ -142,31 +142,13 @@ describe("parseUpdate", () => {
     ).toBe("ignored");
   });
 
-  it("maps menu commands to their existing screens", () => {
-    expect(messageText("/meetups")).toEqual({
-      kind: "screen",
-      screen: "hub",
-      telegramUserId: 42n,
-    });
-    expect(messageText("/archive")).toMatchObject({ screen: "archive" });
-    expect(messageText("/notifications")).toMatchObject({
-      screen: "notify-global",
-    });
-  });
-
-  it("accepts a menu command with a bot mention, any case and a tail", () => {
-    expect(messageText("/ARCHIVE@Stub_Bot")).toMatchObject({
-      kind: "screen",
-      screen: "archive",
-    });
-    expect(messageText("/meetups whatever")).toMatchObject({
-      kind: "screen",
-      screen: "hub",
-    });
-  });
-
-  it("ignores a menu command mentioned for another bot", () => {
-    expect(messageText("/meetups@other_bot")).toEqual({ kind: "ignored" });
+  // Команды разделов из меню убраны (PER-468): разделы открываются кнопками
+  // стартового экрана, а прежняя команда — неизвестная, как любая другая.
+  it("ignores the former section commands", () => {
+    for (const text of ["/meetups", "/archive", "/notifications"]) {
+      expect(messageText(text)).toEqual({ kind: "ignored" });
+    }
+    expect(messageText("/ARCHIVE@Stub_Bot")).toEqual({ kind: "ignored" });
   });
 
   it("reads /menu as /start without a payload", () => {

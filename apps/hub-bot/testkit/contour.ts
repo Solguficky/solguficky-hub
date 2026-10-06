@@ -10,12 +10,20 @@ import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import { MeetupVisibility } from "../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../gen/meetups/v1/meetups_service_pb.js";
 import { createDispatcher } from "../src/application/dispatcher.js";
+import { createAuctionClient } from "../src/auction/client.js";
 import { communityDay } from "../src/community-time.js";
 import { createIdentityClient } from "../src/identity/client.js";
 import { createMeetupsClient } from "../src/meetups/client.js";
+import type { TelegramFiles } from "../src/presentation/telegram-files.js";
 import { presentServiceToken } from "../src/rpc-metadata.js";
 import { noopTracing } from "../src/tracing.js";
-import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
+import { type PhotoVariant, photoVariantOf } from "./conversation.js";
+import {
+  createHarness,
+  type HarnessOptions,
+  type LogRecord,
+  type RecordedCall,
+} from "./harness.js";
 
 // Провод бота против настоящих Identity и Meetups (уровень L2). Среду поднимает
 // Contour.Host (`just contour-bot-test`), а этот модуль ею не владеет: он
@@ -35,6 +43,12 @@ export type ContourEnvironment = {
   maintainerToken: string;
   /** Токен вызывающего Hub Bot (ADR-056): провод играет бота. */
   botServiceToken: string;
+  /**
+   * Адрес Auction, когда контур поднят с ним (`Contour.Host --with-auction`).
+   * Без него провод собирает бота без ряда аукциона, как процесс без
+   * `AUCTION_GRPC_URL`: аукцион — расширение хаба, а не часть контура.
+   */
+  auctionUrl?: string;
 };
 
 const variables = {
@@ -44,9 +58,12 @@ const variables = {
   botServiceToken: "HUB_BOT_SERVICE_TOKEN",
 } as const;
 
+const auctionVariable = "AUCTION_GRPC_URL";
+
 /**
  * Нет переменной — отказ с её именем, а не пропуск: пропущенный сквозной набор
- * выглядел бы в отчёте как пройденный.
+ * выглядел бы в отчёте как пройденный. Адрес Auction необязателен и читается,
+ * только если контур его отдал.
  */
 export function readContourEnvironment(
   env: NodeJS.ProcessEnv = process.env,
@@ -60,11 +77,13 @@ export function readContourEnvironment(
         "`just contour-bot-test` или в среде `just contour-up`",
     );
   }
+  const auctionUrl = env[auctionVariable];
   return {
     identityUrl: env[variables.identityUrl] ?? "",
     meetupsUrl: env[variables.meetupsUrl] ?? "",
     maintainerToken: env[variables.maintainerToken] ?? "",
     botServiceToken: env[variables.botServiceToken] ?? "",
+    ...(auctionUrl === undefined || auctionUrl === "" ? {} : { auctionUrl }),
   };
 }
 
@@ -341,11 +360,19 @@ async function retryWhileUnreachable(
  * Бот, собранный как в `main.ts`, но с записью вызовов Bot API вместо
  * Telegram. Клиенты сервисов — продакшн-код без подмен: транспорт, заголовки,
  * кодирование Protobuf и отображение кодов отказа выполняются по-настоящему.
+ *
+ * С `auctionUrl` бот получает и Auction во всех трёх ролях процесса —
+ * оболочка сходки, форма лота, пульт — и имя бота аукциона для ссылки
+ * человеку с `public` (PER-455). Фото лота бот скачивает у Telegram по пути из
+ * `getFile`, которого в проводе нет: оба подменяются здесь, байты выбирает вид
+ * фото из `file_id` (`sendsPhoto`).
  */
 export function openBotWire(endpoints: {
   identityUrl: string;
   meetupsUrl: string;
   botServiceToken: string;
+  auctionUrl?: string;
+  auctionBotUsername?: string;
 }) {
   // Контур проверяет провод, а не трассировку: спаны здесь не записываются.
   const tracing = noopTracing();
@@ -362,11 +389,59 @@ export function openBotWire(endpoints: {
     tracing,
     serviceToken,
   });
-  const dispatcher = createDispatcher(meetups, undefined, () =>
-    communityDay(new Date(), contourTimeZone),
-  );
   const calls: RecordedCall[] = [];
-  let current = createHarness(identity, dispatcher, calls);
+  // Логгер принадлежит процессу бота и меняется на рестарте: отказ имён
+  // пишется в записи текущего, как это делает `main.ts`.
+  let current: ReturnType<typeof createHarness>;
+  const auction =
+    endpoints.auctionUrl === undefined
+      ? undefined
+      : createAuctionClient(endpoints.auctionUrl, {
+          tracing,
+          serviceToken,
+          onNamesRefused: (cause, meta) =>
+            current.records.push({
+              level: "warn",
+              message: "auction display names unavailable",
+              fields: {
+                ...(meta?.requestId === undefined
+                  ? {}
+                  : { request_id: meta.requestId }),
+                error: cause instanceof Error ? cause.message : String(cause),
+              },
+            }),
+        });
+  const dispatcher = createDispatcher(
+    meetups,
+    undefined,
+    () => communityDay(new Date(), contourTimeZone),
+    auction,
+    auction,
+    auction === undefined
+      ? undefined
+      : { auctions: auction, timeZone: contourTimeZone },
+  );
+  const telegram = fakeTelegram(calls);
+  const options: HarnessOptions = {
+    communityTimeZone: contourTimeZone,
+    files: telegram.files,
+    respond: telegram.respond,
+    ...(auction === undefined ? {} : { auction }),
+    ...(endpoints.auctionBotUsername === undefined
+      ? {}
+      : { auctionBotUsername: endpoints.auctionBotUsername }),
+  };
+  const spawn = () =>
+    createHarness(
+      identity,
+      dispatcher,
+      calls,
+      tracing,
+      undefined,
+      undefined,
+      options,
+    );
+  current = spawn();
   return {
     // Разговор держит этот вход, а не сам бот: после рестарта он говорит уже
     // с новым процессом, а история чата остаётся прежней.
@@ -387,11 +462,117 @@ export function openBotWire(endpoints: {
      * история сообщений у человека остаются.
      */
     restart(): void {
-      current = createHarness(identity, dispatcher, calls);
+      current = spawn();
     },
     close(): void {
       identity.close();
       meetups.close();
+      auction?.close();
+    },
+  };
+}
+
+// Наименьший настоящий JPEG, 1×1: Auction проверяет сигнатуру файла и предел
+// размера (ADR-057), заглушка из нулей отказ получила бы и на хорошем пути.
+const tinyJpeg = Buffer.from(
+  "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=",
+  "base64",
+);
+
+/** Байты фото по его виду; `lost` байтов не отдаёт — скачивание отказывает. */
+export function photoBytesOf(variant: PhotoVariant): Uint8Array | undefined {
+  switch (variant) {
+    case "jpeg":
+      return new Uint8Array(tinyJpeg);
+    case "big": {
+      // Сигнатура настоящая, размер — больше предела Auction
+      // (`LotImage.MaxBytes`, 1 МБ): отказ должен прийти от сервиса с его
+      // числом, а не от проверки формата.
+      const bytes = new Uint8Array(2_500_000);
+      bytes.set(tinyJpeg.subarray(0, 3));
+      return bytes;
+    }
+    case "broken":
+      return new TextEncoder().encode("это не картинка");
+    case "lost":
+      return undefined;
+    default: {
+      const _exhaustive: never = variant;
+      return _exhaustive;
+    }
+  }
+}
+
+// Блок фото в ответе на rich-сообщение с загрузкой: из него бот берёт
+// `file_id` в кэш `lotPhotos`, и второй показ карточки идёт без `GetLotImage`.
+// Без блока кэш в проводе не грелся бы, и путь по `file_id` оставался бы
+// непройденным. Та же форма, что у харнесса бота аукциона.
+const photoBlock = {
+  type: "photo",
+  photo: [
+    { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
+    { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
+  ],
+};
+
+/**
+ * Telegram в проводе за пределами ответа `true`: `getFile` отвечает путём по
+ * `file_id` фотографии из `sendsPhoto`, скачивание отдаёт байты по виду фото,
+ * а rich-сообщение и его правка отвечают сообщением с блоком фото. Чужой
+ * `file_id` — отказ Bot API, как у файла, которого Telegram не знает. Номер
+ * отправленного сообщения — `100 + порядковый номер вызова`, как у харнесса:
+ * `respond` зовётся после записи вызова, и `calls.length` уже его считает.
+ */
+function fakeTelegram(calls: readonly RecordedCall[]): {
+  files: TelegramFiles;
+  respond: NonNullable<HarnessOptions["respond"]>;
+} {
+  return {
+    files: {
+      async download(path) {
+        const variant = photoVariantOf(path.replace(/^photos\//, ""));
+        const bytes = variant === undefined ? undefined : photoBytesOf(variant);
+        return bytes === undefined
+          ? {
+              kind: "failed",
+              reason: "unavailable",
+              cause: new Error("file is not available"),
+            }
+          : { kind: "ok", bytes };
+      },
+    },
+    respond: (method, payload) => {
+      const rich = (payload as { rich_message?: { media?: unknown[] } })
+        .rich_message;
+      if (rich !== undefined) {
+        const edited = (payload as { message_id?: unknown }).message_id;
+        const chatId = (payload as { chat_id?: unknown }).chat_id;
+        return {
+          message_id: typeof edited === "number" ? edited : 100 + calls.length,
+          date: 0,
+          chat: {
+            id: typeof chatId === "number" ? chatId : 42,
+            type: "private",
+            first_name: "tester",
+          },
+          rich_message: {
+            blocks: rich.media === undefined ? [] : [photoBlock],
+          },
+        };
+      }
+      if (method !== "getFile") return undefined;
+      const fileId = (payload as { file_id?: unknown }).file_id;
+      return typeof fileId === "string" && photoVariantOf(fileId) !== undefined
+        ? {
+            file_id: fileId,
+            file_unique_id: `u-${fileId}`,
+            file_path: `photos/${fileId}`,
+          }
+        : {
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: invalid file_id",
+          };
     },
   };
 }

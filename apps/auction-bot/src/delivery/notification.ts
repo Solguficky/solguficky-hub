@@ -83,6 +83,7 @@ function toContent(
     case "communityAnnouncement":
     case "meetupUnpublished":
     case "accessRequested":
+    case "roleGranted":
       return { kind: "foreign", type: type.case };
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };

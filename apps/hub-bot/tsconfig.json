@@ -26,5 +26,6 @@
     "vitest.fail-on-skip.ts",
     "../../tests/contour/bot-wire/**/*.ts",
     "../../tests/telegram-live/**/*.ts"
-  ]
+  ],
+  "exclude": ["../../tests/contour/bot-wire/console/**"]
 }

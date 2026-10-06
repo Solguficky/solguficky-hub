@@ -60,9 +60,34 @@ Biome форматирует переводом строки LF: в справк
 
 Деталь, которая понадобится при следующем таком правиле: смена атрибута не переписывает уже выложенные файлы. Их приводят к LF отдельно, и после этого `git status` продолжает показывать их изменёнными, хотя `git hash-object` совпадает с блобом в индексе, а `git diff` пуст. Это устаревшая stat-информация в индексе; снимает её `git add --renormalize`.
 
+### Ignore-файл ищется в каталоге `biome.json`, а не вверх по дереву
+
+`vcs.useIgnoreFile: true` велит Biome читать `.gitignore` и не проверять то, что Git не отслеживает. Откуда читать, задаёт `vcs.root`, а его умолчание — каталог, где нашёлся `biome.json`. Вверх по дереву, как Git ищет свои `.gitignore` или как `.editorconfig` собирается по цепочке каталогов, Biome не идёт. Пульт провода стал первой единицей репозитория со своим `biome.json`, но без своего `.gitignore`: правило `node_modules/` для него держал корневой файл репозитория. Для Git этого достаточно, для Biome — нет:
+
+```
+internalError/fs ━━━━━━━━━━
+  × Biome couldn't find an ignore file in the following folder: …/tests/contour/bot-wire/console
+configuration ━━━━━━━━━━
+  × Biome exited because the configuration resulted in errors. Please fix them.
+```
+
+Это отказ конфигурации до проверки первого файла, а не нарушение в коде: код возврата 1, «Checked 0 files». Чинится файлом в каталоге единицы, `tests/contour/bot-wire/console/.gitignore`:
+
+```
+# biome читает ignore-файл из каталога единицы (vcs.useIgnoreFile); правило
+# node_modules/ действует и из корневого .gitignore.
+node_modules/
+```
+
+Для Git этот файл избыточен и ничего не меняет; его единственный читатель — Biome. `apps/hub-bot` на то же правило не наткнулся, потому что у него `.gitignore` был с первого коммита по своим причинам.
+
+Аналогия из .NET ведёт здесь в ложную сторону: `.editorconfig` и `Directory.Build.props` MSBuild ищет вверх от файла до корня, и привычка «положу в корень, подхватится везде» на Biome не переносится.
+
 ## Урок
 
 **Линт, которому нужны типы, привязан к compiler API.** Пока `tsc` 7 этот API не отдаёт, линтер либо парсит сам, либо тащит второй TypeScript. Следующий TypeScript-пакет в репозитории повторяет ту же развилку, пока 7.1 не вернёт API — тогда сравнение нужно сделать заново.
+
+**Инструмент, который читает чужой конфигурационный файл, ищет его по своим правилам, а не по правилам хозяина файла.** `.gitignore` принадлежит Git и собирается по дереву; Biome берёт одноимённый файл из одного каталога. Перед тем как положиться на «он же читает `.gitignore`», выясняется, откуда именно, и проверяется в единице без собственного файла.
 
 **Одна неинтерактивная команда закрывает gate.** `biome check .` без `--write` и без watch подходит агенту и CI так же, как `golangci-lint run`. Watch и apply — отдельные команды, не режим по умолчанию.
 
@@ -78,6 +103,9 @@ Biome форматирует переводом строки LF: в справк
 | `tsc` как линтер | `noEmit` ловит типы, не ловит кавычки, импорты и unused. В срезе typecheck и lint — разные скрипты намеренно |
 | `lineEnding: "auto"` вместо `eol=lf` в `.gitattributes` | проверка перестанет падать, но формат станет зависеть от ОС автора: `biome format --write` на Windows перепишет весь пакет в CRLF, а нормализация индекса это спрячет. Лечится причина, а не симптом |
 | `lineEnding: "crlf"` | тот же файл на Linux-раннере CI сразу станет неотформатированным |
+| `vcs.useIgnoreFile: false` у пульта | отказ исчез бы, но каждый неотслеживаемый путь пришлось бы повторять в `files.includes`, и два списка расходились бы молча |
+| `vcs.root` на корень репозитория | подхватился бы корневой `.gitignore`, но конфиг единицы зависел бы от её положения в дереве и ломался бы при переносе каталога |
+| Запускать Biome пульта из `apps/hub-bot`, как у `bot-wire` | лишило бы пульт собственной проверки: он своя единица со своим `package.json`, и его lint не должен зависеть от соседа |
 
 Сравнение не тянет на ADR: граница Hub Bot и выбор grammY уже в [ADR-030](../../decisions/ADR-030-telegram-bot.md). Здесь выбирается инструмент проверки файлов внутри уже принятого стека.
 
@@ -99,6 +127,7 @@ flowchart LR
 
 - [Biome `check`](https://biomejs.dev/reference/cli/#biome-check) — одна команда на lint, format и assist; флаг `--write` включает правку.
 - [Biome configuration](https://biomejs.dev/reference/configuration/) — `linter`, `formatter`, `assist`, `files.includes`.
+- [Biome: VCS integration](https://biomejs.dev/guides/integrate-in-vcs/) — `vcs.useIgnoreFile` и `vcs.root`: откуда берётся ignore-файл и почему умолчание — каталог конфигурации.
 - [TypeScript 7.0 announcement](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) — нативный `tsc` и отсутствие compiler API в JS-модуле.
 - [typescript-eslint typed linting](https://typescript-eslint.io/getting-started/typed-linting/) — зачем ESLint поднимает программу TypeScript.
 - Скилл `.skillshare/skills/proj/proj-write-typescript/SKILL.md` — существующий lint/typecheck/test; ослабление типа рядом с местом.
@@ -112,6 +141,12 @@ flowchart LR
 - `npm run lint` в `package.json` — ровно `biome check .`. Проверено чтением манифеста.
 - `npx biome check --help` про `--line-ending`: «Defaults to `lf`». Проверено.
 - До `eol=lf` в `.gitattributes` `just telegram-bot-lint` на Windows давал «Found 19 errors» — по одной на каждый из 19 файлов, все про формат. После правила и приведения рабочего дерева к LF — «Checked 19 files», ошибок нет. Проверено на обоих состояниях.
+
+Ignore-файл проверялся на `2.5.15` из `tests/contour/bot-wire/console`:
+
+- `npx biome --version` печатает `Version: 2.5.15`; `$schema` в `biome.json` указывает на `2.5.11`. Проверено.
+- Без `.gitignore` в каталоге `npx biome check .` завершается кодом 1 с `internalError/fs: Biome couldn't find an ignore file in the following folder`, хотя корневой `.gitignore` репозитория на месте. Проверено временным переименованием файла.
+- С файлом из одной строки `node_modules/` — «Checked 12 files», код 0. Проверено.
 
 Открытые вопросы, из-за которых статус «вернуться»:
 

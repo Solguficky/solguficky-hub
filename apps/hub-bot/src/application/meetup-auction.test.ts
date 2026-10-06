@@ -33,7 +33,7 @@ function meetups(): Meetups {
     get: async () => ({ kind: "ok", meetup }),
     changeAttributes: notUsed,
     setSchedule: notUsed,
-    publish: notUsed,
+    publish: async () => ({ kind: "ok", meetup }),
     unpublish: notUsed,
     cancel: notUsed,
     markHeld: notUsed,
@@ -122,6 +122,96 @@ describe("meetup auction", () => {
       card: { auction: { kind: "open", auctionId } },
     });
     expect(port.getMeetupAuction).not.toHaveBeenCalled();
+  });
+
+  // Карточка сразу после «Опубликовать» — та же карточка, что из списка: ряд
+  // аукциона на ней дописывает диспетчер, а не чтение `view-meetup`.
+  it("adds the auction to the card a publication returns", async () => {
+    const port = auctions();
+    const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
+
+    await expect(
+      dispatcher.execute({
+        identity: person(["admin"]),
+        intent: "publish-meetup",
+        meetupId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "published",
+      auction: { kind: "open", auctionId },
+    });
+    expect(port.getMeetupAuction).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes without an auction row when Auction is not configured or refuses", async () => {
+    const without = createDispatcher(meetups());
+    await expect(
+      without.execute({
+        identity: person(["admin"]),
+        intent: "publish-meetup",
+        meetupId,
+      }),
+    ).resolves.toEqual({ kind: "published", meetup, repeated: true });
+
+    const port = auctions();
+    port.getMeetupAuction.mockResolvedValue({
+      kind: "unavailable",
+      cause: new Error("down"),
+    });
+    const refusing = createDispatcher(meetups(), undefined, undefined, port);
+    await expect(
+      refusing.execute({
+        identity: person(["admin"]),
+        intent: "publish-meetup",
+        meetupId,
+      }),
+    ).resolves.toEqual({ kind: "published", meetup, repeated: true });
+  });
+
+  // Ответ на вопрос черновика пришёл после публикации: бот покажет сходку
+  // карточкой, и ряд аукциона ей положен. Скрытый черновик показывается
+  // формой, и Auction за него не спрашивают.
+  it("adds the auction to a draft answer only once the meetup is visible", async () => {
+    const changed = (visibility: "visible" | "hidden"): Meetups => ({
+      ...meetups(),
+      get: async () => ({ kind: "ok", meetup: { ...meetup, visibility } }),
+      changeAttributes: async () => ({
+        kind: "ok",
+        meetup: { ...meetup, visibility, description: "Про всё" },
+      }),
+    });
+    const answer = {
+      identity: person(["admin"]),
+      intent: "set-meetup-field" as const,
+      field: "description" as const,
+      value: "Про всё",
+      meetupId,
+    };
+
+    const hidden = auctions();
+    await expect(
+      createDispatcher(changed("hidden"), undefined, undefined, hidden).execute(
+        answer,
+      ),
+    ).resolves.toEqual({
+      kind: "draft",
+      meetup: { ...meetup, visibility: "hidden", description: "Про всё" },
+    });
+    expect(hidden.getMeetupAuction).not.toHaveBeenCalled();
+
+    const visible = auctions();
+    await expect(
+      createDispatcher(
+        changed("visible"),
+        undefined,
+        undefined,
+        visible,
+      ).execute(answer),
+    ).resolves.toMatchObject({
+      kind: "draft",
+      auction: { kind: "open", auctionId },
+    });
+    expect(visible.getMeetupAuction).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the auction row on the card a subscription returns", async () => {

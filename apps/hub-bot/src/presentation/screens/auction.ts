@@ -51,6 +51,14 @@ export type AuctionView = {
    * Право это не решает — его проверяют Auction и Meetups на каждой команде.
    */
   canManage?: boolean;
+  /**
+   * Принимает ли аукцион новые лоты: `false` — онлайн-неделя открыта, и ряда
+   * «Добавить лот» в ленте нет (PER-468). Статус аукциона лента тела не несёт,
+   * его читает адаптер у пульта; не прочитал — отдаёт `true`, и ряд остаётся,
+   * как и когда поле не задано: устаревшую кнопку защищает отказ `lots-frozen`
+   * после вопроса.
+   */
+  canAddLots?: boolean;
 };
 
 // Входы в форму лота — ряды оболочки хаба, а не тела: у бота аукциона формы
@@ -130,13 +138,14 @@ function feedScreen(
     feed.lots.map((item) => [item.lotId, item]),
   );
   const keyboard = new InlineKeyboard();
-  // Действие экрана стоит первым рядом, над лотами и листанием.
+  // Действие экрана стоит первым рядом, над лотами и листанием. После старта
+  // онлайн-недели добавлять лот нельзя, и ряда нет; «Пульт» остаётся.
   if (view.canManage === true) {
     const auction = uuidToToken(feed.auctionId);
-    keyboard
-      .text(addLotLabel, lotNewData(auction))
-      .row()
-      .text(consoleLabel, consoleViewData(auction));
+    if (view.canAddLots !== false) {
+      keyboard.text(addLotLabel, lotNewData(auction)).row();
+    }
+    keyboard.text(consoleLabel, consoleViewData(auction));
   }
   for (const row of view.body.keyboard) {
     nextRow(keyboard);
