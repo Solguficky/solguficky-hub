@@ -14,6 +14,7 @@ import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { consoleViewData, lotFormData, lotNewData } from "../parse-callback.js";
 import {
+  acceptedScreen,
   confirmScreen,
   nameChoiceScreen,
   questionScreen,
@@ -92,11 +93,14 @@ const titleLimit = 256;
 const plainTextLimit = 4096;
 
 export function auctionScreen(view: AuctionView): AuctionShown {
-  // Лист ставки (PER-317): подтверждение, вопрос и выбор имени — свои экраны.
+  // Лист ставки (PER-317): подтверждение, исход, вопрос и выбор имени — свои
+  // экраны.
   for (const block of view.body.blocks) {
     switch (block.kind) {
       case "confirm":
         return { screen: confirmScreen(block, view.body.keyboard, money) };
+      case "accepted":
+        return { screen: acceptedScreen(block, view.body.keyboard, money) };
       case "question":
         return {
           screen: questionScreen(block, view.body.keyboard, money),
@@ -194,6 +198,7 @@ function feedLabel(
     case "name.username":
     case "name.alias":
     case "name.back":
+    case "accepted.lot":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -310,6 +315,7 @@ function lotLabel(button: AuctionButton): string {
     case "name.username":
     case "name.alias":
     case "name.back":
+    case "accepted.lot":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -383,6 +389,7 @@ function historyLabel(button: AuctionButton): string {
     case "name.username":
     case "name.alias":
     case "name.back":
+    case "accepted.lot":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

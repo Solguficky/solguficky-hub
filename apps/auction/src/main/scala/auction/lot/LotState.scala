@@ -243,6 +243,10 @@ final case class ResumeLot(opId: OpId)
  * `LotMarkedForFinal` и `LotResumed` payload не несут, `LotHeldForFinal` — только время удержания (ADR-047, дополнение
  * 2026-09-24): цена, лидер и лимиты удержанного лота — те, что свёрнуты из журнала до него. `LotUnmarkedForFinal` тоже
  * без payload (дополнение 2026-10-06): он только снимает признак.
+ *
+ * `overtakenByProxy` у ручной ставки — её той же командой перебила производная ставка другого участника, и лидерство,
+ * взятое ею, команду не пережило. Свёртка его не читает: это знание о транзакции для потребителей факта, которое
+ * проекция публикации, видящая по одному событию, иначе не получила бы (PER-473). У производной ставки всегда `false`.
  */
 enum LotEvent {
   case LotDrafted(auction: AuctionId)
@@ -253,7 +257,8 @@ enum LotEvent {
       participant: ParticipantId,
       amount: Money,
       previousLeader: Option[ParticipantId],
-      origin: BidOrigin
+      origin: BidOrigin,
+      overtakenByProxy: Boolean = false
   )
   case ProxyLimitSet(participant: ParticipantId, max: Money)
   case ProxyLimitWithdrawn(participant: ParticipantId)

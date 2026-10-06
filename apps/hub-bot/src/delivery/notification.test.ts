@@ -116,6 +116,16 @@ describe("decodeNotification", () => {
       },
     ],
     [
+      "lotProxyRaised",
+      {
+        case: "lotProxyRaised",
+        value: {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+        },
+      },
+    ],
+    [
       "lotPurchased",
       {
         case: "lotPurchased",

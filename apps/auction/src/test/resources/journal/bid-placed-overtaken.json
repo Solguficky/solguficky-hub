@@ -19,9 +19,9 @@
         "currency": "RUB"
       },
       "previousLeader": "00000000-0000-0001-0000-000000000001",
-      "origin": "Proxy",
-      "source": null,
-      "overtakenByProxy": null
+      "origin": "Manual",
+      "source": "Bot",
+      "overtakenByProxy": true
     },
     "lotScheduled": null,
     "proxyLimitSet": null,

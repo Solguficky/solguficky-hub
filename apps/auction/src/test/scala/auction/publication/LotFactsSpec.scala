@@ -1,5 +1,6 @@
 package auction.publication
 
+import auction.entity.Initiator
 import auction.entity.JournalFixtures.*
 import auction.entity.LotJournal
 import auction.entity.StoredLotEvent
@@ -129,5 +130,26 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       proxy.previousLeaderId shouldBe None
       proxy.origin.isProxy shouldBe true
     }
+
+    "carry the overtaken mark of a manual bid and leave it off a bid nobody overtook" in {
+      bidOf(placed.copy(overtakenByProxy = true), Initiator.Participant(participant(2))).overtakenByProxy shouldBe true
+      bidOf(placed, Initiator.Participant(participant(2))).overtakenByProxy shouldBe false
+    }
+
+    "say a proxy bid answers another bidder only when someone else's command placed it" in {
+      val proxy = placed.copy(origin = BidOrigin.Proxy)
+      bidOf(proxy, Initiator.Participant(participant(1))).answersOtherBidder shouldBe true
+      bidOf(proxy, Initiator.Participant(participant(2))).answersOtherBidder shouldBe false
+      bidOf(placed, Initiator.Participant(participant(1))).answersOtherBidder shouldBe false
+    }
+  }
+
+  /** Факт ставки, записанной командой `initiator` после открытия лота. */
+  private def bidOf(event: LotEvent.BidPlaced, initiator: Initiator): bus.BidPlaced = {
+    val opening =
+      List(lotDrafted, lotScheduled, opened).zipWithIndex.map((event, index) => (index + 1L, stored(index + 1, event)))
+    val numbered = opening :+ (4L, LotJournal.store(uuid(4), transaction(4, initiator), event))
+    val steps = LotView.replay(None, lotId, numbered).fold(defect => fail(defect.toString), done => done)
+    message(LotFacts.fact(steps.last)).getBidPlaced
   }
 }

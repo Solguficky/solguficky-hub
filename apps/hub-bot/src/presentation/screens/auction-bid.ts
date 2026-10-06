@@ -10,8 +10,10 @@ import { InlineKeyboard } from "grammy";
 import {
   confirmKeyboard,
   escapeHtml,
+  menuLabel,
   nextRow,
   screenText,
+  toMenu,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -22,6 +24,7 @@ import type { ShownScreen } from "./show.js";
 // `money` приходит параметром: формат цены держит оболочка аукциона хаба.
 
 type ConfirmBlock = Extract<AuctionBlock, { kind: "confirm" }>;
+type AcceptedBlock = Extract<AuctionBlock, { kind: "accepted" }>;
 type QuestionBlock = Extract<AuctionBlock, { kind: "question" }>;
 type NameChoiceBlock = Extract<AuctionBlock, { kind: "name-choice" }>;
 
@@ -67,8 +70,35 @@ export function confirmScreen(
         : "Да, включить автоставку",
       yesData: dataOf(keyboard, "confirm.yes"),
       noData: dataOf(keyboard, "confirm.no"),
-      danger: true,
+      money: true,
     }),
+    format: "HTML",
+  };
+}
+
+// Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с новой
+// ценой открывает «К лоту» — в одном ряду с «Меню», как выход кадра исхода.
+export function acceptedScreen(
+  block: AcceptedBlock,
+  keyboard: readonly (readonly AuctionButton[])[],
+  money: (amount: Money) => string,
+): ShownScreen {
+  const bid = block.command === "bid";
+  return {
+    id: bid ? "bid-accepted" : "proxy-accepted",
+    text: bid
+      ? screenText(
+          `Ставка ${money(block.amount)} принята`,
+          lotLine(block.title),
+        )
+      : screenText(
+          `Автоставка до ${money(block.amount)} включена`,
+          lotLine(block.title),
+          "Лимит видишь только ты.",
+        ),
+    keyboard: new InlineKeyboard()
+      .text("К лоту", dataOf(keyboard, "accepted.lot"))
+      .text(menuLabel, toMenu.data),
     format: "HTML",
   };
 }
@@ -206,18 +236,14 @@ function answerRefusalText(
   }
 }
 
-// Исход команды — первая строка карточки после «Да». Отказ называет цену сам.
+// Исход команды — первая строка карточки после «Да» или после ответа,
+// отвергнутого до «Да». Отказ называет цену сам; принятая команда — свой экран.
 export function resultText(
   result: CommandResult,
   money: (amount: Money) => string,
 ): string {
   if (result.kind === "unknown") {
     return "Аукцион не ответил. Проверь цену на карточке: команда могла пройти.";
-  }
-  if (result.kind === "accepted") {
-    return result.command === "bid"
-      ? `Ставка ${money(result.amount)} принята.`
-      : `Автоставка до ${money(result.amount)} включена.`;
   }
   const { refusal } = result;
   switch (refusal.kind) {

@@ -39,6 +39,8 @@ const catalog = {
     parent: "menu",
     waive: { nav: "PER-2: возврат подписан по-старому" },
   },
+  bid: { class: "screen", nav: "confirm", title: "Ставка", money: true },
+  open: { class: "screen", nav: "confirm", title: "Неделя" },
 } as const satisfies Catalog;
 
 const config: LintConfig = {
@@ -163,6 +165,29 @@ describe("inspectCall configuration", () => {
         ]),
       ),
     ).toEqual(["style", "callback-data"]);
+  });
+
+  // PER-473: цвет читается из каталога, а не из подписи.
+  it("paints only the money confirmation, and paints it always", () => {
+    const confirm = (id: string, title: string, yes: Key) =>
+      rulesOf(
+        "sendMessage",
+        call(id, `<b>${title}</b>`, [[yes], [key("Нет")]]),
+      );
+    expect(
+      confirm(
+        "bid",
+        "Ставка",
+        key("Да, поставить 1 300 ₽", { style: "danger" }),
+      ),
+    ).toEqual([]);
+    expect(confirm("bid", "Ставка", key("Да, поставить 1 300 ₽"))).toEqual([
+      "style",
+    ]);
+    expect(
+      confirm("open", "Неделя", key("Да, открыть неделю", { style: "danger" })),
+    ).toEqual(["style"]);
+    expect(confirm("open", "Неделя", key("Да, открыть неделю"))).toEqual([]);
   });
 
   it("finds the caption of an edited photo inside its media", () => {

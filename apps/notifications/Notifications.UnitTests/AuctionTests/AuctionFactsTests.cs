@@ -42,6 +42,32 @@ public class AuctionFactsTests
     }
 
     [Fact]
+    public void When_ProxyRaisedFactBuilt_Expect_LeaderCausePriceAndExpiryWithoutRequestId()
+    {
+        var leader = EventFactory.NewId();
+        var bid = AuctionMappingTests.Decode(EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId(), leader,
+            proxy: true, answers: true));
+        var now = EventFactory.Committed;
+        var id = Guid.CreateVersion7();
+        var fact = AuctionFacts.ProxyRaised(id, bid, now, now.AddHours(24));
+        fact.NotificationId.ShouldBe(id.ToString());
+        fact.RecipientId.ShouldBe(leader);
+        fact.Cause.AuctionLotEventId.ShouldBe(bid.EventId.ToString());
+        fact.LotProxyRaised.LotId.ShouldBe(bid.LotId.ToString());
+        fact.LotProxyRaised.CurrentPrice.ShouldBe(bid.Price);
+        DateTimeOffset.Parse(fact.CreatedAt).ShouldBe(now);
+        DateTimeOffset.Parse(fact.NotAfter).ShouldBe(now.AddHours(24));
+        fact.HasRequestId.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void When_BidDidNotAnswerAnotherBidder_Expect_ProxyRaisedBuilderRefuses()
+    {
+        var bid = AuctionMappingTests.Decode(EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId(), proxy: true));
+        Should.Throw<ArgumentException>(() => AuctionFacts.ProxyRaised(Guid.CreateVersion7(), bid, EventFactory.Committed, EventFactory.Committed));
+    }
+
+    [Fact]
     public void When_BidHasNoOutbidRecipient_Expect_FactBuilderRefuses()
     {
         var bid = AuctionMappingTests.Decode(EventFactory.Bid(EventFactory.NewId()));

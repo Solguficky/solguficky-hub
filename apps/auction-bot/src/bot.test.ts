@@ -1588,6 +1588,56 @@ describe("bid leaf delivery", () => {
     });
   });
 
+  // PER-473: сумма ниже порога отвергается на сам ответ, без экрана «Да».
+  it("refuses an amount below the threshold without a confirmation", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate(answer({ text: "10" }));
+    const sent = JSON.stringify(calls.map((call) => call.payload));
+    expect(sent).not.toContain("Да, поставить");
+    expect(sent).toMatch(/Ставка ниже порога\. Сейчас можно от 1\s250\s₽\./);
+  });
+
+  // PER-473: после «Да» — экран «принята» с «К лоту» и «Меню» одним рядом.
+  it("answers an accepted bid with its own screen and the lot button", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({
+          kind: "commit",
+          command: "bid",
+          lotId,
+          opId: "0198f2a4-7c1e-7d3a-9b21-00000000c001",
+          amount: 130_000,
+          page: 0,
+        }),
+        message: { message_id: 7, date: 0, chat: privateChat, text: "Ставка" },
+      },
+    } as Update);
+    const shown = calls.find((call) => call.method === "editMessageText");
+    expect(shown?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Ставка 1\s300\s₽ принята<\/b>/),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "К лоту",
+              callback_data: encodeAuctionCallback({
+                kind: "lot",
+                lotId,
+                page: 0,
+              }),
+            },
+            { text: "Меню", callback_data: entryCallback("menu") },
+          ],
+        ],
+      },
+    });
+  });
+
   it.each([
     [{ text: "много" }, "Это не сумма."],
     [{ text: "$20" }, "Ставки принимаются только в рублях."],

@@ -473,6 +473,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         break;
       case "confirm":
         return block.command === "bid" ? "bid-confirm" : "proxy-confirm";
+      case "accepted":
+        return block.command === "bid" ? "bid-accepted" : "proxy-accepted";
       case "question":
         return `${block.question}-question`;
       case "name-choice":
@@ -498,7 +500,7 @@ function isConfirm(id: ScreenId): boolean {
 type HistoryBlock = Extract<AuctionBlock, { kind: "history" }>;
 type FeedBlock = Extract<AuctionBlock, { kind: "feed" }>;
 
-// Экраны листа ставки (PER-317): подтверждение, вопрос и выбор имени. Тексты
+// Экраны листа ставки (PER-317): подтверждение, исход, вопрос и выбор имени. Тексты
 // принадлежат оболочке; слова — те же, что у бота хаба, словарь один.
 function renderLeaf(
   blocks: readonly AuctionBlock[],
@@ -507,6 +509,8 @@ function renderLeaf(
     switch (block.kind) {
       case "confirm":
         return { format: "html", text: confirmText(block) };
+      case "accepted":
+        return { format: "html", text: acceptedText(block) };
       case "question":
         return { format: "html", text: questionText(block), asks: true };
       case "name-choice":
@@ -538,6 +542,23 @@ function confirmText(
         ...lotLine(block.title),
         `Лимит: ${money(block.amount)}`,
         proxyGap(block.currentPrice, block.amount),
+        "Лимит видишь только ты.",
+      ].join("\n");
+}
+
+// Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с
+// новой ценой открывает «К лоту».
+function acceptedText(
+  block: Extract<AuctionBlock, { kind: "accepted" }>,
+): string {
+  return block.command === "bid"
+    ? [
+        `<b>Ставка ${money(block.amount)} принята</b>`,
+        ...lotLine(block.title),
+      ].join("\n")
+    : [
+        `<b>Автоставка до ${money(block.amount)} включена</b>`,
+        ...lotLine(block.title),
         "Лимит видишь только ты.",
       ].join("\n");
 }
@@ -622,15 +643,11 @@ function answerRefusalText(refusal: AnswerRefusal): string {
 }
 
 // Исход команды — первая строка карточки (дизайн-код, «Доставка»): после «Да»
-// человек видит и ответ Auction, и лот. Отказ называет цену сам.
+// человек видит и ответ Auction, и лот. Отказ называет цену сам; принятая
+// команда — свой экран.
 export function resultText(result: CommandResult): string {
   if (result.kind === "unknown") {
     return "Аукцион не ответил. Проверь цену на карточке: команда могла пройти.";
-  }
-  if (result.kind === "accepted") {
-    return result.command === "bid"
-      ? `Ставка ${money(result.amount)} принята.`
-      : `Автоставка до ${money(result.amount)} включена.`;
   }
   const { refusal } = result;
   switch (refusal.kind) {
@@ -927,6 +944,8 @@ function renderButton(
       return text("Взять псевдоним");
     case "name.back":
       return text("‹ Лот");
+    case "accepted.lot":
+      return text("К лоту");
     default: {
       const _exhaustive: never = button;
       return _exhaustive;

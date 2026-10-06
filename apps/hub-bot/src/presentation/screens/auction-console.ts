@@ -307,7 +307,6 @@ export function weekConfirmScreen(confirm: {
       yes: "Да, открыть неделю",
       yesData: consoleConfirmData(auction, uuidToToken(confirm.opId)),
       noData: consoleViewData(auction),
-      danger: true,
     }),
     format: "HTML",
   };

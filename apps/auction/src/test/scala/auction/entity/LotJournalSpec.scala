@@ -106,6 +106,24 @@ final class LotJournalSpec
       )
     }
 
+    "keep the stored form of a bid a proxy overtook in the same command and read the golden file back" in {
+      keepsGolden(
+        "bid-placed-overtaken",
+        LotJournal.store(
+          uuid(1),
+          transaction(2, Initiator.Participant(participant(2))),
+          placed.copy(overtakenByProxy = true)
+        )
+      )
+    }
+
+    "read a bid written before the overtaken flag as a bid nobody overtook" in {
+      val stored = LotJournal.store(uuid(1), transaction(2, Initiator.Participant(participant(2))), placed)
+      val row = write(kit.system, stored).copy(bytes = golden("legacy/bid-placed"))
+
+      LotJournal.envelope(1, read(kit.system, row).asInstanceOf[StoredLotEvent]).event shouldBe placed
+    }
+
     "keep the stored form of a bid placed by a proxy without a source and read the golden file back" in {
       keepsGolden(
         "bid-placed-proxy",

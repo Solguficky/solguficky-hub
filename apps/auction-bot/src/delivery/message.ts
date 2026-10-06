@@ -122,14 +122,29 @@ export function renderNotification(
     title === undefined || title === ""
       ? undefined
       : `«${truncate(title, TITLE_LIMIT)}»`;
-  const text =
-    content.kind === "lot-outbid"
-      ? `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`
-      : `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(content.price)}.`;
+  const text = notificationText(content, lot);
   return {
     text,
     button: { text: "К лоту", callback_data: traceLotCallback(content.lotId) },
   };
+}
+
+function notificationText(
+  content: Exclude<AuctionNotificationContent, { kind: "access-granted" }>,
+  lot: string | undefined,
+): string {
+  switch (content.kind) {
+    case "lot-outbid":
+      return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`;
+    case "lot-proxy-raised":
+      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(content.currentPrice)}: лидируешь ты.`;
+    case "lot-purchased":
+      return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(content.price)}.`;
+    default: {
+      const _exhaustive: never = content;
+      return _exhaustive;
+    }
+  }
 }
 
 // Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст

@@ -255,7 +255,7 @@ describe("closing access", () => {
   const member = person(1, true);
   const token = uuidToToken(member.identityId);
 
-  it("asks with a danger confirmation and returns to the same page", () => {
+  it("asks with a plain confirmation and returns to the same page", () => {
     const screen = closeAccessConfirmScreen(member, {
       kind: "admitted",
       page: 2,
@@ -267,7 +267,6 @@ describe("closing access", () => {
         {
           text: "Да, закрыть доступ",
           callback_data: `v1:cm:by:${token}:a2`,
-          style: "danger",
         },
       ],
       [{ text: "Нет", callback_data: "v1:cm:a:2" }],

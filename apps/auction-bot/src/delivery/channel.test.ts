@@ -31,6 +31,14 @@ const silent: Logger = {
 };
 
 function outbid(id: number, recipient = 42) {
+  return lotFact(id, recipient, "lotOutbid");
+}
+
+function lotFact(
+  id: number,
+  recipient: number,
+  branch: "lotOutbid" | "lotProxyRaised",
+) {
   return {
     data: toBinary(
       NotificationSchema,
@@ -39,7 +47,7 @@ function outbid(id: number, recipient = 42) {
         recipientId: `0198f2a4-7c1e-7d3a-9b21-${String(recipient).padStart(12, "0")}`,
         createdAt: "2026-10-04T10:00:00Z",
         type: {
-          case: "lotOutbid",
+          case: branch,
           value: {
             lotId,
             currentPrice: { minorUnits: 150_000n, currency: "RUB" },
@@ -127,6 +135,28 @@ describe("auction delivery channel", () => {
     await channel(journal, sendMessage)(redelivered);
     expect(sendMessage).toHaveBeenCalledOnce();
     expect(redelivered.ack).toHaveBeenCalledOnce();
+  });
+
+  // Критерий приёмки PER-473: автоставка лидера, ответившая сопернику, даёт
+  // два факта одного события — перебитому и лидеру; каждый доходит своим
+  // сообщением с «К лоту» и только один раз, сколько бы шина его ни выдавала.
+  it("delivers the outbid to the rival and the proxy raise to the leader once each", async () => {
+    const journal = memoryJournal();
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const handle = channel(journal, sendMessage);
+    await handle(lotFact(1, 41, "lotOutbid"));
+    await handle(lotFact(2, 42, "lotProxyRaised"));
+    await handle(lotFact(1, 41, "lotOutbid"));
+    await handle(lotFact(2, 42, "lotProxyRaised"));
+
+    expect(sendMessage.mock.calls.map(([chatId]) => chatId)).toEqual([41, 42]);
+    const [, rivalText] = sendMessage.mock.calls[0] ?? [];
+    const [, leaderText, leaderOptions] = sendMessage.mock.calls[1] ?? [];
+    expect(rivalText).toContain("перебили");
+    expect(leaderText).toContain("Твоя автоставка на «Кружка»");
+    const button = leaderOptions.reply_markup.inline_keyboard[0][0];
+    expect(button.text).toBe("К лоту");
+    expect(parseTraceCallback(button.callback_data)).toContain(":lot:");
   });
 
   // Критерий приёмки: заблокировавший бот человек не ломает следующие факты.

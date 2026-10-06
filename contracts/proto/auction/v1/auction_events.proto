@@ -144,6 +144,17 @@ message BidPlaced {
     ManualBid manual = 2;
     ProxyBid proxy = 3;
   }
+
+  // True on a manual bid that the same command answered with a proxy bid of
+  // another participant: the next fact of the lot carries that proxy bid, and
+  // the lead this bid took did not survive the command. Always false on a proxy
+  // bid.
+  bool overtaken_by_proxy = 4;
+
+  // True on a proxy bid placed by a command of another participant - their bid
+  // or their limit - rather than by the bidder's own limit. Always false on a
+  // manual bid.
+  bool answers_other_bidder = 5;
 }
 
 // A bid a participant placed by hand.

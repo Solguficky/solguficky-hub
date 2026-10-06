@@ -179,7 +179,6 @@ export function declineConfirmScreen(
       yes: "Да, отказать",
       yesData: `v1:cm:qy:${cardCursorData(cursor)}`,
       noData: sameCardData(cursor),
-      danger: true,
     }),
     format: "HTML",
   };

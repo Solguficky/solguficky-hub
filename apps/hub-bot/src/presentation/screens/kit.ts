@@ -106,14 +106,15 @@ export function menuOnly(keyboard = new InlineKeyboard()): InlineKeyboard {
 
 /**
  * Клавиатура подтверждения: «Да, <глагол>» и «Нет» двумя рядами, без ряда
- * навигации. `danger` красит подтверждение действия, которое человек не
- * отменит с того же экрана; ссылка на источник, если она есть, идёт первой.
+ * навигации. `money` — подтверждение траты денег (ставка и автоставка): только
+ * его «Да» красится `danger` (PER-473); необратимость остальных называет текст.
+ * Ссылка на источник, если она есть, идёт первой.
  */
 export function confirmKeyboard(confirm: {
   yes: string;
   yesData: string;
   noData: string;
-  danger?: boolean;
+  money?: boolean;
   lead?: { text: string; url: string };
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
@@ -122,7 +123,7 @@ export function confirmKeyboard(confirm: {
   }
   keyboard.text(confirm.yes, confirm.yesData);
   // Стиль grammY ставит на последнюю добавленную кнопку.
-  if (confirm.danger === true) keyboard.danger();
+  if (confirm.money === true) keyboard.danger();
   return keyboard.row().text(noLabel, confirm.noData);
 }
 

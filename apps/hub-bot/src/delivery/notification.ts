@@ -208,6 +208,7 @@ function toContent(message: Notification): NotificationContent | undefined {
     // Ветки аукциона доставляет бот аукциона (PER-328): общий поток несёт их
     // и сюда, и хаб подтверждает их без журнала и без отказа.
     case "lotOutbid":
+    case "lotProxyRaised":
     case "lotPurchased":
       return { kind: "foreign", type: type.case };
     default:

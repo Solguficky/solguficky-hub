@@ -6,8 +6,13 @@ using Npgsql;
 
 namespace Notifications.Auction;
 
-public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Purchased, Duplicate }
-public sealed record AuctionApplication(AuctionOutcome Outcome, int FactsCreated);
+public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate }
+
+/// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
+public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDictionary<string, int> Created)
+{
+    public int FactsCreated => Created.Values.Sum();
+}
 
 /// <summary>Ключ события и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
 public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> options)
@@ -17,18 +22,28 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
         if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, bid.EventId, now, cancellationToken) == 0)
         {
-            return new AuctionApplication(AuctionOutcome.Duplicate, 0);
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
-        var created = 0;
-        var outcome = bid.PreviousLeader is null ? AuctionOutcome.FirstBid : AuctionOutcome.LeaderUnchanged;
+        var created = new Dictionary<string, int>();
+        var notAfter = now + options.Value.StaleAfter;
+        var outcome = bid.PreviousLeader is null ? AuctionOutcome.FirstBid
+            : bid.OvertakenByProxy ? AuctionOutcome.Overtaken
+            : AuctionOutcome.LeaderUnchanged;
         if (bid.OutbidRecipient is not null)
         {
-            var notAfter = now + options.Value.StaleAfter;
             var notification = AuctionFacts.Outbid(Guid.CreateVersion7(now), bid, now, notAfter);
-            created = await NotificationStore.AddAddressed(work, notification, AuctionFacts.OutbidType,
+            created[AuctionFacts.OutbidType] = await NotificationStore.AddAddressed(work, notification, AuctionFacts.OutbidType,
                 AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter, cancellationToken);
             outcome = AuctionOutcome.Outbid;
+        }
+        // Уникальность факта — (тип, повод, получатель), поэтому лидер и
+        // перебитый получают по факту от одного события, а повтор — ни одного.
+        if (bid.ProxyRaisedRecipient is not null)
+        {
+            var notification = AuctionFacts.ProxyRaised(Guid.CreateVersion7(now), bid, now, notAfter);
+            created[AuctionFacts.ProxyRaisedType] = await NotificationStore.AddAddressed(work, notification,
+                AuctionFacts.ProxyRaisedType, AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter, cancellationToken);
         }
         await work.Commit(cancellationToken);
         return new AuctionApplication(outcome, created);
@@ -39,7 +54,7 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
         if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, sale.EventId, now, cancellationToken) == 0)
         {
-            return new AuctionApplication(AuctionOutcome.Duplicate, 0);
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
         var notAfter = now + options.Value.StaleAfter;
@@ -47,6 +62,7 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         var created = await NotificationStore.AddAddressed(work, notification, AuctionFacts.PurchasedType,
             AuctionFacts.CauseKind, sale.EventId.ToString(), now, notAfter, cancellationToken);
         await work.Commit(cancellationToken);
-        return new AuctionApplication(AuctionOutcome.Purchased, created);
+        return new AuctionApplication(AuctionOutcome.Purchased,
+            new Dictionary<string, int> { [AuctionFacts.PurchasedType] = created });
     }
 }

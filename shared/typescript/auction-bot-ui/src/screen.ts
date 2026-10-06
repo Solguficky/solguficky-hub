@@ -62,6 +62,18 @@ export type AuctionBlock =
     }
   | { kind: "result"; result: CommandResult }
   | {
+      // Принятая ставка или лимит — свой экран, а не строка над карточкой
+      // (PER-473): цена на карточке сразу после «Да» ещё прежняя, потому что
+      // чтение Auction отстаёт от команды. Карточку открывает кнопка, и она
+      // читает лот заново.
+      kind: "accepted";
+      command: AuctionCommand;
+      lotId: string;
+      auctionId: string;
+      title?: string;
+      amount: Money;
+    }
+  | {
       // Подтверждение команды участника: ставку отменить нельзя (дизайн-код,
       // «Клавиатура»). Отдельного ряда навигации у него нет.
       kind: "confirm";
@@ -108,12 +120,11 @@ export type AuctionBlock =
       entries: readonly HistoryItem[];
     };
 
-// Исход команды участника, которым открывается карточка после «Да». Отказ
-// называет цену сам: оболочка пишет его первой строкой экрана.
+// Исход команды участника, которым открывается карточка после «Да» или после
+// ответа, отвергнутого до «Да». Отказ называет цену сам: оболочка пишет его
+// первой строкой экрана. Принятая команда — не строка, а экран `accepted`.
 export type CommandResult =
-  | { command: "bid"; kind: "accepted"; amount: Money }
   | { command: "bid"; kind: "refused"; refusal: BidRefusal }
-  | { command: "proxy"; kind: "accepted"; amount: Money }
   | { command: "proxy"; kind: "refused"; refusal: ProxyLimitRefusal }
   // Ответа Auction не дождались и после повтора тем же `op_id`: команда могла
   // пройти. Карточка, перечитанная следом, показывает, что вышло.
@@ -151,6 +162,7 @@ export type AuctionButton =
         | "name.username"
         | "name.alias"
         | "name.back"
+        | "accepted.lot"
         | "history.prev"
         | "history.next"
         | "history.back";

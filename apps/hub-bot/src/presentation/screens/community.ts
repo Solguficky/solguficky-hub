@@ -236,7 +236,7 @@ export function viewOfOrigin(origin: BlockOrigin): CommunityView {
 
 /**
  * Подтверждение закрытия доступа. Закрытый человек из списков уходит, и
- * вернуть его из бота нельзя, поэтому «Да» красится `danger`.
+ * вернуть его из бота нельзя: это говорит текст, а не цвет (PER-473).
  */
 export function closeAccessConfirmScreen(
   member: CommunityMember,
@@ -256,7 +256,6 @@ export function closeAccessConfirmScreen(
       yes: "Да, закрыть доступ",
       yesData: `v1:cm:by:${token}:${blockOriginData(origin)}`,
       noData,
-      danger: true,
     }),
     format: "HTML",
   };

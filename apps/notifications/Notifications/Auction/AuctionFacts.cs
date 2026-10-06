@@ -7,6 +7,7 @@ public static class AuctionFacts
 {
     public const string OutbidType = "lot_outbid";
     public const string PurchasedType = "lot_purchased";
+    public const string ProxyRaisedType = "lot_proxy_raised";
     public const string CauseKind = "auction_lot_event";
 
     public static Notification Outbid(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) => new()
@@ -17,6 +18,16 @@ public static class AuctionFacts
         NotAfter = notAfter.ToUniversalTime().ToString("O"),
         Cause = new Cause { AuctionLotEventId = bid.EventId.ToString() },
         LotOutbid = new LotOutbid { LotId = bid.LotId.ToString(), CurrentPrice = bid.Price.Clone() },
+    };
+
+    public static Notification ProxyRaised(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = (bid.ProxyRaisedRecipient ?? throw new ArgumentException("bid did not answer another bidder", nameof(bid))).ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionLotEventId = bid.EventId.ToString() },
+        LotProxyRaised = new LotProxyRaised { LotId = bid.LotId.ToString(), CurrentPrice = bid.Price.Clone() },
     };
 
     public static Notification Purchased(Guid notificationId, AuctionSale sale, DateTimeOffset now, DateTimeOffset notAfter) => new()

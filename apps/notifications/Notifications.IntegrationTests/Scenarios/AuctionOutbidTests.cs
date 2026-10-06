@@ -57,6 +57,45 @@ public class AuctionOutbidTests
         (await nats.PublishedFacts()).ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Ручная ставка соперника и ответная автоставка лидера — одна команда и
+    /// два факта Auction (PER-473). Лидер не получает «перебили» по первому и
+    /// получает «подняла цену» по второму, соперник — «перебили»; повтор обоих
+    /// событий фактов не добавляет.
+    /// </summary>
+    [Fact]
+    public async Task When_LeaderProxyAnswersRivalBid_Expect_OneFactEachForLeaderAndRivalAndNoneOnRedelivery()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var lot = EventFactory.NewId();
+        var leader = EventFactory.NewId();
+        var rival = EventFactory.NewId();
+        var manual = EventFactory.Bid(lot, leader, rival, version: 4, overtaken: true);
+        var proxy = EventFactory.Bid(lot, rival, leader, version: 5, proxy: true, answers: true);
+        await nats.Publish(AuctionFeed.BidPlacedSubject, manual);
+        await nats.Publish(AuctionFeed.BidPlacedSubject, proxy);
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+
+        var facts = published.Select(entry => entry.Fact).ToList();
+        var raised = facts.Single(fact => fact.TypeCase == Notification.TypeOneofCase.LotProxyRaised);
+        raised.RecipientId.ShouldBe(leader);
+        raised.Cause.AuctionLotEventId.ShouldBe(proxy.EventId);
+        raised.LotProxyRaised.LotId.ShouldBe(lot);
+        raised.LotProxyRaised.CurrentPrice.ShouldBe(proxy.State.Trading.CurrentPrice);
+        var outbid = facts.Single(fact => fact.TypeCase == Notification.TypeOneofCase.LotOutbid);
+        outbid.RecipientId.ShouldBe(rival);
+        outbid.Cause.AuctionLotEventId.ShouldBe(proxy.EventId);
+
+        await nats.Publish(AuctionFeed.BidPlacedSubject, manual, messageId: Guid.NewGuid().ToString());
+        await nats.Publish(AuctionFeed.BidPlacedSubject, proxy, messageId: Guid.NewGuid().ToString());
+        await Eventually(() => Task.FromResult(silo.Service<AuctionTelemetry>().Total("duplicate")), count => count == 2);
+        silo.Service<AuctionTelemetry>().Total("overtaken").ShouldBe(1);
+        (await Count(db, "notification")).ShouldBe(2);
+        (await nats.PublishedFacts()).Count.ShouldBe(2);
+    }
+
     [Fact]
     public async Task When_EventRedeliveredWithNewTransportId_Expect_NoSecondFact()
     {
