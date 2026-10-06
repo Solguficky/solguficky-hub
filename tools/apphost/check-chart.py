@@ -26,8 +26,9 @@ workload is checked against the rules of the production chart:
   pre-upgrade Helm hook, because the services bind to their durables at start
   and a post-hook would wait for pods that never get ready without it. Its
   image is pinned by digest, it runs as non-root with limits and never
-  restarts in place, and every object it reads is a hook of the same events:
-  a pre-hook runs before the release's own objects exist.
+  restarts in place, and every object it reads is rendered as a hook of the
+  same events with a lower weight: a pre-hook runs before the release's own
+  objects exist, and Helm creates the hooks of one event in weight order.
 
 The fixture proves that the chart carries a digest through, not that a digest
 is real: real digests live in the ops repository (ADR-055).
@@ -60,6 +61,8 @@ STRATEGY = re.compile(r'^  strategy:\s*\n((?:    .*\n?)*)', re.M)
 IMAGE = re.compile(r'^\s*(?:- )?image:\s*"?([^"\s]+)"?\s*$', re.M)
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 HOOK = re.compile(r'^    helm\.sh/hook:\s*"?([\w,-]+)"?\s*$', re.M)
+WEIGHT = re.compile(r'^    helm\.sh/hook-weight:\s*"?(-?\d+)"?\s*$', re.M)
+REFERENCE = re.compile(r'^\s*(?:- )?(?:configMap|secretRef|configMapRef|secret):\s*\n\s+(?:name|secretName):\s*"?([\w.-]+)"?\s*$', re.M)
 COMPONENT = re.compile(r'^    app\.kubernetes\.io/component:\s*"?([\w.-]+)"?\s*$', re.M)
 
 
@@ -133,9 +136,17 @@ def probe_action(text: str, probe: str) -> str | None:
     return actions[0] if actions else "none"
 
 
+def hook_weight(text: str) -> int:
+    """Helm reads a missing weight as 0."""
+    weight = WEIGHT.search(text)
+    return int(weight.group(1)) if weight else 0
+
+
 def check_rendered(rendered: Path) -> list[str]:
     errors = []
     found = {}
+    inputs = {}
+    jobs = {}
     for path, text in documents(rendered):
         kind = KIND.search(text)
         component = COMPONENT.search(text)
@@ -145,6 +156,9 @@ def check_rendered(rendered: Path) -> list[str]:
                 errors.append(
                     f"{component.group(1)}: {kind.group(1) if kind else 'object'} in {path} must be a {HOOK_EVENTS} hook "
                     f"like its Job, got {hook.group(1) if hook else 'no hook'}")
+            input_name = NAME.search(text)
+            if input_name:
+                inputs[input_name.group(1)] = (component.group(1), kind.group(1) if kind else "object", path, hook_weight(text))
             continue
         if not kind or kind.group(1) not in WORKLOAD_KINDS:
             continue
@@ -157,6 +171,7 @@ def check_rendered(rendered: Path) -> list[str]:
             if name in found:
                 errors.append(f"{name}: rendered twice ({found[name]} and {path})")
             found[name] = path
+            jobs[name] = (hook_weight(text), REFERENCE.findall(text))
             errors.extend(check_hook_job(name, text))
             continue
         if kind.group(1) != "Deployment":
@@ -173,6 +188,17 @@ def check_rendered(rendered: Path) -> list[str]:
         errors.append(f"{name}: chart service has no workload")
     for name in sorted(HOOK_JOBS - set(found)):
         errors.append(f"{name}: chart has no hook Job")
+    for name, (weight, references) in sorted(jobs.items()):
+        # A reference to an object the chart does not render passes helm and
+        # leaves the pod in ContainerCreating until the Job's deadline.
+        for reference in references:
+            if reference not in inputs or inputs[reference][0] != name:
+                errors.append(f"{name}: Job reads {reference}, which the chart does not render as its hook input")
+    for input_name, (name, kind, path, weight) in sorted(inputs.items()):
+        if name in jobs and weight >= jobs[name][0]:
+            errors.append(
+                f"{name}: {kind} {input_name} in {path} has hook weight {weight}, not below its Job's {jobs[name][0]}: "
+                f"Helm may create it after the Job starts")
     return errors
 
 

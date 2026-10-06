@@ -40,19 +40,37 @@ public class JetStreamTopologyScriptTests
 
         foreach (var stream in JetStreamTopology.Streams)
         {
-            script.ShouldContain($"nats stream add --config \"$dir/{JetStreamTopologyScript.StreamFile(stream.Name)}\"");
+            Occurrences(script, $"nats stream add --config \"$dir/{JetStreamTopologyScript.StreamFile(stream.Name)}\"").ShouldBe(1);
         }
 
         foreach (var durable in JetStreamTopology.Durables)
         {
-            script.ShouldContain($"nats consumer add {durable.Stream} --config \"$dir/{JetStreamTopologyScript.ConsumerFile(durable.Durable)}\"");
+            Occurrences(script, $"nats consumer add {durable.Stream} --config \"$dir/{JetStreamTopologyScript.ConsumerFile(durable.Durable)}\"").ShouldBe(1);
         }
 
         foreach (var bucket in JetStreamTopology.KeyValueBuckets)
         {
-            script.ShouldContain($"nats kv add {bucket.Bucket} --history 1 --ttl 192h --storage file --replicas 1");
+            var config = JetStreamTopology.ToConfig(bucket);
+            Occurrences(script, $"nats kv add {bucket.Bucket} --history {config.History} --ttl {(long)config.MaxAge.TotalHours}h").ShouldBe(1);
         }
     }
+
+    /// <summary>
+    /// <c>edit</c> идёт на любом отказе <c>add</c>, и без придержанной ошибки
+    /// <c>add</c> лог Job показал бы только вторичное «not found» от <c>edit</c>.
+    /// </summary>
+    [Fact]
+    public void Script_AddFailure_IsReportedWhenEditFailsToo()
+    {
+        var script = JetStreamTopologyScript.Script();
+        var adds = JetStreamTopology.Streams.Count() + JetStreamTopology.Durables.Count() + JetStreamTopology.KeyValueBuckets.Count();
+
+        Occurrences(script, "if ! err=$(nats ").ShouldBe(adds);
+        Occurrences(script, "add failed: $err\" >&2; exit 1;").ShouldBe(adds);
+    }
+
+    private static int Occurrences(string text, string fragment) =>
+        text.Split(fragment).Length - 1;
 
     /// <summary>
     /// Скрипт исполняет sh в Linux-образе: возврат каретки сделал бы каждую

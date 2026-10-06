@@ -107,30 +107,44 @@ internal static class JetStreamTopologyScript
         foreach (var stream in JetStreamTopology.Streams)
         {
             var file = $"\"$dir/{StreamFile(stream.Name)}\"";
-            Line(script,
-                $"nats stream add --config {file} >/dev/null 2>&1 || nats stream edit {stream.Name} --config {file} -f >/dev/null");
-            Line(script, $"echo \"stream {stream.Name}\"");
+            Apply(script, $"stream {stream.Name}",
+                add: $"nats stream add --config {file}",
+                edit: $"nats stream edit {stream.Name} --config {file} -f");
         }
 
         foreach (var durable in JetStreamTopology.Durables)
         {
             var file = $"\"$dir/{ConsumerFile(durable.Durable)}\"";
-            Line(script,
-                $"nats consumer add {durable.Stream} --config {file} >/dev/null 2>&1 || nats consumer edit {durable.Stream} {durable.Durable} --config {file} -f >/dev/null");
-            Line(script, $"echo \"durable {durable.Durable}\"");
+            Apply(script, $"durable {durable.Durable}",
+                add: $"nats consumer add {durable.Stream} --config {file}",
+                edit: $"nats consumer edit {durable.Stream} {durable.Durable} --config {file} -f");
         }
 
         foreach (var bucket in JetStreamTopology.KeyValueBuckets)
         {
             var config = JetStreamTopology.ToConfig(bucket);
             var ttl = Hours(config.MaxAge);
-            Line(script,
-                $"nats kv add {bucket.Bucket} --history {config.History} --ttl {ttl} --storage {Api(config.Storage)} --replicas {config.NumberOfReplicas} >/dev/null 2>&1 " +
-                $"|| nats kv edit {bucket.Bucket} --history {config.History} --ttl {ttl} >/dev/null");
-            Line(script, $"echo \"bucket {bucket.Bucket}\"");
+            // edit несёт только history и ttl: storage живого бакета JetStream
+            // не меняет, а смену storage или replicas в таблице Job молча
+            // пропустит. Такая правка — пересоздание бакета руками.
+            Apply(script, $"bucket {bucket.Bucket}",
+                add: $"nats kv add {bucket.Bucket} --history {config.History} --ttl {ttl} --storage {Api(config.Storage)} --replicas {config.NumberOfReplicas}",
+                edit: $"nats kv edit {bucket.Bucket} --history {config.History} --ttl {ttl}");
         }
 
         return script.ToString();
+    }
+
+    // edit идёт на любом отказе add, а не только на 10058: код CLI наружу не
+    // выходит. Поэтому отказ add не глушится, а придерживается: если edit тоже
+    // упал, в логе Job стоит и первопричина (пересечение subjects, выключенный
+    // JetStream), а не одно вторичное «not found».
+    private static void Apply(StringBuilder script, string name, string add, string edit)
+    {
+        Line(script, $"if ! err=$({add} 2>&1 >/dev/null); then");
+        Line(script, $"  {edit} >/dev/null || {{ echo \"{name}: add failed: $err\" >&2; exit 1; }}");
+        Line(script, "fi");
+        Line(script, $"echo \"{name}\"");
     }
 
     // Перевод строки явный: AppendLine на Windows дал бы CRLF, sh в образе

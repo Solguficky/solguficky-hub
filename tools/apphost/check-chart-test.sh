@@ -92,6 +92,7 @@ metadata:
   name: "jetstream-topology"
   annotations:
     helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-weight: "0"
   labels:
     app.kubernetes.io/component: "jetstream-topology"
 spec:
@@ -105,6 +106,10 @@ spec:
       securityContext:
         runAsNonRoot: true
       restartPolicy: "Never"
+      volumes:
+        - name: "topology"
+          configMap:
+            name: "jetstream-topology-files"
 ---
 apiVersion: "v1"
 kind: "ConfigMap"
@@ -112,6 +117,7 @@ metadata:
   name: "jetstream-topology-files"
   annotations:
     helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-weight: "-10"
   labels:
     app.kubernetes.io/component: "jetstream-topology"
 EOF
@@ -226,9 +232,18 @@ sed -i '0,/pre-install,pre-upgrade/s//post-install,post-upgrade/' "$work/solgufi
 assert_fails "the topology Job as a post-hook" "jetstream-topology: Job must be a pre-install,pre-upgrade hook, got post-install,post-upgrade" "$work"
 
 work=$(tree topology-input-not-hook)
-sed -i '/name: "jetstream-topology-files"/{n;d}' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
-sed -i '/name: "jetstream-topology-files"/{n;d}' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+sed -i '/^  name: "jetstream-topology-files"/{n;d}' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+sed -i '/^  name: "jetstream-topology-files"/{n;d}' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
 assert_fails "a topology input outside the hook" "jetstream-topology: ConfigMap" "$work"
+
+work=$(tree topology-input-same-weight)
+sed -i 's/hook-weight: "-10"/hook-weight: "0"/' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "a topology input created no earlier than the Job" "jetstream-topology: ConfigMap jetstream-topology-files" "$work"
+
+work=$(tree topology-input-missing)
+sed -i '/^kind: "ConfigMap"/,$d' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+sed -i '$d' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "a topology Job reading an input the chart does not render" "jetstream-topology: Job reads jetstream-topology-files" "$work"
 
 work=$(tree topology-restarts)
 sed -i 's/restartPolicy: "Never"/restartPolicy: "OnFailure"/' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
