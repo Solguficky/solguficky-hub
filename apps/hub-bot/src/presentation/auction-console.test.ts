@@ -383,6 +383,51 @@ describe("entry into the auction console", () => {
     expect(JSON.stringify(shown(member.calls))).not.toContain("Пульт");
   });
 
+  // «Добавить лот» — пока онлайн-неделя не открыта (PER-468): после старта
+  // Auction отвечает `lots_frozen`, и кнопка вела бы в отказ после вопроса.
+  it("shows the lot entry while the auction still accepts lots", async () => {
+    for (const status of ["draft", "scheduled"] as const) {
+      const auction = fakeAuction({ status, lots: [vase] });
+      const { bot, calls } = harness(["admin", "public"], auction);
+      await bot.init();
+      await bot.handleUpdate(press(feedData));
+      expect(labels(last(calls)).slice(0, 2)).toEqual([
+        ["Добавить лот"],
+        ["Пульт"],
+      ]);
+      expect(auction.sent("getAuctionConsole")).toHaveLength(1);
+    }
+  });
+
+  it("hides the lot entry once the online week is open and keeps the console", async () => {
+    const auction = fakeAuction({ status: "prebidding", lots: [vase] });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+    const feed = last(calls);
+    expect(labels(feed)[0]).toEqual(["Пульт"]);
+    expect(JSON.stringify(feed)).not.toContain("Добавить лот");
+  });
+
+  it("keeps the lot entry when the console cannot be read", async () => {
+    const auction = fakeAuction({ status: "prebidding", refuse: true });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+    expect(labels(last(calls)).slice(0, 2)).toEqual([
+      ["Добавить лот"],
+      ["Пульт"],
+    ]);
+  });
+
+  it("does not read the console for a member's feed", async () => {
+    const auction = fakeAuction({ lots: [vase] });
+    const { bot } = harness(["member", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+    expect(auction.sent("getAuctionConsole")).toEqual([]);
+  });
+
   it("refuses an old console button of someone who is not an administrator before Auction is asked", async () => {
     const auction = fakeAuction({ lots: [vase] });
     const { bot, calls, records } = harness(["member", "public"], auction);

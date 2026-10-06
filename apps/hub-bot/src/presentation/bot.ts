@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  type AuctionBlock,
   type AuctionResult,
   type AuctionScreenBody,
   type AuctionUpdate,
@@ -11,6 +12,7 @@ import {
   type Viewer,
 } from "@solguficky/auction-bot-ui";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
+import { acceptsLots } from "../application/auction-console.js";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
@@ -38,6 +40,7 @@ import type {
   LotAskError,
   LotFormView,
   LotQuestion,
+  MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
   Person,
@@ -90,7 +93,6 @@ import {
   photoFileId,
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
-import type { NavScreen } from "./commands.js";
 import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
@@ -599,11 +601,11 @@ async function handleMessage(
   ctx.waiting = waiting;
   try {
     const parsed = parseUpdate(ctx.update, ctx.me.username);
-    // Команда меню, выбранная, пока клиент держит режим ответа на вопрос,
+    // Команда, выбранная, пока клиент держит режим ответа на вопрос,
     // приходит ответом на него. Это команда, а не значение поля: разбор ответа
     // её не видит. Человек ушёл от вопроса, и брошенный вопрос удаляется:
     // иначе клиент держал бы режим ответа на него и дальше.
-    const command = parsed.kind === "start" || parsed.kind === "screen";
+    const command = parsed.kind === "start";
     const replyId = command
       ? undefined
       : ctx.message?.reply_to_message?.message_id;
@@ -1418,63 +1420,37 @@ async function handleMessage(
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
-    useCase =
-      parsed.kind === "screen"
-        ? navScreenUseCase(parsed.screen)
-        : deepLink?.kind === "meetup"
-          ? "view_meetup"
-          : "find_meetup";
+    useCase = deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
     // `/start` и `/menu` — вход на поверхность (ADR-060): вместо разрешения
     // личности бот зовёт `RequestRole` с кругом хаба, и Identity гасит белый
     // список или ставит заявку. Личность по-прежнему разрешается один раз на
-    // update. Команда экрана — обычное действие: на ней только проверка роли.
-    let identity: Person;
-    let access: HubAccess;
-    if (parsed.kind === "start") {
-      const answered = await runtime.identity.requestRole(
-        hubRoleRequest(parsed, deepLink),
-        rpcCall(ctx, useCase),
+    // update.
+    const roleAnswer = await runtime.identity.requestRole(
+      hubRoleRequest(parsed, deepLink),
+      rpcCall(ctx, useCase),
+    );
+    if (roleAnswer.kind !== "answered") {
+      outcome = await replyFailClosed(
+        ctx,
+        identityFailureOutcome(roleAnswer, useCase),
       );
-      if (answered.kind !== "answered") {
-        outcome = await replyFailClosed(
-          ctx,
-          identityFailureOutcome(answered, useCase),
-        );
-        return;
-      }
-      const entry = decideHubEntry(answered);
-      if (entry.kind === "unknown-outcome") {
-        outcome = await replyFailClosed(ctx, {
-          level: "error",
-          message: "identity answered an unknown role request outcome",
-          result: "error",
-          use_case: useCase,
-          identity_id: entry.identityId,
-          error_category: "invariant",
-          error: "role_request_outcome_unspecified",
-        });
-        return;
-      }
-      identity = entry.person;
-      access = entry.access;
-    } else {
-      const resolved = await runtime.identity.resolve(
-        toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
-        rpcCall(ctx, useCase),
-      );
-      if (resolved.kind !== "resolved") {
-        outcome = await replyFailClosed(
-          ctx,
-          identityFailureOutcome(resolved, useCase),
-        );
-        return;
-      }
-      identity = {
-        identityId: resolved.identityId,
-        globalRoles: resolved.globalRoles,
-      };
-      access = decideHubAccess(resolved.globalRoles, resolved.blocked);
+      return;
     }
+    const entry = decideHubEntry(roleAnswer);
+    if (entry.kind === "unknown-outcome") {
+      outcome = await replyFailClosed(ctx, {
+        level: "error",
+        message: "identity answered an unknown role request outcome",
+        result: "error",
+        use_case: useCase,
+        identity_id: entry.identityId,
+        error_category: "invariant",
+        error: "role_request_outcome_unspecified",
+      });
+      return;
+    }
+    const identity = entry.person;
+    const access = entry.access;
     if (access !== "admitted") {
       outcome = await denyHubAccess(
         ctx,
@@ -1483,18 +1459,6 @@ async function handleMessage(
         identity,
         useCase,
         false,
-      );
-      return;
-    }
-    // Команда меню проходит тот же путь, что /start, — Identity и политику
-    // поверхности, — и открывает тот же экран, что и кнопка с тем же именем.
-    if (parsed.kind === "screen") {
-      outcome = await openNavScreen(
-        ctx,
-        runtime,
-        identity,
-        parsed.screen,
-        useCase,
       );
       return;
     }
@@ -4124,8 +4088,12 @@ async function editScreen(
   });
 }
 
-// Экраны, куда ведут и кнопки навигации, и команды меню. Кнопка правит своё
-// сообщение, команда отвечает новым — это решает editScreen, а не вызывающий.
+// Экраны за кнопками навигации `v1:nav:*`: те же, что открывает стартовый
+// экран. Это те же экраны, что за кнопками списка сходок, — кнопка даёт к ним
+// вход, а не новый сценарий. Правит ли кнопка своё сообщение или отвечает
+// новым, решает editScreen, а не вызывающий.
+type NavScreen = "hub" | "archive" | "notify-global";
+
 async function openNavScreen(
   ctx: UpdateContext,
   runtime: BotRuntime,
@@ -4188,20 +4156,6 @@ async function openNavScreen(
   }
 }
 
-function navScreenUseCase(screen: NavScreen): ProductUseCase {
-  switch (screen) {
-    case "hub":
-    case "archive":
-      return "find_meetup";
-    case "notify-global":
-      return "manage_notifications";
-    default: {
-      const _exhaustive: never = screen;
-      return _exhaustive;
-    }
-  }
-}
-
 const meetupCategoryOrder: readonly MeetupCategory[] = [
   "changes",
   "material",
@@ -4241,15 +4195,60 @@ function subscriptionNote(
   return lines.join(" ");
 }
 
-// Карточка, которую представление собирает из результата команды — правки,
-// публикации, смены статуса, — несёт того же автора, что и карточка просмотра.
+// Карточка, которую представление собирает из результата формы или команды —
+// правки, публикации, смены статуса, — переносит сходку, того же автора, что и
+// карточка просмотра, и аукцион, который к результату дописал диспетчер: так
+// она не отличается от карточки, открытой из списка.
 function cardFrom(result: {
   meetup: MeetupSnapshot;
   author?: MeetupAuthor;
+  auction?: MeetupAuctionView;
 }): Extract<ExecuteResult, { kind: "meetup-card" }> {
-  return result.author === undefined
-    ? { kind: "meetup-card", meetup: result.meetup }
-    : { kind: "meetup-card", meetup: result.meetup, author: result.author };
+  return {
+    kind: "meetup-card",
+    meetup: result.meetup,
+    ...(result.author === undefined ? {} : { author: result.author }),
+    ...(result.auction === undefined ? {} : { auction: result.auction }),
+  };
+}
+
+// Аукцион ленты, когда тело — лента: у карточки лота и хронологии свой экран,
+// и лента в них не читается (тот же порядок, что у `auctionScreen`).
+function feedAuctionOf(body: AuctionScreenBody): string | undefined {
+  if (
+    body.blocks.some(
+      (block) => block.kind === "lot" || block.kind === "history",
+    )
+  ) {
+    return undefined;
+  }
+  const feed = body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "feed" }> =>
+      block.kind === "feed",
+  );
+  return feed?.auctionId;
+}
+
+// «Добавить лот» в ленте — пока онлайн-неделя не открыта (PER-468). Статус
+// аукциона лента пакета не несёт, его знает пульт, поэтому для ленты
+// администратора бот читает пульт тем же бюджетом действия. Отказ и
+// недоступность пульта ряд не убирают: отказ после вопроса — то, что было и
+// раньше, а ленту ронять не за что.
+async function auctionAcceptsLots(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  auctionId: string,
+): Promise<boolean> {
+  const console = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-auction-console",
+    auctionId,
+    ...rpcCall(ctx, "view_auction"),
+  });
+  return console.kind === "auction-console"
+    ? acceptsLots(console.console.status)
+    : true;
 }
 
 // «Включить аукцион» на карточке сходки (PER-307). Право решает Auction,
@@ -5118,6 +5117,12 @@ async function handleAuctionCallback(
       return unexpectedOutcome(String(_exhaustive), undefined, useCase);
     }
   }
+  const canManage = isAdministrator(person);
+  const feedAuctionId = canManage ? feedAuctionOf(result.body) : undefined;
+  const canAddLots =
+    feedAuctionId === undefined
+      ? undefined
+      : await auctionAcceptsLots(ctx, runtime, person, feedAuctionId);
   const view: AuctionView = {
     body: result.body,
     feedParent: feedParentOf(ctx, result.body),
@@ -5126,7 +5131,8 @@ async function handleAuctionCallback(
     today: communityToday(ctx),
     // Входы в форму лота видит администратор — по той же роли, что правку
     // сходки и «Включить аукцион».
-    canManage: isAdministrator(person),
+    canManage,
+    ...(canAddLots === undefined ? {} : { canAddLots }),
   };
   const shown = auctionScreen(view);
   if (shown.asks === true) {

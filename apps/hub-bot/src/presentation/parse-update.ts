@@ -3,7 +3,6 @@ import {
   type ResolveIdentityInput,
   toResolveIdentityInput,
 } from "../identity/port.js";
-import { type NavScreen, screenCommands } from "./commands.js";
 import {
   IncomingUpdateSchema,
   MeetupDeepLinkPayloadSchema,
@@ -16,7 +15,6 @@ export type ParsedUpdate =
   // для карточки модератора (ADR-060, пункт 23).
   | ({ kind: "start"; firstName: string } & ResolveIdentityInput &
       ({ deepLink: DeepLink } | Record<never, never>))
-  | ({ kind: "screen"; screen: NavScreen } & ResolveIdentityInput)
   | { kind: "ignored" }
   | { kind: "malformed" };
 
@@ -47,8 +45,10 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
   if (command === undefined) {
     return { kind: "ignored" };
   }
-  const identity = toResolveIdentityInput(BigInt(from.id), from.username);
-  const person = { ...identity, firstName: from.first_name };
+  const person = {
+    ...toResolveIdentityInput(BigInt(from.id), from.username),
+    firstName: from.first_name,
+  };
   if (command.name === "start") {
     return parsedStart(person, startDeepLink(command.argument));
   }
@@ -56,12 +56,8 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
   if (command.name === "menu") {
     return parsedStart(person, undefined);
   }
-  // Хвост после команды меню не значит ничего: экран открывается тот же.
-  const screen = screenCommands.get(command.name);
-  if (screen === undefined) {
-    return { kind: "ignored" };
-  }
-  return { kind: "screen", screen, ...identity };
+  // Других команд у бота нет: разделы открываются кнопками стартового экрана.
+  return { kind: "ignored" };
 }
 
 type Command = { name: string; argument: string | undefined };

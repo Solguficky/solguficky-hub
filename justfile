@@ -651,8 +651,8 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "386"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "145"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "391"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "151"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

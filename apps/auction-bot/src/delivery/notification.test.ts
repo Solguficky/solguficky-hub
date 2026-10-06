@@ -85,6 +85,18 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Права администратора сообщества доставляет бот хаба (PER-468).
+  it("leaves a granted role to the hub bot", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "roleGranted", value: { role: GlobalRole.ADMIN } }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "foreign", type: "roleGranted" } },
+    });
+  });
+
   // Допуск в хаб доставляет бот хаба: здесь это чужая ветка, а не отказ.
   it("leaves an admission to the hub to the hub bot", () => {
     expect(

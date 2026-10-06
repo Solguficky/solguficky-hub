@@ -55,11 +55,11 @@ function fakeAuction(
     // Отказ команды; `undefined` — команда принята.
     add?: () => AddLotResult | undefined;
     schedule?: () => ScheduleLotResult | undefined;
-    // Предел изображения Auction в байтах; по умолчанию — 2 МиБ, как у него.
+    // Предел изображения Auction в байтах; по умолчанию — 1 МиБ, как у него.
     imageLimit?: number;
   } = {},
 ) {
-  const imageLimit = options.imageLimit ?? 2 * 1024 * 1024;
+  const imageLimit = options.imageLimit ?? 1024 * 1024;
   // Байты изображений по лоту: их отдаёт `GetLotImage` экрана лота.
   const images = new Map<string, { content: Uint8Array; version: string }>();
   const lots = new Map<string, LotView>(

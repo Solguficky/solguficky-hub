@@ -486,7 +486,7 @@ export function photoBytesOf(variant: PhotoVariant): Uint8Array | undefined {
       return new Uint8Array(tinyJpeg);
     case "big": {
       // Сигнатура настоящая, размер — больше предела Auction
-      // (`LotCard.MaxBytes`, 2 МБ): отказ должен прийти от сервиса с его
+      // (`LotImage.MaxBytes`, 1 МБ): отказ должен прийти от сервиса с его
       // числом, а не от проверки формата.
       const bytes = new Uint8Array(2_500_000);
       bytes.set(tinyJpeg.subarray(0, 3));

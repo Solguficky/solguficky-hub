@@ -88,7 +88,10 @@ export type RenderableContent =
   | { kind: "access-requested"; circle: AccessCircle }
   // Допуск в хаб получает сам заявитель (PER-442). Круг здесь всегда member:
   // допуск в аукцион доставляет бот аукциона.
-  | { kind: "access-granted" };
+  | { kind: "access-granted" }
+  // Роль, выданная вне заявки, — сегодня только администратора (PER-468).
+  // Получает сам человек; кто выдал, контракт не несёт.
+  | { kind: "role-granted"; role: "admin" };
 
 // Круги, на которые ставят заявку: хаб и аукцион.
 export type AccessCircle = "member" | "public";
@@ -196,6 +199,12 @@ function toContent(message: Notification): NotificationContent | undefined {
         ? { kind: "access-granted" }
         : { kind: "foreign", type: type.case };
     }
+    // Права администратора: Notifications шлёт ветку только для роли admin,
+    // иная роль — дефект издателя, а не новая весть.
+    case "roleGranted":
+      return type.value.role === GlobalRole.ADMIN
+        ? { kind: "role-granted", role: "admin" }
+        : undefined;
     // Ветки аукциона доставляет бот аукциона (PER-328): общий поток несёт их
     // и сюда, и хаб подтверждает их без журнала и без отказа.
     case "lotOutbid":

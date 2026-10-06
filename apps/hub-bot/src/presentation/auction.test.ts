@@ -99,7 +99,10 @@ function fakeMeetups(snapshot = meetup(), down = false): Meetups {
         : { kind: "ok", meetup: snapshot },
     changeAttributes: notUsed,
     setSchedule: notUsed,
-    publish: notUsed,
+    publish: async () => ({
+      kind: "ok",
+      meetup: { ...snapshot, visibility: "visible" },
+    }),
     unpublish: notUsed,
     cancel: notUsed,
     markHeld: notUsed,
@@ -319,6 +322,33 @@ describe("meetup card auction row", () => {
     const card = lastScreen(calls);
     expect(JSON.stringify(card)).not.toContain("Лоты");
     expect(JSON.stringify(card)).not.toContain("Включить аукцион");
+  });
+
+  // Карточка, которой бот отвечает на «Опубликовать», — та же карточка, что
+  // из списка: ряд аукциона на ней есть (PER-468).
+  it("keeps the auction row on the card shown right after publishing", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness(["admin"], auction, {
+      snapshot: { ...meetup(), visibility: "hidden" },
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:publish:${meetupToken}`));
+
+    const card = lastScreen(calls);
+    expect(JSON.stringify(card)).toContain("Сходка опубликована");
+    expect(labels(card)).toContainEqual(["Материалы (0)", "Включить аукцион"]);
+  });
+
+  it("shows the lots entry on the card right after publishing a meetup with an auction", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness(["admin"], auction, {
+      snapshot: { ...meetup(), visibility: "hidden" },
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:publish:${meetupToken}`));
+
+    const card = lastScreen(calls);
+    expect(data(card, "Лоты")).toBe(feedData);
   });
 
   it("offers enabling to the administrator in the materials row", async () => {

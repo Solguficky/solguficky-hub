@@ -121,6 +121,17 @@ export function renderNotification(
       ),
     };
   }
+  if (content.kind === "role-granted") {
+    // Кнопка следа — стартовый экран придёт новым сообщением, а весть о
+    // правах останется в истории; «Управление» человек находит на нём сам.
+    return {
+      text: "Тебе выданы права администратора сообщества. На стартовом экране появилось «Управление».",
+      keyboard: new InlineKeyboard().text(
+        "Меню",
+        traceCallback("v1:nav:start"),
+      ),
+    };
+  }
   if (content.kind === "community-announcement") {
     return {
       text: withHeadline("Объявление сообщества", content.body),

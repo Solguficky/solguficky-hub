@@ -1,7 +1,7 @@
 import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import type { LogFields, Logger } from "../logging.js";
-import { botCommands, registerCommands, screenCommands } from "./commands.js";
+import { botCommands, registerCommands } from "./commands.js";
 
 type LogRecord = { level: keyof Logger; message: string; fields: LogFields };
 
@@ -24,17 +24,12 @@ function capturingLogger(): { logger: Logger; records: LogRecord[] } {
 }
 
 describe("bot command menu", () => {
-  it("registers every menu command with its caption for private chats", async () => {
+  it("registers only /menu with its caption for private chats", async () => {
     const setMyCommands = vi.fn<Api["setMyCommands"]>().mockResolvedValue(true);
     const { logger, records } = capturingLogger();
     await registerCommands({ setMyCommands }, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
-      [
-        { command: "menu", description: "Главное меню" },
-        { command: "meetups", description: "Ближайшие сходки" },
-        { command: "archive", description: "Архив сходок" },
-        { command: "notifications", description: "Настройки уведомлений" },
-      ],
+      [{ command: "menu", description: "Главное меню" }],
       { scope: { type: "all_private_chats" } },
     );
     expect(records).toEqual([
@@ -62,15 +57,9 @@ describe("bot command menu", () => {
     ]);
   });
 
-  it("routes every menu command except menu to the screen of its caption", () => {
-    expect(botCommands.map((entry) => entry.command)).toEqual([
-      "menu",
-      ...screenCommands.keys(),
-    ]);
-    expect(Object.fromEntries(screenCommands)).toEqual({
-      meetups: "hub",
-      archive: "archive",
-      notifications: "notify-global",
-    });
+  // Разделы открываются кнопками стартового экрана; вторая дорога к ним в
+  // меню клиента только удлиняла список.
+  it("keeps the menu to a single command", () => {
+    expect(botCommands.map((entry) => entry.command)).toEqual(["menu"]);
   });
 });

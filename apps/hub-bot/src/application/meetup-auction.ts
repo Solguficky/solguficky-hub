@@ -1,9 +1,16 @@
 import type { MeetupAuctions } from "../auction/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import { inMemberCircle } from "./hub-access.js";
-import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
+import type {
+  ExecuteRequest,
+  ExecuteResult,
+  MeetupAuctionView,
+  Person,
+} from "./types.js";
 
-type MeetupCard = Extract<ExecuteResult, { kind: "meetup-card" }>;
+// Результат со сходкой, к которому дописывается аукцион: карточка и результаты
+// формы, которые бот показывает карточкой.
+type WithMeetup = { meetup: { id: string }; auction?: MeetupAuctionView };
 
 // Аукцион у сходки (PER-307; ADR-047, дополнение 2026-10-03). Аукцион —
 // расширение сходки: карточка показывает его вход, администратор включает его
@@ -12,10 +19,10 @@ type MeetupCard = Extract<ExecuteResult, { kind: "meetup-card" }>;
 export function createMeetupAuction(auctions: MeetupAuctions) {
   // Аукцион сходки на карточке. Отказ Auction карточку не роняет: сходка
   // читается из Meetups и остаётся верной, а ряда аукциона в кадре нет.
-  async function withAuction(
-    card: MeetupCard,
+  async function withAuction<T extends WithMeetup>(
+    card: T,
     request: { identity: Person; requestId?: string; deadlineAt?: number },
-  ): Promise<MeetupCard> {
+  ): Promise<T> {
     if (!inMemberCircle(request.identity.globalRoles)) return card;
     const result = await auctions.getMeetupAuction(
       request.identity,

@@ -109,17 +109,37 @@ export function createDispatcher(
       : { kind: "dependency-rejected", reason: result.kind };
   }
 
-  // Карточка, которую вернула команда на ней же — подписка, — несёт и ряд
-  // аукциона: иначе нажатие «Подписаться» убирало бы с карточки «Лоты».
+  // Карточка, которую вернула команда на ней же — подписка, публикация,
+  // правка поля, смена состояния, — несёт и ряд аукциона: иначе нажатие
+  // «Подписаться» убирало бы с карточки «Лоты», а карточка сразу после
+  // «Опубликовать» была бы без «Включить аукцион». Скрытый черновик и вопросы
+  // формы карточкой не показываются, и аукцион им не нужен.
   async function withCardAuction(
     result: ExecuteResult,
     request: { identity: Person; requestId?: string; deadlineAt?: number },
   ): Promise<ExecuteResult> {
-    return result.kind === "meetup-card" &&
-      result.auction === undefined &&
-      meetupAuction !== undefined
-      ? meetupAuction.withAuction(result, request)
-      : result;
+    if (meetupAuction === undefined) return result;
+    switch (result.kind) {
+      case "meetup-card":
+      case "published":
+      case "publication-scheduled":
+      case "publication-unavailable":
+      case "meetup-updated":
+      case "meetup-state-changed":
+        return result.auction === undefined
+          ? meetupAuction.withAuction(result, request)
+          : result;
+      // Ответ на вопрос черновика, когда сходку уже опубликовали: бот покажет
+      // её карточкой, и ряд аукциона ей положен. Скрытый черновик показывается
+      // формой, и за аукционом для него не ходят.
+      case "draft":
+        return result.meetup.visibility === "visible" &&
+          result.auction === undefined
+          ? meetupAuction.withAuction(result, request)
+          : result;
+      default:
+        return result;
+    }
   }
 
   return {
@@ -183,7 +203,7 @@ export function createDispatcher(
         case "change-meetup-state":
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
-            : form(request);
+            : withCardAuction(await form(request), request);
         case "view-global-notifications":
         case "set-global-category":
         case "view-meetup-notifications":
